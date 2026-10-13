@@ -388,6 +388,13 @@ def proxy_owns_dns_hostname(db: Session, hostname: str) -> bool:
         db: Caller-owned session holding the network-object writer lock.
         hostname: Generated or operator-supplied DNS hostname.
     """
+    key = dns_hostname_key(hostname)
+    if db.scalar(select(models.ReverseProxy.id).where(
+        func.lower(func.rtrim(models.ReverseProxy.hostname, ".")) == key,
+        models.ReverseProxy.enabled.is_(True),
+        models.ReverseProxy.managed_dns.is_(True),
+    )) is not None:
+        return True
     return db.scalar(select(models.DnsRecord.id).where(
         func.lower(func.rtrim(models.DnsRecord.hostname, ".")) == dns_hostname_key(hostname),
         models.DnsRecord.description.startswith(DNS_OWNER_PREFIX),

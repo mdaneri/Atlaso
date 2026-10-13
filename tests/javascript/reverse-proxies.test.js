@@ -5,6 +5,28 @@ const test = require("node:test");
 
 const reverseProxies = require("../../atlaso/app/static/reverse-proxies.js");
 
+test("Routes step accepts 64 paths and rejects the affected 65th path before Review", () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const start = source.indexOf("    function validateStep({ step }) {");
+  const end = source.indexOf("    function populateReview()", start);
+  const rows = Array.from({ length: 65 }, (_, index) => ({
+    path_prefix: { value: `/route${index}/` }, upstream_host: { value: "backend.test" },
+    upstream_scheme: { value: "http" },
+  }));
+  let count = 64;
+  const context = vm.createContext({ ...reverseProxies, routeNodes: () => rows.slice(0, count),
+    routeField: (row, name) => row[name] });
+  vm.runInContext(source.slice(start, end), context);
+  assert.equal(context.validateStep({ step: { id: "routes" } }), true);
+  count = 65;
+  const result = context.validateStep({ step: { id: "routes" } });
+  assert.equal(result.valid, false);
+  assert.equal(result.field, rows[64].path_prefix);
+  assert.match(result.message, /64/);
+  count = 64;
+  assert.equal(context.validateStep({ step: { id: "routes" } }), true);
+});
+
 test("wizard rejects invalid served and upstream names on the affected step", () => {
   const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
   const start = source.indexOf("    function validateStep({ step }) {");
@@ -559,8 +581,8 @@ test("display escaping protects operator-controlled text", () => {
 
 test("management service worker precaches the reverse-proxy page asset", () => {
   const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
-  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}370`;/);
-  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-16"/);
+  assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}371`;/);
+  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-17"/);
 });
 
 function classListFor(classes) {

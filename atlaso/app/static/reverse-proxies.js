@@ -659,6 +659,7 @@
       if (step.id === "routes") {
         const routes = routeNodes();
         if (!routes.length) return { valid: false, message: "Add at least one path route." };
+        if (routes.length > 64) return { valid: false, message: "Use at most 64 path routes. Remove the extra route before Review.", field: routeField(routes[64], "path_prefix") };
         for (const route of routes) {
           const path = String(routeField(route, "path_prefix")?.value || "").trim();
           if (!validPathPrefix(path)) {

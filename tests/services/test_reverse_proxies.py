@@ -46,7 +46,8 @@ from atlaso.app.services.reverse_proxies import (
     ("NtpSettings", "http", False),
 ])
 @pytest.mark.parametrize("listen_interface", ["eth1", "eth2"])
-def test_service_socket_guard_retains_exclusive_and_shared_protocol_ownership(model_name, scheme, conflicts, listen_interface):
+@pytest.mark.parametrize("address", ["192.168.1.10", "2001:db8:1::10"])
+def test_service_socket_guard_retains_exclusive_and_shared_protocol_ownership(model_name, scheme, conflicts, listen_interface, address):
     """Validate service-first and proxy-first ownership with shared nginx exceptions.
 
     Args:
@@ -54,27 +55,34 @@ def test_service_socket_guard_retains_exclusive_and_shared_protocol_ownership(mo
         scheme: Existing proxy protocol on the shared TCP port.
         conflicts: Whether the service must reject the enabled proxy socket.
         listen_interface: Same or different interface sharing the proxy address.
+        address: Exact shared IPv4 or IPv6 socket address.
     """
     from atlaso.app import models
     from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 
     engine, db = create_db()
     try:
+        first_interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        if ":" in address:
+            first_interface.ipv6_enabled = True
+            first_interface.ipv6_cidr = address + "/64"
         if listen_interface == "eth2":
             db.add(PhysicalInterface(
                 name="eth2", mac_address="02:00:00:00:00:03", admin_state="up", oper_state="up",
                 role="access", mode="access", ip_cidr="192.168.1.10/24",
+                ipv6_enabled=":" in address, ipv6_cidr=address + "/64" if ":" in address else None,
             ))
-            db.commit()
-        proxy = save_proxy(db, payload(enabled=True, scheme=scheme, port=9443, redirect_http=False), actor="test")
+        db.commit()
+        proxy = save_proxy(db, payload(enabled=True, scheme=scheme, port=9443, redirect_http=False,
+                                      listeners=[{"interface": "eth1", "address": address}]), actor="test")
         acquire_network_objects_write_lock(db)
         service = getattr(models, model_name)(enabled=True, port=9443, listen_interface=listen_interface,
-                                             listen_address="192.168.1.10")
+                                             listen_address=address)
         if model_name == "LdapSettings":
             service.ldaps_enabled = True
         db.add(service)
         db.flush()
-        if conflicts:
+        if conflicts or (listen_interface != "eth1" and model_name in {"OidcProviderSettings", "VcfOfflineDepotSettings"}):
             with pytest.raises(ValueError, match="Service listener conflicts"):
                 validate_service_listener_sockets(db)
             assert "exclusive Atlaso service" in " ".join(validate_proxy(proxy, validation_context(db), [proxy], exclude_id=proxy.id))
@@ -82,6 +90,44 @@ def test_service_socket_guard_retains_exclusive_and_shared_protocol_ownership(mo
         validate_service_listener_sockets(db)
     finally:
         db.rollback()
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("address", ["192.168.1.10", "2001:db8:1::10"])
+@pytest.mark.parametrize("matching", [False, True])
+def test_shared_service_ingress_set_matches_complete_proxy_binding_set(address, matching):
+    """Reject partial ingress and preserve unordered matching multi-interface sets.
+
+    Args:
+        address: Exact IPv4 or IPv6 listener shared by both eligible interfaces.
+        matching: Select both service interfaces or only one for the proxy.
+    """
+    from atlaso.app.models import OidcProviderSettings
+
+    engine, db = create_db()
+    try:
+        first = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        first.ipv6_enabled = ":" in address
+        first.ipv6_cidr = address + "/64" if ":" in address else None
+        db.add(PhysicalInterface(name="eth2", mac_address="02:00:00:00:00:03", role="access", mode="access",
+                                 admin_state="up", oper_state="up", ip_cidr="192.168.1.10/24",
+                                 ipv6_enabled=":" in address, ipv6_cidr=first.ipv6_cidr))
+        db.add(OidcProviderSettings(enabled=True, port=9443, listen_interface="eth1 eth2", listen_address=address))
+        db.commit()
+        before_audits = list(db.scalars(select(AuditEvent.id)))
+        bindings = [{"interface": name, "address": address} for name in (["eth2", "eth1"] if matching else ["eth1"])]
+        request = payload(enabled=True, port=9443, redirect_http=False, listeners=bindings)
+        if matching:
+            proxy = save_proxy(db, request, actor="operator")
+            assert proxy.listeners == bindings
+            validate_service_listener_sockets(db)
+        else:
+            with pytest.raises(ValueError, match="exclusive Atlaso service"):
+                save_proxy(db, request, actor="operator")
+            assert not list(db.scalars(select(ReverseProxy)))
+            assert list(db.scalars(select(AuditEvent.id))) == before_audits
+    finally:
         db.close()
         engine.dispose()
 

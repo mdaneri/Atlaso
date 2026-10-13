@@ -429,7 +429,13 @@ def validate_service_listener_sockets(db: Session) -> None:
             for claim in claims:
                 if _claim_conflicts(claim, address=address, port=port):
                     if _nginx_http_front_door(claim) and scheme == claim.scheme:
-                        continue
+                        scopes = {item.interface for item in claims if item.interface != "*"
+                                  and _nginx_http_front_door(item) and item.scheme == scheme
+                                  and _claim_conflicts(item, address=address, port=port)}
+                        bindings = {str(item.get("interface") or "") for item in proxy.listeners
+                                    if str(item.get("address") or "") == address}
+                        if not scopes or scopes == bindings:
+                            continue
                     raise ValueError(
                         f"Service listener conflicts with enabled reverse proxy {proxy.name} on {interface} {address}:{port}. "
                         "Disable or move the proxy before saving this service listener."
@@ -568,7 +574,11 @@ def validate_proxy(
             for claim in claims:
                 if _claim_conflicts(claim, address=address, port=port):
                     if _nginx_http_front_door(claim) and socket_scheme == claim.scheme:
-                        continue
+                        scopes = {item.interface for item in claims if item.interface != "*"
+                                  and _nginx_http_front_door(item) and item.scheme == socket_scheme
+                                  and _claim_conflicts(item, address=address, port=port)}
+                        if not scopes or scopes == {key[0] for key in seen_listeners if key[1] == address}:
+                            continue
                     errors.append("The listener collides with an exclusive Atlaso service socket.")
                     break
             for forward in context.get("port_forwards", []):

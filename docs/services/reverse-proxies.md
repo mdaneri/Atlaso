@@ -55,6 +55,7 @@ even when the changed interface is unrelated to the proxy's listeners. Disable o
 Disable or move the proxy before changing its address, renaming or deleting its VLAN, or making its parent unavailable.
 Rejected edits preserve the interface, proxy, and owned DNS records together.
 DHCP reservation create and edit reject proxy-owned DNS names, including short names expanded by their scope.
+Enabled managed-DNS proxies reserve their names even while authoritative DNS is disabled or cannot serve their zone.
 The reservation and generated DNS changes remain atomic; ownership conflicts return **409 Conflict**.
 Host inventory refresh disables proxies tied to renamed or missing NICs and their child VLANs in the same transaction.
 Saved exact listener tuples remain unchanged for explicit review; inventory refresh never silently rebinds a proxy.
@@ -83,7 +84,8 @@ remain without errors, including before browser scripts run; review these warnin
    Disabled HTTPS intent can be saved while the CA is disabled.
    Optionally enable **Redirect HTTP to HTTPS** and choose the **Redirect listener port**. The redirect applies only to
    the selected listener addresses and port. The Listener step requires different HTTPS and HTTP redirect ports.
-3. **Routes**: add one or more path routes. Set an absolute **Path prefix**, upstream HTTP or HTTPS **Upstream
+3. **Routes**: add up to 64 path routes; the wizard rejects extra routes before Review. Set an absolute **Path prefix**,
+   upstream HTTP or HTTPS **Upstream
    scheme**, **Upstream host or IP**, and **Upstream port**. Choose whether to **Preserve prefix** or **Strip prefix**.
    Routes rejects invalid upstream DNS names or IP literals before Review; enter the port in its separate field.
    Upstream literals must be ordinary unicast addresses, excluding loopback, link-local, multicast, unspecified,

@@ -572,7 +572,8 @@ def test_public_apply_tracks_disabled_intent_hidden_by_redaction(client, field, 
 @pytest.mark.parametrize("transport", ["api", "ui_create", "ui_edit"])
 @pytest.mark.parametrize("address", ["192.168.50.130", "fd00:50::130"])
 @pytest.mark.parametrize("hostname", ["proxy", "PROXY.ATLASO.INTERNAL."])
-def test_dhcp_reservation_rejects_proxy_dns_owner_atomically(client, transport, address, hostname):
+@pytest.mark.parametrize("owner_kind", ["record", "disabled_dns", "unserved_zone"])
+def test_dhcp_reservation_rejects_proxy_dns_owner_atomically(client, transport, address, hostname, owner_kind):
     """Protect both address families and scope-expanded names through real transports.
 
     Args:
@@ -580,11 +581,19 @@ def test_dhcp_reservation_rejects_proxy_dns_owner_atomically(client, transport, 
         transport: Reservation mutation endpoint under test.
         address: Reservation address in an IPv4 or IPv6 scope.
         hostname: Short or DNS-equivalent spelling of the proxy-owned name.
+        owner_kind: Published record or saved proxy whose DNS zone cannot serve it.
     """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import AuditEvent, DhcpReservation, DhcpScope, DnsRecord
+    from atlaso.app.models import (
+        AuditEvent,
+        DhcpReservation,
+        DhcpScope,
+        DnsRecord,
+        DnsSettings,
+        ReverseProxy,
+    )
     from atlaso.app.services.reverse_proxy_publication import DNS_OWNER_PREFIX
     from tests.routers.api_v1.test_dns_dhcp import create_token
     from tests.routers.ui.helpers import login
@@ -600,7 +609,18 @@ def test_dhcp_reservation_rejects_proxy_dns_owner_atomically(client, transport, 
                           description=f"{DNS_OWNER_PREFIX}17", enabled=True)
         original = DhcpReservation(hostname="original.atlaso.internal", mac_address="02:15:5d:00:22:22",
                                    ip_address="192.168.50.122", description="preserve", enabled=True)
-        db.add_all([owner, original])
+        if owner_kind == "record":
+            db.add(owner)
+        else:
+            settings = db.scalar(select(DnsSettings))
+            settings.enabled = owner_kind != "disabled_dns"
+            settings.authoritative = True
+            settings.domain = "other.test"
+            db.add(ReverseProxy(name="Reserved proxy", hostname="proxy.atlaso.internal", enabled=True,
+                                managed_dns=True, scheme="http", port=18090,
+                                listeners=[{"interface": "eth2", "address": "192.168.50.1"}]))
+            assert db.scalar(select(DnsRecord.id).where(DnsRecord.hostname == owner.hostname)) is None
+        db.add(original)
         db.commit()
         reservation_id = original.id
         before_dns = [(r.id, r.hostname, r.record_type, r.address, r.description) for r in db.scalars(select(DnsRecord))]
