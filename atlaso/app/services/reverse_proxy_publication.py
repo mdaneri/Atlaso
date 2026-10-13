@@ -313,7 +313,7 @@ def directory_entries(proxies: list[dict[str, Any]], address: str) -> list[dict[
     """Publish opted-in resources only on the called listener address.
 
     Args:
-        proxies: Complete bounded proxy desired-state collection.
+        proxies: Complete canonical applied proxy collection.
         address: Input used by directory entries.
     """
     entries = []

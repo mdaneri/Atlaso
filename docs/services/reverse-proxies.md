@@ -108,6 +108,8 @@ remain without errors, including before browser scripts run; review these warnin
    behavior.
    WebSocket traffic uses the same path mapping and managed upgrade headers.
 4. **Publication**: enable **Publish in Public Services** to show a service card on matching public listener views.
+   Cards follow the applied proxy snapshot. Pending edits, failed Apply, and rollback retain the previous links;
+   successful Apply updates or retires them. Cards are hidden when bounded applied-runtime evidence is unavailable.
    This setting is independent of direct access: hiding the card does not disable the configured proxy. **Manage
    authoritative DNS** is a separate opt-in. When enabled and Atlaso authoritative DNS can serve the hostname, Atlaso
    reconciles its A and AAAA records to the selected listener addresses. Otherwise, create those records in your

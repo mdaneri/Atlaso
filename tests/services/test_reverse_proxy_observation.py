@@ -3,6 +3,8 @@
 import json
 from datetime import datetime, timezone
 
+import pytest
+
 from atlaso.app.adapters.system import AdapterResult
 from atlaso.app.services import reverse_proxy_observation as observation
 
@@ -179,3 +181,47 @@ def test_insecure_upstream_is_always_degraded_even_when_cached_probe_is_healthy(
     assert result[0]["status"] == "degraded"
     assert result[0]["failure_class"] == "insecure_verification"
     assert "verification is disabled" in result[0]["warning"]
+
+
+def test_public_snapshot_reads_applied_intent_without_desired_database_state(monkeypatch):
+    """Canonical cached applied intent remains available after desired rows disappear.
+
+    Args:
+        monkeypatch: Scoped replacements for helper and forbidden desired-state reads.
+    """
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    _configure(monkeypatch, _payload())
+    monkeypatch.setattr(observation, "runtime_snapshot", lambda _db: pytest.fail("must not read desired intent"))
+    assert observation.applied_reverse_proxy_snapshot(now=now) == _desired()
+
+
+@pytest.mark.parametrize("invalid", ["stale", "future", "missing-generation", "invalid-host", "invalid-path",
+                                     "invalid-listener", "bad-json", "too-large", "dry-run", "helper-failure"])
+def test_public_snapshot_hides_unproven_or_malformed_applied_intent(monkeypatch, invalid):
+    """Public cards fail closed without fresh canonical bounded runtime evidence.
+
+    Args:
+        monkeypatch: Scoped adapter replacement without upstream network probes.
+        invalid: Invalid helper evidence or canonical publication field.
+    """
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    payload = _payload()
+    if invalid == "stale":
+        payload["observed_at"] = "2026-10-06T00:00:00+00:00"
+    elif invalid == "future":
+        payload["observed_at"] = "2026-10-08T00:00:00+00:00"
+    elif invalid == "missing-generation":
+        payload["generation"] = None
+    elif invalid == "invalid-host":
+        payload["proxies"][0]["hostname"] = "wrong/host"
+    elif invalid == "invalid-path":
+        payload["proxies"][0]["routes"][0]["path_prefix"] = "/../unsafe"
+    elif invalid == "invalid-listener":
+        payload["proxies"][0]["listeners"][0]["address"] = "bad-address"
+    _configure(monkeypatch, payload, dry_run=invalid == "dry-run", returncode=int(invalid == "helper-failure"))
+    if invalid in {"bad-json", "too-large"}:
+        monkeypatch.setattr(observation.SystemAdapter, "reverse_proxy_status", lambda _self: AdapterResult(
+            command=["atlaso-helper"], dry_run=False,
+            stdout="{" if invalid == "bad-json" else "x" * (observation.MAX_HELPER_OUTPUT + 1),
+        ))
+    assert observation.applied_reverse_proxy_snapshot(now=now) == []

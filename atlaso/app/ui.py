@@ -5190,12 +5190,14 @@ def public_service_directory_context(db: Session, binding: dict[str, str]) -> di
                 "pill": "good",
             }
         )
-    from atlaso.app.services.reverse_proxies import runtime_snapshot as proxy_snapshot
+    from atlaso.app.services.reverse_proxy_observation import (
+        applied_reverse_proxy_snapshot,
+    )
     from atlaso.app.services.reverse_proxy_publication import (
         directory_entries as proxy_directory_entries,
     )
 
-    services.extend(proxy_directory_entries(proxy_snapshot(db), binding["address"]))
+    services.extend(proxy_directory_entries(applied_reverse_proxy_snapshot(), binding["address"]))
     services = [
         {
             **service,

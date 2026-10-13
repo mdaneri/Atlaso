@@ -474,3 +474,68 @@ def test_unchanged_reverse_proxy_intent_keeps_public_services_apply_independent(
         assert payload["management_handoff"] is False
         assert payload["selected_units"] == ["public_services"]
         assert payload["management_handoff_units"] == []
+
+
+@pytest.mark.parametrize("change", ["create", "edit", "disable", "delete", "failed", "rollback"])
+def test_public_directory_preserves_applied_proxy_links_until_apply(client, monkeypatch, change):
+    """Public GET follows applied intent through saved edits and failed or reverted Apply.
+
+    Args:
+        client: Isolated HTTP client serving the real public directory.
+        monkeypatch: Scoped replacement of the bounded runtime observer.
+        change: Pending desired-state mutation or failed/reverted publication state.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    from atlaso.app.adapters.system import AdapterResult, SystemAdapter
+    from atlaso.app.models import Job, JobStatus
+    from atlaso.app.services.reverse_proxies import (
+        delete_proxy,
+        runtime_snapshot,
+        save_proxy,
+        set_enabled,
+    )
+    from tests.routers.api_v1.test_reverse_proxies import (
+        _enable_test_listener,
+        _payload,
+    )
+
+    _enable_test_listener()
+    with SessionLocal() as db:
+        proxy = save_proxy(db, _payload(enabled=True), actor="test")
+        applied = [] if change == "create" else runtime_snapshot(db)
+        if change in {"edit", "failed", "rollback"}:
+            save_proxy(db, _payload(enabled=True, hostname="changed.example.test"), actor="test", proxy_id=proxy.id)
+        elif change == "disable":
+            set_enabled(db, proxy.id, enabled=False, actor="test")
+        elif change == "delete":
+            delete_proxy(db, proxy.id, actor="test")
+        if change in {"failed", "rollback"}:
+            db.add(Job(id="public-proxy-" + change, type="appliance-apply", created_by="test",
+                       status=JobStatus.FAILED.value, result=json.dumps({
+                "management_handoff_runtime_commit_pending": change == "failed",
+                "management_handoff_recovery": {"evidence": {"rolled_back": change == "rollback"}},
+            })))
+            db.commit()
+        desired = runtime_snapshot(db)
+
+    status = {"schema": 1, "proxies": applied, "generation": "a" * 64 if applied else None,
+              "health": {}, "observed_at": datetime.now(timezone.utc).isoformat()}
+    monkeypatch.setattr(SystemAdapter, "reverse_proxy_status", lambda _self: AdapterResult(
+        command=["atlaso-helper"], dry_run=False, stdout=json.dumps(status),
+    ))
+    headers = {"host": "192.0.2.10"}
+    pending = client.get("/ui/public", headers=headers)
+    assert pending.status_code == 200
+    assert ('href="https://application.example.test:8443/"' in pending.text) is (change != "create")
+    assert "https://changed.example.test:8443/" not in pending.text
+
+    status["proxies"] = desired
+    status["generation"] = "b" * 64 if desired else None
+    committed = client.get("/ui/public", headers=headers)
+    assert committed.status_code == 200
+    expected = "changed.example.test" if change in {"edit", "failed", "rollback"} else "application.example.test"
+    assert (f'href="https://{expected}:8443/"' in committed.text) is (change not in {"disable", "delete"})
+    if change in {"edit", "failed", "rollback"}:
+        assert "https://application.example.test:8443/" not in committed.text

@@ -83,6 +83,37 @@ def observe_reverse_proxy_health(db: Session, *, now: datetime | None = None) ->
     return items[:MAX_TOTAL_PROXY_ROUTES]
 
 
+def applied_reverse_proxy_snapshot(*, now: datetime | None = None) -> list[dict[str, Any]]:
+    """Read canonical applied intent for public listings, independently of desired edits.
+
+    Args:
+        now: Optional aware UTC time used by deterministic freshness checks.
+    """
+    from atlaso.app.services.reverse_proxy_publication import (
+        render_proxy_servers,
+        transport_manifest,
+        validated_snapshot,
+    )
+
+    try:
+        result = SystemAdapter().reverse_proxy_status()
+        if result.dry_run or result.returncode != 0 or len(result.stdout) > MAX_HELPER_OUTPUT:
+            return []
+        parsed = _validate_observation(json.loads(result.stdout), now=now)
+        proxies = parsed["proxies"]
+        if not proxies:
+            return []
+        if parsed["generation"] is None:
+            return []
+        # Reuse the publication owner's complete schema and semantic validation.
+        # No desired database inventory can invalidate the still-applied snapshot.
+        manifest = transport_manifest(proxies, [])
+        canonical, _manifest = validated_snapshot(render_proxy_servers(proxies, manifest))
+        return canonical
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return []
+
+
 def _validate_observation(value: Any, *, now: datetime | None) -> dict[str, Any]:
     """Validate the complete bounded helper response and its cache freshness.
 
