@@ -121,3 +121,62 @@ def test_postgresql_advisory_contention_refuses_before_table_locks():
     connection.exec_driver_sql.assert_not_called()
     session.rollback.assert_called_once_with()
     session.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("code", [5, 6, 517, 262])
+def test_sqlite_busy_codes_release_admission(code):
+    """SQLite primary and extended busy/locked codes return typed contention.
+
+    Args:
+        code: SQLite driver result code for a busy or locked database.
+    """
+    original = RuntimeError("private database diagnostic")
+    original.sqlite_errorcode = code
+    connection = Mock(dialect=SimpleNamespace(name="sqlite"))
+    connection.exec_driver_sql.side_effect = OperationalError("UPDATE settings", None, original)
+    session = Mock()
+    session.connection.return_value = connection
+    with pytest.raises(ApplianceApplyAdmissionBusy) as failure:
+        lock_appliance_apply_snapshot_tables(session)
+    assert "private" not in str(failure.value)
+    session.rollback.assert_called_once_with()
+
+
+def test_sqlite_other_error_is_not_reported_as_contention():
+    """Do not conceal missing-schema or other database failures as a busy gate."""
+    original = RuntimeError("synthetic schema failure")
+    original.sqlite_errorcode = 1
+    connection = Mock(dialect=SimpleNamespace(name="sqlite"))
+    failure = OperationalError("UPDATE settings", None, original)
+    connection.exec_driver_sql.side_effect = failure
+    session = Mock()
+    session.connection.return_value = connection
+    with pytest.raises(OperationalError) as result:
+        lock_appliance_apply_snapshot_tables(session)
+    assert result.value is failure
+
+
+def test_sqlite_busy_admission_can_retry_after_writer_release(client):
+    """Actual SQLite timeout refuses admission and permits a later fresh attempt.
+
+    Args:
+        client: Initializes the isolated schema used by both sessions.
+    """
+    from sqlalchemy.orm import Session
+
+    from atlaso.app.database import SessionLocal, engine
+
+    with SessionLocal() as writer, engine.connect() as connection, Session(bind=connection) as admission:
+        lock_appliance_apply_snapshot_tables(writer)
+        timeout = connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one()
+        connection.exec_driver_sql("PRAGMA busy_timeout=0")
+        try:
+            with pytest.raises(ApplianceApplyAdmissionBusy):
+                lock_appliance_apply_snapshot_tables(admission)
+            writer.rollback()
+            lock_appliance_apply_snapshot_tables(admission)
+            admission.rollback()
+        finally:
+            # Only this isolated pooled connection's test setting is changed.
+            connection.exec_driver_sql(f"PRAGMA busy_timeout={int(timeout)}")
+            admission.rollback()

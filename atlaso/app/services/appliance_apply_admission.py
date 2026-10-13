@@ -37,7 +37,14 @@ def lock_appliance_apply_snapshot_tables(db: Session) -> None:
     """
     connection = db.connection()
     if connection.dialect.name == "sqlite":
-        acquire_network_objects_write_lock(db)
+        try:
+            acquire_network_objects_write_lock(db)
+        except OperationalError as exc:
+            code = getattr(exc.orig, "sqlite_errorcode", None)
+            if not isinstance(code, int) or code & 0xFF not in {5, 6}:  # SQLITE_BUSY / SQLITE_LOCKED, including extended codes.
+                raise
+            db.rollback()
+            raise ApplianceApplyAdmissionBusy("Appliance Apply writer admission is busy.") from None
         return
     if connection.dialect.name != "postgresql":
         raise RuntimeError("Appliance Apply requires SQLite or PostgreSQL writer admission.")
