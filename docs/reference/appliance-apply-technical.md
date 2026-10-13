@@ -411,6 +411,15 @@ captured state requires it. Each captured artifact, link, and later runtime laye
 backup is reported as an incomplete rollback but does not prevent restoration attempts for the remaining network,
 firewall, nginx, Atlaso, and readiness layers. Restored file bytes and every affected parent-directory entry are synced
 before the durable transaction marker can be cleared; a sync failure keeps rollback incomplete for startup retry.
+After restored-link reconfiguration, rollback waits up to thirty seconds for three consecutive complete native
+observations of the original management addresses on their snapshotted interface, MAC, and exact CIDR. DHCP IPv4
+requires a current networkd lease bound to that address and interface; a retained static address or a lease for another
+address cannot satisfy recovery. Static and dynamic IPv6 addresses retain their native source checks. Rollback checks
+address ownership again before nginx validation and reload-or-restart, so asynchronous DHCP reacquisition cannot race
+an address-specific listener. Missing, conflicting, unstable, or unprovable address ownership prevents nginx activation
+and keeps the journal for supported recovery. Older journals lacking the original identity or addressing intent remain
+incomplete rather than acquiring ownership from today's desired state. Existing route/source equivalence, resolver,
+DNS, TLS, and old-path readiness checks still must succeed before rollback can retire the journal.
 Rollback explicitly reconfigures every pre-existing candidate link and
 removes a
 candidate-only VLAN after restoring its files. A previously absent firewall state is restored by disabling/stopping the

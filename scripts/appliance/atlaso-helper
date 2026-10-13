@@ -32371,6 +32371,76 @@ def _restore_management_handoff_links(state: dict, commands: list[dict[str, obje
         raise ValueError("network link rollback incomplete: " + "; ".join(bounded))
 
 
+def _wait_restored_management_addresses(state: dict, *, attempts: int = 31) -> dict:
+    """Require stable native ownership of the old listener before restarting it.
+
+    Args:
+        state: Immutable pre-mutation listener, MAC, CIDR, and addressing intent.
+        attempts: Sample bound within the thirty-second reacquisition window.
+    """
+    routing = state.get("previous_management_routing")
+    paths = {row["name"]: row for row in state.get("previous_management_paths", [])}
+    expected = {str(ip_address(value)) for value in state.get("previous_management_addresses", [])}
+    if not expected or not isinstance(routing, dict) or not routing:
+        raise ValueError("restored management address ownership snapshot is missing")
+    requirements = []
+    for name, row in routing.items():
+        if name not in paths or not _valid_network_mac(row.get("mac", "")):
+            raise ValueError("restored management interface identity snapshot is missing")
+        for value in row["cidrs"]:
+            cidr = ip_interface(value)
+            if str(cidr.ip) in expected:
+                path = paths[name]
+                if cidr.version == 4 and path.get("ipv4_method") not in {"static", "dhcp"}:
+                    raise ValueError("restored management addressing intent snapshot is missing")
+                dynamic = (path.get("ipv4_method") == "dhcp" if cidr.version == 4 else
+                           path.get("ipv6_enabled") == "true" and not path.get("ipv6_cidr"))
+                requirements.append((name, row["mac"].lower(), str(cidr), dynamic))
+    if {str(ip_interface(row[2]).ip) for row in requirements} != expected:
+        raise ValueError("restored management address snapshot is incomplete")
+    if len({str(ip_interface(row[2]).ip) for row in requirements}) != len(requirements):
+        raise ValueError("restored management address ownership is ambiguous")
+    deadline = time.monotonic() + 30
+    stable = 0
+    previous_identity = None
+    for attempt in range(max(1, attempts)):
+        observation = _network_address_observation()
+        ready = bool(observation.get("complete"))
+        identities = []
+        for name, mac, cidr, dynamic in requirements:
+            links = [row for row in observation.get("links", []) if row.get("name") == name]
+            link = links[0] if len(links) == 1 else {}
+            records = [row for row in link.get("addresses", []) if row.get("cidr") == cidr]
+            if any(row.get("state") == "conflict" for row in records):
+                raise ValueError("restored management address has a native conflict")
+            family = ip_interface(cidr).version
+            source_ready = (len(records) == 1 and (
+                records[0].get("dhcp4_lease") is True if dynamic and family == 4 else
+                records[0].get("source") in {"DHCPv6", "NDisc"} if dynamic else
+                records[0].get("source") == "static"
+            ))
+            owners = [other for other in observation.get("links", [])
+                      for record in other.get("addresses", []) if record.get("address") == str(ip_interface(cidr).ip)]
+            ready = ready and bool(
+                link.get("mac") == mac and link.get("configured") and link.get("up")
+                and link.get("address_inventory_complete") and source_ready
+                and records[0].get("state") == "assigned" and records[0].get("scope") == "global"
+                and type(link.get("ifindex")) is int and link["ifindex"] > 0
+                and len(owners) == 1 and owners[0] is link
+            )
+            identities.append((name, mac, link.get("ifindex"), cidr))
+        identity = tuple(identities)
+        stable = stable + 1 if ready and identity == previous_identity else int(ready)
+        previous_identity = identity if ready else None
+        if stable >= 3:
+            return {"stable_samples": stable, "addresses": sorted(expected)}
+        if time.monotonic() >= deadline:
+            break
+        if attempt + 1 < attempts:
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
+    raise ValueError("restored management addresses did not acquire stable native ownership")
+
+
 def _restore_management_handoff_resolver(state: dict, commands: list[dict[str, object]]) -> None:
     """Clear a candidate resolver override before restored links reconfigure.
 
@@ -32869,6 +32939,7 @@ def _restore_management_handoff(state: dict) -> dict:
     attempt("resolver restore", lambda: _restore_management_handoff_resolver(state, commands))
     before_links = len(errors)
     attempt("network link restore", lambda: _restore_management_handoff_links(state, commands))
+    attempt("restored management addresses", lambda: _wait_restored_management_addresses(state))
     route_sources_ready = len(errors) == before_links
     if route_sources_ready and _restored_legacy_route_baseline(state):
         before_sources = len(errors)
@@ -32998,8 +33069,15 @@ def _restore_management_handoff(state: dict) -> dict:
         if _nginx_binary() is None or _nginx_test_command().returncode != 0:
             raise ValueError("nginx rollback validation failed")
 
-    attempt("nginx validation", validate_nginx)
-    for command in (["systemctl", "start", "atlaso.service"], ["systemctl", "reload-or-restart", "nginx.service"]):
+    address_ready_before = len(errors)
+    attempt("restored management addresses before nginx", lambda: _wait_restored_management_addresses(state))
+    addresses_ready = len(errors) == address_ready_before
+    if addresses_ready:
+        attempt("nginx validation", validate_nginx)
+    service_commands = [["systemctl", "start", "atlaso.service"]]
+    if addresses_ready:
+        service_commands.append(["systemctl", "reload-or-restart", "nginx.service"])
+    for command in service_commands:
         def run_service(command: list[str] = command) -> None:
             """Run one required rollback service command.
 
@@ -33025,7 +33103,8 @@ def _restore_management_handoff(state: dict) -> dict:
             ),
         )
 
-    attempt("old-path readiness", check_readiness)
+    if addresses_ready:
+        attempt("old-path readiness", check_readiness)
     if errors:
         bounded = errors[:8]
         if len(errors) > len(bounded):
