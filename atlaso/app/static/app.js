@@ -19096,6 +19096,7 @@ function setApplianceApplyPollNotice(message = "", tone = "warning") {
 }
 
 function applianceApplyFormatIdentity(unit, volume) {
+  if (!unit.snapshot_hash || volume.id === undefined || !volume.stable_device_id) return "";
   return JSON.stringify([
     unit.snapshot_hash || "", volume.id, volume.stable_device_id,
     Object.entries(volume.fingerprint || {}).sort(([left], [right]) => left.localeCompare(right)),

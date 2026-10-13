@@ -425,6 +425,7 @@ test("format confirmation survives only the same reviewed manifest and disk iden
     { ...volume, stable_device_id: "/dev/disk/by-id/replacement" },
     { ...volume, fingerprint: { ...volume.fingerprint, serial: "replacement" } },
     { ...volume, unit: { snapshot_hash: "replacement-manifest" } },
+    { ...volume, unit: {} },
   ]) {
     const fresh = makeRow(replacement);
     context.restoreApplianceApplyReviewState({ querySelectorAll: () => [fresh.row] }, saved);

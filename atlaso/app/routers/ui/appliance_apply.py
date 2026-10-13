@@ -94,6 +94,7 @@ def build_router(dependencies: ApplianceApplyUiDependencies) -> ApplianceApplyUi
                 "config_path": unit["config_path"],
                 "config_preview": unit["config_preview"],
                 "config_diff": unit["config_diff"],
+                "snapshot_hash": unit["snapshot_hash"],
                 "network_candidate_preview": (
                     unit["network_candidate_variant"]["config_preview"]
                     if unit.get("network_candidate_variant") else None

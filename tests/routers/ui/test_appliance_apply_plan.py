@@ -411,3 +411,30 @@ def test_unexpected_planning_diagnostics_use_generic_request_failure(client, mon
     assert response.status_code == 500
     assert diagnostic not in response.text
     assert "Traceback" not in response.text
+def test_storage_review_serializes_changed_manifest_identity(client, monkeypatch):
+    """Expose the reviewed snapshot even when the formatted disk identity is unchanged.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Test-scoped replacements for Apply planning dependencies.
+    """
+    units, _csrf, _ui = _prepare_network_handoff_review(client, monkeypatch)
+    storage = next(unit for unit in units if unit["id"] == "esx_storage")
+    storage["changed"] = True
+    volume = {
+        "id": 17, "name": "datastore", "stable_device_id": "/dev/disk/by-id/original",
+        "fingerprint": {"serial": "original", "wwn": "wwn-original", "size_bytes": 1000},
+        "requires_format": True,
+    }
+    storage["context"]["esx_storage_manifest"] = {"volumes": [volume]}
+    storage["snapshot_hash"] = "reviewed-storage-manifest"
+    before = client.get("/appliance-apply/review?selected_units=esx_storage").json()
+    before_storage = next(unit for unit in before["units"] if unit["id"] == "esx_storage")
+    assert before_storage["snapshot_hash"] == "reviewed-storage-manifest"
+    assert before_storage["format_volumes"][0]["id"] == volume["id"]
+    storage["snapshot_hash"] = "changed-storage-manifest"
+    after = client.get("/appliance-apply/review?selected_units=esx_storage").json()
+    after_storage = next(unit for unit in after["units"] if unit["id"] == "esx_storage")
+    assert after_storage["format_volumes"] == before_storage["format_volumes"]
+    assert after_storage["snapshot_hash"] != before_storage["snapshot_hash"]
+    assert after["plan_token"] != before["plan_token"]
