@@ -88,9 +88,11 @@ preserved with their affected subsystem below. Keep new requirements at their to
   event.
 - Submission reconciles desired state before writer admission, then expires cached ORM state and builds the complete
   consent-bound plan read-only through job creation. SQLite uses database writer admission; PostgreSQL additionally
-  locks every registered application table in `SHARE ROW EXCLUSIVE` mode so ordinary desired-state saves and inserts
+  locks every registered application table in `EXCLUSIVE MODE NOWAIT` so ordinary desired-state saves and inserts
   cannot bypass capture by omitting an advisory lock. This serializes writes across application tables during capture
-  while allowing reads. Nested DNS/resolver projections must use `reconcile=False` and must not commit during planning.
+  while allowing reads. Contention rolls back admission and returns 409 with retry guidance, so partial table locks
+  never wait in an unrelated writer's lock order. Nested DNS/resolver projections must use `reconcile=False` and must not
+  commit during planning.
 - Real Appliance Settings apply must prove the configured Atlaso loopback `/openapi.json` upstream before publishing a
   management nginx candidate, write and daemon-reload the durable loopback drop-in without restarting the active Atlaso
   worker, then require consecutive guest-local front-door readiness on the applied management address and public port.

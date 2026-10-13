@@ -7,10 +7,12 @@ from unittest.mock import Mock
 import pytest
 from sqlalchemy import update
 from sqlalchemy.dialects.postgresql import dialect
+from sqlalchemy.exc import OperationalError
 
 from atlaso.app.database import Base
 from atlaso.app.models import DnsSettings
 from atlaso.app.services.appliance_apply_admission import (
+    ApplianceApplyAdmissionBusy,
     lock_appliance_apply_snapshot_tables,
 )
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
@@ -26,7 +28,7 @@ def test_postgresql_admission_locks_all_registered_tables_without_writer_coopera
     preparer = connection.dialect.identifier_preparer
     expected = ", ".join(preparer.format_table(table) for table in
                          sorted(Base.metadata.tables.values(), key=lambda table: table.fullname))
-    assert statement == f"LOCK TABLE {expected} IN SHARE ROW EXCLUSIVE MODE"
+    assert statement == f"LOCK TABLE {expected} IN EXCLUSIVE MODE NOWAIT"
     assert preparer.format_table(DnsSettings.__table__) in statement
     session.commit.assert_not_called()
     session.rollback.assert_not_called()
@@ -84,3 +86,23 @@ def test_sqlite_admission_blocks_dns_save_without_advisory_participation(client)
         assert not worker.is_alive()
         assert not failures
         assert committed.is_set()
+
+
+@pytest.mark.parametrize("attribute", ["sqlstate", "pgcode"])
+def test_postgresql_contention_releases_partial_admission(attribute):
+    """Refuse NOWAIT contention and release earlier table and advisory locks.
+
+    Args:
+        attribute: SQLSTATE spelling supplied by supported PostgreSQL drivers.
+    """
+    original = RuntimeError("private database diagnostic")
+    setattr(original, attribute, "55P03")
+    connection = Mock(dialect=dialect())
+    connection.exec_driver_sql.side_effect = OperationalError("LOCK TABLE", None, original)
+    session = Mock()
+    session.connection.return_value = connection
+    with pytest.raises(ApplianceApplyAdmissionBusy) as failure:
+        lock_appliance_apply_snapshot_tables(session)
+    assert "private" not in str(failure.value)
+    session.rollback.assert_called_once_with()
+    session.commit.assert_not_called()

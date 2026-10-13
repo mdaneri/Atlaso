@@ -217,6 +217,7 @@ from atlaso.app.security import (
 )
 from atlaso.app.services import task_cancellation
 from atlaso.app.services.appliance_apply_admission import (
+    ApplianceApplyAdmissionBusy,
     lock_appliance_apply_snapshot_tables,
 )
 from atlaso.app.services.appliance_settings import (
@@ -19502,7 +19503,13 @@ def _submit_appliance_apply(
         # Refresh and build the complete consent-bound plan only after writer
         # admission, then capture that admitted plan through job creation.
         acquire_network_objects_write_lock(db)
-        lock_appliance_apply_snapshot_tables(db)
+        try:
+            lock_appliance_apply_snapshot_tables(db)
+        except ApplianceApplyAdmissionBusy:
+            detail = "Appliance state is being updated. Reopen appliance review and try again."
+            return JSONResponse({"detail": detail}, status_code=409) if wants_json else Response(
+                detail, status_code=409, media_type="text/plain",
+            )
         db.expire_all()
         if "vcf_offline_depot" in selected_ids:
             acquire_vcf_depot_admission_gate(db)

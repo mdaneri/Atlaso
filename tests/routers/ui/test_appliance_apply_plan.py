@@ -607,3 +607,41 @@ def test_reviewed_plan_rechecks_desired_state_after_writer_admission(client, mon
     assert "changed since review" in response.json()["detail"]
     with SessionLocal() as db:
         assert db.query(Job).filter(Job.id != "completed-before-review").count() == 0
+
+
+def test_writer_contention_refuses_submission_without_job(client, monkeypatch):
+    """Contention returns safe retry guidance without queuing stale captures.
+
+    Args:
+        client: Isolated authenticated management client.
+        monkeypatch: Inject typed contention at the snapshot admission boundary.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    from atlaso.app.services.appliance_apply_admission import (
+        ApplianceApplyAdmissionBusy,
+    )
+
+    _units, csrf, ui = _prepare_network_handoff_review(client, monkeypatch)
+    preview = client.get("/appliance-apply/review?selected_units=network&selected_units=wan").json()
+
+    def busy(db):
+        """Model release of admission locks on PostgreSQL contention.
+
+        Args:
+            db: Submission session holding its initial writer boundary.
+        """
+        db.rollback()
+        raise ApplianceApplyAdmissionBusy("private diagnostic")
+
+    monkeypatch.setattr(ui, "lock_appliance_apply_snapshot_tables", busy)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: pytest.fail("contended job executed"))
+    response = client.post("/appliance-apply", data={"csrf": csrf, "reviewed_plan": preview["plan_token"],
+                           "requested_units": preview["requested_units"],
+                           "selected_units": [unit["id"] for unit in preview["units"] if unit["selected"]]},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 409
+    assert "try again" in response.json()["detail"]
+    assert "private" not in response.text
+    with SessionLocal() as db:
+        assert db.query(Job).filter(Job.id != "completed-before-review").count() == 0
