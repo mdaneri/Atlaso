@@ -73,6 +73,80 @@ def ownership_prefix() -> str:
     )
 
 
+def test_exclusive_destination_retains_creation_identity_and_allows_provider_children(tmp_path):
+    """A created destination permits clone files while excluding replacement and directory writers.
+
+    Args:
+        tmp_path: Original pytest-owned temporary root.
+    """
+    destination = tmp_path / "new-parent" / "new-vm"
+    result = run_powershell(
+        ownership_prefix()
+        + f"$target={ps_literal(destination)}; $records=[Collections.Generic.List[object]]::new(); "
+        + "$publish=[Action[string,string]]{param($path,$identity) $records.Add(@{path=$path;identity=$identity})}; "
+        + "$pin=[Atlaso.WorkstationFileIdentity]::CreateAndPinOrdinaryDirectoryPath($target,$publish); try { "
+        + "[IO.File]::WriteAllText((Join-Path $target 'test.vmx'),'public fixture'); "
+        + "$blocked=$false; try { [IO.Directory]::Move($target,($target+'-replaced')) } catch { $blocked=$true }; "
+        + "if (-not $blocked) { throw 'Created directory was replaceable' }; "
+        + "if ($pin.Created[$target] -cne [Atlaso.WorkstationFileIdentity]::Get($target)) { throw 'Identity drift' }; "
+        + "$records | ConvertTo-Json -Compress } finally { $pin.Dispose() }"
+    )
+    records = json.loads(result.stdout)
+    assert len(records) == 2
+    assert records[-1]["path"] == str(destination)
+    assert (destination / "test.vmx").read_text() == "public fixture"
+
+
+def test_exclusive_destination_refuses_concurrently_inserted_child(tmp_path):
+    """A competing child created after the parent callback cannot be adopted by the creator.
+
+    Args:
+        tmp_path: Original pytest-owned temporary root.
+    """
+    destination = tmp_path / "new-parent" / "competing-vm"
+    result = run_powershell(
+        ownership_prefix()
+        + f"$target={ps_literal(destination)}; "
+        + "$publish=[Action[string,string]]{param($path,$identity) "
+        + "[void][IO.Directory]::CreateDirectory((Join-Path $path 'competing-vm'))}; "
+        + "$pin=[Atlaso.WorkstationFileIdentity]::CreateAndPinOrdinaryDirectoryPath($target,$publish)",
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "Exclusive directory creation refused" in result.stderr
+    assert destination.is_dir()
+    assert not list(destination.iterdir())
+
+
+def test_prepared_destination_publishes_each_creation_before_clone_use(tmp_path):
+    """The real helper seals creation identities before any provider VMX is written.
+
+    Args:
+        tmp_path: Original pytest-owned temporary root.
+    """
+    (tmp_path / "evidence").mkdir()
+    source = tmp_path / "source.vmx"
+    source.write_text("public fixture", encoding="utf-8")
+    result = run_powershell(
+        ownership_prefix()
+        + context_script(tmp_path)
+        + f"$ctx=New-AtlasoTestVmOwnershipIntent -Context $ctx -SourceVmxPath {ps_literal(source)} "
+        + f"-SourceVmxIdentity ([Atlaso.WorkstationFileIdentity]::Get({ps_literal(source)})); "
+        + "$pin=New-AtlasoTestVmPreparedOutput -Context $ctx; try { "
+        + "if (Test-Path -LiteralPath $vmx) { throw 'Premature VMX' }; "
+        + "if ($ctx.PreparedOutputIdentity -cne [Atlaso.WorkstationFileIdentity]::Get($output)) { throw 'Wrong original identity' }; "
+        + "[IO.File]::WriteAllText($vmx,'public fixture') } finally { $pin.Dispose() }"
+    )
+    receipts = list((tmp_path / "evidence").glob("atlaso-test-vm-directory-*.json"))
+    assert len(receipts) == 2
+    records = [json.loads(path.read_text(encoding="utf-8-sig")) for path in receipts]
+    assert {record["path"] for record in records} == {
+        str(tmp_path / "checkout"), str(tmp_path / "checkout" / "test-vm")
+    }
+    assert all(record["task_id"] == "synthetic-task" and record["original_identity"] for record in records)
+    assert "prepared directory receipt SHA-256" in result.stdout
+
+
 def identity_writer_prefix() -> str:
     """Load the actual VMX identity writer without executing VM creation."""
     return (
@@ -395,3 +469,50 @@ def test_context_rejects_output_directory_inside_durable_evidence(tmp_path):
     )
     result = run_powershell(command, check=False)
     assert result.returncode != 0
+
+
+@pytest.mark.parametrize("mismatch", ["root", "marker", "duplicate", "partial", "none"])
+def test_cleanup_binds_caller_original_identities_before_provider(tmp_path, mismatch):
+    """Native cleanup refuses substituted identities before its provider boundary.
+
+    Args:
+        tmp_path: Existing pytest temporary root.
+        mismatch: Original ownership selector to mismatch, or a valid dry run.
+    """
+    output = tmp_path / "vm"
+    output.mkdir()
+    vmx = output / "test.vmx"
+    marker = "a" * 32
+    marker_line = f'guestinfo.atlaso.test_vm_cleanup_identity = "{marker}"\n'
+    contents = 'displayName = "test"\n' + marker_line
+    if mismatch == "duplicate":
+        contents += marker_line
+    vmx.write_text(contents, encoding="utf-8")
+    command = (
+        ownership_prefix()
+        + f"$output={ps_literal(output)}; $vmx={ps_literal(vmx)}; "
+        + "$rootId=[Atlaso.WorkstationFileIdentity]::Get($output); "
+        + f"$markerHash=Get-AtlasoTestVmOwnershipCleanupIdentityHash -Value '{marker}'; "
+    )
+    if mismatch == "root":
+        command += "$rootId='00000000:0000000000000000'; "
+    if mismatch == "marker":
+        command += "$markerHash='0'*64; "
+    selectors = "-ExpectedRootIdentity $rootId "
+    if mismatch != "partial":
+        selectors += "-ExpectedPersistentVmIdentitySha256 $markerHash "
+    command += (
+        "Remove-AtlasoWorkstationVmArtifacts -VmrunPath 'provider-must-not-run.exe' "
+        "-VmxPaths @($vmx) -RemovalRoot $output " + selectors + "-WhatIf"
+    )
+    result = run_powershell(command, check=False)
+    assert (result.returncode == 0) == (mismatch == "none")
+    if mismatch == "root":
+        assert "original identity" in result.stderr.lower()
+    elif mismatch == "marker":
+        assert "persistent vm identity" in result.stderr.lower()
+    elif mismatch == "duplicate":
+        assert "exactly one valid persistent" in result.stderr.lower()
+    elif mismatch == "partial":
+        assert "supplied together" in result.stderr.lower()
+    assert vmx.read_text(encoding="utf-8") == contents

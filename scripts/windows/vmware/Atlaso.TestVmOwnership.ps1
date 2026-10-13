@@ -234,6 +234,49 @@ function Get-AtlasoTestVmOutputAncestorPin {
 
 <#
 .SYNOPSIS
+Exclusively create and receipt missing destination components while retaining their native handles.
+.PARAMETER Context
+Task context containing the previously published clone intent.
+#>
+function New-AtlasoTestVmPreparedOutput {
+    [CmdletBinding()]
+    [OutputType([System.IDisposable])]
+    param([Parameter(Mandatory = $true)][psobject]$Context)
+
+    if (-not $Context.Enabled -or -not $Context.IntentPath -or -not $Context.IntentSha256) {
+        throw 'Destination creation requires the published task intent.'
+    }
+    $intentPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile([string]$Context.IntentPath, $true)
+    try {
+        if ((Get-FileHash -LiteralPath $Context.IntentPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne
+            [string]$Context.IntentSha256) { throw 'The clone intent changed before directory creation.' }
+        $publish = [System.Action[string, string]]{
+            param($CreatedPath, $OriginalIdentity)
+            $record = [ordered]@{
+                schema = 1; task_id = [string]$Context.TaskId; repository = [string]$Context.Repository
+                source_commit = [string]$Context.SourceCommit; worktree = [string]$Context.Worktree
+                invocation_id = [string]$Context.InvocationId; path = $CreatedPath; original_identity = $OriginalIdentity
+                intent_path = [string]$Context.IntentPath; intent_sha256 = [string]$Context.IntentSha256
+                kind = 'prepared_directory'; created_utc = [DateTimeOffset]::UtcNow.ToString('o')
+                retention = 'Preserve unless supported cleanup independently admits this creation receipt.'
+            }
+            $publicationContext = $Context.PSObject.Copy()
+            $publicationContext.InvocationId = [guid]::NewGuid().ToString('N')
+            $published = Publish-AtlasoTestVmOwnershipRecord -Context $publicationContext -Record $record -Kind directory
+            Write-Host "Test VM prepared directory receipt: $($published.Path)"
+            Write-Host "Test VM prepared directory receipt SHA-256: $($published.Sha256)"
+            if ($CreatedPath.Equals([string]$Context.OutputDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+                $Context | Add-Member -NotePropertyName PreparedOutputIdentity -NotePropertyValue $OriginalIdentity -Force
+            }
+        }
+        return [Atlaso.WorkstationFileIdentity]::CreateAndPinOrdinaryDirectoryPath(
+            [string]$Context.OutputDirectory, $publish)
+    }
+    finally { $intentPin.Dispose() }
+}
+
+<#
+.SYNOPSIS
 Revalidate and pin the recorded source template through cloning.
 .PARAMETER SourceVmxPath
 Admitted read-only appliance template path.
@@ -283,7 +326,7 @@ function Publish-AtlasoTestVmOwnershipRecord {
     param(
         [Parameter(Mandatory = $true)][psobject]$Context,
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Record,
-        [Parameter(Mandatory = $true)][ValidateSet('intent', 'original')][string]$Kind
+        [Parameter(Mandatory = $true)][ValidateSet('intent', 'original', 'directory')][string]$Kind
     )
 
     if (-not $Context.Enabled) { throw 'Cannot publish ownership for a disabled task context.' }
@@ -416,7 +459,7 @@ function New-AtlasoTestVmOwnershipIntent {
         replaces_receipt = if ($null -ne $ExistingReceipt) {
             [ordered]@{ path = [string]$ExistingReceipt.Path; sha256 = [string]$ExistingReceipt.Sha256 }
         } else { $null }
-        cleanup_tool = 'scripts/windows/vmware/remove-atlaso-vm.ps1 -VmxPath <recorded-vmx> -ExpectedName <canonical-name>'
+        cleanup_tool = 'scripts/windows/vmware/remove-atlaso-vm.ps1 -VmxPath <recorded-vmx> -ExpectedName <canonical-name> -ExpectedRootIdentity <original-directory-identity> -ExpectedPersistentVmIdentitySha256 <recorded-persistent-identity-sha256>'
         invocation_id = $recordId
         created_utc = [DateTimeOffset]::UtcNow.ToString('o')
     }
@@ -519,6 +562,10 @@ function Publish-AtlasoTestVmOriginalOwnership {
         }
 
         $directoryPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($resolvedDirectory, $true)
+        if ($Context.PreparedOutputIdentity -and
+            [Atlaso.WorkstationFileIdentity]::Get($resolvedDirectory) -cne [string]$Context.PreparedOutputIdentity) {
+            throw 'The original clone directory differs from its exclusive creation identity.'
+        }
         if ($null -ne $HeldVmxStream) {
             # The identity writer denies other writers and deletion. A second
             # read pin would deny its already-open write access on Windows.
@@ -559,7 +606,7 @@ function Publish-AtlasoTestVmOriginalOwnership {
             persistent_vm_identity_sha256 = $cleanupIdentityHash
             intent_path = [string]$Context.IntentPath
             intent_sha256 = [string]$Context.IntentSha256
-            cleanup_tool = 'scripts/windows/vmware/remove-atlaso-vm.ps1 -VmxPath <recorded-vmx> -ExpectedName <canonical-name>'
+            cleanup_tool = 'scripts/windows/vmware/remove-atlaso-vm.ps1 -VmxPath <recorded-vmx> -ExpectedName <canonical-name> -ExpectedRootIdentity <original-directory-identity> -ExpectedPersistentVmIdentitySha256 <recorded-persistent-identity-sha256>'
             created_utc = [DateTimeOffset]::UtcNow.ToString('o')
         }
         $published = Publish-AtlasoTestVmOwnershipRecord -Context $Context -Record $receipt -Kind original

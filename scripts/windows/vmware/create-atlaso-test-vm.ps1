@@ -3267,10 +3267,15 @@ if (-not $SkipNetworkPrepare) {
 }
 
 if ((Test-Path -LiteralPath $resolvedOutputDirectory) -and $Redeploy) {
+    $redeployOwnershipArguments = @{}
     if ($ownershipContext.Enabled) {
         # Credential and network preflight can outlive the initial ownership
         # read. Recheck the original binding before the owning removal tool.
-        $null = Assert-AtlasoTestVmOriginalOwnership -Context $ownershipContext
+        $redeployReceipt = Assert-AtlasoTestVmOriginalOwnership -Context $ownershipContext
+        $redeployOwnershipArguments = @{
+            ExpectedRootIdentity = [string]$redeployReceipt.Record.original_identities.directory
+            ExpectedPersistentVmIdentitySha256 = [string]$redeployReceipt.Record.persistent_vm_identity_sha256
+        }
     }
     if (-not (Test-Path -LiteralPath $targetVmx -PathType Leaf)) {
         throw "Refusing redeploy cleanup because the expected Atlaso-owned VMX is missing: $targetVmx. Choose the correct identity, purpose, collision suffix, and output directory, or remove the directory manually after reviewing its contents."
@@ -3284,6 +3289,7 @@ if ((Test-Path -LiteralPath $resolvedOutputDirectory) -and $Redeploy) {
             -VmxPath $targetVmx `
             -VmrunPath $VmrunPath `
             -ExpectedName $Name `
+            @redeployOwnershipArguments `
             -Confirm:$false
     }
 }
@@ -3327,12 +3333,18 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
                     $cleanupIdentity = [guid]::NewGuid().ToString('N')
                     $cleanupIdentityAction = {
                         param($HeldVmxStream)
-                        Publish-AtlasoTestVmOriginalOwnership `
+                        $publishedOwnership = Publish-AtlasoTestVmOriginalOwnership `
                             -Context $Context `
                             -DirectoryPath $CreatedDirectory `
                             -VmxPath $CreatedVmx `
                             -CleanupIdentity $cleanupIdentity `
-                            -HeldVmxStream $HeldVmxStream | Out-Null
+                            -HeldVmxStream $HeldVmxStream
+                        if (-not $publishedOwnership.ReceiptPath -or
+                            [string]$publishedOwnership.ReceiptSha256 -notmatch '^[0-9a-f]{64}$') {
+                            throw 'The original test-VM ownership receipt was published without its independent path and SHA-256.'
+                        }
+                        Write-Host "Test VM original ownership receipt: $($publishedOwnership.ReceiptPath)"
+                        Write-Host "Test VM original ownership receipt SHA-256: $($publishedOwnership.ReceiptSha256)"
                     }
                     Set-AtlasoTestVmCleanupIdentity `
                         -VmxPath $CreatedVmx `
@@ -3347,7 +3359,7 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
         $cloneSourcePin = $null
         try {
         if ($ownershipContext.Enabled) {
-            $cloneOutputPin = Get-AtlasoTestVmOutputAncestorPin -OutputDirectory $resolvedOutputDirectory
+            $cloneOutputPin = New-AtlasoTestVmPreparedOutput -Context $ownershipContext
             $cloneSourcePin = Get-AtlasoTestVmCloneSourcePin `
                 -SourceVmxPath $resolvedSourceVmx `
                 -SourceVmxIdentity $sourceVmxIdentity `
@@ -3770,7 +3782,6 @@ else {
 Write-Host "Appliance VMX: $targetVmx"
 if ($ownershipContext.Enabled -and $ownershipContext.ReceiptPath) {
     Write-Host "Test VM ownership intent: $($ownershipContext.IntentPath) (SHA-256 $($ownershipContext.IntentSha256))"
-    Write-Host "Test VM original ownership receipt: $($ownershipContext.ReceiptPath) (SHA-256 $($ownershipContext.ReceiptSha256))"
 }
 if ($resolvedSshPublicKeyPath) {
     Write-Host "Development SSH access: admin key from $resolvedSshPublicKeyPath with test-only passwordless sudo"

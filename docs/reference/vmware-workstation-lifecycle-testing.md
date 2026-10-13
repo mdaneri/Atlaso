@@ -1178,6 +1178,13 @@ publishes `atlaso-test-vm-original-<id>.json` with the original clone-directory 
 configuration, credential staging, or startup. A persistent non-secret VMX identity preserves the binding when
 Workstation replaces the VMX file during startup; the original filesystem identity remains historical creation evidence.
 The source template is recorded as read-only provenance and is never a cleanup target.
+Before provider cloning, the wrapper exclusively creates each missing destination component relative to its pinned
+parent and immediately publishes an immutable `atlaso-test-vm-directory-<id>.json` creation record. It retains the
+original directory handles with writer and replacement exclusion through cloning and the original VM receipt callback.
+A concurrently inserted directory or junction is refused rather than adopted. Failed preparation preserves its
+published records and any incomplete directory for independent recovery; it does not invent a completed VM receipt.
+The clone callback emits the original receipt path and SHA-256 immediately after publication, so preserve those
+selectors even when later configuration or readiness fails.
 
 Preserve each returned receipt path and SHA-256 digest with the task's resource inventory. Redeployment must prove the
 same task and original directory and persistent VM identity from its creation receipt; it creates a new intent and
@@ -1195,7 +1202,9 @@ source checkout, with receipts outside the checkout and removal scopes. Agent ru
 configuration instead of accepting those overrides.
 
 Use the exact receipt's VMX and canonical name with `remove-atlaso-vm.ps1` only after independent ownership and
-quiescence checks. Preserve the receipts outside cleanup scopes and record provider, VM path, and resource absence
+quiescence checks. Pass its original directory identity as `-ExpectedRootIdentity` and persistent VM identity digest
+as `-ExpectedPersistentVmIdentitySha256`; the owning remover binds its cleanup snapshot to both before stopping the VM.
+Preserve the receipts outside cleanup scopes and record provider, VM path, and resource absence
 separately. A published creation receipt establishes ownership; it does not establish appliance readiness or KMIP
 interoperability.
 
