@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import delete, select
 
-from tests.routers.ui.helpers import login
+from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 from tests.routers.ui.test_generated_dns_apply import _prepare_service_address_baseline
 
 
@@ -854,7 +854,7 @@ def test_applied_dynamic_public_listener_still_requires_network_review(
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
-    rejected = client.post(
+    rejected = submit_reviewed_appliance_apply(client,
         "/appliance-apply", data={"csrf": csrf, "selected_units": ["network"]},
         headers={"Accept": "application/json"},
     )
@@ -863,7 +863,7 @@ def test_applied_dynamic_public_listener_still_requires_network_review(
     with SessionLocal() as db:
         assert db.scalar(select(Job).where(Job.status == JobStatus.PENDING.value)) is None
 
-    submitted = client.post(
+    submitted = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": ["network", *sorted(required)]},
         headers={"Accept": "application/json"},

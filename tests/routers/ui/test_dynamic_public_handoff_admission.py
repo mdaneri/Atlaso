@@ -5,7 +5,7 @@ import json
 import pytest
 from sqlalchemy import select
 
-from tests.routers.ui.helpers import login
+from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 
 
 def _prepare_dynamic_public_baseline(db, ui, *, dns_enabled: bool, access_dynamic: bool = True):
@@ -140,7 +140,7 @@ def test_dynamic_public_listener_requires_network_handoff_without_dns_projection
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
-    rejected = client.post(
+    rejected = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": ["network"]},
         headers={"Accept": "application/json"},
@@ -150,7 +150,7 @@ def test_dynamic_public_listener_requires_network_handoff_without_dns_projection
     with SessionLocal() as db:
         assert db.scalar(select(Job).where(Job.status == JobStatus.PENDING.value)) is None
 
-    submitted = client.post(
+    submitted = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": ["network", *sorted(required)]},
         headers={"Accept": "application/json"},
@@ -191,7 +191,7 @@ def test_static_public_listener_network_edit_does_not_force_protected_handoff(cl
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": ["network"]},
         headers={"Accept": "application/json"},

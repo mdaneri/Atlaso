@@ -1,11 +1,10 @@
 """Exercise canonical Traffic Publishing browser state and legacy bridges."""
-
 from sqlalchemy import select
 
 from atlaso.app.database import SessionLocal
 from atlaso.app.models import NatRule, PhysicalInterface, Role, User
 from atlaso.app.security import roles_to_json
-from tests.routers.ui.helpers import login
+from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 
 
 def test_nat_browser_autosave_and_safe_legacy_bookmarks(client):
@@ -110,7 +109,7 @@ def test_suspended_nat_apply_keeps_routing_baseline_independent(client):
     login(client)
     page = client.get("/traffic-publishing")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    result = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "nat"},
+    result = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "nat"},
                          headers={"Accept": "application/json"})
     assert result.status_code == 202
     with SessionLocal() as db:
@@ -156,7 +155,7 @@ def test_firewall_apply_replays_unchanged_nat_after_ruleset_replacement(client, 
     page = client.get("/traffic-publishing")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     for selection in ("nat", "firewall"):
-        response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": selection},
+        response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": selection},
                                headers={"Accept": "application/json"})
         assert response.status_code == 202
         with SessionLocal() as db:

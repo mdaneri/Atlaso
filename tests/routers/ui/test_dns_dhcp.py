@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from tests.routers.ui.helpers import login
+from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 
 
 def test_dns_settings_derives_listen_addresses_from_selected_interface(client):
@@ -1012,7 +1012,7 @@ def test_dns_settings_rejects_authoritative_dnssec_before_apply(client):
         "Authoritative DNS and DNSSEC validation cannot be enabled together" in error
         for error in response.json()["validation_errors"]
     )
-    submission = client.post(
+    submission = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "dnsmasq"},
         headers={"Accept": "application/json"},

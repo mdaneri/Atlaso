@@ -402,7 +402,8 @@ def test_unexpected_planning_diagnostics_use_generic_request_failure(client, mon
     guarded_client = TestClient(client.app, raise_server_exceptions=False, cookies=client.cookies)
     try:
         response = (
-            guarded_client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network"},
+            guarded_client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network",
+                                                        "reviewed_plan": "reviewed-before-unexpected-failure", "requested_units": "network"},
                                 headers={"Accept": "application/json"})
             if submission else guarded_client.get("/appliance-apply/review")
         )
@@ -438,3 +439,27 @@ def test_storage_review_serializes_changed_manifest_identity(client, monkeypatch
     assert after_storage["format_volumes"] == before_storage["format_volumes"]
     assert after_storage["snapshot_hash"] != before_storage["snapshot_hash"]
     assert after["plan_token"] != before["plan_token"]
+@pytest.mark.parametrize("wants_json", [False, True])
+def test_tokenless_apply_refuses_current_state_after_review(client, monkeypatch, wants_json):
+    """Old assets and form clients cannot submit unreviewed current snapshots.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Test-scoped replacements for Apply planning dependencies.
+        wants_json: Whether the client requests the JSON refusal representation.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    units, csrf, _ui = _prepare_network_handoff_review(client, monkeypatch)
+    preview = client.get("/appliance-apply/review?selected_units=network&selected_units=wan").json()
+    next(unit for unit in units if unit["id"] == "network")["snapshot_hash"] = "changed-after-review"
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "selected_units": [unit["id"] for unit in preview["units"] if unit["selected"]]},
+        headers={"Accept": "application/json" if wants_json else "text/html"},
+    )
+    assert response.status_code == 422
+    assert "Reopen appliance review" in response.text
+    with SessionLocal() as db:
+        assert db.query(Job).filter(Job.id != "completed-before-review").count() == 0

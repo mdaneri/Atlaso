@@ -8,6 +8,7 @@ from atlaso.app import ui
 from atlaso.app.adapters.system import AdapterResult, SystemAdapter
 from atlaso.app.database import SessionLocal
 from atlaso.app.models import Job
+from tests.routers.ui.helpers import submit_reviewed_appliance_apply
 
 
 @pytest.mark.parametrize("management_handoff", [False, True])
@@ -69,7 +70,7 @@ def test_legacy_restore_retires_runtime_forwards_with_host_baselines(client, mon
     login(client)
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": ["firewall", "nat"]},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": ["firewall", "nat"]},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202, response.text
     with SessionLocal() as db:
@@ -149,7 +150,7 @@ def test_listener_only_apply_does_not_infer_forwarding_from_unreadable_snapshot(
     login(client)
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": [selected_unit]},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": [selected_unit]},
                            headers={"Accept": "application/json"})
     if presence is None and selected_unit == "kms":
         assert response.status_code == 422
@@ -268,7 +269,7 @@ def test_global_submission_publishes_captured_port_forward_pair(client, monkeypa
             errors = {unit["id"]: unit["validation_errors"] for unit in ui.appliance_apply_units(db)
                       if unit["id"] in {*selected, "ca"} and unit["validation_errors"]}
             assert not errors, errors
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": selected},
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": selected},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202, response.text
     with SessionLocal() as db:

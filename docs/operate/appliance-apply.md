@@ -88,8 +88,8 @@ The summary shows changed components, required dependencies, explicit choices, a
 **2 changed components + 5 required dependencies = 7 components to process** means one task with seven components.
 Network/WAN dependencies protect management access and replay translation even when they have no pending edits.
 
-Submission revalidates the effective snapshots and dependency plan. If desired state or dependencies changed since
-review, reopen **Review appliance changes**, inspect the new plan, and submit again.
+Submission requires a current review and revalidates its snapshots and dependencies. Reopen old tabs or changed plans
+in **Review appliance changes**, inspect the plan, and submit again.
 A changed storage manifest or disk identity clears any typed format confirmation; inspect the disk and confirm again.
 
 Select **Network** to verify DHCP/SLAAC listeners and **DNS/DHCP** to publish generated DNS, even after startup renewal.

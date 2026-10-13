@@ -8,7 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from tests.routers.ui.helpers import assert_apply_redirect, login
+from tests.routers.ui.helpers import (
+    assert_apply_redirect,
+    login,
+    submit_reviewed_appliance_apply,
+)
 
 
 def vcf_hostname_form_data(
@@ -2701,7 +2705,7 @@ def test_appliance_apply_job_invalidates_projection_before_and_after_execution(c
 
     invalidations = []
     monkeypatch.setattr(ui, "invalidate_appliance_apply_status_projection", lambda: invalidations.append(True))
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "appliance_settings"},
     )
@@ -3110,7 +3114,7 @@ def test_settings_autosave_does_not_update_ntp_servers_when_ntp_is_disabled(clie
         settings = db.execute(select(ApplianceSettings)).scalar_one()
         assert not hasattr(settings, "ntp_servers")
 
-    apply_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "appliance_settings"})
+    apply_response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "appliance_settings"})
     assert_apply_redirect(apply_response)
 
     with SessionLocal() as db:
@@ -4115,7 +4119,7 @@ def test_appliance_settings_apply_task_records_redacted_dry_run_command_evidence
     assert saved.status_code == 200
 
     with caplog.at_level(logging.INFO, logger="atlaso.appliance_apply"):
-        apply_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "appliance_settings"})
+        apply_response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "appliance_settings"})
     assert_apply_redirect(apply_response)
     apply_logs = "\n".join(
         record.getMessage()
@@ -4216,7 +4220,7 @@ def test_appliance_apply_failure_renders_command_details(client, monkeypatch):
     login(client)
     page = client.get("/appliance-apply")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "appliance_settings"})
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "appliance_settings"})
 
     assert_apply_redirect(response)
     assert "super-secret" not in response.text
@@ -4317,7 +4321,7 @@ def test_appliance_apply_stops_unit_after_validation_failure(client, monkeypatch
         settings.root_ssh_enabled = not settings.root_ssh_enabled
         db.commit()
 
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "appliance_settings"})
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "appliance_settings"})
 
     assert_apply_redirect(response)
     assert "atlaso-helper appliance-settings apply" not in response.text
@@ -6931,7 +6935,7 @@ def test_esxi_pxe_ui_create_apply_and_job_redaction(client):
     review = client.get("/appliance-apply/review")
     assert any(unit["id"] == "esxi_pxe" for unit in review.json()["units"])
     apply_csrf = apply_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    applied = client.post("/appliance-apply", data={"csrf": apply_csrf, "selected_units": "esxi_pxe"})
+    applied = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": apply_csrf, "selected_units": "esxi_pxe"})
 
     assert applied.status_code == 200
     assert "ESXi PXE" in applied.text
@@ -7946,7 +7950,7 @@ def test_esxi_pxe_native_http_fresh_default_and_disabled_compatibility(client):
 
     dashboard = client.get("/dashboard")
     csrf = dashboard.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    submission = client.post(
+    submission = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "esxi_pxe"},
         headers={"Accept": "application/json"},
@@ -8822,7 +8826,7 @@ def test_real_local_users_apply_clears_pending_passwords_and_baselines_post_appl
 
     apply_page = client.get("/appliance-apply")
     csrf = apply_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    applied = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "local_users"})
+    applied = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "local_users"})
     assert applied.status_code == 200
     assert not staged_path.exists()
     assert "BridgeStrong1!" not in applied.text
@@ -11008,7 +11012,7 @@ def test_kms_apply_task_captures_current_desired_state(client):
         headers={"X-Atlaso-Autosave": "1"},
     )
     assert disabled.status_code == 200
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "kms"})
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "kms"})
 
     assert_apply_redirect(response)
 
@@ -11332,7 +11336,7 @@ def test_vcf_private_registry_settings_autosave_bundle_status_api_and_apply_task
     assert status.json()["endpoint"] == "registry.atlaso.internal"
     assert status.json()["bundle_count"] == 1
 
-    apply_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "vcf_private_registry"})
+    apply_response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "vcf_private_registry"})
     assert_apply_redirect(apply_response)
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
@@ -11936,7 +11940,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert alias.status_code == 200
     assert alias.json()["endpoint"] == status.json()["endpoint"]
 
-    apply_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "vcf_offline_depot"})
+    apply_response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "vcf_offline_depot"})
     assert_apply_redirect(apply_response)
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
@@ -12168,7 +12172,7 @@ def test_vcf_offline_depot_apply_stages_tool_without_download_profiles(client, t
     assert response.status_code == 200
     assert response.json()["valid"] is True
 
-    apply_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "vcf_offline_depot"})
+    apply_response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "vcf_offline_depot"})
 
     assert apply_response.status_code == 200
     with SessionLocal() as db:
@@ -12213,7 +12217,7 @@ def test_vcf_offline_depot_apply_stages_vcfdt_while_https_is_disabled(client, tm
         db.add(profile)
         db.commit()
 
-    apply_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "vcf_offline_depot"})
+    apply_response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "vcf_offline_depot"})
 
     assert apply_response.status_code == 200
     with SessionLocal() as db:
@@ -12351,7 +12355,7 @@ def test_vcf_offline_depot_tool_package_wizard_endpoint_and_reset_clear_configur
     assert "Properties</small><strong>Default</strong>" in reset_page.text
     assert 'data-vcf-depot-configuration-open data-vcf-depot-requires-tool disabled' in reset_page.text
 
-    apply_reset = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "vcf_offline_depot"})
+    apply_reset = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "vcf_offline_depot"})
     assert apply_reset.status_code == 200
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
@@ -14235,7 +14239,7 @@ def test_vcf_backups_apply_task_captures_sftp_config(client):
     assert settings_response.status_code == 200
     page = client.get("/vcf-backups")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "vcf_backups"})
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "vcf_backups"})
 
     assert_apply_redirect(response)
     with SessionLocal() as db:
@@ -14416,11 +14420,11 @@ def test_global_appliance_apply_tracks_baselines_diffs_and_skips(client):
     assert firewall_review["connection_warnings"] == []
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
-    empty_response = client.post("/appliance-apply", data={"csrf": csrf})
+    empty_response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf})
     assert empty_response.status_code == 422
     assert "Select at least one appliance change to submit." in empty_response.text
 
-    baseline_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "firewall"}, follow_redirects=False)
+    baseline_response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "firewall"}, follow_redirects=False)
     assert baseline_response.status_code == 303
     assert baseline_response.headers["location"].startswith("/ui/management/tasks?job_id=job_")
     with SessionLocal() as db:
@@ -14478,7 +14482,7 @@ def test_global_appliance_apply_tracks_baselines_diffs_and_skips(client):
     assert "Prism.manual = true" in page.text
     assert "highlightConfigPreviews" in client.get("/static/app.js").text
 
-    skipped_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "network"}, follow_redirects=False)
+    skipped_response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "network"}, follow_redirects=False)
     assert skipped_response.status_code == 303
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply").order_by(Job.created_at.desc())).scalars().first()
@@ -14578,7 +14582,7 @@ def test_depot_submission_includes_only_relevant_local_user_dependency(
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: units)
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda job_id: started_jobs.append(job_id))
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": selected_unit},
         follow_redirects=False,
@@ -14691,7 +14695,7 @@ def test_nts_submission_includes_ca_material_dependency(
     monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: units)
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda job_id: started_jobs.append(job_id))
 
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "ntpd"},
         follow_redirects=False,
@@ -14801,7 +14805,7 @@ def test_appliance_apply_carries_explicit_vcf_depot_id_refresh_intent_to_executi
     run_appliance_apply_job = ui.run_appliance_apply_job
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
 
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={
             "csrf": csrf,
@@ -14968,7 +14972,7 @@ def test_vcf_depot_appliance_apply_submission_rejects_active_software_id_task(cl
         db.commit()
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
 
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "vcf_offline_depot"},
         headers={"Accept": "application/json"},
@@ -16205,7 +16209,7 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
         selected_unit_ids = [
             unit["id"] for unit in review.json()["units"] if unit["selected"]
         ]
-        submission = test_client.post(
+        submission = submit_reviewed_appliance_apply(test_client,
             "/appliance-apply",
             data={"csrf": csrf, "selected_units": selected_unit_ids},
             headers={"Accept": "application/json"},
@@ -17419,7 +17423,7 @@ def test_ca_apply_task_captures_current_desired_state(client):
     login(client)
     page = client.get("/certificate-authority")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "ca"})
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "ca"})
 
     assert_apply_redirect(response)
 
@@ -17452,7 +17456,7 @@ def test_ca_apply_replays_applied_listeners_after_managed_leaf_rotation(client, 
     login(client)
     page = client.get("/certificate-authority")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "ca"})
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "ca"})
     assert_apply_redirect(response)
 
     with SessionLocal() as db:
@@ -17494,7 +17498,7 @@ def test_ca_apply_requires_review_of_pending_listener_edits(client, monkeypatch)
     login(client)
     page = client.get("/certificate-authority")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post(
+    response = submit_reviewed_appliance_apply(client,
         "/appliance-apply", data={"csrf": csrf, "selected_units": "ca"}, headers={"accept": "application/json"}
     )
     assert response.status_code == 422
@@ -17866,7 +17870,7 @@ def test_ca_live_apply_stages_decrypted_private_keys_without_leaking_job_output(
     login(client)
     page = client.get("/certificate-authority")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "ca"})
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "ca"})
 
     assert response.status_code == 200
     assert captured["validate_payload"] == captured["apply_payload"]
@@ -17956,7 +17960,7 @@ def test_dns_apply_task_captures_current_desired_state(client):
         db.commit()
     page = client.get("/dns")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "dnsmasq"})
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "dnsmasq"})
 
     assert_apply_redirect(response)
 
@@ -18041,7 +18045,7 @@ def test_dhcp_apply_task_captures_current_desired_state(client):
         db.commit()
     page = client.get("/dhcp")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "dnsmasq"})
+    response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "dnsmasq"})
 
     assert_apply_redirect(response)
 

@@ -19489,9 +19489,11 @@ def _submit_appliance_apply(
     units = appliance_apply_units(db)
     selected_ids = {unit_id for unit_id in selected_units if unit_id in APPLIANCE_APPLY_UNIT_IDS}
     try:
-        roots = {unit_id for unit_id in requested_units if unit_id in APPLIANCE_APPLY_UNIT_IDS} if reviewed_plan else selected_ids
+        if not reviewed_plan:
+            raise ApplianceApplyPlanError("Reopen appliance review before submitting appliance changes.")
+        roots = {unit_id for unit_id in requested_units if unit_id in APPLIANCE_APPLY_UNIT_IDS}
         plan = appliance_apply_execution_plan(db, units, roots, consented_ids=selected_ids)
-        if reviewed_plan and (selected_ids != plan["selected_ids"] or reviewed_plan != appliance_apply_plan_token(plan)):
+        if selected_ids != plan["selected_ids"] or reviewed_plan != appliance_apply_plan_token(plan):
             raise ApplianceApplyPlanError("Appliance changes or dependencies changed since review. Reopen appliance review and try again.")
     except ApplianceApplyPlanError as exc:
         detail = exc.public_detail

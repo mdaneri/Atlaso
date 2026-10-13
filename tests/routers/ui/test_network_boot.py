@@ -1,7 +1,6 @@
 """Test Network Boot and ESXi PXE management UI transports."""
-
 from tests.routers.api_v1.helpers import create_token
-from tests.routers.ui.helpers import login
+from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 
 
 def create_api_token(client, scopes):
@@ -410,7 +409,7 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
 
     apply_page = client.get("/appliance-apply")
     apply_csrf = apply_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    applied = client.post(
+    applied = submit_reviewed_appliance_apply(client,
         "/appliance-apply", data={"csrf": apply_csrf, "selected_units": "esxi_pxe"}
     )
     assert applied.status_code == 200
