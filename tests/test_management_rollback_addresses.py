@@ -654,3 +654,112 @@ def test_management_handoff_recovery_rejects_unknown_startup_arguments(monkeypat
 
     assert result == 2
     assert "accepts only --startup" in capsys.readouterr().err
+
+
+def test_management_handoff_main_dispatches_startup_flag_to_fixed_recovery_unit(monkeypatch, capsys):
+    """Preserve --startup through the real CLI and fixed systemd recovery dispatch.
+
+    Args:
+        monkeypatch: Replace systemd execution while exercising the helper's actual dispatcher.
+        capsys: Pytest fixture used to consume helper output.
+    """
+    helper = load_helper_module()
+    recovery_units = []
+    commands = []
+    recovery_modes = []
+
+    def quiesce(unit, operation):
+        """Record recovery serialization without touching a host service.
+
+        Args:
+            unit: Fixed systemd recovery unit selected by the helper.
+            operation: Recovery operation passed to the unit quiescence guard.
+        """
+        recovery_units.append((unit, operation))
+
+    def recover(*, startup=False):
+        """Capture the recovery mode after child CLI dispatch.
+
+        Args:
+            startup: Whether native startup recovery was requested.
+        """
+        recovery_modes.append(startup)
+        return 0
+
+    def fake_run(command):
+        """Execute the generated helper argv in-process as the systemd child.
+
+        Args:
+            command: Fixed systemd-run command assembled by the production wrapper.
+        """
+        commands.append(command)
+        helper_path = str(helper.Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "atlaso-helper")
+        child_argv = command[command.index(helper_path):]
+        with monkeypatch.context() as child_environment:
+            child_environment.setenv(helper.SYSTEMD_RUN_CHILD_ENV, "1")
+            returncode = helper.main(child_argv)
+        return subprocess.CompletedProcess(command, returncode, "", "")
+
+    monkeypatch.setenv("ATLASO_HELPER_USE_SYSTEMD_RUN", "1")
+    monkeypatch.delenv(helper.SYSTEMD_RUN_CHILD_ENV, raising=False)
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/systemd-run" if name == "systemd-run" else None)
+    monkeypatch.setattr(helper, "_quiesce_management_handoff_unit", quiesce)
+    monkeypatch.setattr(helper, "_recover_management_handoff", recover)
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    result = helper.main(["atlaso-helper", "management-handoff", "recover", "--real", "--startup"])
+
+    assert result == 0
+    assert recovery_units == [(helper.MANAGEMENT_HANDOFF_RECOVERY_UNIT, "recovery")]
+    assert recovery_modes == [True]
+    assert len(commands) == 1
+    command = commands[0]
+    assert f"--unit={helper.MANAGEMENT_HANDOFF_RECOVERY_UNIT.removesuffix('.service')}" in command
+    assert command[-5:] == [
+        str(helper.Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "atlaso-helper"),
+        "management-handoff",
+        "recover",
+        "--real",
+        "--startup",
+    ]
+    capsys.readouterr()
+
+
+@pytest.mark.parametrize(
+    "recovery_args",
+    [("--unknown",), ("--startup", "--startup"), ("/etc/atlaso/atlaso.env",)],
+    ids=["unknown", "duplicate-startup", "path"],
+)
+def test_management_handoff_main_rejects_invalid_args_before_path_or_recovery(
+    monkeypatch, capsys, recovery_args,
+):
+    """Reject invalid recovery argv before path validation, systemd, or mutation.
+
+    Args:
+        monkeypatch: Turn any bypass of the argument gate into a test failure.
+        capsys: Pytest fixture used to inspect the safe usage diagnostic.
+        recovery_args: Unsupported arguments supplied to the real helper dispatcher.
+    """
+    helper = load_helper_module()
+    monkeypatch.setenv("ATLASO_HELPER_USE_SYSTEMD_RUN", "1")
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/bin/systemd-run")
+    monkeypatch.setattr(
+        helper,
+        "_validate_path",
+        lambda _path: pytest.fail("invalid recovery arguments must be rejected before path handling"),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run_real_action_with_systemd",
+        lambda *_args: pytest.fail("invalid recovery arguments must not dispatch systemd"),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_recover_management_handoff",
+        lambda **_kwargs: pytest.fail("invalid recovery arguments must not start recovery"),
+    )
+
+    result = helper.main(["atlaso-helper", "management-handoff", "recover", "--real", *recovery_args])
+
+    assert result == 2
+    assert "accepts only --startup" in capsys.readouterr().err

@@ -260,6 +260,7 @@ NON_PATH_ARGUMENT_ACTIONS = {
     ("network", "dhcp-dns"),
     ("network", "address-status"),
     ("management-handoff", "acknowledge"),
+    ("management-handoff", "recover"),
     ("appliance-update", "status-publish"),
     ("appliance-update", "status-finish"),
     ("appliance-update", "restart-complete"),
@@ -34462,6 +34463,10 @@ def main(argv: list[str]) -> int:
 
     if (group, action) not in NO_PATH_ACTIONS and not args:
         print(f"{group} {action} requires a config or artifact path", file=sys.stderr)
+        return 2
+
+    if (group, action) == ("management-handoff", "recover") and args not in ([], ["--startup"]):
+        print("management-handoff recover accepts only --startup", file=sys.stderr)
         return 2
 
     normalized_args: list[str] = []
