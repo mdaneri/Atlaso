@@ -1012,6 +1012,24 @@ def _seed_transition_sources_locked(
         run_ip(rule_command("add", rule))
 
 
+def transition_guard_state() -> bool:
+    """Capture a complete, equally applied guard in both families without mutation."""
+    with reconciliation_lock():
+        states = []
+        for family in (4, 6):
+            rows = read_native([f"-{family}", "rule", "show"])
+            owned_rules(rows, family)
+            present = transition_guard_present(rows, family)
+            exemptions = transition_exemptions_present(rows, family)
+            expected = set(range(PRIORITY_END, TRANSITION_PRIORITY)) if present else set()
+            if exemptions != expected:
+                raise ReconcileError("routing-domain transition guard inventory is incomplete")
+            states.append(present)
+        if states[0] != states[1]:
+            raise ReconcileError("routing-domain transition guard families disagree")
+        return states[0]
+
+
 def transition_guard(enable: bool, seed_interfaces: Any = None) -> None:
     """Maintain an exact local-origin guard across address changes.
 
@@ -1158,6 +1176,7 @@ def main() -> int:
     mode.add_argument("--transition-start", action="store_true", help="Install persistent local-origin guard")
     mode.add_argument("--transition-start-seeded", action="store_true", help="Seed proven old sources before the guard")
     mode.add_argument("--transition-stop", action="store_true", help="Retire local-origin guard during rollback or reset")
+    mode.add_argument("--transition-status", action="store_true", help="Observe the complete local-origin guard without mutation")
     mode.add_argument("--migrate-legacy", action="store_true", help="Retire journaled legacy source rules before activation")
     arguments = parser.parse_args()
     try:
@@ -1177,6 +1196,8 @@ def main() -> int:
                 raise ReconcileError("invalid transition source bindings") from exc
         elif arguments.transition_stop:
             transition_guard(False)
+        elif arguments.transition_status:
+            print(json.dumps(transition_guard_state()))
         elif arguments.migrate_legacy:
             payload = sys.stdin.read(MAX_JSON_BYTES + 1)
             if len(payload) > MAX_JSON_BYTES:

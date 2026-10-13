@@ -47,6 +47,9 @@ That isolation is allowed when intentional. Clearing a populated **IPv4 Gateway*
 off-subnet HTTPS, DNS, repository, and update access will stop after Apply. Off-link gateways and a gateway equal to the
 interface address remain invalid. Cancel the review or revert the pending Network desired state to retain the applied
 DHCP address and route; a failed protected management handoff rolls back to the last-applied DHCP path.
+The first Apply also accepts the appliance's IPv4-only bootstrap nginx listeners. Rollback restores the recorded
+pre-Apply routing guard even when failure occurs before candidate activation, so an older bootstrap without
+routing-domain isolation does not acquire an orphaned guard merely from rollback reconciliation.
 
 Dedicated-management connected routes use table `100`; Access, Route, and VLAN connected routes use table `200`.
 Connected routes remain available without a gateway and when forwarding is disabled. A configured management gateway

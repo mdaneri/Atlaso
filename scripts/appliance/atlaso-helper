@@ -13010,6 +13010,38 @@ def _reconcile_route_domains() -> None:
         raise ValueError("routing-domain source reconciliation failed")
 
 
+def _snapshot_transition_source_guard() -> bool:
+    """Capture the owned pre-mutation guard, including a legacy absence."""
+    result = _run(["/opt/atlaso/.venv/bin/python", "-I", "-m", "atlaso.route_domains", "--transition-status"])
+    if result.returncode:
+        raise ValueError("previous routing-domain guard state could not be observed")
+    try:
+        state = json.loads(result.stdout)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise ValueError("previous routing-domain guard state is malformed") from exc
+    if type(state) is not bool:
+        raise ValueError("previous routing-domain guard state is malformed")
+    return state
+
+
+def _restore_transition_source_guard(state: dict) -> None:
+    """Restore a captured guard only after the other rollback stages succeed.
+
+    Args:
+        state: Original transaction snapshot, including its preexisting guard.
+    """
+    if "previous_source_transition_guard" in state:
+        previous = state["previous_source_transition_guard"]
+        if type(previous) is not bool:
+            raise ValueError("previous routing-domain guard state is malformed")
+        if not previous and state.get("previous_route_domain_service", {}).get("active"):
+            raise ValueError("active previous routing domains lack their captured guard")
+        _transition_source_guard(previous)
+    elif state.get("source_transition_guard") and not state.get("previous_route_domain_service", {}).get("active"):
+        # Older journals retain their original conservative recovery contract.
+        _transition_source_guard(False)
+
+
 def _transition_source_guard(enable: bool, *, seed_interfaces: list[dict] | None = None) -> None:
     """Block otherwise unclassified local sources while Network changes addresses.
 
@@ -14356,8 +14388,7 @@ def _restore_network_transaction(state: dict) -> bool:
         state, NETWORK_TRANSACTION_DIR / "state.json", require_replacement=True,
         allow_unselected_legacy=_restored_legacy_route_baseline(state),
     )
-    if state.get("source_transition_guard") and not state.get("previous_route_domain_service", {}).get("active"):
-        _transition_source_guard(False)
+    _restore_transition_source_guard(state)
     return _finish_network_transaction(state, "rolled-back")
 
 
@@ -14432,6 +14463,7 @@ def _network_apply_transaction(path: Path):
         state = {"snapshots": snapshots, "candidate_physical_interfaces": physical,
                  "previous_route_domain_service": _snapshot_route_domain_service(),
                  "previous_route_domain_rules": _snapshot_route_domain_rules(),
+                 "previous_source_transition_guard": _snapshot_transition_source_guard(),
                  "candidate_vlan_interfaces": vlans, "candidate_link_states": link_states,
                  "backup_root": str(backup_root), "job_id": job_id, "phase": "applying",
                  "source_transition_guard": True}
@@ -31058,6 +31090,7 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
                       (443 if state["previous_https_enabled"] else 80))
     scoped: list[str] = []
     listeners = 0
+    wildcard_listeners: dict[tuple[int, bool], int] = {}
     already_scoped: set[tuple[str, bool]] = set()
     scoped_ports: dict[bool, set[int]] = {False: set(), True: set()}
     allowed = {str(address) for address in addresses} | {"127.0.0.1", "::1"}
@@ -31068,6 +31101,13 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
             match = ipv4 or ipv6
             listeners += 1
             family = 4 if ipv4 else 6
+            tls = "ssl" in match.group(3)
+            key = (family, tls)
+            port = int(match.group(2))
+            if (key in wildcard_listeners or not 1 <= port <= 65535
+                    or tls and not state["previous_https_enabled"]):
+                raise ValueError("previous management nginx listener is not canonical")
+            wildcard_listeners[key] = port
             # Preserve local readiness and keep a TLS block explicit even when
             # Public Services owns every external socket in this family.
             loopback = ip_address("127.0.0.1" if family == 4 else "::1")
@@ -31114,8 +31154,18 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
         if dedicated and public_port not in scoped_ports[bool(state["previous_https_enabled"])]:
             raise ValueError("previous management nginx listener is not canonical")
         return
-    expected_listeners = 4 if state["previous_https_enabled"] else 2
-    if listeners != expected_listeners:
+    required_protocols = (False, True) if state["previous_https_enabled"] else (False,)
+    observed_families = {family for family, _ in wildcard_listeners}
+    required_families = {address.version for address in addresses}
+    if (not required_families <= observed_families or any(
+        (family, tls) not in wildcard_listeners for family in observed_families for tls in required_protocols
+    ) or any(
+        wildcard_listeners[(family, bool(state["previous_https_enabled"]))] != public_port
+        for family in observed_families
+    ) or any(
+        len({port for (family, kind), port in wildcard_listeners.items() if kind == tls}) != 1
+        for tls in required_protocols
+    )):
         raise ValueError("previous management nginx listener inventory is incomplete")
     if _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, "\n".join(scoped) + "\n") != 0:
         raise ValueError("previous management nginx listener could not be address scoped")
@@ -31184,6 +31234,7 @@ def _snapshot_management_handoff(payload: dict) -> dict:
         "previous_management_interfaces": payload["previous_management_interfaces"],
         "previous_route_domain_service": _snapshot_route_domain_service(),
         "previous_route_domain_rules": _snapshot_route_domain_rules(),
+        "previous_source_transition_guard": _snapshot_transition_source_guard(),
         "previous_route_domains": previous_domains,
         "previous_management_routing": previous_routing,
         "previous_management_parent_interfaces": payload.get(
@@ -33123,8 +33174,7 @@ def _restore_management_handoff(state: dict, *, startup: bool = False) -> dict:
         if len(errors) > len(bounded):
             bounded.append(f"{len(errors) - len(bounded)} additional rollback errors")
         raise ValueError("rollback incomplete: " + "; ".join(bounded))
-    if state.get("source_transition_guard") and not state.get("previous_route_domain_service", {}).get("active"):
-        _transition_source_guard(False)
+    _restore_transition_source_guard(state)
     return {"commands": commands, "readiness": readiness, "readiness_pending": startup}
 
 
