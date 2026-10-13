@@ -7,6 +7,44 @@ import pytest
 from tests.test_appliance_helper import load_helper_module
 
 
+@pytest.mark.parametrize("previous,started", [(False, False), (False, True), (True, False), (True, True)])
+def test_rollback_restores_captured_guard_even_before_forward_activation(monkeypatch, previous, started):
+    """Rollback reconciliation cannot introduce or remove a preexisting guard.
+
+    Args:
+        monkeypatch: Canonical guard mutation boundary.
+        previous: Independently captured native guard state.
+        started: Forward handoff activation progress before the failure.
+    """
+    helper = load_helper_module()
+    calls = []
+    monkeypatch.setattr(helper, "_transition_source_guard", calls.append)
+    helper._restore_transition_source_guard({
+        "previous_source_transition_guard": previous,
+        "source_transition_guard": started,
+        "previous_route_domain_service": {"active": False},
+    })
+    assert calls == [previous]
+
+
+@pytest.mark.parametrize("previous,active", [(None, False), ("false", False), (False, True)])
+def test_rollback_refuses_invalid_captured_guard_without_mutation(monkeypatch, previous, active):
+    """Malformed or contradictory journal state cannot retire the isolation guard.
+
+    Args:
+        monkeypatch: Guard retirement boundary.
+        previous: Invalid captured value, or contradictory absent guard.
+        active: Whether the old routing watcher was running.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "_transition_source_guard", lambda *_args: pytest.fail("unproven guard mutation"))
+    with pytest.raises(ValueError):
+        helper._restore_transition_source_guard({
+            "previous_source_transition_guard": previous,
+            "previous_route_domain_service": {"active": active},
+        })
+
+
 @pytest.mark.parametrize("enabled,active", [(False, False), (True, True), (False, True)])
 def test_watcher_rollback_restores_original_runtime_and_boot_policy(monkeypatch, tmp_path, enabled, active):
     """Restore a previously disabled service without implicitly enabling it.

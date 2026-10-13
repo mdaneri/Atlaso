@@ -901,6 +901,7 @@ def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsy
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", tmp_path / "route-domains.json")
     monkeypatch.setattr(helper, "ROUTE_DOMAIN_SERVICE_PATH", tmp_path / "route-domains.service")
     monkeypatch.setattr(helper, "_snapshot_route_domain_service", lambda: {"enabled": False, "active": False})
+    monkeypatch.setattr(helper, "_snapshot_transition_source_guard", lambda: False)
     legacy_rules = [{"family": 4, "priority": 1000, "table": 100,
                      "source": "192.0.2.0/24", "incoming_interface": "", "protocol": 0}]
     live_rules = list(legacy_rules)
