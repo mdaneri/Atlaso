@@ -2616,7 +2616,7 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "[switch]$LocalBuilder" in script
     assert "$selectedIdentityCount" in script
     assert "Select exactly one test VM identity" in script
-    assert "status --short)" in script
+    assert "status --short --untracked-files=all)" in script
     assert "-LocalBuilder `" in script
     assert "-SourceCommit $sourceCommit" in script
     assert "$expectedPayloadSourceCommit = if ($LocalBuilder)" in script

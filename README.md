@@ -104,6 +104,9 @@ product and release names remain PR-independent. Before a pull request exists, t
 normal test-VM modes derive guarded identities from the clean source commit; protected release paths reject local/test
 provenance, and acceptance evidence remains PR-numbered. See the
 [VMware Workstation lifecycle testing guide](docs/reference/vmware-workstation-lifecycle-testing.md).
+Normal test-VM creation records the task's original clone identities outside its worktree before configuration or
+startup. Preserve both the creation intent and original receipt for retry, redeployment, and ownership-checked cleanup;
+existing VMs without creation evidence are preserved rather than adopted.
 Interrupted Photon sensitive staging has a supported `-CleanupOnly` recovery path bound to the original task worktree
 and root identity. Inspection preserves state; execution revalidates registration after confirmation and proves process
 quiescence before retirement. VM artifacts and reservations use separate owning cleanup procedures; recovery obtains

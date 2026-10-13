@@ -35,6 +35,10 @@ Optional built appliance VMX to clone; the newest build output is selected by de
 
 .PARAMETER OutputDirectory
 Optional exact destination directory for the cloned test VM.
+.PARAMETER OwnershipRoot
+Optional existing permitted durable root containing this checkout for a human CLI ownership receipt.
+.PARAMETER OwnershipTaskId
+Exact task identifier paired with -OwnershipRoot for a human CLI ownership receipt.
 
 .PARAMETER VmrunPath
 Optional VMware vmrun executable override.
@@ -175,6 +179,8 @@ param(
     [string]$CollisionSuffix = '',
     [string]$ApplianceVmxPath = '',
     [string]$OutputDirectory = '',
+    [string]$OwnershipRoot = '',
+    [string]$OwnershipTaskId = '',
     [string]$VmrunPath = '',
     [string]$ManagementNetwork = 'VMnet8',
     [string]$SiteANetwork = 'VMnet2',
@@ -226,6 +232,7 @@ Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Fo
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
+. (Join-Path $PSScriptRoot 'Atlaso.TestVmOwnership.ps1')
 
 <#
 .SYNOPSIS
@@ -3016,14 +3023,15 @@ $selectedIdentityCount = [int]($PullRequestNumber -gt 0) + [int][bool]$LocalBuil
 if ($selectedIdentityCount -ne 1) {
     throw 'Select exactly one test VM identity: -PullRequestNumber for PR validation or -LocalBuilder for local testing.'
 }
+$sourceBranch = ([string](& git -C $repoRoot branch --show-current)).Trim()
+$sourceCommit = ([string](& git -C $repoRoot rev-parse HEAD)).Trim()
+$gitIdentityReadFailed = $LASTEXITCODE -ne 0
+$sourceChanges = @(& git -C $repoRoot status --short --untracked-files=all)
+if ($LocalBuilder -and ($gitIdentityReadFailed -or $LASTEXITCODE -ne 0 -or -not $sourceBranch -or
+        $sourceCommit -notmatch '^[0-9a-f]{40}$' -or $sourceChanges.Count -ne 0)) {
+    throw 'A local test VM requires one clean checked-out branch and exact source commit.'
+}
 $vmIdentity = if ($LocalBuilder) {
-    $sourceBranch = ([string](& git -C $repoRoot branch --show-current)).Trim()
-    $sourceCommit = ([string](& git -C $repoRoot rev-parse HEAD)).Trim()
-    $sourceChanges = @(& git -C $repoRoot status --short)
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceBranch) -or
-        $sourceCommit -notmatch '^[0-9a-f]{40}$' -or $sourceChanges.Count -ne 0) {
-        throw 'A local test VM requires one clean checked-out branch and exact source commit.'
-    }
     New-AtlasoVmwareTestIdentity `
         -LocalBuilder `
         -SourceCommit $sourceCommit `
@@ -3049,6 +3057,57 @@ if (-not $OutputDirectory) {
 $resolvedOutputDirectory = Assert-AtlasoVmwareIdentityDirectory `
     -Path $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory) `
     -ExpectedName $Name
+$targetVmx = Join-Path $resolvedOutputDirectory "$Name.vmx"
+$ownershipContext = New-AtlasoTestVmOwnershipContext `
+    -Worktree $repoRoot `
+    -OwnershipRoot $OwnershipRoot `
+    -OwnershipTaskId $OwnershipTaskId `
+    -OutputDirectory $resolvedOutputDirectory `
+    -VmxPath $targetVmx `
+    -Name $Name `
+    -SourceCommit $sourceCommit `
+    -SourceBranch $sourceBranch `
+    -PullRequestNumber $PullRequestNumber `
+    -LocalBuilder:$LocalBuilder
+$existingOwnershipReceipt = $null
+if ($ownershipContext.Enabled -and (Test-Path -LiteralPath $resolvedOutputDirectory)) {
+    $existingOwnershipReceipt = Assert-AtlasoTestVmOriginalOwnership -Context $ownershipContext
+}
+if ($NoStart) {
+    throw '-NoStart is not supported for normal test VMs because first boot must consume and scrub the shared development signing key.'
+}
+if ($ownershipContext.Enabled -and (Test-Path -LiteralPath $targetVmx) -and -not $Redeploy) {
+    throw "VM already exists: $targetVmx. Pass -Redeploy to remove and recreate it, or choose a different -CollisionSuffix for another identically owned test VM."
+}
+if (
+    $ownershipContext.Enabled -and
+    (Test-Path -LiteralPath $resolvedOutputDirectory -PathType Container) -and
+    -not (Test-Path -LiteralPath $targetVmx -PathType Leaf)
+) {
+    throw "Refusing VMware creation because the canonical Atlaso-owned output directory already exists without its exact VMX: $resolvedOutputDirectory"
+}
+$resolvedSourceVmx = ''
+$sourceVmxIdentity = ''
+if ($ownershipContext.Enabled) {
+    if (-not $ApplianceVmxPath) {
+        $ApplianceVmxPath = Find-LatestApplianceVmx -RepoRoot $repoRoot
+    }
+    $resolvedSourceVmx = (Resolve-Path -LiteralPath $ApplianceVmxPath).Path
+    $expectedPayloadSourceCommit = if ($LocalBuilder) { $vmIdentity.SourceCommit } else { '' }
+    Assert-AtlasoVmwarePayloadProvenance `
+        -VmxPath $resolvedSourceVmx `
+        -ExpectedSourceCommit $expectedPayloadSourceCommit | Out-Null
+    $sourceVmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedSourceVmx)
+    if (-not $WhatIfPreference) {
+        # This public-only intent predates credential access and remains if cloning
+        # or its original-identity callback fails before the VM can be configured.
+        $ownershipContext = New-AtlasoTestVmOwnershipIntent `
+            -Context $ownershipContext `
+            -SourceVmxPath $resolvedSourceVmx `
+            -SourceVmxIdentity $sourceVmxIdentity `
+            -ExistingReceipt $existingOwnershipReceipt
+    }
+}
 $developmentRootCaCertificatePath = Join-Path $repoRoot 'image\vmware-workstation\development-trust\atlaso-development-root-ca.pem'
 $developmentRootCaCertificatePem = Get-Content -LiteralPath $developmentRootCaCertificatePath -Raw
 $developmentRootCaFingerprint = Get-AtlasoDevelopmentRootCaFingerprint `
@@ -3056,9 +3115,6 @@ $developmentRootCaFingerprint = Get-AtlasoDevelopmentRootCaFingerprint `
 $resolvedOpPath = ''
 $onePasswordAuthentication = $null
 $resolvedVmrunPath = ''
-if ($NoStart) {
-    throw '-NoStart is not supported for normal test VMs because first boot must consume and scrub the shared development signing key.'
-}
 if (-not $WhatIfPreference) {
     # Admit the exact fork release before recovery or any credential-side
     # activity. The later isolated runtime repeats the verification inside its
@@ -3152,16 +3208,20 @@ if ($SkipLabNetworkAdapters) {
     $effectiveSkipLabNetworkAdapters = $true
 }
 
-if (-not $ApplianceVmxPath) {
-    $ApplianceVmxPath = Find-LatestApplianceVmx -RepoRoot $repoRoot
+if (-not $ownershipContext.Enabled) {
+    # Preserve ordinary human CLI preflight order: resolve source build inputs
+    # after the intended Environment checks, before any clone or VM mutation.
+    if (-not $ApplianceVmxPath) {
+        $ApplianceVmxPath = Find-LatestApplianceVmx -RepoRoot $repoRoot
+    }
+    $resolvedSourceVmx = (Resolve-Path -LiteralPath $ApplianceVmxPath).Path
+    $expectedPayloadSourceCommit = if ($LocalBuilder) { $vmIdentity.SourceCommit } else { '' }
+    Assert-AtlasoVmwarePayloadProvenance `
+        -VmxPath $resolvedSourceVmx `
+        -ExpectedSourceCommit $expectedPayloadSourceCommit | Out-Null
+    $sourceVmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedSourceVmx)
 }
-$resolvedSourceVmx = (Resolve-Path -LiteralPath $ApplianceVmxPath).Path
-$expectedPayloadSourceCommit = if ($LocalBuilder) { $vmIdentity.SourceCommit } else { '' }
-Assert-AtlasoVmwarePayloadProvenance `
-    -VmxPath $resolvedSourceVmx `
-    -ExpectedSourceCommit $expectedPayloadSourceCommit | Out-Null
 
-$targetVmx = Join-Path $resolvedOutputDirectory "$Name.vmx"
 $resolvedDepotVmdkPath = if ($DepotVmdkPath) {
     $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DepotVmdkPath)
 }
@@ -3199,6 +3259,11 @@ if (-not $SkipNetworkPrepare) {
 }
 
 if ((Test-Path -LiteralPath $resolvedOutputDirectory) -and $Redeploy) {
+    if ($ownershipContext.Enabled) {
+        # Credential and network preflight can outlive the initial ownership
+        # read. Recheck the original binding before the owning removal tool.
+        $null = Assert-AtlasoTestVmOriginalOwnership -Context $ownershipContext
+    }
     if (-not (Test-Path -LiteralPath $targetVmx -PathType Leaf)) {
         throw "Refusing redeploy cleanup because the expected Atlaso-owned VMX is missing: $targetVmx. Choose the correct identity, purpose, collision suffix, and output directory, or remove the directory manually after reviewing its contents."
     }
@@ -3246,6 +3311,28 @@ $developmentCaCleanupMarkerPath = ''
 $credentialStageFailure = $null
 $credentialBridgeCleanupError = ''
 if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from $resolvedSourceVmx")) {
+        $cloneOwnershipArguments = @{}
+        if ($ownershipContext.Enabled) {
+            $cloneOwnershipArguments = @{
+                CloneCreated = {
+                    param($CreatedDirectory, $CreatedVmx, $Context)
+                    $cleanupIdentity = [guid]::NewGuid().ToString('N')
+                    $cleanupIdentityAction = {
+                        Publish-AtlasoTestVmOriginalOwnership `
+                            -Context $Context `
+                            -DirectoryPath $CreatedDirectory `
+                            -VmxPath $CreatedVmx `
+                            -CleanupIdentity $cleanupIdentity | Out-Null
+                    }
+                    Set-AtlasoTestVmCleanupIdentity `
+                        -VmxPath $CreatedVmx `
+                        -Identity $cleanupIdentity `
+                        -ExpectedVmxIdentity ([Atlaso.WorkstationFileIdentity]::Get($CreatedVmx)) `
+                        -DurableIdentityAction $cleanupIdentityAction
+                }
+                CloneCreatedContext = $ownershipContext
+            }
+        }
         & (Join-Path $PSScriptRoot 'create-atlaso-vm.ps1') `
             -Name $Name `
             -ApplianceVmxPath $resolvedSourceVmx `
@@ -3260,7 +3347,8 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
             -SiteANetwork $SiteANetwork `
             -SiteBNetwork $SiteBNetwork `
             -TrunkNetwork $TrunkNetwork `
-            -SkipLabNetworkAdapters:$effectiveSkipLabNetworkAdapters
+            -SkipLabNetworkAdapters:$effectiveSkipLabNetworkAdapters `
+            @cloneOwnershipArguments
         if (-not $?) {
             throw "Atlaso VMware Workstation VM creation failed."
         }
@@ -3274,7 +3362,8 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
                 -Name $Name `
                 -OutputDirectory $resolvedOutputDirectory `
                 -DataDiskStates $rollbackDataDiskStates `
-                -MarkerPathReference ([ref]$developmentCaCleanupMarkerPath) | Out-Null
+                -MarkerPathReference ([ref]$developmentCaCleanupMarkerPath) `
+                -AllowExistingCleanupIdentity | Out-Null
             try {
                 Invoke-AtlasoTestVmCredentialStage `
                     -BridgeState $credentialBridgeState `
@@ -3654,6 +3743,10 @@ else {
     Write-Host "Atlaso Workstation test VM prepared without readiness proof: $Name"
 }
 Write-Host "Appliance VMX: $targetVmx"
+if ($ownershipContext.Enabled -and $ownershipContext.ReceiptPath) {
+    Write-Host "Test VM ownership intent: $($ownershipContext.IntentPath) (SHA-256 $($ownershipContext.IntentSha256))"
+    Write-Host "Test VM original ownership receipt: $($ownershipContext.ReceiptPath) (SHA-256 $($ownershipContext.ReceiptSha256))"
+}
 if ($resolvedSshPublicKeyPath) {
     Write-Host "Development SSH access: admin key from $resolvedSshPublicKeyPath with test-only passwordless sudo"
 }

@@ -95,7 +95,11 @@ if (($firstBootSource | Select-String -Pattern (
 $missingEnvironmentIdRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
     "atlaso-missing-environment-id-$([guid]::NewGuid().ToString('N'))"
 )
+$savedThreadId = $env:CODEX_THREAD_ID
 try {
+    # This case checks ordinary human CLI credential preflight; agent resource
+    # admission is exercised separately with a creation-bound fixture checkout.
+    $env:CODEX_THREAD_ID = ''
     New-Item -ItemType Directory -Path $missingEnvironmentIdRoot | Out-Null
     $missingEnvironmentVmRoot = Join-Path $missingEnvironmentIdRoot 'Atlaso-PR-634-credential-preflight'
     New-Item -ItemType Directory -Path $missingEnvironmentVmRoot | Out-Null
@@ -129,6 +133,7 @@ try {
     }
 }
 finally {
+    $env:CODEX_THREAD_ID = $savedThreadId
     Remove-Item -LiteralPath $missingEnvironmentIdRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 # Keep this synthetic APPDATA provider independent from the interactive host.

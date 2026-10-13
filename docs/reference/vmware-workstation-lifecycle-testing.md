@@ -1166,6 +1166,35 @@ The normal test-VM `-Redeploy` path also requires the exact named VMX and exactl
 `-ResetDataDisks` accepts only strict canonical
 descendants of the selected VM output, so sibling-prefix and reparse-point paths are refused.
 
+## Normal test-VM creation ownership
+
+Codex runs of `create-atlaso-test-vm.ps1` independently read the active `desktop.git-worktree-root` and bind the exact
+task, registered clean checkout, branch, source commit, and canonical VM name. Durable receipts live in the existing
+`.task-ownership` directory beneath that configured root, outside the task checkout and VM removal scope. Missing,
+redirected, conflicting, or out-of-root evidence blocks creation before credential access.
+
+The wrapper publishes an immutable `atlaso-test-vm-intent-<id>.json` before cloning. The low-level clone callback
+publishes `atlaso-test-vm-original-<id>.json` with the original clone-directory and VMX identities before appliance
+configuration, credential staging, or startup. A persistent non-secret VMX identity preserves the binding when
+Workstation replaces the VMX file during startup; the original filesystem identity remains historical creation evidence.
+The source template is recorded as read-only provenance and is never a cleanup target.
+
+Preserve each returned receipt path and SHA-256 digest with the task's resource inventory. Redeployment must prove the
+same task and original directory and persistent VM identity from its creation receipt; it creates a new intent and
+original receipt for the replacement. A missing receipt, changed identity, failed publication, or ambiguous state keeps
+the VM preserved. Never manufacture an original receipt from a later snapshot, edit a receipt, or delete an incomplete
+publication to make admission pass. `-WhatIf` publishes no receipts and performs no credential or VM mutation.
+
+Ordinary human CLI runs retain their existing behavior. Explicit externally recorded human runs select
+`-OwnershipRoot` and `-OwnershipTaskId` together; the root must be an existing permitted durable root containing the
+source checkout, with receipts outside the checkout and removal scopes. Agent runs use their active task and supported
+configuration instead of accepting those overrides.
+
+Use the exact receipt's VMX and canonical name with `remove-atlaso-vm.ps1` only after independent ownership and
+quiescence checks. Preserve the receipts outside cleanup scopes and record provider, VM path, and resource absence
+separately. A published creation receipt establishes ownership; it does not establish appliance readiness or KMIP
+interoperability.
+
 ## Normal Test VM
 
 For a normal Workstation appliance VM, separate from the lifecycle lab, store the exact `Atlaso` Environment ID once in
