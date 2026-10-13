@@ -1195,7 +1195,9 @@ The clone callback emits the original receipt path and SHA-256 immediately after
 selectors even when later configuration or readiness fails.
 
 Preserve each returned receipt path and SHA-256 digest with the task's resource inventory. Redeployment must prove the
-same task and original directory and persistent VM identity from its creation receipt; it creates a new intent and
+same task and original directory and persistent VM identity from its creation receipt. Remaining receipt-bound VM
+artifacts retire through captured directory/file handles even when the VM is unregistered or provider deletion leaves
+the directory behind. Redeployment creates a new intent and
 original receipt for the replacement. For an existing VM, pass `-OwnershipReceiptPath` and
 `-OwnershipReceiptSha256` from the independently preserved task inventory; do not derive a replacement digest from
 the current receipt. Both selectors are required in receipt-enabled runs. Output ancestors are checked before

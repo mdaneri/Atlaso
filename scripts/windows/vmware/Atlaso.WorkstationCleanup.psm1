@@ -2033,20 +2033,22 @@ function Assert-AtlasoPreparedArtifactSnapshot {
 .SYNOPSIS
 Retire captured artifacts through their original directory and file handles.
 .PARAMETER Root
-Exact original preparation directory.
+Exact receipt-bound artifact directory.
 .PARAMETER Snapshot
-Original root identity and complete admitted partial-clone inventory.
+Original root identity and complete admitted artifact inventory.
 .PARAMETER KeepRoot
 Retain the original empty root for its caller's subsequent use.
+.PARAMETER PreparedOnly
+Require the incomplete-clone artifact allowlist rather than a completed VM inventory.
 #>
 function Remove-AtlasoCapturedArtifactSnapshot {
-    param([string]$Root, [psobject]$Snapshot, [switch]$KeepRoot)
+    param([string]$Root, [psobject]$Snapshot, [switch]$KeepRoot, [switch]$PreparedOnly)
     $inventory = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($relative in $Snapshot.Items.Keys) { $inventory.Add($relative, $Snapshot.Items[$relative]) }
     $removal = [Atlaso.WorkstationCapturedContentsV1]::new($Root, $Snapshot.RootIdentity, $inventory, (-not $KeepRoot))
     try {
         Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $Root -Snapshot $Snapshot
-        if (-not $KeepRoot) { Assert-AtlasoPreparedArtifactSnapshot -Root $Root -Snapshot $Snapshot }
+        if ($PreparedOnly) { Assert-AtlasoPreparedArtifactSnapshot -Root $Root -Snapshot $Snapshot }
         $removal.CaptureSnapshot()
         if ($KeepRoot) {
             $removal.Remove()
@@ -2319,8 +2321,8 @@ function Remove-AtlasoWorkstationVmArtifacts {
             Remove-AtlasoCapturedArtifactSnapshot -Root $resolvedRemovalRoot -Snapshot $snapshot -KeepRoot
             return
         }
-        if ($ExpectedPreparedDirectoryIdentity) {
-            Remove-AtlasoCapturedArtifactSnapshot -Root $resolvedRemovalRoot -Snapshot $snapshot
+        if ($ExpectedPreparedDirectoryIdentity -or $ExpectedRootIdentity) {
+            Remove-AtlasoCapturedArtifactSnapshot -Root $resolvedRemovalRoot -Snapshot $snapshot -PreparedOnly:([bool]$ExpectedPreparedDirectoryIdentity)
         }
         elseif (Test-Path -LiteralPath $resolvedRemovalRoot) { Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop }
     }

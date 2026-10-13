@@ -621,3 +621,34 @@ def test_cleanup_binds_caller_original_identities_before_provider(tmp_path, mism
     elif mismatch == "partial":
         assert "supplied together" in result.stderr.lower()
     assert vmx.read_text(encoding="utf-8") == contents
+
+
+@pytest.mark.parametrize("registered", [False, True])
+def test_receipt_bound_vm_cleanup_uses_captured_root_handles(tmp_path, registered):
+    """Both unregistered and provider-surviving VM roots avoid pathname deletion.
+
+    Args:
+        tmp_path: Original pytest-owned temporary root.
+        registered: Whether provider deletion runs before remaining artifacts retire.
+    """
+    output = tmp_path / "vm"
+    output.mkdir()
+    vmx = output / "test.vmx"
+    marker = "a" * 32
+    vmx.write_text(f'displayName = "test"\nguestinfo.atlaso.test_vm_cleanup_identity = "{marker}"\n', encoding="utf-8")
+    (output / "test.vmdk").write_text("public fixture", encoding="utf-8")
+    provider, environment, _, _ = _write_fake_vmrun(tmp_path / "provider", [vmx], registered=registered)
+    result = run_powershell(
+        ownership_prefix()
+        + f"$output={ps_literal(output)}; $vmx={ps_literal(vmx)}; "
+        + "$rootId=[Atlaso.WorkstationFileIdentity]::Get($output); "
+        + f"$markerHash=Get-AtlasoTestVmOwnershipCleanupIdentityHash -Value '{marker}'; "
+        + "& (Get-Module Atlaso.WorkstationCleanup) { function script:Remove-Item { "
+        + "param($LiteralPath,[switch]$Recurse,[switch]$Force,$ErrorAction) throw 'Pathname cleanup is forbidden in this test' } }; "
+        + f"Remove-AtlasoWorkstationVmArtifacts -VmrunPath {ps_literal(provider)} -VmxPaths @($vmx) "
+        + "-RemovalRoot $output -ExpectedRootIdentity $rootId -ExpectedPersistentVmIdentitySha256 $markerHash -Confirm:$false",
+        check=False,
+        environment=environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not output.exists()
