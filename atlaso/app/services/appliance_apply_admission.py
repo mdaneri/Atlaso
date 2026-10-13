@@ -1,9 +1,14 @@
 """Protect complete Apply snapshot capture from nonparticipating writers."""
 
+from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from atlaso.app.database import Base
+from atlaso.app.services.network_objects import (
+    NETWORK_OBJECTS_WRITE_LOCK_ID,
+    acquire_network_objects_write_lock,
+)
 
 
 class ApplianceApplyAdmissionBusy(RuntimeError):
@@ -20,10 +25,11 @@ def lock_appliance_apply_snapshot_tables(db: Session) -> None:
     contention rolls back all admission locks before returning a safe refusal.
     All application tables are covered so related rows, inserts and new models
     cannot silently escape the snapshot boundary. Ordinary reads remain allowed.
-    SQLite already has database-wide writer admission from the caller's lock.
+    PostgreSQL also tries the shared advisory gate without waiting. SQLite uses
+    the ordinary database-wide writer boundary.
 
     Args:
-        db: Submission session already holding the network-object writer lock.
+        db: Submission session before read-only snapshot capture.
 
     Raises:
         RuntimeError: If the backend or model registry cannot provide admission.
@@ -31,9 +37,17 @@ def lock_appliance_apply_snapshot_tables(db: Session) -> None:
     """
     connection = db.connection()
     if connection.dialect.name == "sqlite":
+        acquire_network_objects_write_lock(db)
         return
     if connection.dialect.name != "postgresql":
         raise RuntimeError("Appliance Apply requires SQLite or PostgreSQL writer admission.")
+    acquired = connection.execute(
+        text("SELECT pg_try_advisory_xact_lock(:lock_id)"),
+        {"lock_id": NETWORK_OBJECTS_WRITE_LOCK_ID},
+    ).scalar_one()
+    if acquired is not True:
+        db.rollback()
+        raise ApplianceApplyAdmissionBusy("Appliance Apply writer admission is busy.")
     tables = sorted(Base.metadata.tables.values(), key=lambda table: table.fullname)
     if not tables:
         raise RuntimeError("Appliance Apply snapshot tables are unavailable.")

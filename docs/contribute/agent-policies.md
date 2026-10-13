@@ -87,7 +87,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
   state summaries, rendered config previews/diffs, validation results, adapter commands, dry-run status, and audit
   event.
 - Submission reconciles desired state before writer admission, then expires cached ORM state and builds the complete
-  consent-bound plan read-only through job creation. SQLite uses database writer admission; PostgreSQL additionally
+  consent-bound plan read-only through job creation. SQLite uses database writer admission; PostgreSQL first tries
+  the shared advisory gate without waiting, then
   locks every registered application table in `EXCLUSIVE MODE NOWAIT` so ordinary desired-state saves and inserts
   cannot bypass capture by omitting an advisory lock. This serializes writes across application tables during capture
   while allowing reads. Contention rolls back admission and returns 409 with retry guidance, so partial table locks

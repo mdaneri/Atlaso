@@ -19502,7 +19502,6 @@ def _submit_appliance_apply(
     with vcf_depot_submit_guard, APPLIANCE_APPLY_SUBMIT_LOCK:
         # Refresh and build the complete consent-bound plan only after writer
         # admission, then capture that admitted plan through job creation.
-        acquire_network_objects_write_lock(db)
         try:
             lock_appliance_apply_snapshot_tables(db)
         except ApplianceApplyAdmissionBusy:

@@ -585,7 +585,7 @@ def test_reviewed_plan_rechecks_desired_state_after_writer_admission(client, mon
 
     units, csrf, ui = _prepare_network_handoff_review(client, monkeypatch)
     preview = client.get("/appliance-apply/review?selected_units=network&selected_units=wan").json()
-    original_lock = ui.acquire_network_objects_write_lock
+    original_lock = ui.lock_appliance_apply_snapshot_tables
 
     def admit_after_desired_save(db):
         """Inject a desired snapshot change immediately before writer admission.
@@ -597,7 +597,7 @@ def test_reviewed_plan_rechecks_desired_state_after_writer_admission(client, mon
         target["snapshot_hash"] = "changed-before-writer-admission"
         original_lock(db)
 
-    monkeypatch.setattr(ui, "acquire_network_objects_write_lock", admit_after_desired_save)
+    monkeypatch.setattr(ui, "lock_appliance_apply_snapshot_tables", admit_after_desired_save)
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: pytest.fail("stale plan executed"))
     response = client.post("/appliance-apply", data={"csrf": csrf, "reviewed_plan": preview["plan_token"],
                            "requested_units": preview["requested_units"],

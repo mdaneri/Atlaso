@@ -15,12 +15,12 @@ from atlaso.app.services.appliance_apply_admission import (
     ApplianceApplyAdmissionBusy,
     lock_appliance_apply_snapshot_tables,
 )
-from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 
 
 def test_postgresql_admission_locks_all_registered_tables_without_writer_cooperation():
     """Use DML-conflicting table locks including DNS rows and insert targets."""
     connection = Mock(dialect=dialect())
+    connection.execute.return_value.scalar_one.return_value = True
     session = Mock()
     session.connection.return_value = connection
     lock_appliance_apply_snapshot_tables(session)
@@ -73,7 +73,6 @@ def test_sqlite_admission_blocks_dns_save_without_advisory_participation(client)
             failures.append(exc)
 
     with SessionLocal() as admission:
-        acquire_network_objects_write_lock(admission)
         lock_appliance_apply_snapshot_tables(admission)
         worker = threading.Thread(target=save_dns)
         worker.start()
@@ -98,11 +97,27 @@ def test_postgresql_contention_releases_partial_admission(attribute):
     original = RuntimeError("private database diagnostic")
     setattr(original, attribute, "55P03")
     connection = Mock(dialect=dialect())
+    connection.execute.return_value.scalar_one.return_value = True
     connection.exec_driver_sql.side_effect = OperationalError("LOCK TABLE", None, original)
     session = Mock()
     session.connection.return_value = connection
     with pytest.raises(ApplianceApplyAdmissionBusy) as failure:
         lock_appliance_apply_snapshot_tables(session)
     assert "private" not in str(failure.value)
+    session.rollback.assert_called_once_with()
+    session.commit.assert_not_called()
+
+
+def test_postgresql_advisory_contention_refuses_before_table_locks():
+    """An occupied advisory gate never blocks or acquires partial table locks."""
+    connection = Mock(dialect=dialect())
+    connection.execute.return_value.scalar_one.return_value = False
+    session = Mock()
+    session.connection.return_value = connection
+    with pytest.raises(ApplianceApplyAdmissionBusy):
+        lock_appliance_apply_snapshot_tables(session)
+    statement = str(connection.execute.call_args.args[0])
+    assert statement == "SELECT pg_try_advisory_xact_lock(:lock_id)"
+    connection.exec_driver_sql.assert_not_called()
     session.rollback.assert_called_once_with()
     session.commit.assert_not_called()
