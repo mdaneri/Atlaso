@@ -19382,8 +19382,10 @@ def appliance_apply_review_plan(db: Session, selected_units: list[str] | None = 
     context = appliance_apply_context(db)
     review_units = context["review_apply_units"]
     selectable = {unit["id"] for unit in review_units}
+    independently_changed = {unit["id"] for unit in context["changed_apply_units"]}
     requested = (
-        {unit["id"] for unit in review_units if unit["valid"]}
+        {unit["id"] for unit in review_units if unit["valid"]
+         and (context["initial_apply_required"] or unit["id"] in independently_changed)}
         if selected_units is None else {unit_id for unit_id in selected_units if unit_id in selectable}
     )
     try:

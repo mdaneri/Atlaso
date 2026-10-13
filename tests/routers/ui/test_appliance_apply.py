@@ -1402,7 +1402,13 @@ def test_local_dns_enable_applies_listener_before_host_resolver(client):
     assert review.status_code == 200
     settings_review = next(unit for unit in review.json()["units"] if unit["id"] == "appliance_settings")
     assert settings_review["requires_dns_selection"] is True
+    assert settings_review["required_dependency"] is True
+    assert "appliance_settings" not in review.json()["requested_units"]
     assert json.loads(settings_review["config_preview"])["resolver_servers"] == ["127.0.0.1"]
+    without_dns = client.get("/appliance-apply/review", params={"selected_units": ""}).json()
+    assert without_dns["requested_units"] == []
+    assert without_dns["execution_count"] == 0
+    assert not any(unit["selected"] for unit in without_dns["units"])
     csrf = client.get("/dashboard").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "dnsmasq"},
                            headers={"Accept": "application/json"})
@@ -1452,8 +1458,10 @@ def test_dns_activation_review_projects_local_resolver_for_existing_settings_row
     assert len(settings_rows) == 1
     assert json.loads(settings_rows[0]["config_preview"])["resolver_servers"] == ["127.0.0.1"]
     assert settings_rows[0]["requires_dns_selection"] is False
+    assert "appliance_settings" in review.json()["requested_units"]
 
     if previous_apply:
+        assert settings_rows[0]["required_dependency"] is False
         settings_only = client.get("/appliance-apply/review", params={"selected_units": "appliance_settings"}).json()
         settings_review = next(unit for unit in settings_only["units"] if unit["id"] == "appliance_settings")
         assert json.loads(settings_review["config_preview"])["resolver_servers"] != ["127.0.0.1"]
