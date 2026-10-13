@@ -1192,12 +1192,14 @@ def test_runtime_status_keeps_previous_snapshot_until_matching_commit_receipt(tm
     assert committed["generation"] == "b" * 64
 
 
-def test_interrupted_committed_handoff_retires_without_rollback(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("startup", [False, True])
+def test_interrupted_committed_handoff_retires_without_rollback(tmp_path, monkeypatch, capsys, startup):
     """Complete the durable-commit cleanup window instead of restoring old settings.
     Args:
         tmp_path: Isolated filesystem root used for test artifacts.
         monkeypatch: Scoped replacements for helper dependencies.
         capsys: Captured stdout and stderr for the logging assertion.
+        startup: Whether recovery runs during the native startup phase.
     """
     helper = load_helper_module()
     state_path = tmp_path / "handoff.json"
@@ -1212,11 +1214,11 @@ def test_interrupted_committed_handoff_retires_without_rollback(tmp_path, monkey
     cleared = []
     monkeypatch.setattr(helper, "_retire_reverse_proxy_runtime", retired.append)
     monkeypatch.setattr(helper, "_restore_management_handoff",
-                        lambda _state: pytest.fail("committed handoff must not roll back"))
+                        lambda _state, **_kwargs: pytest.fail("committed handoff must not roll back"))
     monkeypatch.setattr(helper, "_clear_management_handoff_state",
                         lambda *, keep_commit_receipt=False: cleared.append(keep_commit_receipt))
 
-    assert helper._recover_management_handoff() == 0
+    assert helper._recover_management_handoff(startup=startup) == 0
     assert retired == [state]
     assert cleared == [True]
     assert json.loads(capsys.readouterr().out)["management_handoff"] == "committed recovery complete"

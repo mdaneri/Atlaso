@@ -2281,7 +2281,20 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
             "parent": "eth0",
             "ip_cidr": "192.0.2.10/24",
             "ipv6_cidr": "",
-        }
+        },
+        {
+            "name": "eth0",
+            "ipv4_method": "dhcp",
+            "ip_cidr": "",
+            "ipv6_cidr": "",
+        },
+        {
+            "name": "eth0.30",
+            "parent": "eth0",
+            "ip_cidr": "",
+            "ipv6_enabled": "true",
+            "ipv6_cidr": "2001:db8:30::10/64",
+        },
     ]
     units["network"]["removed_vlan_interfaces"] = []
     units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": [], "ca_profiles": []}
@@ -2327,14 +2340,26 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
         *ui.MANAGEMENT_HANDOFF_UNIT_IDS,
         "dnsmasq",
     }
-    assert manifest["previous_management_interfaces"] == ["eth0.20"]
+    assert manifest["previous_management_interfaces"] == ["eth0.20", "eth0", "eth0.30"]
     assert manifest["previous_management_parent_interfaces"] == ["eth0"]
     assert manifest["previous_management_paths"] == [
         {
             "name": "eth0.20",
-            "ipv4_method": "",
+            "ipv4_method": "static",
             "ipv6_enabled": "",
             "ipv6_cidr": "",
+        },
+        {
+            "name": "eth0",
+            "ipv4_method": "dhcp",
+            "ipv6_enabled": "",
+            "ipv6_cidr": "",
+        },
+        {
+            "name": "eth0.30",
+            "ipv4_method": "",
+            "ipv6_enabled": "true",
+            "ipv6_cidr": "2001:db8:30::10/64",
         }
     ]
 
@@ -4376,6 +4401,131 @@ def test_interrupted_handoff_reconciles_application_commit_without_false_rollbac
         assert retained_lock is not None
         assert retained_lock.id == "handoff-unproven"
         assert recovery_calls == ["acknowledge:handoff-committed", "recover", "recover"]
+
+
+@pytest.mark.parametrize("confirmation_succeeds", [False, True])
+def test_startup_management_handoff_recovery_retains_lock_until_http_confirmation(
+    client, monkeypatch, confirmation_succeeds,
+):
+    """Keep the global Apply lock until post-start HTTP rollback proof succeeds.
+
+    Args:
+        client: HTTP test client that initializes the isolated database.
+        monkeypatch: Pytest fixture used to model each recovery phase.
+        confirmation_succeeds: Whether post-start HTTP rollback proof succeeds.
+    """
+    from atlaso.app import ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+
+    calls: list[bool] = []
+
+    class RecoveryAdapter:
+        """Return startup native restoration followed by completed rollback proof."""
+
+        def __init__(self, **_kwargs):
+            """Accept the production adapter construction options.
+
+            Args:
+                **_kwargs: Adapter options ignored by this test double.
+            """
+
+        def recover_management_handoff(self, *, startup=False):
+            """Return evidence for the selected recovery phase.
+
+            Args:
+                startup: Whether to defer HTTP readiness and journal retirement.
+            """
+            calls.append(startup)
+            evidence = (
+                {
+                    "management_handoff": "rollback awaiting application readiness",
+                    "rolled_back": False,
+                    "readiness_pending": True,
+                }
+                if startup
+                else ({
+                    "management_handoff": "rolled back after interruption",
+                    "rolled_back": True,
+                } if confirmation_succeeds else {
+                    "management_handoff": "rollback incomplete",
+                    "rolled_back": False,
+                })
+            )
+            return AdapterResult(
+                command=["atlaso-helper", "management-handoff", "recover"],
+                dry_run=False,
+                stdout=json.dumps(evidence),
+                returncode=0 if startup or confirmation_succeeds else 1,
+            )
+
+    monkeypatch.setattr(ui, "SystemAdapter", RecoveryAdapter)
+    with SessionLocal() as db:
+        ordinary_interrupted_job = Job(
+            id="ordinary-interrupted-apply",
+            type="appliance-apply",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            progress_percent=20,
+            result=json.dumps({"state": "running"}),
+        )
+        job = Job(
+            id="handoff-startup-readiness",
+            type="appliance-apply",
+            status=JobStatus.RUNNING.value,
+            created_by="admin",
+            progress_percent=80,
+            result=json.dumps({
+                "management_handoff": True,
+                "management_handoff_runtime_commit_pending": True,
+            }),
+        )
+        db.add_all([ordinary_interrupted_job, job])
+        db.commit()
+
+        assert ui.recover_interrupted_appliance_apply_jobs(db, startup=True) == 2
+        assert ordinary_interrupted_job.status == JobStatus.FAILED.value
+        startup_payload = json.loads(job.result or "{}")
+        assert startup_payload["management_handoff_recovery"]["evidence"]["readiness_pending"] is True
+        assert startup_payload["management_handoff_runtime_commit_pending"] is True
+        startup_job_ids = ui.retained_startup_management_handoff_job_ids(db)
+        assert startup_job_ids == (job.id,)
+        retained_lock = ui.active_appliance_apply_job(db)
+        assert retained_lock is not None and retained_lock.id == job.id
+
+        fresh_result = json.dumps({"state": "pending", "created_after_startup_capture": True})
+        fresh_job = Job(
+            id="fresh-ordinary-apply",
+            type="appliance-apply",
+            status=JobStatus.PENDING.value,
+            created_by="admin",
+            progress_percent=0,
+            result=fresh_result,
+        )
+        db.add(fresh_job)
+        db.commit()
+
+        assert ui.recover_interrupted_appliance_apply_jobs(db, job_ids=()) == 0
+        assert fresh_job.status == JobStatus.PENDING.value
+        assert fresh_job.result == fresh_result
+        assert calls == [True]
+
+        assert ui.recover_interrupted_appliance_apply_jobs(db, job_ids=startup_job_ids) == 1
+        assert fresh_job.status == JobStatus.PENDING.value
+        assert fresh_job.result == fresh_result
+        completed_payload = json.loads(job.result or "{}")
+        if confirmation_succeeds:
+            assert completed_payload["management_handoff_recovery"]["evidence"]["rolled_back"] is True
+            assert "management_handoff_runtime_commit_pending" not in completed_payload
+            active_lock = ui.active_appliance_apply_job(db)
+            assert active_lock is not None and active_lock.id == fresh_job.id
+        else:
+            assert completed_payload["management_handoff_recovery"]["evidence"]["rolled_back"] is False
+            assert completed_payload["management_handoff_runtime_commit_pending"] is True
+            retained_lock = ui.active_appliance_apply_job(db)
+            assert retained_lock is not None and retained_lock.id == job.id
+        assert calls == [True, False]
 
 
 def test_management_handoff_exception_reconciliation_selects_transaction_boundary():

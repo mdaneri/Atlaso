@@ -164,18 +164,17 @@ Correlate their task IDs and timestamps with [Operational Logs](logs.md) and the
 Safe helper stages and return codes may be retained while the cause remains unknown. See
 [Important-event coverage](logs.md#important-event-coverage) for retained evidence and limits.
 
-If Atlaso restarts during an ordinary apply, startup fails the running child and master task, skips pending children,
-and releases the global lock. For an interrupted management handoff, the privileged helper first stops and verifies any
-surviving apply process, restores the captured previous runtime state, and records the recovery result.
-The same path runs immediately after a helper wait timeout because the fixed apply service can outlive its waiting
-process. Recovery uses a separate fixed service identity; before retrying, the helper stops and verifies any surviving
-recovery service so two rollback attempts cannot mutate the same network state concurrently.
-The helper retains that rollback state until Atlaso durably commits the bundled component results and baselines. If a
-restart occurs after that database commit, startup idempotently acknowledges the committed candidate instead of falsely
-claiming a rollback. A failed task whose helper acknowledgement or rollback is not proven retains the global Apply lock
-until startup or immediate exception recovery reconciles that state, even when an older task payload lacks the newer
-pending marker. Review the task before resubmitting.
-If a selected unit changes before execution, Atlaso rejects the task and asks for a new review.
+If Atlaso restarts during ordinary Apply, startup fails the running master and child, skips pending children, and unlocks.
+On interrupted handoff, the helper stops and verifies surviving Apply processes, restores state, and records recovery.
+Startup restores native networking and listeners before serving, retaining the journal and Apply lock. Bounded HTTP
+confirmation checks the old path and records rollback before releasing the lock; failure leaves recovery pending.
+Recovery also runs after helper timeout because the fixed Apply service can outlive its waiter. Before retry, the helper
+stops and verifies the separate fixed recovery service to prevent concurrent network mutations.
+
+The helper retains rollback state until Atlaso commits component results and baselines. If restart follows that commit,
+startup idempotently acknowledges the candidate instead of claiming rollback. Unproven helper acknowledgement or rollback
+keeps the Apply lock until startup or immediate recovery reconciles it, including older tasks without the pending marker.
+Before resubmitting, review the task; a changed selected unit is rejected and requires a new review.
 
 ## Safety boundaries
 

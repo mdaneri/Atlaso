@@ -864,8 +864,11 @@ class SystemAdapter:
             timeout_seconds=30,
         )
 
-    def recover_management_handoff(self) -> AdapterResult:
+    def recover_management_handoff(self, *, startup: bool = False) -> AdapterResult:
         """Roll back any interrupted management-plane handoff.
+
+        Args:
+            startup: Restore native state while retaining the journal until HTTP can be verified.
 
         Returns:
             The recovery result.
@@ -873,6 +876,7 @@ class SystemAdapter:
         return self._helper_result(
             "management-handoff",
             "recover",
+            *(["--startup"] if startup else []),
             dry_run_message="dry-run: no management handoff recovery performed",
             timeout_seconds=180,
         )

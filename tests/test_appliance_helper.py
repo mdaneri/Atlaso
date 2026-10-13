@@ -1946,6 +1946,7 @@ def test_management_handoff_rollback_continues_after_missing_snapshot(monkeypatc
         tmp_path: Temporary directory containing runtime and backup files.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_wait_restored_management_addresses", lambda _state: {"stable_samples": 3})
     monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
     network_dir = tmp_path / "networkd"
     network_dir.mkdir()
@@ -2036,6 +2037,7 @@ def test_management_handoff_rollback_restores_dnsmasq_runtime_and_boot_policy(mo
         tmp_path: Temporary directory containing the candidate authoritative unit.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_wait_restored_management_addresses", lambda _state: {"stable_samples": 3})
     commands: list[list[str]] = []
     events: list[str] = []
     authoritative_service = tmp_path / "atlaso-dns-authoritative.service"
@@ -2101,6 +2103,7 @@ def test_management_handoff_rollback_preserves_nat_after_firewall(monkeypatch, t
         publication: Durable publication progress and effective mapping change.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_wait_restored_management_addresses", lambda _state: {"stable_samples": 3})
     monkeypatch.setattr(helper, "_reconcile_route_domains", lambda: None)
     runtime = tmp_path / "nat.conf"
     runtime.write_text("prior NAT", encoding="utf-8")
