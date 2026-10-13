@@ -289,19 +289,25 @@ test("server plan leaves required rows checked when invalid and blocks submissio
   assert.equal(harness.submit.disabled, true);
 });
 
-test("plan request roots exclude server-required dependency rows", () => {
+test("plan refresh preserves explicit locked roots while excluding implicit dependencies", () => {
   class HTMLElement {}
   class HTMLInputElement extends HTMLElement {}
   const selected = [
     Object.assign(new HTMLInputElement(), { value: "network", dataset: { requiredDependency: "false" } }),
     Object.assign(new HTMLInputElement(), { value: "ca", dataset: { requiredDependency: "true" } }),
-    Object.assign(new HTMLInputElement(), { value: "wan", dataset: { requiredDependency: "false" } }),
+    Object.assign(new HTMLInputElement(), { value: "wan", dataset: { requiredDependency: "true" } }),
   ];
-  const modal = { querySelectorAll: () => selected };
+  const modal = { dataset: { requestedUnits: JSON.stringify(["network", "wan"]) }, querySelectorAll: () => selected };
   const context = vm.createContext({ HTMLElement, HTMLInputElement });
   vm.runInContext(`${selectedPlanValues}; globalThis.selectedPlanValues = applianceApplySelectedValues;`, context);
 
   assert.deepEqual(Array.from(context.selectedPlanValues(modal)), ["network", "wan"]);
+  selected.push(Object.assign(new HTMLInputElement(), { value: "local_users", dataset: { requiredDependency: "false" } }));
+  assert.deepEqual(Array.from(context.selectedPlanValues(modal)), ["network", "wan", "local_users"]);
+  selected.pop();
+  assert.deepEqual(Array.from(context.selectedPlanValues(modal)), ["network", "wan"]);
+  modal.dataset.requestedUnits = JSON.stringify(["network"]);
+  assert.deepEqual(Array.from(context.selectedPlanValues(modal)), ["network"]);
 });
 
 test("late plan responses are rejected after a newer request starts", () => {

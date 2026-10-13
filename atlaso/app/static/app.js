@@ -19556,8 +19556,9 @@ function isCurrentApplianceApplyPlanRequest(requestId) {
 }
 
 function applianceApplySelectedValues(modal) {
+  const requested = new Set(JSON.parse(modal.dataset.requestedUnits || "[]"));
   return Array.from(modal.querySelectorAll("[data-appliance-apply-review-checkbox]:checked"))
-    .filter((checkbox) => checkbox.dataset.requiredDependency !== "true")
+    .filter((checkbox) => checkbox.dataset.requiredDependency !== "true" || requested.has(checkbox.value))
     .map((checkbox) => checkbox.value);
 }
 
