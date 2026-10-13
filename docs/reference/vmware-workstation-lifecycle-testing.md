@@ -1205,7 +1205,9 @@ credential access and pinned through cloning, and the recorded source template i
 rechecked at that boundary. Source ancestors stay pinned against replacement; the VMX, provenance and both payload
 disks exclude writes and replacement from byte validation through cloning. A missing receipt, changed identity,
 failed publication, or ambiguous state keeps
-the VM preserved. Never manufacture an original receipt from a later snapshot, edit a receipt, or delete an incomplete
+the VM preserved. The admitted task branch, exact commit and clean checkout are revalidated immediately before
+network preparation, recovery/removal, disk reset and clone preparation; preflight drift refuses mutation.
+Never manufacture an original receipt from a later snapshot, edit a receipt, or delete an incomplete
 publication to make admission pass. `-WhatIf` publishes no receipts and performs no credential or VM mutation.
 
 Ordinary human CLI runs retain their existing behavior. Explicit externally recorded human runs select

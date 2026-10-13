@@ -212,6 +212,29 @@ function New-AtlasoTestVmOwnershipContext {
 
 <#
 .SYNOPSIS
+Revalidate the admitted task checkout immediately before infrastructure mutation.
+.PARAMETER Context
+Original task checkout, branch and exact source commit admitted before preflight.
+#>
+function Assert-AtlasoTestVmCheckoutSource {
+    param([Parameter(Mandatory = $true)][psobject]$Context)
+    if (-not $Context.Enabled) { return }
+    $root = ([string](& git -C $Context.Worktree rev-parse --show-toplevel 2>$null)).Trim()
+    $rootFailed = $LASTEXITCODE -ne 0
+    $commit = ([string](& git -C $Context.Worktree rev-parse HEAD 2>$null)).Trim()
+    $commitFailed = $LASTEXITCODE -ne 0
+    $branch = ([string](& git -C $Context.Worktree branch --show-current 2>$null)).Trim()
+    $branchFailed = $LASTEXITCODE -ne 0
+    $status = @(& git -C $Context.Worktree status --porcelain --untracked-files=all 2>$null)
+    if ($rootFailed -or $commitFailed -or $branchFailed -or $LASTEXITCODE -ne 0 -or -not $root -or
+        -not ([IO.Path]::GetFullPath($root).TrimEnd('\', '/')).Equals([string]$Context.Worktree, [StringComparison]::OrdinalIgnoreCase) -or
+        $commit -cne [string]$Context.SourceCommit -or $branch -cne [string]$Context.Branch -or $status.Count) {
+        throw 'The admitted clean task checkout, branch or source commit changed during preflight; infrastructure mutation refused.'
+    }
+}
+
+<#
+.SYNOPSIS
 Pin every existing ancestor of the clone destination before provider mutation.
 .PARAMETER OutputDirectory
 Admitted canonical clone directory, which may not exist yet.

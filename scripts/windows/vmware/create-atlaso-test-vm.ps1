@@ -3094,6 +3094,7 @@ if ($RecoverPreparedDirectory -or $PreparedDirectoryReceiptPath -or $PreparedDir
     }
     Assert-AtlasoPreparedRecoveryParameters -BoundParameters $PSBoundParameters
     $preparedRecoveryVmrun = Resolve-TestVmVmrunPath -Path $VmrunPath
+    Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
     Remove-AtlasoTestVmPreparedOutput -Context $ownershipContext -ReceiptPath $PreparedDirectoryReceiptPath -ReceiptSha256 $PreparedDirectoryReceiptSha256 -VmrunPath $preparedRecoveryVmrun -Confirm:$false
     return
 }
@@ -3153,6 +3154,7 @@ if (-not $WhatIfPreference) {
     # Recovery consumes no 1Password material. Run it first so revoked or
     # rotated credentials cannot strand an earlier plaintext-staging failure.
     $resolvedVmrunPath = Resolve-TestVmVmrunPath -Path $VmrunPath
+    Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
     Invoke-PendingAtlasoDevelopmentCaCleanup `
         -VmrunPath $resolvedVmrunPath `
         -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30)) `
@@ -3273,6 +3275,7 @@ if (
 }
 
 if (-not $SkipNetworkPrepare) {
+    Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
     & (Join-Path $PSScriptRoot 'prepare-networks.ps1') `
         -VmrunPath $VmrunPath `
         -ManagementNetwork $ManagementNetwork `
@@ -3304,6 +3307,7 @@ if ((Test-Path -LiteralPath $resolvedOutputDirectory) -and $Redeploy) {
         -ExpectedDirectory $resolvedOutputDirectory `
         -ExpectedName $Name | Out-Null
     if ($PSCmdlet.ShouldProcess($targetVmx, 'Remove existing Atlaso Workstation test VM')) {
+        Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
         & (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1') `
             -VmxPath $targetVmx `
             -VmrunPath $VmrunPath `
@@ -3324,6 +3328,7 @@ if ($ResetDataDisks) {
             -ChildPath $resolvedDiskPath `
             -FailureMessage 'Refusing to reset VMware data disk outside the VM output directory'
         if ($PSCmdlet.ShouldProcess($resolvedDiskPath, 'Remove existing Atlaso VMware data disk')) {
+            Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
             Remove-Item -LiteralPath $resolvedDiskPath -Force
             Write-Host "Removed existing data disk: $resolvedDiskPath"
         }
@@ -3382,8 +3387,10 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
                 -SourceVmxPath $resolvedSourceVmx `
                 -SourceVmxIdentity $sourceVmxIdentity `
                 -ExpectedSourceCommit $expectedPayloadSourceCommit
+            Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
             $cloneOutputPin = New-AtlasoTestVmPreparedOutput -Context $ownershipContext
         }
+        Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
         & (Join-Path $PSScriptRoot 'create-atlaso-vm.ps1') `
             -Name $Name `
             -ApplianceVmxPath $resolvedSourceVmx `
@@ -3421,6 +3428,7 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
                 -MarkerPathReference ([ref]$developmentCaCleanupMarkerPath) `
                 -AllowExistingCleanupIdentity | Out-Null
             try {
+                Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
                 Invoke-AtlasoTestVmCredentialStage `
                     -BridgeState $credentialBridgeState `
                     -VmxPath $targetVmx `

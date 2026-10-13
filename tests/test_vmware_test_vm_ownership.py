@@ -497,6 +497,31 @@ def test_agent_context_uses_configured_root_and_requires_registered_clean_worktr
         "commit": commit,
     }
 
+    admission = command.split("[pscustomobject]@{enabled=", 1)[0]
+    provider_sentinel = owner.root / "provider-called.txt"
+    mutations = [
+        f"[IO.File]::AppendAllText({ps_literal(checkout / 'source.txt')},'edit'); ",
+        f"[IO.File]::WriteAllText({ps_literal(checkout / 'untracked.txt')},'new'); ",
+        f"git -C {ps_literal(checkout)} switch -c late-branch; ",
+        f"git -C {ps_literal(checkout)} switch -c late-commit; git -C {ps_literal(checkout)} commit --allow-empty -m later; ",
+    ]
+    for mutation in mutations:
+        drifted = run_powershell(
+            admission + mutation
+            + "Assert-AtlasoTestVmCheckoutSource -Context $ctx; "
+            + f"[IO.File]::WriteAllText({ps_literal(provider_sentinel)},'provider mutation')",
+            check=False,
+        )
+        assert drifted.returncode != 0
+        assert "changed during preflight" in drifted.stderr
+        assert not provider_sentinel.exists()
+        (checkout / "source.txt").write_text("source", encoding="utf-8")
+        (checkout / "untracked.txt").unlink(missing_ok=True)
+        subprocess.run(["git", "-C", str(checkout), "switch", "bug/946-test-vm-ownership"],
+                       check=True, capture_output=True, text=True)
+    clean = run_powershell(admission + "Assert-AtlasoTestVmCheckoutSource -Context $ctx")
+    assert clean.returncode == 0
+
     (checkout / "untracked.txt").write_text("dirty", encoding="utf-8")
     dirty = run_powershell(command, check=False)
     assert dirty.returncode != 0
