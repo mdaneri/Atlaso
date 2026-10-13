@@ -15,6 +15,10 @@ Exact source checkout containing the test-VM wrapper.
 Optional existing permitted durable root containing the checkout for an explicit human CLI run.
 .PARAMETER OwnershipTaskId
 Exact task identity for an explicit human CLI run.
+.PARAMETER OwnershipReceiptPath
+Original receipt path preserved in the task resource inventory for redeployment.
+.PARAMETER OwnershipReceiptSha256
+Creation-time receipt digest preserved independently in the task inventory.
 .PARAMETER OutputDirectory
 Canonical test-VM output directory.
 .PARAMETER VmxPath
@@ -37,6 +41,8 @@ function New-AtlasoTestVmOwnershipContext {
         [Parameter(Mandatory = $true)][string]$Worktree,
         [string]$OwnershipRoot = '',
         [string]$OwnershipTaskId = '',
+        [string]$OwnershipReceiptPath = '',
+        [string]$OwnershipReceiptSha256 = '',
         [Parameter(Mandatory = $true)][string]$OutputDirectory,
         [Parameter(Mandatory = $true)][string]$VmxPath,
         [Parameter(Mandatory = $true)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]{1,127}$')][string]$Name,
@@ -57,6 +63,9 @@ function New-AtlasoTestVmOwnershipContext {
         throw 'Agent ownership receipts use the active Codex task and configured worktree root; explicit human selectors are not accepted.'
     }
     if (-not $manualRootSupplied -and -not $agentMode) {
+        if ($OwnershipReceiptPath -or $OwnershipReceiptSha256) {
+            throw 'Human receipt verification requires the paired permitted ownership root and task identity.'
+        }
         return [pscustomobject]@{ Enabled = $false }
     }
 
@@ -106,6 +115,16 @@ function New-AtlasoTestVmOwnershipContext {
     $configuredPrefix = $configuredRoot + [System.IO.Path]::DirectorySeparatorChar
     $evidencePrefix = $evidenceFullPath + [System.IO.Path]::DirectorySeparatorChar
     $outputPrefix = $outputPath + [System.IO.Path]::DirectorySeparatorChar
+    if ([bool]$OwnershipReceiptPath -xor [bool]$OwnershipReceiptSha256) {
+        throw 'Pass both the original ownership receipt path and its independently preserved creation-time SHA-256.'
+    }
+    if ($OwnershipReceiptPath -and
+        (-not [System.IO.Path]::IsPathFullyQualified($OwnershipReceiptPath) -or
+            $OwnershipReceiptSha256 -notmatch '^[0-9a-fA-F]{64}$' -or
+            -not [System.IO.Path]::GetFullPath($OwnershipReceiptPath).StartsWith(
+                $evidencePrefix, [System.StringComparison]::OrdinalIgnoreCase))) {
+        throw 'The supplied original receipt must have an exact in-scope path and creation-time digest.'
+    }
     if (-not $worktreePath.StartsWith($configuredPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw 'The source worktree must be contained by the explicitly permitted ownership root.'
     }
@@ -121,9 +140,11 @@ function New-AtlasoTestVmOwnershipContext {
 
     $configuredRootPin = $null
     $rootPin = $null
+    $outputAncestorPin = $null
     try {
         $configuredRootPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($configuredRoot, $true)
         $rootPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($evidenceFullPath, $true)
+        $outputAncestorPin = Get-AtlasoTestVmOutputAncestorPin -OutputDirectory $outputPath
         $gitTop = ([string](& git -C $worktreePath rev-parse --show-toplevel 2>$null)).Trim()
         $normalizedGitTop = if ($gitTop) { [System.IO.Path]::GetFullPath($gitTop).TrimEnd('\', '/') } else { '' }
         if ($LASTEXITCODE -ne 0 -or -not $gitTop -or
@@ -165,6 +186,7 @@ function New-AtlasoTestVmOwnershipContext {
     }
     finally {
         if ($rootPin) { $rootPin.Dispose() }
+        if ($outputAncestorPin) { $outputAncestorPin.Dispose() }
         if ($configuredRootPin) { $configuredRootPin.Dispose() }
     }
 
@@ -183,6 +205,65 @@ function New-AtlasoTestVmOwnershipContext {
         VmxPath             = $vmxFullPath
         EvidenceDirectory   = $evidenceFullPath
         EvidenceDirectoryId = [Atlaso.WorkstationFileIdentity]::Get($evidenceFullPath)
+        ReceiptPath         = $OwnershipReceiptPath
+        ReceiptSha256       = $OwnershipReceiptSha256.ToLowerInvariant()
+    }
+}
+
+<#
+.SYNOPSIS
+Pin every existing ancestor of the clone destination before provider mutation.
+.PARAMETER OutputDirectory
+Admitted canonical clone directory, which may not exist yet.
+#>
+function Get-AtlasoTestVmOutputAncestorPin {
+    [CmdletBinding()]
+    [OutputType([System.IDisposable])]
+    param([Parameter(Mandatory = $true)][string]$OutputDirectory)
+
+    $ancestor = [System.IO.Path]::GetFullPath($OutputDirectory)
+    while (-not (Test-Path -LiteralPath $ancestor)) {
+        $parent = [System.IO.Path]::GetDirectoryName($ancestor)
+        if (-not $parent -or $parent -eq $ancestor) {
+            throw 'The clone destination has no ordinary existing ancestor.'
+        }
+        $ancestor = $parent
+    }
+    return [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($ancestor, $true)
+}
+
+<#
+.SYNOPSIS
+Revalidate and pin the recorded source template through cloning.
+.PARAMETER SourceVmxPath
+Admitted read-only appliance template path.
+.PARAMETER SourceVmxIdentity
+Original template identity preserved in the creation intent.
+.PARAMETER ExpectedSourceCommit
+Exact local-builder source commit, or empty for an admitted reusable PR template.
+#>
+function Get-AtlasoTestVmCloneSourcePin {
+    [CmdletBinding()]
+    [OutputType([System.IDisposable])]
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceVmxPath,
+        [Parameter(Mandatory = $true)][string]$SourceVmxIdentity,
+        [AllowEmptyString()][string]$ExpectedSourceCommit = ''
+    )
+
+    $pin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($SourceVmxPath, $true)
+    try {
+        if ([Atlaso.WorkstationFileIdentity]::Get($SourceVmxPath) -cne $SourceVmxIdentity) {
+            throw 'The recorded appliance template changed before cloning.'
+        }
+        Assert-AtlasoVmwarePayloadProvenance `
+            -VmxPath $SourceVmxPath `
+            -ExpectedSourceCommit $ExpectedSourceCommit | Out-Null
+        return $pin
+    }
+    catch {
+        $pin.Dispose()
+        throw
     }
 }
 
@@ -509,6 +590,14 @@ function Assert-AtlasoTestVmOriginalOwnership {
     param([Parameter(Mandatory = $true)][psobject]$Context)
 
     if (-not $Context.Enabled) { return $null }
+    if (-not $Context.ReceiptPath -or [string]$Context.ReceiptSha256 -notmatch '^[0-9a-f]{64}$') {
+        throw 'Existing VM admission requires the receipt path and creation-time digest preserved in the task inventory.'
+    }
+    $recordedReceiptPath = [System.IO.Path]::GetFullPath([string]$Context.ReceiptPath)
+    $receiptRootPrefix = [System.IO.Path]::GetFullPath([string]$Context.EvidenceDirectory).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $recordedReceiptPath.StartsWith($receiptRootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The recorded original receipt is outside the durable ownership scope.'
+    }
     if (-not (Test-Path -LiteralPath $Context.OutputDirectory -PathType Container) -or
         -not (Test-Path -LiteralPath $Context.VmxPath -PathType Leaf)) {
         throw 'Existing test-VM ownership can be verified only for the exact existing output directory and VMX.'
@@ -518,13 +607,18 @@ function Assert-AtlasoTestVmOriginalOwnership {
     $cleanupIdentityHash = Get-AtlasoTestVmOwnershipCleanupIdentityHash -Value $cleanupIdentity
     $matchingPathRecords = [System.Collections.Generic.List[object]]::new()
     $matchingIdentityRecords = [System.Collections.Generic.List[object]]::new()
-    $evidencePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath([string]$Context.EvidenceDirectory, $true)
+    $evidencePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
+        [System.IO.Path]::GetDirectoryName($recordedReceiptPath), $true)
     try {
-        foreach ($file in @(Get-ChildItem -LiteralPath $Context.EvidenceDirectory -Filter 'atlaso-test-vm-original-*.json' -File)) {
+        foreach ($file in @(Get-Item -LiteralPath $recordedReceiptPath -ErrorAction Stop)) {
             $filePin = $null
             try {
             if ($file.Length -gt 65536) { continue }
             $filePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($file.FullName, $true)
+            if ((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -cne
+                [string]$Context.ReceiptSha256) {
+                throw 'The original receipt differs from its preserved creation-time digest.'
+            }
             $candidate = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
             if ($candidate.schema -ne 1 -or [string]$candidate.phase -cne 'original-clone-created') {
                 continue
@@ -564,6 +658,9 @@ function Assert-AtlasoTestVmOriginalOwnership {
     $receiptPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile([string]$exact.Path, $true)
     try {
         $sha256 = (Get-FileHash -LiteralPath $exact.Path -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($sha256 -cne [string]$Context.ReceiptSha256) {
+            throw 'The original receipt changed after its creation-time digest was verified.'
+        }
         $intentPath = [System.IO.Path]::GetFullPath([string]$exact.Record.intent_path)
         $evidencePrefix = [System.IO.Path]::GetFullPath([string]$Context.EvidenceDirectory).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
         if (-not $intentPath.StartsWith($evidencePrefix, [System.StringComparison]::OrdinalIgnoreCase) -or

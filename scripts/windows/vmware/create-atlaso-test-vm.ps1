@@ -39,6 +39,10 @@ Optional exact destination directory for the cloned test VM.
 Optional existing permitted durable root containing this checkout for a human CLI ownership receipt.
 .PARAMETER OwnershipTaskId
 Exact task identifier paired with -OwnershipRoot for a human CLI ownership receipt.
+.PARAMETER OwnershipReceiptPath
+Original receipt path preserved in the task inventory for an existing VM.
+.PARAMETER OwnershipReceiptSha256
+Creation-time original receipt digest preserved independently in the task inventory.
 
 .PARAMETER VmrunPath
 Optional VMware vmrun executable override.
@@ -181,6 +185,8 @@ param(
     [string]$OutputDirectory = '',
     [string]$OwnershipRoot = '',
     [string]$OwnershipTaskId = '',
+    [string]$OwnershipReceiptPath = '',
+    [string]$OwnershipReceiptSha256 = '',
     [string]$VmrunPath = '',
     [string]$ManagementNetwork = 'VMnet8',
     [string]$SiteANetwork = 'VMnet2',
@@ -3062,6 +3068,8 @@ $ownershipContext = New-AtlasoTestVmOwnershipContext `
     -Worktree $repoRoot `
     -OwnershipRoot $OwnershipRoot `
     -OwnershipTaskId $OwnershipTaskId `
+    -OwnershipReceiptPath $OwnershipReceiptPath `
+    -OwnershipReceiptSha256 $OwnershipReceiptSha256 `
     -OutputDirectory $resolvedOutputDirectory `
     -VmxPath $targetVmx `
     -Name $Name `
@@ -3335,6 +3343,16 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
                 CloneCreatedContext = $ownershipContext
             }
         }
+        $cloneOutputPin = $null
+        $cloneSourcePin = $null
+        try {
+        if ($ownershipContext.Enabled) {
+            $cloneOutputPin = Get-AtlasoTestVmOutputAncestorPin -OutputDirectory $resolvedOutputDirectory
+            $cloneSourcePin = Get-AtlasoTestVmCloneSourcePin `
+                -SourceVmxPath $resolvedSourceVmx `
+                -SourceVmxIdentity $sourceVmxIdentity `
+                -ExpectedSourceCommit $expectedPayloadSourceCommit
+        }
         & (Join-Path $PSScriptRoot 'create-atlaso-vm.ps1') `
             -Name $Name `
             -ApplianceVmxPath $resolvedSourceVmx `
@@ -3353,6 +3371,11 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
             @cloneOwnershipArguments
         if (-not $?) {
             throw "Atlaso VMware Workstation VM creation failed."
+        }
+        }
+        finally {
+            if ($cloneSourcePin) { $cloneSourcePin.Dispose() }
+            if ($cloneOutputPin) { $cloneOutputPin.Dispose() }
         }
         $createdThisInvocation = $true
         try {

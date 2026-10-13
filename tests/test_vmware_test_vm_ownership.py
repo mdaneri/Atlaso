@@ -121,9 +121,17 @@ def test_original_vm_directory_and_vmx_are_published_before_configuration(tmp_pa
         + "$record=Get-Content -LiteralPath $ctx.ReceiptPath -Raw | ConvertFrom-Json; "
         + "$oldIntent=$ctx.IntentPath; $ctx.InvocationId=[guid]::NewGuid().ToString('N'); "
         + "$redeploy=New-AtlasoTestVmOwnershipIntent -Context $ctx -SourceVmxPath $source -SourceVmxIdentity $sourceId -ExistingReceipt $verified; "
+        + "$receiptBytes=[System.IO.File]::ReadAllBytes($ctx.ReceiptPath); "
+        + "[System.IO.File]::AppendAllText($ctx.ReceiptPath,' '); $tamperRejected=$false; "
+        + "try { Assert-AtlasoTestVmOriginalOwnership -Context $ctx | Out-Null } catch { $tamperRejected=$true }; "
+        + "[System.IO.File]::WriteAllBytes($ctx.ReceiptPath,$receiptBytes); "
+        + "$preservedDigest=$ctx.ReceiptSha256; $ctx.ReceiptSha256=''; $missingDigestRejected=$false; "
+        + "try { Assert-AtlasoTestVmOriginalOwnership -Context $ctx | Out-Null } catch { $missingDigestRejected=$true }; "
+        + "$ctx.ReceiptSha256=$preservedDigest; "
         + "[pscustomobject]@{intent=$oldIntent; receipt=$ctx.ReceiptPath; hash=$ctx.ReceiptSha256; redeployIntent=$redeploy.IntentPath; "
         + "events=@($events); verified=($verified.Path -eq $ctx.ReceiptPath); directory=$record.original_identities.directory; vmx=$record.original_identities.vmx; "
         + "persistentIdentityHash=$record.persistent_vm_identity_sha256; currentVmx=([Atlaso.WorkstationFileIdentity]::Get($vmx)); backupExists=(Test-Path -LiteralPath $backup); "
+        + "tamperRejected=$tamperRejected; missingDigestRejected=$missingDigestRejected; "
         + "task=$record.task_id; source=$record.source_commit; cleanup=$record.cleanup_tool; "
         + "sourceRole=$record.source_template.role} | ConvertTo-Json -Compress"
     )
@@ -131,6 +139,7 @@ def test_original_vm_directory_and_vmx_are_published_before_configuration(tmp_pa
     payload = json.loads(result.stdout.strip().splitlines()[-1])
     assert payload["events"] == ["receipt", "configured"]
     assert payload["verified"]
+    assert payload["tamperRejected"] and payload["missingDigestRejected"]
     assert Path(payload["intent"]).parent == evidence
     assert Path(payload["receipt"]).parent == evidence
     assert Path(payload["intent"]) != output and Path(payload["receipt"]) != output
@@ -312,6 +321,49 @@ def test_agent_context_uses_configured_root_and_requires_registered_clean_worktr
     (checkout / "untracked.txt").write_text("dirty", encoding="utf-8")
     dirty = run_powershell(command, check=False)
     assert dirty.returncode != 0
+
+
+def test_output_ancestor_pin_rejects_junction_before_clone(tmp_path):
+    """Reject a redirected output ancestor before any provider can clone.
+
+    Args:
+        tmp_path: Existing pytest temporary root.
+    """
+    target = tmp_path / "other"
+    target.mkdir()
+    link = tmp_path / "link"
+    output = link / "new-vm"
+    command = (
+        ownership_prefix()
+        + f"New-Item -ItemType Junction -Path {ps_literal(link)} -Target {ps_literal(target)} | Out-Null; "
+        + f"Get-AtlasoTestVmOutputAncestorPin -OutputDirectory {ps_literal(output)}"
+    )
+    result = run_powershell(command, check=False)
+    assert result.returncode != 0
+    assert "ordinary directory" in result.stderr.lower()
+    assert not (target / "new-vm").exists()
+
+
+def test_clone_source_pin_rejects_replaced_template(tmp_path):
+    """A template replaced during preflight cannot supply the later clone.
+
+    Args:
+        tmp_path: Existing pytest temporary root.
+    """
+    source = tmp_path / "source.vmx"
+    source.write_text("original", encoding="utf-8")
+    replacement = tmp_path / "replacement.vmx"
+    replacement.write_text("replacement", encoding="utf-8")
+    command = (
+        ownership_prefix()
+        + f"$source={ps_literal(source)}; $identity=[Atlaso.WorkstationFileIdentity]::Get($source); "
+        + f"[System.IO.File]::Replace({ps_literal(replacement)},$source,{ps_literal(tmp_path / 'backup.vmx')}); "
+        + "Get-AtlasoTestVmCloneSourcePin -SourceVmxPath $source -SourceVmxIdentity $identity"
+    )
+    result = run_powershell(command, check=False)
+    assert result.returncode != 0
+    assert "template changed before cloning" in result.stderr.lower()
+    assert source.read_text(encoding="utf-8") == "replacement"
 
 
 def test_context_rejects_output_directory_inside_durable_evidence(tmp_path):

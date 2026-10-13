@@ -1181,7 +1181,11 @@ The source template is recorded as read-only provenance and is never a cleanup t
 
 Preserve each returned receipt path and SHA-256 digest with the task's resource inventory. Redeployment must prove the
 same task and original directory and persistent VM identity from its creation receipt; it creates a new intent and
-original receipt for the replacement. A missing receipt, changed identity, failed publication, or ambiguous state keeps
+original receipt for the replacement. For an existing VM, pass `-OwnershipReceiptPath` and
+`-OwnershipReceiptSha256` from the independently preserved task inventory; do not derive a replacement digest from
+the current receipt. Both selectors are required in receipt-enabled runs. Output ancestors are checked before
+credential access and pinned through cloning, and the recorded source template identity and expected commit are
+rechecked at that boundary. A missing receipt, changed identity, failed publication, or ambiguous state keeps
 the VM preserved. Never manufacture an original receipt from a later snapshot, edit a receipt, or delete an incomplete
 publication to make admission pass. `-WhatIf` publishes no receipts and performs no credential or VM mutation.
 
