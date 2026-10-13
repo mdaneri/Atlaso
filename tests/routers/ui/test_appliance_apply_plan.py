@@ -499,18 +499,28 @@ def test_reviewed_plan_rejects_intervening_apply_baseline(client, monkeypatch, r
     assert "changed since review" in response.json()["detail"]
     with SessionLocal() as db:
         assert db.query(Job).filter(Job.id != "completed-before-review").count() == 0
-def test_reviewed_plan_rechecks_baseline_after_writer_admission(client, monkeypatch):
+
+
+@pytest.mark.parametrize("service_only", [False, True])
+def test_reviewed_plan_rechecks_baseline_after_writer_admission(client, monkeypatch, service_only):
     """Reject a completed Apply racing the initial planning check.
 
     Args:
         client: Isolated authenticated HTTP test client.
         monkeypatch: Test-scoped replacements for Apply planning dependencies.
+        service_only: Whether the changed NAT baseline is outside the selected service plan.
     """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
 
     units, csrf, ui = _prepare_network_handoff_review(client, monkeypatch)
-    preview = client.get("/appliance-apply/review?selected_units=network&selected_units=wan").json()
+    roots = ["network", "wan"]
+    if service_only:
+        roots = ["ntpd"]
+        next(unit for unit in units if unit["id"] == "ntpd")["changed"] = True
+    preview = client.get("/appliance-apply/review", params=[("selected_units", unit) for unit in roots]).json()
+    if service_only:
+        assert {unit["id"] for unit in preview["units"] if unit["selected"]} == {"ntpd"}
     original = ui.appliance_apply_execution_plan
 
     def plan_with_intervening_apply(*args, **kwargs):
@@ -522,7 +532,7 @@ def test_reviewed_plan_rechecks_baseline_after_writer_admission(client, monkeypa
         """
         plan = original(*args, **kwargs)
         db = args[0]
-        ui.update_appliance_apply_baselines(db, units, {"ca"})
+        ui.update_appliance_apply_baselines(db, units, {"nat" if service_only else "ca"})
         db.commit()
         return plan
 

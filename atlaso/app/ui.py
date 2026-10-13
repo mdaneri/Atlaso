@@ -19348,10 +19348,7 @@ def appliance_apply_execution_plan(
         "unit_map": unit_map,
         "selected_ids": selected_ids,
         "selected_ordered_units": selected_ordered_units,
-        "applied_baseline_fingerprint": appliance_snapshot_hash({
-            unit["id"]: apply_baselines.get(unit["id"])
-            for unit in selected_ordered_units
-        }),
+        "applied_baseline_fingerprint": appliance_snapshot_hash(apply_baselines),
         "skipped_changed_units": skipped_changed_units,
         "generated_dns_only": generated_dns_only,
         "dns_resolver_activation": dns_resolver_activation,
@@ -19607,10 +19604,7 @@ def _submit_appliance_apply(
                 return JSONResponse({"detail": detail}, status_code=409) if wants_json else Response(detail, status_code=409, media_type="text/plain")
 
         current_baselines = load_appliance_apply_baselines(db, refresh=True)
-        current_baseline_fingerprint = appliance_snapshot_hash({
-            unit["id"]: current_baselines.get(unit["id"])
-            for unit in selected_ordered_units
-        })
+        current_baseline_fingerprint = appliance_snapshot_hash(current_baselines)
         if current_baseline_fingerprint != plan["applied_baseline_fingerprint"]:
             detail = "Appliance changes or dependencies changed since review. Reopen appliance review and try again."
             return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
