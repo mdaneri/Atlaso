@@ -463,3 +463,79 @@ def test_tokenless_apply_refuses_current_state_after_review(client, monkeypatch,
     assert "Reopen appliance review" in response.text
     with SessionLocal() as db:
         assert db.query(Job).filter(Job.id != "completed-before-review").count() == 0
+@pytest.mark.parametrize("reapplied_same_state", [False, True])
+def test_reviewed_plan_rejects_intervening_apply_baseline(client, monkeypatch, reapplied_same_state):
+    """Another completed Apply invalidates consent even with identical desired hashes.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Test-scoped replacements for Apply planning dependencies.
+        reapplied_same_state: Whether only baseline metadata changes on an unchanged unit.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    units, csrf, ui = _prepare_network_handoff_review(client, monkeypatch)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    preview = client.get("/appliance-apply/review?selected_units=network&selected_units=wan").json()
+    desired_hashes = [unit["snapshot_hash"] for unit in units]
+    target = next(unit for unit in units if unit["id"] == ("ca" if reapplied_same_state else "network"))
+    with SessionLocal() as db:
+        ui.update_appliance_apply_baselines(db, units, {target["id"]})
+        db.commit()
+    if not reapplied_same_state:
+        target["changed"] = False
+        target["has_baseline"] = True
+        target["config_diff"] = ""
+    assert [unit["snapshot_hash"] for unit in units] == desired_hashes
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "reviewed_plan": preview["plan_token"],
+              "requested_units": preview["requested_units"],
+              "selected_units": [unit["id"] for unit in preview["units"] if unit["selected"]]},
+        headers={"Accept": "application/json"},
+    )
+    assert response.status_code == 422
+    assert "changed since review" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.query(Job).filter(Job.id != "completed-before-review").count() == 0
+def test_reviewed_plan_rechecks_baseline_after_writer_admission(client, monkeypatch):
+    """Reject a completed Apply racing the initial planning check.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Test-scoped replacements for Apply planning dependencies.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    units, csrf, ui = _prepare_network_handoff_review(client, monkeypatch)
+    preview = client.get("/appliance-apply/review?selected_units=network&selected_units=wan").json()
+    original = ui.appliance_apply_execution_plan
+
+    def plan_with_intervening_apply(*args, **kwargs):
+        """Inject a completed baseline change after initial planning.
+
+        Args:
+            *args: Positional arguments passed to the original planner.
+            **kwargs: Keyword arguments passed to the original planner.
+        """
+        plan = original(*args, **kwargs)
+        db = args[0]
+        ui.update_appliance_apply_baselines(db, units, {"ca"})
+        db.commit()
+        return plan
+
+    monkeypatch.setattr(ui, "appliance_apply_execution_plan", plan_with_intervening_apply)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    response = client.post(
+        "/appliance-apply",
+        data={"csrf": csrf, "reviewed_plan": preview["plan_token"],
+              "requested_units": preview["requested_units"],
+              "selected_units": [unit["id"] for unit in preview["units"] if unit["selected"]]},
+        headers={"Accept": "application/json"},
+    )
+    assert response.status_code == 422
+    assert "changed since review" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.query(Job).filter(Job.id != "completed-before-review").count() == 0

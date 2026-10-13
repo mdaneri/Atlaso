@@ -19348,6 +19348,10 @@ def appliance_apply_execution_plan(
         "unit_map": unit_map,
         "selected_ids": selected_ids,
         "selected_ordered_units": selected_ordered_units,
+        "applied_baseline_fingerprint": appliance_snapshot_hash({
+            unit["id"]: apply_baselines.get(unit["id"])
+            for unit in selected_ordered_units
+        }),
         "skipped_changed_units": skipped_changed_units,
         "generated_dns_only": generated_dns_only,
         "dns_resolver_activation": dns_resolver_activation,
@@ -19361,13 +19365,15 @@ def appliance_apply_execution_plan(
 
 
 def appliance_apply_plan_token(plan: dict[str, Any]) -> str:
-    """Bind browser consent to the ordered effective desired-state snapshots.
+    """Bind consent to desired snapshots, applied baselines, and execution state.
 
     Args:
         plan: Server-owned expanded execution plan.
     """
     return appliance_snapshot_hash({
-        "units": [(unit["id"], unit["snapshot_hash"]) for unit in plan["selected_ordered_units"]],
+        "units": [(unit["id"], unit["snapshot_hash"], unit["changed"], unit["has_baseline"], unit["config_diff"])
+                  for unit in plan["selected_ordered_units"]],
+        "applied_baseline": plan["applied_baseline_fingerprint"],
         "execution_controls": {key: value for key, value in plan.items() if isinstance(value, bool)},
     })
 
@@ -19579,6 +19585,9 @@ def _submit_appliance_apply(
     }
     vcf_depot_submit_guard = VCF_DEPOT_SUBMIT_LOCK if "vcf_offline_depot" in selected_ids else nullcontext()
     with vcf_depot_submit_guard, APPLIANCE_APPLY_SUBMIT_LOCK:
+        # Baseline writers use this same database admission boundary. Recheck
+        # after admission so a completed Apply cannot race plan validation.
+        acquire_network_objects_write_lock(db)
         db.expire_all()
         if "vcf_offline_depot" in selected_ids:
             acquire_vcf_depot_admission_gate(db)
@@ -19595,6 +19604,16 @@ def _submit_appliance_apply(
                 detail = vcf_depot_execution_conflict_detail(conflicting_job)
                 return JSONResponse({"detail": detail}, status_code=409) if wants_json else Response(detail, status_code=409, media_type="text/plain")
 
+        current_baselines = load_appliance_apply_baselines(db, refresh=True)
+        current_baseline_fingerprint = appliance_snapshot_hash({
+            unit["id"]: current_baselines.get(unit["id"])
+            for unit in selected_ordered_units
+        })
+        if current_baseline_fingerprint != plan["applied_baseline_fingerprint"]:
+            detail = "Appliance changes or dependencies changed since review. Reopen appliance review and try again."
+            return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
+                detail, status_code=422, media_type="text/plain",
+            )
         job_id = f"job_{uuid4().hex[:12]}"
         if required_format_volumes:
             manifest = unit_map["esx_storage"]["context"]["esx_storage_manifest"]
