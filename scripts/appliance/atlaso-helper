@@ -32409,7 +32409,9 @@ def _wait_restored_management_addresses(state: dict, *, attempts: int = 31) -> d
     previous_identity = None
     for attempt in range(max(1, attempts)):
         observation = _network_address_observation()
-        ready = bool(observation.get("complete"))
+        ready = bool(observation.get("complete")) and all(
+            row.get("address_inventory_complete") is True for row in observation.get("links", [])
+        )
         identities = []
         for name, mac, cidr, dynamic in requirements:
             links = [row for row in observation.get("links", []) if row.get("name") == name]

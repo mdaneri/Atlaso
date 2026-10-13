@@ -235,6 +235,74 @@ def test_restored_dhcp_address_rejects_missing_or_wrong_native_ownership(monkeyp
         helper._wait_restored_management_addresses(rollback_state(), attempts=3)
 
 
+@pytest.mark.parametrize("inventory_state", ["truncated", "malformed"])
+def test_restored_address_rejects_incomplete_competing_link_inventory(monkeypatch, inventory_state):
+    """An incomplete non-target link cannot be excluded from address uniqueness.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing sleep and native observation.
+        inventory_state: Whether the competing inventory is truncated or malformed.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+    target = observed_link()
+    rows = []
+    if inventory_state == "truncated":
+        rows = [
+            {
+                "address": f"203.0.113.{index}",
+                "cidr": f"203.0.113.{index}/24",
+                "scope": "global",
+                "source": "static",
+                "state": "assigned",
+            }
+            for index in range(1, 33)
+        ]
+    competing = observed_link(
+        name="eth1", mac="00:11:22:33:44:66", ifindex=3, addresses=rows,
+    )
+    competing["address_inventory_complete"] = False
+    observations = []
+
+    def observe():
+        observations.append(True)
+        return native_observation(target, competing)
+
+    monkeypatch.setattr(helper, "_network_address_observation", observe)
+
+    with pytest.raises(ValueError, match="did not acquire stable native ownership"):
+        helper._wait_restored_management_addresses(rollback_state(), attempts=3)
+    assert len(observations) == 3
+
+
+def test_restored_address_wait_stabilizes_only_after_competing_inventory_completes(monkeypatch):
+    """Resume stability only after every observed link has a complete address list.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing sleep and native observation.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+    observations = []
+
+    def observe():
+        complete = len(observations) >= 2
+        observations.append(complete)
+        target = observed_link()
+        competing = observed_link(
+            name="eth1", mac="00:11:22:33:44:66", ifindex=3, addresses=[],
+        )
+        competing["address_inventory_complete"] = complete
+        return native_observation(target, competing)
+
+    monkeypatch.setattr(helper, "_network_address_observation", observe)
+
+    evidence = helper._wait_restored_management_addresses(rollback_state(), attempts=5)
+
+    assert evidence == {"stable_samples": 3, "addresses": ["192.0.2.10"]}
+    assert observations == [False, False, True, True, True]
+
+
 def test_restored_address_conflict_fails_immediately(monkeypatch):
     """A native conflict cannot become ready through repeated observations.
 
