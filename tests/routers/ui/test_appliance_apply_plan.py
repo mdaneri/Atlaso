@@ -645,3 +645,35 @@ def test_writer_contention_refuses_submission_without_job(client, monkeypatch):
     assert "private" not in response.text
     with SessionLocal() as db:
         assert db.query(Job).filter(Job.id != "completed-before-review").count() == 0
+
+
+@pytest.mark.parametrize("root", ["ca", "wan"])
+def test_explicit_coupled_roots_can_be_cleared_without_selection_cycle(client, monkeypatch, root):
+    """Explicit handoff/routing roots stay reversible through dependency expansion.
+
+    Args:
+        client: Isolated authenticated management client.
+        monkeypatch: Supply a pending protected handoff with valid snapshots.
+        root: Explicit component coupled to the pending Network handoff.
+    """
+    units, _csrf, _ui = _prepare_network_handoff_review(client, monkeypatch)
+    next(unit for unit in units if unit["id"] == root)["changed"] = True
+    initial = client.get("/appliance-apply/review", params=[("selected_units", "network"),
+                                                           ("selected_units", root)]).json()
+    assert initial["requested_units"] == sorted(["network", root])
+    rows = {unit["id"]: unit for unit in initial["units"]}
+    assert rows["network"]["selected"] and not rows["network"]["required_dependency"]
+    assert rows[root]["selected"] and not rows[root]["required_dependency"]
+    assert any(unit["required_dependency"] for unit in initial["units"] if unit["id"] not in {"network", root})
+
+    remaining = client.get("/appliance-apply/review", params={"selected_units": root}).json()
+    assert remaining["requested_units"] == [root]
+    root_row = next(unit for unit in remaining["units"] if unit["id"] == root)
+    assert root_row["selected"] and not root_row["required_dependency"]
+    if root == "ca":
+        network_row = next(unit for unit in remaining["units"] if unit["id"] == "network")
+        assert network_row["selected"] and network_row["required_dependency"]
+    cleared = client.get("/appliance-apply/review", params={"selected_units": ""}).json()
+    assert cleared["requested_units"] == []
+    assert cleared["execution_count"] == 0
+    assert not any(unit["selected"] for unit in cleared["units"])

@@ -19404,29 +19404,15 @@ def appliance_apply_review_plan(db: Session, selected_units: list[str] | None = 
     effective = plan["selected_ids"]
     effective_map = plan["unit_map"]
     review_map = {unit["id"]: unit for unit in [*context["apply_units"], *review_units]}
-    network = effective_map.get("network", {})
-    wan = effective_map.get("wan", {})
-    network_forces_wan = bool(
-        "network" in effective and (network.get("forces_wan_selection")
-        or network.get("management_domain_migration_required")
-        or (network.get("management_handoff_required") and (
-            network.get("management_gateway_route_migrations") or network.get("management_default_mirror_change"))))
-    )
-    wan_forces_network = bool("wan" in effective and not network_forces_wan and (
-        not network.get("has_baseline") or wan.get("network_address_dependency")
-        or wan.get("forces_network_selection")))
     rows = []
     # Retain unselected changed choices alongside the full ordered execution scope.
     ordered = [*plan["selected_ordered_units"], *[unit for unit in review_units if unit["id"] not in effective]]
     for unit in ordered:
         unit_id = unit["id"]
-        required = unit_id in effective and (
-            unit_id not in requested
-            or (network_forces_wan and unit_id == "wan")
-            or (wan_forces_network and unit_id == "network")
-            or ("network" in effective and plan["management_handoff"]
-                and unit_id in MANAGEMENT_HANDOFF_UNIT_IDS and unit_id != "network")
-        )
+        # Explicit choices stay reversible even when another root requires them.
+        # Only implicitly expanded rows are locked; clearing the remaining root
+        # then lets the operator defer the entire coupled group.
+        required = unit_id in effective and unit_id not in requested
         reason = ""
         if required:
             if plan["management_handoff"] and unit_id in MANAGEMENT_HANDOFF_UNIT_IDS:
