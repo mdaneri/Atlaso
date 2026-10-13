@@ -279,6 +279,50 @@ def capture_commands(monkeypatch, fail_at=None):
     return commands
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_guard_snapshot_is_complete_and_read_only(monkeypatch, enabled):
+    """Record native guard absence or full presence without consuming desired state.
+
+    Args:
+        monkeypatch: Native observation and mutation boundaries.
+        enabled: Guard state present equally in both families.
+    """
+    rows = {}
+    for family in (4, 6):
+        prefixes = ("0.0.0.0/32", "169.254.0.0/16", "127.0.0.0/8") if family == 4 else ("::/128", "fe80::/10", "::1/128")
+        rows[family] = [{"priority": 6000 + index, "src": prefix.split("/")[0], "srclen": int(prefix.split("/")[1]),
+                         "iif": "lo", "table": "254", "protocol": "2"}
+                        for index, prefix in enumerate(prefixes)]
+        rows[family] += [{"priority": 6003, "src": "all", "dst": "169.254.0.0" if family == 4 else "fe80::",
+                          "dstlen": 16 if family == 4 else 10,
+                          "iif": "lo", "table": "254", "protocol": "2"},
+                         {"priority": 6004, "src": "all", "iif": "lo", "action": "7", "protocol": "2"}]
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains, "read_native", lambda args: rows[int(args[0][1:])] if enabled else [])
+    monkeypatch.setattr(domains, "run_ip", lambda *_args: pytest.fail("guard snapshot mutated routing"))
+    monkeypatch.setattr(domains, "read_intent", lambda: pytest.fail("guard snapshot consumed desired state"))
+    assert domains.transition_guard_state() is enabled
+
+
+@pytest.mark.parametrize("mode", ["incomplete", "families", "foreign"])
+def test_guard_snapshot_refuses_ambiguous_native_state(monkeypatch, mode):
+    """Partial or unowned transition rules cannot become a rollback permission.
+
+    Args:
+        monkeypatch: Controlled native guard inventories.
+        mode: Incomplete exemptions, family disagreement, or foreign protocol.
+    """
+    guard = {"priority": 6004, "src": "all", "iif": "lo", "action": "7", "protocol": "2"}
+    if mode == "foreign":
+        guard["protocol"] = "4"
+    monkeypatch.setattr(domains, "reconciliation_lock", nullcontext)
+    monkeypatch.setattr(domains, "read_native", lambda args: [guard] if args[0] == "-4" else [])
+    if mode == "families":
+        monkeypatch.setattr(domains, "transition_exemptions_present", lambda _rows, family: set(range(6000, 6004)) if family == 4 else set())
+    with pytest.raises(domains.ReconcileError):
+        domains.transition_guard_state()
+
+
 def test_overlapping_domains_keep_distinct_exact_dual_stack_sources():
     """The same prefixes never collapse management and lab interface ownership."""
     management, lab = interface(), interface("eth1", "02:00:00:00:00:02", 200)

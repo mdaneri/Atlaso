@@ -2093,7 +2093,8 @@ def test_management_handoff_rollback_restores_dnsmasq_runtime_and_boot_policy(mo
 
 @pytest.mark.parametrize("prior_firewall", [False, True])
 @pytest.mark.parametrize("publication", ["before", "unchanged", "changed", "legacy"])
-def test_management_handoff_rollback_preserves_nat_after_firewall(monkeypatch, tmp_path, prior_firewall, publication):
+@pytest.mark.parametrize("guard_started", [False, True])
+def test_management_handoff_rollback_preserves_nat_after_firewall(monkeypatch, tmp_path, prior_firewall, publication, guard_started):
     """Keep both NAT families after rollback replaces or clears the firewall.
 
     Args:
@@ -2101,6 +2102,7 @@ def test_management_handoff_rollback_preserves_nat_after_firewall(monkeypatch, t
         tmp_path: Directory holding the prior canonical NAT snapshot.
         prior_firewall: Whether rollback restores a prior firewall program.
         publication: Durable publication progress and effective mapping change.
+        guard_started: Whether the forward handoff had installed its guard before failure.
     """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "_wait_restored_management_addresses", lambda _state: {"stable_samples": 3})
@@ -2150,7 +2152,8 @@ def test_management_handoff_rollback_preserves_nat_after_firewall(monkeypatch, t
     guard_stops = []
     monkeypatch.setattr(helper, "_transition_source_guard", lambda enabled: guard_stops.append(enabled))
     monkeypatch.setattr(helper, "_retire_port_forward_connections", lambda ids=None: retired.append(ids))
-    state = {"snapshots": [], "publishing_included": True, "source_transition_guard": True}
+    state = {"snapshots": [], "publishing_included": True, "source_transition_guard": guard_started,
+             "previous_source_transition_guard": False}
     if publication != "legacy":
         state.update(publishing_started=publication != "before",
                      publishing_retire_rule_ids=[1] if publication == "changed" else [])
@@ -2846,6 +2849,43 @@ def test_management_handoff_merges_previous_static_and_dynamic_addresses(monkeyp
     assert helper._management_handoff_previous_link_interfaces(payload) == {"eth0", "eth0.20"}
 
 
+@pytest.mark.parametrize("http_port,tls_port", [(80, 443), (8080, 8443), (8080, None)])
+def test_management_handoff_scopes_ipv4_only_bootstrap(monkeypatch, tmp_path, http_port, tls_port):
+    """A valid IPv4-only bootstrap preserves its family and separate public ports.
+
+    Args:
+        monkeypatch: Isolated nginx paths and installation.
+        tmp_path: Owned temporary site.
+        http_port: Existing HTTP or redirect port.
+        tls_port: Existing TLS port, or HTTP-only mode.
+    """
+    helper = load_helper_module()
+    site = tmp_path / "management.conf"
+    text = "# Managed by Atlaso. Local changes may be overwritten.\n"
+    text += f"server {{\n  listen {http_port} default_server;\n}}\n"
+    if tls_port:
+        text += f"server {{\n  listen {tls_port} ssl default_server;\n}}\n"
+    site.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+    installed = []
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda _path, value: installed.append(value) or 0)
+    helper._scope_management_handoff_old_listener({
+        "previous_https_enabled": bool(tls_port),
+        "previous_management_public_port": tls_port or http_port,
+        "previous_management_addresses": ["192.0.2.10"],
+    })
+    assert len(installed) == 3
+    assert "default_server reuseport;" in installed[0]
+    assert "default_server reuseport;" in installed[1]
+    assert "reuseport" not in installed[-1]
+    assert f"listen 192.0.2.10:{http_port} default_server;" in installed[-1]
+    assert f"listen 127.0.0.1:{http_port} default_server;" in installed[-1]
+    assert "[::]" not in installed[-1]
+    if tls_port:
+        assert f"listen 192.0.2.10:{tls_port} ssl default_server;" in installed[-1]
+    assert f"listen {http_port} default_server;" not in installed[-1]
+
+
 def test_management_handoff_scopes_old_tls_before_new_address_activation(monkeypatch, tmp_path):
     """Keep a wildcard old certificate from serving newly acquired addresses.
 
@@ -3095,7 +3135,8 @@ def test_management_handoff_rejects_incomplete_ipv4_only_inventory(monkeypatch, 
                     "server {\n  listen 80 default_server;\n" + tls_lines + "}\n", encoding="utf-8")
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
     monkeypatch.setattr(helper, "_install_nginx_site", lambda *_args: pytest.fail("Invalid inventory reached publication"))
-    with pytest.raises(ValueError, match="listener inventory is incomplete"):
+    expected_error = "listener is not canonical" if tls_lines == "  listen 80 default_server;\n" else "listener inventory is incomplete"
+    with pytest.raises(ValueError, match=expected_error):
         helper._scope_management_handoff_old_listener({"previous_https_enabled": True,
                                                      "previous_management_addresses": addresses})
 
@@ -3451,6 +3492,7 @@ def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypa
     monkeypatch.setattr(helper, "_snapshot_management_handoff_routing", lambda *_args: {})
     monkeypatch.setattr(helper, "_snapshot_route_domain_rules", lambda: [])
     monkeypatch.setattr(helper, "_snapshot_route_domain_service", lambda: {"enabled": False, "active": False})
+    monkeypatch.setattr(helper, "_snapshot_transition_source_guard", lambda: False)
     monkeypatch.setattr(helper, "_read_existing_management_network_values", lambda: {"Name": ["eth0"]})
     state_dir = tmp_path / "state"
     backup_dir = state_dir / "backup"
@@ -3501,6 +3543,7 @@ def test_management_handoff_syncs_transaction_and_backups_before_marker(monkeypa
         ("publish", state_dir / "state.json"),
     ]
     backup_path = Path(str(state["snapshots"][0]["backup"]))
+    assert state["previous_source_transition_guard"] is False
     assert backup_path.read_text(encoding="utf-8") == "previous runtime\n"
 
 
