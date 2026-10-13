@@ -4392,7 +4392,10 @@ address, prefix, and gateway match the intended network; the change does not rea
 That isolation is allowed when intentional. Clearing a populated <strong>IPv4 Gateway</strong> cell requires the same warning because
 off-subnet HTTPS, DNS, repository, and update access will stop after Apply. Off-link gateways and a gateway equal to the
 interface address remain invalid. Cancel the review or revert the pending Network desired state to retain the applied
-DHCP address and route; a failed protected management handoff rolls back to the last-applied DHCP path.</p>
+DHCP address and route; a failed protected management handoff rolls back to the last-applied DHCP path.
+The first Apply also accepts the appliance's IPv4-only bootstrap nginx listeners. Rollback restores the recorded
+pre-Apply routing guard even when failure occurs before candidate activation, so an older bootstrap without
+routing-domain isolation does not acquire an orphaned guard merely from rollback reconciliation.</p>
 <p>Dedicated-management connected routes use table <code>100</code>; Access, Route, and VLAN connected routes use table <code>200</code>.
 Connected routes remain available without a gateway and when forwarding is disabled. A configured management gateway
 adds the off-subnet default route. Networkd owns DHCP/IPv6 router-advertisement routes and their expiry in the same
