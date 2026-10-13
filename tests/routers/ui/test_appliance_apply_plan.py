@@ -569,3 +569,41 @@ def test_explicit_unchanged_runtime_replay_is_reviewed(client, monkeypatch):
                            "selected_units": [unit["id"] for unit in selected]},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202, response.text
+
+
+@pytest.mark.parametrize("mutation", ["selected", "dependency"])
+def test_reviewed_plan_rechecks_desired_state_after_writer_admission(client, monkeypatch, mutation):
+    """A desired save at admission cannot become an unreviewed captured job.
+
+    Args:
+        client: Isolated authenticated management client.
+        monkeypatch: Replace the admission boundary and host execution.
+        mutation: Whether the changed snapshot belongs to a root or dependency.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    units, csrf, ui = _prepare_network_handoff_review(client, monkeypatch)
+    preview = client.get("/appliance-apply/review?selected_units=network&selected_units=wan").json()
+    original_lock = ui.acquire_network_objects_write_lock
+
+    def admit_after_desired_save(db):
+        """Inject a desired snapshot change immediately before writer admission.
+
+        Args:
+            db: Submission session acquiring the ordinary writer boundary.
+        """
+        target = next(unit for unit in units if unit["id"] == ("network" if mutation == "selected" else "firewall"))
+        target["snapshot_hash"] = "changed-before-writer-admission"
+        original_lock(db)
+
+    monkeypatch.setattr(ui, "acquire_network_objects_write_lock", admit_after_desired_save)
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: pytest.fail("stale plan executed"))
+    response = client.post("/appliance-apply", data={"csrf": csrf, "reviewed_plan": preview["plan_token"],
+                           "requested_units": preview["requested_units"],
+                           "selected_units": [unit["id"] for unit in preview["units"] if unit["selected"]]},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 422
+    assert "changed since review" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert db.query(Job).filter(Job.id != "completed-before-review").count() == 0

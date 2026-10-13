@@ -19489,108 +19489,111 @@ def _submit_appliance_apply(
     """
     verify_csrf(request, csrf)
     wants_json = "application/json" in request.headers.get("accept", "")
+    # Reconciliation may commit initialization and dependent desired state.
+    # Complete it before admission; only read-only capture runs under the lock.
     invalidate_observed_management_dhcp_dns()
-    units = appliance_apply_units(db)
+    appliance_apply_units(db)
     selected_ids = {unit_id for unit_id in selected_units if unit_id in APPLIANCE_APPLY_UNIT_IDS}
-    try:
-        if not reviewed_plan:
-            raise ApplianceApplyPlanError("Reopen appliance review before submitting appliance changes.")
-        if refresh_vcf_depot_software_depot_id:
-            raise ApplianceApplyPlanError("Use the dedicated Software Depot ID task from VCFDT configuration review to refresh the identity.")
-        roots = {unit_id for unit_id in requested_units if unit_id in APPLIANCE_APPLY_UNIT_IDS}
-        plan = appliance_apply_execution_plan(db, units, roots, consented_ids=selected_ids)
-        if selected_ids != plan["selected_ids"] or reviewed_plan != appliance_apply_plan_token(plan):
-            raise ApplianceApplyPlanError("Appliance changes or dependencies changed since review. Reopen appliance review and try again.")
-    except ApplianceApplyPlanError as exc:
-        detail = exc.public_detail
-        return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
-            detail, status_code=422, media_type="text/plain",
-        )
-    units = plan["units"]
-    unit_map = plan["unit_map"]
-    selected_ids = plan["selected_ids"]
-    selected_ordered_units = plan["selected_ordered_units"]
-    skipped_changed_units = plan["skipped_changed_units"]
-    generated_dns_only = plan["generated_dns_only"]
-    dns_resolver_activation = plan["dns_resolver_activation"]
-    management_handoff = plan["management_handoff"]
-    traffic_publishing_pair = plan["traffic_publishing_pair"]
-    routing_publishing_pair = plan["routing_publishing_pair"]
-    routing_publishing_network = plan["routing_publishing_network"]
-    management_handoff_dnsmasq = plan["management_handoff_dnsmasq"]
-    publishing_pair_required = plan["publishing_pair_required"]
-    refresh_vcf_depot_software_depot_id = bool(
-        refresh_vcf_depot_software_depot_id and "vcf_offline_depot" in selected_ids
-    )
-    parsed_format_confirmations: dict[int, str] = {}
-    for raw_confirmation in format_confirmations:
-        try:
-            item = json.loads(raw_confirmation)
-            parsed_format_confirmations[int(item["volume_id"])] = str(item["confirmation"])
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-            detail = "A disk format confirmation was malformed. Reopen appliance review and try again."
-            return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
-
-    required_format_volumes = []
-    if "esx_storage" in selected_ids:
-        required_format_volumes = [
-            volume
-            for volume in unit_map["esx_storage"]["context"]["esx_storage_manifest"]["volumes"]
-            if volume.get("requires_format")
-        ]
-    for volume in required_format_volumes:
-        expected = f"FORMAT {volume['name']}"
-        if parsed_format_confirmations.get(int(volume["id"])) != expected:
-            detail = f"Formatting {volume['name']} requires the exact confirmation {expected!r}."
-            return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
-
-    job_result = {
-        "selected_units": [unit["id"] for unit in selected_ordered_units],
-        "generated_dns_only": generated_dns_only,
-        "dns_resolver_activation": dns_resolver_activation,
-        "skipped_changed_units": skipped_changed_units,
-        "captured_units": [
-            {
-                "unit_id": unit["id"],
-                "label": unit["label"],
-                "snapshot_hash": unit["snapshot_hash"],
-                "summary": unit["summary"],
-                "validation_errors": unit["validation_errors"],
-                "validation_warnings": unit["validation_warnings"],
-                "config_path": unit["config_path"],
-                "config_preview": unit["config_preview"],
-                "config_diff": unit["config_diff"],
-                **({"applied_listener_interface": unit.get("applied_listener_interface", "")}
-                   if unit["id"] in {"ntpd", "ldap", "kms", "vcf_offline_depot"} else {}),
-                **({"applied_listener_sources": dict(unit.get("applied_listener_sources") or {})}
-                   if unit["id"] in {"ntpd", "ldap", "kms", "vcf_offline_depot"} else {}),
-            }
-            for unit in selected_ordered_units
-        ],
-        "units": [],
-        "dry_run": bool(get_settings().dry_run_system_adapters),
-        "format_authorizations": [],
-        "refresh_vcf_depot_software_depot_id": refresh_vcf_depot_software_depot_id,
-        "management_handoff": management_handoff,
-        "traffic_publishing_pair": traffic_publishing_pair,
-        "routing_publishing_pair": routing_publishing_pair,
-        "routing_publishing_network": routing_publishing_network,
-        "management_handoff_units": [
-            unit_id
-            for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq", "wan", "nat")
-            if management_handoff and unit_id in selected_ids
-            and (unit_id != "dnsmasq" or management_handoff_dnsmasq)
-            and (unit_id != "nat" or publishing_pair_required)
-        ],
-    }
     vcf_depot_submit_guard = VCF_DEPOT_SUBMIT_LOCK if "vcf_offline_depot" in selected_ids else nullcontext()
     with vcf_depot_submit_guard, APPLIANCE_APPLY_SUBMIT_LOCK:
-        # Baseline writers use this same database admission boundary. Recheck
-        # after admission so a completed Apply cannot race plan validation.
+        # Refresh and build the complete consent-bound plan only after writer
+        # admission, then capture that admitted plan through job creation.
         acquire_network_objects_write_lock(db)
         db.expire_all()
         if "vcf_offline_depot" in selected_ids:
             acquire_vcf_depot_admission_gate(db)
+        units = appliance_apply_units(db, reconcile=False)
+        try:
+            if not reviewed_plan:
+                raise ApplianceApplyPlanError("Reopen appliance review before submitting appliance changes.")
+            if refresh_vcf_depot_software_depot_id:
+                raise ApplianceApplyPlanError("Use the dedicated Software Depot ID task from VCFDT configuration review to refresh the identity.")
+            roots = {unit_id for unit_id in requested_units if unit_id in APPLIANCE_APPLY_UNIT_IDS}
+            plan = appliance_apply_execution_plan(db, units, roots, consented_ids=selected_ids)
+            if selected_ids != plan["selected_ids"] or reviewed_plan != appliance_apply_plan_token(plan):
+                raise ApplianceApplyPlanError("Appliance changes or dependencies changed since review. Reopen appliance review and try again.")
+        except ApplianceApplyPlanError as exc:
+            detail = exc.public_detail
+            return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(
+                detail, status_code=422, media_type="text/plain",
+            )
+        units = plan["units"]
+        unit_map = plan["unit_map"]
+        selected_ids = plan["selected_ids"]
+        selected_ordered_units = plan["selected_ordered_units"]
+        skipped_changed_units = plan["skipped_changed_units"]
+        generated_dns_only = plan["generated_dns_only"]
+        dns_resolver_activation = plan["dns_resolver_activation"]
+        management_handoff = plan["management_handoff"]
+        traffic_publishing_pair = plan["traffic_publishing_pair"]
+        routing_publishing_pair = plan["routing_publishing_pair"]
+        routing_publishing_network = plan["routing_publishing_network"]
+        management_handoff_dnsmasq = plan["management_handoff_dnsmasq"]
+        publishing_pair_required = plan["publishing_pair_required"]
+        refresh_vcf_depot_software_depot_id = bool(
+            refresh_vcf_depot_software_depot_id and "vcf_offline_depot" in selected_ids
+        )
+        parsed_format_confirmations: dict[int, str] = {}
+        for raw_confirmation in format_confirmations:
+            try:
+                item = json.loads(raw_confirmation)
+                parsed_format_confirmations[int(item["volume_id"])] = str(item["confirmation"])
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                detail = "A disk format confirmation was malformed. Reopen appliance review and try again."
+                return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
+
+        required_format_volumes = []
+        if "esx_storage" in selected_ids:
+            required_format_volumes = [
+                volume
+                for volume in unit_map["esx_storage"]["context"]["esx_storage_manifest"]["volumes"]
+                if volume.get("requires_format")
+            ]
+        for volume in required_format_volumes:
+            expected = f"FORMAT {volume['name']}"
+            if parsed_format_confirmations.get(int(volume["id"])) != expected:
+                detail = f"Formatting {volume['name']} requires the exact confirmation {expected!r}."
+                return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
+
+        job_result = {
+            "selected_units": [unit["id"] for unit in selected_ordered_units],
+            "generated_dns_only": generated_dns_only,
+            "dns_resolver_activation": dns_resolver_activation,
+            "skipped_changed_units": skipped_changed_units,
+            "captured_units": [
+                {
+                    "unit_id": unit["id"],
+                    "label": unit["label"],
+                    "snapshot_hash": unit["snapshot_hash"],
+                    "summary": unit["summary"],
+                    "validation_errors": unit["validation_errors"],
+                    "validation_warnings": unit["validation_warnings"],
+                    "config_path": unit["config_path"],
+                    "config_preview": unit["config_preview"],
+                    "config_diff": unit["config_diff"],
+                    **({"applied_listener_interface": unit.get("applied_listener_interface", "")}
+                       if unit["id"] in {"ntpd", "ldap", "kms", "vcf_offline_depot"} else {}),
+                    **({"applied_listener_sources": dict(unit.get("applied_listener_sources") or {})}
+                       if unit["id"] in {"ntpd", "ldap", "kms", "vcf_offline_depot"} else {}),
+                }
+                for unit in selected_ordered_units
+            ],
+            "units": [],
+            "dry_run": bool(get_settings().dry_run_system_adapters),
+            "format_authorizations": [],
+            "refresh_vcf_depot_software_depot_id": refresh_vcf_depot_software_depot_id,
+            "management_handoff": management_handoff,
+            "traffic_publishing_pair": traffic_publishing_pair,
+            "routing_publishing_pair": routing_publishing_pair,
+            "routing_publishing_network": routing_publishing_network,
+            "management_handoff_units": [
+                unit_id
+                for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq", "wan", "nat")
+                if management_handoff and unit_id in selected_ids
+                and (unit_id != "dnsmasq" or management_handoff_dnsmasq)
+                and (unit_id != "nat" or publishing_pair_required)
+            ],
+        }
         active_job = active_appliance_apply_job(db)
         if active_job is not None:
             detail = (
