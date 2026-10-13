@@ -15909,7 +15909,9 @@ def execute_management_handoff(
                 "previous_management_paths": [
                     {
                         "name": str(path.get("name") or ""),
-                        "ipv4_method": str(path.get("ipv4_method") or ""),
+                        "ipv4_method": str(path.get("ipv4_method") or (
+                            "static" if path.get("parent") and path.get("ip_cidr") else ""
+                        )),
                         "ipv6_enabled": str(path.get("ipv6_enabled") or ""),
                         "ipv6_cidr": str(path.get("ipv6_cidr") or ""),
                     }

@@ -2281,7 +2281,20 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
             "parent": "eth0",
             "ip_cidr": "192.0.2.10/24",
             "ipv6_cidr": "",
-        }
+        },
+        {
+            "name": "eth0",
+            "ipv4_method": "dhcp",
+            "ip_cidr": "",
+            "ipv6_cidr": "",
+        },
+        {
+            "name": "eth0.30",
+            "parent": "eth0",
+            "ip_cidr": "",
+            "ipv6_enabled": "true",
+            "ipv6_cidr": "2001:db8:30::10/64",
+        },
     ]
     units["network"]["removed_vlan_interfaces"] = []
     units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": [], "ca_profiles": []}
@@ -2327,14 +2340,26 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
         *ui.MANAGEMENT_HANDOFF_UNIT_IDS,
         "dnsmasq",
     }
-    assert manifest["previous_management_interfaces"] == ["eth0.20"]
+    assert manifest["previous_management_interfaces"] == ["eth0.20", "eth0", "eth0.30"]
     assert manifest["previous_management_parent_interfaces"] == ["eth0"]
     assert manifest["previous_management_paths"] == [
         {
             "name": "eth0.20",
-            "ipv4_method": "",
+            "ipv4_method": "static",
             "ipv6_enabled": "",
             "ipv6_cidr": "",
+        },
+        {
+            "name": "eth0",
+            "ipv4_method": "dhcp",
+            "ipv6_enabled": "",
+            "ipv6_cidr": "",
+        },
+        {
+            "name": "eth0.30",
+            "ipv4_method": "",
+            "ipv6_enabled": "true",
+            "ipv6_cidr": "2001:db8:30::10/64",
         }
     ]
 
