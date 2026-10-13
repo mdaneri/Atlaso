@@ -61,6 +61,42 @@ def test_appliance_update_quiescence_allows_the_full_systemd_stop_window(monkeyp
     ]
 
 
+def test_management_handoff_startup_recovery_requests_native_only_phase(monkeypatch):
+    """Pass startup recovery mode through the privileged helper boundary.
+
+    Args:
+        monkeypatch: Pytest fixture used to capture the helper invocation.
+    """
+    import atlaso.app.adapters.system as system_adapter
+
+    observed: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):
+        """Capture the helper command and timeout.
+
+        Args:
+            command: Exact helper command passed to subprocess.
+            **kwargs: Subprocess options supplied by the adapter.
+        """
+        observed["command"] = command
+        observed["timeout"] = kwargs.get("timeout")
+        return subprocess.CompletedProcess(command, 0, "{}", "")
+
+    monkeypatch.setattr(system_adapter.subprocess, "run", fake_run)
+
+    result = SystemAdapter(dry_run=False).recover_management_handoff(startup=True)
+
+    assert result.returncode == 0
+    assert observed["timeout"] == 180
+    assert observed["command"][-5:] == [
+        SystemAdapter.HELPER_PATH,
+        "management-handoff",
+        "recover",
+        "--real",
+        "--startup",
+    ]
+
+
 def test_esx_storage_inventory_executes_read_only_helper_during_dry_run(monkeypatch):
     """Verify that esx storage inventory executes read only helper during dry run.
 

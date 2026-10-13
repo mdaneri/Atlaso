@@ -1168,6 +1168,7 @@ def test_handoff_rollback_restores_legacy_selector_before_reconcile(
         source_restore_fails: Simulate refusal to reinstate the old selector.
     """
     events = []
+    monkeypatch.setattr(helper, "_wait_restored_management_addresses", lambda _state: {"stable_samples": 3})
     state = {"snapshots": [], "previous_route_domain_rules": [
         {"family": 4, "priority": 1000, "table": 100, "source": "192.0.2.0/24",
          "incoming_interface": "", "protocol": 4},

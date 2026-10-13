@@ -3472,17 +3472,46 @@ def retry_network_transaction_cleanup(db: Session) -> int:
     return 0
 
 
-def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
+def retained_startup_management_handoff_job_ids(db: Session) -> tuple[str, ...]:
+    """Select only handoffs whose native startup recovery awaits HTTP confirmation.
+
+    Args:
+        db: Startup database session after native recovery has committed its evidence.
+    """
+    jobs = db.scalars(select(Job).where(
+        Job.type == "appliance-apply", Job.status == JobStatus.FAILED.value,
+    )).all()
+    retained: list[str] = []
+    for job in jobs:
+        payload = _job_payload(job)
+        recovery = payload.get("management_handoff_recovery")
+        evidence = recovery.get("evidence") if isinstance(recovery, dict) else None
+        if (
+            payload.get("management_handoff_runtime_commit_pending") is True
+            and isinstance(evidence, dict) and evidence.get("readiness_pending") is True
+        ):
+            retained.append(job.id)
+    return tuple(retained)
+
+
+def recover_interrupted_appliance_apply_jobs(
+    db: Session, *, startup: bool = False, job_ids: tuple[str, ...] | None = None,
+) -> int:
     """Return recover interrupted appliance apply jobs.
 
     Args:
         db: Active database session.
+        startup: Restore native handoff state before serving, retaining its pending mutation lock.
+        job_ids: Exact startup-retained jobs to confirm; None performs the initial startup scan.
     """
-    candidate_jobs = db.scalars(
+    candidates = (
         select(Job)
         .options(selectinload(Job.steps))
         .where(Job.type == "appliance-apply")
-    ).all()
+    )
+    if job_ids is not None:
+        candidates = candidates.where(Job.id.in_(job_ids))
+    candidate_jobs = db.scalars(candidates).all()
     # Startup must settle durable pre-claim reservations before classifying interruptions.
     # This owner-scoped pass cannot be starved by the worker's unrelated request batch.
     for job in candidate_jobs:
@@ -3526,7 +3555,7 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
             ):
                 recovery = adapter.acknowledge_management_handoff(handoff_job.id)
             else:
-                recovery = adapter.recover_management_handoff()
+                recovery = adapter.recover_management_handoff(startup=True) if startup else adapter.recover_management_handoff()
             handoff_recoveries[handoff_job.id] = (
                 recovery,
                 management_handoff_result_evidence(recovery),
@@ -15918,7 +15947,9 @@ def execute_management_handoff(
                 "previous_management_paths": [
                     {
                         "name": str(path.get("name") or ""),
-                        "ipv4_method": str(path.get("ipv4_method") or ""),
+                        "ipv4_method": str(path.get("ipv4_method") or (
+                            "static" if path.get("parent") and path.get("ip_cidr") else ""
+                        )),
                         "ipv6_enabled": str(path.get("ipv6_enabled") or ""),
                         "ipv6_cidr": str(path.get("ipv6_cidr") or ""),
                     }
