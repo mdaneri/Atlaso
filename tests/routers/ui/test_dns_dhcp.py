@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from tests.routers.ui.helpers import login
+from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 
 
 def test_dns_settings_derives_listen_addresses_from_selected_interface(client):
@@ -397,7 +397,7 @@ def test_dns_and_dhcp_pages_render(client):
     assert "applyConnectionWarnings" in app_js.text
     assert 'elements.submit.classList.add("hidden")' in app_js.text
     assert (
-        'elements.submit.classList.toggle("hidden", units.length === 0)' in app_js.text
+        'elements.submit.classList.toggle("hidden", units.length === 0 && !payload.plan_error)' in app_js.text
     )
     assert '{ title: "Status", field: "status", width: 150' in app_js.text
     assert 'applianceApplyModalTable?.on("rowClick"' in app_js.text
@@ -1012,7 +1012,7 @@ def test_dns_settings_rejects_authoritative_dnssec_before_apply(client):
         "Authoritative DNS and DNSSEC validation cannot be enabled together" in error
         for error in response.json()["validation_errors"]
     )
-    submission = client.post(
+    submission = submit_reviewed_appliance_apply(client,
         "/appliance-apply",
         data={"csrf": csrf, "selected_units": "dnsmasq"},
         headers={"Accept": "application/json"},

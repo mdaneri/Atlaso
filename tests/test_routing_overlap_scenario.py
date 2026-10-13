@@ -353,6 +353,19 @@ def test_lease_requires_actual_finite_original_mac(topology):
             scenario._lease({"leases": [bad]}, topology)
 
 
+def _selection_review(path):
+    """Return a synthetic reviewed networking plan.
+
+    Args:
+        path: Selection-specific management URL.
+    """
+    from urllib.parse import parse_qs, urlsplit
+
+    roots = parse_qs(urlsplit(path).query)["selected_units"]
+    return {"plan_token": "review-token", "requested_units": roots,
+            "units": [{"id": root, "valid": True, "selected": True} for root in roots]}
+
+
 class FakeClient:
     """Capture ordinary authenticated API operations without networking."""
 
@@ -376,6 +389,8 @@ class FakeClient:
             json_body: Supported mutation fields.
         """
         self.calls.append((method, path, copy.deepcopy(json_body)))
+        if "/appliance-apply/review?" in path:
+            return _selection_review(path)
         if path.startswith("/api/v1/auth/login?"):
             return {"raw_token": "synthetic", "token": {"id": 1}}
         if path.endswith("/revoke"):
@@ -680,7 +695,7 @@ def test_apply_deadline_preserves_identity(monkeypatch):
     monkeypatch.setattr(client, "request", lambda method, path, **kwargs:
                         (200, '<input name="csrf" value="synthetic">', {}) if method == "GET"
                         else (202, '{"job_id":"job_abc"}', {}))
-    monkeypatch.setattr(client, "json_request", lambda method, path: {"task": {"status": "running"}})
+    monkeypatch.setattr(client, "json_request", lambda method, path: _selection_review(path) if "/review?" in path else {"task": {"status": "running"}})
     with pytest.raises(scenario.ApplyOutcomeUnknown, match="job_abc"):
         scenario._apply(client)
 
@@ -698,7 +713,7 @@ def test_apply_requires_real_networking_units(monkeypatch, dry_unit, accepted):
     monkeypatch.setattr(client, "request", lambda method, path, **kwargs:
                         (200, '<input name="csrf" value="synthetic">', {}) if method == "GET"
                         else (202, '{"job_id":"job_abc"}', {}))
-    monkeypatch.setattr(client, "json_request", lambda method, path: {"task": {
+    monkeypatch.setattr(client, "json_request", lambda method, path: _selection_review(path) if "/review?" in path else {"task": {
         "status": "succeeded", "result": {"dry_run": True, "units": [
             {"unit_id": "network", "dry_run": dry_unit == "network"},
             {"unit_id": "wan", "dry_run": dry_unit == "wan"},
@@ -743,7 +758,7 @@ def test_rejected_apply_reports_only_bounded_validation_identity(monkeypatch):
                         (200, '<input name="csrf" value="synthetic">', {}) if method == "GET" else
                         (422, json.dumps({"detail": "Resolve validation errors before submitting appliance changes.",
                                           "preview": "private appliance address"}), {}))
-    monkeypatch.setattr(client, "json_request", lambda method, path: {
+    monkeypatch.setattr(client, "json_request", lambda method, path: _selection_review(path) if "/review?" in path else {
         "units": [{"id": "wan", "valid": False, "validation_errors": ["private appliance address"]},
                   {"id": "appliance_settings", "valid": False,
                    "validation_errors": ["Web terminal interfaces are unavailable or have no address: private"]}]})

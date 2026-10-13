@@ -50,7 +50,7 @@ sections as needed. Resolve unknown applicability before mutation rather than tr
 | review | Reviewing a diff/PR, opening, following, or merging a PR | [PR workflow](docs/contribute/pr-workflow.md) |
 | security | Sensitive material, suspected vulnerability, private remediation | [Security policy](SECURITY.md) |
 | credentials | Obtaining, storing, copying, or using passwords, tokens, keys, or 1Password configuration | [Credential policy](docs/contribute/credential-policy.md) |
-| ui | Templates, authored CSS/JS, controls, layouts, grids, dialogs, wizards, visible UI copy | [UI guide](docs/contribute/ui-design-guide.md) |
+| ui | Templates, authored CSS/JS, controls, layouts, grids, dialogs, wizards, copy, Apply plans | [UI guide](docs/contribute/ui-design-guide.md) |
 | api | API operations, route ownership, compatibility | [API authoring](docs/contribute/api-authoring.md), [router architecture](docs/contribute/router-architecture.md) |
 | python | Python source or tests | [Static analysis](docs/contribute/python-static-analysis.md) |
 | powershell | PowerShell source or modules | [PowerShell authoring](docs/contribute/powershell-authoring.md) |

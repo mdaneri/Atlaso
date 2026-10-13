@@ -1874,11 +1874,12 @@ def test_apply_units_requires_and_submits_esx_format_confirmation(monkeypatch):
                 path: Filesystem or URL path to read, validate, or update.
                 **_kwargs: Additional keyword arguments accepted by the test double.
             """
-            if path == "/ui/management/appliance-apply/review":
+            if path.startswith("/ui/management/appliance-apply/review?"):
                 return {
+                    "plan_token": "format-review", "requested_units": ["esx_storage"],
                     "units": [
                         {
-                            "id": "esx_storage",
+                            "id": "esx_storage", "selected": True, "valid": True,
                             "format_volumes": [{"id": 7, "confirmation": "FORMAT lifecycle-esx-data"}],
                         }
                     ]
@@ -2123,6 +2124,9 @@ def test_apply_units_retries_once_when_desired_state_drifts(monkeypatch):
                 AssertionError: If an expected invariant is not satisfied.
             """
             assert method == "GET"
+            if "/review?" in path:
+                return {"plan_token": "review-" + str(self.submissions), "requested_units": ["dnsmasq", "ca"],
+                        "units": [{"id": unit, "selected": True, "valid": True} for unit in ["dnsmasq", "ca"]]}
             if path == "/tasks/job_1/status":
                 return {
                     "task": {

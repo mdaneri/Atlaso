@@ -19095,6 +19095,14 @@ function setApplianceApplyPollNotice(message = "", tone = "warning") {
   }
 }
 
+function applianceApplyFormatIdentity(unit, volume) {
+  if (!unit.snapshot_hash || volume.id === undefined || !volume.stable_device_id) return "";
+  return JSON.stringify([
+    unit.snapshot_hash || "", volume.id, volume.stable_device_id,
+    Object.entries(volume.fingerprint || {}).sort(([left], [right]) => left.localeCompare(right)),
+  ]);
+}
+
 function applianceApplyReviewRow(unit) {
   const row = document.createElement("article");
   row.className = "appliance-apply-review-row";
@@ -19114,10 +19122,13 @@ function applianceApplyReviewRow(unit) {
   checkbox.type = "checkbox";
   checkbox.name = "selected_units";
   checkbox.value = unit.id || "";
-  checkbox.checked = Boolean(unit.selected && unit.valid);
-  checkbox.disabled = !unit.valid;
+  const requiredDependency = unit.required_dependency === true;
+  checkbox.checked = Boolean(unit.selected && (unit.valid || requiredDependency));
+  checkbox.disabled = requiredDependency || !unit.valid;
   checkbox.dataset.applianceApplyReviewCheckbox = "";
   checkbox.dataset.valid = String(Boolean(unit.valid));
+  checkbox.dataset.changed = String(unit.changed !== false);
+  checkbox.dataset.requiredDependency = String(requiredDependency);
   if (unit.requires_dns_selection) {
     checkbox.dataset.requiresDnsSelection = "";
   }
@@ -19130,9 +19141,18 @@ function applianceApplyReviewRow(unit) {
   const small = document.createElement("small");
   small.textContent = unit.config_path || "";
   labelText.append(strong, small);
-  if (unit.requires_network_selection) {
+  const state = document.createElement("small");
+  state.textContent = `${unit.changed === false ? "Unchanged" : "Changed"}${requiredDependency ? " · required" : ""}`;
+  labelText.append(state);
+  if (unit.requires_network_selection && !requiredDependency) {
     const dependency = document.createElement("small");
     dependency.textContent = "Required while Network is selected";
+    labelText.append(dependency);
+  }
+  if (requiredDependency) {
+    const dependency = document.createElement("small");
+    dependency.textContent = unit.dependency_reason || "Required by the selected appliance changes";
+    dependency.dataset.applyDependencyReason = "";
     labelText.append(dependency);
   }
   label.append(checkbox, labelText);
@@ -19178,6 +19198,7 @@ function applianceApplyReviewRow(unit) {
       input.autocomplete = "off";
       input.dataset.esxFormatConfirmation = "";
       input.dataset.expected = volume.confirmation || `FORMAT ${volume.name}`;
+      input.dataset.formatIdentity = applianceApplyFormatIdentity(unit, volume);
       const hidden = document.createElement("input");
       hidden.type = "hidden";
       hidden.name = "format_confirmations";
@@ -19253,6 +19274,70 @@ function applianceApplyReviewRow(unit) {
 function updateApplianceApplySelection() {
   const { modal, selectionSummary, submit, connectionWarning } = applianceApplyModalElements();
   if (!(modal instanceof HTMLDialogElement)) return;
+  if (modal.dataset.serverPlanAvailable === "true") {
+    const selectedCheckboxes = Array.from(modal.querySelectorAll("[data-appliance-apply-review-checkbox]:checked"));
+    const changed = selectedCheckboxes.filter((checkbox) => checkbox.dataset.changed === "true").length;
+    const required = selectedCheckboxes.filter((checkbox) => checkbox.dataset.changed !== "true").length;
+    let explicit = 0;
+    try {
+      const requested = JSON.parse(modal.dataset.requestedUnits || "[]");
+      explicit = Array.isArray(requested) ? requested.length : 0;
+    } catch (_error) {
+      explicit = 0;
+    }
+    const selected = selectedCheckboxes.length;
+    const incompleteFormatConfirmations = selectedCheckboxes.some((checkbox) => {
+      const row = checkbox.closest("[data-apply-unit-id]");
+      if (!(row instanceof HTMLElement)) return false;
+      return Array.from(row.querySelectorAll("[data-esx-format-confirmation]"))
+        .some((input) => input instanceof HTMLInputElement && input.value !== input.dataset.expected);
+    });
+    const planError = String(modal.dataset.planError || "");
+    const pending = modal.dataset.planLoading === "true";
+    if (selectionSummary instanceof HTMLElement) {
+      if (pending) {
+        selectionSummary.textContent = "Updating the reviewed appliance plan…";
+      } else if (selected) {
+        const changedLabel = `${changed} changed component${changed === 1 ? "" : "s"}`;
+        const requiredLabel = `${required} required dependenc${required === 1 ? "y" : "ies"}`;
+        selectionSummary.textContent = `${changedLabel} + ${requiredLabel} = ${selected} components to process · ${explicit} explicitly selected · one appliance task${planError ? ` · ${planError}` : ""}`;
+      } else {
+        selectionSummary.textContent = planError || "0 components selected · select at least one changed component";
+      }
+      if (incompleteFormatConfirmations && !pending && !planError) {
+        selectionSummary.textContent += " · complete disk format confirmation";
+      }
+    }
+    if (submit instanceof HTMLButtonElement) {
+      submit.disabled = pending || Boolean(planError) || selected === 0 || incompleteFormatConfirmations;
+    }
+    if (connectionWarning instanceof HTMLElement) {
+      const messages = new Set();
+      selectedCheckboxes.forEach((checkbox) => {
+        const row = checkbox.closest("[data-apply-unit-id]");
+        if (!(row instanceof HTMLElement)) return;
+        try {
+          const warnings = JSON.parse(row.dataset.applyConnectionWarnings || "[]");
+          if (Array.isArray(warnings)) warnings.forEach((warning) => messages.add(String(warning)));
+        } catch (_error) {
+          // Ignore malformed optional warning metadata and keep the apply review usable.
+        }
+      });
+      connectionWarning.replaceChildren();
+      if (messages.size) {
+        const title = document.createElement("strong");
+        title.textContent = "Management connection warning";
+        connectionWarning.append(title);
+        messages.forEach((message) => {
+          const line = document.createElement("div");
+          line.textContent = message;
+          connectionWarning.append(line);
+        });
+      }
+      connectionWarning.classList.toggle("hidden", messages.size === 0);
+    }
+    return;
+  }
   const dnsCheckbox = modal.querySelector('[data-appliance-apply-review-checkbox][value="dnsmasq"]');
   modal.querySelectorAll('[data-requires-dns-selection]').forEach((checkbox) => {
     if (!(checkbox instanceof HTMLInputElement)) return;
@@ -19375,8 +19460,16 @@ function updateApplianceApplySelection() {
 async function openApplianceApplyReview() {
   const elements = applianceApplyModalElements();
   if (!(elements.modal instanceof HTMLDialogElement)) return;
+  const requestId = ++applianceApplyPlanRequest;
   clearApplianceApplyAutoClose();
   elements.modal.dataset.active = "false";
+  elements.modal.dataset.serverPlanAvailable = "false";
+  elements.modal.dataset.planLoading = "false";
+  elements.modal.dataset.planError = "";
+  elements.modal.dataset.requestedUnits = "[]";
+  delete elements.modal.dataset.planToken;
+  const priorPlanToken = elements.reviewForm?.querySelector('[name="reviewed_plan"]');
+  if (priorPlanToken instanceof HTMLInputElement) priorPlanToken.value = "";
   delete elements.modal.dataset.taskId;
   delete elements.modal.dataset.taskStatus;
   elements.review?.classList.remove("hidden");
@@ -19405,6 +19498,7 @@ async function openApplianceApplyReview() {
   try {
     const response = await fetch(managementUiPath("/appliance-apply/review"), { credentials: "same-origin", headers: { Accept: "application/json" } });
     const payload = await response.json();
+    if (!isCurrentApplianceApplyPlanRequest(requestId)) return;
     if (!response.ok) throw new Error(payload.detail || "Unable to load appliance changes.");
     if (payload.active_task) {
       if (applianceApplyPollController) await applianceApplyPollController.observeTask(payload.active_task);
@@ -19412,6 +19506,23 @@ async function openApplianceApplyReview() {
       return;
     }
     const units = Array.isArray(payload.units) ? payload.units : [];
+    const hasServerPlan = typeof payload.plan_token === "string";
+    if (hasServerPlan) {
+      elements.modal.dataset.serverPlanAvailable = "true";
+      elements.modal.dataset.planToken = payload.plan_token;
+      elements.modal.dataset.planError = String(payload.plan_error || "");
+      elements.modal.dataset.requestedUnits = JSON.stringify(
+        Array.isArray(payload.requested_units) ? payload.requested_units : applianceApplySelectedValues(elements.modal),
+      );
+      let reviewedPlan = elements.reviewForm?.querySelector('[name="reviewed_plan"]');
+      if (!(reviewedPlan instanceof HTMLInputElement) && elements.reviewForm instanceof HTMLFormElement) {
+        reviewedPlan = document.createElement("input");
+        reviewedPlan.type = "hidden";
+        reviewedPlan.name = "reviewed_plan";
+        elements.reviewForm.append(reviewedPlan);
+      }
+      if (reviewedPlan instanceof HTMLInputElement) reviewedPlan.value = payload.plan_token;
+    }
     const initialApplyRequired = payload.initial_apply_required === true;
     if (elements.title instanceof HTMLElement) {
       elements.title.textContent = initialApplyRequired ? "Review initial appliance setup" : "Review appliance changes";
@@ -19433,15 +19544,150 @@ async function openApplianceApplyReview() {
       }
     }
     if (elements.status instanceof HTMLElement) {
-      elements.status.className = `status-pill ${units.length ? "warn" : "good"}`;
-      elements.status.textContent = `${units.length} ${initialApplyRequired ? "ready" : "changed"}`;
+      const pendingCount = Number.isFinite(Number(payload.pending_count)) ? Number(payload.pending_count) : units.length;
+      elements.status.className = `status-pill ${pendingCount ? "warn" : "good"}`;
+      elements.status.textContent = `${pendingCount} ${initialApplyRequired ? "ready" : "changed"}`;
     }
     if (elements.submit instanceof HTMLButtonElement) {
-      elements.submit.classList.toggle("hidden", units.length === 0);
+      elements.submit.classList.toggle("hidden", units.length === 0 && !payload.plan_error);
     }
     updateApplianceApplySelection();
   } catch (error) {
+    if (!isCurrentApplianceApplyPlanRequest(requestId)) return;
     setApplianceApplyModalError(error instanceof Error ? error.message : "Unable to load appliance changes.");
+  }
+}
+
+let applianceApplyPlanRequest = 0;
+
+function isCurrentApplianceApplyPlanRequest(requestId) {
+  return requestId === applianceApplyPlanRequest;
+}
+
+function applianceApplySelectedValues(modal) {
+  const requested = new Set(JSON.parse(modal.dataset.requestedUnits || "[]"));
+  return Array.from(modal.querySelectorAll("[data-appliance-apply-review-checkbox]:checked"))
+    .filter((checkbox) => checkbox.dataset.requiredDependency !== "true" || requested.has(checkbox.value))
+    .map((checkbox) => checkbox.value);
+}
+
+function preserveApplianceApplyReviewState(modal) {
+  const active = document.activeElement;
+  const activeRow = active instanceof HTMLElement ? active.closest("[data-apply-unit-id]") : null;
+  const focused = active instanceof HTMLElement && activeRow instanceof HTMLElement
+    ? {
+      unitId: activeRow.dataset.applyUnitId,
+      control: active.matches("[data-appliance-apply-review-checkbox]")
+        ? "checkbox" : active.matches("[data-esx-format-confirmation]") ? "format" : "",
+      formatIndex: active.matches("[data-esx-format-confirmation]")
+        ? Array.from(activeRow.querySelectorAll("[data-esx-format-confirmation]")).indexOf(active) : -1,
+    }
+    : null;
+  const confirmations = new Map();
+  modal.querySelectorAll("[data-apply-unit-id]").forEach((row) => {
+    if (!(row instanceof HTMLElement)) return;
+    const unitId = row.dataset.applyUnitId || "";
+    Array.from(row.querySelectorAll("[data-esx-format-confirmation]")).forEach((input) => {
+      if (input instanceof HTMLInputElement && input.dataset.formatIdentity) {
+        confirmations.set(`${unitId}:${input.dataset.formatIdentity}:${input.dataset.expected || ""}`, input.value);
+      }
+    });
+  });
+  return { confirmations, focused, active };
+}
+
+function restoreApplianceApplyReviewState(modal, state) {
+  modal.querySelectorAll("[data-apply-unit-id]").forEach((row) => {
+    if (!(row instanceof HTMLElement)) return;
+    const unitId = row.dataset.applyUnitId || "";
+    Array.from(row.querySelectorAll("[data-esx-format-confirmation]")).forEach((input) => {
+      if (!(input instanceof HTMLInputElement)) return;
+      if (!input.dataset.formatIdentity) return;
+      const value = state.confirmations.get(`${unitId}:${input.dataset.formatIdentity}:${input.dataset.expected || ""}`);
+      if (value === undefined) return;
+      input.value = value;
+      const hidden = input.parentElement?.querySelector('[name="format_confirmations"]');
+      if (hidden instanceof HTMLInputElement) hidden.disabled = value !== input.dataset.expected;
+    });
+  });
+  if (!state.focused) return;
+  const row = Array.from(modal.querySelectorAll("[data-apply-unit-id]"))
+    .find((candidate) => candidate instanceof HTMLElement && candidate.dataset.applyUnitId === state.focused.unitId);
+  if (!(row instanceof HTMLElement)) return;
+  const target = state.focused.control === "checkbox"
+    ? row.querySelector("[data-appliance-apply-review-checkbox]")
+    : state.focused.control === "format"
+      ? row.querySelectorAll("[data-esx-format-confirmation]")[state.focused.formatIndex]
+      : null;
+  if (target instanceof HTMLElement) target.focus();
+}
+
+async function refreshApplianceApplyPlan() {
+  const elements = applianceApplyModalElements();
+  if (!(elements.modal instanceof HTMLDialogElement) || elements.modal.dataset.serverPlanAvailable !== "true") return;
+  const requestId = ++applianceApplyPlanRequest;
+  const selected = applianceApplySelectedValues(elements.modal);
+  const state = preserveApplianceApplyReviewState(elements.modal);
+  elements.modal.dataset.planLoading = "true";
+  elements.modal.dataset.planError = "";
+  delete elements.modal.dataset.planToken;
+  const oldToken = elements.reviewForm?.querySelector('[name="reviewed_plan"]');
+  if (oldToken instanceof HTMLInputElement) oldToken.value = "";
+  updateApplianceApplySelection();
+  const query = new URLSearchParams();
+  selected.forEach((unitId) => query.append("selected_units", unitId));
+  if (!selected.length) query.append("selected_units", "");
+  try {
+    const response = await fetch(`${managementUiPath("/appliance-apply/review")}?${query.toString()}`, {
+      credentials: "same-origin", headers: { Accept: "application/json" },
+    });
+    const payload = await response.json();
+    if (!isCurrentApplianceApplyPlanRequest(requestId)) return;
+    if (!response.ok) throw new Error(payload.detail || "Unable to update the appliance plan.");
+    if (payload.active_task) {
+      ++applianceApplyPlanRequest;
+      elements.modal.dataset.planLoading = "false";
+      if (elements.submit instanceof HTMLButtonElement) {
+        elements.submit.classList.add("hidden");
+        elements.submit.disabled = true;
+      }
+      if (applianceApplyPollController) await applianceApplyPollController.observeTask(payload.active_task);
+      else renderApplianceApplyTask(payload.active_task);
+      return;
+    }
+    const rows = Array.isArray(payload.units) ? payload.units : [];
+    if (document.activeElement !== state.active) state.focused = null;
+    elements.reviewList?.replaceChildren(...rows.map(applianceApplyReviewRow));
+    elements.modal.dataset.planToken = String(payload.plan_token || "");
+    elements.modal.dataset.planError = String(payload.plan_error || "");
+    elements.modal.dataset.requestedUnits = JSON.stringify(
+      Array.isArray(payload.requested_units) ? payload.requested_units : selected,
+    );
+    const token = elements.reviewForm?.querySelector('[name="reviewed_plan"]');
+    if (token instanceof HTMLInputElement) token.value = String(payload.plan_token || "");
+    if (elements.status instanceof HTMLElement) {
+      const pendingCount = Number.isFinite(Number(payload.pending_count)) ? Number(payload.pending_count) : rows.length;
+      elements.status.className = `status-pill ${pendingCount ? "warn" : "good"}`;
+      elements.status.textContent = `${pendingCount} pending`;
+    }
+    if (elements.submit instanceof HTMLButtonElement) {
+      elements.submit.classList.toggle("hidden", rows.length === 0 && !payload.plan_error);
+    }
+    restoreApplianceApplyReviewState(elements.modal, state);
+    updateApplianceApplySelection();
+  } catch (error) {
+    if (!isCurrentApplianceApplyPlanRequest(requestId)) return;
+    elements.modal.dataset.planError = error instanceof Error ? error.message : "Unable to update the appliance plan.";
+    if (elements.status instanceof HTMLElement) {
+      elements.status.className = "status-pill warn";
+      elements.status.textContent = "plan needs attention";
+    }
+    updateApplianceApplySelection();
+  } finally {
+    if (isCurrentApplianceApplyPlanRequest(requestId)) {
+      elements.modal.dataset.planLoading = "false";
+      updateApplianceApplySelection();
+    }
   }
 }
 
@@ -19599,12 +19845,30 @@ async function submitApplianceApplyForm(form) {
     setApplianceApplyModalError(message);
   };
   setSubmitError("");
+  if (elements.modal.dataset.serverPlanAvailable === "true"
+    && (elements.modal.dataset.planLoading === "true" || elements.modal.dataset.planError || !elements.modal.dataset.planToken)) {
+    setSubmitError("Wait for a valid current appliance plan before submitting.");
+    return false;
+  }
   if (elements.submit instanceof HTMLButtonElement) {
     elements.submit.disabled = true;
     elements.submit.textContent = "Creating task…";
   }
   try {
     const body = new FormData(form);
+    if (elements.modal.dataset.serverPlanAvailable === "true") {
+      body.set("reviewed_plan", elements.modal.dataset.planToken || "");
+      body.delete("requested_units");
+      let requestedUnits = [];
+      try {
+        requestedUnits = JSON.parse(elements.modal.dataset.requestedUnits || "[]");
+      } catch (_error) {
+        requestedUnits = [];
+      }
+      if (Array.isArray(requestedUnits)) {
+        requestedUnits.forEach((unitId) => body.append("requested_units", String(unitId)));
+      }
+    }
     const checkedDisabled = Array.from(elements.modal.querySelectorAll(
       "[data-appliance-apply-review-checkbox]:checked:disabled",
     ));
@@ -19629,6 +19893,7 @@ async function submitApplianceApplyForm(form) {
     if (elements.submit instanceof HTMLButtonElement) {
       elements.submit.disabled = false;
       elements.submit.textContent = "Submit appliance changes";
+      updateApplianceApplySelection();
     }
   }
 }
@@ -19641,6 +19906,8 @@ async function pollGlobalApplianceApply() {
 function initializeApplianceApplyProgress() {
   const elements = applianceApplyModalElements();
   if (!(elements.modal instanceof HTMLDialogElement)) return;
+  elements.selectionSummary?.setAttribute("aria-live", "polite");
+  elements.selectionSummary?.setAttribute("aria-atomic", "true");
   document.addEventListener("click", (event) => {
     const trigger = event.target.closest("[data-appliance-apply-open]");
     if (!trigger) return;
@@ -19655,7 +19922,15 @@ function initializeApplianceApplyProgress() {
     if (elements.modal.dataset.active !== "true") elements.modal.close();
   });
   elements.resultClose?.addEventListener("click", () => elements.modal.close());
-  elements.reviewList?.addEventListener("change", updateApplianceApplySelection);
+  elements.reviewList?.addEventListener("change", (event) => {
+    if (elements.modal.dataset.serverPlanAvailable === "true"
+      && event.target instanceof HTMLInputElement
+      && event.target.matches("[data-appliance-apply-review-checkbox]")) {
+      refreshApplianceApplyPlan().catch(() => {});
+      return;
+    }
+    updateApplianceApplySelection();
+  });
   elements.reviewForm?.addEventListener("submit", (event) => {
     event.preventDefault();
     submitApplianceApplyForm(elements.reviewForm).catch(() => {});

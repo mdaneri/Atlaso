@@ -2,7 +2,11 @@
 
 import pytest
 
-from tests.routers.ui.helpers import assert_apply_redirect, login
+from tests.routers.ui.helpers import (
+    assert_apply_redirect,
+    login,
+    submit_reviewed_appliance_apply,
+)
 
 
 def test_firewall_preview_derives_dns_dhcp_rule_from_dhcp_scope_vlan(client):
@@ -242,7 +246,7 @@ def test_firewall_page_create_rule_and_apply_task(client):
     assert created.status_code == 303
     assert "allow-vcenter" in client.get("/firewall").text
 
-    apply_response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "firewall"})
+    apply_response = submit_reviewed_appliance_apply(client, "/appliance-apply", data={"csrf": csrf, "selected_units": "firewall"})
     assert_apply_redirect(apply_response)
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()
