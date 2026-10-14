@@ -27,6 +27,7 @@ function lifecycleScenario(failureMode = null) {
   let claimCalls = 0;
   let networkUnavailable = false;
   let navigationResponse = null;
+  const fetchCalls = [];
 
   function cacheKey(request) {
     return typeof request === "string" ? request : new URL(request.url).pathname + new URL(request.url).search;
@@ -57,7 +58,8 @@ function lifecycleScenario(failureMode = null) {
 
   const context = vm.createContext({
     caches,
-    fetch: async (asset) => {
+    fetch: async (asset, options) => {
+      fetchCalls.push({ asset, options });
       if (networkUnavailable) throw new Error("simulated offline state");
       if (typeof asset === "object" && navigationResponse) return navigationResponse;
       if (asset === requiredFailureAsset && failureMode === "network") {
@@ -85,6 +87,7 @@ function lifecycleScenario(failureMode = null) {
     },
     URL,
     Response,
+    Headers,
   });
   vm.runInContext(workerSource, context);
 
@@ -115,6 +118,7 @@ function lifecycleScenario(failureMode = null) {
     dispatch,
     dispatchFetch,
     entries,
+    fetchCalls,
     setNavigationResponse(value) { navigationResponse = value; },
     setNetworkUnavailable(value) { networkUnavailable = value; },
     get skipWaitingCalls() { return skipWaitingCalls; },
@@ -137,7 +141,7 @@ test("controlled update 503 remains authoritative instead of using the offline s
     method: "GET",
     mode: "navigate",
     url: "https://atlaso.example/ui/management/appliance-update",
-    headers: { get() { return "text/html"; } },
+    headers: new Headers({ Accept: "text/html" }),
   });
 
   assert.equal(response, controlled);
@@ -191,7 +195,25 @@ test("asset and offline fallback reads ignore overlapping unrelated cache entrie
     method: "GET",
     mode: "navigate",
     url: "https://atlaso.example/ui/management/dashboard",
-    headers: { get() { return "text/html"; } },
+    headers: new Headers({ Accept: "text/html" }),
   });
   assert.equal(offlineResponse.source, "network");
+});
+
+test("only document navigation carries the authentication recovery marker", async () => {
+  const scenario = lifecycleScenario();
+  await scenario.dispatchFetch({
+    method: "GET", mode: "navigate",
+    url: "https://atlaso.example/ui/management/dashboard",
+    headers: new Headers({ Accept: "text/html" }),
+  });
+  const forwarded = scenario.fetchCalls.at(-1);
+  assert.equal(forwarded.options.cache, "no-store");
+  assert.equal(forwarded.options.headers.get("X-Atlaso-Browser-Navigation"), "1");
+  assert.equal(forwarded.options.headers.get("Accept"), "text/html");
+  await scenario.dispatchFetch({
+    method: "GET", mode: "no-cors", url: "https://atlaso.example/static/app.js",
+    headers: new Headers(),
+  });
+  assert.equal(scenario.fetchCalls.at(-1).options, undefined);
 });

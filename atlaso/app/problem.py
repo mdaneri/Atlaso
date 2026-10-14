@@ -1,16 +1,19 @@
 """Render consistent problem responses and browser-login redirects."""
 
-from urllib.parse import quote
+from urllib.parse import urlencode
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from atlaso.app.browser_requests import LOGIN_FORM_EXPIRED_KEY, is_browser_navigation
 from atlaso.app.ui_routes import (
+    MANAGEMENT_UI_ROOT,
     PUBLIC_UI_ROOT,
     management_ui_path,
     public_ui_path,
+    safe_management_return_path,
     safe_public_return_path,
 )
 
@@ -37,17 +40,15 @@ def should_redirect_to_login(request: Request, exc: HTTPException) -> bool:
     """
     if exc.status_code != 401 or exc.detail != "Authentication required":
         return False
-    fetch_mode = request.headers.get("Sec-Fetch-Mode", "").strip().lower()
-    accept = request.headers.get("Accept", "").lower()
-    if fetch_mode and fetch_mode != "navigate":
-        return False
-    if "application/json" in accept and "text/html" not in accept:
+    if not is_browser_navigation(request):
         return False
     path = request.url.path
-    return not (
-        path == "/openapi.json"
-        or path.startswith("/api/")
-        or path in {"/api/docs", "/api/redoc"}
+    return (
+        path == MANAGEMENT_UI_ROOT or path.startswith(f"{MANAGEMENT_UI_ROOT}/")
+        or path == PUBLIC_UI_ROOT or path.startswith(f"{PUBLIC_UI_ROOT}/")
+        # The established management return-target contract also admits its
+        # authenticated certificate downloads outside the browser namespace.
+        or safe_management_return_path(path) == path
     )
 
 
@@ -97,6 +98,30 @@ def install_problem_handlers(app: FastAPI) -> None:
             request: Incoming HTTP request.
             exc: Exception that caused the operation to fail.
         """
+        login_defaults = {
+            management_ui_path("/login"): MANAGEMENT_UI_ROOT,
+            public_ui_path("/login"): public_ui_path("/terminal"),
+            public_ui_path("/ca/login"): public_ui_path("/ca"),
+            public_ui_path("/ca/requests/login"): public_ui_path("/ca/requests"),
+            "/PROD/login": "/PROD/",
+        }
+        if (
+            exc.status_code == 403 and exc.detail == "Invalid CSRF token"
+            and request.method == "POST" and request.url.path in login_defaults
+            and is_browser_navigation(request)
+        ):
+            # Reject the original submission. The following GET issues fresh
+            # CSRF state; never authenticate or replay the submitted credentials.
+            request.session[LOGIN_FORM_EXPIRED_KEY] = True
+            target = login_defaults[request.url.path]
+            if request.url.path == management_ui_path("/login"):
+                form = await request.form()
+                target = safe_management_return_path(str(form.get("next") or ""))
+                if target.split("?", 1)[0] == request.url.path:
+                    target = MANAGEMENT_UI_ROOT
+            return RedirectResponse(
+                f"{request.url.path}?{urlencode({'next': target}, safe='/')}", status_code=303,
+            )
         if should_redirect_to_login(request, exc):
             target = request.url.path
             if request.url.query:
@@ -113,7 +138,10 @@ def install_problem_handlers(app: FastAPI) -> None:
                     target = public_ui_path("/terminal")
             else:
                 login_path = management_ui_path("/login")
-            return RedirectResponse(f"{login_path}?next={quote(target, safe='/?=&%')}", status_code=303)
+                target = safe_management_return_path(target)
+            if request.method not in {"GET", "HEAD"}:
+                target = public_ui_path("/terminal") if public_plane else MANAGEMENT_UI_ROOT
+            return RedirectResponse(f"{login_path}?{urlencode({'next': target}, safe='/')}", status_code=303)
         title = "Unauthorized" if exc.status_code == 401 else "Request failed"
         return problem_response(
             status_code=exc.status_code,
