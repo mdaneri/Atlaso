@@ -4372,6 +4372,8 @@ insufficient scope receives <code>403 Forbidden</code>. Missing, invalid, expire
 </tbody>
 </table>
 <p>Atlaso errors use the <code>ProblemDetails</code> contract:</p>
+<p>API and background fetch clients retain structured authentication and permission errors. Full browser navigation
+uses the appropriate login recovery surface; this does not change the API error status or response contract.</p>
 <div class="language-text highlight"><pre><span></span><code>{
   &quot;type&quot;: &quot;https://atlaso.example/problems/validation&quot;,
   &quot;title&quot;: &quot;Request validation failed&quot;,
