@@ -2659,6 +2659,7 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                             '-ExpectedPersistentVmIdentitySha256', [string]$persistedReceipt.Record.persistent_vm_identity_sha256
                         )
                     }
+                    if ($OwnershipContext) { Assert-AtlasoTestVmCheckoutSource -Context $OwnershipContext }
                     Invoke-AtlasoBoundedProcess `
                         -FilePath $powerShellPath `
                         -ArgumentList (@(
@@ -3398,6 +3399,10 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
                     param($Executable, $Arguments, $Context)
                     Invoke-AtlasoTestVmOwnedClone -Context $Context -FilePath $Executable -ArgumentList $Arguments -TimeoutSeconds $Context.CloneTimeoutSeconds
                 }
+                MutationGuard = {
+                    param($Context)
+                    Assert-AtlasoTestVmCheckoutSource -Context $Context
+                }
             }
         }
         $cloneSourcePin = $null
@@ -3516,6 +3521,7 @@ if (-not $WhatIfPreference) {
             -ExpectedPhase staged `
             -Phase secret-child-active
         try {
+            Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
             Invoke-OnePasswordDevelopmentCaChild `
                 -EnvironmentId $OnePasswordEnvironmentId `
                 -OpPath $resolvedOpPath `
@@ -3551,6 +3557,7 @@ if (-not $WhatIfPreference) {
             -ExpectedPhase staged `
             -Phase vm-start-child-active
         try {
+            Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
             Invoke-AtlasoBoundedProcess `
                 -FilePath $powerShellPath `
                 -ArgumentList @(
@@ -3739,6 +3746,7 @@ if (-not $WhatIfPreference) {
                             '-ExpectedPersistentVmIdentitySha256', [string]$rollbackReceipt.Record.persistent_vm_identity_sha256
                         )
                     }
+                    Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
                     Invoke-AtlasoBoundedProcess `
                         -FilePath (Get-Process -Id $PID).Path `
                         -ArgumentList (@(

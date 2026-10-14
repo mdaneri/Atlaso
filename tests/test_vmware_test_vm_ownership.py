@@ -29,7 +29,7 @@ def ps_literal(value: str | Path) -> str:
 
 
 @pytest.mark.parametrize("caller", ["rollback", "persisted"])
-@pytest.mark.parametrize("admission", ["valid", "missing", "human", "foreign"])
+@pytest.mark.parametrize("admission", ["valid", "missing", "human", "foreign", "drift"])
 def test_failed_creation_removal_callers_require_original_identity_selectors(tmp_path, caller, admission):
     """Execute actual removal caller blocks and refuse provider launch when receipt admission fails.
 
@@ -60,13 +60,17 @@ def test_failed_creation_removal_callers_require_original_identity_selectors(tmp
     setup += "function Invoke-AtlasoBoundedProcess { param($FilePath,$ArgumentList,$TimeoutSeconds,$Action) "
     setup += "if ($ownershipContext.Enabled -and -not $script:checked) { throw 'Provider preceded receipt validation' }; "
     setup += "$ArgumentList | ConvertTo-Json -Compress }; "
+    setup += "function Assert-AtlasoTestVmCheckoutSource { param($Context) "
+    setup += "throw 'Source drift refused' }; " if admission == "drift" else "}; "
     # The production block discards provider output; the fixture captures invocation arguments instead.
     setup += block.replace("| Out-Null", f"| Set-Content -LiteralPath {ps_literal(tmp_path / 'args.json')}")
     result = run_powershell(setup, check=False)
     captured = tmp_path / "args.json"
-    if admission in {"missing", "foreign"}:
+    if admission in {"missing", "foreign", "drift"}:
         assert result.returncode != 0
-        message = "Persisted cleanup requires the original receipt" if admission == "foreign" and caller == "persisted" else "Original receipt missing"
+        message = "Source drift refused" if admission == "drift" else (
+            "Persisted cleanup requires the original receipt" if admission == "foreign" and caller == "persisted" else "Original receipt missing"
+        )
         assert message in result.stderr
         assert not captured.exists()
     else:
@@ -126,6 +130,72 @@ def ownership_prefix() -> str:
         f"Import-Module {ps_literal(VMWARE / 'Atlaso.WorkstationCleanup.psm1')} -Force; "
         f". {ps_literal(VMWARE / 'Atlaso.TestVmOwnership.ps1')}; "
     )
+
+
+@pytest.mark.parametrize("nonempty", [False, True])
+def test_directory_publication_failure_retires_only_original_empty_leaf(tmp_path, nonempty):
+    """Publication failure retires the retained empty object and preserves inserted artifacts.
+
+    Args:
+        tmp_path: Original pytest-owned temporary root.
+        nonempty: Whether a concurrently inserted ordinary file prevents retirement.
+    """
+    destination = tmp_path / "failed-leaf"
+    callback = "param($path,$identity) $blocked=$false; try { [IO.Directory]::Move($path,($path+'-replacement')) } catch { $blocked=$true }; "
+    callback += "if (-not $blocked) { throw 'Original handle did not exclude replacement' }; "
+    if nonempty:
+        callback += "[IO.File]::WriteAllText((Join-Path $path 'preserve.txt'),'foreign child'); "
+    callback += "throw 'Injected directory receipt publication failure'"
+    result = run_powershell(
+        ownership_prefix() + f"$publish=[Action[string,string]]{{{callback}}}; "
+        + f"[Atlaso.WorkstationFileIdentity]::CreateAndPinOrdinaryDirectoryPath({ps_literal(destination)},$publish)",
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "Injected directory receipt publication failure" in result.stderr
+    assert destination.exists() == nonempty
+    if nonempty:
+        assert (destination / "preserve.txt").read_text() == "foreign child"
+    else:
+        retry = run_powershell(
+            ownership_prefix()
+            + f"$pin=[Atlaso.WorkstationFileIdentity]::CreateAndPinOrdinaryDirectoryPath({ps_literal(destination)},[Action[string,string]]{{param($path,$identity)}}); $pin.Dispose()"
+        )
+        assert retry.returncode == 0
+
+
+@pytest.mark.parametrize("drift", [False, True])
+def test_post_signer_start_revalidates_source_before_provider_launch(tmp_path, drift):
+    """The actual post-signer launch block refuses source drift before calling the provider.
+
+    Args:
+        tmp_path: Original pytest-owned temporary root.
+        drift: Whether the source guard reports a late edit.
+    """
+    script = (VMWARE / "create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
+    phase = script.index("-Phase vm-start-child-active", script.index("if (-not $createdThisInvocation"))
+    start = script.index("Assert-AtlasoTestVmCheckoutSource", phase)
+    end = script.index("| Out-Null", start) + len("| Out-Null")
+    block = script[start:end].replace("$PSScriptRoot", ps_literal(VMWARE))
+    sentinel = tmp_path / "provider-called.txt"
+    setup = "$ErrorActionPreference='Stop'; $ownershipContext=@{Enabled=$true}; $powerShellPath=(Get-Process -Id $PID).Path; "
+    setup += "$targetVmx='public.vmx'; $resolvedVmrunPath='public-provider'; $TimeoutSeconds=10; $script:checked=$false; "
+    setup += "function Assert-AtlasoTestVmCheckoutSource { param($Context) "
+    setup += "throw 'Source drift refused' }; " if drift else "$script:checked=$true }; "
+    setup += "function Invoke-AtlasoBoundedProcess { param($FilePath,$ArgumentList,$TimeoutSeconds,$Action) "
+    setup += "if (-not $script:checked) { throw 'Provider preceded byte validation' }; "
+    setup += f"[IO.File]::WriteAllText({ps_literal(sentinel)},'called') }}; "
+    result = run_powershell(setup + block, check=False)
+    assert (result.returncode != 0) if drift else (result.returncode == 0)
+    assert sentinel.exists() == (not drift)
+
+
+def test_post_clone_nic_helper_requires_parent_source_guard():
+    """The low-level mutable NIC helper receives the admitted parent's immediate source guard."""
+    parent = (VMWARE / "create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
+    child = (VMWARE / "create-atlaso-vm.ps1").read_text(encoding="utf-8")
+    assert "MutationGuard = {\n                    param($Context)\n                    Assert-AtlasoTestVmCheckoutSource -Context $Context" in parent
+    assert "if ($MutationGuard) { & $MutationGuard $CloneCreatedContext }\n& (Join-Path $PSScriptRoot 'set-test-nics.ps1')" in child
 
 
 def test_exclusive_destination_retains_creation_identity_and_allows_provider_children(tmp_path):
@@ -255,7 +325,7 @@ def test_prepared_directory_recovery_requires_original_receipt_and_no_completed_
         assert (tmp_path / "checkout" / "test-vm").exists()
 
 
-@pytest.mark.parametrize("mode", ["active", "publication", "legacy", "whatif"])
+@pytest.mark.parametrize("mode", ["active", "publication", "directory", "legacy", "whatif"])
 def test_clone_process_publication_and_active_controller_fail_closed(tmp_path, mode):
     """No child starts without publication and active or legacy controllers prevent recovery.
 
@@ -271,10 +341,17 @@ def test_clone_process_publication_and_active_controller_fail_closed(tmp_path, m
     setup += f"$ctx=New-AtlasoTestVmOwnershipIntent -Context $ctx -SourceVmxPath {ps_literal(source)} "
     setup += f"-SourceVmxIdentity ([Atlaso.WorkstationFileIdentity]::Get({ps_literal(source)})); "
     setup += "function Assert-AtlasoTestVmCheckoutSource { param($Context) }; "
-    if mode == "publication":
+    if mode in {"publication", "directory"}:
         sentinel = tmp_path / "child-started.txt"
-        setup += "$collision=Join-Path $evidence ('atlaso-test-vm-clone-process-'+$ctx.InvocationId+'.json'); "
-        setup += "[IO.File]::WriteAllText($collision,'preserve'); $failure=$null; "
+        if mode == "directory":
+            (tmp_path / "checkout").mkdir()
+            setup += "$script:publisher=${function:Publish-AtlasoTestVmOwnershipRecord}; "
+            setup += "function Publish-AtlasoTestVmOwnershipRecord { param($Context,$Record,$Kind) "
+            setup += "if ($Kind -eq 'directory') { throw 'Injected directory publication failure' }; "
+            setup += "& $script:publisher -Context $Context -Record $Record -Kind $Kind }; $failure=$null; "
+        else:
+            setup += "$collision=Join-Path $evidence ('atlaso-test-vm-clone-process-'+$ctx.InvocationId+'.json'); "
+            setup += "[IO.File]::WriteAllText($collision,'preserve'); $failure=$null; "
         child = f"[IO.File]::WriteAllText({ps_literal(sentinel)},'ran')"
         setup += "try { Invoke-AtlasoTestVmOwnedClone -Context $ctx -FilePath (Get-Process -Id $PID).Path "
         setup += f"-ArgumentList @('-NoProfile','-NonInteractive','-Command',{ps_literal(child)}) -TimeoutSeconds 30 "

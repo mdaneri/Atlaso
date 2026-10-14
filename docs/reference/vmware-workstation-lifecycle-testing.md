@@ -1187,7 +1187,10 @@ Before provider cloning, the wrapper exclusively creates each missing destinatio
 parent and immediately publishes an immutable `atlaso-test-vm-directory-<id>.json` creation record. It retains the
 original directory handles with writer and replacement exclusion through cloning and the original VM receipt callback.
 A concurrently inserted directory or junction is refused rather than adopted. Failed preparation preserves its
-published records and any incomplete directory; it does not invent a completed VM receipt. Retry an incomplete
+published records. If directory-receipt publication fails, the still-suspended clone cannot resume and the newly
+created empty object is retired through its retained creation handle. Nonempty retirement refuses and preserves
+inserted artifacts. Successfully recorded but incomplete destinations retain their
+original records; preparation does not invent a completed VM receipt. Retry an incomplete
 canonical output with `-RecoverPreparedDirectory`, `-PreparedDirectoryReceiptPath`, and
 `-PreparedDirectoryReceiptSha256` using the selectors emitted at its original preparation. This is a cleanup-only
 invocation: it rejects creation options before removal and exits without cloning; retry creation separately.
@@ -1222,6 +1225,8 @@ network preparation, recovery/removal, disk reset and clone preparation; preflig
 Each boundary also rejects assume-unchanged/skip-worktree entries and independently hashes all tracked file bytes
 against the admitted index, applying Git's normal clean conversion for checkout line endings. Cached status or
 fsmonitor results cannot substitute for this byte verification; index changes or hashing failures refuse mutation.
+The source guard also runs immediately before post-clone signer staging, startup and immediate/persisted removal
+child launches. Late source drift preserves the VM rather than executing changed helper code.
 Never manufacture an original receipt from a later snapshot, edit a receipt, or delete an incomplete
 publication to make admission pass. `-WhatIf` publishes no receipts and performs no credential or VM mutation.
 

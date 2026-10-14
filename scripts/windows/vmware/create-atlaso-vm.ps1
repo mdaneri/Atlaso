@@ -35,6 +35,8 @@ Optional lifecycle ownership callback invoked with the newly cloned directory an
 Explicit parent ownership data forwarded to the creation callback without consulting child script variables.
 .PARAMETER CloneExecutor
 Optional parent-owned executor that records a suspended clone and prepares its directory before resuming it.
+.PARAMETER MutationGuard
+Optional parent-owned source validator invoked before post-clone configuration and mutable helper launch.
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -57,7 +59,8 @@ param(
     [switch]$SkipLabNetworkAdapters,
     [scriptblock]$CloneCreated,
     [object]$CloneCreatedContext,
-    [scriptblock]$CloneExecutor
+    [scriptblock]$CloneExecutor,
+    [scriptblock]$MutationGuard
 )
 
 $ErrorActionPreference = 'Stop'
@@ -377,12 +380,14 @@ if ($null -ne $CloneCreated) {
 }
 
 $null = Get-AtlasoVmwarePayloadLayout -VmxPath $targetVmx -RequireExactlyTwoVmdks
+if ($MutationGuard) { & $MutationGuard $CloneCreatedContext }
 Set-VmxValue -Path $targetVmx -Key 'displayName' -Value $Name
 Set-VmxValue -Path $targetVmx -Key 'disk.EnableUUID' -Value 'TRUE'
 New-DataVmdk -Path $resolvedDepotVmdkPath -Size $DepotDiskSize -Label 'VCF Offline Depot'
 New-DataVmdk -Path $resolvedBackupVmdkPath -Size $BackupDiskSize -Label 'VCF Backups'
 Set-VmxScsiDisk -Path $targetVmx -Unit 2 -DiskPath $resolvedDepotVmdkPath
 Set-VmxScsiDisk -Path $targetVmx -Unit 3 -DiskPath $resolvedBackupVmdkPath
+if ($MutationGuard) { & $MutationGuard $CloneCreatedContext }
 & (Join-Path $PSScriptRoot 'set-test-nics.ps1') `
     -VmxPath $targetVmx `
     -ManagementNetwork $ManagementNetwork `

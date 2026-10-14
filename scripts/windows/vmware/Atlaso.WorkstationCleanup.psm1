@@ -367,7 +367,7 @@ namespace Atlaso
                                 RootDirectory = parent.DangerousGetHandle(), ObjectName = name, Attributes = 0x40 };
                             IntPtr raw;
                             IoStatusBlock status;
-                            int result = NtCreateFile(out raw, 0x00100081, ref attributes, out status,
+                            int result = NtCreateFile(out raw, 0x00110081, ref attributes, out status,
                                 IntPtr.Zero, 0x10, FileShareRead, 2, 0x00200021, IntPtr.Zero, 0);
                             if (result < 0) throw new InvalidOperationException("Exclusive directory creation refused: " + result);
                             handle = new SafeFileHandle(raw, true);
@@ -391,7 +391,18 @@ namespace Atlaso
                         string identity = String.Format("{0:X8}:{1:X8}{2:X8}",
                             information.VolumeSerialNumber, information.FileIndexHigh, information.FileIndexLow);
                         pins.Created.Add(current, identity);
-                        publish(current, identity);
+                        try { publish(current, identity); }
+                        catch (Exception publicationFailure)
+                        {
+                            // Only this just-created object can be retired. Retain
+                            // its original handle and let nonempty refusal preserve
+                            // any concurrently inserted artifacts.
+                            byte delete = 1;
+                            if (!SetFileInformationByHandle(handle, 4, ref delete, 1))
+                                throw new AggregateException("Directory publication failed and original empty-directory retirement was refused.",
+                                    publicationFailure, new Win32Exception(Marshal.GetLastWin32Error()));
+                            throw;
+                        }
                     }
                     parent = handle;
                 }
