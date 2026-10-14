@@ -411,6 +411,29 @@ captured state requires it. Each captured artifact, link, and later runtime laye
 backup is reported as an incomplete rollback but does not prevent restoration attempts for the remaining network,
 firewall, nginx, Atlaso, and readiness layers. Restored file bytes and every affected parent-directory entry are synced
 before the durable transaction marker can be cleared; a sync failure keeps rollback incomplete for startup retry.
+Startup handoff recovery uses two phases. `management-handoff recover --startup` restores the native snapshots,
+address ownership, routes, firewall, TLS and nginx configuration, but skips the final HTTP probes and retains the
+journal with `rolled_back=false` and `readiness_pending=true`. The application keeps the durable mutation lock.
+After ASGI startup can serve requests, one tracked background consumer invokes full recovery, including the old-path
+and loopback HTTP readiness checks. Startup captures the exact retained handoff job IDs before admitting requests;
+confirmation targets only those jobs and is not scheduled for ordinary interrupted Applies.
+Only actual successful rollback retires the journal and releases the lock;
+failed confirmation remains pending. Shutdown waits for the bounded consumer instead of detaching it.
+
+Runtime additions to the captured old listener set exclude tentative, conflicted, deprecated, expired, and unpreferred
+addresses, matching normal inventory eligibility. Explicitly configured listener addresses remain mandatory.
+After restored-link reconfiguration, rollback waits up to thirty seconds for three consecutive complete native
+observations of the original management addresses on their snapshotted interface, MAC, and exact CIDR. Every observed
+interface must have a complete address inventory, so omitted competing addresses cannot prove sole ownership. DHCP IPv4
+requires a current networkd lease bound to that address and interface; a retained static address or a lease for another
+address cannot satisfy recovery. Snapshots capture static IPv4 intent for management VLANs from their prior configured
+CIDR and parent. Static and dynamic IPv6 addresses retain their native source checks. Rollback checks
+address ownership again before nginx validation and reload-or-restart, so asynchronous DHCP reacquisition cannot race
+an address-specific listener. The VCF Offline Depot listener restorer also rechecks ownership and nginx validation
+immediately before its nginx restart. Missing, conflicting, unstable, or unprovable address ownership prevents nginx activation
+and keeps the journal for supported recovery. Older journals lacking the original identity or addressing intent remain
+incomplete rather than acquiring ownership from today's desired state. Existing route/source equivalence, resolver,
+DNS, TLS, and old-path readiness checks still must succeed before rollback can retire the journal.
 Rollback explicitly reconfigures every pre-existing candidate link and
 removes a
 candidate-only VLAN after restoring its files. A previously absent firewall state is restored by disabling/stopping the
@@ -1014,13 +1037,14 @@ Global apply `stage-tool` extracts the uploaded archive under `/opt/atlaso/vcf-d
 `/opt/atlaso/vcf-download-tool/vcf-download-tool` wrapper for helper-owned apply work, records the tool version from
 `--version`, and applies `application-prodv2.properties` to both the helper extraction tree and
 `/var/lib/atlaso/vcfDownloadTool/active-tool/conf/`. Atlaso preserves the current software depot ID during ordinary
-settings and download-profile applies. It runs `vcf-download-tool configuration generate --software-depot-id` only
-when no ID has been recorded or the operator explicitly confirms **Refresh software depot ID**. The helper then runs
+settings and download-profile applies. Global Apply runs `vcf-download-tool configuration generate --software-depot-id`
+only when no ID has been recorded. Explicit refresh belongs to the dedicated Software Depot ID task. The helper then runs
 `vcf-download-tool configuration get --software-depot-id` and records only the unambiguous persisted readback value;
 it does not trust the first UUID printed during first-run initialization. A generation failure leaves the previous ID
 recorded. Successful generation followed by failed or ambiguous readback clears the displayed ID because VCFDT may
-already have replaced its runtime identity. The refresh icon submits explicit refresh intent through the same global
-`/ui/management/appliance-apply` workflow for `vcf_offline_depot`; it is not a service-specific helper call.
+already have replaced its runtime identity. VCFDT configuration review dispatches the dedicated identity task for
+explicit replacement; global `/ui/management/appliance-apply` rejects a form-only refresh flag. The dedicated task
+stages tool inputs and reads back the identity without applying nginx or updating the depot Apply baseline.
 Download tokens and activation codes use the combined VCFDT configuration wizard's state-aware credential selector and
 conditional upload-or-paste step; storage keys remain separate for compatibility.
 Metadata and binaries profiles use whichever credential was staged most recently: the runtime download-token file used

@@ -1,5 +1,6 @@
 """Implement audit behavior."""
 
+import sys
 from types import SimpleNamespace
 
 from sqlalchemy.orm import Session
@@ -19,7 +20,7 @@ def record_audit(
     detail: str | None = None,
     request_id: str | None = None,
     emit_operational: bool = True,
-    post_commit_best_effort: bool = False,
+    post_commit_best_effort: bool = True,
 ) -> AuditEvent:
     """Persist audit.
 
@@ -61,6 +62,10 @@ def record_audit(
         # Optional reporting must not turn a persisted success into a rollback.
         if not post_commit_best_effort:
             raise
+        try:
+            print("event=audit_post_commit_reporting_failed", file=sys.stderr)
+        except Exception:  # noqa: BLE001 - Best-effort reporting must swallow every stderr sink failure.
+            pass
     return event
 
 

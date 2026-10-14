@@ -67,7 +67,7 @@ also validate listener conflicts. See [Traffic Publishing](traffic-publishing.md
 
 1. Finish editing the desired state on the relevant service pages.
 2. Open **Review appliance changes** from the lower-left sidebar card or a page-level pending-change action.
-3. Read the status of every changed unit:
+3. Read the status of every changed unit and every required dependency:
 
    | Status | Meaning | What to do |
    | --- | --- | --- |
@@ -78,7 +78,19 @@ also validate listener conflicts. See [Traffic Publishing](traffic-publishing.md
 4. Expand each selected unit and inspect its summary and rendered difference.
 5. Clear the checkbox for a valid unit that should remain pending for a later run.
 
-Valid changed units are selected by default; invalid units are not. Unselected units remain pending after submission.
+Valid changed units are selected by default; invalid independent units are not. Unselected changes remain pending.
+The review also lists unchanged components that must run for management protection, certificate deployment, DNS
+publication, or routing and Firewall consistency. These required dependencies stay checked and locked, with a reason
+beside each component. Clear the originating change to defer its dependencies; the server recomputes the plan after
+each selection change. A required component needing attention blocks submission until its validation is resolved.
+
+The summary shows changed components, required dependencies, explicit choices, and complete scope. For example,
+**2 changed components + 5 required dependencies = 7 components to process** means one task with seven components.
+Network/WAN dependencies protect management access and replay translation even when they have no pending edits.
+
+Submission revalidates reviewed snapshots and dependencies. Validation clients review unchanged units for runtime drift.
+Clients submit the token, roots, and full scope. Reopen changed plans in **Review appliance changes** before submission.
+A changed storage manifest or disk identity clears any typed format confirmation; inspect the disk and confirm again.
 
 Select **Network** to verify DHCP/SLAAC listeners and **DNS/DHCP** to publish generated DNS, even after startup renewal.
 If applied listener ownership is unproven, apply the named service first. Inspect locked pending Certificate Authority,
@@ -99,30 +111,18 @@ If another session starts an Apply after the current one, the monitor finishes t
 
 Components run sequentially. On failure, Atlaso marks the rest **skipped**. Writes are locked while a master task
 is pending or running; read-only pages, task inspection, authentication, and safe cancellation remain available.
-A management-path change is the exception to independent component execution. Atlaso selects Certificate Authority,
-Network, Firewall, Appliance Settings, and Public Services together after all other dependencies expand, then runs one
-recoverable handoff. It retains the previous addresses, listener, firewall policy, and TLS identity until bounded Atlaso
-loopback, candidate nginx, dynamic-address, and host-facing `/openapi.json` checks prove the candidate ready.
-The transaction validates bundled TLS material, persists the candidate resolver and source-restricted firewall rules,
-and retires the old path only after readiness succeeds. Before publishing the applied Network baseline, Atlaso records
-the helper-confirmed DHCP or SLAAC address in observed interface state so the committed listener remains immediately
-eligible. On failure it restores the complete previous state and records the same actionable failing layer and rollback
-result on every bundled component.
-Successful baselines use the exact submitted snapshots, including applied resolver values; unrelated or concurrently
-saved Appliance Settings changes remain pending. A missing known-good Network baseline blocks mutation. Durable state
-and backups remain until the database commit is proven and acknowledged, so interruption or cleanup failure can retry
-rollback or acknowledgement safely. See the technical reference for the complete handoff and recovery contract.
+A management-path change runs related components as one recoverable handoff. Atlaso retains the previous addresses,
+listeners, firewall policy, and TLS identity until readiness checks prove the candidate ready. On failure it restores
+the previous state and records the failing layer and rollback result on each bundled component. A missing known-good
+Network baseline blocks mutation. Baselines use the submitted snapshots; unrelated or concurrent edits remain pending.
+See the [technical reference](../reference/appliance-apply-technical.md) for readiness, durable recovery, and commit contracts.
 
-Safe cancellation does not interrupt the component already running. Every helper or adapter command in that component
-continues to completion. After the component returns, Atlaso skips the remaining components and releases the mutation
-lock when the master task becomes terminal.
+Safe cancellation lets the running component finish. Every helper or adapter command in that component
+completes before remaining components are skipped and the terminal master task releases the mutation lock.
 
-An ordinary Appliance Settings Apply keeps management access online without restarting the Atlaso worker. It checks
-the front door before and after activation and restores the previous configuration if readiness fails. See the
-[technical reference](../reference/appliance-apply-technical.md) for durable recovery and interruption handling.
-The dialog still understands the bounded **Applying management settings; Atlaso is reconnecting to task status.** state
-when following a retained task created by an older release that contains authenticated restart metadata. Current
-Appliance Settings tasks do not create that restart window.
+An ordinary Appliance Settings Apply keeps management access online and restores the previous configuration if
+readiness fails. Retained tasks from older releases can show **Applying management settings; Atlaso is reconnecting
+to task status.** Current Appliance Settings tasks do not create that restart window.
 
 If that reconnect exceeds the bounded grace window, or a status failure is not part of the planned restart, the dialog
 instead shows **Live task status is temporarily unavailable** with a link-free instruction to open **Tasks** in another
@@ -165,18 +165,17 @@ Correlate their task IDs and timestamps with [Operational Logs](logs.md) and the
 Safe helper stages and return codes may be retained while the cause remains unknown. See
 [Important-event coverage](logs.md#important-event-coverage) for retained evidence and limits.
 
-If Atlaso restarts during an ordinary apply, startup fails the running child and master task, skips pending children,
-and releases the global lock. For an interrupted management handoff, the privileged helper first stops and verifies any
-surviving apply process, restores the captured previous runtime state, and records the recovery result.
-The same path runs immediately after a helper wait timeout because the fixed apply service can outlive its waiting
-process. Recovery uses a separate fixed service identity; before retrying, the helper stops and verifies any surviving
-recovery service so two rollback attempts cannot mutate the same network state concurrently.
-The helper retains that rollback state until Atlaso durably commits the bundled component results and baselines. If a
-restart occurs after that database commit, startup idempotently acknowledges the committed candidate instead of falsely
-claiming a rollback. A failed task whose helper acknowledgement or rollback is not proven retains the global Apply lock
-until startup or immediate exception recovery reconciles that state, even when an older task payload lacks the newer
-pending marker. Review the task before resubmitting.
-If a selected unit changes before execution, Atlaso rejects the task and asks for a new review.
+If Atlaso restarts during ordinary Apply, startup fails the running master and child, skips pending children, and unlocks.
+On interrupted handoff, the helper stops and verifies surviving Apply processes, restores state, and records recovery.
+Startup restores native networking and listeners before serving, retaining the journal and Apply lock. Bounded HTTP
+confirmation checks the old path and records rollback before releasing the lock; failure leaves recovery pending.
+Recovery also runs after helper timeout because the fixed Apply service can outlive its waiter. Before retry, the helper
+stops and verifies the separate fixed recovery service to prevent concurrent network mutations.
+
+The helper retains rollback state until Atlaso commits component results and baselines. If restart follows that commit,
+startup idempotently acknowledges the candidate instead of claiming rollback. Unproven helper acknowledgement or rollback
+keeps the Apply lock until startup or immediate recovery reconciles it, including older tasks without the pending marker.
+Before resubmitting, review the task; a changed selected unit is rejected and requires a new review.
 
 ## Safety boundaries
 

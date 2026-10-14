@@ -184,6 +184,11 @@ Atlaso errors use the `ProblemDetails` contract:
 The `X-Request-ID` response header and the `request_id` problem field identify the same request for troubleshooting.
 Record them without recording credentials or sensitive payload values.
 
+For audited mutations using `record_audit`, optional App-log publication after the audit commit cannot turn a
+committed save into a failure response. If retained App-log capture fails, the saved state and Audit event remain
+durable; investigate the value-free `event=audit_post_commit_reporting_failed` process diagnostic. This does not
+relax durable capture requirements for individual App records.
+
 ## Immediate and applied effects
 
 Read each mutation's description before calling it. Some operations change application state immediately, some queue a
