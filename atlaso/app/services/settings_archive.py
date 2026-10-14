@@ -1618,9 +1618,18 @@ def _restore_settings_archive_data(db: Session, data: dict[str, Any]) -> dict[st
     from atlaso.app.services.reverse_proxies import (
         runtime_snapshot as proxy_runtime_snapshot,
     )
-    from atlaso.app.services.reverse_proxy_publication import reconcile_proxy_dns
+    from atlaso.app.services.reverse_proxy_publication import (
+        appliance_addresses,
+        reconcile_proxy_dns,
+        validate_publication_size,
+    )
 
-    reconcile_proxy_dns(db, proxy_runtime_snapshot(db))
+    # Archive preflight uses portable synthetic IDs. Database sequences may
+    # assign wider IDs, so admit the actual flushed publication before commit.
+    db.flush()
+    restored_proxies = proxy_runtime_snapshot(db)
+    validate_publication_size(restored_proxies, appliance_addresses(db))
+    reconcile_proxy_dns(db, restored_proxies)
     counts["dns_records"] = len(db.scalars(select(DnsRecord)).all())
     _disable_startup_example_seed(db)
     return counts

@@ -3,14 +3,16 @@
 from copy import deepcopy
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from atlaso.app.database import SessionLocal
 from atlaso.app.models import (
     AuditEvent,
     EsxStorageSettings,
+    LdapRecoveryArchive,
     PhysicalInterface,
     ReverseProxy,
+    ReverseProxyRoute,
     Setting,
 )
 from atlaso.app.services.esxi_pxe import ESXI_PXE_HOSTNAME_KEY
@@ -26,6 +28,80 @@ from atlaso.app.services.settings_archive import (
     restore_settings_archive,
 )
 from tests.services.test_reverse_proxies import payload
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("within_budget", [False, True])
+def test_restore_checks_publication_with_assigned_ids_atomically(client, monkeypatch, enabled, within_budget):
+    """Model advanced database sequences at the actual publication-size boundary.
+
+    Args:
+        client: Initialized appliance fixture.
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+        enabled: Whether the restored proxy publishes a listener.
+        within_budget: Whether the budget admits the database-assigned IDs.
+    """
+    from atlaso.app.services import reverse_proxy_publication as publication
+    from atlaso.app.services.ldap import LDAP_PENDING_RECOVERY_PAYLOADS
+    from atlaso.app.services.reverse_proxies import publication_snapshot
+    from atlaso.app.services.reverse_proxy_archive import candidates
+
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        save_proxy(db, payload(scheme="http", port=8084, redirect_http=False,
+                               listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]), actor="test")
+        recovery = LdapRecoveryArchive(filename="retained.ldif", path="retained-recovery-fixture",
+                                       sha256="a" * 64, created_by="test")
+        db.add(recovery)
+        db.commit()
+        recovery_id = recovery.id
+        before = deepcopy(export_settings_archive(db, actor="test")["data"])
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        archive["data"]["reverse_proxies"][0].update(enabled=enabled, description="Restored candidate")
+        addresses = publication.appliance_addresses(db)
+        synthetic = publication_snapshot(candidates(archive["data"]))
+
+        def rendered_size(snapshot):
+            return len(publication.render_proxy_servers(
+                snapshot, publication.transport_manifest(snapshot, addresses)).encode("utf-8"))
+
+        preflight_size = rendered_size(synthetic)
+        assigned = deepcopy(synthetic)
+        assigned[0]["id"] = assigned[0]["routes"][0]["id"] = 1000
+        assigned_size = rendered_size(assigned)
+        assert assigned_size > preflight_size
+        monkeypatch.setattr(publication, "MAX_PUBLICATION_BYTES", assigned_size if within_budget else preflight_size)
+        recovery_bytes = b"synthetic retained recovery payload"
+        monkeypatch.setitem(LDAP_PENDING_RECOVERY_PAYLOADS, recovery_id, recovery_bytes)
+        audit_ids = list(db.scalars(select(AuditEvent.id).order_by(AuditEvent.id)))
+
+        def assign_advanced_id(_mapper, _connection, row):
+            # Exercise the flushed insert path with the IDs a retained sequence
+            # could allocate; no PostgreSQL server is required by this fixture.
+            row.id = 1000
+
+        for model in (ReverseProxy, ReverseProxyRoute):
+            event.listen(model, "before_insert", assign_advanced_id)
+        try:
+            if within_budget:
+                counts = restore_settings_archive(db, archive)
+                assert counts["reverse_proxies"] == counts["reverse_proxy_routes"] == 1
+                db.expire_all()
+                restored = db.scalar(select(ReverseProxy))
+                assert restored.id == restored.routes[0].id == 1000
+                assert restored.description == "Restored candidate" and restored.enabled is enabled
+                assert recovery_id not in LDAP_PENDING_RECOVERY_PAYLOADS
+            else:
+                with pytest.raises(ValueError, match="generated configuration size bound"):
+                    restore_settings_archive(db, archive)
+                db.expire_all()
+                assert export_settings_archive(db, actor="test")["data"] == before
+                assert list(db.scalars(select(AuditEvent.id).order_by(AuditEvent.id))) == audit_ids
+                assert db.get(LdapRecoveryArchive, recovery_id).filename == "retained.ldif"
+                assert LDAP_PENDING_RECOVERY_PAYLOADS[recovery_id] == recovery_bytes
+        finally:
+            for model in (ReverseProxy, ReverseProxyRoute):
+                event.remove(model, "before_insert", assign_advanced_id)
 
 
 def test_archive_rejects_different_ingress_scopes_on_shared_proxy_socket(client):

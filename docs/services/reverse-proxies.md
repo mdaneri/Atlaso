@@ -183,6 +183,8 @@ edit is hidden by preview redaction. The digest covers only the canonical proxy 
 A restore changes desired state only and still requires global Appliance Apply. Preflight renders the complete proxy
 collection, including disabled intent, and rejects publication metadata above the ordinary save size limit before
 replacing any saved rows.
+Restore also checks the flushed publication with its database-assigned proxy and route IDs before committing.
+If those IDs make the configuration exceed the size limit, the whole restore rolls back and retains staged recovery data.
 Archives with an enabled HTTPS proxy require an enabled CA; restore rejects this inconsistent relationship before
 replacing saved state. Disabled HTTPS intent and enabled HTTP proxies remain portable without an enabled CA.
 Preflight also reserves service names that factory-default identity migration will create under the restored appliance
