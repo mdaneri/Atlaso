@@ -257,6 +257,114 @@ function Get-AtlasoTestVmOutputAncestorPin {
 
 <#
 .SYNOPSIS
+Record a suspended clone child before preparing its directory or permitting execution.
+.PARAMETER Context
+Original admitted task/source intent and canonical destination.
+.PARAMETER FilePath
+Verified clone executable.
+.PARAMETER ArgumentList
+Public clone arguments passed without shell interpolation.
+.PARAMETER TimeoutSeconds
+Bounded clone execution deadline.
+#>
+function Invoke-AtlasoTestVmOwnedClone {
+    param(
+        [Parameter(Mandatory = $true)][psobject]$Context,
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string[]]$ArgumentList,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 86400)][int]$TimeoutSeconds
+    )
+    if (-not $Context.Enabled -or [string]$Context.InvocationId -cnotmatch '^[0-9a-f]{32}$') {
+        throw 'Owned clone execution requires the original task intent.'
+    }
+    if (-not (Get-Command Invoke-AtlasoBoundedStreamingProcess -ErrorAction SilentlyContinue)) {
+        . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
+    }
+    $jobName = 'Local\Atlaso-TestVm-Clone-' + $Context.InvocationId
+    $publisher = {
+        param($Job)
+        $controller = Get-Process -Id $PID -ErrorAction Stop
+        try {
+            $record = [ordered]@{
+                schema = 1; kind = 'clone_process'; task_id = [string]$Context.TaskId
+                repository = [string]$Context.Repository; worktree = [string]$Context.Worktree
+                source_commit = [string]$Context.SourceCommit; invocation_id = [string]$Context.InvocationId
+                output_directory = [string]$Context.OutputDirectory
+                intent_path = [string]$Context.IntentPath; intent_sha256 = [string]$Context.IntentSha256
+                BootIdentity = Get-AtlasoWindowsBootIdentity
+                OwnerProcessId = $PID; OwnerProcessStartFileTimeUtc = $controller.StartTime.ToUniversalTime().ToFileTimeUtc()
+                ProcessJobName = $jobName; ProcessOwnershipPhase = 'assigned'
+                ChildProcessId = $Job.RootProcess.Id
+                ChildProcessStartFileTimeUtc = $Job.RootProcess.StartTime.ToUniversalTime().ToFileTimeUtc()
+            }
+            $published = Publish-AtlasoTestVmOwnershipRecord -Context $Context -Record $record -Kind clone-process
+            $Context | Add-Member -NotePropertyName CloneProcessReceipt -NotePropertyValue @{path=$published.Path; sha256=$published.Sha256} -Force
+            Write-Host "Test VM clone process receipt: $($published.Path)"
+            Write-Host "Test VM clone process receipt SHA-256: $($published.Sha256)"
+            $Context | Add-Member -NotePropertyName CloneOutputPin -NotePropertyValue (New-AtlasoTestVmPreparedOutput -Context $Context) -Force
+            Assert-AtlasoTestVmCheckoutSource -Context $Context
+        }
+        finally { $controller.Dispose() }
+    }
+    Invoke-AtlasoBoundedStreamingProcess -FilePath $FilePath -ArgumentList $ArgumentList `
+        -TimeoutSeconds $TimeoutSeconds -Action 'Receipt-bound VMware clone' -ProcessJobName $jobName -ProcessOwnershipPublisher $publisher
+}
+
+<#
+.SYNOPSIS
+Prove the original clone controller and child tree quiescent before directory recovery.
+.PARAMETER Context
+Admitted recovery task and canonical destination.
+.PARAMETER DirectoryRecord
+Original independently verified directory receipt containing the pre-creation process receipt binding.
+#>
+function Assert-AtlasoTestVmCloneQuiescence {
+    param([psobject]$Context, [psobject]$DirectoryRecord)
+    if (-not $DirectoryRecord.PSObject.Properties['clone_process'] -or -not $DirectoryRecord.clone_process) {
+        throw 'The original directory lacks clone process creation evidence; preserve it without retrofitting.'
+    }
+    $binding = $DirectoryRecord.clone_process
+    $path = [IO.Path]::GetFullPath([string]$binding.path)
+    $scope = [IO.Path]::GetFullPath([string]$Context.EvidenceDirectory).TrimEnd('\', '/') + '\'
+    if (-not $path.StartsWith($scope, [StringComparison]::OrdinalIgnoreCase) -or [string]$binding.sha256 -cnotmatch '^[0-9a-f]{64}$') {
+        throw 'Clone process receipt is outside its original evidence binding.'
+    }
+    $parentPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath([IO.Path]::GetDirectoryName($path), $true)
+    $filePin = $null
+    try {
+        $filePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true)
+        if ((Get-Item -LiteralPath $path).Length -gt 65536 -or (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ine [string]$binding.sha256) {
+            throw 'Original clone process receipt changed; preserve the prepared directory.'
+        }
+        $record = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        if ($record.schema -ne 1 -or $record.kind -cne 'clone_process' -or
+            [string]$record.task_id -cne [string]$Context.TaskId -or [string]$record.repository -cne [string]$Context.Repository -or
+            [string]$record.worktree -cne [string]$Context.Worktree -or [string]$record.output_directory -cne [string]$Context.OutputDirectory -or
+            [string]$record.source_commit -cne [string]$DirectoryRecord.source_commit -or
+            [string]$record.invocation_id -cne [string]$DirectoryRecord.invocation_id -or
+            [string]$record.intent_path -cne [string]$DirectoryRecord.intent_path -or
+            [string]$record.intent_sha256 -cne [string]$DirectoryRecord.intent_sha256 -or
+            [string]$record.ProcessJobName -cne ('Local\Atlaso-TestVm-Clone-' + $record.invocation_id)) {
+            throw 'Original clone process receipt does not match the preparation intent.'
+        }
+        if (-not (Get-Command Complete-AtlasoSameBootBoundedProcessRecovery -ErrorAction SilentlyContinue)) {
+            . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
+        }
+        $boot = Get-AtlasoWindowsBootIdentityState -BootIdentity $record.BootIdentity
+        if ($boot -eq 'current') {
+            Complete-AtlasoSameBootBoundedProcessRecovery -Marker $record `
+                -JobNamePattern '^Local\\Atlaso-TestVm-Clone-[0-9a-f]{32}$' -ProcessDescription 'test-VM clone'
+        }
+        elseif ($boot -ne 'prior') { throw 'Clone boot identity cannot establish quiescence.' }
+    }
+    finally {
+        if ($filePin) { $filePin.Dispose() }
+        $parentPin.Dispose()
+    }
+}
+
+<#
+.SYNOPSIS
 Exclusively create and receipt missing destination components while retaining their native handles.
 .PARAMETER Context
 Task context containing the previously published clone intent.
@@ -281,6 +389,7 @@ function New-AtlasoTestVmPreparedOutput {
                 invocation_id = [string]$Context.InvocationId; path = $CreatedPath; original_identity = $OriginalIdentity
                 intent_path = [string]$Context.IntentPath; intent_sha256 = [string]$Context.IntentSha256
                 kind = 'prepared_directory'; created_utc = [DateTimeOffset]::UtcNow.ToString('o')
+                clone_process = if ($Context.PSObject.Properties['CloneProcessReceipt']) { $Context.CloneProcessReceipt } else { $null }
                 cleanup_tool = 'scripts/windows/vmware/create-atlaso-test-vm.ps1 -RecoverPreparedDirectory -PreparedDirectoryReceiptPath <original-path> -PreparedDirectoryReceiptSha256 <creation-digest>'
                 retention = 'Canonical incomplete output is recoverable only with the independently preserved preparation selectors; preserve ancestor records.'
             }
@@ -404,9 +513,10 @@ function Remove-AtlasoTestVmPreparedOutput {
         }
         # A VMX needs its original VM receipt. Pre-clone recovery must never
         # manufacture that receipt or become an alternate VM deletion path.
-        $directoryPin.Dispose()
-        $directoryPin = $null
         if ($PSCmdlet.ShouldProcess([string]$Context.OutputDirectory, 'Remove receipt-bound incomplete clone directory')) {
+            Assert-AtlasoTestVmCloneQuiescence -Context $Context -DirectoryRecord $record
+            $directoryPin.Dispose()
+            $directoryPin = $null
             Remove-AtlasoWorkstationVmArtifacts -VmrunPath $VmrunPath -VmxPaths @() -RemovalRoot $Context.OutputDirectory -ExpectedPreparedDirectoryIdentity $record.original_identity -Confirm:$false
         }
     }
@@ -479,7 +589,7 @@ function Publish-AtlasoTestVmOwnershipRecord {
     param(
         [Parameter(Mandatory = $true)][psobject]$Context,
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Record,
-        [Parameter(Mandatory = $true)][ValidateSet('intent', 'original', 'directory')][string]$Kind
+        [Parameter(Mandatory = $true)][ValidateSet('intent', 'original', 'directory', 'clone-process')][string]$Kind
     )
 
     if (-not $Context.Enabled) { throw 'Cannot publish ownership for a disabled task context.' }

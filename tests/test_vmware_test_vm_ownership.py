@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 import tomllib
 import uuid
 from pathlib import Path
@@ -150,7 +151,7 @@ def test_prepared_destination_publishes_each_creation_before_clone_use(tmp_path)
     assert "prepared directory receipt SHA-256" in result.stdout
 
 
-@pytest.mark.parametrize("case", ["empty", "partial", "digest", "replaced", "vmx", "unsupported", "foreign"])
+@pytest.mark.parametrize("case", ["empty", "partial", "digest", "replaced", "vmx", "unsupported", "foreign", "process_digest"])
 def test_prepared_directory_recovery_requires_original_receipt_and_no_completed_vm(tmp_path, case):
     """A pre-callback failure can recover only its original incomplete destination.
 
@@ -167,8 +168,13 @@ def test_prepared_directory_recovery_requires_original_receipt_and_no_completed_
         + context_script(tmp_path)
         + f"$ctx=New-AtlasoTestVmOwnershipIntent -Context $ctx -SourceVmxPath {ps_literal(source)} "
         + f"-SourceVmxIdentity ([Atlaso.WorkstationFileIdentity]::Get({ps_literal(source)})); "
-        + "$pin=New-AtlasoTestVmPreparedOutput -Context $ctx; $pin.Dispose(); "
+        + "function Assert-AtlasoTestVmCheckoutSource { param($Context) }; "
+        + "Invoke-AtlasoTestVmOwnedClone -Context $ctx -FilePath $env:ComSpec -ArgumentList @('/c','exit','0') -TimeoutSeconds 30; "
+        + "$ctx.CloneOutputPin.Dispose(); "
+        + "[pscustomobject]@{path=$ctx.PreparedReceiptPath; sha=$ctx.PreparedReceiptSha256} | ConvertTo-Json -Compress"
     )
+    preparation = run_powershell(setup)
+    selectors = json.loads(preparation.stdout.strip().splitlines()[-1])
     changes = {
         "empty": "",
         "partial": "[IO.File]::WriteAllText((Join-Path $output 'partial.vmdk'),'public incomplete disk'); ",
@@ -177,9 +183,13 @@ def test_prepared_directory_recovery_requires_original_receipt_and_no_completed_
         "vmx": "[IO.File]::WriteAllText($vmx,'public VMX'); ",
         "unsupported": "[IO.File]::WriteAllText((Join-Path $output 'unrelated.txt'),'preserve'); ",
         "foreign": "$ctx.TaskId='another-task'; ",
+        "process_digest": "$directory=Get-Content -LiteralPath $ctx.PreparedReceiptPath -Raw | ConvertFrom-Json; [IO.File]::AppendAllText($directory.clone_process.path,' '); ",
     }
     result = run_powershell(
-        setup + changes[case]
+        ownership_prefix() + context_script(tmp_path)
+        + f"$ctx | Add-Member -NotePropertyName PreparedReceiptPath -NotePropertyValue {ps_literal(selectors['path'])}; "
+        + f"$ctx | Add-Member -NotePropertyName PreparedReceiptSha256 -NotePropertyValue '{selectors['sha']}'; "
+        + changes[case]
         + "Remove-AtlasoTestVmPreparedOutput -Context $ctx -ReceiptPath $ctx.PreparedReceiptPath "
         + f"-ReceiptSha256 $ctx.PreparedReceiptSha256 -VmrunPath {ps_literal(provider)} -Confirm:$false; "
         + "if (Test-Path -LiteralPath $output) { throw 'Recovery did not retire the original directory' }",
@@ -192,6 +202,146 @@ def test_prepared_directory_recovery_requires_original_receipt_and_no_completed_
     else:
         assert result.returncode != 0
         assert (tmp_path / "checkout" / "test-vm").exists()
+
+
+@pytest.mark.parametrize("mode", ["active", "publication", "legacy", "whatif"])
+def test_clone_process_publication_and_active_controller_fail_closed(tmp_path, mode):
+    """No child starts without publication and active or legacy controllers prevent recovery.
+
+    Args:
+        tmp_path: Original pytest-owned temporary root.
+        mode: Active-controller, failed-publication, missing-evidence, or dry-run boundary.
+    """
+    (tmp_path / "evidence").mkdir()
+    source = tmp_path / "source.vmx"
+    source.write_text("public fixture", encoding="utf-8")
+    provider, environment, _, _ = _write_fake_vmrun(tmp_path / "provider", [], registered=False)
+    setup = ownership_prefix() + context_script(tmp_path)
+    setup += f"$ctx=New-AtlasoTestVmOwnershipIntent -Context $ctx -SourceVmxPath {ps_literal(source)} "
+    setup += f"-SourceVmxIdentity ([Atlaso.WorkstationFileIdentity]::Get({ps_literal(source)})); "
+    setup += "function Assert-AtlasoTestVmCheckoutSource { param($Context) }; "
+    if mode == "publication":
+        sentinel = tmp_path / "child-started.txt"
+        setup += "$collision=Join-Path $evidence ('atlaso-test-vm-clone-process-'+$ctx.InvocationId+'.json'); "
+        setup += "[IO.File]::WriteAllText($collision,'preserve'); $failure=$null; "
+        child = f"[IO.File]::WriteAllText({ps_literal(sentinel)},'ran')"
+        setup += "try { Invoke-AtlasoTestVmOwnedClone -Context $ctx -FilePath (Get-Process -Id $PID).Path "
+        setup += f"-ArgumentList @('-NoProfile','-NonInteractive','-Command',{ps_literal(child)}) -TimeoutSeconds 30 "
+        setup += "} catch { $failure=$_.Exception }; "
+        setup += "if (-not $failure -or -not $failure.Data['AtlasoProcessTreeTerminationProven']) { throw 'No proven failed-publication termination' }; "
+        setup += "if (Test-Path -LiteralPath $output) { throw 'Directory preceded child publication' }; "
+        setup += ". '" + str(VMWARE / "Atlaso.WorkstationFirstBoot.ps1").replace("'", "''") + "'; "
+        setup += "if (Open-AtlasoBoundedProcessJob -ProcessJobName ('Local\\Atlaso-TestVm-Clone-'+$ctx.InvocationId)) { throw 'Failed child job survived' }"
+        result = run_powershell(setup, check=False, environment=environment)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not sentinel.exists()
+    else:
+        if mode in {"legacy", "whatif"}:
+            setup += "$pin=New-AtlasoTestVmPreparedOutput -Context $ctx; $pin.Dispose(); "
+        else:
+            setup += "Invoke-AtlasoTestVmOwnedClone -Context $ctx -FilePath $env:ComSpec -ArgumentList @('/c','exit','0') -TimeoutSeconds 30; $ctx.CloneOutputPin.Dispose(); "
+        if mode == "whatif":
+            setup += "function Assert-AtlasoTestVmCloneQuiescence { throw 'Dry run entered process recovery' }; "
+        setup += "Remove-AtlasoTestVmPreparedOutput -Context $ctx -ReceiptPath $ctx.PreparedReceiptPath "
+        setup += f"-ReceiptSha256 $ctx.PreparedReceiptSha256 -VmrunPath {ps_literal(provider)} -Confirm:$false"
+        if mode == "whatif":
+            setup += " -WhatIf"
+        result = run_powershell(setup, check=False, environment=environment)
+        assert (result.returncode == 0) if mode == "whatif" else (result.returncode != 0)
+        assert (tmp_path / "checkout" / "test-vm").exists()
+        if mode != "whatif":
+            assert ("controller is active" if mode == "active" else "lacks clone process creation evidence") in result.stderr
+
+
+def test_interrupted_clone_controller_requires_original_tree_quiescence(tmp_path):
+    """A live clone refuses recovery; terminating its original controller permits exact recovery.
+
+    Args:
+        tmp_path: Original pytest-owned temporary root.
+    """
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    source = tmp_path / "source.vmx"
+    source.write_text("public fixture", encoding="utf-8")
+    output = tmp_path / "checkout" / "test-vm"
+    partial = output / "partial.vmdk"
+    provider, environment, _, _ = _write_fake_vmrun(tmp_path / "provider", [], registered=False)
+    child = f"[IO.File]::WriteAllText({ps_literal(partial)},'partial'); Start-Sleep -Seconds 40"
+    setup = ownership_prefix() + context_script(tmp_path)
+    setup += f"$ctx=New-AtlasoTestVmOwnershipIntent -Context $ctx -SourceVmxPath {ps_literal(source)} "
+    setup += f"-SourceVmxIdentity ([Atlaso.WorkstationFileIdentity]::Get({ps_literal(source)})); "
+    setup += "function Assert-AtlasoTestVmCheckoutSource { param($Context) }; "
+    setup += "try { Invoke-AtlasoTestVmOwnedClone -Context $ctx -FilePath (Get-Process -Id $PID).Path "
+    setup += f"-ArgumentList @('-NoProfile','-NonInteractive','-Command',{ps_literal(child)}) -TimeoutSeconds 50 "
+    setup += "} finally { if ($ctx.PSObject.Properties['CloneOutputPin']) { $ctx.CloneOutputPin.Dispose() } }"
+    controller = subprocess.Popen(
+        ["pwsh", "-NoProfile", "-NonInteractive", "-Command", setup],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment,
+    )
+    try:
+        deadline = time.monotonic() + 25
+        while not partial.exists() and time.monotonic() < deadline and controller.poll() is None:
+            time.sleep(0.1)
+        assert partial.exists(), "The receipt-bound child did not reach its partial-clone boundary"
+        paths = list(evidence.glob("atlaso-test-vm-directory-*.json"))
+        directory_path = next(path for path in paths if json.loads(path.read_text(encoding="utf-8-sig"))["path"] == str(output))
+        # Original publication selectors are read from the controller stream after its interruption.
+        refusal = run_powershell(
+            ownership_prefix() + context_script(tmp_path)
+            + f"$directory=Get-Content -LiteralPath {ps_literal(directory_path)} -Raw | ConvertFrom-Json; "
+            + "Assert-AtlasoTestVmCloneQuiescence -Context $ctx -DirectoryRecord $directory",
+            check=False, environment=environment,
+        )
+        assert refusal.returncode != 0
+        assert "controller is active" in refusal.stderr
+        assert partial.exists()
+        controller.terminate()
+        stdout, stderr = controller.communicate(timeout=15)
+        receipt_line = next(line for line in stdout.splitlines() if line == f"Test VM prepared directory receipt: {directory_path}")
+        # Select the leaf publication from the emitted path and SHA pair, never re-hash later evidence.
+        lines = stdout.splitlines()
+        index = lines.index(receipt_line)
+        receipt_path = receipt_line.split(": ", 1)[1]
+        receipt_sha = lines[index + 1].split(": ", 1)[1]
+        assert receipt_path == str(directory_path), stdout + stderr
+        recovery = run_powershell(
+            ownership_prefix() + context_script(tmp_path)
+            + f"Remove-AtlasoTestVmPreparedOutput -Context $ctx -ReceiptPath {ps_literal(receipt_path)} "
+            + f"-ReceiptSha256 '{receipt_sha}' -VmrunPath {ps_literal(provider)} -Confirm:$false",
+            check=False, environment=environment,
+        )
+        assert recovery.returncode == 0, recovery.stdout + recovery.stderr
+        assert not output.exists()
+    finally:
+        if controller.poll() is None:
+            controller.terminate()
+        controller.communicate(timeout=15)
+
+
+def test_named_clone_job_collision_preserves_existing_child(tmp_path):
+    """An existing named job is never adopted or terminated by a second clone.
+
+    Args:
+        tmp_path: Original pytest-owned temporary root.
+    """
+    (tmp_path / "evidence").mkdir()
+    source = tmp_path / "source.vmx"
+    source.write_text("public fixture", encoding="utf-8")
+    result = run_powershell(
+        ownership_prefix() + context_script(tmp_path)
+        + f"$ctx=New-AtlasoTestVmOwnershipIntent -Context $ctx -SourceVmxPath {ps_literal(source)} "
+        + f"-SourceVmxIdentity ([Atlaso.WorkstationFileIdentity]::Get({ps_literal(source)})); "
+        + f". {ps_literal(VMWARE / 'Atlaso.WorkstationFirstBoot.ps1')}; "
+        + "$seed=New-AtlasoBoundedProcessJob -FilePath $env:ComSpec -ArgumentList @('/c','exit','0') "
+        + "-ProcessJobName ('Local\\Atlaso-TestVm-Clone-'+$ctx.InvocationId) -DeferResume; try { "
+        + "$refused=$false; try { Invoke-AtlasoTestVmOwnedClone -Context $ctx -FilePath $env:ComSpec "
+        + "-ArgumentList @('/c','exit','0') -TimeoutSeconds 10 } catch { $refused=$true }; "
+        + "if (-not $refused -or $seed.RootProcess.HasExited) { throw 'Existing job was adopted or terminated' }; "
+        + "if (Test-Path -LiteralPath $output) { throw 'Collision prepared a directory' } "
+        + "} finally { $seed.TerminateAndWait(10000); $seed.Dispose() }",
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_prepared_root_removal_keeps_original_handle_through_retirement(tmp_path):

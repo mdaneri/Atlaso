@@ -33,6 +33,8 @@ Configure only the management adapter.
 Optional lifecycle ownership callback invoked with the newly cloned directory and VMX before either is configured.
 .PARAMETER CloneCreatedContext
 Explicit parent ownership data forwarded to the creation callback without consulting child script variables.
+.PARAMETER CloneExecutor
+Optional parent-owned executor that records a suspended clone and prepares its directory before resuming it.
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -54,7 +56,8 @@ param(
     [string]$BackupDiskSize = '500GB',
     [switch]$SkipLabNetworkAdapters,
     [scriptblock]$CloneCreated,
-    [object]$CloneCreatedContext
+    [object]$CloneCreatedContext,
+    [scriptblock]$CloneExecutor
 )
 
 $ErrorActionPreference = 'Stop'
@@ -356,9 +359,13 @@ foreach ($reusedDataDisk in @(
     }
 }
 
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resolvedOutputDirectory) | Out-Null
 if ($PSCmdlet.ShouldProcess($targetVmx, "Clone Atlaso Workstation VM from $resolvedSourceVmx")) {
-    Invoke-Vmrun -Arguments @('-T', 'ws', 'clone', $resolvedSourceVmx, $targetVmx, 'full', '-cloneName', $Name)
+    $cloneArguments = @('-T', 'ws', 'clone', $resolvedSourceVmx, $targetVmx, 'full', '-cloneName', $Name)
+    if ($CloneExecutor) { & $CloneExecutor $resolvedVmrun $cloneArguments $CloneCreatedContext }
+    else {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resolvedOutputDirectory) | Out-Null
+        Invoke-Vmrun -Arguments $cloneArguments
+    }
 }
 
 if (-not (Test-Path -LiteralPath $targetVmx)) {

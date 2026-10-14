@@ -237,6 +237,8 @@ namespace Atlaso
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern IntPtr CreateJobObject(IntPtr securityAttributes, string name);
+        [DllImport("kernel32.dll", EntryPoint = "SetLastError")]
+        private static extern void ClearNativeError(uint error);
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern IntPtr OpenJobObject(uint desiredAccess, bool inheritHandle, string name);
@@ -367,10 +369,16 @@ namespace Atlaso
         {
             const uint CREATE_SUSPENDED = 0x00000004;
             const uint CREATE_NO_WINDOW = 0x08000000;
+            ClearNativeError(0);
             IntPtr job = CreateJobObject(IntPtr.Zero, name);
+            int creationError = Marshal.GetLastWin32Error();
             if (job == IntPtr.Zero)
             {
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows process job creation failed.");
+            }
+            if (creationError == 183) {
+                CloseHandle(job);
+                throw new InvalidOperationException("The named process job already exists and is not owned by this launch.");
             }
             ProcessInformation processInformation = new ProcessInformation();
             try

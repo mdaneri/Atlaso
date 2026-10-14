@@ -1178,6 +1178,11 @@ publishes `atlaso-test-vm-original-<id>.json` with the original clone-directory 
 configuration, credential staging, or startup. A persistent non-secret VMX identity preserves the binding when
 Workstation replaces the VMX file during startup; the original filesystem identity remains historical creation evidence.
 The source template is recorded as read-only provenance and is never a cleanup target.
+The owned clone starts suspended in a fresh named kill-on-close Windows job. Before creating the destination or
+resuming the child, the wrapper publishes an immutable `atlaso-test-vm-clone-process-<id>.json` recording the original
+controller and child creation times, boot identity, job name, task/source and intent binding. Each original directory
+receipt includes that process receipt's path and SHA-256. Failed publication terminates the suspended child tree;
+an existing job name is refused without adopting its processes. Clone completion requires whole-job quiescence.
 Before provider cloning, the wrapper exclusively creates each missing destination component relative to its pinned
 parent and immediately publishes an immutable `atlaso-test-vm-directory-<id>.json` creation record. It retains the
 original directory handles with writer and replacement exclusion through cloning and the original VM receipt callback.
@@ -1189,7 +1194,11 @@ invocation: it rejects creation options before removal and exits without cloning
 Recovery retains the original root through handle-based deletion and verifies the
 original receipt, intent, task/source ancestry and directory identity inside the owning remover before retiring an
 empty destination or ordinary partial-clone files. A VMX, lock directory, unknown file, replaced directory, or
-altered receipt is preserved. Completed clones still require their original VM receipt and the normal redeploy path.
+altered receipt is preserved. Recovery verifies the original process binding and refuses an active or reused controller.
+On the same boot it uses the exact recorded child identity and named job to prove or complete owned-tree termination;
+a proven prior host boot independently establishes quiescence. Missing, ambiguous or legacy process evidence preserves
+the directory without retrofitting receipts or stopping unrelated processes.
+Completed clones still require their original VM receipt and the normal redeploy path.
 Ancestor preparation records remain historical evidence; recovery never removes a shared parent directory.
 The clone callback emits the original receipt path and SHA-256 immediately after publication, so preserve those
 selectors even when later configuration or readiness fails.

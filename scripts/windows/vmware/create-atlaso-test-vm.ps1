@@ -3351,6 +3351,7 @@ $credentialBridgeCleanupError = ''
 if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from $resolvedSourceVmx")) {
         $cloneOwnershipArguments = @{}
         if ($ownershipContext.Enabled) {
+            $ownershipContext | Add-Member -NotePropertyName CloneTimeoutSeconds -NotePropertyValue $TimeoutSeconds -Force
             $cloneOwnershipArguments = @{
                 CloneCreated = {
                     param($CreatedDirectory, $CreatedVmx, $Context)
@@ -3377,9 +3378,12 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
                         -DurableIdentityAction $cleanupIdentityAction
                 }
                 CloneCreatedContext = $ownershipContext
+                CloneExecutor = {
+                    param($Executable, $Arguments, $Context)
+                    Invoke-AtlasoTestVmOwnedClone -Context $Context -FilePath $Executable -ArgumentList $Arguments -TimeoutSeconds $Context.CloneTimeoutSeconds
+                }
             }
         }
-        $cloneOutputPin = $null
         $cloneSourcePin = $null
         try {
         if ($ownershipContext.Enabled) {
@@ -3388,7 +3392,6 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
                 -SourceVmxIdentity $sourceVmxIdentity `
                 -ExpectedSourceCommit $expectedPayloadSourceCommit
             Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
-            $cloneOutputPin = New-AtlasoTestVmPreparedOutput -Context $ownershipContext
         }
         Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
         & (Join-Path $PSScriptRoot 'create-atlaso-vm.ps1') `
@@ -3413,7 +3416,10 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
         }
         finally {
             if ($cloneSourcePin) { $cloneSourcePin.Dispose() }
-            if ($cloneOutputPin) { $cloneOutputPin.Dispose() }
+            if ($ownershipContext.Enabled -and $ownershipContext.PSObject.Properties['CloneOutputPin'] -and $ownershipContext.CloneOutputPin) {
+                $ownershipContext.CloneOutputPin.Dispose()
+                $ownershipContext.CloneOutputPin = $null
+            }
         }
         $createdThisInvocation = $true
         try {
