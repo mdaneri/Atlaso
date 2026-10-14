@@ -531,6 +531,11 @@ def test_public_directory_preserves_applied_proxy_links_until_apply(client, monk
 
     status = {"schema": 1, "proxies": applied, "generation": "a" * 64 if applied else None,
               "health": {}, "observed_at": datetime.now(timezone.utc).isoformat()}
+    from atlaso.app.services.reverse_proxy_observation import (
+        invalidate_public_proxy_snapshot,
+    )
+
+    invalidate_public_proxy_snapshot()
     monkeypatch.setattr(SystemAdapter, "reverse_proxy_status", lambda _self: AdapterResult(
         command=["atlaso-helper"], dry_run=False, stdout=json.dumps(status),
     ))
@@ -542,9 +547,36 @@ def test_public_directory_preserves_applied_proxy_links_until_apply(client, monk
 
     status["proxies"] = desired
     status["generation"] = "b" * 64 if desired else None
+    invalidate_public_proxy_snapshot()
     committed = client.get("/ui/public", headers=headers)
     assert committed.status_code == 200
     expected = "changed.example.test" if change in {"edit", "failed", "rollback"} else "application.example.test"
     assert (f'href="https://{expected}:8443/"' in committed.text) is (change not in {"disable", "delete"})
     if change in {"edit", "failed", "rollback"}:
         assert "https://application.example.test:8443/" not in committed.text
+
+
+@pytest.mark.parametrize("service_id", ["ca", "vcf_offline_depot"])
+def test_unrelated_public_service_admission_never_observes_proxy_runtime(client, monkeypatch, service_id):
+    """Evaluate a real public binding without invoking the proxy helper path.
+
+    Args:
+        client: Fixture initializing the real application database.
+        monkeypatch: Fixture making every proxy observation fail if called.
+        service_id: Unrelated native public service being admitted.
+    """
+    from starlette.requests import Request
+
+    from atlaso.app import ui
+    from atlaso.app.services import reverse_proxy_observation
+    from tests.routers.api_v1.test_reverse_proxies import _enable_test_listener
+
+    _enable_test_listener()
+    monkeypatch.setattr(reverse_proxy_observation, "applied_reverse_proxy_snapshot",
+                        lambda: pytest.fail("Native service admission must not observe proxy runtime"))
+    request = Request({"type": "http", "headers": [(b"host", b"192.0.2.10")]})
+    with SessionLocal() as db:
+        binding = ui.request_host_interface_binding("192.0.2.10", db)
+        assert binding and binding["role"] != "management"
+        assert ui.request_allows_public_service(db, request, service_id) is False
+        assert ui.request_public_service_route_allowed(db, request, service_id) is False

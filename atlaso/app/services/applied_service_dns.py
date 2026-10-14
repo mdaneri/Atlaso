@@ -212,6 +212,11 @@ def save_appliance_apply_baselines(db: Session, baselines: dict[str, dict[str, A
     """
     acquire_network_objects_write_lock(db)
     set_setting_value(db, APPLIANCE_APPLY_BASELINES_KEY, json.dumps(baselines, indent=2, sort_keys=True))
+    from atlaso.app.services.reverse_proxy_observation import (
+        invalidate_public_proxy_snapshot,
+    )
+
+    invalidate_public_proxy_snapshot()
 
 
 def owned_service_dns_records(db: Session, config: str) -> list[dict[str, str]]:

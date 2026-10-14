@@ -116,6 +116,7 @@ def test_tls_fixture_keeps_one_leaf_and_verifies_before_forwarding(tmp_path):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     client_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    client_context.minimum_version = ssl.TLSVersion.TLSv1_2
     client_context.check_hostname = False
     client_context.verify_mode = ssl.CERT_NONE
     try:

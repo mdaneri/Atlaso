@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+import time
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -20,6 +23,17 @@ _SOCKET_ID = re.compile(r"[1-9][0-9]{0,9}-[1-9][0-9]{0,9}\Z")
 _STATUSES = {"healthy", "degraded", "unavailable"}
 _FAILURES = {"insecure_verification", "invalid_http", "tls_verification", "unavailable", "upstream_http"}
 _TLS_STATUSES = {"failed", "fingerprint", "insecure", "not_applicable", "not_probed", "trusted_ca"}
+PUBLIC_SNAPSHOT_CACHE_SECONDS = 15
+_public_cache_lock = threading.Lock()
+_public_refresh_lock = threading.Lock()
+_public_cache: tuple[list[dict[str, Any]], datetime | None, float, int] = ([], None, 0.0, 0)
+
+
+def invalidate_public_proxy_snapshot() -> None:
+    """Discard public evidence after an applied-state boundary changes."""
+    global _public_cache
+    with _public_cache_lock:
+        _public_cache = ([], None, 0.0, _public_cache[3] + 1)
 
 
 def observe_reverse_proxy_health(db: Session, *, now: datetime | None = None) -> list[dict[str, Any]]:
@@ -84,6 +98,41 @@ def observe_reverse_proxy_health(db: Session, *, now: datetime | None = None) ->
 
 
 def applied_reverse_proxy_snapshot(*, now: datetime | None = None) -> list[dict[str, Any]]:
+    """Read a short, single-flight cache without queueing public requests behind helpers.
+
+    Args:
+        now: Optional aware UTC time used by deterministic freshness checks.
+    """
+    global _public_cache
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None or current.utcoffset() is None:
+        return []
+    with _public_cache_lock:
+        proxies, observed_at, retry_at, epoch = _public_cache
+        cached = deepcopy(proxies) if observed_at and -MAX_FUTURE_SKEW <= current - observed_at <= MAX_OBSERVATION_AGE else []
+        if time.monotonic() < retry_at:
+            return cached
+    if not _public_refresh_lock.acquire(blocking=False):
+        return cached
+    try:
+        # Another reader may have completed between inspection and admission.
+        with _public_cache_lock:
+            if time.monotonic() < _public_cache[2] or epoch != _public_cache[3]:
+                if epoch != _public_cache[3]:
+                    return []
+                latest, sampled_at, _, _ = _public_cache
+                return deepcopy(latest) if sampled_at and -MAX_FUTURE_SKEW <= current - sampled_at <= MAX_OBSERVATION_AGE else []
+        fresh, observed_at = _read_applied_reverse_proxy_snapshot(now=now)
+        with _public_cache_lock:
+            if epoch != _public_cache[3]:
+                return []
+            _public_cache = (fresh, observed_at, time.monotonic() + PUBLIC_SNAPSHOT_CACHE_SECONDS, epoch)
+        return deepcopy(fresh)
+    finally:
+        _public_refresh_lock.release()
+
+
+def _read_applied_reverse_proxy_snapshot(*, now: datetime | None) -> tuple[list[dict[str, Any]], datetime | None]:
     """Read canonical applied intent for public listings, independently of desired edits.
 
     Args:
@@ -98,20 +147,20 @@ def applied_reverse_proxy_snapshot(*, now: datetime | None = None) -> list[dict[
     try:
         result = SystemAdapter().reverse_proxy_status()
         if result.dry_run or result.returncode != 0 or len(result.stdout) > MAX_HELPER_OUTPUT:
-            return []
+            return [], None
         parsed = _validate_observation(json.loads(result.stdout), now=now)
         proxies = parsed["proxies"]
         if not proxies:
-            return []
+            return [], None
         if parsed["generation"] is None:
-            return []
+            return [], None
         # Reuse the publication owner's complete schema and semantic validation.
         # No desired database inventory can invalidate the still-applied snapshot.
         manifest = transport_manifest(proxies, [])
         canonical, _manifest = validated_snapshot(render_proxy_servers(proxies, manifest))
-        return canonical
+        return canonical, _parse_timestamp(parsed["observed_at"])
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
-        return []
+        return [], None
 
 
 def _validate_observation(value: Any, *, now: datetime | None) -> dict[str, Any]:

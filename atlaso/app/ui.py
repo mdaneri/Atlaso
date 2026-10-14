@@ -5153,12 +5153,13 @@ def request_host_interface_binding(request_host: str, db: Session) -> dict[str, 
     return None
 
 
-def public_service_directory_context(db: Session, binding: dict[str, str]) -> dict[str, Any]:
+def public_service_directory_context(db: Session, binding: dict[str, str], *, include_proxies: bool = True) -> dict[str, Any]:
     """Return public service directory context.
 
     Args:
         db: Active database session.
         binding: Binding supplied by the caller.
+        include_proxies: Whether this directory render needs cached proxy cards.
     """
     ca_settings = get_ca_settings_row(db)
     depot_settings = get_vcf_offline_depot_settings_row(db)
@@ -5201,7 +5202,8 @@ def public_service_directory_context(db: Session, binding: dict[str, str]) -> di
         directory_entries as proxy_directory_entries,
     )
 
-    services.extend(proxy_directory_entries(applied_reverse_proxy_snapshot(), binding["address"]))
+    if include_proxies:
+        services.extend(proxy_directory_entries(applied_reverse_proxy_snapshot(), binding["address"]))
     services = [
         {
             **service,
@@ -5232,7 +5234,7 @@ def request_allows_public_service(db: Session, request: Request, service_id: str
     binding = request_host_interface_binding(request_host_name(request), db)
     if not binding or binding.get("role") == "management":
         return False
-    services = public_service_directory_context(db, binding)["public_services"]
+    services = public_service_directory_context(db, binding, include_proxies=False)["public_services"]
     return any(service.get("id") == service_id for service in services)
 
 
@@ -5247,7 +5249,7 @@ def request_public_service_route_allowed(db: Session, request: Request, service_
     binding = request_host_interface_binding(request_host_name(request), db)
     if not binding or binding.get("role") == "management":
         return True
-    services = public_service_directory_context(db, binding)["public_services"]
+    services = public_service_directory_context(db, binding, include_proxies=False)["public_services"]
     return any(service.get("id") == service_id for service in services)
 
 
@@ -18522,6 +18524,11 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             )
         finally:
             invalidate_appliance_apply_status_projection()
+            from atlaso.app.services.reverse_proxy_observation import (
+                invalidate_public_proxy_snapshot,
+            )
+
+            invalidate_public_proxy_snapshot()
 
 
 VCF_DEPOT_SOFTWARE_ID_TASK_STEPS = (

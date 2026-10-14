@@ -16,6 +16,9 @@ complete ordered route collection. Reads require `read:firewall`; mutations requ
 /api/v1/traffic-publishing/reverse-proxies/health` compares saved intent with the helper's applied snapshot and reports
 cached per-route observations. It does not probe the upstream on a browser or API request; missing, stale, or mismatched
 evidence remains unavailable or pending.
+Public directory cards use a 15-second cache of validated applied intent, including failed observations, with only one
+helper refresh admitted at a time. Cached evidence still expires at its original observation age; applied baseline
+changes and Apply completion invalidate it. CA and depot admission checks do not load proxy cards or invoke this observer.
 
 ## Before you begin
 

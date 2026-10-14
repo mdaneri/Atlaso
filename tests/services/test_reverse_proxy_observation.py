@@ -1,7 +1,7 @@
 """Validate bounded cached observations for managed reverse proxies."""
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -76,6 +76,7 @@ def _configure(monkeypatch, payload, *, dry_run=False, returncode=0):
         dry_run: Whether the adapter result represents unexecuted work.
         returncode: Simulated helper exit status.
     """
+    observation.invalidate_public_proxy_snapshot()
     monkeypatch.setattr(observation, "runtime_snapshot", lambda _db: _desired())
     monkeypatch.setattr(
         observation.SystemAdapter,
@@ -225,3 +226,79 @@ def test_public_snapshot_hides_unproven_or_malformed_applied_intent(monkeypatch,
             stdout="{" if invalid == "bad-json" else "x" * (observation.MAX_HELPER_OUTPUT + 1),
         ))
     assert observation.applied_reverse_proxy_snapshot(now=now) == []
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_public_snapshot_bounds_success_and_failed_helper_reads(monkeypatch, failure):
+    """Bound public bursts, returned mutation, refresh expiry and invalidation.
+
+    Args:
+        monkeypatch: Controlled helper and monotonic clock.
+        failure: Whether the helper returns failed rather than applied evidence.
+    """
+    _configure(monkeypatch, _payload(), returncode=int(failure))
+    clock = [10.0]
+    monkeypatch.setattr(observation.time, "monotonic", lambda: clock[0])
+    calls = []
+
+    def read(_self):
+        calls.append(True)
+        return AdapterResult(command=["atlaso-helper"], dry_run=False,
+                             stdout=json.dumps(_payload()), returncode=int(failure))
+
+    monkeypatch.setattr(observation.SystemAdapter, "reverse_proxy_status", read)
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    for _ in range(40):
+        result = observation.applied_reverse_proxy_snapshot(now=now)
+        assert bool(result) is not failure
+        if result:
+            assert result == _desired()
+            result[0]["hostname"] = "must-not-poison-cache.test"
+    assert len(calls) == 1
+    assert observation.applied_reverse_proxy_snapshot(now=now + timedelta(seconds=91)) == []
+    assert len(calls) == 1
+    clock[0] += observation.PUBLIC_SNAPSHOT_CACHE_SECONDS + 1
+    observation.applied_reverse_proxy_snapshot(now=now)
+    assert len(calls) == 2
+    observation.invalidate_public_proxy_snapshot()
+    observation.applied_reverse_proxy_snapshot(now=now)
+    assert len(calls) == 3
+
+
+def test_public_snapshot_single_flight_and_invalidated_refresh(monkeypatch):
+    """Do not queue readers or resurrect an invalidated in-flight generation.
+
+    Args:
+        monkeypatch: Controlled bounded helper response.
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    _configure(monkeypatch, _payload())
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def read(_self):
+        calls.append(True)
+        entered.set()
+        assert release.wait(5)
+        return AdapterResult(command=["atlaso-helper"], dry_run=False, stdout=json.dumps(_payload()))
+
+    monkeypatch.setattr(observation.SystemAdapter, "reverse_proxy_status", read)
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(observation.applied_reverse_proxy_snapshot, now=now)
+        try:
+            assert entered.wait(5)
+            for _ in range(40):
+                assert observation.applied_reverse_proxy_snapshot(now=now) == []
+            assert len(calls) == 1
+            observation.invalidate_public_proxy_snapshot()
+        finally:
+            release.set()
+        assert first.result(timeout=5) == []
+    monkeypatch.setattr(observation.SystemAdapter, "reverse_proxy_status", lambda _self: AdapterResult(
+        command=["atlaso-helper"], dry_run=False, stdout=json.dumps(_payload()),
+    ))
+    assert observation.applied_reverse_proxy_snapshot(now=now) == _desired()
