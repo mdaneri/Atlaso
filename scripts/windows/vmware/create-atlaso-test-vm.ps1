@@ -2285,6 +2285,9 @@ function Upgrade-AtlasoLegacyDevelopmentCaCleanupMarker {
 .SYNOPSIS
 Finalize a proven development-signer import without leaving plaintext in VMX.
 
+.PARAMETER OwnershipContext
+Admitted task/source context revalidated before stop and mutable restart helper launch.
+
 .PARAMETER Marker
 Validated cleanup marker for the exact normal test VM.
 
@@ -2298,9 +2301,16 @@ function Complete-AtlasoDevelopmentCaSuccessfulImport {
     param(
         [Parameter(Mandatory = $true)][object]$Marker,
         [Parameter(Mandatory = $true)][string]$VmrunPath,
-        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
+        [psobject]$OwnershipContext
     )
 
+    if ($OwnershipContext) {
+        if ($OwnershipContext.Enabled -and [string]$Marker.VmxPath -ine [string]$OwnershipContext.VmxPath) {
+            throw 'Successful-import cleanup requires the admitted VM destination; preserve unrelated markers.'
+        }
+        Assert-AtlasoTestVmCheckoutSource -Context $OwnershipContext
+    }
     $restartScrubProven = $false
     if ($Marker.Phase -in @('staged', 'vm-stop-child-active')) {
         if ($Marker.Phase -ceq 'staged') {
@@ -2390,6 +2400,7 @@ function Complete-AtlasoDevelopmentCaSuccessfulImport {
             -Phase vm-restart-child-active
         $Marker.Phase = 'vm-restart-child-active'
         try {
+            if ($OwnershipContext) { Assert-AtlasoTestVmCheckoutSource -Context $OwnershipContext }
             Invoke-AtlasoBoundedProcess `
                 -FilePath (Get-Process -Id $PID).Path `
                 -ArgumentList @(
@@ -2543,7 +2554,8 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                 Complete-AtlasoDevelopmentCaSuccessfulImport `
                     -Marker $marker `
                     -VmrunPath $VmrunPath `
-                    -TimeoutSeconds $TimeoutSeconds
+                    -TimeoutSeconds $TimeoutSeconds `
+                    -OwnershipContext $OwnershipContext
                 continue
             }
         }
@@ -3599,7 +3611,8 @@ if (-not $WhatIfPreference) {
         Complete-AtlasoDevelopmentCaSuccessfulImport `
             -Marker $successfulImportMarker `
             -VmrunPath $resolvedVmrunPath `
-            -TimeoutSeconds $TimeoutSeconds
+            -TimeoutSeconds $TimeoutSeconds `
+            -OwnershipContext $ownershipContext
         $developmentCaCleanupMarkerPath = ''
     }
     catch {
@@ -3830,6 +3843,7 @@ $readinessIdentity = $null
 if (-not $WhatIfPreference) {
     # Prove exact VMX, NIC, hostname, and host-facing address ownership before
     # printing ready state or any connection endpoint.
+    Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
     $readinessIdentity = & (Join-Path $PSScriptRoot 'get-atlaso-vm-ip.ps1') `
         -VmxPath $targetVmx `
         -ExpectedHostname $FirstBootFqdn `

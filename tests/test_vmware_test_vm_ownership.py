@@ -165,21 +165,25 @@ def test_directory_publication_failure_retires_only_original_empty_leaf(tmp_path
 
 
 @pytest.mark.parametrize("drift", [False, True])
-def test_post_signer_start_revalidates_source_before_provider_launch(tmp_path, drift):
+@pytest.mark.parametrize("caller", ["initial", "restart"])
+def test_post_signer_start_revalidates_source_before_provider_launch(tmp_path, drift, caller):
     """The actual post-signer launch block refuses source drift before calling the provider.
 
     Args:
         tmp_path: Original pytest-owned temporary root.
         drift: Whether the source guard reports a late edit.
+        caller: Initial signer-bearing start or powered-off scrub restart.
     """
     script = (VMWARE / "create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
-    phase = script.index("-Phase vm-start-child-active", script.index("if (-not $createdThisInvocation"))
-    start = script.index("Assert-AtlasoTestVmCheckoutSource", phase)
+    phase = script.index("-Phase vm-start-child-active", script.index("if (-not $createdThisInvocation")) if caller == "initial" else script.index("-Phase vm-restart-child-active")
+    token = "Assert-AtlasoTestVmCheckoutSource" if caller == "initial" else "if ($OwnershipContext) { Assert-AtlasoTestVmCheckoutSource"
+    start = script.index(token, phase)
     end = script.index("| Out-Null", start) + len("| Out-Null")
     block = script[start:end].replace("$PSScriptRoot", ps_literal(VMWARE))
     sentinel = tmp_path / "provider-called.txt"
     setup = "$ErrorActionPreference='Stop'; $ownershipContext=@{Enabled=$true}; $powerShellPath=(Get-Process -Id $PID).Path; "
     setup += "$targetVmx='public.vmx'; $resolvedVmrunPath='public-provider'; $TimeoutSeconds=10; $script:checked=$false; "
+    setup += "$Marker=@{VmxPath=$targetVmx}; $VmrunPath=$resolvedVmrunPath; "
     setup += "function Assert-AtlasoTestVmCheckoutSource { param($Context) "
     setup += "throw 'Source drift refused' }; " if drift else "$script:checked=$true }; "
     setup += "function Invoke-AtlasoBoundedProcess { param($FilePath,$ArgumentList,$TimeoutSeconds,$Action) "

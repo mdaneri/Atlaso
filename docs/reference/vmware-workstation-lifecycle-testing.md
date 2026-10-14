@@ -1186,6 +1186,8 @@ an existing job name is refused without adopting its processes. Clone completion
 Before provider cloning, the wrapper exclusively creates each missing destination component relative to its pinned
 parent and immediately publishes an immutable `atlaso-test-vm-directory-<id>.json` creation record. It retains the
 original directory handles with writer and replacement exclusion through cloning and the original VM receipt callback.
+The original VM receipt publisher verifies and borrows the retained creation handle instead of opening a conflicting
+second directory pin.
 A concurrently inserted directory or junction is refused rather than adopted. Failed preparation preserves its
 published records. If directory-receipt publication fails, the still-suspended clone cannot resume and the newly
 created empty object is retired through its retained creation handle. Nonempty retirement refuses and preserves
@@ -1225,8 +1227,9 @@ network preparation, recovery/removal, disk reset and clone preparation; preflig
 Each boundary also rejects assume-unchanged/skip-worktree entries and independently hashes all tracked file bytes
 against the admitted index, applying Git's normal clean conversion for checkout line endings. Cached status or
 fsmonitor results cannot substitute for this byte verification; index changes or hashing failures refuse mutation.
-The source guard also runs immediately before post-clone signer staging, startup and immediate/persisted removal
-child launches. Late source drift preserves the VM rather than executing changed helper code.
+The source guard also runs immediately before post-clone signer staging, startup, signer-scrub restart, NIC configuration,
+immediate/persisted removal and the final readiness helper launch. Late source drift preserves the VM rather than
+executing changed helper code.
 Never manufacture an original receipt from a later snapshot, edit a receipt, or delete an incomplete
 publication to make admission pass. `-WhatIf` publishes no receipts and performs no credential or VM mutation.
 
