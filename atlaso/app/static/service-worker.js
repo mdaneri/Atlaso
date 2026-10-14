@@ -1,5 +1,5 @@
 const ATLASO_CACHE_PREFIX = "atlaso-management-pwa-v";
-const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}360`;
+const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}361`;
 const ATLASO_ASSETS = [
   "/manifest.webmanifest",
   "/favicon.ico",
@@ -106,8 +106,12 @@ self.addEventListener("fetch", (event) => {
     if (!shouldServeOfflineFallback(request, url)) {
       return;
     }
+    const headers = new Headers(request.headers);
+    // Forwarded fetches lose Sec-Fetch-Mode: navigate. Preserve the document
+    // intent explicitly so authentication recovery and activity agree.
+    headers.set("X-Atlaso-Browser-Navigation", "1");
     event.respondWith(
-      fetch(request, { cache: "no-store" }).then((response) => {
+      fetch(request, { cache: "no-store", headers }).then((response) => {
         // A controlled update response is authoritative. Never replace a
         // valid 503 status page with the cached offline shell.
         if (response.status === 503 || response.headers.get("X-Atlaso-Update-Mode") === "active") {
