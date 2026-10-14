@@ -28,6 +28,57 @@ def ps_literal(value: str | Path) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+@pytest.mark.parametrize("caller", ["rollback", "persisted"])
+@pytest.mark.parametrize("admission", ["valid", "missing", "human", "foreign"])
+def test_failed_creation_removal_callers_require_original_identity_selectors(tmp_path, caller, admission):
+    """Execute actual removal caller blocks and refuse provider launch when receipt admission fails.
+
+    Args:
+        tmp_path: Original pytest-owned temporary root.
+        caller: Immediate rollback or persisted cleanup child invocation.
+        admission: Valid, missing or foreign receipt, or ordinary human CLI context.
+    """
+    script = (VMWARE / "create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
+    variable = "rollbackOwnershipArguments" if caller == "rollback" else "persistedOwnershipArguments"
+    start = script.index(f"${variable} = @()")
+    end = script.index("| Out-Null", start) + len("| Out-Null")
+    block = script[start:end].replace("$PSScriptRoot", ps_literal(VMWARE))
+    enabled = "$false" if admission == "human" else "$true"
+    destination = tmp_path / "public.vmx"
+    setup = "$ErrorActionPreference='Stop'; "
+    setup += f"$ownershipContext=[pscustomobject]@{{Enabled={enabled};VmxPath={ps_literal(destination)}}}; "
+    setup += f"$marker=[pscustomobject]@{{VmxPath={ps_literal(destination)};Name='public'}}; "
+    if admission == "foreign":
+        setup += f"$ownershipContext.VmxPath={ps_literal(tmp_path / 'another.vmx')}; "
+    setup += "$targetVmx=$marker.VmxPath; $rollbackVmrunPath='public-provider'; $VmrunPath=$rollbackVmrunPath; "
+    setup += "$powerShellPath=(Get-Process -Id $PID).Path; $Name='public'; $TimeoutSeconds=10; $script:checked=$false; "
+    setup += "function Assert-AtlasoTestVmOriginalOwnership { param($Context) $script:checked=$true; "
+    if admission in {"missing", "foreign"}:
+        setup += "throw 'Original receipt missing' }; "
+    else:
+        setup += "[pscustomobject]@{Record=@{original_identities=@{directory='12345678:0000000000000123'};persistent_vm_identity_sha256=('a'*64)}} }; "
+    setup += "function Invoke-AtlasoBoundedProcess { param($FilePath,$ArgumentList,$TimeoutSeconds,$Action) "
+    setup += "if ($ownershipContext.Enabled -and -not $script:checked) { throw 'Provider preceded receipt validation' }; "
+    setup += "$ArgumentList | ConvertTo-Json -Compress }; "
+    # The production block discards provider output; the fixture captures invocation arguments instead.
+    setup += block.replace("| Out-Null", f"| Set-Content -LiteralPath {ps_literal(tmp_path / 'args.json')}")
+    result = run_powershell(setup, check=False)
+    captured = tmp_path / "args.json"
+    if admission in {"missing", "foreign"}:
+        assert result.returncode != 0
+        message = "Persisted cleanup requires the original receipt" if admission == "foreign" and caller == "persisted" else "Original receipt missing"
+        assert message in result.stderr
+        assert not captured.exists()
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
+        arguments = json.loads(captured.read_text(encoding="utf-8-sig"))
+        if admission == "valid":
+            assert arguments[arguments.index("-ExpectedRootIdentity") + 1] == "12345678:0000000000000123"
+            assert arguments[arguments.index("-ExpectedPersistentVmIdentitySha256") + 1] == "a" * 64
+        else:
+            assert "-ExpectedRootIdentity" not in arguments
+
+
 def context_script(tmp_path: Path, *, invocation_id: str = "") -> str:
     """Build a synthetic, task-bound context under one pytest-owned root.
 

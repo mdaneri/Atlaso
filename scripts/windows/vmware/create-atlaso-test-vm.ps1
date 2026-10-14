@@ -2432,6 +2432,9 @@ function Complete-AtlasoDevelopmentCaSuccessfulImport {
 .SYNOPSIS
 Retry every interrupted development-CA rollback before another VM mutation.
 
+.PARAMETER OwnershipContext
+Admitted task context requiring the exact original VM receipt before persisted removal.
+
 .PARAMETER VmrunPath
 Resolved VMware vmrun executable used for bounded scrub and stop proof.
 
@@ -2449,7 +2452,8 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
         [Parameter(Mandatory = $true)][string]$VmrunPath,
         [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
         [string]$ExpectedFingerprint = ('0' * 64),
-        [string]$MarkerRoot = (Get-AtlasoDevelopmentCaCleanupMarkerRoot)
+        [string]$MarkerRoot = (Get-AtlasoDevelopmentCaCleanupMarkerRoot),
+        [psobject]$OwnershipContext
     )
 
     if (-not (Test-Path -LiteralPath $MarkerRoot -PathType Container)) {
@@ -2644,16 +2648,27 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                     $marker.Phase = 'removal-child-active'
                 }
                 try {
+                    $persistedOwnershipArguments = @()
+                    if ($OwnershipContext -and $OwnershipContext.Enabled) {
+                        if ([string]$marker.VmxPath -ine [string]$OwnershipContext.VmxPath) {
+                            throw 'Persisted cleanup requires the original receipt for its exact VM; preserve unrelated markers.'
+                        }
+                        $persistedReceipt = Assert-AtlasoTestVmOriginalOwnership -Context $OwnershipContext
+                        $persistedOwnershipArguments = @(
+                            '-ExpectedRootIdentity', [string]$persistedReceipt.Record.original_identities.directory,
+                            '-ExpectedPersistentVmIdentitySha256', [string]$persistedReceipt.Record.persistent_vm_identity_sha256
+                        )
+                    }
                     Invoke-AtlasoBoundedProcess `
                         -FilePath $powerShellPath `
-                        -ArgumentList @(
+                        -ArgumentList (@(
                             '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
                             (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1'),
                             '-VmxPath', $marker.VmxPath,
                             '-VmrunPath', $VmrunPath,
                             '-ExpectedName', $marker.Name,
                             '-Confirm:$false'
-                        ) `
+                        ) + $persistedOwnershipArguments) `
                         -TimeoutSeconds $TimeoutSeconds `
                         -Action 'Remove the exact failed normal test VM during persisted cleanup' | Out-Null
                 }
@@ -3158,7 +3173,8 @@ if (-not $WhatIfPreference) {
     Invoke-PendingAtlasoDevelopmentCaCleanup `
         -VmrunPath $resolvedVmrunPath `
         -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30)) `
-        -ExpectedFingerprint $developmentRootCaFingerprint
+        -ExpectedFingerprint $developmentRootCaFingerprint `
+        -OwnershipContext $ownershipContext
 }
 if (-not $WhatIfPreference) {
     # Resolve new Environment configuration only after credential-independent
@@ -3715,16 +3731,24 @@ if (-not $WhatIfPreference) {
                         -Phase removal-child-active
                 }
                 try {
+                    $rollbackOwnershipArguments = @()
+                    if ($ownershipContext.Enabled) {
+                        $rollbackReceipt = Assert-AtlasoTestVmOriginalOwnership -Context $ownershipContext
+                        $rollbackOwnershipArguments = @(
+                            '-ExpectedRootIdentity', [string]$rollbackReceipt.Record.original_identities.directory,
+                            '-ExpectedPersistentVmIdentitySha256', [string]$rollbackReceipt.Record.persistent_vm_identity_sha256
+                        )
+                    }
                     Invoke-AtlasoBoundedProcess `
                         -FilePath (Get-Process -Id $PID).Path `
-                        -ArgumentList @(
+                        -ArgumentList (@(
                             '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
                             (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1'),
                             '-VmxPath', $targetVmx,
                             '-VmrunPath', $rollbackVmrunPath,
                             '-ExpectedName', $Name,
                             '-Confirm:$false'
-                        ) `
+                        ) + $rollbackOwnershipArguments) `
                         -TimeoutSeconds $TimeoutSeconds `
                         -Action 'Remove the exact failed normal test VM during rollback' | Out-Null
                 }

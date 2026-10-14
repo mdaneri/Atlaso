@@ -2710,7 +2710,9 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "Get-AtlasoVmwarePayloadLayout -VmxPath $targetVmx -RequireExactlyTwoVmdks" in vm_script
     assert vm_script.index(
         "Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx"
-    ) < vm_script.index("Invoke-Vmrun -Arguments @('-T', 'ws', 'clone'")
+    ) < vm_script.index("$cloneArguments = @('-T', 'ws', 'clone'")
+    assert "& $CloneExecutor $resolvedVmrun $cloneArguments $CloneCreatedContext" in vm_script
+    assert "Invoke-Vmrun -Arguments $cloneArguments" in vm_script
     assert "Set-VmxScsiDisk -Path $targetVmx -Unit 2 -DiskPath $resolvedDepotVmdkPath" in vm_script
     assert "Set-VmxScsiDisk -Path $targetVmx -Unit 3 -DiskPath $resolvedBackupVmdkPath" in vm_script
     assert "Set-VmxScsiDisk -Path $targetVmx -Unit 1 -DiskPath $resolvedDepotVmdkPath" not in vm_script
@@ -2725,10 +2727,10 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "$capacityBytes -ne 500GB" in vm_script
     assert "does not expose a readable VMDK capacity descriptor" in vm_script
     assert vm_script.index("foreach ($reusedDataDisk") < vm_script.index(
-        "Invoke-Vmrun -Arguments @('-T', 'ws', 'clone'"
+        "$cloneArguments = @('-T', 'ws', 'clone'"
     )
     assert vm_script.index("Assert-ExistingDataVmdk -Path $reusedDataDisk.Path") < vm_script.index(
-        "Invoke-Vmrun -Arguments @('-T', 'ws', 'clone'"
+        "$cloneArguments = @('-T', 'ws', 'clone'"
     )
     assert "Set-VmxScsiDisk" in vm_script
     assert "disk.EnableUUID" in vm_script
