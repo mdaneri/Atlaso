@@ -1440,6 +1440,8 @@ receipt selectors plus `-CleanupRecoveryReceiptPath` and `-CleanupRecoveryReceip
 validates the immutable task, VM receipt, marker, preserved disk and quarantine bindings without requiring the live
 VM; stopped/process-quiescence and disk identity checks still precede restoration. It exits after recovery and forbids
 redeploy. Legacy markers without original recovery evidence are preserved; never manufacture that evidence afterward.
+Receipt-only recovery runs before Python/1Password SDK artifact admission. Missing SDK tooling cannot strand preserved
+disks; artifact verification remains mandatory before fresh credential or creation work.
 Rerun an interrupted creation with the preserved original receipt selectors without adding `-Redeploy` solely for
 recovery. Pending cleanup runs before an existing-VM rejection. If import recovery leaves a healthy VM in place, the
 wrapper preserves it and rejects recreation after recovery, before obtaining new credentials.

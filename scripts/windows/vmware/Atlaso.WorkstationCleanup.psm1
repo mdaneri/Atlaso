@@ -16,7 +16,7 @@ unchanged and does not require them to resolve.
 #>
 
 Set-StrictMode -Version Latest
-if (-not ('Atlaso.WorkstationCapturedContentsV1' -as [type])) {
+if (-not ('Atlaso.WorkstationCapturedContentsV2' -as [type])) {
         Add-Type -TypeDefinition @'
 using System;
 using System.IO;
@@ -25,7 +25,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 namespace Atlaso {
-    public sealed class WorkstationCapturedContentsV1 : IDisposable {
+    public sealed class WorkstationCapturedContentsV2 : IDisposable {
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
         private static extern SafeFileHandle CreateFileW(string p, uint a, uint s, IntPtr x, uint d, uint f, IntPtr t);
         [DllImport("kernel32.dll", SetLastError=true)]
@@ -111,9 +111,9 @@ namespace Atlaso {
             }
             return h;
         }
-        public WorkstationCapturedContentsV1(string path, string expectedRoot, IDictionary<string,string> inventory)
+        public WorkstationCapturedContentsV2(string path, string expectedRoot, IDictionary<string,string> inventory)
             : this(path, expectedRoot, inventory, false) { }
-        public WorkstationCapturedContentsV1(string path, string expectedRoot, IDictionary<string,string> inventory, bool deleteRoot) {
+        public WorkstationCapturedContentsV2(string path, string expectedRoot, IDictionary<string,string> inventory, bool deleteRoot) {
             Root = Path.GetFullPath(path);
             try {
                 var chain = new Stack<string>();
@@ -2081,7 +2081,7 @@ function Remove-AtlasoCapturedArtifactSnapshot {
     param([string]$Root, [psobject]$Snapshot, [switch]$KeepRoot, [switch]$PreparedOnly)
     $inventory = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($relative in $Snapshot.Items.Keys) { $inventory.Add($relative, $Snapshot.Items[$relative]) }
-    $removal = [Atlaso.WorkstationCapturedContentsV1]::new($Root, $Snapshot.RootIdentity, $inventory, (-not $KeepRoot))
+    $removal = [Atlaso.WorkstationCapturedContentsV2]::new($Root, $Snapshot.RootIdentity, $inventory, (-not $KeepRoot))
     try {
         Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $Root -Snapshot $Snapshot
         if ($PreparedOnly) { Assert-AtlasoPreparedArtifactSnapshot -Root $Root -Snapshot $Snapshot }

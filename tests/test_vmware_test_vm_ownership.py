@@ -339,6 +339,26 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
     assert disk.read_text() == "public preserved data fixture"
 
 
+@pytest.mark.parametrize("keep_root", [False, True])
+def test_native_cleanup_reimport_uses_versioned_contract(tmp_path, keep_root):
+    """A resident legacy CLR type cannot supply the changed cleanup contract.
+
+    Args:
+        tmp_path: Original pytest-owned fixture directory.
+        keep_root: Preserve the original empty object or remove it through its handle.
+    """
+    root = tmp_path / "original-empty-root"
+    root.mkdir()
+    legacy = "namespace Atlaso { public sealed class WorkstationCapturedContentsV1 { public WorkstationCapturedContentsV1(string path, string expectedRoot, System.Collections.Generic.IDictionary<string,string> inventory) {} } }"
+    command = "$ErrorActionPreference='Stop';Add-Type -TypeDefinition " + ps_literal(legacy) + ";"
+    command += ownership_prefix()
+    command += f"& (Get-Module Atlaso.WorkstationCleanup) {{param($root,$keep) $snapshot=Get-AtlasoRootSnapshot -RemovalRoot $root; Remove-AtlasoCapturedArtifactSnapshot -Root $root -Snapshot $snapshot -KeepRoot:$keep -PreparedOnly}} {ps_literal(root)} ${str(keep_root).lower()};"
+    command += "if(-not ('Atlaso.WorkstationCapturedContentsV1' -as [type]) -or -not ('Atlaso.WorkstationCapturedContentsV2' -as [type])){throw 'Native version isolation was not exercised'}"
+    result = run_powershell(command, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert root.exists() == keep_root
+
+
 @pytest.mark.parametrize("case", ["valid", "refused", "whatif", "unpaired", "redeploy"])
 def test_parent_cleanup_recovery_selectors_stop_before_fresh_creation(tmp_path, case):
     """Execute the parent recovery-only selector gates and mutation-free preview.
@@ -357,7 +377,7 @@ def test_parent_cleanup_recovery_selectors_stop_before_fresh_creation(tmp_path, 
     command += "$CleanupRecoveryReceiptSha256=" + ("'';" if case == "unpaired" else "('a'*64);")
     command += f"$Redeploy=${str(case == 'redeploy').lower()};$WhatIfPreference=${str(case == 'whatif').lower()};"
     command += "$TimeoutSeconds=5;$NoStart=$false;$RecoverPreparedDirectory=$false;$PreparedDirectoryReceiptPath='';$PreparedDirectoryReceiptSha256='';"
-    command += "function Get-AtlasoDevelopmentRootCaFingerprint {'a'*64};function Confirm-OnePasswordTestVmArtifact {'unused'};function Resolve-TestVmVmrunPath {'unused'};function Assert-AtlasoTestVmCheckoutSource {$events.Add('source')};"
+    command += "function Get-AtlasoDevelopmentRootCaFingerprint {'a'*64};function Confirm-OnePasswordTestVmArtifact {throw 'SDK artifact unavailable; receipt-only recovery must not enter this boundary'};function Resolve-TestVmVmrunPath {'unused'};function Assert-AtlasoTestVmCheckoutSource {$events.Add('source')};"
     command += "function Invoke-PendingAtlasoDevelopmentCaCleanup {$events.Add('recovery');"
     command += "throw 'Original recovery refused'};" if case == "refused" else "};"
     command += "$failure='';try { & {" + block + ";$events.Add('fresh-creation')} }catch{$failure=$_.Exception.Message};"

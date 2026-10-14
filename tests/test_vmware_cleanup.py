@@ -525,7 +525,7 @@ def _write_test_vm_wrapper_harness(directory: Path) -> Path:
 
     replace_segment(
         "if (-not $WhatIfPreference) {\n"
-        "    # Admit the exact fork release before recovery or any credential-side",
+        "    # Recovery consumes no 1Password material.",
         "if (-not $WhatIfPreference) {\n"
         "    # Resolve new Environment configuration only after credential-independent",
         "$resolvedVmrunPath = $VmrunPath\n",
