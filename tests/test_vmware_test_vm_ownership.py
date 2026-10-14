@@ -279,7 +279,7 @@ def test_post_removal_pending_recovery_requires_original_marker_receipt(tmp_path
         assert marker_path.read_text() == "public marker"
 
 
-@pytest.mark.parametrize("failure,retry", [(True, "none"), (False, "reuse"), (False, "reset"), (False, "foreign"), (False, "tampered"), (False, "replacement"), (False, "extra"), (False, "extra_dir"), (False, "disk_replaced"), (False, "missing"), (False, "legacy"), (False, "root_pubfail"), (False, "preinsert")])
+@pytest.mark.parametrize("failure,retry", [(True, "none"), (False, "reuse"), (False, "reset"), (False, "foreign"), (False, "tampered"), (False, "replacement"), (False, "extra"), (False, "extra_dir"), (False, "disk_replaced"), (False, "missing"), (False, "legacy"), (False, "root_pubfail"), (False, "preinsert"), (False, "clone_extra")])
 def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path, failure, retry):
     """Exercise the VMX-locked production callback and publication refusal.
 
@@ -340,7 +340,7 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
         "disk_replaced": "[IO.File]::Move($diskPath,($diskPath+'.original'));[IO.File]::WriteAllText($diskPath,'replacement');",
         "missing": "$ctx.RestoredDirectoryReceiptSha256='';",
         "legacy": "$ctx.RestoredDirectoryReceiptPath='';",
-        "root_pubfail": "", "preinsert": "",
+        "root_pubfail": "", "preinsert": "", "clone_extra": "",
     }
     command += changes[retry]
     source = (VMWARE / "create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
@@ -363,8 +363,12 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
         command += "$ResetDataDisks=$true;$RestoredDirectoryReceiptPath=$ctx.RestoredDirectoryReceiptPath;$ownershipContext=$ctx;$resolvedOutputDirectory=$output;$resolvedDepotVmdkPath=$diskPath;$resolvedBackupVmdkPath=Join-Path $output 'unused.vmdk';"
         command += "& {[CmdletBinding(SupportsShouldProcess)]param() " + block + "};"
     command += "$ctx | Add-Member CloneOutputPin (New-AtlasoTestVmPreparedOutput -Context $ctx) -Force;"
-    command += "$freshIdentity='e'*32;[IO.File]::WriteAllText($vmx,('guestinfo.atlaso.test_vm_cleanup_identity = '+[char]34+$freshIdentity+[char]34));"
+    command += f"$sourceVmx={ps_literal(source_vmx)};Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($sourceVmx)) -Filter '*.vmdk' -File | ForEach-Object {{[IO.File]::Copy($_.FullName,(Join-Path $output $_.Name))}};"
+    command += "$freshIdentity='e'*32;[IO.File]::WriteAllText($vmx,([IO.File]::ReadAllText($sourceVmx)+[Environment]::NewLine+'guestinfo.atlaso.test_vm_cleanup_identity = '+[char]34+$freshIdentity+[char]34));"
     command += "Publish-AtlasoTestVmOriginalOwnership -Context $ctx -DirectoryPath $output -VmxPath $vmx -CleanupIdentity $freshIdentity | Out-Null;"
+    if retry == "clone_extra":
+        command += "[IO.File]::WriteAllText((Join-Path $output 'unproven.vmdk'),'foreign');"
+    command += "Assert-AtlasoTestVmRestoredClonePayload -Context $ctx -VmxPath $vmx;"
     command += "$fresh=Assert-AtlasoTestVmOriginalOwnership -Context $ctx;if($fresh.Record.restored_directory.sha256 -cne $ctx.RestoredDirectoryReceiptSha256){throw 'Fresh clone lost original restored-root binding'};$ctx.CloneOutputPin.Dispose();"
     command += "[pscustomobject]@{marker=$marker;proof=$proofFile.FullName} | ConvertTo-Json -Compress"
     result = run_powershell(command, check=False)

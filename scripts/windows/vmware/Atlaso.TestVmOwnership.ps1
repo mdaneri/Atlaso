@@ -1117,6 +1117,39 @@ function Get-AtlasoTestVmMarkerProjection {
 
 <#
 .SYNOPSIS
+Validate cloned payload disks alongside only the originally restored data components.
+.PARAMETER Context
+Owned clone context retaining the restored root and original disk admission pins.
+.PARAMETER VmxPath
+Fresh original-receipted clone whose two payload roles must remain valid.
+#>
+function Assert-AtlasoTestVmRestoredClonePayload {
+    param([psobject]$Context, [string]$VmxPath)
+    $record=Read-AtlasoTestVmSealedRecord -Context $Context -Path $Context.RestoredDirectoryReceiptPath -Sha256 $Context.RestoredDirectoryReceiptSha256 -Phase 'restored-data-created'
+    $fresh=Assert-AtlasoTestVmOriginalOwnership -Context $Context
+    if ($VmxPath -cne $Context.VmxPath -or $fresh.Record.original_identities.directory -cne $record.original_identity -or
+        $fresh.Record.restored_directory.path -cne $Context.RestoredDirectoryReceiptPath -or
+        $fresh.Record.restored_directory.sha256 -cne $Context.RestoredDirectoryReceiptSha256 -or
+        -not $Context.CloneOutputPin -or $Context.CloneOutputPin.GetRetainedCreatedIdentity($Context.OutputDirectory) -cne $record.original_identity) {
+        throw 'Cloned payload does not retain its original restored root binding.'
+    }
+    $layout=@(Get-AtlasoVmwarePayloadLayout -VmxPath $VmxPath)
+    $expected=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach($payload in $layout){$null=$expected.Add($payload.File.FullName)}
+    foreach($disk in $record.disks){
+        if($Context.RestoredDataReset){continue}
+        if([Atlaso.WorkstationFileIdentity]::Get($disk.Path) -cne $disk.Identity -or -not $expected.Add($disk.Path)) {
+            throw 'Restored data component changed or overlaps a cloned payload.'
+        }
+    }
+    $actual=@(Get-ChildItem -LiteralPath $Context.OutputDirectory -Filter '*.vmdk' -File -Force)
+    if($actual.Count -ne $expected.Count -or @($actual | Where-Object {-not $expected.Contains($_.FullName)}).Count){
+        throw 'Cloned output contains unproven VMDK components.'
+    }
+}
+
+<#
+.SYNOPSIS
 Verify an existing test VM has a matching original creation receipt.
 .PARAMETER Context
 Admitted task context for the expected canonical VM.

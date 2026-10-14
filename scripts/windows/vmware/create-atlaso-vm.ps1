@@ -379,7 +379,12 @@ if ($null -ne $CloneCreated) {
     & $CloneCreated $resolvedOutputDirectory $targetVmx $CloneCreatedContext
 }
 
-$null = Get-AtlasoVmwarePayloadLayout -VmxPath $targetVmx -RequireExactlyTwoVmdks
+if ($CloneCreatedContext -and $CloneCreatedContext.Enabled -and $CloneCreatedContext.PSObject.Properties['RestoredDirectoryReceiptPath'] -and $CloneCreatedContext.RestoredDirectoryReceiptPath) {
+    Assert-AtlasoTestVmRestoredClonePayload -Context $CloneCreatedContext -VmxPath $targetVmx
+}
+else {
+    $null = Get-AtlasoVmwarePayloadLayout -VmxPath $targetVmx -RequireExactlyTwoVmdks
+}
 if ($MutationGuard) { & $MutationGuard $CloneCreatedContext }
 Set-VmxValue -Path $targetVmx -Key 'displayName' -Value $Name
 Set-VmxValue -Path $targetVmx -Key 'disk.EnableUUID' -Value 'TRUE'

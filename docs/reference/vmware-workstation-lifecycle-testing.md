@@ -1449,6 +1449,9 @@ components, refusing replacements, extra files/directories, missing selectors an
 disk handles remain held through cloning; a fresh VM receives its own original VM receipt. `-ResetDataDisks` removes
 only that admitted complete component set through captured handles before creating replacement disks. Nested or
 unproven component layouts remain quarantined rather than acquiring ownership from a later snapshot.
+Restored-root cloning validates both system payload roles and permits only the separately receipt-bound data VMDK
+components alongside them. Source-image validation still requires exactly two payload disks; unexpected clone VMDKs
+are refused.
 Rerun an interrupted creation with the preserved original receipt selectors without adding `-Redeploy` solely for
 recovery. Pending cleanup runs before an existing-VM rejection. If import recovery leaves a healthy VM in place, the
 wrapper preserves it and rejects recreation after recovery, before obtaining new credentials.
