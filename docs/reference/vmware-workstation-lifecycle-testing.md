@@ -1433,6 +1433,9 @@ without mutation; an ownership context for another VM cannot authorize their rec
 Rerun an interrupted creation with the preserved original receipt selectors without adding `-Redeploy` solely for
 recovery. Pending cleanup runs before an existing-VM rejection. If import recovery leaves a healthy VM in place, the
 wrapper preserves it and rejects recreation after recovery, before obtaining new credentials.
+Fresh source-template resolution, provenance validation, and creation-intent publication follow pending recovery and
+the existing-VM check. A removed or replaced template therefore cannot strand recovery for an already-receipted VM;
+if recovery removes the failed VM, any subsequent creation still requires valid source provenance.
 
 ## Fidelity Boundary
 

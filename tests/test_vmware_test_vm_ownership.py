@@ -74,12 +74,14 @@ def test_pending_cleanup_admits_original_owner_before_any_marker_mutation(tmp_pa
 
 
 @pytest.mark.parametrize("recovery", ["healthy", "removed", "refused", "missing_receipt", "whatif"])
-def test_existing_vm_rejection_follows_receipt_bound_pending_recovery(tmp_path, recovery):
+@pytest.mark.parametrize("template_condition", ["valid", "missing", "replaced"])
+def test_existing_vm_rejection_follows_receipt_bound_pending_recovery(tmp_path, recovery, template_condition):
     """Execute parent preflight ordering without redeploying a recovered healthy VM.
 
     Args:
         tmp_path: Original pytest-owned fixture directory.
         recovery: Pending outcome, absent original receipt or mutation-free preview.
+        template_condition: Fresh clone source available, absent or invalidated.
     """
     script = (VMWARE / "create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
     start = script.index("if ($ownershipContext.Enabled -and (Test-Path -LiteralPath $resolvedOutputDirectory))")
@@ -91,13 +93,17 @@ def test_existing_vm_rejection_follows_receipt_bound_pending_recovery(tmp_path, 
     vmx.write_text("public VM fixture", encoding="utf-8")
     captured = tmp_path / "events.json"
     setup = "$ErrorActionPreference='Stop'; $events=[Collections.Generic.List[string]]::new(); "
-    setup += f"$repoRoot={ps_literal(ROOT)}; $resolvedOutputDirectory={ps_literal(output)}; $targetVmx={ps_literal(vmx)}; $ApplianceVmxPath=$targetVmx; "
+    template = tmp_path / "template.vmx"
+    if template_condition != "missing":
+        template.write_text("public template fixture", encoding="utf-8")
+    setup += f"$repoRoot={ps_literal(ROOT)}; $resolvedOutputDirectory={ps_literal(output)}; $targetVmx={ps_literal(vmx)}; $ApplianceVmxPath={ps_literal(template)}; "
     setup += "$ownershipContext=[pscustomobject]@{Enabled=$true}; $LocalBuilder=$false; $NoStart=$false; $Redeploy=$false; $TimeoutSeconds=10; "
     setup += f"$WhatIfPreference=${str(recovery == 'whatif').lower()}; "
     setup += "function Assert-AtlasoTestVmOriginalOwnership { param($Context) $events.Add('receipt'); "
     setup += "throw 'Original receipt missing' }; " if recovery == "missing_receipt" else "[pscustomobject]@{} }; "
-    setup += "function Assert-AtlasoVmwarePayloadProvenance { param($VmxPath,$ExpectedSourceCommit) }; "
-    setup += "function New-AtlasoTestVmOwnershipIntent { param($Context,$SourceVmxPath,$SourceVmxIdentity,$ExistingReceipt) $Context }; "
+    setup += "function Assert-AtlasoVmwarePayloadProvenance { param($VmxPath,$ExpectedSourceCommit) $events.Add('template'); "
+    setup += "throw 'Replaced template refused' }; " if template_condition == "replaced" else "}; "
+    setup += "function New-AtlasoTestVmOwnershipIntent { param($Context,$SourceVmxPath,$SourceVmxIdentity,$ExistingReceipt) $events.Add('intent'); $Context }; "
     setup += "function Get-AtlasoDevelopmentRootCaFingerprint { param($CertificatePath) '0'*64 }; "
     setup += "function Confirm-OnePasswordTestVmArtifact { param($RepositoryRoot,$PythonCommand,$TimeoutSeconds) 'unused' }; "
     setup += "function Resolve-TestVmVmrunPath { param($Path) 'unused-provider' }; "
@@ -114,7 +120,14 @@ def test_existing_vm_rejection_follows_receipt_bound_pending_recovery(tmp_path, 
     evidence = json.loads(captured.read_text(encoding="utf-8-sig"))
     events = evidence["events"]
     if recovery == "removed":
-        assert events == ["receipt", "checkout", "recovery", "credential-boundary"]
+        if template_condition == "valid":
+            assert events == ["receipt", "checkout", "recovery", "template", "intent", "credential-boundary"]
+        elif template_condition == "missing":
+            assert events == ["receipt", "checkout", "recovery"]
+            assert "Cannot find path" in evidence["failure"]
+        else:
+            assert events == ["receipt", "checkout", "recovery", "template"]
+            assert evidence["failure"] == "Replaced template refused"
         assert not vmx.exists()
     elif recovery == "healthy":
         assert events == ["receipt", "checkout", "recovery"]

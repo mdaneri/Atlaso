@@ -3154,28 +3154,6 @@ if (
 ) {
     throw "Refusing VMware creation because the canonical Atlaso-owned output directory already exists without its exact VMX: $resolvedOutputDirectory"
 }
-$resolvedSourceVmx = ''
-$sourceVmxIdentity = ''
-if ($ownershipContext.Enabled) {
-    if (-not $ApplianceVmxPath) {
-        $ApplianceVmxPath = Find-LatestApplianceVmx -RepoRoot $repoRoot
-    }
-    $resolvedSourceVmx = (Resolve-Path -LiteralPath $ApplianceVmxPath).Path
-    $expectedPayloadSourceCommit = if ($LocalBuilder) { $vmIdentity.SourceCommit } else { '' }
-    Assert-AtlasoVmwarePayloadProvenance `
-        -VmxPath $resolvedSourceVmx `
-        -ExpectedSourceCommit $expectedPayloadSourceCommit | Out-Null
-    $sourceVmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedSourceVmx)
-    if (-not $WhatIfPreference) {
-        # This public-only intent predates credential access and remains if cloning
-        # or its original-identity callback fails before the VM can be configured.
-        $ownershipContext = New-AtlasoTestVmOwnershipIntent `
-            -Context $ownershipContext `
-            -SourceVmxPath $resolvedSourceVmx `
-            -SourceVmxIdentity $sourceVmxIdentity `
-            -ExistingReceipt $existingOwnershipReceipt
-    }
-}
 $developmentRootCaCertificatePath = Join-Path $repoRoot 'image\vmware-workstation\development-trust\atlaso-development-root-ca.pem'
 $developmentRootCaCertificatePem = Get-Content -LiteralPath $developmentRootCaCertificatePath -Raw
 $developmentRootCaFingerprint = Get-AtlasoDevelopmentRootCaFingerprint `
@@ -3205,6 +3183,28 @@ if ($ownershipContext.Enabled -and (Test-Path -LiteralPath $targetVmx) -and -not
     # Recovery may finish a healthy VM's import. Preserve that VM and refuse
     # recreation only after the receipt-bound pending work has completed.
     throw "VM already exists: $targetVmx. Pass -Redeploy to remove and recreate it, or choose a different -CollisionSuffix for another identically owned test VM."
+}
+$resolvedSourceVmx = ''
+$sourceVmxIdentity = ''
+if ($ownershipContext.Enabled) {
+    if (-not $ApplianceVmxPath) {
+        $ApplianceVmxPath = Find-LatestApplianceVmx -RepoRoot $repoRoot
+    }
+    $resolvedSourceVmx = (Resolve-Path -LiteralPath $ApplianceVmxPath).Path
+    $expectedPayloadSourceCommit = if ($LocalBuilder) { $vmIdentity.SourceCommit } else { '' }
+    Assert-AtlasoVmwarePayloadProvenance `
+        -VmxPath $resolvedSourceVmx `
+        -ExpectedSourceCommit $expectedPayloadSourceCommit | Out-Null
+    $sourceVmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedSourceVmx)
+    if (-not $WhatIfPreference) {
+        # This public-only intent predates credential access and remains if cloning
+        # or its original-identity callback fails before the VM can be configured.
+        $ownershipContext = New-AtlasoTestVmOwnershipIntent `
+            -Context $ownershipContext `
+            -SourceVmxPath $resolvedSourceVmx `
+            -SourceVmxIdentity $sourceVmxIdentity `
+            -ExistingReceipt $existingOwnershipReceipt
+    }
 }
 if (-not $WhatIfPreference) {
     # Resolve new Environment configuration only after credential-independent
