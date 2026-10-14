@@ -40,6 +40,12 @@ def test_legacy_apply_rejects_pending_proxy_publication_before_staging(client, m
         audit_ids = [row.id for row in db.query(AuditEvent).all()]
 
     def forbidden(*_args, **_kwargs):
+        """Reject all adapter use after the pending-publication guard.
+
+        Args:
+            *_args: Positional adapter arguments that must remain unused.
+            **_kwargs: Keyword adapter arguments that must remain unused.
+        """
         raise AssertionError("Rejected legacy Apply must not validate, stage, or invoke an adapter")
 
     monkeypatch.setattr(firewall if service == "firewall" else dns_dhcp, "SystemAdapter", forbidden)

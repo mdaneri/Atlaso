@@ -145,6 +145,11 @@ def test_service_takeover_requires_reviewed_proxy_retirement_first(client, monke
     unit_map["public_services"].update(changed=True, config_preview="", snapshot_marker={"reverse_proxy_intent_sha256": "removed"})
     unit_map["public_services"]["context"]["reverse_proxies"] = []
     def preview_for(target):
+        """Render a service fixture at the selected socket.
+
+        Args:
+            target: Candidate listener address in either IP family.
+        """
         return json.dumps({"enabled": True, "listen": {"addresses": [target], "port": 5696}}
                           if service == "kms" else {"boot": {"enabled": True, "listen_address": target, "http_port": 5696}})
 

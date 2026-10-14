@@ -269,6 +269,11 @@ def test_public_snapshot_bounds_success_and_failed_helper_reads(monkeypatch, fai
     calls = []
 
     def read(_self):
+        """Return the controlled helper observation.
+
+        Args:
+            _self: Adapter instance whose helper read is counted.
+        """
         calls.append(True)
         return AdapterResult(command=["atlaso-helper"], dry_run=False,
                              stdout=json.dumps(_payload()), returncode=int(failure))
@@ -307,6 +312,11 @@ def test_public_snapshot_single_flight_and_invalidated_refresh(monkeypatch):
     calls = []
 
     def read(_self):
+        """Hold one controlled helper read across cache invalidation.
+
+        Args:
+            _self: Adapter instance supplied to the mocked status method.
+        """
         calls.append(True)
         entered.set()
         assert release.wait(5)

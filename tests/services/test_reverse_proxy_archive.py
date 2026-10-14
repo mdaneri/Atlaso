@@ -62,6 +62,11 @@ def test_restore_checks_publication_with_assigned_ids_atomically(client, monkeyp
         synthetic = publication_snapshot(candidates(archive["data"]))
 
         def rendered_size(snapshot):
+            """Measure the real publication at the configured test budget.
+
+            Args:
+                snapshot: Canonical candidate proxy collection to render.
+            """
             return len(publication.render_proxy_servers(
                 snapshot, publication.transport_manifest(snapshot, addresses)).encode("utf-8"))
 
@@ -76,6 +81,13 @@ def test_restore_checks_publication_with_assigned_ids_atomically(client, monkeyp
         audit_ids = list(db.scalars(select(AuditEvent.id).order_by(AuditEvent.id)))
 
         def assign_advanced_id(_mapper, _connection, row):
+            """Simulate a retained database sequence during row insertion.
+
+            Args:
+                _mapper: SQLAlchemy mapper invoking the insert event.
+                _connection: Transaction connection supplied by SQLAlchemy.
+                row: Candidate proxy or route receiving its assigned identity.
+            """
             # Exercise the flushed insert path with the IDs a retained sequence
             # could allocate; no PostgreSQL server is required by this fixture.
             row.id = 1000

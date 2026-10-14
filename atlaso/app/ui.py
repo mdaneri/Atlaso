@@ -27,7 +27,7 @@ from ipaddress import (
 from pathlib import Path, PurePosixPath
 from secrets import token_urlsafe
 from typing import Any, Callable
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -771,6 +771,7 @@ from atlaso.app.ui_routes import (
     PUBLIC_UI_ROOT,
     management_ui_path,
     public_ui_path,
+    safe_depot_login_next,
     safe_management_return_path,
     safe_public_return_path,
 )
@@ -16691,47 +16692,6 @@ def public_depot_redirect() -> RedirectResponse:
         The endpoint response.
     """
     return RedirectResponse("/PROD/", status_code=301)
-
-
-def safe_depot_login_next(value: str | None) -> str:
-    """Return safe depot login next.
-
-    Args:
-        value: Candidate value consumed by safe depot login next.
-    """
-    fallback = "/PROD/"
-    target = (value or "").strip()
-    if not target or "\\" in target or any(ord(character) < 0x20 or ord(character) == 0x7F for character in target):
-        return fallback
-    try:
-        parsed = urlsplit(target)
-    except ValueError:
-        return fallback
-    if parsed.scheme or parsed.netloc or parsed.fragment:
-        return fallback
-
-    decoded_path = parsed.path
-    for _ in range(4):
-        next_decoded_path = unquote(decoded_path)
-        if next_decoded_path == decoded_path:
-            break
-        decoded_path = next_decoded_path
-    else:
-        return fallback
-    if (
-        "\\" in decoded_path
-        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in decoded_path)
-        or "//" in decoded_path
-        or any(segment in {".", ".."} for segment in decoded_path.split("/"))
-    ):
-        return fallback
-
-    if parsed.path == "/PROD":
-        return "/PROD" + ("?" + parsed.query if parsed.query else "")
-    if not parsed.path.startswith("/PROD/") or not decoded_path.startswith("/PROD/"):
-        return fallback
-    depot_suffix = parsed.path.removeprefix("/PROD/")
-    return "/PROD/" + depot_suffix + ("?" + parsed.query if parsed.query else "")
 
 
 def depot_login_response(request: Request, *, return_to: str = "/PROD/", error: str | None = None, status_code: int = 200, db: Session | None = None) -> HTMLResponse:

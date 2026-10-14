@@ -196,21 +196,42 @@ async def test_maximum_outage_cycle_keeps_every_route_fresh(tmp_path, monkeypatc
     class Clock:
         @staticmethod
         def now(_zone):
+            """Return the simulated observation time.
+
+            Args:
+                _zone: Requested time zone, already represented by the clock.
+            """
             return clock
 
     class StopAfterTwoCycles(Exception):
         pass
 
     async def timed_batch(*tasks):
+        """Advance a full batch deadline before collecting probe results.
+
+        Args:
+            *tasks: Probe coroutines submitted in one bounded batch.
+        """
         nonlocal clock
         assert len(tasks) <= 64
         clock += timedelta(seconds=10)
         return await gather(*tasks)
 
     async def unavailable(_route, _forbidden):
+        """Model an upstream that consumes its deadline without a response.
+
+        Args:
+            _route: Candidate upstream route under observation.
+            _forbidden: Excluded appliance addresses supplied to the probe.
+        """
         raise TimeoutError
 
     async def pause(seconds):
+        """Check the published cycle and advance the simulated pause.
+
+        Args:
+            seconds: Requested delay between full probe cycles.
+        """
         nonlocal clock, pauses
         cache = json.loads((tmp_path / "health.json").read_text(encoding="utf-8"))
         assert len(cache["health"]) == 256

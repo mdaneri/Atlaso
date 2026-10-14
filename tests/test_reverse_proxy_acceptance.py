@@ -95,7 +95,11 @@ def test_fixture_challenge_and_bounded_echo():
 
 
 def test_tls_fixture_keeps_one_leaf_and_verifies_before_forwarding(tmp_path):
-    """Use real TLS connections for the same immutable positive and negative leaf."""
+    """Use real TLS connections for the same immutable positive and negative leaf.
+
+    Args:
+        tmp_path: Owned temporary directory for the synthetic TLS fixture.
+    """
     import hashlib
     import socket
     import ssl
