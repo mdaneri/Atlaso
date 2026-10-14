@@ -38,14 +38,24 @@ FORWARDED = {"Accept": "text/html", "Sec-Fetch-Mode": "same-origin", "Sec-Fetch-
     ({**FORWARDED, "Accept": "application/problem+json"}, False),
 ])
 def test_navigation_classification(headers, expected):
-    """Only document intent receives browser recovery, including forwarded intent."""
+    """Only document intent receives browser recovery, including forwarded intent.
+
+    Args:
+        headers: Browser navigation or background request headers under test.
+        expected: Expected classification or safe recovery target.
+    """
     request = Request({"type": "http", "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()]})
     assert is_browser_navigation(request) is expected
 
 
 @pytest.mark.parametrize("headers", [DOCUMENT, FORWARDED])
 def test_dashboard_navigation_and_reload_recover_after_expiry(client, headers):
-    """Expired server state redirects the reproduced dashboard path with its notice."""
+    """Expired server state redirects the reproduced dashboard path with its notice.
+
+    Args:
+        client: Isolated HTTP client exercising the application routes.
+        headers: Browser navigation or background request headers under test.
+    """
     login(client)
     with SessionLocal() as db:
         session = db.execute(select(BrowserSession)).scalar_one()
@@ -62,7 +72,11 @@ def test_dashboard_navigation_and_reload_recover_after_expiry(client, headers):
 
 
 def test_forwarded_navigation_refreshes_activity_but_fetch_does_not(client):
-    """The same classification owns activity and expired-document recovery."""
+    """The same classification owns activity and expired-document recovery.
+
+    Args:
+        client: Isolated HTTP client exercising the application routes.
+    """
     login(client)
     before = utcnow() - timedelta(minutes=2)
     with SessionLocal() as db:
@@ -79,8 +93,20 @@ def test_forwarded_navigation_refreshes_activity_but_fetch_does_not(client):
 @pytest.mark.parametrize("headers", [DOCUMENT, FORWARDED])
 @pytest.mark.parametrize("next_path", ["/ui/management/dashboard?a=1&b=2", "//example.test", "/ui/public/ca", "/ui/management/login"])
 def test_stale_management_login_rejects_submission_and_opens_fresh_form(client, monkeypatch, headers, next_path):
-    """A stale CSRF submission never reaches authentication and preserves a safe next."""
+    """A stale CSRF submission never reaches authentication and preserves a safe next.
+
+    Args:
+        client: Isolated HTTP client exercising the application routes.
+        monkeypatch: Fixture replacing authentication to detect rejected submission execution.
+        headers: Browser navigation or background request headers under test.
+        next_path: Submitted return destination to preserve or reject.
+    """
     def forbidden_authentication(*args):
+        """Reject unexpected authentication during stale-form recovery.
+
+        Args:
+            *args: Authentication arguments whose use fails this test.
+        """
         pytest.fail("CSRF-invalid submission reached authentication")
 
     monkeypatch.setattr(ui, "authenticate_user", forbidden_authentication)
@@ -103,7 +129,12 @@ def test_stale_management_login_rejects_submission_and_opens_fresh_form(client, 
     {**DOCUMENT, "Authorization": "Bearer test-fixture"},
 ])
 def test_fetch_login_csrf_error_remains_structured(client, headers):
-    """Background consumers retain truthful 403 JSON without login redirects."""
+    """Background consumers retain truthful 403 JSON without login redirects.
+
+    Args:
+        client: Isolated HTTP client exercising the application routes.
+        headers: Browser navigation or background request headers under test.
+    """
     response = client.post("/ui/management/login", data={
         "username": "fixture", "password": "fixture", "csrf": "stale-fixture",
     }, headers=headers, follow_redirects=False)
@@ -126,7 +157,14 @@ def test_fetch_login_csrf_error_remains_structured(client, headers):
     ("/ui/management/dashboard", 401, "Invalid token", None),
 ])
 def test_error_recovery_preserves_plane_and_error_meaning(path, status, detail, expected):
-    """Only known login CSRF failures and unauthenticated documents recover."""
+    """Only known login CSRF failures and unauthenticated documents recover.
+
+    Args:
+        path: Request endpoint under test.
+        status: HTTP error status raised by the test route.
+        detail: Public error detail raised by the test route.
+        expected: Expected classification or safe recovery target.
+    """
     app = FastAPI()
     app.add_middleware(SessionMiddleware, secret_key="test-fixture-secret-with-enough-length")
     install_problem_handlers(app)
@@ -146,7 +184,11 @@ def test_error_recovery_preserves_plane_and_error_meaning(path, status, detail, 
 
 
 def test_fresh_login_after_recovery_succeeds(client):
-    """Fresh CSRF and credentials are required after the rejected stale submission."""
+    """Fresh CSRF and credentials are required after the rejected stale submission.
+
+    Args:
+        client: Isolated HTTP client exercising the application routes.
+    """
     response = client.post("/ui/management/login", headers=DOCUMENT, data={
         "username": "admin", "password": "atlaso-admin", "csrf": "stale-fixture",
     }, follow_redirects=False)
@@ -171,7 +213,16 @@ def test_fresh_login_after_recovery_succeeds(client):
     ("/PROD/login", "/PROD/login?next=/PROD/login", "/PROD/login", "/PROD/"),
 ])
 def test_stale_portal_login_follows_real_get_form_route(client, monkeypatch, path, next_path, form_path, expected):
-    """Actual public/depot routes provide fresh HTML and preserve safe directory context."""
+    """Actual public/depot routes provide fresh HTML and preserve safe directory context.
+
+    Args:
+        client: Isolated HTTP client exercising the application routes.
+        monkeypatch: Fixture replacing authentication to detect rejected submission execution.
+        path: Request endpoint under test.
+        next_path: Submitted return destination to preserve or reject.
+        form_path: Expected GET route that renders the fresh form.
+        expected: Expected classification or safe recovery target.
+    """
     with SessionLocal() as db:
         db.execute(select(ApplianceSettings)).scalar_one().management_https_enabled = True
         for model in (CaSettings, VcfOfflineDepotSettings):
@@ -188,6 +239,11 @@ def test_stale_portal_login_follows_real_get_form_route(client, monkeypatch, pat
         db.commit()
 
     def forbidden_authentication(*args):
+        """Reject unexpected authentication during stale-form recovery.
+
+        Args:
+            *args: Authentication arguments whose use fails this test.
+        """
         pytest.fail("Stale portal submission reached authentication")
 
     monkeypatch.setattr(ui, "authenticate_user", forbidden_authentication)
