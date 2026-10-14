@@ -2444,7 +2444,7 @@ function Complete-AtlasoDevelopmentCaSuccessfulImport {
 Retry every interrupted development-CA rollback before another VM mutation.
 
 .PARAMETER OwnershipContext
-Admitted task context requiring the exact original VM receipt before persisted removal.
+Admitted task context requiring the exact original VM receipt before any marker-bound mutation.
 
 .PARAMETER VmrunPath
 Resolved VMware vmrun executable used for bounded scrub and stop proof.
@@ -2479,12 +2479,18 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
         throw "Unexpected development-CA cleanup state blocks new VM creation: $($unexpectedFiles[0].FullName)"
     }
     foreach ($markerFile in @(Get-ChildItem -LiteralPath $MarkerRoot -File -Filter '*.json' -Force)) {
+        if ($OwnershipContext -and $OwnershipContext.Enabled) {
+            $null = Assert-AtlasoTestVmOriginalOwnership -Context $OwnershipContext
+        }
         try {
             $marker = Read-AtlasoDevelopmentCaCleanupMarker `
                 -MarkerPath $markerFile.FullName `
                 -MarkerRoot $MarkerRoot
         }
         catch {
+            # Legacy repair can scrub and stop a VM before returning a marker.
+            # Agent-owned recovery must never enter it without exact admission.
+            if ($OwnershipContext -and $OwnershipContext.Enabled) { throw }
             if ($_.Exception.Message -notlike 'The marked VMX changed filesystem identity;*') {
                 throw
             }
@@ -2497,6 +2503,15 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
             $marker = Read-AtlasoDevelopmentCaCleanupMarker `
                 -MarkerPath $markerFile.FullName `
                 -MarkerRoot $MarkerRoot
+        }
+        if ($OwnershipContext -and $OwnershipContext.Enabled) {
+            if (
+                [string]$marker.VmxPath -ine [string]$OwnershipContext.VmxPath -or
+                [string]$marker.OutputDirectory -ine [string]$OwnershipContext.OutputDirectory -or
+                [string]$marker.Name -cne [string]$OwnershipContext.Name
+            ) {
+                throw 'Persisted cleanup requires the original receipt for its exact VM; preserve unrelated markers.'
+            }
         }
         if ($marker.Phase -ceq 'retired') {
             Remove-AtlasoDevelopmentCaCleanupMarker -MarkerPath $marker.MarkerPath

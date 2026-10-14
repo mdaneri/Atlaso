@@ -1427,6 +1427,9 @@ reused disks quarantined while an artifact-removal child may survive. An unprove
 marker until a Windows host restart provides that proof.
 If this final stop/scrub/restart sequence is interrupted, rerun the same wrapper command. The pending marker resumes
 before 1Password preflight or any new network, disk, or VM mutation; do not edit the marker or VMX manually.
+Agent-owned retries validate the original VM receipt and exact marker destination before scrubbing, stopping,
+quarantining disks, retiring a marker, or removing artifacts. Foreign markers and legacy identity repairs are preserved
+without mutation; an ownership context for another VM cannot authorize their recovery.
 
 ## Fidelity Boundary
 

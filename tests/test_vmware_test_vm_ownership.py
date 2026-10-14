@@ -28,6 +28,51 @@ def ps_literal(value: str | Path) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+@pytest.mark.parametrize("admission", ["valid", "foreign", "missing", "legacy"])
+@pytest.mark.parametrize("phase", ["retired", "staged", "stopped-vmx-scrubbed"])
+def test_pending_cleanup_admits_original_owner_before_any_marker_mutation(tmp_path, admission, phase):
+    """Run the real pending loop and preserve foreign or unreceipted marker state.
+
+    Args:
+        tmp_path: Original pytest-owned fixture directory.
+        admission: Exact original owner, foreign destination, absent receipt or legacy repair.
+        phase: Retired, signer-bearing or rollback marker phase.
+    """
+    markers = tmp_path / "markers"
+    markers.mkdir()
+    marker_path = markers / "pending.json"
+    marker_path.write_text("public marker fixture", encoding="utf-8")
+    sentinel = tmp_path / "mutation.txt"
+    vmx = tmp_path / "vm" / "test.vmx"
+    destination = tmp_path / "other" / "test.vmx" if admission == "foreign" else vmx
+    setup = "$ErrorActionPreference='Stop'; $tokens=$null; $errors=$null; "
+    setup += f"$ast=[Management.Automation.Language.Parser]::ParseFile({ps_literal(VMWARE / 'create-atlaso-test-vm.ps1')},[ref]$tokens,[ref]$errors); "
+    setup += "$fn=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-PendingAtlasoDevelopmentCaCleanup'},$true); "
+    setup += ". ([scriptblock]::Create($fn.Extent.Text)); $script:admitted=$false; "
+    setup += f"$ctx=[pscustomobject]@{{Enabled=$true;VmxPath={ps_literal(vmx)};OutputDirectory={ps_literal(vmx.parent)};Name='test'}}; "
+    setup += f"$fixture=[pscustomobject]@{{VmxPath={ps_literal(destination)};OutputDirectory={ps_literal(destination.parent)};Name='test';Phase='{phase}';MarkerPath={ps_literal(marker_path)}}}; "
+    setup += "function Assert-AtlasoStrictDescendantPath { param($ParentPath,$ChildPath,$FailureMessage) }; "
+    setup += "function Assert-AtlasoTestVmOriginalOwnership { param($Context) "
+    setup += "throw 'Original receipt missing' }; " if admission == "missing" else "$script:admitted=$true }; "
+    setup += "function Read-AtlasoDevelopmentCaCleanupMarker { param($MarkerPath,$MarkerRoot) "
+    setup += "throw 'The marked VMX changed filesystem identity; preserve it' }; " if admission == "legacy" else "$fixture }; "
+    for name in ("Repair-AtlasoLegacyDevelopmentCaCleanupMarkerIdentity", "Remove-AtlasoDevelopmentCaCleanupMarker",
+                 "Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub", "Clear-AtlasoWorkstationDevelopmentRootCaRuntimePrivateKey",
+                 "Stop-AtlasoTestVmForRollback", "Complete-AtlasoDevelopmentCaSuccessfulImport"):
+        setup += f"function {name} {{ if (-not $script:admitted) {{ throw 'Mutation preceded original receipt' }}; "
+        setup += f"[IO.File]::WriteAllText({ps_literal(sentinel)},'mutation'); throw 'Admitted mutation boundary' }}; "
+    setup += f"Invoke-PendingAtlasoDevelopmentCaCleanup -VmrunPath 'unused' -TimeoutSeconds 5 -MarkerRoot {ps_literal(markers)} -OwnershipContext $ctx"
+    result = run_powershell(setup, check=False)
+    assert result.returncode != 0
+    assert marker_path.read_text(encoding="utf-8") == "public marker fixture"
+    if admission == "valid":
+        assert sentinel.exists(), result.stdout + result.stderr
+    else:
+        assert not sentinel.exists(), result.stdout + result.stderr
+        expected = {"foreign": "preserve unrelated markers", "missing": "Original receipt missing", "legacy": "changed filesystem identity"}
+        assert expected[admission] in result.stderr
+
+
 @pytest.mark.parametrize("caller", ["rollback", "persisted"])
 @pytest.mark.parametrize("admission", ["valid", "missing", "human", "foreign", "drift"])
 def test_failed_creation_removal_callers_require_original_identity_selectors(tmp_path, caller, admission):
