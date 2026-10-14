@@ -206,6 +206,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--plan-only", action="store_true", help="Write the intended lifecycle plan without changing the appliance.")
     parser.add_argument("--reverse-proxy-only", action="store_true", help="Verify managed proxies on one owned appliance and a host-bound upstream.")
     parser.add_argument("--reverse-proxy-upstream-host", default="")
+    parser.add_argument("--reverse-proxy-tls-fixture-directory", default="")
     for option in ("dir", "node", "packages", "browser"):
         parser.add_argument(f"--reverse-proxy-screenshot-{option}", default="")
     args = parser.parse_args(argv)

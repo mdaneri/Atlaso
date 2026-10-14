@@ -18721,6 +18721,74 @@ class ApplianceApplyPlanError(ValueError):
         super().__init__("Appliance Apply planning refused.")
 
 
+def proxy_socket_release_dependencies(
+    unit_map: dict[str, dict[str, Any]], baselines: dict[str, dict[str, Any]],
+) -> set[str]:
+    """Find changed service owners whose applied sockets a desired proxy takes.
+
+    Args:
+        unit_map: Current reviewed units, including canonical proxy intent.
+        baselines: Last successfully applied service configurations.
+
+    Returns:
+        Native or shared listener units requiring explicit release consent.
+    """
+    sockets = {
+        (str(listener["address"]), port)
+        for proxy in unit_map.get("public_services", {}).get("context", {}).get("reverse_proxies", [])
+        if proxy.get("enabled")
+        for listener in proxy.get("listeners", [])
+        for port in [proxy["port"], *([proxy["redirect_port"]] if proxy.get("redirect_http") else [])]
+    }
+    releases = set()
+    for unit_id in ("kms", "ldap", "ntpd", "vcf_backups", "vcf_offline_depot", "vcf_private_registry"):
+        if not sockets or not unit_map.get(unit_id, {}).get("changed"):
+            continue
+        preview = str((baselines.get(unit_id) or {}).get("config_preview") or "")
+        owned: set[tuple[str, int]] = set()
+        try:
+            if unit_id in {"kms", "ldap"}:
+                document = json.loads(preview) if preview else {}
+                settings = document.get("service", {}) if unit_id == "ldap" else document
+                if settings.get("enabled"):
+                    if unit_id == "kms":
+                        listen = settings["listen"]
+                        owned.update((str(address), int(listen["port"])) for address in listen["addresses"])
+                    else:
+                        for field, enabled in (("port", "ldaps_enabled"), ("ldap_port", "ldap_enabled")):
+                            if settings.get(enabled):
+                                owned.update((address, int(settings[field])) for address in split_addresses(settings["listen_address"]))
+            elif unit_id == "ntpd" and "nts enable" in preview.splitlines():
+                addresses = next((line.partition(":")[2] for line in preview.splitlines()
+                                  if line.startswith("# Atlaso NTP listen addresses:")), "")
+                owned.update((address, 4460) for address in split_addresses(addresses))
+            elif unit_id == "vcf_backups" and "# Atlaso VCF Backups enabled: true" in preview.splitlines():
+                targets = next((line.partition(":")[2] for line in preview.splitlines()
+                                if line.startswith("# Service listener targets:")), "")
+                for target in targets.split(","):
+                    address, _, port = target.strip().rpartition(":")
+                    owned.add((address.strip("[]"), int(port)))
+            elif unit_id == "vcf_offline_depot":
+                owned.update((match[0].strip("[]"), int(match[1])) for match in re.findall(
+                    r"\blisten\s+(\[[0-9a-fA-F:.]+\]|[0-9.]+):([0-9]+)", preview,
+                ))
+            elif unit_id == "vcf_private_registry" and preview:
+                port_match = re.search(r"(?m)^https:\s*\n\s+port:\s*([0-9]+)", preview)
+                addresses = next((line.partition(":")[2] for line in preview.splitlines()
+                                  if line.startswith("atlaso_listen_address:")), "")
+                if port_match:
+                    owned.update((address, int(port_match[1])) for address in split_addresses(addresses))
+        except (ValueError, KeyError, TypeError, AttributeError):
+            # Invalid applied evidence cannot prove that a candidate socket is free.
+            if preview:
+                releases.add(unit_id)
+            continue
+        if any((address, port) in sockets or address in {"0.0.0.0", "::", "*"}
+               and any(candidate_port == port for _, candidate_port in sockets) for address, port in owned):
+            releases.add(unit_id)
+    return releases
+
+
 def appliance_apply_execution_plan(
     db: Session, units: list[dict[str, Any]], selected_ids: set[str], *, enforce_consent: bool = True, consented_ids: set[str] | None = None,
 ) -> dict[str, Any]:
@@ -18975,8 +19043,9 @@ def appliance_apply_execution_plan(
     proxy_handoff = bool((desired_proxy_intent != applied_proxy_intent or desired_proxy_marker != applied_proxy_marker)
                          and selected_ids.intersection({*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq"}))
     if proxy_handoff:
+        proxy_release_ids = proxy_socket_release_dependencies(unit_map, apply_baselines)
         unchecked_dependencies = [unit["label"] for unit in units
-                                  if unit["id"] in {*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq"}
+                                  if unit["id"] in {*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq", *proxy_release_ids}
                                   and unit["changed"] and unit["id"] not in approved_ids]
         if enforce_consent and unchecked_dependencies:
             detail = ("Select the pending reverse-proxy publication dependencies together: "
@@ -18984,6 +19053,9 @@ def appliance_apply_execution_plan(
             raise ApplianceApplyPlanError(detail)
         if "dnsmasq" in unit_map and unit_map["dnsmasq"]["changed"]:
             selected_ids.add("dnsmasq")
+        selected_ids.update(proxy_release_ids)
+    else:
+        proxy_release_ids = set()
     management_handoff = bool(
         (
             selected_ids.intersection(MANAGEMENT_HANDOFF_UNIT_IDS)
@@ -19163,7 +19235,7 @@ def appliance_apply_execution_plan(
         selected_ordered_units = [unit for unit in selected_ordered_units if unit["id"] != "firewall"]
         nat_index = next(index for index, unit in enumerate(selected_ordered_units) if unit["id"] == "nat")
         selected_ordered_units.insert(nat_index, unit_map["firewall"])
-    if publishing_pair_required and "nat" in selected_ids:
+    if publishing_pair_required and "nat" in selected_ids or proxy_release_ids:
         # Release selected service sockets before the paired live-listener check.
         # Handoff publishes as one group at its first member, not at the NAT row.
         grouped = (
@@ -19172,7 +19244,7 @@ def appliance_apply_execution_plan(
             if management_handoff
             else {"firewall", "nat"}
         )
-        release_ids = listener_units - grouped
+        release_ids = (listener_units - grouped if publishing_pair_required else set()) | proxy_release_ids
         if management_handoff:
             # Only shutdowns can precede the CA-bearing group. Enabled consumers
             # may need newly deployed certificates, even for a listener change.
@@ -19184,13 +19256,21 @@ def appliance_apply_execution_plan(
                 "vcf_offline_depot": ("vcf_depot_settings",),
                 "vcf_private_registry": ("vcf_registry_settings",),
             }
-            release_ids = {
+            shutdown_ids = {
                 unit_id for unit_id in release_ids
                 if unit_id in shutdown_settings and all(
                     getattr(unit_map.get(unit_id, {}).get("context", {}).get(key), "enabled", None) is False
                     for key in shutdown_settings[unit_id]
                 )
             }
+            pending_moves = proxy_release_ids - shutdown_ids
+            if pending_moves:
+                labels = ", ".join(unit_map[unit_id]["label"] for unit_id in sorted(pending_moves))
+                raise ApplianceApplyPlanError(
+                    "Apply the socket-moving service changes before enabling the replacement proxy: "
+                    + labels + ". Keep that proxy disabled until those listeners have moved."
+                )
+            release_ids = shutdown_ids
             if unit_map.get("esxi_pxe", {}).get("context", {}).get("esxi_pxe_boot", {}).get("enabled") is False:
                 release_ids.add("esxi_pxe")
         releases = [unit for unit in selected_ordered_units

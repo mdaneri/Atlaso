@@ -87,6 +87,7 @@ from atlaso.app.services.reverse_proxies import (
 from atlaso.app.services.reverse_proxy_publication import (
     DNS_OWNER_PREFIX,
     proxy_owns_dns_hostname,
+    publication_pending,
     reconcile_proxy_dns,
 )
 
@@ -780,6 +781,9 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
+        if publication_pending(db):
+            raise HTTPException(status_code=409, detail="Pending reverse-proxy publication requires global Appliance Apply before legacy DNS/DHCP Apply.")
         validation = dnsmasq_validation_response(db)
         if not validation.valid:
             return ConfigApplyResponse(**validation.model_dump(), reloaded=False)
@@ -1467,6 +1471,9 @@ def build_router(dependencies: DnsDhcpApiDependencies) -> DnsDhcpApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
+        if publication_pending(db):
+            raise HTTPException(status_code=409, detail="Pending reverse-proxy publication requires global Appliance Apply before legacy DNS/DHCP Apply.")
         validation = dnsmasq_validation_response(db)
         if not validation.valid:
             return ConfigApplyResponse(**validation.model_dump(), reloaded=False)

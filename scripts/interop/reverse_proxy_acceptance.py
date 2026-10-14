@@ -10,6 +10,7 @@ import json
 import os
 import socket
 import ssl
+import stat
 import sys
 import threading
 import time
@@ -280,7 +281,7 @@ class FixtureHandler(BaseHTTPRequestHandler):
 class FixtureServer(ThreadingHTTPServer):
     """Bound concurrent fixture requests and close worker sockets on exit."""
 
-    daemon_threads = True
+    daemon_threads = False
     request_queue_size = 8
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -290,6 +291,7 @@ class FixtureServer(ThreadingHTTPServer):
             *args: Additional positional arguments passed unchanged to the original operation.
             **kwargs: Additional keyword arguments passed unchanged to the original operation.
         """
+        self.tls_context = kwargs.pop("tls_context", None)
         self.unavailable = threading.Event()
         super().__init__(*args, **kwargs)
 
@@ -297,7 +299,24 @@ class FixtureServer(ThreadingHTTPServer):
         """Set a finite timeout before a request worker consumes the socket."""
         connection, address = super().get_request()
         connection.settimeout(10)
+        if self.tls_context is not None:
+            try:
+                connection = self.tls_context.wrap_socket(connection, server_side=True)
+            except BaseException:
+                connection.close()
+                raise
         return connection, address
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        """Ignore expected peer disconnects without emitting request diagnostics.
+
+        Args:
+            request: The admitted fixture socket.
+            client_address: The connected peer address.
+        """
+        if isinstance(sys.exc_info()[1], (ssl.SSLEOFError, ConnectionError)):
+            return
+        super().handle_error(request, client_address)
 
 
 def listener_request(address: str, port: int, hostname: str, path: str, *, context: ssl.SSLContext | None = None) -> tuple[int, bytes, dict[str, str]]:
@@ -356,49 +375,64 @@ def proxy_payload(
     }
 
 
-def appliance_upstream_fingerprint(lifecycle: Any, args: Any) -> str:
-    """Observe the validated www.example.com leaf from the appliance network path.
+def fixture_tls_context(directory: Path) -> tuple[ssl.SSLContext, str]:
+    """Load an admitted fixture leaf once for the entire consumer lifetime.
 
     Args:
-        lifecycle: Supported bounded appliance SSH operations.
-        args: Admitted appliance address, credentials and SSH host-key pin.
+        directory: Existing protected, creation-receipted fixture directory.
+
+    Returns:
+        The server context and its immutable leaf fingerprint.
     """
-    program = (
-        "import ssl,socket,hashlib;context=ssl.create_default_context();"
-        "context.minimum_version=ssl.TLSVersion.TLSv1_2;"
-        "raw=socket.create_connection(('www.example.com',443),timeout=15);"
-        "peer=context.wrap_socket(raw,server_hostname='www.example.com');"
-        "print(hashlib.sha256(peer.getpeercert(binary_form=True)).hexdigest());peer.close()"
-    )
-    encoded = base64.b64encode(program.encode()).decode("ascii")
-    command = f"/opt/atlaso/.venv/bin/python -c 'import base64;exec(base64.b64decode(\"{encoded}\"))'"
-    result = lifecycle.ssh_command(args.appliance_ssh_host, args, command, role="appliance", appliance_as_root=False)
-    fingerprint = result.get("stdout", "").strip()
-    if result.get("returncode") != 0 or len(fingerprint) != 64 or any(char not in "0123456789abcdef" for char in fingerprint):
-        raise RuntimeError("The appliance did not return a validated connected-leaf fingerprint.")
-    return fingerprint
+    certificate = directory / "certificate.pem"
+    private_key = directory / "private-key.pem"
+    if not directory.is_dir() or directory.is_symlink():
+        raise RuntimeError("Prepare the owned protected reverse-proxy TLS fixture before native acceptance.")
+    for path, limit in ((certificate, 65_536), (private_key, 16_384)):
+        try:
+            info = path.lstat()
+        except FileNotFoundError as error:
+            raise RuntimeError("Prepare the owned protected reverse-proxy TLS fixture before native acceptance.") from error
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > limit
+                or getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)):
+            raise RuntimeError("The owned TLS fixture requires bounded ordinary single-link files.")
+    content = certificate.read_bytes()
+    if len(content) > 65_536:
+        raise RuntimeError("The owned TLS fixture certificate exceeds its bound.")
+    fingerprint = hashlib.sha256(ssl.PEM_cert_to_DER_cert(content.decode("ascii"))).hexdigest()
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(certificate, private_key)
+    if certificate.read_bytes() != content:
+        raise RuntimeError("The owned TLS fixture certificate changed while loading.")
+    return context, fingerprint
 
 
-def trust_proxy_payloads(address: str, interface: str, fingerprint: str, insecure_address: str) -> list[dict[str, Any]]:
+def trust_proxy_payloads(address: str, interface: str, fingerprint: str, insecure_address: str,
+                         fixture_host: str, fixture_port: int) -> list[dict[str, Any]]:
     """Match each public Host to the external TLS origin's virtual host.
 
     Args:
         address: Exact selected Site A IPv4 listener address.
         interface: Admitted physical Site A interface name.
-        fingerprint: Observed www.example.com connected-leaf fingerprint.
+        fingerprint: Immutable owned fixture leaf fingerprint.
         insecure_address: Observed BadSSL IPv4 endpoint serving its expired fallback certificate.
+        fixture_host: Admitted host Site A address owning the TLS fixture.
+        fixture_port: Port held by the same fixture throughout the consumer.
     """
     scenarios = [
         ("Native trusted HTTPS", "example.com", 8445, [
             ("/trusted/", "www.example.com", "trusted_ca", ""),
-            ("/pinned/", "www.example.com", "fingerprint", fingerprint),
-            ("/wrong-pin/", "www.example.com", "fingerprint", "0" * 64),
         ]),
         ("Native self-signed HTTPS", "self-signed.proxy.atlaso.internal", 8446, [
             ("/self-signed/", "self-signed.badssl.com", "trusted_ca", ""),
         ]),
         ("Native insecure HTTPS", "badssl.com", 8447, [
             ("/insecure/", insecure_address, "insecure", ""),
+        ]),
+        ("Native owned pinned HTTPS", "pinned.proxy.atlaso.internal", 8448, [
+            ("/pinned/", fixture_host, "fingerprint", fingerprint),
+            ("/wrong-pin/", fixture_host, "fingerprint", "0" * 64),
         ]),
     ]
     payloads = []
@@ -410,7 +444,8 @@ def trust_proxy_payloads(address: str, interface: str, fingerprint: str, insecur
         payload["redirect_http"] = False
         payload["routes"] = [
             {"path_prefix": prefix, "upstream_scheme": "https", "upstream_host": upstream_host,
-             "upstream_port": 443, "path_behavior": "strip", "trust_mode": trust,
+             "upstream_port": fixture_port if trust == "fingerprint" else 443,
+             "path_behavior": "strip", "trust_mode": trust,
              "fingerprint": digest, "insecure_acknowledged": trust == "insecure"}
             for prefix, upstream_host, trust, digest in routes
         ]
@@ -470,16 +505,26 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
     host = str(IPv4Address(args.reverse_proxy_upstream_host))
     if host == address or IPv4Address(host).is_loopback or IPv4Address(host).is_unspecified:
         raise lifecycle.LifecycleError("The upstream must be the selected remote host adapter.")
+    if not args.reverse_proxy_tls_fixture_directory:
+        raise lifecycle.LifecycleError("Select the owned protected reverse-proxy TLS fixture directory.")
+    tls_context, fingerprint = fixture_tls_context(Path(args.reverse_proxy_tls_fixture_directory))
     step = lifecycle.run_step
-    step(results, "appliance-health", lifecycle.appliance_health, client, args)
-    step(results, "configure-proxy-listener", lifecycle.configure_oidc_listener, client, args)
-    step(results, "apply-proxy-network", lifecycle.apply_units, client, ["network", "firewall"], args)
-    step(results, "configure-proxy-authoritative-dns", configure_proxy_dns, client, args, address)
-    step(results, "configure-proxy-ca", lifecycle.configure_ca, client, args)
     server = FixtureServer((host, 0), FixtureHandler)
     thread = threading.Thread(target=server.serve_forever, name="atlaso-proxy-fixture", daemon=True)
-    thread.start()
     try:
+        tls_server = FixtureServer((host, 0), FixtureHandler, tls_context=tls_context)
+    except BaseException:
+        server.server_close()
+        raise
+    tls_thread = threading.Thread(target=tls_server.serve_forever, name="atlaso-proxy-tls-fixture", daemon=True)
+    try:
+        thread.start()
+        tls_thread.start()
+        step(results, "appliance-health", lifecycle.appliance_health, client, args)
+        step(results, "configure-proxy-listener", lifecycle.configure_oidc_listener, client, args)
+        step(results, "apply-proxy-network", lifecycle.apply_units, client, ["network", "firewall"], args)
+        step(results, "configure-proxy-authoritative-dns", configure_proxy_dns, client, args, address)
+        step(results, "configure-proxy-ca", lifecycle.configure_ca, client, args)
         fixture_port = server.server_address[1]
         http_payload = proxy_payload("Native HTTP application", "http.proxy.atlaso.internal", address, args.site_interface, host, fixture_port)
         https_payload = proxy_payload("Native HTTPS application", "https.proxy.atlaso.internal", address, args.site_interface, host, fixture_port, scheme="https", port=8443)
@@ -494,9 +539,9 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
             "Directory listing without managed DNS", f"external-listed.{args.domain}", address,
             args.site_interface, host, fixture_port, port=8083, managed_dns=False, public_listing=True,
         )
-        fingerprint = appliance_upstream_fingerprint(lifecycle, args)
         insecure_address = socket.getaddrinfo("self-signed.badssl.com", 443, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
-        trust_payloads = trust_proxy_payloads(address, args.site_interface, fingerprint, insecure_address)
+        trust_payloads = trust_proxy_payloads(address, args.site_interface, fingerprint, insecure_address,
+                                            host, tls_server.server_address[1])
         http_proxy = client.json_request("POST", API, json_body=http_payload)
         https_proxy = client.json_request("POST", API, json_body=https_payload)
         client.json_request("POST", API, json_body=standard_http)
@@ -722,8 +767,15 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
             spec.loader.exec_module(module)
             step(results, "reverse-proxy-ui-capture", module.capture_ui, client, args)
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+        if tls_thread.is_alive():
+            tls_server.shutdown()
+        tls_server.server_close()
+        if tls_thread.ident is not None:
+            tls_thread.join(timeout=15)
         if thread.is_alive():
+            server.shutdown()
+        server.server_close()
+        if thread.ident is not None:
+            thread.join(timeout=5)
+        if thread.is_alive() or tls_thread.is_alive():
             raise lifecycle.LifecycleError("Owned upstream fixture did not terminate.")

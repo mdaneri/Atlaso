@@ -3,6 +3,105 @@
 import pytest
 
 
+@pytest.mark.parametrize("service", ["dns", "dhcp"])
+@pytest.mark.parametrize("change", ["create", "edit", "disable", "delete"])
+def test_legacy_apply_rejects_pending_proxy_publication_before_staging(client, monkeypatch, service, change):
+    """Keep desired proxy DNS private until its protected publication succeeds.
+
+    Args:
+        client: Isolated real HTTP client.
+        monkeypatch: Fixture detecting premature staging or adapter calls.
+        service: Hidden compatibility Apply transport.
+        change: Saved proxy intent transition after its baseline was applied.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, ReverseProxy
+    from atlaso.app.routers.api_v1 import dns_dhcp
+    from atlaso.app.services.applied_service_dns import save_appliance_apply_baselines
+    from atlaso.app.services.reverse_proxies import runtime_snapshot
+    from atlaso.app.services.reverse_proxy_publication import intent_snapshot_marker
+    from atlaso.app.services.settings_archive import export_settings_archive
+
+    token = create_token(client, [f"write:{service}"])
+    with SessionLocal() as db:
+        proxy = ReverseProxy(name="Legacy DNS boundary", hostname="proxy.example.test", enabled=True)
+        db.add(proxy)
+        db.flush()
+        marker = None if change == "create" else intent_snapshot_marker(runtime_snapshot(db))
+        save_appliance_apply_baselines(db, {"public_services": {"snapshot_marker": marker}})
+        if change == "edit":
+            proxy.hostname = "new.example.test"
+        elif change == "disable":
+            proxy.enabled = False
+        elif change == "delete":
+            db.delete(proxy)
+        db.commit()
+        before = export_settings_archive(db, actor="test")["data"]
+        audit_ids = [row.id for row in db.query(AuditEvent).all()]
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("Rejected legacy Apply must not validate, stage, or invoke an adapter")
+
+    monkeypatch.setattr(dns_dhcp, "SystemAdapter", forbidden)
+    response = client.post(f"/api/v1/{service}/apply", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 409
+    assert "global Appliance Apply" in response.json()["detail"]
+    with SessionLocal() as db:
+        assert [row.id for row in db.query(AuditEvent).all()] == audit_ids
+        assert export_settings_archive(db, actor="test")["data"] == before
+
+
+@pytest.mark.parametrize("proxy_present", [False, True])
+@pytest.mark.parametrize("service", ["dns", "dhcp"])
+def test_proxy_publication_guard_allows_matching_or_absent_intent(client, proxy_present, service):
+    """An applied canonical marker permits independent legacy enforcement.
+
+    Args:
+        client: Fixture establishing an isolated database.
+        proxy_present: Whether a proxy collection has already been published.
+        service: Hidden compatibility Apply transport.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ReverseProxy
+    from atlaso.app.services.applied_service_dns import save_appliance_apply_baselines
+    from atlaso.app.services.reverse_proxies import runtime_snapshot
+    from atlaso.app.services.reverse_proxy_publication import (
+        intent_snapshot_marker,
+        publication_pending,
+    )
+
+    with SessionLocal() as db:
+        if proxy_present:
+            db.add(ReverseProxy(name="Applied proxy", hostname="proxy.example.test"))
+            db.flush()
+        save_appliance_apply_baselines(db, {
+            "public_services": {"snapshot_marker": intent_snapshot_marker(runtime_snapshot(db))},
+        })
+        db.commit()
+        assert not publication_pending(db)
+    token = create_token(client, [f"write:{service}"])
+    response = client.post(f"/api/v1/{service}/apply", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200, response.text
+
+
+def test_legacy_applied_proxy_without_marker_requires_protected_publication(client):
+    """Fail closed when legacy applied evidence cannot prove last-proxy removal.
+
+    Args:
+        client: Fixture establishing an isolated database.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.applied_service_dns import save_appliance_apply_baselines
+    from atlaso.app.services.reverse_proxy_publication import (
+        INTENT_MARKER,
+        publication_pending,
+    )
+
+    with SessionLocal() as db:
+        save_appliance_apply_baselines(db, {"public_services": {"config_preview": INTENT_MARKER + "[]"}})
+        assert publication_pending(db)
+
+
 def test_dhcp_availability_opt_out_survives_omitted_api_field(client):
     """Old API clients cannot silently re-enable an explicit opt-out.
 

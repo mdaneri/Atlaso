@@ -455,6 +455,28 @@ def intent_snapshot_marker(proxies: list[dict[str, Any]]) -> dict[str, str] | No
     return {"reverse_proxy_intent_sha256": hashlib.sha256(intent.encode("utf-8")).hexdigest()}
 
 
+def publication_pending(db: Session) -> bool:
+    """Require protected publication before independent DNS enforcement.
+
+    Args:
+        db: Writer-admitted session containing desired and applied intent.
+
+    Returns:
+        Whether saved proxy intent differs from its successful publication.
+    """
+    from atlaso.app.services.applied_service_dns import load_appliance_apply_baselines
+    from atlaso.app.services.reverse_proxies import runtime_snapshot
+
+    applied = load_appliance_apply_baselines(db, refresh=True).get("public_services") or {}
+    if applied.get("snapshot_marker") is None and any(
+        line.startswith(INTENT_MARKER) for line in str(applied.get("config_preview") or "").splitlines()
+    ):
+        # A legacy applied proxy block without its canonical marker cannot
+        # prove that removing the last desired proxy is safe independently.
+        return True
+    return intent_snapshot_marker(runtime_snapshot(db)) != applied.get("snapshot_marker")
+
+
 def context(db: Session) -> dict[str, Any]:
     """Build read-only collection, validation and redacted publication previews.
 

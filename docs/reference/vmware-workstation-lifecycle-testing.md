@@ -27,8 +27,14 @@ and strip path mapping, normalized forwarding headers, upstream authentication c
 exchange, reserved paths, exact Host selection, standard and custom redirects, duplicate hostname rejection, and the
 cached health API. An owned fixture outage verifies safe Apply and degraded health followed by recovery. An audited
 appliance reboot repeats publication and cached health checks. HTTPS upstream checks use
-public `example.com` and `self-signed.badssl.com` endpoints to prove CA validation, connected-leaf fingerprint pinning,
-wrong-pin rejection, and explicit insecure degradation; endpoint failure fails the run rather than skipping evidence.
+public `example.com` and `self-signed.badssl.com` endpoints for CA validation and explicit insecure degradation;
+endpoint failure fails the run. Pinning and wrong-pin rejection use a separate owned TLS origin on the selected host
+adapter. Supply `-ReverseProxyTlsFixtureDirectory` with existing `certificate.pem` and `private-key.pem` files. The
+consumer loads one leaf and keeps its TLS listener alive across the entire run, including reboot and archive checks.
+Before creating the short-lived key, follow the credential policy or obtain its explicit narrow fixture exception.
+Record original task/source ownership outside the fixture directory before use, protect its directory and files for
+the current user and SYSTEM, and release it through the supported owning tool. The launcher validates access without
+printing key material; it never generates, copies, or adopts a fixture key. Plan-only mode does not require a key.
 These checks do not yet prove DNS ownership, archive/reset recovery, or failed-Apply rollback.
 Those remain acceptance
 gates for issue #723. Optional screenshot tooling uses the installed Node.js, Playwright, Sharp, and Chrome paths.

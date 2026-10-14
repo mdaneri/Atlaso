@@ -9,6 +9,99 @@ from starlette.testclient import TestClient
 from tests.routers.ui.helpers import login
 
 
+@pytest.mark.parametrize("address", ["192.0.2.10", "2001:db8::10"])
+@pytest.mark.parametrize("service,port", [("kms", 5696), ("ldap", 636), ("ntpd", 4460),
+                                          ("vcf_backups", 2222), ("vcf_offline_depot", 8444),
+                                          ("vcf_private_registry", 8445)])
+def test_proxy_plan_detects_applied_socket_owner_and_redirect(address, service, port):
+    """Resolve release dependencies from applied rather than disabled desired state.
+
+    Args:
+        address: Applied service address in either IP family.
+        service: Native or shared service listener owner.
+        port: Applied owner port taken by the desired proxy redirect.
+    """
+    from atlaso.app import ui
+
+    previews = {
+        "kms": json.dumps({"enabled": True, "listen": {"addresses": [address], "port": port}}),
+        "ldap": json.dumps({"service": {"enabled": True, "ldaps_enabled": True, "ldap_enabled": False,
+                                           "listen_address": address, "port": port}}),
+        "ntpd": f"# Atlaso NTP listen addresses: {address}\nnts enable\n",
+        "vcf_backups": f"# Atlaso VCF Backups enabled: true\n# Service listener targets: {address}:{port}\n",
+        "vcf_offline_depot": f"server {{ listen {'[' + address + ']' if ':' in address else address}:{port} ssl; }}",
+        "vcf_private_registry": f"https:\n  port: {port}\natlaso_listen_address: {address}\n",
+    }
+    proxy = {"enabled": True, "port": 8443, "redirect_http": True, "redirect_port": port,
+             "listeners": [{"interface": "eth1", "address": address}]}
+    units = {"public_services": {"context": {"reverse_proxies": [proxy]}}, service: {"changed": True}}
+    baselines = {service: {"config_preview": previews[service]}}
+    assert ui.proxy_socket_release_dependencies(units, baselines) == {service}
+    proxy["enabled"] = False
+    assert ui.proxy_socket_release_dependencies(units, baselines) == set()
+    proxy["enabled"] = True
+    units[service]["changed"] = False
+    assert ui.proxy_socket_release_dependencies(units, baselines) == set()
+    units[service]["changed"] = True
+    proxy["listeners"][0]["address"] = "192.0.2.99"
+    assert ui.proxy_socket_release_dependencies(units, baselines) == set()
+
+
+def test_proxy_review_requires_shutdown_and_orders_it_before_protected_group(client, monkeypatch):
+    """Capture a reviewed shutdown before the first nginx handoff member.
+
+    Args:
+        client: Isolated authenticated HTTP client.
+        monkeypatch: Fixture pinning real unit snapshots for focused planning.
+    """
+    from atlaso.app.database import SessionLocal
+
+    units, csrf, ui = _prepare_network_handoff_review(client, monkeypatch)
+    unit_map = {unit["id"]: unit for unit in units}
+    for unit in units:
+        unit["changed"] = False
+    unit_map["public_services"].update(changed=True, snapshot_marker={"reverse_proxy_intent_sha256": "new"})
+    unit_map["public_services"]["context"]["reverse_proxies"] = [{
+        "enabled": True, "port": 5696, "listeners": [{"interface": "eth1", "address": "192.0.2.10"}],
+    }]
+    unit_map["kms"].update(changed=True, context={"kms_settings": SimpleNamespace(enabled=False)})
+    with SessionLocal() as db:
+        baselines = ui.load_appliance_apply_baselines(db)
+        baselines["kms"]["config_preview"] = json.dumps({
+            "enabled": True, "listen": {"addresses": ["192.0.2.10"], "port": 5696},
+        })
+        ui.save_appliance_apply_baselines(db, baselines)
+        db.commit()
+        with pytest.raises(ui.ApplianceApplyPlanError) as denied:
+            ui.appliance_apply_execution_plan(db, units, {"public_services"})
+        assert "reverse-proxy publication dependencies" in denied.value.public_detail
+        plan = ui.appliance_apply_execution_plan(db, units, {"public_services", "kms"})
+        order = [unit["id"] for unit in plan["selected_ordered_units"]]
+        assert order.index("kms") < min(order.index(unit_id) for unit_id in ui.MANAGEMENT_HANDOFF_UNIT_IDS)
+        unit_map["kms"]["context"]["kms_settings"].enabled = True
+        with pytest.raises(ui.ApplianceApplyPlanError) as moved:
+            ui.appliance_apply_execution_plan(db, units, {"public_services", "kms"})
+        assert "socket-moving service changes" in moved.value.public_detail
+        unit_map["kms"]["context"]["kms_settings"].enabled = False
+
+    from atlaso.app.models import Job
+
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    preview = client.get("/appliance-apply/review?selected_units=public_services&selected_units=kms").json()
+    assert not preview["plan_error"]
+    effective = [unit["id"] for unit in preview["units"] if unit["selected"]]
+    assert effective.index("kms") < effective.index("public_services")
+    response = client.post("/appliance-apply", data={
+        "csrf": csrf, "reviewed_plan": preview["plan_token"],
+        "requested_units": preview["requested_units"], "selected_units": effective,
+    }, headers={"Accept": "application/json"})
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        submitted = json.loads(db.get(Job, response.json()["job_id"]).result)
+        assert submitted["selected_units"] == effective
+        assert submitted["management_handoff"] is True
+
+
 def _prepare_network_handoff_review(client, monkeypatch, *, invalid_firewall=False, changed_local_users=False):
     """Build current unit snapshots with a protected Network/WAN handoff.
 

@@ -1,6 +1,5 @@
 """Verify native proxy fixture behavior and focused lifecycle admission."""
 
-import base64
 import http.client
 import importlib.util
 import io
@@ -83,33 +82,75 @@ def test_fixture_challenge_and_bounded_echo():
         assert not thread.is_alive()
 
 
-def test_tls_pin_is_observed_from_the_admitted_appliance_path():
-    """Capture a validated peer through appliance SSH instead of the Windows resolver."""
-    module = load_module("proxy_native_fingerprint_test", "reverse_proxy_acceptance.py")
-    bridge = Mock(return_value={"returncode": 0, "stdout": "a" * 64 + "\n"})
-    args = SimpleNamespace(appliance_ssh_host="192.0.2.10")
-    assert module.appliance_upstream_fingerprint(SimpleNamespace(ssh_command=bridge), args) == "a" * 64
-    assert bridge.call_args.args[:2] == (args.appliance_ssh_host, args)
-    assert bridge.call_args.kwargs == {"role": "appliance", "appliance_as_root": False}
-    command = bridge.call_args.args[2]
-    encoded = command.split('b64decode("')[1].split('"')[0]
-    program = base64.b64decode(encoded).decode()
-    assert "ssl.create_default_context()" in program and "TLSv1_2" in program
-    assert "server_hostname='www.example.com'" in program and "timeout=15" in program
-    assert "peer.getpeercert(binary_form=True)" in program
-    for response in ({"returncode": 1, "stdout": "a" * 64}, {"returncode": 0, "stdout": "not-a-pin"}):
-        bridge.return_value = response
-        with pytest.raises(RuntimeError, match="validated connected-leaf fingerprint"):
-            module.appliance_upstream_fingerprint(SimpleNamespace(ssh_command=bridge), args)
+def test_tls_fixture_keeps_one_leaf_and_verifies_before_forwarding(tmp_path):
+    """Use real TLS connections for the same immutable positive and negative leaf."""
+    import hashlib
+    import socket
+    import ssl
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    from atlaso.app.services.reverse_proxy_transport import verify_peer
+
+    fixture = os.environ.get("ATLASO_TEST_TLS_FIXTURE_DIRECTORY")
+    directory = Path(fixture) if fixture else tmp_path
+    if not fixture:
+        key = ec.generate_private_key(ec.SECP256R1())
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Ephemeral proxy test")])
+        now = datetime.now(timezone.utc)
+        cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+                .serial_number(x509.random_serial_number()).not_valid_before(now-timedelta(minutes=1))
+                .not_valid_after(now+timedelta(hours=1)).sign(key, hashes.SHA256()))
+        with (directory / "private-key.pem").open("xb") as output:
+            output.write(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                          serialization.NoEncryption()))
+        with (directory / "certificate.pem").open("xb") as output:
+            output.write(cert.public_bytes(serialization.Encoding.PEM))
+    module = load_module("proxy_owned_tls_fixture_test", "reverse_proxy_acceptance.py")
+    context, fingerprint = module.fixture_tls_context(directory)
+    server = module.FixtureServer(("127.0.0.1", 0), module.FixtureHandler, tls_context=context)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    client_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    client_context.check_hostname = False
+    client_context.verify_mode = ssl.CERT_NONE
+    try:
+        for pin in (fingerprint, fingerprint, "0" * 64):
+            with socket.create_connection(server.server_address, timeout=5) as raw:
+                with client_context.wrap_socket(raw, server_hostname="fixture.test") as peer:
+                    assert hashlib.sha256(peer.getpeercert(binary_form=True)).hexdigest() == fingerprint
+                    writer = Mock()
+                    writer.get_extra_info.return_value = peer
+                    if pin == "0" * 64:
+                        with pytest.raises(ssl.SSLCertVerificationError, match="pin mismatch"):
+                            verify_peer({"trust_mode": "fingerprint", "fingerprint": pin}, writer)
+                        writer.write.assert_not_called()
+                    else:
+                        verify_peer({"trust_mode": "fingerprint", "fingerprint": pin}, writer)
+                        peer.sendall(b"GET /stable HTTP/1.1\r\nHost: fixture.test\r\nConnection: close\r\n\r\n")
+                        response = http.client.HTTPResponse(peer)
+                        response.begin()
+                        assert response.status == 200
+                        assert json.loads(response.read())["path"] == "/stable"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=15)
+        assert not thread.is_alive()
 
 
 def test_tls_fixture_matches_public_host_to_each_origin_without_dns_or_redirects():
     """Exercise trust modes with origin-compatible Hosts while retaining exact pins."""
     module = load_module("proxy_trust_virtual_hosts_test", "reverse_proxy_acceptance.py")
     fingerprint = "a" * 64
-    payloads = module.trust_proxy_payloads("192.0.2.44", "eth1", fingerprint, "198.51.100.44")
+    payloads = module.trust_proxy_payloads("192.0.2.44", "eth1", fingerprint, "198.51.100.44", "192.0.2.1", 54321)
     assert [(row["hostname"], row["port"]) for row in payloads] == [
         ("example.com", 8445), ("self-signed.proxy.atlaso.internal", 8446), ("badssl.com", 8447),
+        ("pinned.proxy.atlaso.internal", 8448),
     ]
     routes = {route["path_prefix"]: route for row in payloads for route in row["routes"]}
     assert routes["/trusted/"]["trust_mode"] == "trusted_ca"
@@ -122,8 +163,10 @@ def test_tls_fixture_matches_public_host_to_each_origin_without_dns_or_redirects
     for row in payloads:
         assert row["listeners"] == [{"interface": "eth1", "address": "192.0.2.44"}]
         assert not row["redirect_http"] and not row["managed_dns"] and not row["public_listing"]
-        assert all(route["upstream_host"] != row["hostname"] and route["upstream_port"] == 443
+        assert all(route["upstream_host"] != row["hostname"]
+                   and route["upstream_port"] == (54321 if route["trust_mode"] == "fingerprint" else 443)
                    and route["upstream_scheme"] == "https" for route in row["routes"])
+    assert routes["/pinned/"]["upstream_host"] == routes["/wrong-pin/"]["upstream_host"] == "192.0.2.1"
 
 
 def test_dns_payload_only_changes_authoritative_ipv4_listener():

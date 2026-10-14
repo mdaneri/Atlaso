@@ -64,6 +64,8 @@ Run only NTP clock-source Apply and host/client UDP acceptance on a two-interfac
 Run only the public reverse-proxy appliance scenario on management and host-reachable Site A interfaces.
 .PARAMETER ReverseProxyUpstreamHost
 Nonsecret Windows host IPv4 address on Site A, used as the reverse-proxy upstream fixture.
+.PARAMETER ReverseProxyTlsFixtureDirectory
+Existing protected, creation-receipted directory containing the owned TLS fixture certificate.pem and private-key.pem.
 .PARAMETER ReverseProxyScreenshotNode
 Path to the installed Node.js executable used for optional reverse-proxy browser evidence.
 .PARAMETER ReverseProxyScreenshotPackages
@@ -138,6 +140,7 @@ param(
     [switch]$TimeSourceOnly,
     [switch]$ReverseProxyOnly,
     [string]$ReverseProxyUpstreamHost = '',
+    [string]$ReverseProxyTlsFixtureDirectory = '',
     [string]$ReverseProxyScreenshotNode = '',
     [string]$ReverseProxyScreenshotPackages = '',
     [string]$ReverseProxyScreenshotBrowser = '',
@@ -159,6 +162,37 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($ReverseProxyOnly -and -not $PlanOnly) {
+    if (-not $ReverseProxyTlsFixtureDirectory -or
+        -not (Test-Path -LiteralPath $ReverseProxyTlsFixtureDirectory -PathType Container)) {
+        throw 'Reverse-proxy acceptance requires an existing owned protected TLS fixture directory.'
+    }
+    $fixtureSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $fixtureItems = @((Get-Item -LiteralPath $ReverseProxyTlsFixtureDirectory -Force))
+    foreach ($fixtureName in @('certificate.pem', 'private-key.pem')) {
+        $fixtureItems += Get-Item -LiteralPath (Join-Path $ReverseProxyTlsFixtureDirectory $fixtureName) -Force
+    }
+    foreach ($fixtureItem in $fixtureItems) {
+        if (($fixtureItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'The owned TLS fixture must not contain reparse points.'
+        }
+        $fixtureAcl = Get-Acl -LiteralPath $fixtureItem.FullName
+        if (-not $fixtureAcl.GetOwner([Security.Principal.SecurityIdentifier]).Equals($fixtureSid)) {
+            throw 'The owned TLS fixture requires current-user ownership.'
+        }
+        foreach ($fixtureRule in $fixtureAcl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+            if ($fixtureRule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+                $fixtureRule.IdentityReference.Value -notin @($fixtureSid.Value, 'S-1-5-18')) {
+                throw 'The owned TLS fixture grants access outside the current user and SYSTEM.'
+            }
+        }
+    }
+    if (-not (Get-Acl -LiteralPath $ReverseProxyTlsFixtureDirectory).AreAccessRulesProtected) {
+        throw 'The owned TLS fixture directory requires protected access rules.'
+    }
+}
+
 if ($SameAddressHandoffOnly -and -not $RoutingOverlapOnly) {
     throw '-SameAddressHandoffOnly requires -RoutingOverlapOnly.'
 }
@@ -3704,7 +3738,8 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         $basePythonArgs += @('--time-source-site-network', $SiteANetwork)
     }
     if ($ReverseProxyOnly) {
-        $basePythonArgs += @('--reverse-proxy-only', '--reverse-proxy-upstream-host', $ReverseProxyUpstreamHost)
+        $basePythonArgs += @('--reverse-proxy-only', '--reverse-proxy-upstream-host', $ReverseProxyUpstreamHost,
+            '--reverse-proxy-tls-fixture-directory', $ReverseProxyTlsFixtureDirectory)
         if ($ReverseProxyScreenshotNode) {
             $reverseProxyScreenshotDirectory = Join-Path $resultRoot 'screenshots'
             $basePythonArgs += @(
