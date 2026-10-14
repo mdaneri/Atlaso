@@ -40,6 +40,11 @@ clears browser identity and CSRF state, records a sanitized audit event, and ret
 navigation returns to the appropriate management, public, or protocol login surface with **Session expired due to
 inactivity**.
 
+This also applies to management navigation and reloads controlled by the installed service worker. Background
+fetches and API clients retain structured errors. If an old sign-in form has stale CSRF state, Atlaso rejects that
+submission and opens a fresh form with **Sign-in form expired. Please sign in again.** Enter the credentials again;
+the rejected submission is never replayed. Permission-denied responses remain permission failures.
+
 The authenticated VCF Offline Depot browser sends deliberate `/PROD/` activity through its depot protocol listener;
 it does not require or publish the management UI plane on that interface.
 

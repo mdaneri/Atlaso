@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from atlaso.app.audit import record_audit
+from atlaso.app.browser_requests import LOGIN_FORM_EXPIRED_KEY, is_browser_navigation
 from atlaso.app.config import Settings, get_settings
 from atlaso.app.database import get_db
 from atlaso.app.models import (
@@ -639,11 +640,7 @@ def browser_request_is_interactive(request: Request) -> bool:
     """
     if request.method.upper() not in {"GET", "HEAD", "OPTIONS"}:
         return True
-    fetch_mode = request.headers.get("Sec-Fetch-Mode", "").strip().lower()
-    if fetch_mode:
-        return fetch_mode == "navigate"
-    accept = request.headers.get("Accept", "").lower()
-    return "text/html" in accept
+    return is_browser_navigation(request) and "text/html" in request.headers.get("Accept", "").lower()
 
 
 def start_browser_session(request: Request, db: Session, user: User) -> BrowserSession:
@@ -694,8 +691,11 @@ def consume_browser_session_expired_notice(request: Request) -> str | None:
     Args:
         request: Incoming login request carrying the one-time notice.
     """
+    form_expired = request.session.pop(LOGIN_FORM_EXPIRED_KEY, False) is True
     if request.session.pop(BROWSER_SESSION_EXPIRED_KEY, False) is True:
         return "Session expired due to inactivity"
+    if form_expired:
+        return "Sign-in form expired. Please sign in again."
     return None
 
 

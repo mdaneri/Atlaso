@@ -171,6 +171,9 @@ Successful responses use the operation's documented response model. Common failu
 
 Atlaso errors use the `ProblemDetails` contract:
 
+API and background fetch clients retain structured authentication and permission errors. Full browser navigation
+uses the appropriate login recovery surface; this does not change the API error status or response contract.
+
     {
       "type": "https://atlaso.example/problems/validation",
       "title": "Request validation failed",
