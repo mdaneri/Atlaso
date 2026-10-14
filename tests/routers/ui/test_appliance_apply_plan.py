@@ -12,7 +12,7 @@ from tests.routers.ui.helpers import login
 @pytest.mark.parametrize("address", ["192.0.2.10", "2001:db8::10"])
 @pytest.mark.parametrize("service,port", [("kms", 5696), ("ldap", 636), ("ntpd", 4460),
                                           ("vcf_backups", 2222), ("vcf_offline_depot", 8444),
-                                          ("vcf_private_registry", 8445)])
+                                          ("vcf_private_registry", 8445), ("esxi_pxe", 8088)])
 def test_proxy_plan_detects_applied_socket_owner_and_redirect(address, service, port):
     """Resolve release dependencies from applied rather than disabled desired state.
 
@@ -31,6 +31,7 @@ def test_proxy_plan_detects_applied_socket_owner_and_redirect(address, service, 
         "vcf_backups": f"# Atlaso VCF Backups enabled: true\n# Service listener targets: {address}:{port}\n",
         "vcf_offline_depot": f"server {{ listen {'[' + address + ']' if ':' in address else address}:{port} ssl; }}",
         "vcf_private_registry": f"https:\n  port: {port}\natlaso_listen_address: {address}\n",
+        "esxi_pxe": json.dumps({"boot": {"enabled": True, "listen_address": address, "http_port": port}}),
     }
     proxy = {"enabled": True, "port": 8443, "redirect_http": True, "redirect_port": port,
              "listeners": [{"interface": "eth1", "address": address}]}
@@ -47,12 +48,14 @@ def test_proxy_plan_detects_applied_socket_owner_and_redirect(address, service, 
     assert ui.proxy_socket_release_dependencies(units, baselines) == set()
 
 
-def test_proxy_review_requires_shutdown_and_orders_it_before_protected_group(client, monkeypatch):
+@pytest.mark.parametrize("service", ["kms", "esxi_pxe"])
+def test_proxy_review_requires_shutdown_and_orders_it_before_protected_group(client, monkeypatch, service):
     """Capture a reviewed shutdown before the first nginx handoff member.
 
     Args:
         client: Isolated authenticated HTTP client.
         monkeypatch: Fixture pinning real unit snapshots for focused planning.
+        service: Applied service whose shutdown releases the proxy socket.
     """
     from atlaso.app.database import SessionLocal
 
@@ -64,33 +67,42 @@ def test_proxy_review_requires_shutdown_and_orders_it_before_protected_group(cli
     unit_map["public_services"]["context"]["reverse_proxies"] = [{
         "enabled": True, "port": 5696, "listeners": [{"interface": "eth1", "address": "192.0.2.10"}],
     }]
-    unit_map["kms"].update(changed=True, context={"kms_settings": SimpleNamespace(enabled=False)})
+    state = {"enabled": False} if service == "esxi_pxe" else SimpleNamespace(enabled=False)
+    state_key = "esxi_pxe_boot" if service == "esxi_pxe" else "kms_settings"
+    unit_map[service].update(changed=True, context={state_key: state})
     with SessionLocal() as db:
         baselines = ui.load_appliance_apply_baselines(db)
-        baselines["kms"]["config_preview"] = json.dumps({
+        baseline = {
             "enabled": True, "listen": {"addresses": ["192.0.2.10"], "port": 5696},
-        })
+        } if service == "kms" else {"boot": {"enabled": True, "listen_address": "192.0.2.10", "http_port": 5696}}
+        baselines[service]["config_preview"] = json.dumps(baseline)
         ui.save_appliance_apply_baselines(db, baselines)
         db.commit()
         with pytest.raises(ui.ApplianceApplyPlanError) as denied:
             ui.appliance_apply_execution_plan(db, units, {"public_services"})
         assert "reverse-proxy publication dependencies" in denied.value.public_detail
-        plan = ui.appliance_apply_execution_plan(db, units, {"public_services", "kms"})
+        plan = ui.appliance_apply_execution_plan(db, units, {"public_services", service})
         order = [unit["id"] for unit in plan["selected_ordered_units"]]
-        assert order.index("kms") < min(order.index(unit_id) for unit_id in ui.MANAGEMENT_HANDOFF_UNIT_IDS)
-        unit_map["kms"]["context"]["kms_settings"].enabled = True
+        assert order.index(service) < min(order.index(unit_id) for unit_id in ui.MANAGEMENT_HANDOFF_UNIT_IDS)
+        if service == "kms":
+            state.enabled = True
+        else:
+            state["enabled"] = True
         with pytest.raises(ui.ApplianceApplyPlanError) as moved:
-            ui.appliance_apply_execution_plan(db, units, {"public_services", "kms"})
+            ui.appliance_apply_execution_plan(db, units, {"public_services", service})
         assert "socket-moving service changes" in moved.value.public_detail
-        unit_map["kms"]["context"]["kms_settings"].enabled = False
+        if service == "kms":
+            state.enabled = False
+        else:
+            state["enabled"] = False
 
     from atlaso.app.models import Job
 
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
-    preview = client.get("/appliance-apply/review?selected_units=public_services&selected_units=kms").json()
+    preview = client.get(f"/appliance-apply/review?selected_units=public_services&selected_units={service}").json()
     assert not preview["plan_error"]
     effective = [unit["id"] for unit in preview["units"] if unit["selected"]]
-    assert effective.index("kms") < effective.index("public_services")
+    assert effective.index(service) < effective.index("public_services")
     response = client.post("/appliance-apply", data={
         "csrf": csrf, "reviewed_plan": preview["plan_token"],
         "requested_units": preview["requested_units"], "selected_units": effective,
@@ -104,7 +116,8 @@ def test_proxy_review_requires_shutdown_and_orders_it_before_protected_group(cli
 
 @pytest.mark.parametrize("address", ["192.0.2.10", "2001:db8::10"])
 @pytest.mark.parametrize("redirect", [False, True])
-def test_service_takeover_requires_reviewed_proxy_retirement_first(client, monkeypatch, address, redirect):
+@pytest.mark.parametrize("service", ["kms", "esxi_pxe"])
+def test_service_takeover_requires_reviewed_proxy_retirement_first(client, monkeypatch, address, redirect, service):
     """A service-only Apply cannot bind a still-applied nginx listener.
 
     Args:
@@ -112,6 +125,7 @@ def test_service_takeover_requires_reviewed_proxy_retirement_first(client, monke
         monkeypatch: Supply captured units without executing host mutation.
         address: Old proxy IPv4 or IPv6 address.
         redirect: Take the redirect socket instead of the main listener.
+        service: Selected service taking the old applied proxy socket.
     """
     from atlaso.app.database import SessionLocal
     from atlaso.app.services.reverse_proxy_publication import (
@@ -130,29 +144,33 @@ def test_service_takeover_requires_reviewed_proxy_retirement_first(client, monke
     applied = render_proxy_servers([proxy], transport_manifest([proxy], []))
     unit_map["public_services"].update(changed=True, config_preview="", snapshot_marker={"reverse_proxy_intent_sha256": "removed"})
     unit_map["public_services"]["context"]["reverse_proxies"] = []
-    unit_map["kms"].update(changed=True, config_preview=json.dumps({"enabled": True, "listen": {"addresses": [address], "port": 5696}}),
-                           context={"kms_settings": SimpleNamespace(enabled=True)})
+    def preview_for(target):
+        return json.dumps({"enabled": True, "listen": {"addresses": [target], "port": 5696}}
+                          if service == "kms" else {"boot": {"enabled": True, "listen_address": target, "http_port": 5696}})
+
+    context = {"kms_settings": SimpleNamespace(enabled=True)} if service == "kms" else {"esxi_pxe_boot": {"enabled": True}}
+    unit_map[service].update(changed=True, config_preview=preview_for(address), context=context)
     with SessionLocal() as db:
         baselines = ui.load_appliance_apply_baselines(db)
         baselines["public_services"]["config_preview"] = applied
         ui.save_appliance_apply_baselines(db, baselines)
         db.commit()
         with pytest.raises(ui.ApplianceApplyPlanError) as denied:
-            ui.appliance_apply_execution_plan(db, units, {"kms"})
+            ui.appliance_apply_execution_plan(db, units, {service})
         assert "Select Public Services" in denied.value.public_detail
-        plan = ui.appliance_apply_execution_plan(db, units, {"kms"}, enforce_consent=False)
+        plan = ui.appliance_apply_execution_plan(db, units, {service}, enforce_consent=False)
         assert "public_services" in plan["selected_ids"]
         accepted = ui.appliance_apply_execution_plan(db, units, plan["selected_ids"])
         order = [unit["id"] for unit in accepted["selected_ordered_units"]]
-        assert order.index("kms") > max(order.index(key) for key in ui.MANAGEMENT_HANDOFF_UNIT_IDS)
-        unit_map["kms"]["config_preview"] = json.dumps({"enabled": True, "listen": {"addresses": ["192.0.2.99"], "port": 5696}})
-        assert ui.proxy_socket_takeover_dependencies(unit_map, baselines, {"kms"}) == set()
-    unit_map["kms"]["config_preview"] = json.dumps({"enabled": True, "listen": {"addresses": [address], "port": 5696}})
+        assert order.index(service) > max(order.index(key) for key in ui.MANAGEMENT_HANDOFF_UNIT_IDS)
+        unit_map[service]["config_preview"] = preview_for("192.0.2.99")
+        assert ui.proxy_socket_takeover_dependencies(unit_map, baselines, {service}) == set()
+    unit_map[service]["config_preview"] = preview_for(address)
     monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
-    preview = client.get("/appliance-apply/review?selected_units=kms").json()
+    preview = client.get(f"/appliance-apply/review?selected_units={service}").json()
     assert not preview["plan_error"]
     selected = [unit["id"] for unit in preview["units"] if unit["selected"]]
-    assert selected.index("kms") > selected.index("public_services")
+    assert selected.index(service) > selected.index("public_services")
     response = client.post("/appliance-apply", data={
         "csrf": csrf, "reviewed_plan": preview["plan_token"],
         "requested_units": preview["requested_units"], "selected_units": selected,
@@ -163,7 +181,7 @@ def test_service_takeover_requires_reviewed_proxy_retirement_first(client, monke
     with SessionLocal() as db:
         captured = json.loads(db.get(Job, response.json()["job_id"]).result)
         assert captured["management_handoff"] is True
-        assert captured["selected_units"].index("kms") > captured["selected_units"].index("public_services")
+        assert captured["selected_units"].index(service) > captured["selected_units"].index("public_services")
 
 
 def _prepare_network_handoff_review(client, monkeypatch, *, invalid_firewall=False, changed_local_users=False):

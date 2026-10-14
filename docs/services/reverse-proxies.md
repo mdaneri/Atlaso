@@ -163,6 +163,10 @@ signals, not proof that an application's complete workflow works.
 Stripping `/app` or `/app/` from `/app/value` sends `/value` upstream with the original query arguments.
 A request matching the complete strip prefix maps to `/`; the mapping adds no extra leading slash.
 
+An applied ESXi PXE HTTP listener is a socket owner too. Review its shutdown with Public Services before an HTTPS proxy
+takes that socket. Move an enabled PXE listener in a separate Apply while the replacement proxy stays disabled.
+If PXE takes an applied proxy socket, review Public Services with PXE so the old proxy listener retires first.
+
 After a successful appliance apply, test the configured hostname, scheme, port, and path from an authorized client on
 each selected listener. Confirm both path-prefix behaviors as configured, the upstream application's normal sign-in and
 authorization behavior, and a WebSocket connection when the application uses one. For an HTTP-to-HTTPS redirect,

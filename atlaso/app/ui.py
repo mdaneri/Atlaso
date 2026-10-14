@@ -18748,7 +18748,7 @@ def proxy_socket_release_dependencies(
         for port in [proxy["port"], *([proxy["redirect_port"]] if proxy.get("redirect_http") else [])]
     }
     releases = set()
-    for unit_id in ("kms", "ldap", "ntpd", "vcf_backups", "vcf_offline_depot", "vcf_private_registry"):
+    for unit_id in ("kms", "ldap", "ntpd", "esxi_pxe", "vcf_backups", "vcf_offline_depot", "vcf_private_registry"):
         if not sockets or not unit_map.get(unit_id, {}).get("changed"):
             continue
         preview = str((baselines.get(unit_id) or {}).get("config_preview") or "")
@@ -18765,6 +18765,12 @@ def proxy_socket_release_dependencies(
                         for field, enabled in (("port", "ldaps_enabled"), ("ldap_port", "ldap_enabled")):
                             if settings.get(enabled):
                                 owned.update((address, int(settings[field])) for address in split_addresses(settings["listen_address"]))
+            elif unit_id == "esxi_pxe":
+                settings = (json.loads(preview) if preview else {}).get("boot", {})
+                if settings.get("enabled"):
+                    addresses = split_addresses(settings["listen_address"]) or ["*"]
+                    owned.update((str(ip_address(address)) if address not in {"*", "0.0.0.0", "::"} else address,
+                                  int(settings.get("http_port") or 8080)) for address in addresses)
             elif unit_id == "ntpd" and "nts enable" in preview.splitlines():
                 addresses = next((line.partition(":")[2] for line in preview.splitlines()
                                   if line.startswith("# Atlaso NTP listen addresses:")), "")
@@ -18808,7 +18814,7 @@ def proxy_socket_takeover_dependencies(
     """
     from atlaso.app.services.reverse_proxy_publication import validated_snapshot
 
-    if not selected_ids.intersection({"kms", "ldap", "ntpd", "vcf_backups", "vcf_offline_depot", "vcf_private_registry"}):
+    if not selected_ids.intersection({"kms", "ldap", "ntpd", "esxi_pxe", "vcf_backups", "vcf_offline_depot", "vcf_private_registry"}):
         return set()
     preview = str((baselines.get("public_services") or {}).get("config_preview") or "")
     try:
@@ -19299,6 +19305,8 @@ def appliance_apply_execution_plan(
                     for key in shutdown_settings[unit_id]
                 )
             }
+            if unit_map.get("esxi_pxe", {}).get("context", {}).get("esxi_pxe_boot", {}).get("enabled") is False:
+                shutdown_ids.add("esxi_pxe")
             pending_moves = proxy_release_ids - shutdown_ids
             if pending_moves:
                 labels = ", ".join(unit_map[unit_id]["label"] for unit_id in sorted(pending_moves))
@@ -19307,8 +19315,6 @@ def appliance_apply_execution_plan(
                     + labels + ". Keep that proxy disabled until those listeners have moved."
                 )
             release_ids = shutdown_ids
-            if unit_map.get("esxi_pxe", {}).get("context", {}).get("esxi_pxe_boot", {}).get("enabled") is False:
-                release_ids.add("esxi_pxe")
         releases = [unit for unit in selected_ordered_units
                     if unit["id"] in release_ids]
         selected_ordered_units = [unit for unit in selected_ordered_units if unit not in releases]
