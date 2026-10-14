@@ -371,8 +371,14 @@ def proxy_payload(
         "listeners": [{"interface": interface, "address": address}],
         "routes": [{"path_prefix": prefix, "upstream_scheme": "http", "upstream_host": upstream_host,
                     "upstream_port": upstream_port, "path_behavior": behavior, "trust_mode": "trusted_ca"}
-                   for prefix, behavior in (("/preserve/", "preserve"), ("/strip/", "strip"))],
+                   for prefix, behavior in (("/preserve/", "preserve"), ("/strip/", "strip"), ("/trim", "strip"))],
     }
+
+
+def publication_path_cases() -> tuple[tuple[str, str], ...]:
+    """Require exact upstream paths at both strip-prefix slash boundaries."""
+    return (("/preserve/value?q=1", "/preserve/value?q=1"), ("/strip/value?q=1", "/value?q=1"),
+            ("/trim/value?q=1", "/value?q=1"), ("/trim?q=1", "/?q=1"), ("/trim/", "/"))
 
 
 def fixture_tls_context(directory: Path) -> tuple[ssl.SSLContext, str]:
@@ -582,8 +588,8 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
             observations = []
             for payload, tls in ((http_payload, None), (https_payload, context), (standard_http, None), (standard_https, context)):
                 websocket_exchange(address, payload["port"], payload["hostname"], context=tls)
-                for prefix, expected in (("/preserve/", "/preserve/value?q=1"), ("/strip/", "/value?q=1")):
-                    code, body, _ = listener_request(address, payload["port"], payload["hostname"], prefix + "value?q=1", context=tls)
+                for requested, expected in publication_path_cases():
+                    code, body, _ = listener_request(address, payload["port"], payload["hostname"], requested, context=tls)
                     if code != 200:
                         raise lifecycle.LifecycleError(f"Proxy mapping returned HTTP {code}.")
                     observed = json.loads(body)
@@ -593,7 +599,7 @@ def run_reverse_proxy_acceptance(lifecycle: Any, results: list[Any], client: Any
                         raise lifecycle.LifecycleError("Public Host normalization differs from intent.")
                     if observed["forwarded_for"] != host or observed["real_ip"] != host:
                         raise lifecycle.LifecycleError("Proxy forwarding headers did not preserve the observed client address.")
-                    observations.append({"scheme": payload["scheme"], "mapping": prefix, "status": code})
+                    observations.append({"scheme": payload["scheme"], "mapping": requested, "status": code})
                 code, _body, headers = listener_request(address, payload["port"], payload["hostname"], "/strip/auth", context=tls)
                 if code != 401 or not headers.get("WWW-Authenticate"):
                     raise lifecycle.LifecycleError("Upstream authentication challenge was not preserved.")

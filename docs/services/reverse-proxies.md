@@ -160,6 +160,9 @@ the SHA-256 digest of the leaf certificate on the connected upstream TLS session
 verification is always reported as degraded, even when an HTTP status is returned. These observations are operational
 signals, not proof that an application's complete workflow works.
 
+Stripping `/app` or `/app/` from `/app/value` sends `/value` upstream with the original query arguments.
+A request matching the complete strip prefix maps to `/`; the mapping adds no extra leading slash.
+
 After a successful appliance apply, test the configured hostname, scheme, port, and path from an authorized client on
 each selected listener. Confirm both path-prefix behaviors as configured, the upstream application's normal sign-in and
 authorization behavior, and a WebSocket connection when the application uses one. For an HTTP-to-HTTPS redirect,

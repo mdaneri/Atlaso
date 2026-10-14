@@ -285,8 +285,16 @@ def render_proxy_servers(proxies: list[dict[str, Any]], manifest: dict[str, Any]
             for route in proxy["routes"]:
                 path = (SOCKET_ROOT / manifest["generation"] / f"{proxy['id']}-{route['id']}.sock").as_posix()
                 suffix = ":/" if route["path_behavior"] == "strip" else ""
+                rewrite = []
+                if route["path_behavior"] == "strip" and not route["path_prefix"].endswith("/"):
+                    # URI substitution would prepend '/' to a suffix that
+                    # already starts with '/'. Stay in the selected location
+                    # and pass the changed URI, retaining the original args.
+                    pattern = re.escape(route["path_prefix"])
+                    rewrite = [f"    rewrite ^{pattern}/?(.*)$ /$1 break;"]
+                    suffix = ""
                 lines.extend([f"  # Upstream TLS policy: {route['trust_mode']}{' - WARNING: certificate verification is disabled' if route['trust_mode'] == 'insecure' else ''}",
-                              f"  location {route['path_prefix']} {{", f"    proxy_pass http://unix:{path}{suffix};",
+                              f"  location {route['path_prefix']} {{", *rewrite, f"    proxy_pass http://unix:{path}{suffix};",
                               "    proxy_http_version 1.1;", "    proxy_buffering off;", "    proxy_request_buffering on;",
                               "    proxy_set_header Host $host;", "    proxy_set_header X-Forwarded-For $remote_addr;",
                               "    proxy_set_header Forwarded '';",

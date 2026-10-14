@@ -1,6 +1,7 @@
 """Test reverse-proxy publication metadata and generated listener intent."""
 
 import json
+import re
 from copy import deepcopy
 
 import pytest
@@ -180,6 +181,30 @@ def proxy_payload(*, proxy_id: int = 10) -> dict:
             },
         ],
     }
+
+
+@pytest.mark.parametrize("prefix", ["/app", "/app.v1+()", "/应用"])
+def test_non_slashed_strip_prefix_rewrites_one_leading_slash(prefix):
+    """Retain literal prefix matching and canonical validation across strip boundaries.
+
+    Args:
+        prefix: Accepted prefix without a final slash, including regex characters.
+    """
+    proxy = proxy_payload()
+    proxy["routes"] = [dict(proxy["routes"][0], path_prefix=prefix, path_behavior="strip")]
+    manifest = transport_manifest([proxy], [])
+    rendered = render_proxy_servers([proxy], manifest)
+    assert validated_snapshot(rendered) == ([proxy], manifest)
+    pattern = re.escape(prefix) + r"/?(.*)$"
+    directive = f"rewrite ^{pattern} /$1 break;"
+    assert directive in rendered
+    assert ".sock:/;" not in rendered
+    assert ".sock;" in rendered
+    for requested, expected in ((prefix, "/"), (prefix + "/", "/"), (prefix + "/value", "/value"),
+                                (prefix + "value", "/value")):
+        assert re.sub("^" + pattern, r"/\1", requested) == expected
+    with pytest.raises(ValueError, match="canonical intent"):
+        validated_snapshot(rendered.replace(directive, directive.replace("break", "last")))
 
 
 def test_transport_manifest_is_deterministic_and_tracks_upstream_policy_and_exclusions():

@@ -43,6 +43,18 @@ def test_focused_mode_secrets_and_plan():
         lifecycle.parse_args(["--reverse-proxy-only", "--time-source-only"])
 
 
+def test_native_mapping_matrix_covers_non_slashed_strip_and_query_boundaries():
+    """Require non-slashed strips in every native publication/reboot verification."""
+    module = load_module("proxy_mapping_acceptance_test", "reverse_proxy_acceptance.py")
+    value = module.proxy_payload("Fixture", "fixture.example.test", "192.0.2.10", "eth1", "192.0.2.1", 9000)
+    routes = {route["path_prefix"]: route["path_behavior"] for route in value["routes"]}
+    assert routes["/trim"] == routes["/strip/"] == "strip"
+    assert dict(module.publication_path_cases()) == {
+        "/preserve/value?q=1": "/preserve/value?q=1", "/strip/value?q=1": "/value?q=1",
+        "/trim/value?q=1": "/value?q=1", "/trim?q=1": "/?q=1", "/trim/": "/",
+    }
+
+
 def test_fixture_challenge_and_bounded_echo():
     """Serve the real fixture socket and preserve the application's challenge."""
     module = load_module("proxy_acceptance_test", "reverse_proxy_acceptance.py")
