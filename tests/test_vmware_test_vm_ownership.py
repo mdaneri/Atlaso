@@ -389,13 +389,13 @@ def test_prepared_destination_publishes_each_creation_before_clone_use(tmp_path)
     assert "prepared directory receipt SHA-256" in result.stdout
 
 
-@pytest.mark.parametrize("case", ["empty", "partial", "digest", "replaced", "vmx", "unsupported", "foreign", "process_digest"])
+@pytest.mark.parametrize("case", ["empty", "partial", "backup", "digest", "replaced", "vmx", "unsupported", "foreign", "process_digest"])
 def test_prepared_directory_recovery_requires_original_receipt_and_no_completed_vm(tmp_path, case):
     """A pre-callback failure can recover only its original incomplete destination.
 
     Args:
         tmp_path: Original pytest-owned temporary root.
-        case: Empty/partial recovery or a receipt, identity, VMX, artifact, or owner refusal.
+        case: Empty recovery or a child, receipt, identity, VMX, artifact, or owner refusal.
     """
     (tmp_path / "evidence").mkdir()
     source = tmp_path / "source.vmx"
@@ -416,6 +416,7 @@ def test_prepared_directory_recovery_requires_original_receipt_and_no_completed_
     changes = {
         "empty": "",
         "partial": "[IO.File]::WriteAllText((Join-Path $output 'partial.vmdk'),'public incomplete disk'); ",
+        "backup": "[IO.File]::WriteAllText((Join-Path $output 'backup.vmdk'),'foreign backup after clone completion'); ",
         "digest": "$ctx.PreparedReceiptSha256='0'*64; ",
         "replaced": "[IO.Directory]::Move($output,($output+'-original')); [void][IO.Directory]::CreateDirectory($output); ",
         "vmx": "[IO.File]::WriteAllText($vmx,'public VMX'); ",
@@ -434,12 +435,16 @@ def test_prepared_directory_recovery_requires_original_receipt_and_no_completed_
         check=False,
         environment=environment,
     )
-    if case in {"empty", "partial"}:
+    if case == "empty":
         assert result.returncode == 0, result.stdout + result.stderr
         assert not (tmp_path / "checkout" / "test-vm").exists()
     else:
         assert result.returncode != 0
         assert (tmp_path / "checkout" / "test-vm").exists()
+        if case in {"partial", "backup"}:
+            expected = "public incomplete disk" if case == "partial" else "foreign backup after clone completion"
+            assert (tmp_path / "checkout" / "test-vm" / f"{case}.vmdk").read_text() == expected
+            assert "no original child creation evidence" in result.stderr
 
 
 @pytest.mark.parametrize("mode", ["active", "publication", "directory", "legacy", "whatif"])
@@ -499,7 +504,7 @@ def test_clone_process_publication_and_active_controller_fail_closed(tmp_path, m
 
 
 def test_interrupted_clone_controller_requires_original_tree_quiescence(tmp_path):
-    """A live clone refuses recovery; terminating its original controller permits exact recovery.
+    """Proven clone quiescence does not authorize deleting unreceipted children.
 
     Args:
         tmp_path: Original pytest-owned temporary root.
@@ -555,8 +560,9 @@ def test_interrupted_clone_controller_requires_original_tree_quiescence(tmp_path
             + f"-ReceiptSha256 '{receipt_sha}' -VmrunPath {ps_literal(provider)} -Confirm:$false",
             check=False, environment=environment,
         )
-        assert recovery.returncode == 0, recovery.stdout + recovery.stderr
-        assert not output.exists()
+        assert recovery.returncode != 0, recovery.stdout + recovery.stderr
+        assert "no original child creation evidence" in recovery.stderr
+        assert partial.read_text() == "partial"
     finally:
         if controller.poll() is None:
             controller.terminate()
@@ -597,7 +603,6 @@ def test_prepared_root_removal_keeps_original_handle_through_retirement(tmp_path
     """
     output = tmp_path / "prepared"
     output.mkdir()
-    (output / "partial.vmdk").write_text("public incomplete disk", encoding="utf-8")
     result = run_powershell(
         ownership_prefix()
         + f"$output={ps_literal(output)}; $snapshot=& (Get-Module Atlaso.WorkstationCleanup) "

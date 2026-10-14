@@ -1198,8 +1198,10 @@ canonical output with `-RecoverPreparedDirectory`, `-PreparedDirectoryReceiptPat
 invocation: it rejects creation options before removal and exits without cloning; retry creation separately.
 Recovery retains the original root through handle-based deletion and verifies the
 original receipt, intent, task/source ancestry and directory identity inside the owning remover before retiring an
-empty destination or ordinary partial-clone files. A VMX, lock directory, unknown file, replaced directory, or
-altered receipt is preserved. Recovery verifies the original process binding and refuses an active or reused controller.
+empty destination. Directory and process receipts do not prove child creation: every nonempty prepared directory,
+including one containing ordinary partial-clone files, is preserved without child creation evidence. A later cleanup
+snapshot cannot supply that evidence. A replaced directory or altered receipt is also preserved. Recovery verifies
+the original process binding and refuses an active or reused controller.
 On the same boot it uses the exact recorded child identity and named job to prove or complete owned-tree termination;
 a proven prior host boot independently establishes quiescence. Missing, ambiguous or legacy process evidence preserves
 the directory without retrofitting receipts or stopping unrelated processes.

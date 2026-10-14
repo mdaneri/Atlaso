@@ -2048,7 +2048,7 @@ function Assert-AtlasoWorkstationCleanupRootBinding {
 
 <#
 .SYNOPSIS
-Admit only ordinary partial-clone files in the already captured preparation snapshot.
+Admit only the originally receipted empty preparation directory.
 .PARAMETER Root
 Exact original preparation directory.
 .PARAMETER Snapshot
@@ -2058,11 +2058,9 @@ function Assert-AtlasoPreparedArtifactSnapshot {
     param([string]$Root, [psobject]$Snapshot)
     foreach ($relative in $Snapshot.Items.Keys) {
         if ($relative -eq '.') { continue }
-        $entry = Get-Item -LiteralPath (Join-Path $Root $relative) -Force
-        if ($entry.PSIsContainer -or $entry.Extension -notin @('.vmdk', '.vmxf', '.nvram', '.vmsd', '.log') -or
-            ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-            throw 'Prepared cleanup found a completed VM, active lock, or unsupported artifact; preserve it.'
-        }
+        # Directory/process receipts do not establish who created a child.
+        # A later cleanup snapshot must never manufacture that provenance.
+        throw 'Prepared cleanup has no original child creation evidence; preserve the nonempty directory.'
     }
     Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $Root -Snapshot $Snapshot
 }
@@ -2077,7 +2075,7 @@ Original root identity and complete admitted artifact inventory.
 .PARAMETER KeepRoot
 Retain the original empty root for its caller's subsequent use.
 .PARAMETER PreparedOnly
-Require the incomplete-clone artifact allowlist rather than a completed VM inventory.
+Require an empty prepared directory rather than a completed VM inventory.
 #>
 function Remove-AtlasoCapturedArtifactSnapshot {
     param([string]$Root, [psobject]$Snapshot, [switch]$KeepRoot, [switch]$PreparedOnly)
