@@ -279,7 +279,7 @@ def test_post_removal_pending_recovery_requires_original_marker_receipt(tmp_path
         assert marker_path.read_text() == "public marker"
 
 
-@pytest.mark.parametrize("failure,retry", [(True, "none"), (False, "reuse"), (False, "reset"), (False, "foreign"), (False, "tampered"), (False, "replacement"), (False, "extra"), (False, "extra_dir"), (False, "disk_replaced"), (False, "missing"), (False, "legacy"), (False, "root_pubfail")])
+@pytest.mark.parametrize("failure,retry", [(True, "none"), (False, "reuse"), (False, "reset"), (False, "foreign"), (False, "tampered"), (False, "replacement"), (False, "extra"), (False, "extra_dir"), (False, "disk_replaced"), (False, "missing"), (False, "legacy"), (False, "root_pubfail"), (False, "preinsert")])
 def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path, failure, retry):
     """Exercise the VMX-locked production callback and publication refusal.
 
@@ -325,6 +325,8 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
     command += "$quarantine=$read.QuarantineDirectory;[IO.Directory]::CreateDirectory($quarantine)|Out-Null;"
     command += "[IO.File]::Move($diskPath,(Join-Path $quarantine 'preserved.vmdk'));[IO.File]::Delete($vmx);[IO.Directory]::Delete($output);"
     command += "function Repair-AtlasoWorkstationStaleRegistrations {param($ScopeRoot,$VmxPath,$ExpectedDisplayName,$OnVerified,[switch]$Confirm) & $OnVerified};"
+    if retry == "preinsert":
+        command += "[IO.Directory]::CreateDirectory($output)|Out-Null;"
     if retry == "root_pubfail":
         command += "$realPublisher=${function:Publish-AtlasoTestVmOwnershipRecord};function Publish-AtlasoTestVmOwnershipRecord {param($Context,$Record,$Kind) if($Kind -eq 'restored-directory'){throw 'Original restored root publication refused'};& $realPublisher @PSBoundParameters};"
     command += f"Invoke-PendingAtlasoDevelopmentCaCleanup -VmrunPath 'provider-must-not-run' -TimeoutSeconds 5 -MarkerRoot {ps_literal(markers)} -OwnershipContext $ctx;"
@@ -338,7 +340,7 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
         "disk_replaced": "[IO.File]::Move($diskPath,($diskPath+'.original'));[IO.File]::WriteAllText($diskPath,'replacement');",
         "missing": "$ctx.RestoredDirectoryReceiptSha256='';",
         "legacy": "$ctx.RestoredDirectoryReceiptPath='';",
-        "root_pubfail": "",
+        "root_pubfail": "", "preinsert": "",
     }
     command += changes[retry]
     source = (VMWARE / "create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
@@ -374,7 +376,12 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
         assert Path(evidence["proof"]).exists()
         assert "Test VM cleanup recovery receipt SHA-256:" in result.stdout
         assert "Test VM restored directory receipt SHA-256:" in result.stdout
-    if retry == "root_pubfail":
+    if retry == "preinsert":
+        assert output.is_dir() and not list(output.iterdir())
+        preserved = next(output.parent.glob(".atlaso-development-ca-cleanup-*/preserved.vmdk"))
+        assert preserved.read_text() == "public preserved data fixture"
+        assert list(markers.iterdir()), "Refusal must retain recovery evidence"
+    elif retry == "root_pubfail":
         assert "Original restored root publication refused" in result.stderr
         assert not output.exists()
         preserved = next(output.parent.glob(".atlaso-development-ca-cleanup-*/preserved.vmdk"))
