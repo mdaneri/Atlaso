@@ -680,7 +680,7 @@ $capturedFile = Join-Path $capturedRoot 'owned.txt'
 [IO.File]::WriteAllText($capturedFile, 'owned evidence')
 $capturedInventory = [Collections.Generic.Dictionary[string,string]]::new()
 $capturedInventory.Add('owned.txt', [Atlaso.WorkstationFileIdentity]::Get($capturedFile))
-$capturedCleanup = [Atlaso.WorkstationCapturedContentsV1]::new($capturedRoot, [Atlaso.WorkstationFileIdentity]::Get($capturedRoot), $capturedInventory)
+$capturedCleanup = [Atlaso.WorkstationCapturedContentsV2]::new($capturedRoot, [Atlaso.WorkstationFileIdentity]::Get($capturedRoot), $capturedInventory)
 try {
     $capturedCleanup.CaptureSnapshot()
     Assert-Refused { [IO.File]::Move($capturedFile, "$capturedFile.replaced") } 'being used by another process'

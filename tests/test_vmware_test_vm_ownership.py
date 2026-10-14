@@ -279,13 +279,14 @@ def test_post_removal_pending_recovery_requires_original_marker_receipt(tmp_path
         assert marker_path.read_text() == "public marker"
 
 
-@pytest.mark.parametrize("failure", [False, True])
-def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path, failure):
+@pytest.mark.parametrize("failure,retry", [(True, "none"), (False, "reuse"), (False, "reset"), (False, "foreign"), (False, "tampered"), (False, "replacement"), (False, "extra"), (False, "extra_dir"), (False, "disk_replaced"), (False, "missing"), (False, "legacy"), (False, "root_pubfail")])
+def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path, failure, retry):
     """Exercise the VMX-locked production callback and publication refusal.
 
     Args:
         tmp_path: Original pytest-owned fixture directory.
         failure: Refuse original proof publication before the durable marker.
+        retry: Admit restored data for reuse/reset or refuse unproven retry state.
     """
     (tmp_path / "evidence").mkdir()
     output = tmp_path / "checkout" / "test-vm"
@@ -294,6 +295,7 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
     vmx.write_text('guestinfo.atlaso.test_vm_cleanup_identity = "' + "d" * 32 + '"\n', encoding="utf-8")
     disk = output / "preserved.vmdk"
     disk.write_text("public preserved data fixture", encoding="utf-8")
+    source_vmx = _write_vmware_payload_fixture(tmp_path / "source")
     markers = tmp_path / "markers"
     markers.mkdir()
     command = ownership_prefix() + context_script(tmp_path)
@@ -316,27 +318,74 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
     command += f"$marker=New-AtlasoDevelopmentCaCleanupMarker -VmxPath $vmx -Name $ctx.Name -OutputDirectory $output -DataDiskStates @($diskState) -MarkerRoot {ps_literal(markers)} -InitialPhase stopped-vmx-scrubbed -AllowExistingCleanupIdentity -OwnershipContext $ctx; "
     command += "$proofFile=@(Get-ChildItem -LiteralPath $evidence -Filter 'atlaso-test-vm-ca-marker-*')[0];"
     command += "$proof=Get-Content -LiteralPath $proofFile.FullName -Raw | ConvertFrom-Json;"
-    command += "$ctx | Add-Member CleanupRecoveryReceiptPath $proofFile.FullName;$ctx | Add-Member CleanupRecoveryReceiptSha256 ((Get-FileHash $proofFile.FullName).Hash.ToLowerInvariant());"
+    command += "$ctx | Add-Member CleanupRecoveryReceiptPath $proofFile.FullName -Force;$ctx | Add-Member CleanupRecoveryReceiptSha256 ((Get-FileHash $proofFile.FullName).Hash.ToLowerInvariant()) -Force;"
     command += "$read=Read-AtlasoDevelopmentCaCleanupMarker -MarkerPath $marker -MarkerRoot ([IO.Path]::GetDirectoryName($marker));"
     command += "if($proof.original_receipt_sha256 -cne $original.Sha256 -or $proof.marker_projection -cne (Get-AtlasoTestVmMarkerProjection $read)){throw 'Original callback binding mismatch'};"
     command += "$writer=[IO.File]::Open($vmx,'Open','Write','None');$writer.Dispose();"
     command += "$quarantine=$read.QuarantineDirectory;[IO.Directory]::CreateDirectory($quarantine)|Out-Null;"
     command += "[IO.File]::Move($diskPath,(Join-Path $quarantine 'preserved.vmdk'));[IO.File]::Delete($vmx);[IO.Directory]::Delete($output);"
     command += "function Repair-AtlasoWorkstationStaleRegistrations {param($ScopeRoot,$VmxPath,$ExpectedDisplayName,$OnVerified,[switch]$Confirm) & $OnVerified};"
+    if retry == "root_pubfail":
+        command += "$realPublisher=${function:Publish-AtlasoTestVmOwnershipRecord};function Publish-AtlasoTestVmOwnershipRecord {param($Context,$Record,$Kind) if($Kind -eq 'restored-directory'){throw 'Original restored root publication refused'};& $realPublisher @PSBoundParameters};"
     command += f"Invoke-PendingAtlasoDevelopmentCaCleanup -VmrunPath 'provider-must-not-run' -TimeoutSeconds 5 -MarkerRoot {ps_literal(markers)} -OwnershipContext $ctx;"
     command += "if([Atlaso.WorkstationFileIdentity]::Get($diskPath) -cne $diskState.Identity){throw 'Restoration replaced original data'};"
+    changes = {
+        "none": "", "reuse": "", "reset": "", "foreign": "$ctx.TaskId='foreign-task';",
+        "tampered": "[IO.File]::AppendAllText($ctx.RestoredDirectoryReceiptPath,' ');",
+        "replacement": "[IO.Directory]::Move($output,($output+'-original'));[IO.Directory]::CreateDirectory($output)|Out-Null;",
+        "extra": "[IO.File]::WriteAllText((Join-Path $output 'foreign.txt'),'foreign');",
+        "extra_dir": "[IO.Directory]::CreateDirectory((Join-Path $output 'foreign-directory'))|Out-Null;",
+        "disk_replaced": "[IO.File]::Move($diskPath,($diskPath+'.original'));[IO.File]::WriteAllText($diskPath,'replacement');",
+        "missing": "$ctx.RestoredDirectoryReceiptSha256='';",
+        "legacy": "$ctx.RestoredDirectoryReceiptPath='';",
+        "root_pubfail": "",
+    }
+    command += changes[retry]
+    source = (VMWARE / "create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
+    start = source.index("$existingOwnershipReceipt = $null")
+    end = source.index("if (-not $WhatIfPreference) {\n    # Resolve new Environment configuration", start)
+    parent = source[start:end] + "}finally{}"
+    command += f"Import-Module {ps_literal(VMWARE / 'Atlaso.VmwarePayload.psm1')};$repoRoot={ps_literal(ROOT)};$ApplianceVmxPath={ps_literal(source_vmx)};"
+    command += "$ctx.InvocationId='';$ownershipContext=$ctx;$RestoredDirectoryReceiptPath=$ctx.RestoredDirectoryReceiptPath;$RestoredDirectoryReceiptSha256=$ctx.RestoredDirectoryReceiptSha256;"
+    command += "$CleanupRecoveryReceiptPath='';$CleanupRecoveryReceiptSha256='';$Redeploy=$false;$NoStart=$false;$WhatIfPreference=$false;$TimeoutSeconds=5;$RecoverPreparedDirectory=$false;$PreparedDirectoryReceiptPath='';$PreparedDirectoryReceiptSha256='';$resolvedOutputDirectory=$output;$targetVmx=$vmx;"
+    command += f"function Get-AtlasoDevelopmentCaCleanupMarkerRoot {{ {ps_literal(markers)} }};function Resolve-TestVmVmrunPath {{'provider-must-not-run'}};function Assert-AtlasoTestVmCheckoutSource {{param($Context)}};"
+    command += parent + ";"
+    if retry == "reset":
+        source = (VMWARE / "create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
+        start = source.index("if ($ResetDataDisks) {")
+        block = source[start:source.index("$rollbackDataDiskStates = @()", start)]
+        command += "function Assert-AtlasoTestVmCheckoutSource {param($Context)};function Get-AtlasoRollbackDataDiskStates {param($DiskPaths,$OutputDirectory) $diskState};"
+        command += "$ResetDataDisks=$true;$RestoredDirectoryReceiptPath=$ctx.RestoredDirectoryReceiptPath;$ownershipContext=$ctx;$resolvedOutputDirectory=$output;$resolvedDepotVmdkPath=$diskPath;$resolvedBackupVmdkPath=Join-Path $output 'unused.vmdk';"
+        command += "& {[CmdletBinding(SupportsShouldProcess)]param() " + block + "};"
+    command += "$ctx | Add-Member CloneOutputPin (New-AtlasoTestVmPreparedOutput -Context $ctx) -Force;"
+    command += "$freshIdentity='e'*32;[IO.File]::WriteAllText($vmx,('guestinfo.atlaso.test_vm_cleanup_identity = '+[char]34+$freshIdentity+[char]34));"
+    command += "Publish-AtlasoTestVmOriginalOwnership -Context $ctx -DirectoryPath $output -VmxPath $vmx -CleanupIdentity $freshIdentity | Out-Null;"
+    command += "$fresh=Assert-AtlasoTestVmOriginalOwnership -Context $ctx;if($fresh.Record.restored_directory.sha256 -cne $ctx.RestoredDirectoryReceiptSha256){throw 'Fresh clone lost original restored-root binding'};$ctx.CloneOutputPin.Dispose();"
     command += "[pscustomobject]@{marker=$marker;proof=$proofFile.FullName} | ConvertTo-Json -Compress"
     result = run_powershell(command, check=False)
-    assert (result.returncode == 0) == (not failure), result.stdout + result.stderr
+    succeeds = not failure and retry in {"reuse", "reset"}
+    assert (result.returncode == 0) == succeeds, result.stdout + result.stderr
     if failure:
         assert "Original proof publication refused" in result.stderr
         assert not list(markers.iterdir())
-    else:
+    elif succeeds:
         evidence = json.loads(result.stdout.strip().splitlines()[-1])
         assert not Path(evidence["marker"]).exists()
         assert Path(evidence["proof"]).exists()
         assert "Test VM cleanup recovery receipt SHA-256:" in result.stdout
-    assert disk.read_text() == "public preserved data fixture"
+        assert "Test VM restored directory receipt SHA-256:" in result.stdout
+    if retry == "root_pubfail":
+        assert "Original restored root publication refused" in result.stderr
+        assert not output.exists()
+        preserved = next(output.parent.glob(".atlaso-development-ca-cleanup-*/preserved.vmdk"))
+        assert preserved.read_text() == "public preserved data fixture"
+    elif retry == "reset":
+        assert not disk.exists()
+    else:
+        preserved = output.with_name(output.name + "-original") / disk.name if retry == "replacement" else (
+            disk.with_name(disk.name + ".original") if retry == "disk_replaced" else disk
+        )
+        assert preserved.read_text() == "public preserved data fixture"
 
 
 @pytest.mark.parametrize("keep_root", [False, True])
@@ -370,10 +419,11 @@ def test_parent_cleanup_recovery_selectors_stop_before_fresh_creation(tmp_path, 
     script = (VMWARE / "create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
     start = script.index("$existingOwnershipReceipt = $null")
     end = script.index("if ($ownershipContext.Enabled -and (Test-Path -LiteralPath $targetVmx) -and -not $Redeploy)", start)
-    block = script[start:end]
+    block = script[start:end].replace("try {\n$ownershipContext | Add-Member RestoredDirectoryReceiptPath", "$ownershipContext | Add-Member RestoredDirectoryReceiptPath", 1)
     command = "$ErrorActionPreference='Stop';$events=[Collections.Generic.List[string]]::new();"
     command += f"$repoRoot={ps_literal(ROOT)};$resolvedOutputDirectory={ps_literal(tmp_path / 'removed')};$targetVmx=Join-Path $resolvedOutputDirectory 'vm.vmx';"
     command += "$ownershipContext=[pscustomobject]@{Enabled=$true};$CleanupRecoveryReceiptPath='original-marker-proof';"
+    command += "$RestoredDirectoryReceiptPath='';$RestoredDirectoryReceiptSha256='';"
     command += "$CleanupRecoveryReceiptSha256=" + ("'';" if case == "unpaired" else "('a'*64);")
     command += f"$Redeploy=${str(case == 'redeploy').lower()};$WhatIfPreference=${str(case == 'whatif').lower()};"
     command += "$TimeoutSeconds=5;$NoStart=$false;$RecoverPreparedDirectory=$false;$PreparedDirectoryReceiptPath='';$PreparedDirectoryReceiptSha256='';"
@@ -387,6 +437,26 @@ def test_parent_cleanup_recovery_selectors_stop_before_fresh_creation(tmp_path, 
     assert "fresh-creation" not in evidence["events"]
     assert evidence["events"] == (["source", "recovery"] if case in {"valid", "refused"} else [])
     assert bool(evidence["failure"]) == (case in {"refused", "unpaired", "redeploy"})
+
+
+def test_lan_harness_captured_cleanup_case_uses_current_native_type(tmp_path):
+    """Execute the changed Packer harness block with real capture/refusal semantics.
+
+    Args:
+        tmp_path: Original pytest-owned native fixture directory.
+    """
+    harness = ROOT / "tests/powershell/Test-AtlasoWorkstationLanSegments.ps1"
+    source = harness.read_text(encoding="utf-8")
+    start = source.index("$capturedRoot = Join-Path $fixture 'captured-cleanup'")
+    block = source[start:source.index("$resourcePinRoot =", start)]
+    command = ownership_prefix() + "$tokens=$null;$errors=$null;"
+    command += f"$ast=[Management.Automation.Language.Parser]::ParseFile({ps_literal(harness)},[ref]$tokens,[ref]$errors);"
+    command += "$fn=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Assert-Refused'},$true);. ([scriptblock]::Create($fn.Extent.Text));"
+    command += f"$fixture={ps_literal(tmp_path)};" + block
+    result = run_powershell(command, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "captured-cleanup/owned.txt").read_text() == "owned evidence"
+    assert (tmp_path / "captured-cleanup/foreign.txt").read_text() == "foreign evidence"
 
 
 def run_powershell(command: str, *, check: bool = True, environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -780,7 +850,7 @@ def test_prepared_root_removal_keeps_original_handle_through_retirement(tmp_path
         + "{param($root) Get-AtlasoRootSnapshot -RemovalRoot $root} $output; "
         + "$inventory=[Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase); "
         + "foreach ($path in $snapshot.Items.Keys) { $inventory.Add($path,$snapshot.Items[$path]) }; "
-        + "$removal=[Atlaso.WorkstationCapturedContentsV1]::new($output,$snapshot.RootIdentity,$inventory,$true); "
+        + "$removal=[Atlaso.WorkstationCapturedContentsV2]::new($output,$snapshot.RootIdentity,$inventory,$true); "
         + "try { $removal.CaptureSnapshot(); $renameBlocked=$false; "
         + "try { [IO.Directory]::Move($output,($output+'-replaced')) } catch { $renameBlocked=$true }; "
         + "if (-not $renameBlocked) { throw 'The original prepared root could be replaced' }; "

@@ -1442,6 +1442,13 @@ VM; stopped/process-quiescence and disk identity checks still precede restoratio
 redeploy. Legacy markers without original recovery evidence are preserved; never manufacture that evidence afterward.
 Receipt-only recovery runs before Python/1Password SDK artifact admission. Missing SDK tooling cannot strand preserved
 disks; artifact verification remains mandatory before fresh credential or creation work.
+If recovery restores canonical in-directory disk components, it publishes an original restored-directory receipt path
+and SHA-256 before moving them. Preserve both. A later creation retry passes `-RestoredDirectoryReceiptPath` and
+`-RestoredDirectoryReceiptSha256`, without `-Redeploy`. Admission checks that original root and its exact ordinary disk
+components, refusing replacements, extra files/directories, missing selectors and legacy state. The original root and
+disk handles remain held through cloning; a fresh VM receives its own original VM receipt. `-ResetDataDisks` removes
+only that admitted complete component set through captured handles before creating replacement disks. Nested or
+unproven component layouts remain quarantined rather than acquiring ownership from a later snapshot.
 Rerun an interrupted creation with the preserved original receipt selectors without adding `-Redeploy` solely for
 recovery. Pending cleanup runs before an existing-VM rejection. If import recovery leaves a healthy VM in place, the
 wrapper preserves it and rejects recreation after recovery, before obtaining new credentials.

@@ -47,6 +47,10 @@ Creation-time original receipt digest preserved independently in the task invent
 Original marker receipt path preserved at publication for post-removal recovery.
 .PARAMETER CleanupRecoveryReceiptSha256
 Original marker receipt digest independently preserved at publication.
+.PARAMETER RestoredDirectoryReceiptPath
+Original restored-data directory receipt path preserved before disk restoration.
+.PARAMETER RestoredDirectoryReceiptSha256
+Original restored-data directory digest preserved independently for a creation retry.
 .PARAMETER RecoverPreparedDirectory
 Remove an incomplete pre-clone destination and exit; retry creation in a separate invocation.
 .PARAMETER PreparedDirectoryReceiptPath
@@ -199,6 +203,8 @@ param(
     [string]$OwnershipReceiptSha256 = '',
     [string]$CleanupRecoveryReceiptPath = '',
     [string]$CleanupRecoveryReceiptSha256 = '',
+    [string]$RestoredDirectoryReceiptPath = '',
+    [string]$RestoredDirectoryReceiptSha256 = '',
     [switch]$RecoverPreparedDirectory,
     [string]$PreparedDirectoryReceiptPath = '',
     [string]$PreparedDirectoryReceiptSha256 = '',
@@ -1100,13 +1106,25 @@ Captured VMDK components whose non-empty quarantine paths must be restored.
 
 .PARAMETER QuarantineDirectory
 Exact invocation-owned sibling quarantine directory.
+.PARAMETER OwnershipContext
+Original task and marker proof for prospective restored-root publication.
 #>
 function Restore-AtlasoRollbackDataDisksFromQuarantine {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$DataDiskStates,
-        [Parameter(Mandatory = $true)][string]$QuarantineDirectory
+        [Parameter(Mandatory = $true)][string]$QuarantineDirectory,
+        [psobject]$OwnershipContext
     )
 
+    $restorationPin=$null
+    try {
+    if ($OwnershipContext -and $OwnershipContext.Enabled -and @($DataDiskStates | Where-Object QuarantinePath).Count) {
+        if (Test-Path -LiteralPath $OwnershipContext.OutputDirectory) {
+            Assert-AtlasoTestVmRestoredDirectory -Context $OwnershipContext -AllowQuarantine | Out-Null
+            $restorationPin=$OwnershipContext.RestoredOutputPin
+        }
+        else { $restorationPin=New-AtlasoTestVmRestoredDirectory -Context $OwnershipContext -DataDiskStates $DataDiskStates }
+    }
     foreach ($state in $DataDiskStates) {
         if (-not $state.QuarantinePath) {
             continue
@@ -1117,8 +1135,10 @@ function Restore-AtlasoRollbackDataDisksFromQuarantine {
         if ([Atlaso.WorkstationFileIdentity]::Get($state.QuarantinePath) -ne $state.Identity) {
             throw "A quarantined VMware data disk changed identity and was preserved for manual recovery: $($state.QuarantinePath)"
         }
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $state.Path) | Out-Null
-        Move-Item -LiteralPath $state.QuarantinePath -Destination $state.Path
+        if (-not (Test-Path -LiteralPath (Split-Path -Parent $state.Path) -PathType Container)) {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $state.Path) | Out-Null
+        }
+        [IO.File]::Move([string]$state.QuarantinePath,[string]$state.Path)
         if ([Atlaso.WorkstationFileIdentity]::Get($state.Path) -ne $state.Identity) {
             throw "A restored VMware data disk failed identity verification: $($state.Path)"
         }
@@ -1130,6 +1150,8 @@ function Restore-AtlasoRollbackDataDisksFromQuarantine {
         }
         Remove-Item -LiteralPath $QuarantineDirectory -Recurse -Force
     }
+    }
+    finally { if ($restorationPin) {$restorationPin.Dispose()}; if ($OwnershipContext -and $OwnershipContext.PSObject.Properties['RestoredOutputPin']) {$OwnershipContext.RestoredOutputPin=$null} }
 }
 
 <#
@@ -1749,6 +1771,8 @@ function New-AtlasoDevelopmentCaCleanupMarker {
                 marker_path=$markerPath;host_boot_identity=$payload.HostBootIdentity;
                 marker_projection=(& $markerProjectionAction -Marker ([pscustomobject]$payload))}
             $publishedProof = & $publishOwnershipAction -Context $proofContext -Record $proof -Kind ca-marker
+            $OwnershipContext | Add-Member CleanupRecoveryReceiptPath $publishedProof.Path -Force
+            $OwnershipContext | Add-Member CleanupRecoveryReceiptSha256 $publishedProof.Sha256 -Force
             Write-Host "Test VM cleanup recovery receipt: $($publishedProof.Path)"
             Write-Host "Test VM cleanup recovery receipt SHA-256: $($publishedProof.Sha256)"
         }
@@ -2776,7 +2800,8 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                     -OnVerified {
                         Restore-AtlasoRollbackDataDisksFromQuarantine `
                             -DataDiskStates $dataDiskStates `
-                            -QuarantineDirectory $quarantineDirectory
+                            -QuarantineDirectory $quarantineDirectory `
+                            -OwnershipContext $OwnershipContext
                         if (Test-Path -LiteralPath $marker.VmxPath) {
                             throw "The exact cleanup-marker VMX was recreated during recovery release: $($marker.VmxPath)"
                         }
@@ -2800,7 +2825,8 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
             try {
                 Restore-AtlasoRollbackDataDisksFromQuarantine `
                     -DataDiskStates $dataDiskStates `
-                    -QuarantineDirectory $quarantineDirectory
+                    -QuarantineDirectory $quarantineDirectory `
+                    -OwnershipContext $OwnershipContext
             }
             catch {
                 throw "$($cleanupFailure.Exception.Message) Preserved data remains in $quarantineDirectory and the durable cleanup marker remains at $($marker.MarkerPath)."
@@ -3177,6 +3203,12 @@ $ownershipContext = New-AtlasoTestVmOwnershipContext `
     -PullRequestNumber $PullRequestNumber `
     -LocalBuilder:$LocalBuilder
 $existingOwnershipReceipt = $null
+try {
+$ownershipContext | Add-Member RestoredDirectoryReceiptPath $RestoredDirectoryReceiptPath -Force
+$ownershipContext | Add-Member RestoredDirectoryReceiptSha256 $RestoredDirectoryReceiptSha256.ToLowerInvariant() -Force
+if ([bool]$RestoredDirectoryReceiptPath -xor [bool]$RestoredDirectoryReceiptSha256) {throw 'Pass both original restored directory selectors.'}
+if ($RestoredDirectoryReceiptPath -and (-not $ownershipContext.Enabled -or $Redeploy -or $RestoredDirectoryReceiptSha256 -notmatch '^[0-9a-fA-F]{64}$')) {throw 'Restored-directory retry requires task ownership and forbids redeploy.'}
+if ($RestoredDirectoryReceiptPath) {Assert-AtlasoTestVmRestoredDirectory -Context $ownershipContext -AllowQuarantine:([bool]$CleanupRecoveryReceiptPath) | Out-Null}
 $ownershipContext | Add-Member -NotePropertyName CleanupRecoveryReceiptPath -NotePropertyValue $CleanupRecoveryReceiptPath -Force
 $ownershipContext | Add-Member -NotePropertyName CleanupRecoveryReceiptSha256 -NotePropertyValue $CleanupRecoveryReceiptSha256.ToLowerInvariant() -Force
 if ([bool]$CleanupRecoveryReceiptPath -xor [bool]$CleanupRecoveryReceiptSha256) { throw 'Pass both original cleanup recovery selectors.' }
@@ -3193,7 +3225,7 @@ if ($RecoverPreparedDirectory -or $PreparedDirectoryReceiptPath -or $PreparedDir
     Remove-AtlasoTestVmPreparedOutput -Context $ownershipContext -ReceiptPath $PreparedDirectoryReceiptPath -ReceiptSha256 $PreparedDirectoryReceiptSha256 -VmrunPath $preparedRecoveryVmrun -Confirm:$false
     return
 }
-if ($ownershipContext.Enabled -and (Test-Path -LiteralPath $resolvedOutputDirectory) -and -not $CleanupRecoveryReceiptPath) {
+if ($ownershipContext.Enabled -and (Test-Path -LiteralPath $resolvedOutputDirectory) -and -not $CleanupRecoveryReceiptPath -and -not $RestoredDirectoryReceiptPath) {
     $existingOwnershipReceipt = Assert-AtlasoTestVmOriginalOwnership -Context $ownershipContext
 }
 if ($NoStart) {
@@ -3202,7 +3234,7 @@ if ($NoStart) {
 if (
     $ownershipContext.Enabled -and
     (Test-Path -LiteralPath $resolvedOutputDirectory -PathType Container) -and
-    -not (Test-Path -LiteralPath $targetVmx -PathType Leaf) -and -not $CleanupRecoveryReceiptPath
+    -not (Test-Path -LiteralPath $targetVmx -PathType Leaf) -and -not $CleanupRecoveryReceiptPath -and -not $RestoredDirectoryReceiptPath
 ) {
     throw "Refusing VMware creation because the canonical Atlaso-owned output directory already exists without its exact VMX: $resolvedOutputDirectory"
 }
@@ -3415,6 +3447,18 @@ if ((Test-Path -LiteralPath $resolvedOutputDirectory) -and $Redeploy) {
 }
 
 if ($ResetDataDisks) {
+    if ($RestoredDirectoryReceiptPath) {
+        $restored=Assert-AtlasoTestVmRestoredDirectory -Context $ownershipContext
+        $selected=@(Get-AtlasoRollbackDataDiskStates -DiskPaths @($resolvedDepotVmdkPath,$resolvedBackupVmdkPath) -OutputDirectory $resolvedOutputDirectory)
+        if ($selected.Count -ne @($restored.disks).Count -or @($selected | Where-Object { $candidate=$_; -not @($restored.disks | Where-Object { $_.Path -ceq $candidate.Path -and $_.Identity -ceq $candidate.Identity }).Count }).Count) {throw 'Reset paths do not match the original restored disk components.'}
+        Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
+        if ($PSCmdlet.ShouldProcess($resolvedOutputDirectory,'Reset originally restored data disk components')) {
+            $ownershipContext.RestoredOutputPin.ReleaseFiles()
+            & (Get-Module Atlaso.WorkstationCleanup) {param($root,$record) $snapshot=Get-AtlasoRootSnapshot -RemovalRoot $root; if($snapshot.RootIdentity -cne $record.original_identity -or $snapshot.Items.Count -ne @($record.disks).Count){throw 'Restored root changed before reset'};foreach($disk in $record.disks){if($snapshot.Items[$disk.RelativePath] -cne $disk.Identity){throw 'Restored disk changed before reset'}};Remove-AtlasoCapturedArtifactSnapshot -Root $root -Snapshot $snapshot -KeepRoot} $resolvedOutputDirectory $restored
+            $ownershipContext.RestoredDataReset=$true
+        }
+    }
+    else {
     foreach ($diskPath in @($resolvedDepotVmdkPath, $resolvedBackupVmdkPath)) {
         if (-not (Test-Path -LiteralPath $diskPath)) {
             continue
@@ -3429,6 +3473,7 @@ if ($ResetDataDisks) {
             Remove-Item -LiteralPath $resolvedDiskPath -Force
             Write-Host "Removed existing data disk: $resolvedDiskPath"
         }
+    }
     }
 }
 
@@ -3520,6 +3565,7 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
             if ($ownershipContext.Enabled -and $ownershipContext.PSObject.Properties['CloneOutputPin'] -and $ownershipContext.CloneOutputPin) {
                 $ownershipContext.CloneOutputPin.Dispose()
                 $ownershipContext.CloneOutputPin = $null
+                if($ownershipContext.PSObject.Properties['RestoredOutputPin']) {$ownershipContext.RestoredOutputPin=$null}
             }
         }
         $createdThisInvocation = $true
@@ -3878,7 +3924,8 @@ if (-not $WhatIfPreference) {
                     try {
                         Restore-AtlasoRollbackDataDisksFromQuarantine `
                             -DataDiskStates $rollbackDataDiskStates `
-                            -QuarantineDirectory $quarantineDirectory
+                            -QuarantineDirectory $quarantineDirectory `
+                            -OwnershipContext $ownershipContext
                     }
                     catch {
                         $rollbackErrors.Add($_.Exception.Message)
@@ -3970,4 +4017,11 @@ if (($waitForIpEnabled -or $TrustRootCa) -and $readinessIdentity) {
 }
 elseif ($readinessIdentity) {
     Write-Host 'Management wait and development-root verification were explicitly disabled with -WaitForIp:$false.' -ForegroundColor DarkGray
+}
+}
+finally {
+    if ($ownershipContext.PSObject.Properties['RestoredOutputPin'] -and $ownershipContext.RestoredOutputPin) {
+        $ownershipContext.RestoredOutputPin.Dispose()
+        $ownershipContext.RestoredOutputPin=$null
+    }
 }

@@ -403,6 +403,10 @@ function New-AtlasoTestVmPreparedOutput {
     if (-not $Context.Enabled -or -not $Context.IntentPath -or -not $Context.IntentSha256) {
         throw 'Destination creation requires the published task intent.'
     }
+    if ($Context.PSObject.Properties['RestoredDirectoryReceiptPath'] -and $Context.RestoredDirectoryReceiptPath) {
+        Assert-AtlasoTestVmRestoredDirectory -Context $Context -AllowReset:([bool]$Context.RestoredDataReset) | Out-Null
+        return $Context.RestoredOutputPin
+    }
     $intentPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile([string]$Context.IntentPath, $true)
     try {
         if ((Get-FileHash -LiteralPath $Context.IntentPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne
@@ -615,7 +619,7 @@ function Publish-AtlasoTestVmOwnershipRecord {
     param(
         [Parameter(Mandatory = $true)][psobject]$Context,
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Record,
-        [Parameter(Mandatory = $true)][ValidateSet('intent', 'original', 'directory', 'clone-process', 'ca-marker')][string]$Kind
+        [Parameter(Mandatory = $true)][ValidateSet('intent', 'original', 'directory', 'clone-process', 'ca-marker', 'restored-directory')][string]$Kind
     )
 
     if (-not $Context.Enabled) { throw 'Cannot publish ownership for a disabled task context.' }
@@ -696,7 +700,9 @@ function New-AtlasoTestVmOwnershipIntent {
     )
 
     if (-not $Context.Enabled) { return $null }
-    if ((Test-Path -LiteralPath $Context.OutputDirectory) -and $null -eq $ExistingReceipt) {
+    $restored=$Context.PSObject.Properties['RestoredDirectoryReceiptPath'] -and $Context.RestoredDirectoryReceiptPath
+    if ($restored) { Assert-AtlasoTestVmRestoredDirectory -Context $Context | Out-Null }
+    if ((Test-Path -LiteralPath $Context.OutputDirectory) -and $null -eq $ExistingReceipt -and -not $restored) {
         throw 'A new test-VM ownership intent cannot adopt an existing output directory.'
     }
     if (-not (Test-Path -LiteralPath $Context.OutputDirectory) -and $null -ne $ExistingReceipt) {
@@ -900,6 +906,9 @@ function Publish-AtlasoTestVmOriginalOwnership {
                 directory = $directoryIdentity
                 vmx = $vmxIdentity
             }
+            restored_directory = if ($Context.PSObject.Properties['RestoredDirectoryReceiptPath'] -and $Context.RestoredDirectoryReceiptPath) {
+                @{path=$Context.RestoredDirectoryReceiptPath;sha256=$Context.RestoredDirectoryReceiptSha256}
+            } else {$null}
             persistent_vm_identity_sha256 = $cleanupIdentityHash
             intent_path = [string]$Context.IntentPath
             intent_sha256 = [string]$Context.IntentSha256
@@ -984,6 +993,112 @@ function Assert-AtlasoTestVmRemovedMarkerOwnership {
     if (-not $Marker.ArtifactsRemoved -or $Marker.Phase -notin @('stopped-vmx-scrubbed', 'removal-child-active', 'retired')) { throw 'Marker lacks stopped removal evidence.' }
     if ($Marker.Phase -eq 'removal-child-active' -and (Get-AtlasoHostBootIdentity) -ceq $Marker.HostBootIdentity) { throw 'Removal child quiescence is not proven.' }
     return $vm
+}
+
+<#
+.SYNOPSIS
+Create the original restored-data root and publish its binding before moving disks.
+.PARAMETER Context
+Original task, VM and independently preserved marker receipt selectors.
+.PARAMETER DataDiskStates
+Original disk component paths, identities and admitted quarantine paths.
+#>
+function New-AtlasoTestVmRestoredDirectory {
+    param([psobject]$Context, [object[]]$DataDiskStates)
+    $proof = Read-AtlasoTestVmSealedRecord -Context $Context -Path $Context.CleanupRecoveryReceiptPath -Sha256 $Context.CleanupRecoveryReceiptSha256 -Phase 'ca-marker-original'
+    $projection = $proof.marker_projection | ConvertFrom-Json
+    if ($proof.original_receipt_path -cne $Context.ReceiptPath -or $proof.original_receipt_sha256 -cne $Context.ReceiptSha256 -or
+        @($projection.DataDisks).Count -ne $DataDiskStates.Count) { throw 'Restoration lacks its original VM and disk binding.' }
+    foreach ($disk in $DataDiskStates) {
+        $match = @($projection.DataDisks | Where-Object { $_.Path -ceq $disk.Path -and $_.RelativePath -ceq $disk.RelativePath -and $_.Identity -ceq $disk.Identity })
+        if ($match.Count -ne 1 -or -not $disk.QuarantinePath -or
+            [IO.Path]::GetDirectoryName([string]$disk.Path) -cne $Context.OutputDirectory -or
+            [IO.Path]::GetFileName([string]$disk.Path) -cne $disk.RelativePath -or
+            [Atlaso.WorkstationFileIdentity]::Get([string]$disk.QuarantinePath) -cne $disk.Identity) { throw 'Original quarantined disk identity changed.' }
+    }
+    $publish = [Action[string,string]]{
+        param($CreatedPath, $OriginalIdentity)
+        $record = [ordered]@{schema=1;phase='restored-data-created';task_id=$Context.TaskId;repository=$Context.Repository;
+            worktree=$Context.Worktree;source_branch=$Context.Branch;source_commit=$Context.SourceCommit;
+            output_directory=$Context.OutputDirectory;vmx_path=$Context.VmxPath;canonical_name=$Context.Name;
+            pull_request_number=$Context.PullRequestNumber;local_builder=$Context.LocalBuilder;
+            path=$CreatedPath;original_identity=$OriginalIdentity;disks=@($projection.DataDisks);
+            original_receipt_path=$Context.ReceiptPath;original_receipt_sha256=$Context.ReceiptSha256;
+            marker_receipt_path=$Context.CleanupRecoveryReceiptPath;marker_receipt_sha256=$Context.CleanupRecoveryReceiptSha256}
+        $publicationContext=$Context.PSObject.Copy()
+        $publicationContext | Add-Member InvocationId ([guid]::NewGuid().ToString('N')) -Force
+        $published=Publish-AtlasoTestVmOwnershipRecord -Context $publicationContext -Record $record -Kind restored-directory
+        Write-Host "Test VM restored directory receipt: $($published.Path)"
+        Write-Host "Test VM restored directory receipt SHA-256: $($published.Sha256)"
+        if ($CreatedPath -ceq $Context.OutputDirectory) {
+            $Context | Add-Member RestoredDirectoryReceiptPath $published.Path -Force
+            $Context | Add-Member RestoredDirectoryReceiptSha256 $published.Sha256 -Force
+        }
+    }
+    $created=[Atlaso.WorkstationFileIdentity]::CreateAndPinOrdinaryDirectoryPath([string]$Context.OutputDirectory,$publish)
+    $created.Dispose()
+    # Creation pins exclude writes on the entire ancestor chain. Transfer to an
+    # ordinary mutation-compatible admission pin, rechecking the original ID
+    # before any disk move; a replacement in the gap refuses all restoration.
+    Assert-AtlasoTestVmRestoredDirectory -Context $Context -AllowQuarantine | Out-Null
+    return $Context.RestoredOutputPin
+}
+
+<#
+.SYNOPSIS
+Admit only the originally receipted disk-only restored root for a creation retry.
+.PARAMETER Context
+Current task and independently preserved restored-directory receipt selectors.
+.PARAMETER AllowReset
+Permit an empty root only after this invocation removed the admitted disks by captured handles.
+.PARAMETER AllowQuarantine
+Permit partial restoration with original components still in their admitted quarantine.
+#>
+function Assert-AtlasoTestVmRestoredDirectory {
+    param([psobject]$Context, [switch]$AllowReset, [switch]$AllowQuarantine)
+    $record=Read-AtlasoTestVmSealedRecord -Context $Context -Path $Context.RestoredDirectoryReceiptPath -Sha256 $Context.RestoredDirectoryReceiptSha256 -Phase 'restored-data-created'
+    $vm=Read-AtlasoTestVmSealedRecord -Context $Context -Path $record.original_receipt_path -Sha256 $record.original_receipt_sha256 -Phase 'original-clone-created'
+    $intent=Read-AtlasoTestVmSealedRecord -Context $Context -Path $vm.intent_path -Sha256 $vm.intent_sha256 -Phase 'clone-pending'
+    if($intent.source_commit -cne $vm.source_commit){throw 'Restored directory original intent changed.'}
+    $proof=Read-AtlasoTestVmSealedRecord -Context $Context -Path $record.marker_receipt_path -Sha256 $record.marker_receipt_sha256 -Phase 'ca-marker-original'
+    $projection=$proof.marker_projection | ConvertFrom-Json
+    if ($record.path -cne $Context.OutputDirectory -or $proof.original_receipt_path -cne $record.original_receipt_path -or
+        $proof.original_receipt_sha256 -cne $record.original_receipt_sha256 -or
+        $proof.original_directory_identity -cne $vm.original_identities.directory -or
+        (@($projection.DataDisks) | ConvertTo-Json -Depth 5 -Compress) -cne (@($record.disks) | ConvertTo-Json -Depth 5 -Compress)) { throw 'Restored directory original binding changed.' }
+    $borrowed=$Context.PSObject.Properties['RestoredOutputPin'] -and $Context.RestoredOutputPin
+    $pin=if ($borrowed) { $Context.RestoredOutputPin } else {
+        $native=[Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath([string]$Context.OutputDirectory,$true)
+        $holder=[pscustomobject]@{Native=$native;Path=$Context.OutputDirectory;Identity=$record.original_identity;Disposed=$false;FilePins=[Collections.Generic.Dictionary[string,object]]::new([StringComparer]::OrdinalIgnoreCase)}
+        $holder | Add-Member ScriptMethod ReleaseFiles {foreach($held in $this.FilePins.Values){$held.Dispose()};$this.FilePins.Clear()}
+        $holder | Add-Member ScriptMethod Dispose { $this.ReleaseFiles();$this.Native.Dispose();$this.Disposed=$true }
+        $holder | Add-Member ScriptMethod GetRetainedCreatedIdentity {param($path)
+            if ($this.Disposed -or $path -cne $this.Path -or [Atlaso.WorkstationFileIdentity]::Get($path) -cne $this.Identity) {throw 'Original restored root pin changed.'};return $this.Identity }
+        $holder
+    }
+    try {
+        if ($pin.GetRetainedCreatedIdentity([string]$Context.OutputDirectory) -cne $record.original_identity -or
+            (Test-Path -LiteralPath $Context.VmxPath)) { throw 'Restored directory was replaced or acquired a VMX.' }
+        $files=@(Get-ChildItem -LiteralPath $Context.OutputDirectory -File -Recurse -Force)
+        if (@(Get-ChildItem -LiteralPath $Context.OutputDirectory -Directory -Force).Count) {throw 'Restored root contains unproven directories.'}
+        if ($AllowReset -and $files.Count) { throw 'Reset restored root contains unexpected files.' }
+        foreach ($file in $files) {
+            $disk=@($record.disks | Where-Object { $_.Path -ceq $file.FullName })
+            if ($disk.Count -ne 1 -or [Atlaso.WorkstationFileIdentity]::Get($file.FullName) -cne $disk[0].Identity) { throw 'Restored directory contains an unproven file.' }
+            if (-not $pin.FilePins.ContainsKey($file.FullName)) {$pin.FilePins.Add($file.FullName,[Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($file.FullName,$true))}
+            if([Atlaso.WorkstationFileIdentity]::Get($file.FullName) -cne $disk[0].Identity){throw 'Restored disk changed while its admission pin was acquired.'}
+        }
+        if (-not $AllowReset) { foreach ($disk in $record.disks) {
+            if (Test-Path -LiteralPath $disk.Path -PathType Leaf) {continue}
+            $quarantine=Join-Path $projection.QuarantineDirectory $disk.RelativePath
+            if (-not $AllowQuarantine -or [Atlaso.WorkstationFileIdentity]::Get($quarantine) -cne $disk.Identity) { throw 'Original restored disk is missing.' }
+        } }
+        $Context | Add-Member RestoredOutputPin $pin -Force
+        $Context | Add-Member PreparedOutputIdentity $record.original_identity -Force
+        $Context | Add-Member RestoredDataReset ([bool]$AllowReset) -Force
+        return $record
+    }
+    catch { if (-not $borrowed) {$pin.Dispose()};throw }
 }
 
 <#
