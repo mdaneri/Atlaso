@@ -225,11 +225,36 @@ function Assert-AtlasoTestVmCheckoutSource {
     $commitFailed = $LASTEXITCODE -ne 0
     $branch = ([string](& git -C $Context.Worktree branch --show-current 2>$null)).Trim()
     $branchFailed = $LASTEXITCODE -ne 0
-    $status = @(& git -C $Context.Worktree status --porcelain --untracked-files=all 2>$null)
+    $status = @(& git -C $Context.Worktree -c core.fsmonitor=false -c core.ignoreStat=false status --porcelain --untracked-files=all 2>$null)
     if ($rootFailed -or $commitFailed -or $branchFailed -or $LASTEXITCODE -ne 0 -or -not $root -or
         -not ([IO.Path]::GetFullPath($root).TrimEnd('\', '/')).Equals([string]$Context.Worktree, [StringComparison]::OrdinalIgnoreCase) -or
         $commit -cne [string]$Context.SourceCommit -or $branch -cne [string]$Context.Branch -or $status.Count) {
         throw 'The admitted clean task checkout, branch or source commit changed during preflight; infrastructure mutation refused.'
+    }
+    & git -C $Context.Worktree diff --cached --quiet --no-ext-diff HEAD -- 2>$null
+    if ($LASTEXITCODE -ne 0) { throw 'The admitted source index changed during preflight; infrastructure mutation refused.' }
+    $entries = @(& git -C $Context.Worktree -c core.quotePath=false ls-files -v --stage 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $entries.Count) { throw 'Tracked source enumeration failed during preflight.' }
+    $paths = [Collections.Generic.List[string]]::new()
+    $expected = [Collections.Generic.List[string]]::new()
+    foreach ($entry in $entries) {
+        $match = [regex]::Match($entry, '^H (100644|100755) ([0-9a-f]{40}) 0\t([^"\r\n]+)$')
+        if (-not $match.Success) {
+            throw 'Tracked source flags or ambiguous file admission changed during preflight; infrastructure mutation refused.'
+        }
+        $expected.Add($match.Groups[2].Value)
+        # hash-object reads file bytes independently of index stat/fsmonitor caches,
+        # while applying the same checkout normalization as Git's clean filters.
+        $paths.Add('"' + $match.Groups[3].Value.Replace('\', '\\').Replace('"', '\"') + '"')
+    }
+    $actual = @($paths | & git -C $Context.Worktree hash-object --stdin-paths 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $actual.Count -ne $expected.Count) {
+        throw 'Tracked source hashing failed during preflight; infrastructure mutation refused.'
+    }
+    for ($index = 0; $index -lt $expected.Count; $index++) {
+        if ([string]$actual[$index] -cne $expected[$index]) {
+            throw 'Tracked source bytes changed during preflight; infrastructure mutation refused.'
+        }
     }
 }
 

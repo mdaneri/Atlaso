@@ -1219,6 +1219,9 @@ disks exclude writes and replacement from byte validation through cloning. A mis
 failed publication, or ambiguous state keeps
 the VM preserved. The admitted task branch, exact commit and clean checkout are revalidated immediately before
 network preparation, recovery/removal, disk reset and clone preparation; preflight drift refuses mutation.
+Each boundary also rejects assume-unchanged/skip-worktree entries and independently hashes all tracked file bytes
+against the admitted index, applying Git's normal clean conversion for checkout line endings. Cached status or
+fsmonitor results cannot substitute for this byte verification; index changes or hashing failures refuse mutation.
 Never manufacture an original receipt from a later snapshot, edit a receipt, or delete an incomplete
 publication to make admission pass. `-WhatIf` publishes no receipts and performs no credential or VM mutation.
 

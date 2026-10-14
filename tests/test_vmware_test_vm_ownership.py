@@ -672,11 +672,16 @@ def test_agent_context_uses_configured_root_and_requires_registered_clean_worktr
     subprocess.run(["git", "-C", str(checkout), "config", "user.name", "Synthetic Test"], check=True)
     subprocess.run(["git", "-C", str(checkout), "config", "user.email", "synthetic@example.invalid"], check=True)
     (checkout / "source.txt").write_text("source", encoding="utf-8")
-    subprocess.run(["git", "-C", str(checkout), "add", "source.txt"], check=True)
+    (checkout / ".gitattributes").write_text("*.txt text\n", encoding="utf-8")
+    (checkout / "spaced name.txt").write_bytes(b"line\n")
+    subprocess.run(["git", "-C", str(checkout), "add", "."], check=True)
     subprocess.run(["git", "-C", str(checkout), "commit", "-m", "source"], check=True,
                    capture_output=True, text=True)
     commit = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"], check=True,
                             capture_output=True, text=True).stdout.strip()
+    (checkout / "spaced name.txt").write_bytes(b"line\r\n")
+    subprocess.run(["git", "-C", str(checkout), "add", "spaced name.txt"], check=True,
+                   capture_output=True, text=True)
     output = checkout / "image" / "vmware-workstation" / "test-vms" / "Atlaso-PR-946-test-vm"
     vmx = output / "Atlaso-PR-946-test-vm.vmx"
     command = (
@@ -705,6 +710,14 @@ def test_agent_context_uses_configured_root_and_requires_registered_clean_worktr
         f"[IO.File]::WriteAllText({ps_literal(checkout / 'untracked.txt')},'new'); ",
         f"git -C {ps_literal(checkout)} switch -c late-branch; ",
         f"git -C {ps_literal(checkout)} switch -c late-commit; git -C {ps_literal(checkout)} commit --allow-empty -m later; ",
+        f"git -C {ps_literal(checkout)} update-index --assume-unchanged source.txt; "
+        + f"[IO.File]::WriteAllText({ps_literal(checkout / 'source.txt')},'hidden'); ",
+        f"git -C {ps_literal(checkout)} update-index --skip-worktree source.txt; "
+        + f"[IO.File]::WriteAllText({ps_literal(checkout / 'source.txt')},'hidden'); ",
+        # Model a stale clean-status result while leaving enumeration and byte hashing real.
+        f"[IO.File]::WriteAllText({ps_literal(checkout / 'source.txt')},'hidden'); "
+        + "function git { if ($args -contains 'status') { $global:LASTEXITCODE=0; return }; "
+        + f"$input | & {ps_literal(shutil.which('git'))} @args }}; ",
     ]
     for mutation in mutations:
         drifted = run_powershell(
@@ -715,7 +728,12 @@ def test_agent_context_uses_configured_root_and_requires_registered_clean_worktr
         )
         assert drifted.returncode != 0
         assert "changed during preflight" in drifted.stderr
+        if "function git" in mutation:
+            assert "Tracked source bytes changed" in drifted.stderr
         assert not provider_sentinel.exists()
+        for flag in ("--no-assume-unchanged", "--no-skip-worktree"):
+            subprocess.run(["git", "-C", str(checkout), "update-index", flag, "source.txt"],
+                           check=True, capture_output=True, text=True)
         (checkout / "source.txt").write_text("source", encoding="utf-8")
         (checkout / "untracked.txt").unlink(missing_ok=True)
         subprocess.run(["git", "-C", str(checkout), "switch", "bug/946-test-vm-ownership"],
