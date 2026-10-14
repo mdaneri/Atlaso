@@ -400,9 +400,9 @@ def test_omitted_nonsecret_sdk_selectors_are_discovered_fail_closed() -> None:
     artifact_preflight = test_vm.index(
         "$OnePasswordPython = Confirm-OnePasswordTestVmArtifact `"
     )
-    assert artifact_preflight < test_vm.index(
-        "Invoke-PendingAtlasoDevelopmentCaCleanup `"
-    )
+    recovery = test_vm.index("Invoke-PendingAtlasoDevelopmentCaCleanup `")
+    recovery_only_exit = test_vm.index("if ($CleanupRecoveryReceiptPath) { return }")
+    assert recovery < recovery_only_exit < artifact_preflight
     assert artifact_preflight < test_vm.index("$resolvedOpPath = Resolve-OnePasswordCliPath")
     assert artifact_preflight < test_vm.index("Assert-OnePasswordDevelopmentCaBridge `")
     bridge_function = test_vm.index("function New-AtlasoTestVmCredentialBridgeState {")
