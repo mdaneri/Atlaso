@@ -65,11 +65,14 @@ DHCP reservation create and edit reject proxy-owned DNS names, including short n
 Enabled managed-DNS proxies reserve their names even while authoritative DNS is disabled or cannot serve their zone.
 Ordinary DNS create, edit, hosts import, and zone import enforce the same reservation before changing any rows.
 The reservation and generated DNS changes remain atomic; ownership conflicts return **409 Conflict**.
-Legacy DNS and DHCP Apply endpoints also return **409 Conflict** while proxy publication is pending. Use global
+Legacy DNS, DHCP and Firewall Apply endpoints return **409 Conflict** while proxy publication is pending. Use global
 Appliance Apply so the proxy listener and its DNS records publish together. When an applied native service owns a
 replacement proxy's socket, review its shutdown with the proxy changes; the service stops before nginx activates.
 For an enabled service moving to another socket, keep the replacement proxy disabled, apply the service move first,
 then enable and apply the proxy. This preserves certificate setup and listener release ordering.
+When a native service takes a disabled or moved proxy's still-applied socket, review Public Services with that service.
+The protected publication releases nginx's old listener before the service starts. A served hostname also cannot claim
+a peer route's upstream hostname, including disabled peer intent, because that would redirect the peer's backend DNS.
 Host inventory refresh disables proxies tied to renamed or missing NICs and their child VLANs in the same transaction.
 Saved exact listener tuples remain unchanged for explicit review; inventory refresh never silently rebinds a proxy.
 Review the warning, select the current listener tuples, and re-enable the proxy before applying publication.

@@ -41,6 +41,7 @@ from atlaso.app.services.firewall import (
     validate_firewall_rule,
 )
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+from atlaso.app.services.reverse_proxy_publication import publication_pending
 from atlaso.app.services.routing_permissions import routing_permission_apply_state
 
 Endpoint = Callable[..., Any]
@@ -319,12 +320,15 @@ def build_router(dependencies: FirewallApiDependencies) -> FirewallApiRouter:
         adapter boundary only when valid and the routing permission fingerprint matches both executed
         WAN and Firewall baselines. Pending routing changes require global Appliance Apply; this legacy
         route returns valid=false and reloaded=false without publishing them or advancing baselines.
+        Pending reverse-proxy publication returns 409 before validation, staging or helper execution.
 
         Args:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
         acquire_network_objects_write_lock(db)
+        if publication_pending(db):
+            raise HTTPException(status_code=409, detail="Pending reverse-proxy publication requires global Appliance Apply before legacy Firewall Apply.")
         validation = validate_firewall(identity, db)
         if not validation.valid:
             return ConfigApplyResponse(**validation.model_dump(), reloaded=False)

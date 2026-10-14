@@ -508,6 +508,13 @@ def validate_proxy(
         if peer.id != exclude_id
     }
     proxy_names.add(hostname)
+    peer_upstreams = {
+        str(route.upstream_host).strip().rstrip(".").casefold()
+        for peer in existing if peer.id != exclude_id
+        for route in peer.routes
+    }
+    if hostname and hostname in peer_upstreams:
+        errors.append("This hostname is already used by a peer reverse-proxy upstream.")
     if candidate.managed_dns and len(hostname) > 120:
         errors.append("Managed DNS requires a hostname of at most 120 characters.")
     if hostname and hostname in service_names:

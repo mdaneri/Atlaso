@@ -102,6 +102,70 @@ def test_proxy_review_requires_shutdown_and_orders_it_before_protected_group(cli
         assert submitted["management_handoff"] is True
 
 
+@pytest.mark.parametrize("address", ["192.0.2.10", "2001:db8::10"])
+@pytest.mark.parametrize("redirect", [False, True])
+def test_service_takeover_requires_reviewed_proxy_retirement_first(client, monkeypatch, address, redirect):
+    """A service-only Apply cannot bind a still-applied nginx listener.
+
+    Args:
+        client: Real management client with an isolated database.
+        monkeypatch: Supply captured units without executing host mutation.
+        address: Old proxy IPv4 or IPv6 address.
+        redirect: Take the redirect socket instead of the main listener.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.reverse_proxy_publication import (
+        render_proxy_servers,
+        transport_manifest,
+    )
+    from tests.services.test_reverse_proxy_observation import _desired
+
+    units, csrf, ui = _prepare_network_handoff_review(client, monkeypatch)
+    unit_map = {unit["id"]: unit for unit in units}
+    for unit in units:
+        unit["changed"] = False
+    proxy = _desired()[0]
+    proxy["listeners"][0]["address"] = address
+    proxy.update(redirect_http=redirect, redirect_port=5696, port=8443 if redirect else 5696)
+    applied = render_proxy_servers([proxy], transport_manifest([proxy], []))
+    unit_map["public_services"].update(changed=True, config_preview="", snapshot_marker={"reverse_proxy_intent_sha256": "removed"})
+    unit_map["public_services"]["context"]["reverse_proxies"] = []
+    unit_map["kms"].update(changed=True, config_preview=json.dumps({"enabled": True, "listen": {"addresses": [address], "port": 5696}}),
+                           context={"kms_settings": SimpleNamespace(enabled=True)})
+    with SessionLocal() as db:
+        baselines = ui.load_appliance_apply_baselines(db)
+        baselines["public_services"]["config_preview"] = applied
+        ui.save_appliance_apply_baselines(db, baselines)
+        db.commit()
+        with pytest.raises(ui.ApplianceApplyPlanError) as denied:
+            ui.appliance_apply_execution_plan(db, units, {"kms"})
+        assert "Select Public Services" in denied.value.public_detail
+        plan = ui.appliance_apply_execution_plan(db, units, {"kms"}, enforce_consent=False)
+        assert "public_services" in plan["selected_ids"]
+        accepted = ui.appliance_apply_execution_plan(db, units, plan["selected_ids"])
+        order = [unit["id"] for unit in accepted["selected_ordered_units"]]
+        assert order.index("kms") > max(order.index(key) for key in ui.MANAGEMENT_HANDOFF_UNIT_IDS)
+        unit_map["kms"]["config_preview"] = json.dumps({"enabled": True, "listen": {"addresses": ["192.0.2.99"], "port": 5696}})
+        assert ui.proxy_socket_takeover_dependencies(unit_map, baselines, {"kms"}) == set()
+    unit_map["kms"]["config_preview"] = json.dumps({"enabled": True, "listen": {"addresses": [address], "port": 5696}})
+    monkeypatch.setattr(ui, "run_appliance_apply_job", lambda _job_id: None)
+    preview = client.get("/appliance-apply/review?selected_units=kms").json()
+    assert not preview["plan_error"]
+    selected = [unit["id"] for unit in preview["units"] if unit["selected"]]
+    assert selected.index("kms") > selected.index("public_services")
+    response = client.post("/appliance-apply", data={
+        "csrf": csrf, "reviewed_plan": preview["plan_token"],
+        "requested_units": preview["requested_units"], "selected_units": selected,
+    }, headers={"Accept": "application/json"})
+    assert response.status_code == 202, response.text
+    from atlaso.app.models import Job
+
+    with SessionLocal() as db:
+        captured = json.loads(db.get(Job, response.json()["job_id"]).result)
+        assert captured["management_handoff"] is True
+        assert captured["selected_units"].index("kms") > captured["selected_units"].index("public_services")
+
+
 def _prepare_network_handoff_review(client, monkeypatch, *, invalid_firewall=False, changed_local_users=False):
     """Build current unit snapshots with a protected Network/WAN handoff.
 

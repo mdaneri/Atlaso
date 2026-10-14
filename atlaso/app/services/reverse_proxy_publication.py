@@ -231,6 +231,9 @@ def retire_obsolete_proxy_certificates(db: Session, proxies: list[dict[str, Any]
     return changed
 
 
+MAX_PUBLICATION_BYTES = 1_500_000
+
+
 def validate_publication_size(proxies: list[dict[str, Any]], addresses: list[str]) -> None:
     """Reject desired state that exceeds the ordinary save publication budget.
 
@@ -239,7 +242,7 @@ def validate_publication_size(proxies: list[dict[str, Any]], addresses: list[str
         addresses: Candidate appliance addresses forbidden as upstreams.
     """
     rendered = render_proxy_servers(proxies, transport_manifest(proxies, addresses))
-    if len(rendered.encode("utf-8")) > 1_500_000:
+    if len(rendered.encode("utf-8")) > MAX_PUBLICATION_BYTES:
         raise ValueError("Reverse-proxy publication exceeds its generated configuration size bound.")
 
 

@@ -405,11 +405,12 @@ def test_legacy_firewall_apply_preserves_exact_proxy_listener_admissions(client,
                          listeners=listeners, routes=[ReverseProxyRoute(
                              path_prefix="/", upstream_host="upstream.example.test", upstream_port=8081)]),
             ReverseProxy(name="Disabled proxy", hostname="disabled.example.test", enabled=False,
-                         scheme="http", port=9090, listeners=listeners),
+                         scheme="http", port=9090, listeners=listeners, routes=[ReverseProxyRoute(
+                             path_prefix="/", upstream_host="disabled-upstream.example.test", upstream_port=8081)]),
         ])
         db.commit()
         ui_preview = firewall_context(db, reconcile=False)["firewall_config_preview"]
-        update_appliance_apply_baselines(db, appliance_apply_units(db), {"wan", "firewall"})
+        update_appliance_apply_baselines(db, appliance_apply_units(db), {"wan", "firewall", "public_services"})
         db.commit()
     calls = []
     original = SystemAdapter.apply_firewall_config

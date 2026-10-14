@@ -3,7 +3,7 @@
 import pytest
 
 
-@pytest.mark.parametrize("service", ["dns", "dhcp"])
+@pytest.mark.parametrize("service", ["dns", "dhcp", "firewall"])
 @pytest.mark.parametrize("change", ["create", "edit", "disable", "delete"])
 def test_legacy_apply_rejects_pending_proxy_publication_before_staging(client, monkeypatch, service, change):
     """Keep desired proxy DNS private until its protected publication succeeds.
@@ -16,7 +16,7 @@ def test_legacy_apply_rejects_pending_proxy_publication_before_staging(client, m
     """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import AuditEvent, ReverseProxy
-    from atlaso.app.routers.api_v1 import dns_dhcp
+    from atlaso.app.routers.api_v1 import dns_dhcp, firewall
     from atlaso.app.services.applied_service_dns import save_appliance_apply_baselines
     from atlaso.app.services.reverse_proxies import runtime_snapshot
     from atlaso.app.services.reverse_proxy_publication import intent_snapshot_marker
@@ -42,7 +42,7 @@ def test_legacy_apply_rejects_pending_proxy_publication_before_staging(client, m
     def forbidden(*_args, **_kwargs):
         raise AssertionError("Rejected legacy Apply must not validate, stage, or invoke an adapter")
 
-    monkeypatch.setattr(dns_dhcp, "SystemAdapter", forbidden)
+    monkeypatch.setattr(firewall if service == "firewall" else dns_dhcp, "SystemAdapter", forbidden)
     response = client.post(f"/api/v1/{service}/apply", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 409
     assert "global Appliance Apply" in response.json()["detail"]
@@ -52,7 +52,7 @@ def test_legacy_apply_rejects_pending_proxy_publication_before_staging(client, m
 
 
 @pytest.mark.parametrize("proxy_present", [False, True])
-@pytest.mark.parametrize("service", ["dns", "dhcp"])
+@pytest.mark.parametrize("service", ["dns", "dhcp", "firewall"])
 def test_proxy_publication_guard_allows_matching_or_absent_intent(client, proxy_present, service):
     """An applied canonical marker permits independent legacy enforcement.
 

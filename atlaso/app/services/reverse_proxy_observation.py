@@ -14,8 +14,12 @@ from sqlalchemy.orm import Session
 
 from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.services.reverse_proxies import MAX_TOTAL_PROXY_ROUTES, runtime_snapshot
+from atlaso.app.services.reverse_proxy_publication import MAX_PUBLICATION_BYTES
 
-MAX_HELPER_OUTPUT = 1_048_576
+# Publication metadata already uses ASCII-escaped compact JSON. The helper's
+# default JSON spacing adds at most one byte per compact punctuation byte.
+# Include the helper's bounded health file and its small fixed envelope.
+MAX_HELPER_OUTPUT = 2 * MAX_PUBLICATION_BYTES + 262_144 + 4096
 MAX_OBSERVATION_AGE = timedelta(seconds=90)
 MAX_FUTURE_SKEW = timedelta(seconds=5)
 _GENERATION = re.compile(r"[0-9a-f]{64}\Z")
@@ -53,7 +57,7 @@ def observe_reverse_proxy_health(db: Session, *, now: datetime | None = None) ->
 
     try:
         result = SystemAdapter().reverse_proxy_status()
-        if result.dry_run or result.returncode != 0 or len(result.stdout) > MAX_HELPER_OUTPUT:
+        if result.dry_run or result.returncode != 0 or len(result.stdout.encode("utf-8")) > MAX_HELPER_OUTPUT:
             return _unavailable_items(desired, "runtime_observer_unavailable")
         observation = json.loads(result.stdout)
         parsed = _validate_observation(observation, now=now)
@@ -146,7 +150,7 @@ def _read_applied_reverse_proxy_snapshot(*, now: datetime | None) -> tuple[list[
 
     try:
         result = SystemAdapter().reverse_proxy_status()
-        if result.dry_run or result.returncode != 0 or len(result.stdout) > MAX_HELPER_OUTPUT:
+        if result.dry_run or result.returncode != 0 or len(result.stdout.encode("utf-8")) > MAX_HELPER_OUTPUT:
             return [], None
         parsed = _validate_observation(json.loads(result.stdout), now=now)
         proxies = parsed["proxies"]

@@ -18796,6 +18796,30 @@ def proxy_socket_release_dependencies(
     return releases
 
 
+def proxy_socket_takeover_dependencies(
+    unit_map: dict[str, dict[str, Any]], baselines: dict[str, dict[str, Any]], selected_ids: set[str],
+) -> set[str]:
+    """Find selected services taking sockets from still-applied proxy intent.
+
+    Args:
+        unit_map: Reviewed desired service configurations and proxy publication.
+        baselines: Last committed publication with its canonical proxy block.
+        selected_ids: Services requested to start or replay.
+    """
+    from atlaso.app.services.reverse_proxy_publication import validated_snapshot
+
+    if not selected_ids.intersection({"kms", "ldap", "ntpd", "vcf_backups", "vcf_offline_depot", "vcf_private_registry"}):
+        return set()
+    preview = str((baselines.get("public_services") or {}).get("config_preview") or "")
+    try:
+        proxies, _manifest = validated_snapshot(preview)
+    except ValueError as exc:
+        raise ApplianceApplyPlanError("The applied proxy publication cannot prove socket ownership; restore valid applied evidence before service Apply.") from exc
+    projected = {unit_id: {**unit, "changed": unit_id in selected_ids} for unit_id, unit in unit_map.items()}
+    projected["public_services"] = {"context": {"reverse_proxies": proxies}}
+    return proxy_socket_release_dependencies(projected, unit_map)
+
+
 def appliance_apply_execution_plan(
     db: Session, units: list[dict[str, Any]], selected_ids: set[str], *, enforce_consent: bool = True, consented_ids: set[str] | None = None,
 ) -> dict[str, Any]:
@@ -19047,7 +19071,12 @@ def appliance_apply_execution_plan(
                             if line.startswith(proxy_markers)]
     desired_proxy_marker = unit_map.get("public_services", {}).get("snapshot_marker")
     applied_proxy_marker = (apply_baselines.get("public_services") or {}).get("snapshot_marker")
-    proxy_handoff = bool((desired_proxy_intent != applied_proxy_intent or desired_proxy_marker != applied_proxy_marker)
+    proxy_takeover_ids = proxy_socket_takeover_dependencies(unit_map, apply_baselines, selected_ids)
+    if proxy_takeover_ids:
+        if enforce_consent and "public_services" not in approved_ids:
+            raise ApplianceApplyPlanError("Select Public Services with the service taking an applied reverse-proxy socket so nginx releases it first.")
+        selected_ids.add("public_services")
+    proxy_handoff = bool(proxy_takeover_ids or (desired_proxy_intent != applied_proxy_intent or desired_proxy_marker != applied_proxy_marker)
                          and selected_ids.intersection({*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq"}))
     if proxy_handoff:
         proxy_release_ids = proxy_socket_release_dependencies(unit_map, apply_baselines)
@@ -19292,6 +19321,13 @@ def appliance_apply_execution_plan(
         selected_ordered_units = [unit_map["dnsmasq"], *[
             unit for unit in selected_ordered_units if unit["id"] != "dnsmasq"
         ]]
+    if proxy_takeover_ids:
+        # Retire old nginx listeners and deploy CA files before native consumers.
+        takers = [unit for unit in selected_ordered_units if unit["id"] in proxy_takeover_ids]
+        selected_ordered_units = [unit for unit in selected_ordered_units if unit not in takers]
+        group_ids = {*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq", "wan", "nat"}
+        last_group = max(index for index, unit in enumerate(selected_ordered_units) if unit["id"] in group_ids)
+        selected_ordered_units[last_group + 1:last_group + 1] = takers
     if https_ca_required and not management_handoff:
         # Settings validates the management certificate files on disk; publish
         # the pending CA state before enabling HTTPS.

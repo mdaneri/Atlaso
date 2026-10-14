@@ -1,6 +1,7 @@
 """Validate bounded cached observations for managed reverse proxies."""
 
 import json
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -194,6 +195,32 @@ def test_public_snapshot_reads_applied_intent_without_desired_database_state(mon
     _configure(monkeypatch, _payload())
     monkeypatch.setattr(observation, "runtime_snapshot", lambda _db: pytest.fail("must not read desired intent"))
     assert observation.applied_reverse_proxy_snapshot(now=now) == _desired()
+
+
+def test_large_accepted_unicode_publication_keeps_health_and_public_snapshot(monkeypatch):
+    """Observe valid disabled metadata beyond the old output cap.
+
+    Args:
+        monkeypatch: Replace only the helper and desired inventory boundaries.
+    """
+    from atlaso.app.services.reverse_proxy_publication import validate_publication_size
+
+    proxies = _desired()
+    for identity in range(2, 62):
+        proxy = deepcopy(proxies[0])
+        proxy.update(id=identity, name=f"Disabled {identity}", hostname=f"disabled{identity}.example.test",
+                     enabled=False, description="界" * 1000)
+        proxy["routes"][0].update(id=identity + 100, path_prefix="/" + "😀" * 1023)
+        proxies.append(proxy)
+    validate_publication_size(proxies, [])
+    payload = _payload(proxies=proxies)
+    assert len(json.dumps(payload).encode("utf-8")) > 1_048_576
+    _configure(monkeypatch, payload)
+    monkeypatch.setattr(observation, "runtime_snapshot", lambda _db: proxies)
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    health = observation.observe_reverse_proxy_health(object(), now=now)
+    assert health[0]["status"] == "healthy"
+    assert observation.applied_reverse_proxy_snapshot(now=now) == proxies
 
 
 @pytest.mark.parametrize("invalid", ["stale", "future", "missing-generation", "invalid-host", "invalid-path",

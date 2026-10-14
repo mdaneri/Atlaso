@@ -2415,7 +2415,7 @@ def test_linux_development_lock_includes_uvicorn_platform_dependencies() -> None
     project = tomllib.loads(project_path.read_text(encoding="utf-8"))["project"]
     assert project["optional-dependencies"]["dev"].count(UVLOOP_REQUIREMENT) == 1
     lock_path = Path(__file__).resolve().parents[1] / "requirements-dev.lock"
-    assert "uvloop==0.22.1 ; sys_platform" in lock_path.read_text(encoding="utf-8")
+    assert "uvloop==0.23.0 ; sys_platform" in lock_path.read_text(encoding="utf-8")
 
 
 def test_uvloop_hashes_require_mature_cp314_manylinux_wheel(
@@ -2436,13 +2436,13 @@ def test_uvloop_hashes_require_mature_cp314_manylinux_wheel(
         "files": [
             {
                 "filename": (
-                    "uvloop-0.22.1-cp314-cp314-manylinux_2_17_x86_64.whl"
+                    "uvloop-0.23.0-cp314-cp314-manylinux_2_17_x86_64.whl"
                 ),
                 "upload-time": "2026-01-01T00:00:00Z",
                 "hashes": {"sha256": "a" * 64},
             },
             {
-                "filename": "uvloop-0.22.1.tar.gz",
+                "filename": "uvloop-0.23.0.tar.gz",
                 "upload-time": "2099-01-01T00:00:00Z",
                 "hashes": {"sha256": "b" * 64},
             },
@@ -2475,7 +2475,7 @@ def test_uvloop_hashes_reject_missing_cp314_manylinux_wheel(
     payload = {
         "files": [
             {
-                "filename": "uvloop-0.22.1.tar.gz",
+                "filename": "uvloop-0.23.0.tar.gz",
                 "upload-time": "2026-01-01T00:00:00Z",
                 "hashes": {"sha256": "a" * 64},
             }

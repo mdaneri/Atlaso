@@ -300,6 +300,38 @@ def test_managed_dns_hostname_bound_prevents_invalid_owned_record():
         engine.dispose()
 
 
+@pytest.mark.parametrize("editing", [False, True])
+@pytest.mark.parametrize("peer_enabled", [False, True])
+@pytest.mark.parametrize("hostname", ["backend.example.test", "BACKEND.EXAMPLE.TEST."])
+def test_peer_upstream_hostname_cannot_be_claimed_atomically(editing, peer_enabled, hostname):
+    """Keep peer backend resolution private when another served name is saved.
+
+    Args:
+        editing: Replace a saved row instead of adding a new virtual host.
+        peer_enabled: Include disabled peer intent in the ownership inventory.
+        hostname: Canonical or case/root-dot alias of the peer backend.
+    """
+    from atlaso.app.services.settings_archive import export_settings_archive
+
+    engine, db = create_db()
+    try:
+        peer = payload(name="Peer", hostname="peer.example.test", enabled=peer_enabled)
+        peer["routes"][0]["upstream_host"] = "backend.example.test"
+        save_proxy(db, peer, actor="test")
+        current = save_proxy(db, payload(), actor="test") if editing else None
+        before = export_settings_archive(db, actor="test")["data"]
+        audit_ids = list(db.scalars(select(AuditEvent.id)))
+        with pytest.raises(ValueError, match="peer reverse-proxy upstream"):
+            save_proxy(db, payload(hostname=hostname, managed_dns=True), actor="test",
+                       proxy_id=current.id if current else None)
+        assert export_settings_archive(db, actor="test")["data"] == before
+        assert list(db.scalars(select(AuditEvent.id))) == audit_ids
+        save_proxy(db, payload(hostname="distinct.example.test", name="Distinct"), actor="test")
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def test_live_https_requires_ca_for_save_enable_and_publication_readiness():
     """Preserve disabled HTTPS intent and reject enabled publication without a CA."""
     from atlaso.app.services.reverse_proxy_publication import context
