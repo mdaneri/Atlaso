@@ -154,9 +154,11 @@ def listener_claims_for_settings(settings: list[ServiceListenerSettings], pxe: d
     for protocol, ports in (("udp", (53, 67, 68, 69, 111, 547)), ("tcp", (53, 111, 2049, 20048))):
         claims.extend(ListenerClaim("*", "*", protocol, port, port) for port in ports)
     if pxe["enabled"]:
+        addresses = [str(ip_address(address)) for address in split_addresses(str(pxe.get("listen_address") or ""))] or ["*"]
         for name in re.split(r"[,\s]+", pxe["listen_interface"]):
             if name:
-                claims.append(ListenerClaim(name, "*", "tcp", pxe["http_port"], pxe["http_port"], "nginx", "http"))
+                claims.extend(ListenerClaim(name, address, "tcp", pxe["http_port"], pxe["http_port"], "nginx", "http")
+                              for address in addresses)
     return claims
 
 

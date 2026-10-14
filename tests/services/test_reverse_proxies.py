@@ -1512,3 +1512,60 @@ def test_observed_ipv6_inventory_retains_distinct_external_upstream(observed):
     finally:
         db.close()
         engine.dispose()
+
+
+@pytest.mark.parametrize("ipv6", [False, True])
+@pytest.mark.parametrize("scenario", ["distinct", "same_http", "same_https", "same_other_interface"])
+def test_pxe_exact_listener_claim_preserves_proxy_address_and_protocol_boundaries(ipv6, scenario):
+    """Save distinct-address proxies without relaxing real PXE socket ownership.
+
+    Args:
+        ipv6: Whether the configured listener belongs to IPv6.
+        scenario: Distinct binding or same-socket ownership scenario.
+    """
+    from atlaso.app.services.esxi_pxe import (
+        esxi_pxe_boot_settings,
+        save_esxi_pxe_boot_settings,
+    )
+    from atlaso.app.services.public_services import _esxi_pxe_http_server_lines
+
+    engine, db = create_db()
+    try:
+        pxe_address = "2001:db8:1::10" if ipv6 else "192.168.1.10"
+        proxy_address = ("2001:db8:1::20" if ipv6 else "192.168.1.20") if scenario == "distinct" else pxe_address
+        first = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        first.ipv6_enabled = ipv6
+        first.ipv6_cidr = "2001:db8:1::10/64" if ipv6 else ""
+        db.add(PhysicalInterface(name="eth2", mac_address="02:00:00:00:00:03", role="access", mode="access",
+                                 admin_state="up", oper_state="up", ip_cidr=proxy_address + "/24" if not ipv6 else "192.168.1.20/24",
+                                 ipv6_enabled=ipv6, ipv6_cidr=proxy_address + "/64" if ipv6 else ""))
+        db.commit()
+        boot = esxi_pxe_boot_settings(db)
+        save_esxi_pxe_boot_settings(db, enabled=True, hostname="pxe.example.test", listen_interface="eth1",
+                                   listen_address=pxe_address, http_port=9443, tftp_root=boot["tftp_root"],
+                                   bios_bootfile=boot["bios_bootfile"], uefi_bootfile=boot["uefi_bootfile"])
+        db.commit()
+        before = esxi_pxe_boot_settings(db)
+        claims = [claim for claim in listener_claims(db, include_reverse_proxies=False) if claim.start == 9443]
+        assert claims == [ListenerClaim("eth1", pxe_address, "tcp", 9443, 9443, "nginx", "http")]
+        rendered = _esxi_pxe_http_server_lines(pxe_address, "127.0.0.1", 8000, 9443, "/var/lib/atlaso/pxe/http/esxi")
+        endpoint = f"[{pxe_address}]:9443" if ipv6 else f"{pxe_address}:9443"
+        assert f"  listen {endpoint};" in rendered
+        values = payload(enabled=True, scheme="https" if scenario == "same_https" else "http", port=9443,
+                         redirect_http=False, listeners=[{"interface": "eth2" if scenario in {"distinct", "same_other_interface"} else "eth1",
+                                                         "address": proxy_address}])
+        audit_ids = list(db.scalars(select(AuditEvent.id)))
+        if scenario in {"same_https", "same_other_interface"}:
+            with pytest.raises(ValueError, match="collid|conflict"):
+                save_proxy(db, values, actor="test")
+            db.rollback()
+            assert desired_rows(db) == []
+            assert list(db.scalars(select(AuditEvent.id))) == audit_ids
+            assert esxi_pxe_boot_settings(db) == before
+        else:
+            assert save_proxy(db, values, actor="test").enabled
+            validate_service_listener_sockets(db)
+    finally:
+        db.rollback()
+        db.close()
+        engine.dispose()
