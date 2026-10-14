@@ -4385,6 +4385,10 @@ insufficient scope receives <code>403 Forbidden</code>. Missing, invalid, expire
 </code></pre></div>
 <p>The <code>X-Request-ID</code> response header and the <code>request_id</code> problem field identify the same request for troubleshooting.
 Record them without recording credentials or sensitive payload values.</p>
+<p>For audited mutations using <code>record_audit</code>, optional App-log publication after the audit commit cannot turn a
+committed save into a failure response. If retained App-log capture fails, the saved state and Audit event remain
+durable; investigate the value-free <code>event=audit_post_commit_reporting_failed</code> process diagnostic. This does not
+relax durable capture requirements for individual App records.</p>
 <h2 id="immediate-and-applied-effects">Immediate and applied effects<a class="headerlink" href="#immediate-and-applied-effects" title="Permanent link">&para;</a></h2>
 <p>Read each mutation's description before calling it. Some operations change application state immediately, some queue a
 durable job, and some save desired state only. Desired-state edits do not mutate the host by themselves:

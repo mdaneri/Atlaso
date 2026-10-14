@@ -4227,6 +4227,10 @@ A capture failure preserves its durable recovery state. Successfully prepared sa
 without replaying raw secrets; an interruption before sanitization requires operator investigation and leaves capture
 unavailable. Do not delete a selected store or its pending state to resume logging. Existing displayed pages remain
 available in the browser when a request fails.</p>
+<p>For audited mutations using <code>record_audit</code>, an App-log capture failure after the audit commit does not change the
+successful mutation response. The saved state and Audit event remain durable. The process emits the value-free
+<code>event=audit_post_commit_reporting_failed</code> diagnostic to stderr for operator investigation; it contains no audit
+payload or exception text. The failed App record is not mirrored to the ordinary file before durable capture succeeds.</p>
 <p>Signed-release migration runs only after the release has committed and before maintenance mode is cleared.
 A failure at this stage requires forward recovery, not rollback of the selected history. For first adoption from a
 release with the older helper, install the verified new helper through the supported deployment procedure before
