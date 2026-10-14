@@ -15,6 +15,7 @@ Import-Module (
     Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationCleanup.psm1'
 ) -Force
 . (Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1')
+. (Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.TestVmOwnership.ps1')
 
 # The encoded Environment value must contain the entire PEM, and all decode
 # failures must remain fixed diagnostics inside the bounded secret child.

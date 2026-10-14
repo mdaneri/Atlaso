@@ -2335,7 +2335,11 @@ function Remove-AtlasoWorkstationVmArtifacts {
     # Re-resolve the inventory because it may have appeared after the initial
     # snapshot; surviving VMX files are safe for direct removal only while unregistered.
     $finalInventoryPath = Resolve-AtlasoWorkstationInventoryPath
-    Remove-AtlasoWorkstationStaleRegistrations -InventoryPath $finalInventoryPath -ScopeRoot $staleScope
+    # An empty preparation receipt owns no VMX or provider registration.
+    # Preserve even newly inserted stale entries instead of adopting them.
+    if (-not $ExpectedPreparedDirectoryIdentity) {
+        Remove-AtlasoWorkstationStaleRegistrations -InventoryPath $finalInventoryPath -ScopeRoot $staleScope
+    }
     foreach ($survivingVmxPath in @($resolvedVmxPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })) {
         if (Test-AtlasoWorkstationVmxRegistered -InventoryPath $finalInventoryPath -VmxPath $survivingVmxPath -ScopeRoot $resolvedRemovalRoot) {
             throw "A VMware Workstation VM became registered during cleanup; artifacts were preserved: $survivingVmxPath"

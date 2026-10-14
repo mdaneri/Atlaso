@@ -183,6 +183,7 @@ function New-AtlasoTestVmOwnershipContext {
         if (-not $evidenceFullPath.StartsWith($configuredPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
             throw 'The ownership evidence directory must remain beneath the permitted task root.'
         }
+        $admittedEvidenceDirectoryId = [Atlaso.WorkstationFileIdentity]::Get($evidenceFullPath)
     }
     finally {
         if ($rootPin) { $rootPin.Dispose() }
@@ -204,7 +205,7 @@ function New-AtlasoTestVmOwnershipContext {
         OutputDirectory     = $outputPath
         VmxPath             = $vmxFullPath
         EvidenceDirectory   = $evidenceFullPath
-        EvidenceDirectoryId = [Atlaso.WorkstationFileIdentity]::Get($evidenceFullPath)
+        EvidenceDirectoryId = $admittedEvidenceDirectoryId
         ReceiptPath         = $OwnershipReceiptPath
         ReceiptSha256       = $OwnershipReceiptSha256.ToLowerInvariant()
     }
@@ -614,7 +615,7 @@ function Publish-AtlasoTestVmOwnershipRecord {
     param(
         [Parameter(Mandatory = $true)][psobject]$Context,
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Record,
-        [Parameter(Mandatory = $true)][ValidateSet('intent', 'original', 'directory', 'clone-process')][string]$Kind
+        [Parameter(Mandatory = $true)][ValidateSet('intent', 'original', 'directory', 'clone-process', 'ca-marker')][string]$Kind
     )
 
     if (-not $Context.Enabled) { throw 'Cannot publish ownership for a disabled task context.' }
@@ -919,6 +920,84 @@ function Publish-AtlasoTestVmOriginalOwnership {
         if ($directoryPin) { $directoryPin.Dispose() }
         $intentPin.Dispose()
     }
+}
+
+<#
+.SYNOPSIS
+Read an independently selected immutable task record without requiring its live VM.
+.PARAMETER Context
+Admitted task and durable evidence root.
+.PARAMETER Path
+Original receipt path preserved by its caller.
+.PARAMETER Sha256
+Original publication digest independently preserved by its caller.
+.PARAMETER Phase
+Exact expected record phase.
+#>
+function Read-AtlasoTestVmSealedRecord {
+    param([psobject]$Context, [string]$Path, [string]$Sha256, [string]$Phase)
+    if (-not $Path -or $Sha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'Original recovery receipt selectors are required.' }
+    $root = [IO.Path]::GetFullPath([string]$Context.EvidenceDirectory).TrimEnd('\', '/')
+    $resolved = [IO.Path]::GetFullPath($Path)
+    if (-not $resolved.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Recovery receipt is outside durable evidence.' }
+    $rootPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($root, $true)
+    $filePin = $null
+    try {
+        if ([Atlaso.WorkstationFileIdentity]::Get($root) -cne [string]$Context.EvidenceDirectoryId) { throw 'Recovery evidence root changed.' }
+        $filePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($resolved, $true)
+        if ((Get-Item -LiteralPath $resolved).Length -gt 65536 -or
+            (Get-FileHash -LiteralPath $resolved -Algorithm SHA256).Hash.ToLowerInvariant() -cne $Sha256) { throw 'Original recovery receipt changed.' }
+        $record = Get-Content -LiteralPath $resolved -Raw | ConvertFrom-Json
+        if ($record.schema -ne 1 -or $record.phase -cne $Phase -or
+            $record.task_id -cne $Context.TaskId -or $record.repository -cne $Context.Repository -or
+            $record.worktree -cne $Context.Worktree -or $record.source_branch -cne $Context.Branch -or
+            $record.output_directory -cne $Context.OutputDirectory -or $record.vmx_path -cne $Context.VmxPath -or
+            $record.canonical_name -cne $Context.Name -or $record.source_commit -cnotmatch '^[0-9a-f]{40}$' -or
+            [int]$record.pull_request_number -ne [int]$Context.PullRequestNumber -or
+            [bool]$record.local_builder -ne [bool]$Context.LocalBuilder) { throw 'Recovery receipt does not match the original task and VM.' }
+        & git -C $Context.Worktree merge-base --is-ancestor $record.source_commit $Context.SourceCommit 2>$null
+        if ($LASTEXITCODE -ne 0) { throw 'Recovery receipt source ancestry changed.' }
+        return $record
+    }
+    finally { if ($filePin) { $filePin.Dispose() }; $rootPin.Dispose() }
+}
+
+<#
+.SYNOPSIS
+Validate original marker and VM receipts before restoring a removed VM's data.
+.PARAMETER Context
+Task context with independently preserved original and marker receipt selectors.
+.PARAMETER Marker
+Validated stopped or removed marker with original disk identities.
+#>
+function Assert-AtlasoTestVmRemovedMarkerOwnership {
+    param([psobject]$Context, [psobject]$Marker)
+    $vm = Read-AtlasoTestVmSealedRecord -Context $Context -Path $Context.ReceiptPath -Sha256 $Context.ReceiptSha256 -Phase 'original-clone-created'
+    $intent = Read-AtlasoTestVmSealedRecord -Context $Context -Path $vm.intent_path -Sha256 $vm.intent_sha256 -Phase 'clone-pending'
+    if ($intent.source_commit -cne $vm.source_commit) { throw 'Original VM intent binding changed.' }
+    $proof = Read-AtlasoTestVmSealedRecord -Context $Context -Path $Context.CleanupRecoveryReceiptPath -Sha256 $Context.CleanupRecoveryReceiptSha256 -Phase 'ca-marker-original'
+    if ($proof.original_receipt_path -cne $Context.ReceiptPath -or $proof.original_receipt_sha256 -cne $Context.ReceiptSha256 -or
+        $proof.original_directory_identity -cne $vm.original_identities.directory -or
+        $proof.persistent_vm_identity_sha256 -cne $vm.persistent_vm_identity_sha256 -or
+        $proof.marker_path -cne $Marker.MarkerPath -or $proof.host_boot_identity -cne $Marker.HostBootIdentity -or
+        $proof.marker_projection -cne (Get-AtlasoTestVmMarkerProjection -Marker $Marker)) { throw 'Original marker removal binding changed.' }
+    if (-not $Marker.ArtifactsRemoved -or $Marker.Phase -notin @('stopped-vmx-scrubbed', 'removal-child-active', 'retired')) { throw 'Marker lacks stopped removal evidence.' }
+    if ($Marker.Phase -eq 'removal-child-active' -and (Get-AtlasoHostBootIdentity) -ceq $Marker.HostBootIdentity) { throw 'Removal child quiescence is not proven.' }
+    return $vm
+}
+
+<#
+.SYNOPSIS
+Serialize immutable marker identity and preserved data bindings.
+.PARAMETER Marker
+Creation payload or validated marker, excluding mutable phase.
+#>
+function Get-AtlasoTestVmMarkerProjection {
+    param([psobject]$Marker)
+    if ($Marker.PSObject.Properties['OriginalProjection']) { return [string]$Marker.OriginalProjection }
+    return ([ordered]@{Name=$Marker.Name; VmxPath=$Marker.VmxPath; OutputDirectory=$Marker.OutputDirectory;
+        QuarantineDirectory=$Marker.QuarantineDirectory; CleanupIdentityHash=$Marker.CleanupIdentityHash;
+        DataDisks=@($Marker.DataDisks)} | ConvertTo-Json -Depth 6 -Compress)
 }
 
 <#

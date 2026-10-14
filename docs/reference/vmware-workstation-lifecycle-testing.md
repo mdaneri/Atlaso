@@ -1202,6 +1202,8 @@ empty destination. Directory and process receipts do not prove child creation: e
 including one containing ordinary partial-clone files, is preserved without child creation evidence. A later cleanup
 snapshot cannot supply that evidence. A replaced directory or altered receipt is also preserved. Recovery verifies
 the original process binding and refuses an active or reused controller.
+An empty preparation receipt owns no VMX or Workstation registration. Prepared cleanup preserves stale provider
+registrations, including entries introduced after admission, rather than repairing them through the directory scope.
 On the same boot it uses the exact recorded child identity and named job to prove or complete owned-tree termination;
 a proven prior host boot independently establishes quiescence. Missing, ambiguous or legacy process evidence preserves
 the directory without retrofitting receipts or stopping unrelated processes.
@@ -1432,6 +1434,12 @@ before 1Password preflight or any new network, disk, or VM mutation; do not edit
 Agent-owned retries validate the original VM receipt and exact marker destination before scrubbing, stopping,
 quarantining disks, retiring a marker, or removing artifacts. Foreign markers and legacy identity repairs are preserved
 without mutation; an ownership context for another VM cannot authorize their recovery.
+Owned marker publication also emits an immutable cleanup recovery receipt path and SHA-256 before staging or removal.
+Preserve both independently. If an interrupted removal has already removed the VM root, rerun with the original VM
+receipt selectors plus `-CleanupRecoveryReceiptPath` and `-CleanupRecoveryReceiptSha256`. This recovery-only mode
+validates the immutable task, VM receipt, marker, preserved disk and quarantine bindings without requiring the live
+VM; stopped/process-quiescence and disk identity checks still precede restoration. It exits after recovery and forbids
+redeploy. Legacy markers without original recovery evidence are preserved; never manufacture that evidence afterward.
 Rerun an interrupted creation with the preserved original receipt selectors without adding `-Redeploy` solely for
 recovery. Pending cleanup runs before an existing-VM rejection. If import recovery leaves a healthy VM in place, the
 wrapper preserves it and rejects recreation after recovery, before obtaining new credentials.
