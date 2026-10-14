@@ -57,6 +57,8 @@ Physical-interface and VLAN writers also reject assigning an enabled proxy's lit
 even when the changed interface is unrelated to the proxy's listeners. Disable or move that upstream first.
 Disable or move the proxy before changing its address, renaming or deleting its VLAN, or making its parent unavailable.
 Rejected edits preserve the interface, proxy, and owned DNS records together.
+Interface edits also validate the final rebased service listeners before committing; disabling duplicate-address checks
+does not permit a native service to take an enabled proxy's socket.
 DHCP reservation create and edit reject proxy-owned DNS names, including short names expanded by their scope.
 Enabled managed-DNS proxies reserve their names even while authoritative DNS is disabled or cannot serve their zone.
 Ordinary DNS create, edit, hosts import, and zone import enforce the same reservation before changing any rows.

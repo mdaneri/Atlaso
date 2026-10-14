@@ -532,3 +532,87 @@ def test_proxy_api_rejects_secondary_observed_ipv6_without_state_changes(client,
         after = hashlib.sha256(json.dumps(export_settings_archive(db, actor="test")["data"], sort_keys=True).encode()).hexdigest()
         assert after == before
         assert list(db.scalars(select(AuditEvent.id))) == audits
+
+
+@pytest.mark.parametrize("transport", ["api", "ui"])
+@pytest.mark.parametrize("ipv6", [False, True])
+@pytest.mark.parametrize("proxy_enabled,collides", [(True, True), (False, True), (True, False)])
+def test_interface_service_rebase_preserves_proxy_sockets_atomically(client, transport, ipv6, proxy_enabled, collides):
+    """Reject final rebased service claims without changing settings or audits.
+
+    Args:
+        client: Real application HTTP client.
+        transport: Physical interface edit transport.
+        ipv6: Whether the colliding socket belongs to IPv6.
+        proxy_enabled: Whether the saved proxy reserves its listener.
+        collides: Whether the rebased service takes the proxy address and port.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, KmsSettings, PhysicalInterface
+    from atlaso.app.services.reverse_proxies import (
+        save_proxy,
+        validate_service_listener_sockets,
+    )
+    from atlaso.app.services.settings_archive import export_settings_archive
+    from tests.routers.ui.helpers import login
+
+    _enable_test_listener()
+    proxy_address = "2001:db8::10" if ipv6 else "192.0.2.10"
+    old_address = "2001:db8::20" if ipv6 else "198.51.100.20"
+    candidate = proxy_address if collides else ("2001:db8::30" if ipv6 else "198.51.100.30")
+    with SessionLocal() as db:
+        first = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        first.ipv6_enabled = ipv6
+        first.ipv6_cidr = "2001:db8::10/64" if ipv6 else ""
+        second = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        second.role = second.mode = "access"
+        second.admin_state = second.oper_state = "up"
+        second.ip_cidr = "198.51.100.20/24"
+        second.ipv6_enabled = ipv6
+        second.ipv6_cidr = "2001:db8::20/64" if ipv6 else ""
+        second.check_duplicate_ip_addresses = False
+        db.commit()
+        values = _payload(enabled=proxy_enabled, scheme="http", port=5696, redirect_http=False)
+        values["listeners"][0]["address"] = proxy_address
+        save_proxy(db, values, actor="test")
+        kms = db.scalar(select(KmsSettings))
+        kms.enabled = True
+        kms.port = 5696
+        kms.listen_interface = "eth2"
+        kms.listen_address = old_address
+        db.commit()
+        validate_service_listener_sockets(db)
+        interface_id = second.id
+    changes = {"ip_cidr": "198.51.100.20/24" if ipv6 else candidate + "/24",
+               "ipv6_enabled": ipv6, "ipv6_cidr": candidate + "/64" if ipv6 else "",
+               "check_duplicate_ip_addresses": False}
+    if transport == "api":
+        token, _ = create_token(client, scopes=["write:interfaces"])
+        headers = {"Authorization": f"Bearer {token}"}
+    else:
+        login(client)
+        page = client.get("/physical-interfaces")
+        csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+        headers = {"X-Atlaso-Grid": "1", "Accept": "application/json"}
+    with SessionLocal() as db:
+        before = export_settings_archive(db, actor="test")["data"]
+        audit_ids = list(db.scalars(select(AuditEvent.id)))
+    if transport == "api":
+        response = client.patch("/api/v1/interfaces/physical/eth2", headers=headers, json=changes)
+    else:
+        response = client.post(f"/physical-interfaces/{interface_id}/edit", headers=headers, data={
+            **changes, "role": "access", "mode": "access", "ipv4_method": "static",
+            "admin_state": "up", "mtu": 1500, "csrf": csrf,
+            "ipv6_enabled": "on" if ipv6 else "false", "check_duplicate_ip_addresses": "false",
+        })
+    if proxy_enabled and collides:
+        assert response.status_code == 422, response.text
+        assert "Service listener conflicts" in response.text
+        with SessionLocal() as db:
+            assert export_settings_archive(db, actor="test")["data"] == before
+            assert list(db.scalars(select(AuditEvent.id))) == audit_ids
+    else:
+        assert response.status_code in {200, 303}, response.text
+        with SessionLocal() as db:
+            assert candidate in db.scalar(select(KmsSettings)).listen_address
+            validate_service_listener_sockets(db)

@@ -502,7 +502,10 @@ def refresh_interface_dependent_addresses(
             if vlan.name not in affected_interface_names
         )
 
-    from atlaso.app.services.reverse_proxies import validate_interface_proxy_bindings
+    from atlaso.app.services.reverse_proxies import (
+        validate_interface_proxy_bindings,
+        validate_service_listener_sockets,
+    )
 
     try:
         validate_interface_proxy_bindings(
@@ -1124,6 +1127,12 @@ def refresh_interface_dependent_addresses(
     if dns_refresher is not None:
         for label in dns_refresher(db, actor):
             mark_changed(label)
+    # Listener rebasing and DNS normalization can introduce claims absent from
+    # the original interface check. Validate the complete final transaction.
+    try:
+        validate_service_listener_sockets(db)
+    except ValueError as exc:
+        raise PhysicalInterfaceUpdateError(str(exc)) from exc
     return changed
 
 
