@@ -269,7 +269,7 @@ def test_post_removal_pending_recovery_requires_original_marker_receipt(tmp_path
     command += "$fn=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-PendingAtlasoDevelopmentCaCleanup'},$true); . ([scriptblock]::Create($fn.Extent.Text)); "
     command += "function Assert-AtlasoStrictDescendantPath {param($ParentPath,$ChildPath,$FailureMessage)}; function Read-AtlasoDevelopmentCaCleanupMarker {param($MarkerPath,$MarkerRoot) $marker}; "
     command += "function Repair-AtlasoWorkstationStaleRegistrations {param($ScopeRoot,$VmxPath,$ExpectedDisplayName,$OnVerified,[switch]$Confirm) & $OnVerified }; "
-    command += "function Restore-AtlasoRollbackDataDisksFromQuarantine {param($DataDiskStates,$QuarantineDirectory)}; "
+    command += "function Restore-AtlasoRollbackDataDisksFromQuarantine {param($DataDiskStates,$QuarantineDirectory,$OwnershipContext,$OnRestored) if($OnRestored){& $OnRestored}}; "
     command += f"function Remove-AtlasoDevelopmentCaCleanupMarker {{param($MarkerPath) [IO.File]::WriteAllText({ps_literal(sentinel)},'restoration completed') }}; "
     command += f"Invoke-PendingAtlasoDevelopmentCaCleanup -VmrunPath 'must-not-run' -TimeoutSeconds 5 -MarkerRoot {ps_literal(marker_root)} -OwnershipContext $ctx"
     result = run_powershell(command, check=False)
@@ -279,7 +279,7 @@ def test_post_removal_pending_recovery_requires_original_marker_receipt(tmp_path
         assert marker_path.read_text() == "public marker"
 
 
-@pytest.mark.parametrize("failure,retry", [(True, "none"), (False, "reuse"), (False, "reset"), (False, "foreign"), (False, "tampered"), (False, "replacement"), (False, "extra"), (False, "extra_dir"), (False, "disk_replaced"), (False, "missing"), (False, "legacy"), (False, "root_pubfail"), (False, "preinsert"), (False, "clone_extra")])
+@pytest.mark.parametrize("failure,retry", [(True, "none"), (False, "reuse"), (False, "reset"), (False, "foreign"), (False, "tampered"), (False, "replacement"), (False, "extra"), (False, "extra_dir"), (False, "disk_replaced"), (False, "missing"), (False, "legacy"), (False, "root_pubfail"), (False, "preinsert"), (False, "clone_extra"), (False, "marker_pins"), (False, "marker_failure"), (False, "restore_extra"), (False, "marker_resume")])
 def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path, failure, retry):
     """Exercise the VMX-locked production callback and publication refusal.
 
@@ -329,7 +329,23 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
         command += "[IO.Directory]::CreateDirectory($output)|Out-Null;"
     if retry == "root_pubfail":
         command += "$realPublisher=${function:Publish-AtlasoTestVmOwnershipRecord};function Publish-AtlasoTestVmOwnershipRecord {param($Context,$Record,$Kind) if($Kind -eq 'restored-directory'){throw 'Original restored root publication refused'};& $realPublisher @PSBoundParameters};"
-    command += f"Invoke-PendingAtlasoDevelopmentCaCleanup -VmrunPath 'provider-must-not-run' -TimeoutSeconds 5 -MarkerRoot {ps_literal(markers)} -OwnershipContext $ctx;"
+    if retry in {"marker_pins", "marker_failure", "marker_resume"}:
+        command += "$retirementAttempt=[pscustomobject]@{Refused=$false};"
+        command += "$realRetirement=${function:Remove-AtlasoDevelopmentCaCleanupMarker};function Remove-AtlasoDevelopmentCaCleanupMarker {param($MarkerPath) "
+        command += "if(-not $ctx.RestoredOutputPin -or -not $ctx.RestoredOutputPin.FilePins.ContainsKey($diskPath)){throw 'Restored disk pin missing at marker retirement'};"
+        command += "$blocked=0;try{[IO.File]::Move($diskPath,($diskPath+'.replacement'))}catch{$blocked++};try{[IO.File]::Delete($diskPath)}catch{$blocked++};try{$w=[IO.File]::Open($diskPath,'Open','Write','None');$w.Dispose()}catch{$blocked++};"
+        command += "if($blocked -ne 3 -or [Atlaso.WorkstationFileIdentity]::Get($diskPath) -cne $diskState.Identity){throw 'Restored disk was mutable during marker retirement'};"
+        if retry == "marker_resume":
+            command += "if(-not $retirementAttempt.Refused){$retirementAttempt.Refused=$true;throw 'Injected marker retirement refusal'};"
+        command += "throw 'Injected marker retirement refusal'" if retry == "marker_failure" else "& $realRetirement -MarkerPath $MarkerPath"
+        command += "};"
+    if retry == "restore_extra":
+        command += "$realRestoredAdmission=${function:Assert-AtlasoTestVmRestoredDirectory};function Assert-AtlasoTestVmRestoredDirectory {param($Context,[switch]$AllowReset,[switch]$AllowQuarantine) "
+        command += "if(-not $AllowQuarantine){[IO.File]::WriteAllText((Join-Path $output 'late-foreign.txt'),'foreign')}; & $realRestoredAdmission @PSBoundParameters};"
+    pending_command = f"Invoke-PendingAtlasoDevelopmentCaCleanup -VmrunPath 'provider-must-not-run' -TimeoutSeconds 5 -MarkerRoot {ps_literal(markers)} -OwnershipContext $ctx;"
+    if retry == "marker_resume":
+        command += "try{" + pending_command + "throw 'Expected retirement refusal'}catch{if($_.Exception.Message -notlike '*Injected marker retirement refusal*'){throw}};"
+    command += pending_command
     command += "if([Atlaso.WorkstationFileIdentity]::Get($diskPath) -cne $diskState.Identity){throw 'Restoration replaced original data'};"
     changes = {
         "none": "", "reuse": "", "reset": "", "foreign": "$ctx.TaskId='foreign-task';",
@@ -340,7 +356,7 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
         "disk_replaced": "[IO.File]::Move($diskPath,($diskPath+'.original'));[IO.File]::WriteAllText($diskPath,'replacement');",
         "missing": "$ctx.RestoredDirectoryReceiptSha256='';",
         "legacy": "$ctx.RestoredDirectoryReceiptPath='';",
-        "root_pubfail": "", "preinsert": "", "clone_extra": "",
+        "root_pubfail": "", "preinsert": "", "clone_extra": "", "marker_pins": "", "marker_failure": "", "restore_extra": "", "marker_resume": "",
     }
     command += changes[retry]
     source = (VMWARE / "create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
@@ -372,7 +388,7 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
     command += "$fresh=Assert-AtlasoTestVmOriginalOwnership -Context $ctx;if($fresh.Record.restored_directory.sha256 -cne $ctx.RestoredDirectoryReceiptSha256){throw 'Fresh clone lost original restored-root binding'};$ctx.CloneOutputPin.Dispose();"
     command += "[pscustomobject]@{marker=$marker;proof=$proofFile.FullName} | ConvertTo-Json -Compress"
     result = run_powershell(command, check=False)
-    succeeds = not failure and retry in {"reuse", "reset"}
+    succeeds = not failure and retry in {"reuse", "reset", "marker_pins", "marker_resume"}
     assert (result.returncode == 0) == succeeds, result.stdout + result.stderr
     if failure:
         assert "Original proof publication refused" in result.stderr
@@ -393,6 +409,15 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
         assert not output.exists()
         preserved = next(output.parent.glob(".atlaso-development-ca-cleanup-*/preserved.vmdk"))
         assert preserved.read_text() == "public preserved data fixture"
+    elif retry == "marker_failure":
+        assert "Injected marker retirement refusal" in result.stderr
+        assert list(markers.iterdir()), "Retirement failure must retain the original marker"
+        assert disk.read_text() == "public preserved data fixture"
+        disk.rename(disk.with_suffix(".released"))
+    elif retry == "restore_extra":
+        assert "unproven file" in result.stderr
+        assert list(markers.iterdir()), "Final inventory refusal must retain recovery evidence"
+        assert disk.read_text() == "public preserved data fixture"
     elif retry == "reset":
         assert not disk.exists()
     else:

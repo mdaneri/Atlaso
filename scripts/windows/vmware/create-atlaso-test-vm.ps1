@@ -1108,17 +1108,21 @@ Captured VMDK components whose non-empty quarantine paths must be restored.
 Exact invocation-owned sibling quarantine directory.
 .PARAMETER OwnershipContext
 Original task and marker proof for prospective restored-root publication.
+.PARAMETER OnRestored
+Retire recovery evidence only after final validation while original disk pins remain held.
 #>
 function Restore-AtlasoRollbackDataDisksFromQuarantine {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$DataDiskStates,
         [Parameter(Mandatory = $true)][string]$QuarantineDirectory,
-        [psobject]$OwnershipContext
+        [psobject]$OwnershipContext,
+        [scriptblock]$OnRestored
     )
 
     $restorationPin=$null
     try {
-    if ($OwnershipContext -and $OwnershipContext.Enabled -and @($DataDiskStates | Where-Object QuarantinePath).Count) {
+    if ($OwnershipContext -and $OwnershipContext.Enabled -and $DataDiskStates.Count -and
+        (@($DataDiskStates | Where-Object QuarantinePath).Count -or -not (Test-Path -LiteralPath $OwnershipContext.VmxPath))) {
         if (Test-Path -LiteralPath $OwnershipContext.OutputDirectory) {
             Assert-AtlasoTestVmRestoredDirectory -Context $OwnershipContext -AllowQuarantine | Out-Null
             $restorationPin=$OwnershipContext.RestoredOutputPin
@@ -1139,6 +1143,9 @@ function Restore-AtlasoRollbackDataDisksFromQuarantine {
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $state.Path) | Out-Null
         }
         [IO.File]::Move([string]$state.QuarantinePath,[string]$state.Path)
+        if ($restorationPin -and -not $restorationPin.FilePins.ContainsKey($state.Path)) {
+            $restorationPin.FilePins.Add($state.Path,[Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile([string]$state.Path,$true))
+        }
         if ([Atlaso.WorkstationFileIdentity]::Get($state.Path) -ne $state.Identity) {
             throw "A restored VMware data disk failed identity verification: $($state.Path)"
         }
@@ -1150,6 +1157,8 @@ function Restore-AtlasoRollbackDataDisksFromQuarantine {
         }
         Remove-Item -LiteralPath $QuarantineDirectory -Recurse -Force
     }
+    if ($restorationPin) { Assert-AtlasoTestVmRestoredDirectory -Context $OwnershipContext | Out-Null }
+    if ($OnRestored) { & $OnRestored }
     }
     finally { if ($restorationPin) {$restorationPin.Dispose()}; if ($OwnershipContext -and $OwnershipContext.PSObject.Properties['RestoredOutputPin']) {$OwnershipContext.RestoredOutputPin=$null} }
 }
@@ -2801,11 +2810,13 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                         Restore-AtlasoRollbackDataDisksFromQuarantine `
                             -DataDiskStates $dataDiskStates `
                             -QuarantineDirectory $quarantineDirectory `
-                            -OwnershipContext $OwnershipContext
-                        if (Test-Path -LiteralPath $marker.VmxPath) {
-                            throw "The exact cleanup-marker VMX was recreated during recovery release: $($marker.VmxPath)"
-                        }
-                        Remove-AtlasoDevelopmentCaCleanupMarker -MarkerPath $marker.MarkerPath
+                            -OwnershipContext $OwnershipContext `
+                            -OnRestored {
+                                if (Test-Path -LiteralPath $marker.VmxPath) {
+                                    throw "The exact cleanup-marker VMX was recreated during recovery release: $($marker.VmxPath)"
+                                }
+                                Remove-AtlasoDevelopmentCaCleanupMarker -MarkerPath $marker.MarkerPath
+                            }
                     } `
                     -Confirm:$false
             }
@@ -3768,6 +3779,7 @@ if (-not $WhatIfPreference) {
         }
         if ($createdThisInvocation -and (Test-Path -LiteralPath $targetVmx -PathType Leaf)) {
             $rollbackErrors = [System.Collections.Generic.List[string]]::new()
+            $restoredMarkerRetirement = [pscustomobject]@{Completed=$false}
             $quarantineDirectory = ''
             $runtimeSignerScrubbed = $false
             $runtimeSignerScrubError = ''
@@ -3928,14 +3940,20 @@ if (-not $WhatIfPreference) {
                         Restore-AtlasoRollbackDataDisksFromQuarantine `
                             -DataDiskStates $rollbackDataDiskStates `
                             -QuarantineDirectory $quarantineDirectory `
-                            -OwnershipContext $ownershipContext
+                            -OwnershipContext $ownershipContext `
+                            -OnRestored {
+                                if ($rollbackErrors.Count -eq 0 -and $developmentCaCleanupMarkerPath) {
+                                    Remove-AtlasoDevelopmentCaCleanupMarker -MarkerPath $developmentCaCleanupMarkerPath
+                                    $restoredMarkerRetirement.Completed = $true
+                                }
+                            }
                     }
                     catch {
                         $rollbackErrors.Add($_.Exception.Message)
                     }
                 }
             }
-            if ($rollbackErrors.Count -eq 0 -and $developmentCaCleanupMarkerPath) {
+            if ($rollbackErrors.Count -eq 0 -and $developmentCaCleanupMarkerPath -and -not $restoredMarkerRetirement.Completed) {
                 try {
                     Remove-AtlasoDevelopmentCaCleanupMarker `
                         -MarkerPath $developmentCaCleanupMarkerPath

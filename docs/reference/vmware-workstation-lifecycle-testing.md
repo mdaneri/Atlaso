@@ -1444,7 +1444,10 @@ Receipt-only recovery runs before Python/1Password SDK artifact admission. Missi
 disks; artifact verification remains mandatory before fresh credential or creation work.
 If recovery restores canonical in-directory disk components, it publishes an original restored-directory receipt path
 and SHA-256 before moving them. Preserve both. A later creation retry passes `-RestoredDirectoryReceiptPath` and
-`-RestoredDirectoryReceiptSha256`, without `-Redeploy`. Admission checks that original root and its exact ordinary disk
+`-RestoredDirectoryReceiptSha256`. Recovery pins each moved original disk, validates the complete restored inventory,
+and retires the cleanup marker while those pins still exclude writes, deletion and replacement. A failed validation or
+marker retirement preserves the marker for another bounded recovery.
+Retry proceeds without `-Redeploy`. Admission checks that original root and its exact ordinary disk
 components, refusing replacements, extra files/directories, missing selectors and legacy state. The original root and
 disk handles remain held through cloning; a fresh VM receives its own original VM receipt. `-ResetDataDisks` removes
 only that admitted complete component set through captured handles before creating replacement disks. Nested or
