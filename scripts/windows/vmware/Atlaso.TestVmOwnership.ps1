@@ -849,7 +849,15 @@ function Publish-AtlasoTestVmOriginalOwnership {
             throw 'The task ownership intent does not match the clone callback context.'
         }
 
-        $directoryPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($resolvedDirectory, $true)
+        if ($Context.PSObject.Properties['CloneOutputPin'] -and $Context.CloneOutputPin) {
+            # The creator already excludes replacement. Reuse its exact retained
+            # handle rather than opening a pin that denies its DELETE access.
+            $retainedIdentity = $Context.CloneOutputPin.GetRetainedCreatedIdentity($resolvedDirectory)
+            if ($retainedIdentity -cne [string]$Context.PreparedOutputIdentity) {
+                throw 'The retained original creation handle no longer matches its preparation receipt.'
+            }
+        }
+        else { $directoryPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($resolvedDirectory, $true) }
         if ($Context.PreparedOutputIdentity -and
             [Atlaso.WorkstationFileIdentity]::Get($resolvedDirectory) -cne [string]$Context.PreparedOutputIdentity) {
             throw 'The original clone directory differs from its exclusive creation identity.'

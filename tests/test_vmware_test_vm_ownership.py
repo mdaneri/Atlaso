@@ -543,11 +543,13 @@ def identity_writer_prefix() -> str:
     )
 
 
-def test_original_vm_directory_and_vmx_are_published_before_configuration(tmp_path):
+@pytest.mark.parametrize("retained", [False, True])
+def test_original_vm_directory_and_vmx_are_published_before_configuration(tmp_path, retained):
     """The real publisher captures both original identities before VMX edits.
 
     Args:
         tmp_path: Existing pytest temporary root.
+        retained: Whether the normal clone's original delete-capable creation handle remains held.
     """
     evidence = tmp_path / "evidence"
     evidence.mkdir()
@@ -560,7 +562,9 @@ def test_original_vm_directory_and_vmx_are_published_before_configuration(tmp_pa
         + context_script(tmp_path)
         + f"$source={ps_literal(source)}; $sourceId=[Atlaso.WorkstationFileIdentity]::Get($source); "
         + "$ctx=New-AtlasoTestVmOwnershipIntent -Context $ctx -SourceVmxPath $source -SourceVmxIdentity $sourceId; "
-        + "$cleanupIdentity=('d'*32); [void][System.IO.Directory]::CreateDirectory($output); "
+        + "$cleanupIdentity=('d'*32); "
+        + ("$ctx | Add-Member -NotePropertyName CloneOutputPin -NotePropertyValue (New-AtlasoTestVmPreparedOutput -Context $ctx); " if retained
+           else "[void][System.IO.Directory]::CreateDirectory($output); ")
         + "[System.IO.File]::WriteAllText($vmx, ('source clone' + [Environment]::NewLine)); "
         + "$events=[System.Collections.Generic.List[string]]::new(); function git { "
         + "if ($args.Count -eq 6 -and $args[0] -eq '-C' -and $args[2] -eq 'merge-base' -and "
@@ -570,6 +574,7 @@ def test_original_vm_directory_and_vmx_are_published_before_configuration(tmp_pa
         + "-VmxPath $vmx -CleanupIdentity $cleanupIdentity -HeldVmxStream $held | Out-Null}; "
         + "Set-AtlasoTestVmCleanupIdentity -VmxPath $vmx -Identity $cleanupIdentity "
         + "-ExpectedVmxIdentity ([Atlaso.WorkstationFileIdentity]::Get($vmx)) -DurableIdentityAction $publication; "
+        + ("$ctx.CloneOutputPin.Dispose(); $ctx.CloneOutputPin=$null; " if retained else "")
         + "$events.Add('receipt'); $replacement=($vmx + '.replacement'); "
         + "[System.IO.File]::WriteAllText($replacement, ('configured' + [Environment]::NewLine + 'guestinfo.atlaso.test_vm_cleanup_identity = ' + [char]34 + $cleanupIdentity + [char]34 + [Environment]::NewLine)); "
         + "$backup=($vmx + '.backup'); [System.IO.File]::Replace($replacement,$vmx,$backup); $events.Add('configured'); "

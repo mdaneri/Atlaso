@@ -329,10 +329,25 @@ namespace Atlaso
                 new System.Collections.Generic.List<SafeFileHandle>();
             public readonly System.Collections.Generic.Dictionary<string, string> Created =
                 new System.Collections.Generic.Dictionary<string, string>();
+            internal readonly System.Collections.Generic.Dictionary<string, SafeFileHandle> CreatedHandles =
+                new System.Collections.Generic.Dictionary<string, SafeFileHandle>(StringComparer.OrdinalIgnoreCase);
+            public string GetRetainedCreatedIdentity(string path)
+            {
+                SafeFileHandle handle;
+                string full = System.IO.Path.GetFullPath(path).TrimEnd('\\', '/');
+                if (!CreatedHandles.TryGetValue(full, out handle) || handle.IsClosed || handle.IsInvalid)
+                    throw new InvalidOperationException("The original creation handle is no longer retained.");
+                ByHandleFileInformation information;
+                if (!GetFileInformationByHandle(handle, out information))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                return String.Format("{0:X8}:{1:X8}{2:X8}",
+                    information.VolumeSerialNumber, information.FileIndexHigh, information.FileIndexLow);
+            }
             public void Dispose()
             {
                 for (int i = Handles.Count - 1; i >= 0; --i) Handles[i].Dispose();
                 Handles.Clear();
+                CreatedHandles.Clear();
             }
         }
         public static CreatedDirectoryPins CreateAndPinOrdinaryDirectoryPath(string path, Action<string, string> publish)
@@ -391,6 +406,7 @@ namespace Atlaso
                         string identity = String.Format("{0:X8}:{1:X8}{2:X8}",
                             information.VolumeSerialNumber, information.FileIndexHigh, information.FileIndexLow);
                         pins.Created.Add(current, identity);
+                        pins.CreatedHandles.Add(current, handle);
                         try { publish(current, identity); }
                         catch (Exception publicationFailure)
                         {
