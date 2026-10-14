@@ -13,6 +13,7 @@ from atlaso.app.ui_routes import (
     PUBLIC_UI_ROOT,
     management_ui_path,
     public_ui_path,
+    safe_depot_login_next,
     safe_management_return_path,
     safe_public_return_path,
 )
@@ -114,13 +115,21 @@ def install_problem_handlers(app: FastAPI) -> None:
             # CSRF state; never authenticate or replay the submitted credentials.
             request.session[LOGIN_FORM_EXPIRED_KEY] = True
             target = login_defaults[request.url.path]
+            login_path = request.url.path
             if request.url.path == management_ui_path("/login"):
                 form = await request.form()
                 target = safe_management_return_path(str(form.get("next") or ""))
                 if target.split("?", 1)[0] == request.url.path:
                     target = MANAGEMENT_UI_ROOT
+            elif request.url.path == "/PROD/login":
+                form = await request.form()
+                target = safe_depot_login_next(str(form.get("next") or ""))
+                if target.split("?", 1)[0] == "/PROD/login":
+                    target = "/PROD/"
+            elif request.url.path == public_ui_path("/ca/requests/login"):
+                login_path = public_ui_path("/ca/requests")
             return RedirectResponse(
-                f"{request.url.path}?{urlencode({'next': target}, safe='/')}", status_code=303,
+                f"{login_path}?{urlencode({'next': target}, safe='/')}", status_code=303,
             )
         if should_redirect_to_login(request, exc):
             target = request.url.path

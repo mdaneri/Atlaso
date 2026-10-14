@@ -13,7 +13,14 @@ from starlette.testclient import TestClient
 from atlaso.app import ui
 from atlaso.app.browser_requests import is_browser_navigation
 from atlaso.app.database import SessionLocal
-from atlaso.app.models import BrowserSession, utcnow
+from atlaso.app.models import (
+    ApplianceSettings,
+    BrowserSession,
+    CaSettings,
+    PhysicalInterface,
+    VcfOfflineDepotSettings,
+    utcnow,
+)
 from atlaso.app.problem import install_problem_handlers
 from tests.routers.ui.helpers import login
 
@@ -108,7 +115,7 @@ def test_fetch_login_csrf_error_remains_structured(client, headers):
 @pytest.mark.parametrize("path, status, detail, expected", [
     ("/ui/public/login", 403, "Invalid CSRF token", "/ui/public/login"),
     ("/ui/public/ca/login", 403, "Invalid CSRF token", "/ui/public/ca/login"),
-    ("/ui/public/ca/requests/login", 403, "Invalid CSRF token", "/ui/public/ca/requests/login"),
+    ("/ui/public/ca/requests/login", 403, "Invalid CSRF token", "/ui/public/ca/requests"),
     ("/PROD/login", 403, "Invalid CSRF token", "/PROD/login"),
     ("/ui/public/terminal", 401, "Authentication required", "/ui/public/login"),
     ("/api/v1/dashboard", 401, "Authentication required", None),
@@ -153,3 +160,49 @@ def test_fresh_login_after_recovery_succeeds(client):
     assert response.status_code == 303
     assert response.headers["location"] == "/ui/management/dashboard"
     assert client.get(response.headers["location"]).status_code == 200
+
+
+@pytest.mark.parametrize("path, next_path, form_path, expected", [
+    ("/ui/public/ca/requests/login", "/ui/public/ca/requests", "/ui/public/ca/requests", "/ui/public/ca/requests"),
+    ("/PROD/login", "/PROD/COMP/ESX_HOST/?view=compact&sort=name", "/PROD/login", "/PROD/COMP/ESX_HOST/?view=compact&sort=name"),
+    ("/PROD/login", "//example.test", "/PROD/login", "/PROD/"),
+    ("/PROD/login", "/ui/management/dashboard", "/PROD/login", "/PROD/"),
+    ("/PROD/login", "/PROD/%252e%252e/escape", "/PROD/login", "/PROD/"),
+    ("/PROD/login", "/PROD/login?next=/PROD/login", "/PROD/login", "/PROD/"),
+])
+def test_stale_portal_login_follows_real_get_form_route(client, monkeypatch, path, next_path, form_path, expected):
+    """Actual public/depot routes provide fresh HTML and preserve safe directory context."""
+    with SessionLocal() as db:
+        db.execute(select(ApplianceSettings)).scalar_one().management_https_enabled = True
+        for model in (CaSettings, VcfOfflineDepotSettings):
+            settings = db.execute(select(model)).scalar_one()
+            settings.enabled = True
+            settings.listen_interface = "eth2"
+            settings.listen_address = "192.168.87.32"
+        management = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth0")).scalar_one()
+        management.role = "management"
+        management.ip_cidr = "192.168.167.10/24"
+        public = db.execute(select(PhysicalInterface).where(PhysicalInterface.name == "eth2")).scalar_one()
+        public.role = "access"
+        public.ip_cidr = "192.168.87.32/24"
+        db.commit()
+
+    def forbidden_authentication(*args):
+        pytest.fail("Stale portal submission reached authentication")
+
+    monkeypatch.setattr(ui, "authenticate_user", forbidden_authentication)
+    headers = {**DOCUMENT, "host": "192.168.87.32"}
+    response = client.post(path, data={
+        "username": "fixture", "password": "fixture", "csrf": "stale-fixture", "next": next_path,
+    }, headers=headers, follow_redirects=False)
+    assert response.status_code == 303
+    assert urlsplit(response.headers["location"]).path == form_path
+    assert parse_qs(urlsplit(response.headers["location"]).query) == {"next": [expected]}
+    page = client.get(response.headers["location"], headers=headers)
+    assert page.status_code == 200
+    assert "Sign-in form expired. Please sign in again." in page.text
+    assert 'name="csrf" value="' in page.text
+    from html import unescape
+
+    return_to = unescape(page.text.split('name="next" value="', 1)[1].split('"', 1)[0])
+    assert return_to == expected

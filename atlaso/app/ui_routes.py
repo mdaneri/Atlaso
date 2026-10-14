@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 MANAGEMENT_UI_ROOT = "/ui/management"
 PUBLIC_UI_ROOT = "/ui/public"
@@ -248,3 +248,44 @@ def safe_public_return_path(value: str | None, *, default: str = "/") -> str:
     if legacy is None or legacy[0] != "public":
         return public_ui_path(default)
     return urlunsplit(("", "", legacy[1], parsed.query, parsed.fragment))
+
+
+def safe_depot_login_next(value: str | None) -> str:
+    """Return safe depot login next.
+
+    Args:
+        value: Candidate value consumed by safe depot login next.
+    """
+    fallback = "/PROD/"
+    target = (value or "").strip()
+    if not target or "\\" in target or any(ord(character) < 0x20 or ord(character) == 0x7F for character in target):
+        return fallback
+    try:
+        parsed = urlsplit(target)
+    except ValueError:
+        return fallback
+    if parsed.scheme or parsed.netloc or parsed.fragment:
+        return fallback
+
+    decoded_path = parsed.path
+    for _ in range(4):
+        next_decoded_path = unquote(decoded_path)
+        if next_decoded_path == decoded_path:
+            break
+        decoded_path = next_decoded_path
+    else:
+        return fallback
+    if (
+        "\\" in decoded_path
+        or any(ord(character) < 0x20 or ord(character) == 0x7F for character in decoded_path)
+        or "//" in decoded_path
+        or any(segment in {".", ".."} for segment in decoded_path.split("/"))
+    ):
+        return fallback
+
+    if parsed.path == "/PROD":
+        return "/PROD" + ("?" + parsed.query if parsed.query else "")
+    if not parsed.path.startswith("/PROD/") or not decoded_path.startswith("/PROD/"):
+        return fallback
+    depot_suffix = parsed.path.removeprefix("/PROD/")
+    return "/PROD/" + depot_suffix + ("?" + parsed.query if parsed.query else "")
