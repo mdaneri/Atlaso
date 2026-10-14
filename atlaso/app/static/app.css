@@ -9159,9 +9159,13 @@ dialog.has-expanded-monaco .confirm-modal-panel {
   gap: 0.65rem;
 }
 
-.vcf-vault-candidate-list .info-band {
-  align-items: center;
-  grid-template-columns: auto 1fr;
+.vcf-vault-candidate-list .scope-choice {
+  align-items: start;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.vcf-vault-candidate-copy small {
+  overflow-wrap: anywhere;
 }
 .inline-boolean-toggle {
   align-items: center;
