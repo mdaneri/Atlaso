@@ -3400,7 +3400,10 @@ if (
     (Test-Path -LiteralPath $resolvedOutputDirectory -PathType Container) -and
     -not (Test-Path -LiteralPath $targetVmx -PathType Leaf)
 ) {
-    throw "Refusing VMware creation because the canonical Atlaso-owned output directory already exists without its exact VMX: $resolvedOutputDirectory"
+    if (-not $RestoredDirectoryReceiptPath) {
+        throw "Refusing VMware creation because the canonical Atlaso-owned output directory already exists without its exact VMX: $resolvedOutputDirectory"
+    }
+    Assert-AtlasoTestVmRestoredDirectory -Context $ownershipContext | Out-Null
 }
 
 if (-not $SkipNetworkPrepare) {

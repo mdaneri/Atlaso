@@ -352,6 +352,9 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
     command += "$CleanupRecoveryReceiptPath='';$CleanupRecoveryReceiptSha256='';$Redeploy=$false;$NoStart=$false;$WhatIfPreference=$false;$TimeoutSeconds=5;$RecoverPreparedDirectory=$false;$PreparedDirectoryReceiptPath='';$PreparedDirectoryReceiptSha256='';$resolvedOutputDirectory=$output;$targetVmx=$vmx;"
     command += f"function Get-AtlasoDevelopmentCaCleanupMarkerRoot {{ {ps_literal(markers)} }};function Resolve-TestVmVmrunPath {{'provider-must-not-run'}};function Assert-AtlasoTestVmCheckoutSource {{param($Context)}};"
     command += parent + ";"
+    late_start = source.index("if ((Test-Path -LiteralPath $targetVmx) -and -not $Redeploy) {")
+    late_admission = source[late_start:source.index("if (-not $SkipNetworkPrepare) {", late_start)]
+    command += late_admission + ";"
     if retry == "reset":
         source = (VMWARE / "create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
         start = source.index("if ($ResetDataDisks) {")
