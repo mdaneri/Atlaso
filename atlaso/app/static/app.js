@@ -24461,30 +24461,30 @@ function initializeVcfVaultImport() {
     candidatesElement.replaceChildren();
     candidates.forEach((candidate) => {
       const label = document.createElement("label");
-      label.className = "info-band";
+      label.className = "scope-choice";
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.name = "candidate_ids";
       checkbox.value = candidate.candidate_id;
       checkbox.checked = true;
       const copy = document.createElement("span");
-      copy.className = "vcf-helper-action-copy";
+      copy.className = "scope-choice-copy vcf-vault-candidate-copy";
       const key = document.createElement("code");
       key.textContent = String(candidate.key || "");
       const keyLabel = document.createElement("strong");
       keyLabel.append(key);
       const credentialTypeLabel = candidate.secret_type === "vcf_password"
         ? "VCF password" : candidate.secret_type === "esx_password" ? "ESX password" : "Other credential";
-      const account = document.createElement("span");
-      account.className = "muted";
-      account.textContent = `${credentialTypeLabel} · ${String(candidate.username || "Username unavailable")}`;
-      const description = document.createElement("span");
+      const accountDescription = document.createElement("small");
+      accountDescription.className = "muted";
+      accountDescription.textContent = `${credentialTypeLabel} · ${String(candidate.username || "Username unavailable")}`;
+      const description = document.createElement("small");
       description.className = "muted";
       description.textContent = String(candidate.description || candidate.resource_name || "");
-      const endpoints = document.createElement("span");
+      const endpoints = document.createElement("small");
       endpoints.className = "muted";
       endpoints.textContent = candidate.uris?.length ? candidate.uris.join(" · ") : "No verified endpoint. Add a URI in the Vault editor after import.";
-      copy.append(keyLabel, account, description, endpoints);
+      copy.append(keyLabel, accountDescription, description, endpoints);
       label.append(checkbox, copy);
       candidatesElement.append(label);
     });

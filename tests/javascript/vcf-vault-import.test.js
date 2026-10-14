@@ -4,6 +4,8 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const appSource = fs.readFileSync("atlaso/app/static/app.js", "utf8");
+const appCss = fs.readFileSync("atlaso/app/static/app.css", "utf8");
+const importTemplate = fs.readFileSync("atlaso/app/templates/partials/vcf_vault_import_modal.html", "utf8");
 
 function functionSource(name) {
   const start = appSource.indexOf(`function ${name}(`);
@@ -137,7 +139,11 @@ function makeRuntime(responses) {
       getElementById: (id) => (id === "vcf-vault-import-modal" ? modal : null),
       querySelector: (selector) => (selector === "[data-vcf-vault-import-form]" ? form : null),
       querySelectorAll: (selector) => (selector === "[data-vcf-vault-import-open]" ? launchers : []),
-      createElement: () => new FakeElement(),
+      createElement: (tagName) => {
+        const element = new FakeElement();
+        element.tagName = String(tagName || "").toUpperCase();
+        return element;
+      },
     },
     window: {
       AtlasoUiPatterns: {
@@ -215,6 +221,13 @@ test("VCF vault inspect reports discovery coverage and renders safe URI repair g
   );
   assert.equal(runtime.form.summary.innerHTML, "");
   assert.equal(runtime.form.candidates.children.length, 2);
+  const firstChoice = runtime.form.candidates.children[0];
+  assert.equal(firstChoice.tagName, "LABEL");
+  assert.equal(firstChoice.className, "scope-choice");
+  assert.equal(firstChoice.children[0].type, "checkbox");
+  assert.equal(firstChoice.children[0].name, "candidate_ids");
+  assert.equal(firstChoice.children[0].checked, true);
+  assert.equal(firstChoice.children[1].className, "scope-choice-copy vcf-vault-candidate-copy");
   const verifiedCopy = runtime.form.candidates.children[0].children[1];
   assert.equal(verifiedCopy.innerHTML, "");
   assert.equal(verifiedCopy.children[0].children[0].textContent, "<script>alert(1)</script>");
@@ -230,6 +243,21 @@ test("VCF vault inspect reports discovery coverage and renders safe URI repair g
     runtime.form.candidates.children[1].children[1].children[3].textContent,
     /Add a URI in the Vault editor after import\./,
   );
+});
+
+test("VCF password candidates use the semantic password choice group and shared tile styles", () => {
+  assert.match(importTemplate, /<fieldset class="scope-choice-fieldset"><legend>Passwords to import<\/legend>/);
+  assert.match(importTemplate, /<div class="scope-choice-grid vcf-vault-candidate-list" data-vcf-vault-candidates><\/div><\/fieldset>/);
+  assert.match(importTemplate, /<p class="muted" role="status" data-vcf-vault-discovery-summary><\/p><fieldset/);
+  assert.match(appSource, /label\.className = "scope-choice"/);
+  assert.match(appSource, /checkbox\.type = "checkbox"/);
+  assert.match(appSource, /label\.append\(checkbox, copy\)/);
+  assert.match(appCss, /\.scope-choice:has\(input:checked\)/);
+  assert.match(appCss, /\.scope-choice:focus-within/);
+  assert.match(appCss, /\.vcf-vault-candidate-list \.scope-choice/);
+  assert.match(appCss, /\.vcf-vault-candidate-copy code,\s*\.vcf-vault-candidate-copy small\s*\{\s*overflow-wrap: anywhere;/);
+  assert.match(appCss, /\.scope-choice-grid\s*\{[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(appCss, /@media \(max-width: 640px\)\s*\{[\s\S]*?\.scope-choice-grid\s*\{\s*grid-template-columns: 1fr;/);
 });
 
 test("VCF candidate rows distinguish accounts with the same resource and endpoint", async () => {
