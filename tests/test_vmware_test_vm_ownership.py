@@ -73,6 +73,61 @@ def test_pending_cleanup_admits_original_owner_before_any_marker_mutation(tmp_pa
         assert expected[admission] in result.stderr
 
 
+@pytest.mark.parametrize("recovery", ["healthy", "removed", "refused", "missing_receipt", "whatif"])
+def test_existing_vm_rejection_follows_receipt_bound_pending_recovery(tmp_path, recovery):
+    """Execute parent preflight ordering without redeploying a recovered healthy VM.
+
+    Args:
+        tmp_path: Original pytest-owned fixture directory.
+        recovery: Pending outcome, absent original receipt or mutation-free preview.
+    """
+    script = (VMWARE / "create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
+    start = script.index("if ($ownershipContext.Enabled -and (Test-Path -LiteralPath $resolvedOutputDirectory))")
+    end = script.index("    # Resolve new Environment configuration", start)
+    block = script[start:end].rsplit("if (-not $WhatIfPreference) {", 1)[0]
+    output = tmp_path / "vm"
+    output.mkdir()
+    vmx = output / "test.vmx"
+    vmx.write_text("public VM fixture", encoding="utf-8")
+    captured = tmp_path / "events.json"
+    setup = "$ErrorActionPreference='Stop'; $events=[Collections.Generic.List[string]]::new(); "
+    setup += f"$repoRoot={ps_literal(ROOT)}; $resolvedOutputDirectory={ps_literal(output)}; $targetVmx={ps_literal(vmx)}; $ApplianceVmxPath=$targetVmx; "
+    setup += "$ownershipContext=[pscustomobject]@{Enabled=$true}; $LocalBuilder=$false; $NoStart=$false; $Redeploy=$false; $TimeoutSeconds=10; "
+    setup += f"$WhatIfPreference=${str(recovery == 'whatif').lower()}; "
+    setup += "function Assert-AtlasoTestVmOriginalOwnership { param($Context) $events.Add('receipt'); "
+    setup += "throw 'Original receipt missing' }; " if recovery == "missing_receipt" else "[pscustomobject]@{} }; "
+    setup += "function Assert-AtlasoVmwarePayloadProvenance { param($VmxPath,$ExpectedSourceCommit) }; "
+    setup += "function New-AtlasoTestVmOwnershipIntent { param($Context,$SourceVmxPath,$SourceVmxIdentity,$ExistingReceipt) $Context }; "
+    setup += "function Get-AtlasoDevelopmentRootCaFingerprint { param($CertificatePath) '0'*64 }; "
+    setup += "function Confirm-OnePasswordTestVmArtifact { param($RepositoryRoot,$PythonCommand,$TimeoutSeconds) 'unused' }; "
+    setup += "function Resolve-TestVmVmrunPath { param($Path) 'unused-provider' }; "
+    setup += "function Assert-AtlasoTestVmCheckoutSource { param($Context) $events.Add('checkout') }; "
+    setup += "function Invoke-PendingAtlasoDevelopmentCaCleanup { param($VmrunPath,$TimeoutSeconds,$ExpectedFingerprint,$OwnershipContext) $events.Add('recovery'); "
+    if recovery == "removed":
+        setup += "Remove-Item -LiteralPath $targetVmx; "
+    elif recovery == "refused":
+        setup += "throw 'Pending recovery refused'; "
+    setup += "}; $failure=''; try { " + block + "; $events.Add('credential-boundary') } catch { $failure=$_.Exception.Message } finally { "
+    setup += f"[IO.File]::WriteAllText({ps_literal(captured)},(@{{events=@($events);failure=$failure}} | ConvertTo-Json)) }}"
+    result = run_powershell(ownership_prefix() + setup, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    evidence = json.loads(captured.read_text(encoding="utf-8-sig"))
+    events = evidence["events"]
+    if recovery == "removed":
+        assert events == ["receipt", "checkout", "recovery", "credential-boundary"]
+        assert not vmx.exists()
+    elif recovery == "healthy":
+        assert events == ["receipt", "checkout", "recovery"]
+        assert "VM already exists" in evidence["failure"]
+        assert vmx.read_text(encoding="utf-8") == "public VM fixture"
+    elif recovery == "refused":
+        assert events == ["receipt", "checkout", "recovery"]
+        assert evidence["failure"] == "Pending recovery refused"
+    else:
+        assert events == ["receipt"]
+        assert ("Original receipt missing" if recovery == "missing_receipt" else "VM already exists") in evidence["failure"]
+
+
 @pytest.mark.parametrize("caller", ["rollback", "persisted"])
 @pytest.mark.parametrize("admission", ["valid", "missing", "human", "foreign", "drift"])
 def test_failed_creation_removal_callers_require_original_identity_selectors(tmp_path, caller, admission):

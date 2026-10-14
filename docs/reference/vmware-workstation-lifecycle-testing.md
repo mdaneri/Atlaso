@@ -1430,6 +1430,9 @@ before 1Password preflight or any new network, disk, or VM mutation; do not edit
 Agent-owned retries validate the original VM receipt and exact marker destination before scrubbing, stopping,
 quarantining disks, retiring a marker, or removing artifacts. Foreign markers and legacy identity repairs are preserved
 without mutation; an ownership context for another VM cannot authorize their recovery.
+Rerun an interrupted creation with the preserved original receipt selectors without adding `-Redeploy` solely for
+recovery. Pending cleanup runs before an existing-VM rejection. If import recovery leaves a healthy VM in place, the
+wrapper preserves it and rejects recreation after recovery, before obtaining new credentials.
 
 ## Fidelity Boundary
 

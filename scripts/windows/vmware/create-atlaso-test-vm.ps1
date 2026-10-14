@@ -3147,9 +3147,6 @@ if ($ownershipContext.Enabled -and (Test-Path -LiteralPath $resolvedOutputDirect
 if ($NoStart) {
     throw '-NoStart is not supported for normal test VMs because first boot must consume and scrub the shared development signing key.'
 }
-if ($ownershipContext.Enabled -and (Test-Path -LiteralPath $targetVmx) -and -not $Redeploy) {
-    throw "VM already exists: $targetVmx. Pass -Redeploy to remove and recreate it, or choose a different -CollisionSuffix for another identically owned test VM."
-}
 if (
     $ownershipContext.Enabled -and
     (Test-Path -LiteralPath $resolvedOutputDirectory -PathType Container) -and
@@ -3203,6 +3200,11 @@ if (-not $WhatIfPreference) {
         -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30)) `
         -ExpectedFingerprint $developmentRootCaFingerprint `
         -OwnershipContext $ownershipContext
+}
+if ($ownershipContext.Enabled -and (Test-Path -LiteralPath $targetVmx) -and -not $Redeploy) {
+    # Recovery may finish a healthy VM's import. Preserve that VM and refuse
+    # recreation only after the receipt-bound pending work has completed.
+    throw "VM already exists: $targetVmx. Pass -Redeploy to remove and recreate it, or choose a different -CollisionSuffix for another identically owned test VM."
 }
 if (-not $WhatIfPreference) {
     # Resolve new Environment configuration only after credential-independent
