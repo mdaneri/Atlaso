@@ -255,6 +255,7 @@ test("VCF password candidates use the semantic password choice group and shared 
   assert.match(appCss, /\.scope-choice:has\(input:checked\)/);
   assert.match(appCss, /\.scope-choice:focus-within/);
   assert.match(appCss, /\.vcf-vault-candidate-list \.scope-choice/);
+  assert.match(appCss, /\.vcf-vault-candidate-copy code,\s*\.vcf-vault-candidate-copy small\s*\{\s*overflow-wrap: anywhere;/);
   assert.match(appCss, /\.scope-choice-grid\s*\{[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(appCss, /@media \(max-width: 640px\)\s*\{[\s\S]*?\.scope-choice-grid\s*\{\s*grid-template-columns: 1fr;/);
 });

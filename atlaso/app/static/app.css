@@ -9164,6 +9164,7 @@ dialog.has-expanded-monaco .confirm-modal-panel {
   grid-template-columns: auto minmax(0, 1fr);
 }
 
+.vcf-vault-candidate-copy code,
 .vcf-vault-candidate-copy small {
   overflow-wrap: anywhere;
 }
