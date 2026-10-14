@@ -31,7 +31,7 @@ ONEPASSWORD_LOCK = "requirements-onepassword-deploy.lock"
 ONEPASSWORD_MANIFEST = Path("scripts/windows/vmware/onepassword-sdk-cp314-wheel.json")
 ONEPASSWORD_CP314_WHEEL = "onepassword_sdk-0.4.1-cp314-cp314-win_amd64.whl"
 DEV_LOCK = "requirements-dev.lock"
-UVLOOP_VERSION = "0.22.1"
+UVLOOP_VERSION = "0.23.0"
 UVLOOP_REQUIREMENT = (
     f'uvloop=={UVLOOP_VERSION} ; sys_platform != "win32" and '
     'sys_platform != "cygwin" and platform_python_implementation != "PyPy"'
