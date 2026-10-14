@@ -151,8 +151,10 @@ apply succeeds.
 ## Verify runtime behavior
 
 The transport worker publishes cached route health after each batch, pausing 30 seconds between full cycles, with at most
-eight probes running at once. Every route retains its own observation time; samples older than 90 seconds are unavailable
-even when another batch has just published. Each probe sends `HEAD` to the configured public hostname and route path and
+64 probes running at once. At the 256-route limit, four batches with ten-second probe deadlines and the pause have a
+70-second budget, leaving margin for scheduling and publication within the freshness window. Every route retains its
+own observation time; samples older than 90 seconds are unavailable even when another batch has just published.
+Each probe sends `HEAD` to the configured public hostname and route path and
 keeps no response body. Fingerprint trust checks
 the SHA-256 digest of the leaf certificate on the connected upstream TLS session before forwarding data. Insecure TLS
 verification is always reported as degraded, even when an HTTP status is returned. These observations are operational

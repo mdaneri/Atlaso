@@ -5,11 +5,13 @@ import hashlib
 import json
 import socket
 import ssl
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from atlaso.app.services import reverse_proxy_transport as transport
+from atlaso.app.services.reverse_proxy_observation import MAX_OBSERVATION_AGE
 
 
 def route(**changes):
@@ -107,16 +109,17 @@ async def test_native_observation_failure_refuses_outbound(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_health_cache_sampling_is_periodic_atomic_and_bounded(tmp_path, monkeypatch):
-    """Sample at most eight routes concurrently and publish one compact cache generation.
+    """Bound concurrent probes and publish each batch before starting the next.
 
     Args:
         tmp_path: Isolated filesystem root supplied by pytest.
         monkeypatch: Scoped dependency replacements supplied by pytest.
     """
-    routes = [route(socket_id=f"1-{index}", trust_mode="trusted_ca", fingerprint="") for index in range(1, 11)]
+    limit = transport.HEALTH_PROBE_CONCURRENCY
+    routes = [route(socket_id=f"1-{index}", trust_mode="trusted_ca", fingerprint="") for index in range(1, limit + 3)]
     manifest = {"generation": "a" * 64, "routes": routes, "forbidden_addresses": ["192.0.2.10"]}
     release = asyncio.Event()
-    eight_started = asyncio.Event()
+    batch_started = asyncio.Event()
     active = 0
     peak = 0
     calls = 0
@@ -129,14 +132,14 @@ async def test_health_cache_sampling_is_periodic_atomic_and_bounded(tmp_path, mo
             _forbidden: Fixture input for fake probe.
         """
         nonlocal active, peak, calls
-        if selected["socket_id"] == routes[8]["socket_id"]:
+        if selected["socket_id"] == routes[limit]["socket_id"]:
             published = json.loads((tmp_path / "health.json").read_text(encoding="utf-8"))
-            assert len(published["health"]) == 8
+            assert len(published["health"]) == limit
         calls += 1
         active += 1
         peak = max(peak, active)
-        if active == 8:
-            eight_started.set()
+        if active == limit:
+            batch_started.set()
         await release.wait()
         active -= 1
         return {"status": "healthy", "last_success": None, "failure_class": None,
@@ -157,22 +160,79 @@ async def test_health_cache_sampling_is_periodic_atomic_and_bounded(tmp_path, mo
     monkeypatch.setattr(transport, "probe", fake_probe)
     monkeypatch.setattr(transport.asyncio, "sleep", stop_after_interval)
     task = asyncio.create_task(transport.observe_health(manifest, tmp_path))
-    await asyncio.wait_for(eight_started.wait(), timeout=2)
-    assert calls == 8
+    await asyncio.wait_for(batch_started.wait(), timeout=2)
+    assert calls == limit
     release.set()
     with pytest.raises(StopAfterPublish):
         await asyncio.wait_for(task, timeout=2)
 
     cache_path = tmp_path / "health.json"
     cache = json.loads(cache_path.read_text(encoding="utf-8"))
-    assert peak == 8
+    assert peak == limit
     assert calls == len(routes)
     assert not (tmp_path / "health.pending").exists()
     assert cache["generation"] == manifest["generation"]
     assert set(cache["health"]) == {item["socket_id"] for item in routes}
-    assert len(cache_path.read_bytes()) < 16_384
+    assert len(cache_path.read_bytes()) < 262_144
     assert all(set(item) == {"status", "last_success", "failure_class", "http_status", "tls_status", "observed_at"}
                for item in cache["health"].values())
+
+
+@pytest.mark.asyncio
+async def test_maximum_outage_cycle_keeps_every_route_fresh(tmp_path, monkeypatch):
+    """Simulate full-deadline batches at capacity without waiting on wall time.
+
+    Args:
+        tmp_path: Isolated filesystem root supplied by pytest.
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
+    clock = datetime(2026, 10, 14, tzinfo=timezone.utc)
+    routes = [route(socket_id=f"1-{index}") for index in range(1, transport.MAX_ROUTES + 1)]
+    manifest = {"generation": "a" * 64, "routes": routes, "forbidden_addresses": []}
+    first_samples = {}
+    pauses = 0
+    gather = asyncio.gather
+
+    class Clock:
+        @staticmethod
+        def now(_zone):
+            return clock
+
+    class StopAfterTwoCycles(Exception):
+        pass
+
+    async def timed_batch(*tasks):
+        nonlocal clock
+        assert len(tasks) <= 64
+        clock += timedelta(seconds=10)
+        return await gather(*tasks)
+
+    async def unavailable(_route, _forbidden):
+        raise TimeoutError
+
+    async def pause(seconds):
+        nonlocal clock, pauses
+        cache = json.loads((tmp_path / "health.json").read_text(encoding="utf-8"))
+        assert len(cache["health"]) == 256
+        for key, item in cache["health"].items():
+            sampled = datetime.fromisoformat(item["observed_at"])
+            assert item["status"] == "degraded" and item["failure_class"] == "unavailable"
+            assert clock - sampled + timedelta(seconds=seconds) < MAX_OBSERVATION_AGE
+            if pauses:
+                assert sampled - first_samples[key] == timedelta(seconds=70)
+            else:
+                first_samples[key] = sampled
+        pauses += 1
+        if pauses == 2:
+            raise StopAfterTwoCycles
+        clock += timedelta(seconds=seconds)
+
+    monkeypatch.setattr(transport, "datetime", Clock)
+    monkeypatch.setattr(transport, "probe", unavailable)
+    monkeypatch.setattr(transport.asyncio, "gather", timed_batch)
+    monkeypatch.setattr(transport.asyncio, "sleep", pause)
+    with pytest.raises(StopAfterTwoCycles):
+        await transport.observe_health(manifest, tmp_path)
 
 
 @pytest.mark.asyncio

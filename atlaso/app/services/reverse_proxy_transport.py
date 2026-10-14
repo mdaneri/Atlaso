@@ -24,6 +24,11 @@ CONFIG_ROOT = Path("/etc/atlaso/traffic-publishing/reverse-proxies")
 SOCKET_ROOT = Path("/run/atlaso-rp")
 MAX_CONNECTIONS = 128
 MAX_ROUTES = 256
+HEALTH_PROBE_CONCURRENCY = 64
+HEALTH_PROBE_TIMEOUT = 10
+HEALTH_CYCLE_PAUSE = 30
+# Four worst-case batches plus the pause take 70 seconds at MAX_ROUTES,
+# leaving scheduling/publication margin within the observer's 90-second age.
 BUFFER_LIMIT = 65536
 # A 1,024-code-point prefix can use four UTF-8 bytes, each percent-encoded.
 MAX_PROBE_PATH_LENGTH = 1024 * 4 * 3
@@ -326,7 +331,7 @@ async def observe_health(manifest: dict[str, Any], root: Path) -> None:
         manifest: Input used by observe health.
         root: Input used by observe health.
     """
-    semaphore = asyncio.Semaphore(8)
+    semaphore = asyncio.Semaphore(HEALTH_PROBE_CONCURRENCY)
     previous: dict[str, Any] = {}
 
     async def observe(route: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -337,7 +342,7 @@ async def observe_health(manifest: dict[str, Any], root: Path) -> None:
         """
         async with semaphore:
             try:
-                async with asyncio.timeout(10):
+                async with asyncio.timeout(HEALTH_PROBE_TIMEOUT):
                     result = await probe(route, set(manifest["forbidden_addresses"]))
             except TimeoutError:
                 result = {"status": "degraded", "last_success": None, "failure_class": "unavailable",
@@ -350,8 +355,8 @@ async def observe_health(manifest: dict[str, Any], root: Path) -> None:
 
     while True:
         routes = manifest["routes"]
-        for start in range(0, max(1, len(routes)), 8):
-            previous.update(await asyncio.gather(*(observe(route) for route in routes[start:start + 8])))
+        for start in range(0, max(1, len(routes)), HEALTH_PROBE_CONCURRENCY):
+            previous.update(await asyncio.gather(*(observe(route) for route in routes[start:start + HEALTH_PROBE_CONCURRENCY])))
             payload = {"schema": 1, "generation": manifest["generation"], "health": previous,
                        "observed_at": datetime.now(timezone.utc).isoformat()}
             temporary = root / "health.pending"
@@ -359,7 +364,7 @@ async def observe_health(manifest: dict[str, Any], root: Path) -> None:
             with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
                 json.dump(payload, stream, sort_keys=True, separators=(",", ":"))
             temporary.replace(root / "health.json")
-        await asyncio.sleep(30)
+        await asyncio.sleep(HEALTH_CYCLE_PAUSE)
 
 
 async def probe(route: dict[str, Any], forbidden: set[str]) -> dict[str, Any]:
