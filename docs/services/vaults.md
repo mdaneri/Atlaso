@@ -97,7 +97,8 @@ retrieves that supported credential by ID with `GET /v1/credentials/{id}`. For V
 fields from its latest available SDDC specification only. Unsupported, unavailable, masked, or permission-limited
 candidates are summarized by skipped count and reason; vendor error messages and password values are not shown.
 The selection list shows each account and credential type alongside its key, resource, and discovered URIs so multiple
-accounts on one appliance can be distinguished.
+accounts on one appliance can be distinguished. The **Passwords to import** group contains native checkbox choices;
+each complete choice is clickable, and keyboard focus and checked state remain visible.
 
 Atlaso builds credential-free URIs only from authoritative resource metadata. SDDC Manager SSH credentials use a
 validated FQDN `resourceName` or `resourceIp`; API, SSO, AUDIT, and missing credential types use HTTPS only for known
