@@ -40,7 +40,12 @@ def _fresh_events(session: Session) -> list[AuditEvent]:
 
 
 def _fail_capture(*_args, **_kwargs) -> None:
-    """Simulate the durable operational-history writer failing."""
+    """Simulate the durable operational-history writer failing.
+
+    Args:
+        *_args: Positional writer arguments ignored by the failure stub.
+        **_kwargs: Keyword writer arguments ignored by the failure stub.
+    """
     raise OSError("synthetic private capture failure")
 
 
@@ -113,6 +118,11 @@ def test_explicit_strict_mode_propagates_post_commit_failure(
         monkeypatch: Fixture used to force operational reporting to fail.
     """
     def fail_reporting(_event: AuditEvent) -> None:
+        """Simulate strict reporting failure.
+
+        Args:
+            _event: Audit event received by the operational reporter.
+        """
         raise RuntimeError("synthetic reporting failure")
 
     monkeypatch.setattr(audit, "log_audit_event", fail_reporting)
@@ -171,9 +181,19 @@ def test_best_effort_survives_stderr_failure(
     """
     class BrokenStderr:
         def write(self, _value: str) -> int:
+            """Fail every write to simulate an unavailable stderr sink.
+
+            Args:
+                _value: Diagnostic text passed to the stderr writer.
+            """
             raise OSError("synthetic stderr failure")
 
     def fail_reporting(_event: AuditEvent) -> None:
+        """Simulate best-effort reporting failure.
+
+        Args:
+            _event: Audit event received by the operational reporter.
+        """
         raise RuntimeError("synthetic reporting failure")
 
     monkeypatch.setattr(audit, "log_audit_event", fail_reporting)
@@ -201,6 +221,38 @@ def _client_logging_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     monkeypatch.setenv("ATLASO_APP_LOG_PATH", str(tmp_path / "client-operational.log"))
 
 
+@pytest.fixture(autouse=True)
+def _isolated_logging_configuration() -> Generator[None, None, None]:
+    """Restore process logging after client startup and synthetic handler failures."""
+    from atlaso.app import operational_logging
+
+    root_logger = logging.getLogger()
+    loggers = [root_logger, logging.getLogger("atlaso"), operational_logging.LOGGER]
+    original_levels = [logger.level for logger in loggers]
+    original_configuration = operational_logging._APPLIED_CONFIGURATION
+    original_handlers = [
+        handler for handler in root_logger.handlers
+        if operational_logging._handler_is_file(handler) or operational_logging._handler_is_syslog(handler)
+    ]
+    # Keep the existing handlers alive and detached, so startup cannot close them
+    # or advance another test's streaming redaction context.
+    for handler in original_handlers:
+        root_logger.removeHandler(handler)
+    operational_logging._APPLIED_CONFIGURATION = None
+    try:
+        yield
+    finally:
+        for handler in list(root_logger.handlers):
+            if operational_logging._handler_is_file(handler) or operational_logging._handler_is_syslog(handler):
+                root_logger.removeHandler(handler)
+                handler.close()
+        for handler in original_handlers:
+            root_logger.addHandler(handler)
+        for logger, level in zip(loggers, original_levels, strict=True):
+            logger.setLevel(level)
+        operational_logging._APPLIED_CONFIGURATION = original_configuration
+
+
 def test_firewall_settings_api_succeeds_when_audit_capture_fails(
     client,
     tmp_path: Path,
@@ -225,6 +277,12 @@ def test_firewall_settings_api_succeeds_when_audit_capture_fails(
     capture_calls = 0
 
     def fail_capture(*_args, **_kwargs) -> None:
+        """Count the real handler's attempted history capture, then fail.
+
+        Args:
+            *_args: Positional writer arguments ignored by the failure stub.
+            **_kwargs: Keyword writer arguments ignored by the failure stub.
+        """
         nonlocal capture_calls
         capture_calls += 1
         _fail_capture()
