@@ -73,13 +73,18 @@ class NativeNginxHandoffTests(unittest.TestCase):
             )
             direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-            def response(address):
+            def response(address, host=None):
                 """Read a fresh connection without proxy or keepalive reuse.
 
                 Args:
                     address: Numeric loopback address to contact.
+                    host: Optional Host header selecting a cohosted virtual server.
                 """
-                with direct.open(f"http://{address}:{port}/openapi.json", timeout=1) as result:
+                request = urllib.request.Request(
+                    f"http://{address}:{port}/openapi.json",
+                    headers={"Host": host} if host else {},
+                )
+                with direct.open(request, timeout=1) as result:
                     return result.read().decode()
 
             def wait_for(predicate):
@@ -123,6 +128,7 @@ class NativeNginxHandoffTests(unittest.TestCase):
             try:
                 wait_for(lambda: response("127.0.0.2") == "old")
                 with (patch.object(helper, "NGINX_MANAGEMENT_SITE_PATH", management),
+                      patch.object(helper, "NGINX_PUBLIC_SERVICES_SITE_PATH", public),
                       patch.object(helper, "NGINX_SITES_DIR", sites),
                       patch.object(helper, "_nginx_binary", lambda: NGINX),
                       patch.object(helper, "_install_nginx_include", lambda: None),
@@ -177,9 +183,80 @@ class NativeNginxHandoffTests(unittest.TestCase):
 
                     candidate = helper._management_handoff_reuseport_site(shared_candidate)
                     self.assertEqual(candidate.count("reuseport"), 1)
-                    self.assertEqual(helper._install_nginx_site(public, candidate, verify_activation=True), 0)
+                    previous_generation = helper._nginx_active_workers()
+                    self.assertEqual(helper._install_nginx_site(
+                        public, candidate, verify_activation=True,
+                    ), 0)
+                    wait_for(lambda: helper._nginx_active_workers() != previous_generation)
+                    self.assertEqual(helper._nginx_active_workers()[0], previous_generation[0])
+                    self.assertEqual(public.read_text().count("reuseport"), 1)
                     self.assertEqual(response("127.0.0.3"), "candidate")
+                    self.assertEqual(response("127.0.0.3", "identity.example.test"), "oidc")
+                    self.assertEqual(response("127.0.0.3", "ca.example.test"), "ca")
                     self.assertEqual(response("127.0.0.2"), "old")
+
+                    pxe_site = (
+                        "# Managed by Atlaso. Local changes may be overwritten.\n"
+                        "server {\n"
+                        f"  listen 127.0.0.2:{port} reuseport;\n"
+                        "  server_name pxe.example.test;\n"
+                        '  location / { return 200 "pxe"; }\n'
+                        "}\n"
+                    )
+                    invalid_candidate.write_text(pxe_site)
+                    invalid_test = real_run(
+                        [NGINX, "-t", "-c", str(main)], capture_output=True, text=True,
+                    )
+                    invalid_candidate.unlink()
+                    self.assertNotEqual(invalid_test.returncode, 0, invalid_test.stderr)
+                    self.assertIn("duplicate listen options", invalid_test.stderr.lower())
+
+                    public_candidate = candidate + "\n" + pxe_site
+                    previous_generation = helper._nginx_active_workers()
+                    self.assertEqual(helper._install_nginx_site(
+                        public, public_candidate, verify_activation=True,
+                    ), 0)
+                    wait_for(lambda: helper._nginx_active_workers() != previous_generation)
+                    self.assertEqual(helper._nginx_active_workers()[0], previous_generation[0])
+                    management_owner = sum(
+                        "reuseport" in line and f"127.0.0.2:{port}" in line
+                        for line in management.read_text().splitlines()
+                    )
+                    public_owner = sum(
+                        "reuseport" in line and f"127.0.0.2:{port}" in line
+                        for line in public.read_text().splitlines()
+                    )
+                    self.assertEqual((management_owner, public_owner), (1, 0))
+                    self.assertEqual(response("127.0.0.2"), "old")
+                    self.assertEqual(response("127.0.0.2", "pxe.example.test"), "pxe")
+                    self.assertEqual(response("127.0.0.3"), "candidate")
+                    self.assertEqual(response("127.0.0.3", "identity.example.test"), "oidc")
+
+                    # The final paired publisher moves the one option owner to
+                    # Public Services without changing the shared socket twice.
+                    management_candidate = management.read_text()
+                    previous_generation = helper._nginx_active_workers()
+                    self.assertEqual(helper._management_handoff_publish_final_sites(
+                        management_candidate, public_candidate, verify_activation=True,
+                    ), 0)
+                    wait_for(lambda: helper._nginx_active_workers() != previous_generation)
+                    self.assertEqual(helper._nginx_active_workers()[0], previous_generation[0])
+                    management_owner = sum(
+                        "reuseport" in line and f"127.0.0.2:{port}" in line
+                        for line in management.read_text().splitlines()
+                    )
+                    public_owner = sum(
+                        "reuseport" in line and f"127.0.0.2:{port}" in line
+                        for line in public.read_text().splitlines()
+                    )
+                    self.assertEqual((management_owner, public_owner), (0, 1))
+                    self.assertEqual(
+                        sum("reuseport" in line and f"127.0.0.3:{port}" in line
+                            for line in public.read_text().splitlines()),
+                        1,
+                    )
+                    self.assertEqual(response("127.0.0.2"), "old")
+                    self.assertEqual(response("127.0.0.2", "pxe.example.test"), "pxe")
 
                     # As in recovery, files restore first while candidate sockets still exist.
                     public.unlink()

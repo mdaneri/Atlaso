@@ -207,6 +207,55 @@ def test_reuseport_preserves_later_existing_socket_owner_and_normalizes_aliases(
     assert helper._management_handoff_reuseport_site(transformed) == transformed
 
 
+@pytest.mark.parametrize("address", ["192.0.2.20", "2001:db8::20"])
+def test_shared_reuseport_owner_in_readonly_site_wins(address):
+    """Keep an existing cross-file option owner and leave its site untouched.
+
+    Args:
+        address: IPv4 or IPv6 address shared by the management and PXE sites.
+    """
+    helper = load_helper_module()
+    endpoint = f"[{address}]:80" if ":" in address else f"{address}:80"
+    management = f"server {{\n  listen {endpoint} default_server reuseport;\n}}\n"
+    pxe = f"server {{\n  listen {endpoint} reuseport;\n}}\n"
+
+    transformed = helper._management_handoff_reuseport_site(management, shared_sites=[pxe])
+
+    assert f"listen {endpoint} default_server;" in transformed
+    assert pxe == f"server {{\n  listen {endpoint} reuseport;\n}}\n"
+    assert transformed.count("reuseport") + pxe.count("reuseport") == 1
+    assert helper._management_handoff_reuseport_site(transformed, shared_sites=[pxe]) == transformed
+
+
+@pytest.mark.parametrize("address", ["192.0.2.20", "2001:db8::20"])
+def test_rendered_pxe_shared_http_socket_is_armed_when_peer_is_plain(address):
+    """Arm management HTTP when a separate rendered PXE site shares its socket.
+
+    Args:
+        address: IPv4 or IPv6 Access address used by both rendered sites.
+    """
+    helper = load_helper_module()
+    management = helper._management_nginx_config(
+        {"fqdn": "atlaso.example.test", "management_https_enabled": False},
+        listen_addresses=[address],
+    )
+    pxe = render_public_services_nginx_config(
+        [{
+            "interface": "eth1",
+            "role": "access",
+            "address": address,
+            "services": [{"id": "esxi_pxe"}],
+        }],
+    )
+    endpoint = f"[{address}]:80" if ":" in address else f"{address}:80"
+
+    transformed = helper._management_handoff_reuseport_site(management, shared_sites=[pxe])
+
+    assert f"listen {endpoint} default_server reuseport;" in transformed
+    assert f"listen {endpoint};" in pxe
+    assert transformed.count("reuseport") + pxe.count("reuseport") == 1
+
+
 @pytest.mark.parametrize("reuseport", [False, True])
 def test_committed_reuseport_preserves_settings_scope_and_public_tls_ownership(monkeypatch, tmp_path, reuseport):
     """A later Apply must read both committed dedicated and Access TLS listeners.

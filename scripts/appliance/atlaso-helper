@@ -9651,6 +9651,10 @@ def _install_nginx_site(site_path: Path, text: str, *, verify_activation: bool =
         print("nginx command not found", file=sys.stderr)
         return 127
     _install_nginx_include()
+    if verify_activation:
+        text = _management_handoff_reuseport_site(
+            text, shared_sites=_management_handoff_other_nginx_sites({site_path}),
+        )
     conflict = _nginx_site_conflict(site_path, text)
     if conflict:
         print(conflict, file=sys.stderr)
@@ -31244,17 +31248,32 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
         raise ValueError("previous management nginx listener could not be address scoped")
 
 
-def _management_handoff_reuseport_site(text: str) -> str:
+def _management_handoff_other_nginx_sites(excluded: set[Path]) -> list[str]:
+    """Read unchanged managed sites whose socket option owners must be preserved.
+
+    Args:
+        excluded: Sites being replaced together by the current publication.
+    """
+    resolved = {path.resolve() for path in excluded}
+    return [path.read_text(encoding="utf-8") for path in sorted(NGINX_SITES_DIR.glob("*.conf"))
+            if path.is_file() and path.resolve() not in resolved]
+
+
+def _management_handoff_reuseport_site(text: str, *, shared_sites: list[str] | None = None) -> str:
     """Enable overlap once per socket shared by managed virtual hosts.
 
     Args:
         text: Managed nginx site text containing numeric listen endpoints.
+        shared_sites: Unchanged sites whose existing socket option owners take precedence.
     """
-    listeners = list(re.finditer(r"(?m)^([ \t]*listen[ \t]+)([^;\n]+);", text))
+    pattern = re.compile(r"(?m)^([ \t]*listen[ \t]+)([^;\n]+);")
+    listeners = list(pattern.finditer(text))
+    shared_listeners = [listener for site in shared_sites or [] for listener in pattern.finditer(site)
+                        if "reuseport" in listener.group(2).split()]
     sockets: list[tuple[str, int]] = []
     first: dict[tuple[str, int], int] = {}
     existing: dict[tuple[str, int], int] = {}
-    for index, listener in enumerate(listeners):
+    for index, listener in enumerate([*listeners, *shared_listeners]):
         fields = listener.group(2).split()
         endpoint = fields[0]
         if endpoint.isdecimal():
@@ -31269,7 +31288,10 @@ def _management_handoff_reuseport_site(text: str) -> str:
         sockets.append(identity)
         first.setdefault(identity, index)
         if "reuseport" in fields:
-            existing.setdefault(identity, index)
+            if index < len(listeners):
+                existing.setdefault(identity, index)
+            else:
+                existing[identity] = index
     owners = first | existing
     chunks: list[str] = []
     position = 0
@@ -32314,6 +32336,10 @@ def _management_handoff_publish_final_sites(
     ) != 0:
         return 2
     _install_nginx_include()
+    if verify_activation:
+        peers = _management_handoff_other_nginx_sites({NGINX_MANAGEMENT_SITE_PATH, NGINX_PUBLIC_SERVICES_SITE_PATH})
+        management_site = _management_handoff_reuseport_site(management_site, shared_sites=[public_site, *peers])
+        public_site = _management_handoff_reuseport_site(public_site, shared_sites=[management_site, *peers])
     sites: tuple[tuple[Path, str | None], ...] = (
         (NGINX_MANAGEMENT_SITE_PATH, management_site),
         (NGINX_PUBLIC_SERVICES_SITE_PATH, public_site if "server {" in public_site else None),

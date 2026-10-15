@@ -324,8 +324,9 @@ post-retirement observation checks every still-assigned address against the cand
 
 When an older management site still uses wildcard nginx sockets, the handoff first enables `reuseport` on those
 inherited sockets in a graceful reload, then activates address-specific replacements in a second graceful reload.
-Shared Public Services virtual hosts declare `reuseport` only once for each address and port, preserving an existing
-declaration when present so nginx does not reject duplicate socket options.
+Shared virtual hosts declare `reuseport` only once for each address and port across all published nginx sites,
+including management redirects and PXE HTTP. Publication preserves an unchanged site's existing declaration and
+coordinates paired final sites before validation so nginx does not reject duplicate socket options.
 Both steps require a new accepting worker generation under the same master; a successful reload signal alone does
 not prove activation. Candidate listeners retain socket reuse through application acknowledgement so rollback can
 restore a previous wildcard without a bind collision. Recovery activates that temporary bridge before reloading the
