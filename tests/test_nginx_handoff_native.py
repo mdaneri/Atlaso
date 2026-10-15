@@ -42,7 +42,12 @@ class NativeNginxHandoffTests(unittest.TestCase):
                 port = reservation.getsockname()[1]
 
             def site(binding, body):
-                """Render only the socket and response needed by this fixture."""
+                """Render only the socket and response needed by this fixture.
+
+                Args:
+                    binding: nginx listen endpoint for the generated server.
+                    body: Response body that identifies the serving generation.
+                """
                 return ("# Managed by Atlaso. Local changes may be overwritten.\n"
                         "server {\n"
                         f"  listen {binding} default_server;\n"
@@ -68,12 +73,20 @@ class NativeNginxHandoffTests(unittest.TestCase):
             direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
             def response(address):
-                """Read a fresh connection without proxy or keepalive reuse."""
+                """Read a fresh connection without proxy or keepalive reuse.
+
+                Args:
+                    address: Numeric loopback address to contact.
+                """
                 with direct.open(f"http://{address}:{port}/openapi.json", timeout=1) as result:
                     return result.read().decode()
 
             def wait_for(predicate):
-                """Bound asynchronous nginx activation and bind-failure observation."""
+                """Bound asynchronous nginx activation and bind-failure observation.
+
+                Args:
+                    predicate: Observation that must become true before timeout.
+                """
                 deadline = time.monotonic() + 8
                 while time.monotonic() < deadline:
                     try:
@@ -87,7 +100,12 @@ class NativeNginxHandoffTests(unittest.TestCase):
             real_run = subprocess.run
 
             def run(command, **kwargs):
-                """Replace only systemd supervision; execute the real nginx signaler."""
+                """Replace only systemd supervision; execute the real nginx signaler.
+
+                Args:
+                    command: Process command intercepted by the native fixture.
+                    **kwargs: Process-run options forwarded to the nginx signaler.
+                """
                 if command[:3] == ["systemctl", "show", "nginx.service"]:
                     if "--property=ActiveState,MainPID" in command:
                         return subprocess.CompletedProcess(command, 0, f"ActiveState=active\nMainPID={process.pid}\n", "")

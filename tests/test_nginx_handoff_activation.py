@@ -21,7 +21,12 @@ def load_helper_module():
 
 
 def test_active_workers_reports_master_and_worker_start_identity(monkeypatch, tmp_path):
-    """Use Linux start time with PID to distinguish a reloaded worker generation."""
+    """Use Linux start time with PID to distinguish a reloaded worker generation.
+
+    Args:
+        monkeypatch: Replace procfs and process probes with an isolated fixture.
+        tmp_path: Temporary procfs tree for the synthetic nginx processes.
+    """
     helper = load_helper_module()
     proc_root = tmp_path / "proc"
     worker_dir = proc_root / "431"
@@ -50,7 +55,11 @@ def test_active_workers_reports_master_and_worker_start_identity(monkeypatch, tm
 
 
 def test_reload_nginx_waits_for_new_worker_generation_without_restart(monkeypatch):
-    """A successful signal command is insufficient until new workers accept."""
+    """A successful signal command is insufficient until new workers accept.
+
+    Args:
+        monkeypatch: Replace nginx generation observations and systemd reload.
+    """
     helper = load_helper_module()
     generations = iter([(431, {(432, 19)}), (431, {(433, 20)})])
     commands = []
@@ -66,7 +75,12 @@ def test_reload_nginx_waits_for_new_worker_generation_without_restart(monkeypatc
 
 
 def test_reload_nginx_rejects_successful_signal_without_new_workers(monkeypatch, capsys):
-    """Do not report activation or use restart when reload leaves old workers."""
+    """Do not report activation or use restart when reload leaves old workers.
+
+    Args:
+        monkeypatch: Replace time, worker observations, and systemd reload.
+        capsys: Capture the diagnostic that explains the failed activation.
+    """
     helper = load_helper_module()
     commands = []
     ticks = iter(value / 4 for value in range(100))
@@ -104,7 +118,13 @@ def test_management_handoff_reuseport_is_added_once_to_every_listener():
 
 @pytest.mark.parametrize("reuseport", [False, True])
 def test_committed_reuseport_preserves_settings_scope_and_public_tls_ownership(monkeypatch, tmp_path, reuseport):
-    """A later Apply must read both committed dedicated and Access TLS listeners."""
+    """A later Apply must read both committed dedicated and Access TLS listeners.
+
+    Args:
+        monkeypatch: Isolate management and Public Services site paths.
+        tmp_path: Temporary files containing committed site snapshots.
+        reuseport: Whether the persisted generated listeners carry the option.
+    """
     helper = load_helper_module()
     management = tmp_path / "management.conf"
     public = tmp_path / "public.conf"
@@ -147,7 +167,12 @@ def test_committed_reuseport_preserves_settings_scope_and_public_tls_ownership(m
 
 
 def test_old_listener_migration_stops_after_unverified_wildcard_bridge(monkeypatch, tmp_path):
-    """Do not scope the old listener until its reuseport bridge is active."""
+    """Do not scope the old listener until its reuseport bridge is active.
+
+    Args:
+        monkeypatch: Replace journal and nginx installation boundaries.
+        tmp_path: Temporary prior management site.
+    """
     helper = load_helper_module()
     site = tmp_path / "management.conf"
     original = (
@@ -163,6 +188,13 @@ def test_old_listener_migration_stops_after_unverified_wildcard_bridge(monkeypat
     )
 
     def install(_path, text, *, verify_activation=False):
+        """Record each installation before simulating an activation failure.
+
+        Args:
+            _path: Management site path passed to the installer.
+            text: Candidate configuration requested for installation.
+            verify_activation: Whether a new accepting worker generation is required.
+        """
         events.append(("install", text, verify_activation))
         return 1
 
@@ -183,7 +215,12 @@ def test_old_listener_migration_stops_after_unverified_wildcard_bridge(monkeypat
 
 
 def test_restore_management_handoff_nginx_bridge_persists_exact_prior_bytes(monkeypatch, tmp_path):
-    """Use a transient reusable wildcard, then persist and reload the exact prior site."""
+    """Use a transient reusable wildcard, then persist and reload the exact prior site.
+
+    Args:
+        monkeypatch: Replace service state, filesystem sync, validation, and reload.
+        tmp_path: Temporary management site whose original bytes must be restored.
+    """
     helper = load_helper_module()
     site = tmp_path / "management.conf"
     original = (
@@ -201,6 +238,13 @@ def test_restore_management_handoff_nginx_bridge_persists_exact_prior_bytes(monk
     )
 
     def install(_path, text, *, verify_activation=False):
+        """Record transient rollback configuration and accept its activation.
+
+        Args:
+            _path: Management site path passed to the installer.
+            text: Transient reusable-wildcard configuration.
+            verify_activation: Whether a new accepting worker generation is required.
+        """
         events.append(("install", text, verify_activation))
         return 0
 
@@ -230,7 +274,12 @@ def test_restore_management_handoff_nginx_bridge_persists_exact_prior_bytes(monk
 def test_restore_management_handoff_nginx_bridge_keeps_exact_prior_bytes_on_activation_failure(
     monkeypatch, tmp_path,
 ):
-    """A failed transient wildcard activation still restores the exact site bytes."""
+    """A failed transient wildcard activation still restores the exact site bytes.
+
+    Args:
+        monkeypatch: Replace systemd and nginx boundaries with a failed activation.
+        tmp_path: Temporary site for verifying byte-exact rollback.
+    """
     helper = load_helper_module()
     site = tmp_path / "management.conf"
     original = b"server {\n  listen 443 ssl default_server;\n}\n"
@@ -261,12 +310,23 @@ def test_restore_management_handoff_nginx_bridge_keeps_exact_prior_bytes_on_acti
 
 
 def test_restore_management_handoff_starts_inactive_nginx_without_restart(monkeypatch, tmp_path):
-    """Start exact restored configuration after reboot and wait for its workers."""
+    """Start exact restored configuration after reboot and wait for its workers.
+
+    Args:
+        monkeypatch: Replace systemd, validation, and worker-generation probes.
+        tmp_path: Temporary directory reserved for recovery-related files.
+    """
     helper = load_helper_module()
     commands = []
     events = []
 
     def run(command, **_kwargs):
+        """Simulate an inactive service and record bounded systemctl requests.
+
+        Args:
+            command: systemctl command requested by the helper.
+            **_kwargs: Additional process-run options accepted by the helper.
+        """
         commands.append(command)
         output = "ActiveState=inactive\nMainPID=0\n" if command[1:2] == ["show"] else ""
         return subprocess.CompletedProcess(command, 0, output, "")
@@ -291,11 +351,21 @@ def test_restore_management_handoff_starts_inactive_nginx_without_restart(monkey
 
 
 def test_restore_management_handoff_refuses_ambiguous_nginx_state(monkeypatch):
-    """Do not mutate nginx when systemd cannot prove an inactive service."""
+    """Do not mutate nginx when systemd cannot prove an inactive service.
+
+    Args:
+        monkeypatch: Replace systemd and make nginx mutations fail if attempted.
+    """
     helper = load_helper_module()
     commands = []
 
     def run(command, **_kwargs):
+        """Return an indeterminate active service state.
+
+        Args:
+            command: systemctl command requested by the helper.
+            **_kwargs: Additional process-run options accepted by the helper.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(
             command, 0, "ActiveState=activating\nMainPID=431\n", "",

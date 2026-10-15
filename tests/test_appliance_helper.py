@@ -2974,6 +2974,7 @@ def test_management_handoff_wildcard_migration_preserves_public_ownership(
         Args:
             path: Target management site.
             text: Migrated management configuration.
+            verify_activation: Require a new accepting nginx worker generation.
         """
         installed.append((text, verify_activation))
         events.append(("install", text, verify_activation))
@@ -2985,6 +2986,12 @@ def test_management_handoff_wildcard_migration_preserves_public_ownership(
     states = []
 
     def write_state(current, phase):
+        """Capture the durable handoff journal transition.
+
+        Args:
+            current: Handoff state being persisted.
+            phase: Durable transaction phase name.
+        """
         states.append((current.copy(), phase))
         events.append(("journal", current.copy(), phase))
 
