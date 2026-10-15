@@ -4050,6 +4050,10 @@ elseif ($readinessIdentity) {
 }
 }
 finally {
+    if ($ownershipContext.PSObject.Properties['CheckoutSourcePin'] -and $ownershipContext.CheckoutSourcePin) {
+        $ownershipContext.CheckoutSourcePin.Dispose()
+        $ownershipContext.CheckoutSourcePin=$null
+    }
     if ($ownershipContext.PSObject.Properties['RestoredOutputPin'] -and $ownershipContext.RestoredOutputPin) {
         $ownershipContext.RestoredOutputPin.Dispose()
         $ownershipContext.RestoredOutputPin=$null

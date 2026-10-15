@@ -225,8 +225,24 @@ Original task checkout, branch and exact source commit admitted before preflight
 function Assert-AtlasoTestVmCheckoutSource {
     param([Parameter(Mandatory = $true)][psobject]$Context)
     if (-not $Context.Enabled) { return }
+    $borrowed = $Context.PSObject.Properties['CheckoutSourcePin'] -and $Context.CheckoutSourcePin
+    $sourcePin = if ($borrowed) { $Context.CheckoutSourcePin } else {
+        $holder = [pscustomobject]@{
+            Pins = [Collections.Generic.List[object]]::new()
+            Files = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            Directories = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            Disposed = $false
+        }
+        $holder | Add-Member ScriptMethod Dispose {
+            for ($i=$this.Pins.Count-1; $i -ge 0; $i--) { $this.Pins[$i].Dispose() }
+            $this.Pins.Clear(); $this.Disposed=$true
+        }
+        $holder
+    }
+    $published = $false
     $worktreePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath([string]$Context.Worktree, $true)
     try {
+    if ($sourcePin.Disposed) { throw 'Verified checkout source handles were already released; mutation refused.' }
     if (-not $Context.PSObject.Properties['WorktreeDirectoryId'] -or
         [Atlaso.WorkstationFileIdentity]::Get([string]$Context.Worktree) -cne [string]$Context.WorktreeDirectoryId) {
         throw 'The admitted task worktree filesystem identity changed; infrastructure mutation refused.'
@@ -255,6 +271,17 @@ function Assert-AtlasoTestVmCheckoutSource {
             throw 'Tracked source flags or ambiguous file admission changed during preflight; infrastructure mutation refused.'
         }
         $expected.Add($match.Groups[2].Value)
+        $file = [IO.Path]::GetFullPath((Join-Path $Context.Worktree $match.Groups[3].Value))
+        if (-not $file.StartsWith(([string]$Context.Worktree + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Tracked source path escaped the admitted checkout.'
+        }
+        $directory = [IO.Path]::GetDirectoryName($file)
+        if ($sourcePin.Directories.Add($directory)) {
+            $sourcePin.Pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($directory,$true))
+        }
+        if ($sourcePin.Files.Add($file)) {
+            $sourcePin.Pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($file,$true))
+        }
         # hash-object reads file bytes independently of index stat/fsmonitor caches,
         # while applying the same checkout normalization as Git's clean filters.
         $paths.Add('"' + $match.Groups[3].Value.Replace('\', '\\').Replace('"', '\"') + '"')
@@ -268,8 +295,13 @@ function Assert-AtlasoTestVmCheckoutSource {
             throw 'Tracked source bytes changed during preflight; infrastructure mutation refused.'
         }
     }
+    $Context | Add-Member CheckoutSourcePin $sourcePin -Force
+    $published = $true
     }
-    finally { $worktreePin.Dispose() }
+    finally {
+        $worktreePin.Dispose()
+        if (-not $borrowed -and -not $published) { $sourcePin.Dispose() }
+    }
 }
 
 <#

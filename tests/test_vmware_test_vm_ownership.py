@@ -1226,6 +1226,9 @@ def test_agent_context_uses_configured_root_and_requires_registered_clean_worktr
     (checkout / "source.txt").write_text("source", encoding="utf-8")
     (checkout / ".gitattributes").write_text("*.txt text\n", encoding="utf-8")
     (checkout / "spaced name.txt").write_bytes(b"line\n")
+    (checkout / "deps").mkdir()
+    (checkout / "deps" / "helper-dependency.ps1").write_text("function Get-FixtureMarker { 'original' }\n", encoding="utf-8")
+    (checkout / "helper.ps1").write_text(". (Join-Path $PSScriptRoot 'deps/helper-dependency.ps1'); $global:fixtureResult=Get-FixtureMarker\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(checkout), "add", "."], check=True)
     subprocess.run(["git", "-C", str(checkout), "commit", "-m", "source"], check=True,
                    capture_output=True, text=True)
@@ -1292,6 +1295,27 @@ def test_agent_context_uses_configured_root_and_requires_registered_clean_worktr
                        check=True, capture_output=True, text=True)
     clean = run_powershell(admission + "Assert-AtlasoTestVmCheckoutSource -Context $ctx")
     assert clean.returncode == 0
+
+    wrapper = (VMWARE / "create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
+    final_release = wrapper.rsplit("\nfinally {", 1)[1].rsplit("\n}", 1)[0]
+    probe = admission + "$ownershipContext=$ctx;try{try{Assert-AtlasoTestVmCheckoutSource -Context $ctx;$blocked=0;"
+    probe += f"$helper={ps_literal(checkout / 'helper.ps1')};$dependency={ps_literal(checkout / 'deps' / 'helper-dependency.ps1')};"
+    probe += "try{[IO.File]::AppendAllText($helper,'changed')}catch{$blocked++};try{[IO.File]::Move($helper,($helper+'.replacement'))}catch{$blocked++};"
+    probe += "try{[IO.File]::AppendAllText($dependency,'changed')}catch{$blocked++};try{[IO.Directory]::Move((Split-Path $dependency),((Split-Path $dependency)+'-replacement'))}catch{$blocked++};"
+    probe += "try{[IO.Directory]::Move($ctx.Worktree,($ctx.Worktree+'-replacement'))}catch{$blocked++};if($blocked -ne 5){throw 'Verified helper source remained mutable'};"
+    probe += "Assert-AtlasoTestVmCheckoutSource -Context $ctx;& $helper;if($global:fixtureResult -cne 'original'){throw 'Unverified helper dependency executed'};throw 'Expected guarded provider failure'"
+    probe += "}finally{" + final_release + "}}catch{if($_.Exception.Message -cne 'Expected guarded provider failure'){throw}};"
+    probe += "if($ctx.CheckoutSourcePin){throw 'Invocation retained source handles after failure'};$released=[IO.File]::Open($helper,'Open','Write','None');$released.Dispose();"
+    probe += "[IO.Directory]::Move($ctx.Worktree,($ctx.Worktree+'-released'));[IO.Directory]::Move(($ctx.Worktree+'-released'),$ctx.Worktree);"
+    guarded = run_powershell(probe, check=False)
+    assert guarded.returncode == 0, guarded.stdout + guarded.stderr
+
+    failed_pin = admission + "$realGit=(Get-Command git -CommandType Application | Select-Object -First 1).Source;function git {if($args -contains 'hash-object'){throw 'Injected tracked hashing failure'};& $realGit @args};"
+    failed_pin += "try{Assert-AtlasoTestVmCheckoutSource -Context $ctx;throw 'Expected admission refusal'}catch{if($_.Exception.Message -cne 'Injected tracked hashing failure'){throw}};"
+    failed_pin += f"$released=[IO.File]::Open({ps_literal(checkout / 'helper.ps1')},'Open','Write','None');$released.Dispose();"
+    failed_pin += "[IO.Directory]::Move($ctx.Worktree,($ctx.Worktree+'-released'));[IO.Directory]::Move(($ctx.Worktree+'-released'),$ctx.Worktree);"
+    partial = run_powershell(failed_pin, check=False)
+    assert partial.returncode == 0, partial.stdout + partial.stderr
 
     replacement = admission + "[IO.Directory]::Move($ctx.Worktree,($ctx.Worktree+'-original'));[IO.Directory]::CreateDirectory($ctx.Worktree)|Out-Null;"
     replacement += "Get-ChildItem -LiteralPath ($ctx.Worktree+'-original') -Force | Where-Object Name -ne '.git' | Copy-Item -Destination $ctx.Worktree -Recurse -Force;"

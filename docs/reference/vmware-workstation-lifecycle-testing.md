@@ -1230,6 +1230,9 @@ the VM preserved. The admitted task branch, exact commit and clean checkout are 
 network preparation, recovery/removal, disk reset and clone preparation; preflight drift refuses mutation.
 Admission records the original worktree directory identity while pinned. Every source guard re-pins and checks that
 identity before checking Git state; a byte-identical replacement checkout cannot authorize mutation.
+Verified tracked files and their directories stay pinned against writes, deletion and replacement through invocation
+completion, covering helpers and their checked-in dependencies after each guard returns. The wrapper releases these
+handles in its outer `finally` on success or failure; failed initial admission releases partial pins before returning.
 Each boundary also rejects assume-unchanged/skip-worktree entries and independently hashes all tracked file bytes
 against the admitted index, applying Git's normal clean conversion for checkout line endings. Cached status or
 fsmonitor results cannot substitute for this byte verification; index changes or hashing failures refuse mutation.
