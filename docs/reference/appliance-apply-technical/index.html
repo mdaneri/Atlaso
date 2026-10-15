@@ -5219,6 +5219,17 @@ separate snapshotted certificate and key files, including when the protocol rema
 certificate rotates. The pre-retirement candidate certificate check excludes old-only live addresses served by those
 blocks while retaining configured, acquired dynamic, and unrelated secondary candidate addresses. The final
 post-retirement observation checks every still-assigned address against the candidate certificate before commit.</p>
+<p>When an older management site still uses wildcard nginx sockets, the handoff first enables <code>reuseport</code> on those
+inherited sockets in a graceful reload, then activates address-specific replacements in a second graceful reload.
+Shared virtual hosts declare <code>reuseport</code> only once for each address and port across all published nginx sites,
+including management redirects and PXE HTTP. Publication preserves an unchanged site's existing declaration and
+coordinates paired final sites before validation so nginx does not reject duplicate socket options.
+Both steps require a new accepting worker generation under the same master; a successful reload signal alone does
+not prove activation. Candidate listeners retain socket reuse through application acknowledgement so rollback can
+restore a previous wildcard without a bind collision. Recovery activates that temporary bridge before reloading the
+exact snapshotted configuration. These transitions do not restart nginx or retire the old management path before
+strict candidate readiness. For reload diagnosis, inspect retained nginx error history as well as the current error
+file: the log collector seals older generations, so the current file can be empty after a failed reload.</p>
 <p>When DHCP offers the same IPv4 address as a retained static management address, address presence alone is not lease
 proof. Atlaso also requires a live networkd DHCP client, matching interface-index lease address and netmask, and a
 configured DHCP route with the same preferred source and DHCP server. Missing, expired, or inconsistent evidence keeps
