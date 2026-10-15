@@ -517,13 +517,15 @@ def _write_test_vm_wrapper_harness(directory: Path) -> Path:
     script_root = str(VMWARE_SCRIPT_ROOT).replace("'", "''")
     source = source.replace(
         error_preference,
-        f"$script:AtlasoWrapperScriptRoot = '{script_root}'\n{error_preference}",
+        # This fake-provider harness exercises ordinary human CLI behavior;
+        # its synthetic VM must not inherit the surrounding agent's real task.
+        f"$script:AtlasoWrapperScriptRoot = '{script_root}'\n$env:CODEX_THREAD_ID = ''\n{error_preference}",
         1,
     )
 
     replace_segment(
         "if (-not $WhatIfPreference) {\n"
-        "    # Admit the exact fork release before recovery or any credential-side",
+        "    # Recovery consumes no 1Password material.",
         "if (-not $WhatIfPreference) {\n"
         "    # Resolve new Environment configuration only after credential-independent",
         "$resolvedVmrunPath = $VmrunPath\n",

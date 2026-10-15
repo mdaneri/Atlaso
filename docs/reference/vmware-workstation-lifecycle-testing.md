@@ -1166,6 +1166,98 @@ The normal test-VM `-Redeploy` path also requires the exact named VMX and exactl
 `-ResetDataDisks` accepts only strict canonical
 descendants of the selected VM output, so sibling-prefix and reparse-point paths are refused.
 
+## Normal test-VM creation ownership
+
+Codex runs of `create-atlaso-test-vm.ps1` independently read the active `desktop.git-worktree-root` and bind the exact
+task, registered clean checkout, branch, source commit, and canonical VM name. Durable receipts live in the existing
+`.task-ownership` directory beneath that configured root, outside the task checkout and VM removal scope. Missing,
+redirected, conflicting, or out-of-root evidence blocks creation before credential access.
+
+The wrapper publishes an immutable `atlaso-test-vm-intent-<id>.json` before cloning. The low-level clone callback
+publishes `atlaso-test-vm-original-<id>.json` with the original clone-directory and VMX identities before appliance
+configuration, credential staging, or startup. A persistent non-secret VMX identity preserves the binding when
+Workstation replaces the VMX file during startup; the original filesystem identity remains historical creation evidence.
+The source template is recorded as read-only provenance and is never a cleanup target.
+The owned clone starts suspended in a fresh named kill-on-close Windows job. Before creating the destination or
+resuming the child, the wrapper publishes an immutable `atlaso-test-vm-clone-process-<id>.json` recording the original
+controller and child creation times, boot identity, job name, task/source and intent binding. Each original directory
+receipt includes that process receipt's path and SHA-256. Failed publication terminates the suspended child tree;
+an existing job name is refused without adopting its processes. Clone completion requires whole-job quiescence.
+Before provider cloning, the wrapper exclusively creates each missing destination component relative to its pinned
+parent and immediately publishes an immutable `atlaso-test-vm-directory-<id>.json` creation record. It retains the
+original directory handles with writer and replacement exclusion through cloning and the original VM receipt callback.
+The original VM receipt publisher verifies and borrows the retained creation handle instead of opening a conflicting
+second directory pin.
+A concurrently inserted directory or junction is refused rather than adopted. Failed preparation preserves its
+published records. If directory-receipt publication fails, the still-suspended clone cannot resume and the newly
+created empty object is retired through its retained creation handle. Nonempty retirement refuses and preserves
+inserted artifacts. Successfully recorded but incomplete destinations retain their
+original records; preparation does not invent a completed VM receipt. Retry an incomplete
+canonical output with `-RecoverPreparedDirectory`, `-PreparedDirectoryReceiptPath`, and
+`-PreparedDirectoryReceiptSha256` using the selectors emitted at its original preparation. This is a cleanup-only
+invocation: it rejects creation options before removal and exits without cloning; retry creation separately.
+Recovery retains the original root through handle-based deletion and verifies the
+original receipt, intent, task/source ancestry and directory identity inside the owning remover before retiring an
+empty destination. Directory and process receipts do not prove child creation: every nonempty prepared directory,
+including one containing ordinary partial-clone files, is preserved without child creation evidence. A later cleanup
+snapshot cannot supply that evidence. A replaced directory or altered receipt is also preserved. Recovery verifies
+the original process binding and refuses an active or reused controller.
+An empty preparation receipt owns no VMX or Workstation registration. Prepared cleanup preserves stale provider
+registrations, including entries introduced after admission, rather than repairing them through the directory scope.
+On the same boot it uses the exact recorded child identity and named job to prove or complete owned-tree termination;
+a proven prior host boot independently establishes quiescence. Missing, ambiguous or legacy process evidence preserves
+the directory without retrofitting receipts or stopping unrelated processes.
+Completed clones still require their original VM receipt and the normal redeploy path.
+Ancestor preparation records remain historical evidence; recovery never removes a shared parent directory.
+The clone callback emits the original receipt path and SHA-256 immediately after publication, so preserve those
+selectors even when later configuration or readiness fails.
+
+Preserve each returned receipt path and SHA-256 digest with the task's resource inventory. Redeployment must prove the
+same task and original directory and persistent VM identity from its creation receipt. Remaining receipt-bound VM
+artifacts retire through captured directory/file handles even when the VM is unregistered or provider deletion leaves
+the directory behind. Immediate failed-creation rollback and persisted rollback cleanup pass the verified original
+directory and persistent VM identity selectors to the removal child. Missing original receipt admission preserves
+the VM; persisted cleanup also refuses a marker for a different task destination.
+Redeployment creates a new intent and
+original receipt for the replacement. For an existing VM, pass `-OwnershipReceiptPath` and
+`-OwnershipReceiptSha256` from the independently preserved task inventory; do not derive a replacement digest from
+the current receipt. Both selectors are required in receipt-enabled runs. Output ancestors are checked before
+credential access and pinned through cloning, and the recorded source template identity and expected commit are
+rechecked at that boundary. Source ancestors stay pinned against replacement; the VMX, provenance and both payload
+disks exclude writes and replacement from byte validation through cloning. A missing receipt, changed identity,
+failed publication, or ambiguous state keeps
+the VM preserved. The admitted task branch, exact commit and clean checkout are revalidated immediately before
+network preparation, recovery/removal, disk reset and clone preparation; preflight drift refuses mutation.
+Admission records the original worktree directory identity while pinned. Every source guard re-pins and checks that
+identity before checking Git state; a byte-identical replacement checkout cannot authorize mutation.
+Verified tracked files and their directories stay pinned against writes, deletion and replacement through invocation
+completion, covering helpers and their checked-in dependencies after each guard returns. The wrapper releases these
+handles in its outer `finally` on success or failure; failed initial admission releases partial pins before returning.
+Within the trusted entrypoint/host contract above, guards also compare the already parsed entry/call-stack scripts
+and loaded checkout functions, including module-private functions, with the pinned commit-verified text. Restoring
+files after parsing cannot authorize stale in-memory code. This does not create an independent host trust boundary.
+Each boundary also rejects assume-unchanged/skip-worktree entries and independently hashes all tracked file bytes
+against the immutable admitted commit tree, applying Git's normal clean conversion for checkout line endings. The staged
+inventory and flags must match that tree; an index swap cannot change the expected helper hashes. Cached status or
+fsmonitor results cannot substitute for this byte verification; index changes or hashing failures refuse mutation.
+The source guard also runs immediately before post-clone signer staging, startup, signer-scrub restart, NIC configuration,
+immediate/persisted removal and the final readiness helper launch. Late source drift preserves the VM rather than
+executing changed helper code.
+Never manufacture an original receipt from a later snapshot, edit a receipt, or delete an incomplete
+publication to make admission pass. `-WhatIf` publishes no receipts and performs no credential or VM mutation.
+
+Ordinary human CLI runs retain their existing behavior. Explicit externally recorded human runs select
+`-OwnershipRoot` and `-OwnershipTaskId` together; the root must be an existing permitted durable root containing the
+source checkout, with receipts outside the checkout and removal scopes. Agent runs use their active task and supported
+configuration instead of accepting those overrides.
+
+Use the exact receipt's VMX and canonical name with `remove-atlaso-vm.ps1` only after independent ownership and
+quiescence checks. Pass its original directory identity as `-ExpectedRootIdentity` and persistent VM identity digest
+as `-ExpectedPersistentVmIdentitySha256`; the owning remover binds its cleanup snapshot to both before stopping the VM.
+Preserve the receipts outside cleanup scopes and record provider, VM path, and resource absence
+separately. A published creation receipt establishes ownership; it does not establish appliance readiness or KMIP
+interoperability.
+
 ## Normal Test VM
 
 For a normal Workstation appliance VM, separate from the lifecycle lab, store the exact `Atlaso` Environment ID once in
@@ -1348,6 +1440,42 @@ reused disks quarantined while an artifact-removal child may survive. An unprove
 marker until a Windows host restart provides that proof.
 If this final stop/scrub/restart sequence is interrupted, rerun the same wrapper command. The pending marker resumes
 before 1Password preflight or any new network, disk, or VM mutation; do not edit the marker or VMX manually.
+Agent-owned retries validate the original VM receipt and exact marker destination before scrubbing, stopping,
+quarantining disks, retiring a marker, or removing artifacts. Foreign markers and legacy identity repairs are preserved
+without mutation; an ownership context for another VM cannot authorize their recovery.
+Live pending recovery retains the receipt-bound original root pin through signer, stop/restart and quarantine helpers.
+It releases that pin only for the removal child's independent original-identity admission and captured-handle removal;
+all refusal and completion paths release their pins without adopting a replacement root.
+Owned marker publication also emits an immutable cleanup recovery receipt path and SHA-256 before staging or removal.
+Preserve both independently. If an interrupted removal has already removed the VM root, rerun with the original VM
+receipt selectors plus `-CleanupRecoveryReceiptPath` and `-CleanupRecoveryReceiptSha256`. This recovery-only mode
+validates the immutable task, VM receipt, marker, preserved disk and quarantine bindings without requiring the live
+VM; stopped/process-quiescence and disk identity checks still precede restoration. It exits after recovery and forbids
+redeploy. Legacy markers without original recovery evidence are preserved; never manufacture that evidence afterward.
+Receipt-only recovery runs before Python/1Password SDK artifact admission. Missing SDK tooling cannot strand preserved
+disks; artifact verification remains mandatory before fresh credential or creation work.
+If recovery restores canonical in-directory disk components, it publishes an original restored-directory receipt path
+and SHA-256 before moving them. Zero-disk removal recovery also publishes an original empty restored root before
+retiring its marker; preserve those selectors for the next creation retry. Any pre-existing unreceipted replacement
+root is refused before provider reconciliation, even when no disks need restoring.
+Preserve both. A later creation retry passes `-RestoredDirectoryReceiptPath` and
+`-RestoredDirectoryReceiptSha256`. Recovery pins each moved original disk, validates the complete restored inventory,
+and retires the cleanup marker while those pins still exclude writes, deletion and replacement. A failed validation or
+marker retirement preserves the marker for another bounded recovery.
+Retry proceeds without `-Redeploy`. Admission checks that original root and its exact ordinary disk
+components, refusing replacements, extra files/directories, missing selectors and legacy state. The original root and
+disk handles remain held through cloning; a fresh VM receives its own original VM receipt. `-ResetDataDisks` removes
+only that admitted complete component set through captured handles before creating replacement disks. Nested or
+unproven component layouts remain quarantined rather than acquiring ownership from a later snapshot.
+Restored-root cloning validates both system payload roles and permits only the separately receipt-bound data VMDK
+components alongside them. Source-image validation still requires exactly two payload disks; unexpected clone VMDKs
+are refused.
+Rerun an interrupted creation with the preserved original receipt selectors without adding `-Redeploy` solely for
+recovery. Pending cleanup runs before an existing-VM rejection. If import recovery leaves a healthy VM in place, the
+wrapper preserves it and rejects recreation after recovery, before obtaining new credentials.
+Fresh source-template resolution, provenance validation, and creation-intent publication follow pending recovery and
+the existing-VM check. A removed or replaced template therefore cannot strand recovery for an already-receipted VM;
+if recovery removes the failed VM, any subsequent creation still requires valid source provenance.
 
 ## Fidelity Boundary
 
