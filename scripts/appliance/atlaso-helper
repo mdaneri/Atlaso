@@ -10104,9 +10104,9 @@ def _existing_management_scoped_addresses() -> tuple[list[str], list[str], int, 
     listeners = [line.strip() for line in site.splitlines() if line.strip().startswith("listen ")]
     if not listeners:
         raise ValueError("existing management listener inventory is empty")
-    if any(re.fullmatch(r"listen (?:\d+|\[::\]:\d+)(?: ssl)? default_server;", line)
+    if any(re.fullmatch(r"listen (?:\d+|\[::\]:\d+)(?: ssl)? default_server(?: reuseport)?;", line)
            for line in listeners):
-        if any(not re.fullmatch(r"listen (?:\d+|\[::\]:\d+)(?: ssl)? default_server;", line)
+        if any(not re.fullmatch(r"listen (?:\d+|\[::\]:\d+)(?: ssl)? default_server(?: reuseport)?;", line)
                for line in listeners):
             raise ValueError("existing management listeners mix wildcard and scoped sockets")
         return None
@@ -10114,7 +10114,7 @@ def _existing_management_scoped_addresses() -> tuple[list[str], list[str], int, 
     ports: dict[bool, set[int]] = {False: set(), True: set()}
     for line in listeners:
         match = re.fullmatch(
-            r"listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+)( ssl)? default_server;", line,
+            r"listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+)( ssl)? default_server(?: reuseport)?;", line,
         )
         if match is None:
             raise ValueError("existing management listener inventory is not canonical")
@@ -31154,8 +31154,8 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
     scoped_ports: dict[bool, set[int]] = {False: set(), True: set()}
     allowed = {str(address) for address in addresses} | {"127.0.0.1", "::1"}
     for line in site.splitlines():
-        ipv4 = re.fullmatch(r"(\s*)listen (\d+)( (?:ssl )?default_server);", line)
-        ipv6 = re.fullmatch(r"(\s*)listen \[::\]:(\d+)( (?:ssl )?default_server);", line)
+        ipv4 = re.fullmatch(r"(\s*)listen (\d+)( (?:ssl )?default_server)(?: reuseport)?;", line)
+        ipv6 = re.fullmatch(r"(\s*)listen \[::\]:(\d+)( (?:ssl )?default_server)(?: reuseport)?;", line)
         if ipv4 or ipv6:
             match = ipv4 or ipv6
             listeners += 1
@@ -32138,7 +32138,7 @@ def _management_handoff_previous_public_tls_addresses(state: dict) -> set[str]:
     previous = {str(ip_address(value)) for value in state.get("previous_management_addresses", [])}
     owned: set[str] = set()
     for line in site.splitlines():
-        match = re.fullmatch(r"\s*listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+) ssl default_server;", line)
+        match = re.fullmatch(r"\s*listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+) ssl default_server(?: reuseport)?;", line)
         if match is None or int(match.group(3)) != public_port:
             continue
         address = ip_address(match.group(1) or match.group(2))
@@ -32160,7 +32160,7 @@ def _management_handoff_candidate_public_tls_addresses(path: Path, port: int) ->
     owned: set[str] = set()
     for line in site.splitlines():
         match = re.fullmatch(
-            r"\s*listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+) ssl(?: default_server)?;", line,
+            r"\s*listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+) ssl(?: default_server)?(?: reuseport)?;", line,
         )
         if match is not None and int(match.group(3)) == port:
             owned.add(str(ip_address(match.group(1) or match.group(2))))

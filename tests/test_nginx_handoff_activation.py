@@ -102,6 +102,50 @@ def test_management_handoff_reuseport_is_added_once_to_every_listener():
     assert helper._management_handoff_reuseport_site(transformed) == transformed
 
 
+@pytest.mark.parametrize("reuseport", [False, True])
+def test_committed_reuseport_preserves_settings_scope_and_public_tls_ownership(monkeypatch, tmp_path, reuseport):
+    """A later Apply must read both committed dedicated and Access TLS listeners."""
+    helper = load_helper_module()
+    management = tmp_path / "management.conf"
+    public = tmp_path / "public.conf"
+    backup = tmp_path / "public.snapshot"
+    addresses = ["127.0.0.1", "::1", "192.0.2.10", "2001:db8::10"]
+    text = helper._management_nginx_config(
+        {"fqdn": "atlaso.example.test", "management_https_enabled": True},
+        Path("/etc/atlaso/management.crt"), Path("/etc/atlaso/management.key"),
+        listen_addresses=addresses, https_listen_addresses=["127.0.0.1", "::1"],
+    )
+    public_text = (
+        "# Managed by Atlaso. Local changes may be overwritten.\nserver {\n"
+        "  listen 192.0.2.10:443 ssl default_server;\n"
+        "  listen [2001:db8::10]:443 ssl default_server;\n  server_name _;\n}\n"
+    )
+    if reuseport:
+        text = helper._management_handoff_reuseport_site(text)
+        public_text = helper._management_handoff_reuseport_site(public_text)
+    management.write_text(text, encoding="utf-8")
+    public.write_text(public_text, encoding="utf-8")
+    backup.write_text(public_text, encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management)
+    monkeypatch.setattr(helper, "NGINX_PUBLIC_SERVICES_SITE_PATH", public)
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda *_args, **_kwargs: pytest.fail("scope changed"))
+    preserved = helper._existing_management_scoped_addresses()
+    assert set(preserved[0]) == set(addresses)
+    assert set(preserved[1]) == {"127.0.0.1", "::1"}
+    assert preserved[2:] == (80, 443)
+    state = {
+        "previous_management_addresses": ["192.0.2.10", "2001:db8::10"],
+        "previous_https_enabled": True,
+        "previous_management_public_port": 443,
+        "snapshots": [{"path": str(public), "backup": str(backup)}],
+    }
+    expected = {"192.0.2.10", "2001:db8::10"}
+    assert helper._management_handoff_previous_public_tls_addresses(state) == expected
+    assert helper._management_handoff_candidate_public_tls_addresses(public, 443) == expected
+    helper._scope_management_handoff_old_listener(state)
+    assert management.read_text(encoding="utf-8") == text
+
+
 def test_old_listener_migration_stops_after_unverified_wildcard_bridge(monkeypatch, tmp_path):
     """Do not scope the old listener until its reuseport bridge is active."""
     helper = load_helper_module()

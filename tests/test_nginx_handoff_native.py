@@ -50,7 +50,9 @@ class NativeNginxHandoffTests(unittest.TestCase):
                         f'  location / {{ return 200 "{body}"; }}\n'
                         "}\n")
 
-            original = site(str(port), "old")
+            original = site(str(port), "old").replace(
+                "  server_name _;", f"  listen [::]:{port} default_server;\n  server_name _;",
+            )
             management.write_text(original)
             main.write_text(
                 f"daemon off; worker_processes 1; pid {root}/nginx.pid; error_log {log} notice;\n"
@@ -123,6 +125,8 @@ class NativeNginxHandoffTests(unittest.TestCase):
                     helper._scope_management_handoff_old_listener(state)
                     self.assertTrue(state["nginx_reuseport_bridge"])
                     self.assertEqual(response("127.0.0.2"), "old")
+                    self.assertEqual(set(helper._existing_management_scoped_addresses()[0]),
+                                     {"127.0.0.1", "127.0.0.2", "::1"})
                     candidate = helper._management_handoff_reuseport_site(
                         site(f"127.0.0.3:{port}", "candidate"))
                     self.assertEqual(helper._install_nginx_site(public, candidate, verify_activation=True), 0)
