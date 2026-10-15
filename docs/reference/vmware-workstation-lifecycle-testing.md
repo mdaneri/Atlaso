@@ -1234,7 +1234,8 @@ Verified tracked files and their directories stay pinned against writes, deletio
 completion, covering helpers and their checked-in dependencies after each guard returns. The wrapper releases these
 handles in its outer `finally` on success or failure; failed initial admission releases partial pins before returning.
 Each boundary also rejects assume-unchanged/skip-worktree entries and independently hashes all tracked file bytes
-against the admitted index, applying Git's normal clean conversion for checkout line endings. Cached status or
+against the immutable admitted commit tree, applying Git's normal clean conversion for checkout line endings. The staged
+inventory and flags must match that tree; an index swap cannot change the expected helper hashes. Cached status or
 fsmonitor results cannot substitute for this byte verification; index changes or hashing failures refuse mutation.
 The source guard also runs immediately before post-clone signer staging, startup, signer-scrub restart, NIC configuration,
 immediate/persisted removal and the final readiness helper launch. Late source drift preserves the VM rather than

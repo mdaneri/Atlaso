@@ -1317,6 +1317,15 @@ def test_agent_context_uses_configured_root_and_requires_registered_clean_worktr
     partial = run_powershell(failed_pin, check=False)
     assert partial.returncode == 0, partial.stdout + partial.stderr
 
+    swapped = admission + "$realGit=(Get-Command git -CommandType Application | Select-Object -First 1).Source;function git {$result=& $realGit @args;$exit=$LASTEXITCODE;if($args -contains '--cached'){"
+    swapped += f"[IO.File]::WriteAllText({ps_literal(checkout / 'helper.ps1')},'throw '+[char]39+'changed helper'+[char]39);"
+    swapped += "& $realGit -C $ctx.Worktree add -- helper.ps1};$global:LASTEXITCODE=$exit;$result};Assert-AtlasoTestVmCheckoutSource -Context $ctx;"
+    swapped += f"[IO.File]::WriteAllText({ps_literal(provider_sentinel)},'provider')"
+    raced = run_powershell(swapped, check=False)
+    assert raced.returncode != 0 and "source index or flags changed" in raced.stderr
+    assert not provider_sentinel.exists()
+    subprocess.run(["git", "-C", str(checkout), "checkout", "HEAD", "--", "helper.ps1"], check=True, capture_output=True, text=True)
+
     replacement = admission + "[IO.Directory]::Move($ctx.Worktree,($ctx.Worktree+'-original'));[IO.Directory]::CreateDirectory($ctx.Worktree)|Out-Null;"
     replacement += "Get-ChildItem -LiteralPath ($ctx.Worktree+'-original') -Force | Where-Object Name -ne '.git' | Copy-Item -Destination $ctx.Worktree -Recurse -Force;"
     replacement += "[IO.Directory]::Move((Join-Path ($ctx.Worktree+'-original') '.git'),(Join-Path $ctx.Worktree '.git'));"

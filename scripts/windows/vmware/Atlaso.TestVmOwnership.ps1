@@ -261,16 +261,18 @@ function Assert-AtlasoTestVmCheckoutSource {
     }
     & git -C $Context.Worktree diff --cached --quiet --no-ext-diff HEAD -- 2>$null
     if ($LASTEXITCODE -ne 0) { throw 'The admitted source index changed during preflight; infrastructure mutation refused.' }
-    $entries = @(& git -C $Context.Worktree -c core.quotePath=false ls-files -v --stage 2>$null)
+    $entries = @(& git --no-replace-objects -C $Context.Worktree -c core.quotePath=false ls-tree -r --full-tree $Context.SourceCommit 2>$null)
     if ($LASTEXITCODE -ne 0 -or -not $entries.Count) { throw 'Tracked source enumeration failed during preflight.' }
     $paths = [Collections.Generic.List[string]]::new()
     $expected = [Collections.Generic.List[string]]::new()
+    $committed = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
     foreach ($entry in $entries) {
-        $match = [regex]::Match($entry, '^H (100644|100755) ([0-9a-f]{40}) 0\t([^"\r\n]+)$')
+        $match = [regex]::Match($entry, '^(100644|100755) blob ([0-9a-f]{40})\t([^"\r\n]+)$')
         if (-not $match.Success) {
             throw 'Tracked source flags or ambiguous file admission changed during preflight; infrastructure mutation refused.'
         }
         $expected.Add($match.Groups[2].Value)
+        $committed.Add($match.Groups[3].Value,($match.Groups[1].Value+' '+$match.Groups[2].Value))
         $file = [IO.Path]::GetFullPath((Join-Path $Context.Worktree $match.Groups[3].Value))
         if (-not $file.StartsWith(([string]$Context.Worktree + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) {
             throw 'Tracked source path escaped the admitted checkout.'
@@ -285,6 +287,15 @@ function Assert-AtlasoTestVmCheckoutSource {
         # hash-object reads file bytes independently of index stat/fsmonitor caches,
         # while applying the same checkout normalization as Git's clean filters.
         $paths.Add('"' + $match.Groups[3].Value.Replace('\', '\\').Replace('"', '\"') + '"')
+    }
+    $indexEntries = @(& git -C $Context.Worktree -c core.quotePath=false ls-files -v --stage 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $indexEntries.Count -ne $entries.Count) { throw 'The admitted source index inventory changed during preflight.' }
+    foreach ($entry in $indexEntries) {
+        $match = [regex]::Match($entry, '^H (100644|100755) ([0-9a-f]{40}) 0\t([^"\r\n]+)$')
+        if (-not $match.Success -or -not $committed.ContainsKey($match.Groups[3].Value) -or
+            $committed[$match.Groups[3].Value] -cne ($match.Groups[1].Value+' '+$match.Groups[2].Value)) {
+            throw 'The admitted source index or flags changed during preflight; infrastructure mutation refused.'
+        }
     }
     $actual = @($paths | & git -C $Context.Worktree hash-object --stdin-paths 2>$null)
     if ($LASTEXITCODE -ne 0 -or $actual.Count -ne $expected.Count) {
