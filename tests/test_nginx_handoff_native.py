@@ -3,6 +3,7 @@
 import importlib.machinery
 import importlib.util
 import os
+import re
 import shutil
 import signal
 import socket
@@ -145,8 +146,37 @@ class NativeNginxHandoffTests(unittest.TestCase):
                     self.assertEqual(response("127.0.0.2"), "old")
                     self.assertEqual(set(helper._existing_management_scoped_addresses()[0]),
                                      {"127.0.0.1", "127.0.0.2", "::1"})
-                    candidate = helper._management_handoff_reuseport_site(
-                        site(f"127.0.0.3:{port}", "candidate"))
+                    shared_candidate = (
+                        "# Managed by Atlaso. Local changes may be overwritten.\n"
+                        "server {\n"
+                        f"  listen 127.0.0.3:{port};\n"
+                        "  server_name identity.example.test;\n"
+                        '  location / { return 200 "oidc"; }\n'
+                        "}\n"
+                        "server {\n"
+                        f"  listen 127.0.0.3:{port};\n"
+                        "  server_name ca.example.test;\n"
+                        '  location / { return 200 "ca"; }\n'
+                        "}\n"
+                        "server {\n"
+                        f"  listen 127.0.0.3:{port} default_server;\n"
+                        "  server_name _;\n"
+                        '  location / { return 200 "candidate"; }\n'
+                        "}\n"
+                    )
+                    invalid_candidate = sites / "candidate-invalid.conf"
+                    invalid_candidate.write_text(re.sub(
+                        r"(?m)^(\s*listen\s+[^;\n]+);$", r"\1 reuseport;", shared_candidate,
+                    ))
+                    invalid_test = real_run(
+                        [NGINX, "-t", "-c", str(main)], capture_output=True, text=True,
+                    )
+                    invalid_candidate.unlink()
+                    self.assertNotEqual(invalid_test.returncode, 0, invalid_test.stderr)
+                    self.assertIn("duplicate listen options", invalid_test.stderr.lower())
+
+                    candidate = helper._management_handoff_reuseport_site(shared_candidate)
+                    self.assertEqual(candidate.count("reuseport"), 1)
                     self.assertEqual(helper._install_nginx_site(public, candidate, verify_activation=True), 0)
                     self.assertEqual(response("127.0.0.3"), "candidate")
                     self.assertEqual(response("127.0.0.2"), "old")

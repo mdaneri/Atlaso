@@ -31245,17 +31245,45 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
 
 
 def _management_handoff_reuseport_site(text: str) -> str:
-    """Allow the handoff's old and new sockets to overlap during graceful cycles.
+    """Enable overlap once per socket shared by managed virtual hosts.
 
     Args:
-        text: Managed nginx site text with one options declaration per socket.
+        text: Managed nginx site text containing numeric listen endpoints.
     """
-    return re.sub(
-        r"(?m)^(\s*listen\s+[^;\n]+);",
-        lambda match: match.group(0) if "reuseport" in match.group(1).split()
-        else match.group(1) + " reuseport;",
-        text,
-    )
+    listeners = list(re.finditer(r"(?m)^([ \t]*listen[ \t]+)([^;\n]+);", text))
+    sockets: list[tuple[str, int]] = []
+    first: dict[tuple[str, int], int] = {}
+    existing: dict[tuple[str, int], int] = {}
+    for index, listener in enumerate(listeners):
+        fields = listener.group(2).split()
+        endpoint = fields[0]
+        if endpoint.isdecimal():
+            address, port = "0.0.0.0", endpoint
+        elif endpoint.startswith("["):
+            address, port = endpoint[1:].split("]:", 1)
+        else:
+            address, port = endpoint.rsplit(":", 1)
+            if address == "*":
+                address = "0.0.0.0"
+        identity = (str(ip_address(address)), int(port))
+        sockets.append(identity)
+        first.setdefault(identity, index)
+        if "reuseport" in fields:
+            existing.setdefault(identity, index)
+    owners = first | existing
+    chunks: list[str] = []
+    position = 0
+    for index, listener in enumerate(listeners):
+        directive = listener.group(2)
+        if owners[sockets[index]] == index:
+            if "reuseport" not in directive.split():
+                directive += " reuseport"
+        else:
+            directive = re.sub(r"[ \t]+reuseport(?=[ \t]|$)", "", directive)
+        chunks.extend((text[position:listener.start()], listener.group(1) + directive + ";"))
+        position = listener.end()
+    chunks.append(text[position:])
+    return "".join(chunks)
 
 
 def _restore_management_handoff_nginx_bridge(state: dict) -> None:

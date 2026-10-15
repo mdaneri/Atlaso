@@ -2,10 +2,14 @@
 
 import importlib.machinery
 import importlib.util
+import re
 import subprocess
+from ipaddress import ip_address
 from pathlib import Path
 
 import pytest
+
+from atlaso.app.services.public_services import render_public_services_nginx_config
 
 HELPER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "atlaso-helper"
 
@@ -113,6 +117,92 @@ def test_management_handoff_reuseport_is_added_once_to_every_listener():
     assert transformed.count("reuseport") == 2
     assert "listen 443 ssl default_server reuseport;" in transformed
     assert "listen [::]:443 ssl default_server reuseport;" in transformed
+    assert helper._management_handoff_reuseport_site(transformed) == transformed
+
+
+@pytest.mark.parametrize(
+    ("address", "oidc_port"),
+    [
+        ("192.0.2.20", 443),
+        ("2001:db8::20", 443),
+        ("192.0.2.20", 8443),
+        ("2001:db8::20", 8443),
+    ],
+)
+def test_reuseport_is_declared_once_per_rendered_public_socket(address, oidc_port):
+    """Arm each socket once in rendered cohosted CA, OIDC, and management sites.
+
+    Args:
+        address: IPv4 or IPv6 Access address shared by the rendered services.
+        oidc_port: OIDC HTTPS port, shared with or separate from the CA listener.
+    """
+    helper = load_helper_module()
+    site = render_public_services_nginx_config(
+        [
+            {
+                "interface": "eth1",
+                "role": "access",
+                "address": address,
+                "management_ui": True,
+                "services": [
+                    {"id": "ca", "dns_names": ["ca.example.test"]},
+                    {"id": "oidc", "port": oidc_port, "dns_names": ["identity.example.test"]},
+                ],
+            },
+        ],
+        ca_certificate_path="/ca.crt",
+        ca_key_path="/ca.key",
+        oidc_certificate_path="/oidc.crt",
+        oidc_key_path="/oidc.key",
+        management_certificate_path="/management.crt",
+        management_key_path="/management.key",
+    )
+
+    transformed = helper._management_handoff_reuseport_site(site)
+    sockets: dict[tuple[str, int], list[list[str]]] = {}
+    for line in transformed.splitlines():
+        match = re.fullmatch(r"\s*listen\s+(\S+)(?:\s+(.*))?;", line)
+        if match is None:
+            continue
+        endpoint = match.group(1)
+        if endpoint.startswith("["):
+            host, port = endpoint[1:].split("]:", 1)
+        else:
+            host, port = endpoint.rsplit(":", 1)
+        sockets.setdefault((str(ip_address(host)), int(port)), []).append(
+            (match.group(2) or "").split(),
+        )
+
+    assert sockets
+    for declarations in sockets.values():
+        assert sum("reuseport" in options for options in declarations) == 1
+    if oidc_port == 443:
+        assert len(sockets[(str(ip_address(address)), 443)]) == 3
+    else:
+        assert len(sockets[(str(ip_address(address)), 443)]) == 2
+        assert len(sockets[(str(ip_address(address)), 8443)]) == 1
+    assert helper._management_handoff_reuseport_site(transformed) == transformed
+
+
+def test_reuseport_preserves_later_existing_socket_owner_and_normalizes_aliases():
+    """Keep a later preexisting option owner and coalesce equivalent endpoints."""
+    helper = load_helper_module()
+    site = (
+        "server {\n"
+        "  listen 443 ssl default_server;\n"
+        "  listen 0.0.0.0:443 ssl;\n"
+        "  listen *:443 ssl reuseport;\n"
+        "  listen [2001:db8::20]:443 ssl;\n"
+        "  listen [2001:0db8:0:0:0:0:0:20]:443 ssl reuseport;\n"
+        "}\n"
+    )
+
+    transformed = helper._management_handoff_reuseport_site(site)
+    listeners = [line for line in transformed.splitlines() if line.strip().startswith("listen ")]
+
+    assert ["reuseport" in line.removesuffix(";").split() for line in listeners] == [
+        False, False, True, False, True,
+    ]
     assert helper._management_handoff_reuseport_site(transformed) == transformed
 
 
