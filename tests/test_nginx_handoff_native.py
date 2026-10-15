@@ -1,0 +1,146 @@
+"""Exercise wildcard migration and rollback with real Linux nginx sockets."""
+
+import importlib.machinery
+import importlib.util
+import os
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+import urllib.request
+from pathlib import Path
+from unittest.mock import patch
+
+NGINX = os.environ.get("ATLASO_TEST_NGINX") or shutil.which("nginx")
+HELPER = Path(__file__).resolve().parents[1] / "scripts/appliance/atlaso-helper"
+
+
+@unittest.skipUnless(sys.platform == "linux" and NGINX, "Requires Linux and a native nginx binary")
+class NativeNginxHandoffTests(unittest.TestCase):
+    """Prove actual bind behavior rather than mocking reload exit status."""
+
+    def test_wildcard_migration_and_exact_rollback(self):
+        """Keep the old endpoint live while activating and reverting scoped sockets."""
+        loader = importlib.machinery.SourceFileLoader("native_handoff_helper", str(HELPER))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        helper = importlib.util.module_from_spec(spec)
+        loader.exec_module(helper)
+        with tempfile.TemporaryDirectory(dir=os.environ.get("ATLASO_NATIVE_TEST_ROOT")) as temporary:
+            root = Path(temporary)
+            sites = root / "sites"
+            sites.mkdir()
+            management = sites / "management.conf"
+            public = sites / "public.conf"
+            main = root / "nginx.conf"
+            log = root / "error.log"
+            with socket.socket() as reservation:
+                reservation.bind(("127.0.0.1", 0))
+                port = reservation.getsockname()[1]
+
+            def site(binding, body):
+                """Render only the socket and response needed by this fixture."""
+                return ("# Managed by Atlaso. Local changes may be overwritten.\n"
+                        "server {\n"
+                        f"  listen {binding} default_server;\n"
+                        "  server_name _;\n"
+                        f'  location / {{ return 200 "{body}"; }}\n'
+                        "}\n")
+
+            original = site(str(port), "old")
+            management.write_text(original)
+            main.write_text(
+                f"daemon off; worker_processes 1; pid {root}/nginx.pid; error_log {log} notice;\n"
+                "events {}\nhttp { access_log off;\n"
+                + "".join(f"{name}_temp_path {root}/{name};\n" for name in (
+                    "client_body", "proxy", "fastcgi", "uwsgi", "scgi"))
+                + f"include {sites}/*.conf;\n}}\n"
+            )
+            process = subprocess.Popen(
+                [NGINX, "-c", str(main)], stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, start_new_session=True,
+            )
+            direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+            def response(address):
+                """Read a fresh connection without proxy or keepalive reuse."""
+                with direct.open(f"http://{address}:{port}/openapi.json", timeout=1) as result:
+                    return result.read().decode()
+
+            def wait_for(predicate):
+                """Bound asynchronous nginx activation and bind-failure observation."""
+                deadline = time.monotonic() + 8
+                while time.monotonic() < deadline:
+                    try:
+                        if predicate():
+                            return
+                    except OSError:
+                        pass
+                    time.sleep(0.05)
+                self.fail("Native nginx did not reach the expected state")
+
+            real_run = subprocess.run
+
+            def run(command, **kwargs):
+                """Replace only systemd supervision; execute the real nginx signaler."""
+                if command[:3] == ["systemctl", "show", "nginx.service"]:
+                    if "--property=ActiveState,MainPID" in command:
+                        return subprocess.CompletedProcess(command, 0, f"ActiveState=active\nMainPID={process.pid}\n", "")
+                    return subprocess.CompletedProcess(command, 0, str(process.pid), "")
+                if command == ["systemctl", "reload", "nginx"]:
+                    return real_run([NGINX, "-s", "reload", "-c", str(main)],
+                                    capture_output=True, text=True, timeout=kwargs.get("timeout", 5))
+                if command == ["systemctl", "enable", "--now", "nginx"]:
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                self.fail(f"Unexpected native fixture command: {command}")
+
+            state = {"previous_management_addresses": ["127.0.0.2"],
+                     "previous_https_enabled": False, "previous_management_public_port": port}
+            try:
+                wait_for(lambda: response("127.0.0.2") == "old")
+                with (patch.object(helper, "NGINX_MANAGEMENT_SITE_PATH", management),
+                      patch.object(helper, "NGINX_SITES_DIR", sites),
+                      patch.object(helper, "_nginx_binary", lambda: NGINX),
+                      patch.object(helper, "_install_nginx_include", lambda: None),
+                      patch.object(helper, "_write_management_handoff_state", lambda *_args: None),
+                      patch.object(helper, "_run", run),
+                      patch.object(helper, "_nginx_test_command", lambda: real_run(
+                          [NGINX, "-t", "-c", str(main)], capture_output=True, text=True))):
+                    # The original bug: syntax and signal both succeed while bind fails.
+                    previous = helper._nginx_active_workers()
+                    self.assertEqual(helper._install_nginx_site(
+                        management, site(f"127.0.0.2:{port}", "unactivated")), 0)
+                    wait_for(lambda: "still could not bind" in log.read_text())
+                    self.assertEqual(response("127.0.0.2"), "old")
+                    self.assertEqual(helper._nginx_active_workers(), previous)
+                    management.write_text(original)
+                    self.assertEqual(helper._reload_nginx(verify_activation=True), 0)
+
+                    # Production migration must activate scoped sockets without a restart.
+                    helper._scope_management_handoff_old_listener(state)
+                    self.assertTrue(state["nginx_reuseport_bridge"])
+                    self.assertEqual(response("127.0.0.2"), "old")
+                    candidate = helper._management_handoff_reuseport_site(
+                        site(f"127.0.0.3:{port}", "candidate"))
+                    self.assertEqual(helper._install_nginx_site(public, candidate, verify_activation=True), 0)
+                    self.assertEqual(response("127.0.0.3"), "candidate")
+                    self.assertEqual(response("127.0.0.2"), "old")
+
+                    # As in recovery, files restore first while candidate sockets still exist.
+                    public.unlink()
+                    management.write_text(original)
+                    helper._restore_management_handoff_nginx_bridge(state)
+                    self.assertEqual(management.read_text(), original)
+                    self.assertEqual(response("127.0.0.2"), "old")
+                    self.assertIsNone(process.poll())
+            finally:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGTERM)
+                process.wait(timeout=10)
+
+
+if __name__ == "__main__":
+    unittest.main()

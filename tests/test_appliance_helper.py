@@ -2862,19 +2862,29 @@ def test_management_handoff_scopes_ipv4_only_bootstrap(monkeypatch, tmp_path, ht
     site.write_text(text, encoding="utf-8")
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
     installed = []
-    monkeypatch.setattr(helper, "_install_nginx_site", lambda _path, value: installed.append(value) or 0)
-    helper._scope_management_handoff_old_listener({
+    states = []
+    monkeypatch.setattr(helper, "_write_management_handoff_state", lambda state, phase: states.append((state.copy(), phase)))
+    monkeypatch.setattr(
+        helper, "_install_nginx_site",
+        lambda _path, value, **kwargs: installed.append((value, kwargs)) or 0,
+    )
+    state = {
         "previous_https_enabled": bool(tls_port),
         "previous_management_public_port": tls_port or http_port,
         "previous_management_addresses": ["192.0.2.10"],
-    })
-    assert len(installed) == 1
-    assert f"listen 192.0.2.10:{http_port} default_server;" in installed[0]
-    assert f"listen 127.0.0.1:{http_port} default_server;" in installed[0]
-    assert "[::]" not in installed[0]
+    }
+    helper._scope_management_handoff_old_listener(state)
+    assert len(installed) == 2
+    assert states[0][0]["nginx_reuseport_bridge"] is True
+    assert installed[0][1] == {"verify_activation": True}
+    assert installed[1][1] == {"verify_activation": True}
+    assert f"listen {http_port} default_server reuseport;" in installed[0][0]
+    assert f"listen 192.0.2.10:{http_port} default_server reuseport;" in installed[1][0]
+    assert f"listen 127.0.0.1:{http_port} default_server reuseport;" in installed[1][0]
+    assert "[::]" not in installed[1][0]
     if tls_port:
-        assert f"listen 192.0.2.10:{tls_port} ssl default_server;" in installed[0]
-    assert f"listen {http_port} default_server;" not in installed[0]
+        assert f"listen 192.0.2.10:{tls_port} ssl default_server reuseport;" in installed[1][0]
+    assert f"listen {http_port} default_server;" not in installed[1][0]
 
 
 def test_management_handoff_scopes_old_tls_before_new_address_activation(monkeypatch, tmp_path):
@@ -2894,16 +2904,23 @@ def test_management_handoff_scopes_old_tls_before_new_address_activation(monkeyp
     )
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
     installed = []
-    monkeypatch.setattr(helper, "_install_nginx_site", lambda _path, text: installed.append(text) or 0)
+    monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
+    monkeypatch.setattr(
+        helper, "_install_nginx_site",
+        lambda _path, text, **kwargs: installed.append((text, kwargs)) or 0,
+    )
     helper._scope_management_handoff_old_listener({
         "previous_https_enabled": True,
         "previous_management_addresses": ["192.0.2.10", "2001:db8::10"],
     })
-    assert len(installed) == 1
-    assert "listen 192.0.2.10:443 ssl default_server;" in installed[0]
-    assert "listen [2001:db8::10]:443 ssl default_server;" in installed[0]
-    assert "listen 443 ssl default_server;" not in installed[0]
-    assert "listen [::]:443 ssl default_server;" not in installed[0]
+    assert len(installed) == 2
+    assert all(kwargs == {"verify_activation": True} for _text, kwargs in installed)
+    assert "listen 443 ssl default_server reuseport;" in installed[0][0]
+    assert "listen [::]:443 ssl default_server reuseport;" in installed[0][0]
+    assert "listen 192.0.2.10:443 ssl default_server reuseport;" in installed[1][0]
+    assert "listen [2001:db8::10]:443 ssl default_server reuseport;" in installed[1][0]
+    assert "listen 443 ssl default_server;" not in installed[1][0]
+    assert "listen [::]:443 ssl default_server;" not in installed[1][0]
 
 
 @pytest.mark.parametrize("https,port", [(True, 443), (True, 8443), (False, 80)])
@@ -2949,35 +2966,53 @@ def test_management_handoff_wildcard_migration_preserves_public_ownership(
         "snapshots": [{"path": str(public), "backup": str(backup)}],
     }
     installed = []
+    events = []
 
-    def install(path, text):
+    def install(path, text, *, verify_activation=False):
         """Capture the migration and reject duplicated explicit defaults.
 
         Args:
             path: Target management site.
             text: Migrated management configuration.
         """
+        installed.append((text, verify_activation))
+        events.append(("install", text, verify_activation))
         sockets = re.findall(r"listen (\S+)(?: ssl)? default_server;", text + public_text)
         assert len(sockets) == len(set(sockets))
         path.write_text(text, encoding="utf-8")
-        installed.append(text)
         return 0
 
+    states = []
+
+    def write_state(current, phase):
+        states.append((current.copy(), phase))
+        events.append(("journal", current.copy(), phase))
+
+    monkeypatch.setattr(helper, "_write_management_handoff_state", write_state)
     monkeypatch.setattr(helper, "_install_nginx_site", install)
     helper._scope_management_handoff_old_listener(state)
     migrated = management.read_text(encoding="utf-8")
+    assert len(installed) == 2
+    assert all(verified for _text, verified in installed)
+    assert states[0][0]["nginx_reuseport_bridge"] is True
+    assert [event[0] for event in events[:3]] == ["journal", "install", "install"]
+    assert f"listen {port}{' ssl' if https else ''} default_server reuseport;" in installed[0][0]
+    assert (
+        f"listen 192.0.2.10:{port}{' ssl' if https else ''} default_server reuseport;" in installed[1][0]
+    ) == (not https or port != 443)
     for address in ("192.0.2.10", "[2001:db8::10]"):
-        assert (f"listen {address}:{port}{' ssl' if https else ''} default_server;" in migrated) == (
+        assert (f"listen {address}:{port}{' ssl' if https else ''} default_server reuseport;" in migrated) == (
             not https or port != 443
         )
-        assert f"listen {address}:80 default_server;" in migrated
-    assert f"listen 127.0.0.1:{port}{' ssl' if https else ''} default_server;" in migrated
-    assert f"listen [::1]:{port}{' ssl' if https else ''} default_server;" in migrated
+        assert f"listen {address}:80 default_server reuseport;" in migrated
+    assert f"listen {port}{' ssl' if https else ''} default_server reuseport;" in installed[0][0]
+    assert f"listen 127.0.0.1:{port}{' ssl' if https else ''} default_server reuseport;" in migrated
+    assert f"listen [::1]:{port}{' ssl' if https else ''} default_server reuseport;" in migrated
     if mixed:
-        assert f"listen 192.0.2.20:{port}{' ssl' if https else ''} default_server;" in migrated
-        assert f"listen [2001:db8::20]:{port}{' ssl' if https else ''} default_server;" in migrated
+        assert f"listen 192.0.2.20:{port}{' ssl' if https else ''} default_server reuseport;" in migrated
+        assert f"listen [2001:db8::20]:{port}{' ssl' if https else ''} default_server reuseport;" in migrated
     helper._scope_management_handoff_old_listener(state)
-    assert len(installed) == 1
+    assert len(installed) == 2
     assert public.read_text(encoding="utf-8") == public_text
 
 
@@ -3006,7 +3041,8 @@ def test_management_handoff_wildcard_validation_failure_restores_sites(monkeypat
     monkeypatch.setattr(helper, "_nginx_binary", lambda: "nginx")
     monkeypatch.setattr(helper, "_install_nginx_include", lambda: None)
     monkeypatch.setattr(helper, "_nginx_site_conflict", lambda *_args: None)
-    monkeypatch.setattr(helper, "_reload_nginx", lambda: pytest.fail("invalid site reloaded"))
+    monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
+    monkeypatch.setattr(helper, "_reload_nginx", lambda **_kwargs: pytest.fail("invalid site reloaded"))
     validated = []
 
     def validate():
@@ -3015,7 +3051,7 @@ def test_management_handoff_wildcard_validation_failure_restores_sites(monkeypat
         return subprocess.CompletedProcess(["nginx", "-t"], 1, "", "configuration test failed\n")
 
     monkeypatch.setattr(helper, "_nginx_test_command", validate)
-    with pytest.raises(ValueError, match="previous management nginx listener could not be address scoped"):
+    with pytest.raises(ValueError, match="previous wildcard nginx socket could not be prepared"):
         helper._scope_management_handoff_old_listener({
             "previous_https_enabled": True,
             "previous_management_addresses": ["192.0.2.10"],
@@ -3023,7 +3059,9 @@ def test_management_handoff_wildcard_validation_failure_restores_sites(monkeypat
         })
     assert len(validated) == 1
     assert "listen 192.0.2.10:443 ssl default_server;" not in validated[0]
-    assert "listen 127.0.0.1:443 ssl default_server;" in validated[0]
+    assert "listen 443 ssl default_server reuseport;" in validated[0]
+    assert "listen [::]:443 ssl default_server reuseport;" in validated[0]
+    assert "listen 127.0.0.1:443 ssl default_server;" not in validated[0]
     assert management.read_text(encoding="utf-8") == original
     assert public.read_text(encoding="utf-8") == public_text
 
@@ -3044,18 +3082,24 @@ def test_management_handoff_scopes_old_http_before_new_address_activation(monkey
     )
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
     installed = []
-    monkeypatch.setattr(helper, "_install_nginx_site", lambda _path, text: installed.append(text) or 0)
+    monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
+    monkeypatch.setattr(
+        helper, "_install_nginx_site",
+        lambda _path, text, **kwargs: installed.append((text, kwargs)) or 0,
+    )
 
     helper._scope_management_handoff_old_listener({
         "previous_https_enabled": False,
         "previous_management_addresses": ["192.0.2.10", "2001:db8::10"],
     })
 
-    assert len(installed) == 1
-    assert "listen 192.0.2.10:80 default_server;" in installed[0]
-    assert "listen [2001:db8::10]:80 default_server;" in installed[0]
-    assert "listen 80 default_server;" not in installed[0]
-    assert "listen [::]:80 default_server;" not in installed[0]
+    assert len(installed) == 2
+    assert all(kwargs == {"verify_activation": True} for _text, kwargs in installed)
+    assert "listen 80 default_server reuseport;" in installed[0][0]
+    assert "listen 192.0.2.10:80 default_server reuseport;" in installed[1][0]
+    assert "listen [2001:db8::10]:80 default_server reuseport;" in installed[1][0]
+    assert "listen 80 default_server;" not in installed[1][0]
+    assert "listen [::]:80 default_server;" not in installed[1][0]
 
 
 @pytest.mark.parametrize("http_port,https_port", [(80, 443), (8080, 8443)])
