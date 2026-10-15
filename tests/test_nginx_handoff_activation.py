@@ -2,6 +2,7 @@
 
 import importlib.machinery
 import importlib.util
+import json
 import re
 import subprocess
 from ipaddress import ip_address
@@ -470,3 +471,106 @@ def test_restore_management_handoff_refuses_ambiguous_nginx_state(monkeypatch):
         helper._restore_management_handoff_nginx_bridge({"nginx_reuseport_bridge": True})
 
     assert commands == [["systemctl", "show", "nginx.service", "--property=ActiveState,MainPID"]]
+
+
+@pytest.mark.parametrize("timeout_point", ["service-state", "service-start", "worker-probe"])
+def test_nginx_bridge_timeout_is_recorded_while_recovery_continues(
+    monkeypatch, tmp_path, capsys, timeout_point,
+):
+    """Convert bridge subprocess timeouts to bounded rollback errors and continue recovery.
+
+    Args:
+        monkeypatch: Isolate rollback dependencies while keeping recovery and bridge real.
+        tmp_path: Temporary journal, networkd, and nginx paths for interrupted recovery.
+        capsys: Capture the structured recovery failure without traceback output.
+        timeout_point: Bridge subprocess boundary that raises the timeout.
+    """
+    helper = load_helper_module()
+    state = {
+        "phase": "candidate-ready",
+        "nginx_reuseport_bridge": True,
+        "snapshots": [],
+        "previous_management_addresses": ["192.0.2.10"],
+        "previous_https_enabled": True,
+        "previous_management_public_port": 443,
+    }
+    state_path = tmp_path / "management-handoff.json"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    networkd = tmp_path / "networkd"
+    networkd.mkdir()
+    events = []
+    commands = []
+    cleared = []
+    monkeypatch.setattr(helper, "MANAGEMENT_HANDOFF_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", networkd / "00-atlaso-mgmt.network")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", tmp_path / "management.conf")
+    monkeypatch.setattr(helper, "NAT_RUNTIME_CONFIG_PATH", tmp_path / "nat.conf")
+    monkeypatch.setattr(helper, "_quiesce_management_handoff_apply", lambda: {"state": "inactive"})
+    monkeypatch.setattr(helper, "_clear_management_handoff_state", lambda: cleared.append(True))
+    monkeypatch.setattr(helper, "_capture_management_handoff_lease_updates", lambda _state: None)
+    monkeypatch.setattr(helper, "_stop_route_domains_for_restore", lambda _state: None)
+    monkeypatch.setattr(helper, "_quiesce_management_handoff_firewall", lambda _state, _commands: None)
+    monkeypatch.setattr(helper, "_restore_management_handoff_resolver", lambda _state, _commands: None)
+    monkeypatch.setattr(helper, "_restore_management_handoff_links", lambda _state, _commands: None)
+    monkeypatch.setattr(helper, "_wait_restored_management_addresses", lambda _state: {"stable_samples": 3})
+    monkeypatch.setattr(helper, "_restore_route_domains", lambda _state: None)
+    monkeypatch.setattr(helper, "_restore_management_handoff_wan", lambda _state, _commands: None)
+    monkeypatch.setattr(helper, "_restore_management_handoff_firewall", lambda _state, _commands: None)
+    monkeypatch.setattr(helper, "_nginx_binary", lambda: "/usr/sbin/nginx")
+    monkeypatch.setattr(
+        helper,
+        "_nginx_test_command",
+        lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "", ""),
+    )
+
+    def run(command, **kwargs):
+        """Raise at the selected bridge command and accept other rollback commands.
+
+        Args:
+            command: systemd command issued by rollback or bridge restoration.
+            **kwargs: Process options, including each command's timeout.
+        """
+        commands.append(command)
+        if command == ["systemctl", "show", "nginx.service", "--property=ActiveState,MainPID"]:
+            if timeout_point == "service-state":
+                raise subprocess.TimeoutExpired(command, kwargs.get("timeout"))
+            return subprocess.CompletedProcess(
+                command, 0, "ActiveState=inactive\nMainPID=0\n", "",
+            )
+        if command == ["systemctl", "start", "nginx.service"]:
+            if timeout_point == "service-start":
+                raise subprocess.TimeoutExpired(command, kwargs.get("timeout"))
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command == ["systemctl", "start", "atlaso.service"]:
+            events.append("atlaso-start")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def active_workers():
+        """Return one accepting worker unless this test injects a worker-probe timeout."""
+        if timeout_point == "worker-probe":
+            raise subprocess.TimeoutExpired(["nginx-worker-probe"], 10)
+        return 431, {(432, 19)}
+
+    monkeypatch.setattr(helper, "_run", run)
+    monkeypatch.setattr(helper, "_nginx_active_workers", active_workers)
+    monkeypatch.setattr(
+        helper,
+        "_management_handoff_readiness",
+        lambda *_args: events.append("old-path-readiness") or {"stable_samples": 3},
+    )
+
+    assert helper._recover_management_handoff() == 1
+
+    output = capsys.readouterr()
+    payload = json.loads(output.err.splitlines()[-1])
+    assert payload["management_handoff"] == "rollback incomplete"
+    assert payload["failing_layer"] == "interruption recovery"
+    assert "nginx wildcard restore: TimeoutExpired" in payload["error"]
+    assert "Traceback" not in output.err + output.out
+    assert state_path.is_file()
+    assert cleared == []
+    assert events == ["atlaso-start", "old-path-readiness"]
+    assert ["systemctl", "start", "atlaso.service"] in commands
+    assert ["systemctl", "restart", "nginx.service"] not in commands
+    assert ["systemctl", "reload-or-restart", "nginx.service"] not in commands

@@ -33099,7 +33099,8 @@ def _restore_management_handoff(state: dict, *, startup: bool = False) -> dict:
         """
         try:
             operation()
-        except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError, shutil.Error) as exc:
+        except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError, shutil.Error,
+                subprocess.SubprocessError) as exc:
             errors.append(f"{stage}: {type(exc).__name__}")
 
     attempt(
@@ -33646,7 +33647,7 @@ def _recover_management_handoff(*, startup: bool = False) -> int:
     try:
         state = json.loads(MANAGEMENT_HANDOFF_STATE_PATH.read_text(encoding="utf-8"))
         evidence = _restore_management_handoff(state, startup=True) if startup else _restore_management_handoff(state)
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
         print(
             json.dumps(
                 {
@@ -34275,11 +34276,11 @@ def _apply_management_handoff(payload: dict) -> int:
         _sync_management_handoff_candidate(state, payload)
         state["candidate_addresses"] = candidate_addresses
         _write_management_handoff_state(state, "awaiting-application-commit")
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
         rollback_error = ""
         try:
             rollback = _restore_management_handoff(state)
-        except (OSError, ValueError, json.JSONDecodeError) as rollback_exc:
+        except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as rollback_exc:
             rollback = {}
             rollback_error = str(rollback_exc)
         if not rollback_error:
