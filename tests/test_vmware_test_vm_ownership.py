@@ -44,8 +44,9 @@ def test_pending_cleanup_admits_original_owner_before_any_marker_mutation(tmp_pa
     marker_path.write_text("public marker fixture", encoding="utf-8")
     sentinel = tmp_path / "mutation.txt"
     vmx = tmp_path / "vm" / "test.vmx"
+    vmx.parent.mkdir()
     destination = tmp_path / "other" / "test.vmx" if admission == "foreign" else vmx
-    setup = "$ErrorActionPreference='Stop'; $tokens=$null; $errors=$null; "
+    setup = ownership_prefix() + "$ErrorActionPreference='Stop'; $tokens=$null; $errors=$null; "
     setup += f"$ast=[Management.Automation.Language.Parser]::ParseFile({ps_literal(VMWARE / 'create-atlaso-test-vm.ps1')},[ref]$tokens,[ref]$errors); "
     setup += "$fn=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-PendingAtlasoDevelopmentCaCleanup'},$true); "
     setup += ". ([scriptblock]::Create($fn.Extent.Text)); $script:admitted=$false; "
@@ -60,11 +61,13 @@ def test_pending_cleanup_admits_original_owner_before_any_marker_mutation(tmp_pa
                  "Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub", "Clear-AtlasoWorkstationDevelopmentRootCaRuntimePrivateKey",
                  "Stop-AtlasoTestVmForRollback", "Complete-AtlasoDevelopmentCaSuccessfulImport"):
         setup += f"function {name} {{ if (-not $script:admitted) {{ throw 'Mutation preceded original receipt' }}; "
+        setup += "$blocked=$false;try{[IO.Directory]::Move($ctx.OutputDirectory,($ctx.OutputDirectory+'-replacement'))}catch{$blocked=$true};if(-not $blocked){throw 'Original recovery root was replaceable at mutation boundary'}; "
         setup += f"[IO.File]::WriteAllText({ps_literal(sentinel)},'mutation'); throw 'Admitted mutation boundary' }}; "
     setup += f"Invoke-PendingAtlasoDevelopmentCaCleanup -VmrunPath 'unused' -TimeoutSeconds 5 -MarkerRoot {ps_literal(markers)} -OwnershipContext $ctx"
     result = run_powershell(setup, check=False)
     assert result.returncode != 0
     assert marker_path.read_text(encoding="utf-8") == "public marker fixture"
+    vmx.parent.rename(vmx.parent.with_name("released-root"))
     if admission == "valid":
         assert sentinel.exists(), result.stdout + result.stderr
     else:
@@ -1289,6 +1292,18 @@ def test_agent_context_uses_configured_root_and_requires_registered_clean_worktr
                        check=True, capture_output=True, text=True)
     clean = run_powershell(admission + "Assert-AtlasoTestVmCheckoutSource -Context $ctx")
     assert clean.returncode == 0
+
+    replacement = admission + "[IO.Directory]::Move($ctx.Worktree,($ctx.Worktree+'-original'));[IO.Directory]::CreateDirectory($ctx.Worktree)|Out-Null;"
+    replacement += "Get-ChildItem -LiteralPath ($ctx.Worktree+'-original') -Force | Where-Object Name -ne '.git' | Copy-Item -Destination $ctx.Worktree -Recurse -Force;"
+    replacement += "[IO.Directory]::Move((Join-Path ($ctx.Worktree+'-original') '.git'),(Join-Path $ctx.Worktree '.git'));"
+    replacement += "Assert-AtlasoTestVmCheckoutSource -Context $ctx; "
+    replacement += f"[IO.File]::WriteAllText({ps_literal(provider_sentinel)},'provider')"
+    refused = run_powershell(replacement, check=False)
+    assert refused.returncode != 0 and "worktree filesystem identity changed" in refused.stderr
+    assert not provider_sentinel.exists()
+    (checkout / ".git").rename(checkout.with_name("checkout-original") / ".git")
+    checkout.rename(checkout.with_name("checkout-replacement"))
+    checkout.with_name("checkout-original").rename(checkout)
 
     (checkout / "untracked.txt").write_text("dirty", encoding="utf-8")
     dirty = run_powershell(command, check=False)

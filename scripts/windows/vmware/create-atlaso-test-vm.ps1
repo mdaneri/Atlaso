@@ -2554,6 +2554,8 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
         $OwnershipContext.PSObject.Properties['CleanupRecoveryReceiptPath'] -and
         $OwnershipContext.CleanupRecoveryReceiptPath) { throw 'Original cleanup recovery marker is missing.' }
     foreach ($markerFile in $pendingMarkerFiles) {
+        $pendingOutputPin = $null
+        try {
         try {
             $marker = Read-AtlasoDevelopmentCaCleanupMarker `
                 -MarkerPath $markerFile.FullName `
@@ -2590,6 +2592,7 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
             else {
                 if ($OwnershipContext.PSObject.Properties['CleanupRecoveryReceiptPath'] -and
                     $OwnershipContext.CleanupRecoveryReceiptPath) { throw 'Cleanup recovery selectors require removed VM artifacts.' }
+                $pendingOutputPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath([string]$OwnershipContext.OutputDirectory, $true)
                 $null = Assert-AtlasoTestVmOriginalOwnership -Context $OwnershipContext
             }
         }
@@ -2767,6 +2770,10 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                         )
                     }
                     if ($OwnershipContext) { Assert-AtlasoTestVmCheckoutSource -Context $OwnershipContext }
+                    # The removal child independently re-admits the exact original
+                    # root before mutation and holds its deletion-compatible handles.
+                    # Release this non-deletable admission pin only at that handoff.
+                    if ($pendingOutputPin) { $pendingOutputPin.Dispose(); $pendingOutputPin = $null }
                     Invoke-AtlasoBoundedProcess `
                         -FilePath $powerShellPath `
                         -ArgumentList (@(
@@ -2844,6 +2851,8 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
             }
             throw "$($cleanupFailure.Exception.Message) The durable cleanup marker remains for the next bounded retry: $($marker.MarkerPath)"
         }
+        }
+        finally { if ($pendingOutputPin) { $pendingOutputPin.Dispose() } }
     }
 }
 

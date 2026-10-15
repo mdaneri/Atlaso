@@ -1228,6 +1228,8 @@ disks exclude writes and replacement from byte validation through cloning. A mis
 failed publication, or ambiguous state keeps
 the VM preserved. The admitted task branch, exact commit and clean checkout are revalidated immediately before
 network preparation, recovery/removal, disk reset and clone preparation; preflight drift refuses mutation.
+Admission records the original worktree directory identity while pinned. Every source guard re-pins and checks that
+identity before checking Git state; a byte-identical replacement checkout cannot authorize mutation.
 Each boundary also rejects assume-unchanged/skip-worktree entries and independently hashes all tracked file bytes
 against the admitted index, applying Git's normal clean conversion for checkout line endings. Cached status or
 fsmonitor results cannot substitute for this byte verification; index changes or hashing failures refuse mutation.
@@ -1434,6 +1436,9 @@ before 1Password preflight or any new network, disk, or VM mutation; do not edit
 Agent-owned retries validate the original VM receipt and exact marker destination before scrubbing, stopping,
 quarantining disks, retiring a marker, or removing artifacts. Foreign markers and legacy identity repairs are preserved
 without mutation; an ownership context for another VM cannot authorize their recovery.
+Live pending recovery retains the receipt-bound original root pin through signer, stop/restart and quarantine helpers.
+It releases that pin only for the removal child's independent original-identity admission and captured-handle removal;
+all refusal and completion paths release their pins without adopting a replacement root.
 Owned marker publication also emits an immutable cleanup recovery receipt path and SHA-256 before staging or removal.
 Preserve both independently. If an interrupted removal has already removed the VM root, rerun with the original VM
 receipt selectors plus `-CleanupRecoveryReceiptPath` and `-CleanupRecoveryReceiptSha256`. This recovery-only mode

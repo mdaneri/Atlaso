@@ -140,10 +140,12 @@ function New-AtlasoTestVmOwnershipContext {
 
     $configuredRootPin = $null
     $rootPin = $null
+    $worktreePin = $null
     $outputAncestorPin = $null
     try {
         $configuredRootPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($configuredRoot, $true)
         $rootPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($evidenceFullPath, $true)
+        $worktreePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($worktreePath, $true)
         $outputAncestorPin = Get-AtlasoTestVmOutputAncestorPin -OutputDirectory $outputPath
         $gitTop = ([string](& git -C $worktreePath rev-parse --show-toplevel 2>$null)).Trim()
         $normalizedGitTop = if ($gitTop) { [System.IO.Path]::GetFullPath($gitTop).TrimEnd('\', '/') } else { '' }
@@ -184,10 +186,12 @@ function New-AtlasoTestVmOwnershipContext {
             throw 'The ownership evidence directory must remain beneath the permitted task root.'
         }
         $admittedEvidenceDirectoryId = [Atlaso.WorkstationFileIdentity]::Get($evidenceFullPath)
+        $admittedWorktreeDirectoryId = [Atlaso.WorkstationFileIdentity]::Get($worktreePath)
     }
     finally {
         if ($rootPin) { $rootPin.Dispose() }
         if ($outputAncestorPin) { $outputAncestorPin.Dispose() }
+        if ($worktreePin) { $worktreePin.Dispose() }
         if ($configuredRootPin) { $configuredRootPin.Dispose() }
     }
 
@@ -196,6 +200,7 @@ function New-AtlasoTestVmOwnershipContext {
         TaskId              = $taskId
         Repository          = 'mdaneri/Atlaso'
         Worktree            = $worktreePath
+        WorktreeDirectoryId = $admittedWorktreeDirectoryId
         PermittedRoot       = $configuredRoot
         Branch              = $SourceBranch
         SourceCommit        = $SourceCommit
@@ -220,6 +225,12 @@ Original task checkout, branch and exact source commit admitted before preflight
 function Assert-AtlasoTestVmCheckoutSource {
     param([Parameter(Mandatory = $true)][psobject]$Context)
     if (-not $Context.Enabled) { return }
+    $worktreePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath([string]$Context.Worktree, $true)
+    try {
+    if (-not $Context.PSObject.Properties['WorktreeDirectoryId'] -or
+        [Atlaso.WorkstationFileIdentity]::Get([string]$Context.Worktree) -cne [string]$Context.WorktreeDirectoryId) {
+        throw 'The admitted task worktree filesystem identity changed; infrastructure mutation refused.'
+    }
     $root = ([string](& git -C $Context.Worktree rev-parse --show-toplevel 2>$null)).Trim()
     $rootFailed = $LASTEXITCODE -ne 0
     $commit = ([string](& git -C $Context.Worktree rev-parse HEAD 2>$null)).Trim()
@@ -257,6 +268,8 @@ function Assert-AtlasoTestVmCheckoutSource {
             throw 'Tracked source bytes changed during preflight; infrastructure mutation refused.'
         }
     }
+    }
+    finally { $worktreePin.Dispose() }
 }
 
 <#
