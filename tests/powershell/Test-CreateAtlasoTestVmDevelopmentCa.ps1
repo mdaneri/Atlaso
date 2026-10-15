@@ -15,6 +15,7 @@ Import-Module (
     Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationCleanup.psm1'
 ) -Force
 . (Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1')
+. (Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.TestVmOwnership.ps1')
 
 # The encoded Environment value must contain the entire PEM, and all decode
 # failures must remain fixed diagnostics inside the bounded secret child.
@@ -95,7 +96,11 @@ if (($firstBootSource | Select-String -Pattern (
 $missingEnvironmentIdRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
     "atlaso-missing-environment-id-$([guid]::NewGuid().ToString('N'))"
 )
+$savedThreadId = $env:CODEX_THREAD_ID
 try {
+    # This case checks ordinary human CLI credential preflight; agent resource
+    # admission is exercised separately with a creation-bound fixture checkout.
+    $env:CODEX_THREAD_ID = ''
     New-Item -ItemType Directory -Path $missingEnvironmentIdRoot | Out-Null
     $missingEnvironmentVmRoot = Join-Path $missingEnvironmentIdRoot 'Atlaso-PR-634-credential-preflight'
     New-Item -ItemType Directory -Path $missingEnvironmentVmRoot | Out-Null
@@ -129,6 +134,7 @@ try {
     }
 }
 finally {
+    $env:CODEX_THREAD_ID = $savedThreadId
     Remove-Item -LiteralPath $missingEnvironmentIdRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 # Keep this synthetic APPDATA provider independent from the interactive host.
@@ -922,7 +928,7 @@ $rollbackRemoval = $wrapperSource.LastIndexOf(
     [System.StringComparison]::Ordinal
 )
 $conditionalRestore = $wrapperSource.LastIndexOf(
-    'if ($quarantineDirectory -and -not $removalTreeUnproven)',
+    'if (($quarantineDirectory -or ($ownershipContext.Enabled -and $developmentCaCleanupMarkerPath)) -and -not $removalTreeUnproven)',
     [System.StringComparison]::Ordinal
 )
 $preSecretRollbackMarker = $wrapperSource.LastIndexOf(

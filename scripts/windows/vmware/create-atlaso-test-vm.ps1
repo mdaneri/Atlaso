@@ -35,6 +35,28 @@ Optional built appliance VMX to clone; the newest build output is selected by de
 
 .PARAMETER OutputDirectory
 Optional exact destination directory for the cloned test VM.
+.PARAMETER OwnershipRoot
+Optional existing permitted durable root containing this checkout for a human CLI ownership receipt.
+.PARAMETER OwnershipTaskId
+Exact task identifier paired with -OwnershipRoot for a human CLI ownership receipt.
+.PARAMETER OwnershipReceiptPath
+Original receipt path preserved in the task inventory for an existing VM.
+.PARAMETER OwnershipReceiptSha256
+Creation-time original receipt digest preserved independently in the task inventory.
+.PARAMETER CleanupRecoveryReceiptPath
+Original marker receipt path preserved at publication for post-removal recovery.
+.PARAMETER CleanupRecoveryReceiptSha256
+Original marker receipt digest independently preserved at publication.
+.PARAMETER RestoredDirectoryReceiptPath
+Original restored-data directory receipt path preserved before disk restoration.
+.PARAMETER RestoredDirectoryReceiptSha256
+Original restored-data directory digest preserved independently for a creation retry.
+.PARAMETER RecoverPreparedDirectory
+Remove an incomplete pre-clone destination and exit; retry creation in a separate invocation.
+.PARAMETER PreparedDirectoryReceiptPath
+Original preparation receipt path, required with RecoverPreparedDirectory.
+.PARAMETER PreparedDirectoryReceiptSha256
+Original preparation receipt digest, required with RecoverPreparedDirectory.
 
 .PARAMETER VmrunPath
 Optional VMware vmrun executable override.
@@ -175,6 +197,17 @@ param(
     [string]$CollisionSuffix = '',
     [string]$ApplianceVmxPath = '',
     [string]$OutputDirectory = '',
+    [string]$OwnershipRoot = '',
+    [string]$OwnershipTaskId = '',
+    [string]$OwnershipReceiptPath = '',
+    [string]$OwnershipReceiptSha256 = '',
+    [string]$CleanupRecoveryReceiptPath = '',
+    [string]$CleanupRecoveryReceiptSha256 = '',
+    [string]$RestoredDirectoryReceiptPath = '',
+    [string]$RestoredDirectoryReceiptSha256 = '',
+    [switch]$RecoverPreparedDirectory,
+    [string]$PreparedDirectoryReceiptPath = '',
+    [string]$PreparedDirectoryReceiptSha256 = '',
     [string]$VmrunPath = '',
     [string]$ManagementNetwork = 'VMnet8',
     [string]$SiteANetwork = 'VMnet2',
@@ -226,6 +259,7 @@ Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Fo
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
+. (Join-Path $PSScriptRoot 'Atlaso.TestVmOwnership.ps1')
 
 <#
 .SYNOPSIS
@@ -1072,13 +1106,32 @@ Captured VMDK components whose non-empty quarantine paths must be restored.
 
 .PARAMETER QuarantineDirectory
 Exact invocation-owned sibling quarantine directory.
+.PARAMETER OwnershipContext
+Original task and marker proof for prospective restored-root publication.
+.PARAMETER OnRestored
+Retire recovery evidence only after final validation while original disk pins remain held.
 #>
 function Restore-AtlasoRollbackDataDisksFromQuarantine {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$DataDiskStates,
-        [Parameter(Mandatory = $true)][string]$QuarantineDirectory
+        [Parameter(Mandatory = $true)][string]$QuarantineDirectory,
+        [psobject]$OwnershipContext,
+        [scriptblock]$OnRestored
     )
 
+    $restorationPin=$null
+    try {
+    if ($OwnershipContext -and $OwnershipContext.Enabled -and
+        (@($DataDiskStates | Where-Object QuarantinePath).Count -or -not (Test-Path -LiteralPath $OwnershipContext.VmxPath))) {
+        if (Test-Path -LiteralPath $OwnershipContext.OutputDirectory) {
+            if (-not $OwnershipContext.PSObject.Properties['RestoredDirectoryReceiptPath'] -or -not $OwnershipContext.RestoredDirectoryReceiptPath) {
+                throw 'Removed output root reappeared without an original restored-directory receipt; preserve recovery marker and directory.'
+            }
+            Assert-AtlasoTestVmRestoredDirectory -Context $OwnershipContext -AllowQuarantine | Out-Null
+            $restorationPin=$OwnershipContext.RestoredOutputPin
+        }
+        else { $restorationPin=New-AtlasoTestVmRestoredDirectory -Context $OwnershipContext -DataDiskStates $DataDiskStates }
+    }
     foreach ($state in $DataDiskStates) {
         if (-not $state.QuarantinePath) {
             continue
@@ -1089,8 +1142,13 @@ function Restore-AtlasoRollbackDataDisksFromQuarantine {
         if ([Atlaso.WorkstationFileIdentity]::Get($state.QuarantinePath) -ne $state.Identity) {
             throw "A quarantined VMware data disk changed identity and was preserved for manual recovery: $($state.QuarantinePath)"
         }
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $state.Path) | Out-Null
-        Move-Item -LiteralPath $state.QuarantinePath -Destination $state.Path
+        if (-not (Test-Path -LiteralPath (Split-Path -Parent $state.Path) -PathType Container)) {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $state.Path) | Out-Null
+        }
+        [IO.File]::Move([string]$state.QuarantinePath,[string]$state.Path)
+        if ($restorationPin -and -not $restorationPin.FilePins.ContainsKey($state.Path)) {
+            $restorationPin.FilePins.Add($state.Path,[Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile([string]$state.Path,$true))
+        }
         if ([Atlaso.WorkstationFileIdentity]::Get($state.Path) -ne $state.Identity) {
             throw "A restored VMware data disk failed identity verification: $($state.Path)"
         }
@@ -1102,6 +1160,10 @@ function Restore-AtlasoRollbackDataDisksFromQuarantine {
         }
         Remove-Item -LiteralPath $QuarantineDirectory -Recurse -Force
     }
+    if ($restorationPin) { Assert-AtlasoTestVmRestoredDirectory -Context $OwnershipContext | Out-Null }
+    if ($OnRestored) { & $OnRestored }
+    }
+    finally { if ($restorationPin) {$restorationPin.Dispose()}; if ($OwnershipContext -and $OwnershipContext.PSObject.Properties['RestoredOutputPin']) {$OwnershipContext.RestoredOutputPin=$null} }
 }
 
 <#
@@ -1310,7 +1372,7 @@ Filesystem identity captured before acquiring the mutation lock.
 
 .PARAMETER DurableIdentityAction
 Optional marker-publication action that must complete while the VMX remains
-locked against writers and same-path replacement.
+locked against writers and same-path replacement. Receives the held VMX stream.
 
 .PARAMETER AllowExistingIdentity
 Permit one exact matching cleanup identity to be rebound to a durable marker.
@@ -1410,7 +1472,7 @@ function Set-AtlasoTestVmCleanupIdentity {
             throw "The cleanup identity could not be proven in the VMX: $resolvedVmxPath"
         }
         if ($null -ne $DurableIdentityAction) {
-            & $DurableIdentityAction
+            & $DurableIdentityAction $stream
         }
     }
     finally {
@@ -1617,6 +1679,8 @@ Initial durable cleanup phase. Pre-secret rollback uses stopped/scrubbed proof.
 .PARAMETER AllowExistingCleanupIdentity
 Reuse one exact cleanup identity already written by this invocation when its
 original marker publication failed before any secret child started.
+.PARAMETER OwnershipContext
+Original task and VM receipt context for immutable marker evidence publication.
 #>
 function New-AtlasoDevelopmentCaCleanupMarker {
     param(
@@ -1628,7 +1692,8 @@ function New-AtlasoDevelopmentCaCleanupMarker {
         [ref]$MarkerPathReference,
         [ValidateSet('secret-child-active', 'stopped-vmx-scrubbed')]
         [string]$InitialPhase = 'secret-child-active',
-        [switch]$AllowExistingCleanupIdentity
+        [switch]$AllowExistingCleanupIdentity,
+        [psobject]$OwnershipContext
     )
 
     $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
@@ -1689,6 +1754,8 @@ function New-AtlasoDevelopmentCaCleanupMarker {
             }
         )
     }
+    $originalOwnershipBox = [pscustomobject]@{ Value = $null }
+    $originalOwnershipPin = $null
     $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(
         ($payload | ConvertTo-Json -Depth 4 -Compress)
     )
@@ -1696,10 +1763,31 @@ function New-AtlasoDevelopmentCaCleanupMarker {
     # lookup scope. Capture the script-local helper itself so normal wrapper
     # execution cannot depend on ambient or global function state.
     $durableMarkerMoveAction = ${function:Move-AtlasoDurableCleanupMarkerFile}
+    $publishOwnershipAction = ${function:Publish-AtlasoTestVmOwnershipRecord}
+    $markerProjectionAction = ${function:Get-AtlasoTestVmMarkerProjection}
     if ($null -eq $durableMarkerMoveAction) {
         throw 'The durable cleanup-marker rename helper is unavailable.'
     }
     $publishMarker = {
+        if ($originalOwnershipBox.Value) {
+            $proofContext = $OwnershipContext.PSObject.Copy()
+            $proofContext | Add-Member -NotePropertyName InvocationId -NotePropertyValue $markerId -Force
+            $proof = [ordered]@{schema=1;phase='ca-marker-original';task_id=$OwnershipContext.TaskId;
+                repository=$OwnershipContext.Repository;worktree=$OwnershipContext.Worktree;source_branch=$OwnershipContext.Branch;
+                source_commit=$OwnershipContext.SourceCommit;output_directory=$OwnershipContext.OutputDirectory;
+                vmx_path=$OwnershipContext.VmxPath;canonical_name=$OwnershipContext.Name;
+                pull_request_number=$OwnershipContext.PullRequestNumber;local_builder=$OwnershipContext.LocalBuilder;
+                original_receipt_path=$OwnershipContext.ReceiptPath;original_receipt_sha256=$OwnershipContext.ReceiptSha256;
+                original_directory_identity=$originalOwnershipBox.Value.Record.original_identities.directory;
+                persistent_vm_identity_sha256=$originalOwnershipBox.Value.Record.persistent_vm_identity_sha256;
+                marker_path=$markerPath;host_boot_identity=$payload.HostBootIdentity;
+                marker_projection=(& $markerProjectionAction -Marker ([pscustomobject]$payload))}
+            $publishedProof = & $publishOwnershipAction -Context $proofContext -Record $proof -Kind ca-marker
+            $OwnershipContext | Add-Member CleanupRecoveryReceiptPath $publishedProof.Path -Force
+            $OwnershipContext | Add-Member CleanupRecoveryReceiptSha256 $publishedProof.Sha256 -Force
+            Write-Host "Test VM cleanup recovery receipt: $($publishedProof.Path)"
+            Write-Host "Test VM cleanup recovery receipt SHA-256: $($publishedProof.Sha256)"
+        }
         $markerStream = [System.IO.FileStream]::new(
             $temporaryPath,
             [System.IO.FileMode]::CreateNew,
@@ -1722,6 +1810,10 @@ function New-AtlasoDevelopmentCaCleanupMarker {
             -DestinationPath $markerPath
     }.GetNewClosure()
     try {
+        if ($OwnershipContext -and $OwnershipContext.Enabled) {
+            $originalOwnershipPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($resolvedOutputDirectory, $true)
+            $originalOwnershipBox.Value = Assert-AtlasoTestVmOriginalOwnership -Context $OwnershipContext
+        }
         Set-AtlasoTestVmCleanupIdentity `
             -VmxPath $resolvedVmxPath `
             -Identity $cleanupIdentity `
@@ -1736,6 +1828,7 @@ function New-AtlasoDevelopmentCaCleanupMarker {
         return $markerPath
     }
     finally {
+        if ($originalOwnershipPin) { $originalOwnershipPin.Dispose() }
         Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
     }
 }
@@ -1976,7 +2069,8 @@ function Read-AtlasoDevelopmentCaCleanupMarker {
                 [System.Globalization.CultureInfo]::InvariantCulture
             )
             Phase = 'retired'
-            ArtifactsRemoved = $false
+            ArtifactsRemoved = -not (Test-Path -LiteralPath $resolvedOutputDirectory)
+            OriginalProjection = (Get-AtlasoTestVmMarkerProjection -Marker $marker)
         }
     }
     Assert-AtlasoStrictDescendantPath `
@@ -2263,6 +2357,9 @@ function Upgrade-AtlasoLegacyDevelopmentCaCleanupMarker {
 .SYNOPSIS
 Finalize a proven development-signer import without leaving plaintext in VMX.
 
+.PARAMETER OwnershipContext
+Admitted task/source context revalidated before stop and mutable restart helper launch.
+
 .PARAMETER Marker
 Validated cleanup marker for the exact normal test VM.
 
@@ -2276,9 +2373,16 @@ function Complete-AtlasoDevelopmentCaSuccessfulImport {
     param(
         [Parameter(Mandatory = $true)][object]$Marker,
         [Parameter(Mandatory = $true)][string]$VmrunPath,
-        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
+        [psobject]$OwnershipContext
     )
 
+    if ($OwnershipContext) {
+        if ($OwnershipContext.Enabled -and [string]$Marker.VmxPath -ine [string]$OwnershipContext.VmxPath) {
+            throw 'Successful-import cleanup requires the admitted VM destination; preserve unrelated markers.'
+        }
+        Assert-AtlasoTestVmCheckoutSource -Context $OwnershipContext
+    }
     $restartScrubProven = $false
     if ($Marker.Phase -in @('staged', 'vm-stop-child-active')) {
         if ($Marker.Phase -ceq 'staged') {
@@ -2368,6 +2472,7 @@ function Complete-AtlasoDevelopmentCaSuccessfulImport {
             -Phase vm-restart-child-active
         $Marker.Phase = 'vm-restart-child-active'
         try {
+            if ($OwnershipContext) { Assert-AtlasoTestVmCheckoutSource -Context $OwnershipContext }
             Invoke-AtlasoBoundedProcess `
                 -FilePath (Get-Process -Id $PID).Path `
                 -ArgumentList @(
@@ -2410,6 +2515,9 @@ function Complete-AtlasoDevelopmentCaSuccessfulImport {
 .SYNOPSIS
 Retry every interrupted development-CA rollback before another VM mutation.
 
+.PARAMETER OwnershipContext
+Admitted task context requiring the exact original VM receipt before any marker-bound mutation.
+
 .PARAMETER VmrunPath
 Resolved VMware vmrun executable used for bounded scrub and stop proof.
 
@@ -2427,10 +2535,13 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
         [Parameter(Mandatory = $true)][string]$VmrunPath,
         [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
         [string]$ExpectedFingerprint = ('0' * 64),
-        [string]$MarkerRoot = (Get-AtlasoDevelopmentCaCleanupMarkerRoot)
+        [string]$MarkerRoot = (Get-AtlasoDevelopmentCaCleanupMarkerRoot),
+        [psobject]$OwnershipContext
     )
 
     if (-not (Test-Path -LiteralPath $MarkerRoot -PathType Container)) {
+        if ($OwnershipContext -and $OwnershipContext.PSObject.Properties['CleanupRecoveryReceiptPath'] -and
+            $OwnershipContext.CleanupRecoveryReceiptPath) { throw 'Original cleanup recovery marker is missing.' }
         return
     }
     Assert-AtlasoStrictDescendantPath `
@@ -2441,13 +2552,22 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
     if ($unexpectedFiles.Count -gt 0) {
         throw "Unexpected development-CA cleanup state blocks new VM creation: $($unexpectedFiles[0].FullName)"
     }
-    foreach ($markerFile in @(Get-ChildItem -LiteralPath $MarkerRoot -File -Filter '*.json' -Force)) {
+    $pendingMarkerFiles = @(Get-ChildItem -LiteralPath $MarkerRoot -File -Filter '*.json' -Force)
+    if (-not $pendingMarkerFiles.Count -and $OwnershipContext -and
+        $OwnershipContext.PSObject.Properties['CleanupRecoveryReceiptPath'] -and
+        $OwnershipContext.CleanupRecoveryReceiptPath) { throw 'Original cleanup recovery marker is missing.' }
+    foreach ($markerFile in $pendingMarkerFiles) {
+        $pendingOutputPin = $null
+        try {
         try {
             $marker = Read-AtlasoDevelopmentCaCleanupMarker `
                 -MarkerPath $markerFile.FullName `
                 -MarkerRoot $MarkerRoot
         }
         catch {
+            # Legacy repair can scrub and stop a VM before returning a marker.
+            # Agent-owned recovery must never enter it without exact admission.
+            if ($OwnershipContext -and $OwnershipContext.Enabled) { throw }
             if ($_.Exception.Message -notlike 'The marked VMX changed filesystem identity;*') {
                 throw
             }
@@ -2460,6 +2580,28 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
             $marker = Read-AtlasoDevelopmentCaCleanupMarker `
                 -MarkerPath $markerFile.FullName `
                 -MarkerRoot $MarkerRoot
+        }
+        if ($OwnershipContext -and $OwnershipContext.Enabled) {
+            if (
+                [string]$marker.VmxPath -ine [string]$OwnershipContext.VmxPath -or
+                [string]$marker.OutputDirectory -ine [string]$OwnershipContext.OutputDirectory -or
+                [string]$marker.Name -cne [string]$OwnershipContext.Name
+            ) {
+                throw 'Persisted cleanup requires the original receipt for its exact VM; preserve unrelated markers.'
+            }
+            if ($marker.ArtifactsRemoved) {
+                $null = Assert-AtlasoTestVmRemovedMarkerOwnership -Context $OwnershipContext -Marker $marker
+                if ((Test-Path -LiteralPath $OwnershipContext.OutputDirectory) -and
+                    (-not $OwnershipContext.PSObject.Properties['RestoredDirectoryReceiptPath'] -or -not $OwnershipContext.RestoredDirectoryReceiptPath)) {
+                    throw 'Removed output root reappeared without an original restored-directory receipt; preserve recovery marker and directory.'
+                }
+            }
+            else {
+                if ($OwnershipContext.PSObject.Properties['CleanupRecoveryReceiptPath'] -and
+                    $OwnershipContext.CleanupRecoveryReceiptPath) { throw 'Cleanup recovery selectors require removed VM artifacts.' }
+                $pendingOutputPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath([string]$OwnershipContext.OutputDirectory, $true)
+                $null = Assert-AtlasoTestVmOriginalOwnership -Context $OwnershipContext
+            }
         }
         if ($marker.Phase -ceq 'retired') {
             Remove-AtlasoDevelopmentCaCleanupMarker -MarkerPath $marker.MarkerPath
@@ -2517,7 +2659,8 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                 Complete-AtlasoDevelopmentCaSuccessfulImport `
                     -Marker $marker `
                     -VmrunPath $VmrunPath `
-                    -TimeoutSeconds $TimeoutSeconds
+                    -TimeoutSeconds $TimeoutSeconds `
+                    -OwnershipContext $OwnershipContext
                 continue
             }
         }
@@ -2622,16 +2765,32 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                     $marker.Phase = 'removal-child-active'
                 }
                 try {
+                    $persistedOwnershipArguments = @()
+                    if ($OwnershipContext -and $OwnershipContext.Enabled) {
+                        if ([string]$marker.VmxPath -ine [string]$OwnershipContext.VmxPath) {
+                            throw 'Persisted cleanup requires the original receipt for its exact VM; preserve unrelated markers.'
+                        }
+                        $persistedReceipt = Assert-AtlasoTestVmOriginalOwnership -Context $OwnershipContext
+                        $persistedOwnershipArguments = @(
+                            '-ExpectedRootIdentity', [string]$persistedReceipt.Record.original_identities.directory,
+                            '-ExpectedPersistentVmIdentitySha256', [string]$persistedReceipt.Record.persistent_vm_identity_sha256
+                        )
+                    }
+                    if ($OwnershipContext) { Assert-AtlasoTestVmCheckoutSource -Context $OwnershipContext }
+                    # The removal child independently re-admits the exact original
+                    # root before mutation and holds its deletion-compatible handles.
+                    # Release this non-deletable admission pin only at that handoff.
+                    if ($pendingOutputPin) { $pendingOutputPin.Dispose(); $pendingOutputPin = $null }
                     Invoke-AtlasoBoundedProcess `
                         -FilePath $powerShellPath `
-                        -ArgumentList @(
+                        -ArgumentList (@(
                             '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
                             (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1'),
                             '-VmxPath', $marker.VmxPath,
                             '-VmrunPath', $VmrunPath,
                             '-ExpectedName', $marker.Name,
                             '-Confirm:$false'
-                        ) `
+                        ) + $persistedOwnershipArguments) `
                         -TimeoutSeconds $TimeoutSeconds `
                         -Action 'Remove the exact failed normal test VM during persisted cleanup' | Out-Null
                 }
@@ -2664,11 +2823,14 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                     -OnVerified {
                         Restore-AtlasoRollbackDataDisksFromQuarantine `
                             -DataDiskStates $dataDiskStates `
-                            -QuarantineDirectory $quarantineDirectory
-                        if (Test-Path -LiteralPath $marker.VmxPath) {
-                            throw "The exact cleanup-marker VMX was recreated during recovery release: $($marker.VmxPath)"
-                        }
-                        Remove-AtlasoDevelopmentCaCleanupMarker -MarkerPath $marker.MarkerPath
+                            -QuarantineDirectory $quarantineDirectory `
+                            -OwnershipContext $OwnershipContext `
+                            -OnRestored {
+                                if (Test-Path -LiteralPath $marker.VmxPath) {
+                                    throw "The exact cleanup-marker VMX was recreated during recovery release: $($marker.VmxPath)"
+                                }
+                                Remove-AtlasoDevelopmentCaCleanupMarker -MarkerPath $marker.MarkerPath
+                            }
                     } `
                     -Confirm:$false
             }
@@ -2688,13 +2850,16 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
             try {
                 Restore-AtlasoRollbackDataDisksFromQuarantine `
                     -DataDiskStates $dataDiskStates `
-                    -QuarantineDirectory $quarantineDirectory
+                    -QuarantineDirectory $quarantineDirectory `
+                    -OwnershipContext $OwnershipContext
             }
             catch {
                 throw "$($cleanupFailure.Exception.Message) Preserved data remains in $quarantineDirectory and the durable cleanup marker remains at $($marker.MarkerPath)."
             }
             throw "$($cleanupFailure.Exception.Message) The durable cleanup marker remains for the next bounded retry: $($marker.MarkerPath)"
         }
+        }
+        finally { if ($pendingOutputPin) { $pendingOutputPin.Dispose() } }
     }
 }
 
@@ -3016,14 +3181,15 @@ $selectedIdentityCount = [int]($PullRequestNumber -gt 0) + [int][bool]$LocalBuil
 if ($selectedIdentityCount -ne 1) {
     throw 'Select exactly one test VM identity: -PullRequestNumber for PR validation or -LocalBuilder for local testing.'
 }
+$sourceBranch = ([string](& git -C $repoRoot branch --show-current)).Trim()
+$sourceCommit = ([string](& git -C $repoRoot rev-parse HEAD)).Trim()
+$gitIdentityReadFailed = $LASTEXITCODE -ne 0
+$sourceChanges = @(& git -C $repoRoot status --short --untracked-files=all)
+if ($LocalBuilder -and ($gitIdentityReadFailed -or $LASTEXITCODE -ne 0 -or -not $sourceBranch -or
+        $sourceCommit -notmatch '^[0-9a-f]{40}$' -or $sourceChanges.Count -ne 0)) {
+    throw 'A local test VM requires one clean checked-out branch and exact source commit.'
+}
 $vmIdentity = if ($LocalBuilder) {
-    $sourceBranch = ([string](& git -C $repoRoot branch --show-current)).Trim()
-    $sourceCommit = ([string](& git -C $repoRoot rev-parse HEAD)).Trim()
-    $sourceChanges = @(& git -C $repoRoot status --short)
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceBranch) -or
-        $sourceCommit -notmatch '^[0-9a-f]{40}$' -or $sourceChanges.Count -ne 0) {
-        throw 'A local test VM requires one clean checked-out branch and exact source commit.'
-    }
     New-AtlasoVmwareTestIdentity `
         -LocalBuilder `
         -SourceCommit $sourceCommit `
@@ -3049,6 +3215,56 @@ if (-not $OutputDirectory) {
 $resolvedOutputDirectory = Assert-AtlasoVmwareIdentityDirectory `
     -Path $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory) `
     -ExpectedName $Name
+$targetVmx = Join-Path $resolvedOutputDirectory "$Name.vmx"
+$ownershipContext = New-AtlasoTestVmOwnershipContext `
+    -Worktree $repoRoot `
+    -OwnershipRoot $OwnershipRoot `
+    -OwnershipTaskId $OwnershipTaskId `
+    -OwnershipReceiptPath $OwnershipReceiptPath `
+    -OwnershipReceiptSha256 $OwnershipReceiptSha256 `
+    -OutputDirectory $resolvedOutputDirectory `
+    -VmxPath $targetVmx `
+    -Name $Name `
+    -SourceCommit $sourceCommit `
+    -SourceBranch $sourceBranch `
+    -PullRequestNumber $PullRequestNumber `
+    -LocalBuilder:$LocalBuilder
+$existingOwnershipReceipt = $null
+try {
+$ownershipContext | Add-Member RestoredDirectoryReceiptPath $RestoredDirectoryReceiptPath -Force
+$ownershipContext | Add-Member RestoredDirectoryReceiptSha256 $RestoredDirectoryReceiptSha256.ToLowerInvariant() -Force
+if ([bool]$RestoredDirectoryReceiptPath -xor [bool]$RestoredDirectoryReceiptSha256) {throw 'Pass both original restored directory selectors.'}
+if ($RestoredDirectoryReceiptPath -and (-not $ownershipContext.Enabled -or $Redeploy -or $RestoredDirectoryReceiptSha256 -notmatch '^[0-9a-fA-F]{64}$')) {throw 'Restored-directory retry requires task ownership and forbids redeploy.'}
+if ($RestoredDirectoryReceiptPath) {Assert-AtlasoTestVmRestoredDirectory -Context $ownershipContext -AllowQuarantine:([bool]$CleanupRecoveryReceiptPath) | Out-Null}
+$ownershipContext | Add-Member -NotePropertyName CleanupRecoveryReceiptPath -NotePropertyValue $CleanupRecoveryReceiptPath -Force
+$ownershipContext | Add-Member -NotePropertyName CleanupRecoveryReceiptSha256 -NotePropertyValue $CleanupRecoveryReceiptSha256.ToLowerInvariant() -Force
+if ([bool]$CleanupRecoveryReceiptPath -xor [bool]$CleanupRecoveryReceiptSha256) { throw 'Pass both original cleanup recovery selectors.' }
+if ($CleanupRecoveryReceiptPath -and (-not $ownershipContext.Enabled -or $Redeploy -or
+    $CleanupRecoveryReceiptSha256 -notmatch '^[0-9a-fA-F]{64}$')) { throw 'Cleanup recovery requires task ownership and forbids redeploy.' }
+if ($RecoverPreparedDirectory -or $PreparedDirectoryReceiptPath -or $PreparedDirectoryReceiptSha256) {
+    if (-not $RecoverPreparedDirectory -or -not $PreparedDirectoryReceiptPath -or -not $PreparedDirectoryReceiptSha256 -or
+        $OwnershipReceiptPath -or $OwnershipReceiptSha256) {
+        throw 'Prepared recovery requires its explicit switch and paired original selectors; existing-VM selectors cannot be combined.'
+    }
+    Assert-AtlasoPreparedRecoveryParameters -BoundParameters $PSBoundParameters
+    $preparedRecoveryVmrun = Resolve-TestVmVmrunPath -Path $VmrunPath
+    Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
+    Remove-AtlasoTestVmPreparedOutput -Context $ownershipContext -ReceiptPath $PreparedDirectoryReceiptPath -ReceiptSha256 $PreparedDirectoryReceiptSha256 -VmrunPath $preparedRecoveryVmrun -Confirm:$false
+    return
+}
+if ($ownershipContext.Enabled -and (Test-Path -LiteralPath $resolvedOutputDirectory) -and -not $CleanupRecoveryReceiptPath -and -not $RestoredDirectoryReceiptPath) {
+    $existingOwnershipReceipt = Assert-AtlasoTestVmOriginalOwnership -Context $ownershipContext
+}
+if ($NoStart) {
+    throw '-NoStart is not supported for normal test VMs because first boot must consume and scrub the shared development signing key.'
+}
+if (
+    $ownershipContext.Enabled -and
+    (Test-Path -LiteralPath $resolvedOutputDirectory -PathType Container) -and
+    -not (Test-Path -LiteralPath $targetVmx -PathType Leaf) -and -not $CleanupRecoveryReceiptPath -and -not $RestoredDirectoryReceiptPath
+) {
+    throw "Refusing VMware creation because the canonical Atlaso-owned output directory already exists without its exact VMX: $resolvedOutputDirectory"
+}
 $developmentRootCaCertificatePath = Join-Path $repoRoot 'image\vmware-workstation\development-trust\atlaso-development-root-ca.pem'
 $developmentRootCaCertificatePem = Get-Content -LiteralPath $developmentRootCaCertificatePath -Raw
 $developmentRootCaFingerprint = Get-AtlasoDevelopmentRootCaFingerprint `
@@ -3056,28 +3272,53 @@ $developmentRootCaFingerprint = Get-AtlasoDevelopmentRootCaFingerprint `
 $resolvedOpPath = ''
 $onePasswordAuthentication = $null
 $resolvedVmrunPath = ''
-if ($NoStart) {
-    throw '-NoStart is not supported for normal test VMs because first boot must consume and scrub the shared development signing key.'
+if (-not $WhatIfPreference) {
+    # Recovery consumes no 1Password material. Run it first so revoked or
+    # rotated credentials cannot strand an earlier plaintext-staging failure.
+    $resolvedVmrunPath = Resolve-TestVmVmrunPath -Path $VmrunPath
+    Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
+    Invoke-PendingAtlasoDevelopmentCaCleanup `
+        -VmrunPath $resolvedVmrunPath `
+        -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30)) `
+        -ExpectedFingerprint $developmentRootCaFingerprint `
+        -OwnershipContext $ownershipContext
+}
+if ($CleanupRecoveryReceiptPath) { return }
+if ($ownershipContext.Enabled -and (Test-Path -LiteralPath $targetVmx) -and -not $Redeploy) {
+    # Recovery may finish a healthy VM's import. Preserve that VM and refuse
+    # recreation only after the receipt-bound pending work has completed.
+    throw "VM already exists: $targetVmx. Pass -Redeploy to remove and recreate it, or choose a different -CollisionSuffix for another identically owned test VM."
+}
+$resolvedSourceVmx = ''
+$sourceVmxIdentity = ''
+if ($ownershipContext.Enabled) {
+    if (-not $ApplianceVmxPath) {
+        $ApplianceVmxPath = Find-LatestApplianceVmx -RepoRoot $repoRoot
+    }
+    $resolvedSourceVmx = (Resolve-Path -LiteralPath $ApplianceVmxPath).Path
+    $expectedPayloadSourceCommit = if ($LocalBuilder) { $vmIdentity.SourceCommit } else { '' }
+    Assert-AtlasoVmwarePayloadProvenance `
+        -VmxPath $resolvedSourceVmx `
+        -ExpectedSourceCommit $expectedPayloadSourceCommit | Out-Null
+    $sourceVmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedSourceVmx)
+    if (-not $WhatIfPreference) {
+        # This public-only intent predates credential access and remains if cloning
+        # or its original-identity callback fails before the VM can be configured.
+        $ownershipContext = New-AtlasoTestVmOwnershipIntent `
+            -Context $ownershipContext `
+            -SourceVmxPath $resolvedSourceVmx `
+            -SourceVmxIdentity $sourceVmxIdentity `
+            -ExistingReceipt $existingOwnershipReceipt
+    }
 }
 if (-not $WhatIfPreference) {
-    # Admit the exact fork release before recovery or any credential-side
-    # activity. The later isolated runtime repeats the verification inside its
-    # private credential root before installation.
+    # Resolve new Environment configuration only after credential-independent
+    # recovery and existing-VM admission. SDK availability cannot strand receipt-only recovery.
     $OnePasswordPython = Confirm-OnePasswordTestVmArtifact `
         -RepositoryRoot $repoRoot `
         -PythonCommand $OnePasswordPython `
         -TimeoutSeconds $TimeoutSeconds
-    # Recovery consumes no 1Password material. Run it first so revoked or
-    # rotated credentials cannot strand an earlier plaintext-staging failure.
-    $resolvedVmrunPath = Resolve-TestVmVmrunPath -Path $VmrunPath
-    Invoke-PendingAtlasoDevelopmentCaCleanup `
-        -VmrunPath $resolvedVmrunPath `
-        -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30)) `
-        -ExpectedFingerprint $developmentRootCaFingerprint
-}
-if (-not $WhatIfPreference) {
-    # Resolve new Environment configuration only after credential-independent
-    # recovery has scrubbed any signer staging left by an interrupted prior run.
+    # Recovery has scrubbed any signer staging left by an interrupted prior run.
     $OnePasswordEnvironmentId = Resolve-OnePasswordDevelopmentCaEnvironmentId `
         -EnvironmentId $OnePasswordEnvironmentId `
         -EnvironmentIdFile $EnvironmentIdFile `
@@ -3152,16 +3393,20 @@ if ($SkipLabNetworkAdapters) {
     $effectiveSkipLabNetworkAdapters = $true
 }
 
-if (-not $ApplianceVmxPath) {
-    $ApplianceVmxPath = Find-LatestApplianceVmx -RepoRoot $repoRoot
+if (-not $ownershipContext.Enabled) {
+    # Preserve ordinary human CLI preflight order: resolve source build inputs
+    # after the intended Environment checks, before any clone or VM mutation.
+    if (-not $ApplianceVmxPath) {
+        $ApplianceVmxPath = Find-LatestApplianceVmx -RepoRoot $repoRoot
+    }
+    $resolvedSourceVmx = (Resolve-Path -LiteralPath $ApplianceVmxPath).Path
+    $expectedPayloadSourceCommit = if ($LocalBuilder) { $vmIdentity.SourceCommit } else { '' }
+    Assert-AtlasoVmwarePayloadProvenance `
+        -VmxPath $resolvedSourceVmx `
+        -ExpectedSourceCommit $expectedPayloadSourceCommit | Out-Null
+    $sourceVmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($resolvedSourceVmx)
 }
-$resolvedSourceVmx = (Resolve-Path -LiteralPath $ApplianceVmxPath).Path
-$expectedPayloadSourceCommit = if ($LocalBuilder) { $vmIdentity.SourceCommit } else { '' }
-Assert-AtlasoVmwarePayloadProvenance `
-    -VmxPath $resolvedSourceVmx `
-    -ExpectedSourceCommit $expectedPayloadSourceCommit | Out-Null
 
-$targetVmx = Join-Path $resolvedOutputDirectory "$Name.vmx"
 $resolvedDepotVmdkPath = if ($DepotVmdkPath) {
     $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DepotVmdkPath)
 }
@@ -3182,10 +3427,14 @@ if (
     (Test-Path -LiteralPath $resolvedOutputDirectory -PathType Container) -and
     -not (Test-Path -LiteralPath $targetVmx -PathType Leaf)
 ) {
-    throw "Refusing VMware creation because the canonical Atlaso-owned output directory already exists without its exact VMX: $resolvedOutputDirectory"
+    if (-not $RestoredDirectoryReceiptPath) {
+        throw "Refusing VMware creation because the canonical Atlaso-owned output directory already exists without its exact VMX: $resolvedOutputDirectory"
+    }
+    Assert-AtlasoTestVmRestoredDirectory -Context $ownershipContext | Out-Null
 }
 
 if (-not $SkipNetworkPrepare) {
+    Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
     & (Join-Path $PSScriptRoot 'prepare-networks.ps1') `
         -VmrunPath $VmrunPath `
         -ManagementNetwork $ManagementNetwork `
@@ -3199,6 +3448,16 @@ if (-not $SkipNetworkPrepare) {
 }
 
 if ((Test-Path -LiteralPath $resolvedOutputDirectory) -and $Redeploy) {
+    $redeployOwnershipArguments = @{}
+    if ($ownershipContext.Enabled) {
+        # Credential and network preflight can outlive the initial ownership
+        # read. Recheck the original binding before the owning removal tool.
+        $redeployReceipt = Assert-AtlasoTestVmOriginalOwnership -Context $ownershipContext
+        $redeployOwnershipArguments = @{
+            ExpectedRootIdentity = [string]$redeployReceipt.Record.original_identities.directory
+            ExpectedPersistentVmIdentitySha256 = [string]$redeployReceipt.Record.persistent_vm_identity_sha256
+        }
+    }
     if (-not (Test-Path -LiteralPath $targetVmx -PathType Leaf)) {
         throw "Refusing redeploy cleanup because the expected Atlaso-owned VMX is missing: $targetVmx. Choose the correct identity, purpose, collision suffix, and output directory, or remove the directory manually after reviewing its contents."
     }
@@ -3207,15 +3466,29 @@ if ((Test-Path -LiteralPath $resolvedOutputDirectory) -and $Redeploy) {
         -ExpectedDirectory $resolvedOutputDirectory `
         -ExpectedName $Name | Out-Null
     if ($PSCmdlet.ShouldProcess($targetVmx, 'Remove existing Atlaso Workstation test VM')) {
+        Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
         & (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1') `
             -VmxPath $targetVmx `
             -VmrunPath $VmrunPath `
             -ExpectedName $Name `
+            @redeployOwnershipArguments `
             -Confirm:$false
     }
 }
 
 if ($ResetDataDisks) {
+    if ($RestoredDirectoryReceiptPath) {
+        $restored=Assert-AtlasoTestVmRestoredDirectory -Context $ownershipContext
+        $selected=@(Get-AtlasoRollbackDataDiskStates -DiskPaths @($resolvedDepotVmdkPath,$resolvedBackupVmdkPath) -OutputDirectory $resolvedOutputDirectory)
+        if ($selected.Count -ne @($restored.disks).Count -or @($selected | Where-Object { $candidate=$_; -not @($restored.disks | Where-Object { $_.Path -ceq $candidate.Path -and $_.Identity -ceq $candidate.Identity }).Count }).Count) {throw 'Reset paths do not match the original restored disk components.'}
+        Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
+        if ($PSCmdlet.ShouldProcess($resolvedOutputDirectory,'Reset originally restored data disk components')) {
+            $ownershipContext.RestoredOutputPin.ReleaseFiles()
+            & (Get-Module Atlaso.WorkstationCleanup) {param($root,$record) $snapshot=Get-AtlasoRootSnapshot -RemovalRoot $root; if($snapshot.RootIdentity -cne $record.original_identity -or $snapshot.Items.Count -ne @($record.disks).Count){throw 'Restored root changed before reset'};foreach($disk in $record.disks){if($snapshot.Items[$disk.RelativePath] -cne $disk.Identity){throw 'Restored disk changed before reset'}};Remove-AtlasoCapturedArtifactSnapshot -Root $root -Snapshot $snapshot -KeepRoot} $resolvedOutputDirectory $restored
+            $ownershipContext.RestoredDataReset=$true
+        }
+    }
+    else {
     foreach ($diskPath in @($resolvedDepotVmdkPath, $resolvedBackupVmdkPath)) {
         if (-not (Test-Path -LiteralPath $diskPath)) {
             continue
@@ -3226,9 +3499,11 @@ if ($ResetDataDisks) {
             -ChildPath $resolvedDiskPath `
             -FailureMessage 'Refusing to reset VMware data disk outside the VM output directory'
         if ($PSCmdlet.ShouldProcess($resolvedDiskPath, 'Remove existing Atlaso VMware data disk')) {
+            Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
             Remove-Item -LiteralPath $resolvedDiskPath -Force
             Write-Host "Removed existing data disk: $resolvedDiskPath"
         }
+    }
     }
 }
 
@@ -3246,6 +3521,55 @@ $developmentCaCleanupMarkerPath = ''
 $credentialStageFailure = $null
 $credentialBridgeCleanupError = ''
 if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from $resolvedSourceVmx")) {
+        $cloneOwnershipArguments = @{}
+        if ($ownershipContext.Enabled) {
+            $ownershipContext | Add-Member -NotePropertyName CloneTimeoutSeconds -NotePropertyValue $TimeoutSeconds -Force
+            $cloneOwnershipArguments = @{
+                CloneCreated = {
+                    param($CreatedDirectory, $CreatedVmx, $Context)
+                    $cleanupIdentity = [guid]::NewGuid().ToString('N')
+                    $cleanupIdentityAction = {
+                        param($HeldVmxStream)
+                        $publishedOwnership = Publish-AtlasoTestVmOriginalOwnership `
+                            -Context $Context `
+                            -DirectoryPath $CreatedDirectory `
+                            -VmxPath $CreatedVmx `
+                            -CleanupIdentity $cleanupIdentity `
+                            -HeldVmxStream $HeldVmxStream
+                        if (-not $publishedOwnership.ReceiptPath -or
+                            [string]$publishedOwnership.ReceiptSha256 -notmatch '^[0-9a-f]{64}$') {
+                            throw 'The original test-VM ownership receipt was published without its independent path and SHA-256.'
+                        }
+                        Write-Host "Test VM original ownership receipt: $($publishedOwnership.ReceiptPath)"
+                        Write-Host "Test VM original ownership receipt SHA-256: $($publishedOwnership.ReceiptSha256)"
+                    }
+                    Set-AtlasoTestVmCleanupIdentity `
+                        -VmxPath $CreatedVmx `
+                        -Identity $cleanupIdentity `
+                        -ExpectedVmxIdentity ([Atlaso.WorkstationFileIdentity]::Get($CreatedVmx)) `
+                        -DurableIdentityAction $cleanupIdentityAction
+                }
+                CloneCreatedContext = $ownershipContext
+                CloneExecutor = {
+                    param($Executable, $Arguments, $Context)
+                    Invoke-AtlasoTestVmOwnedClone -Context $Context -FilePath $Executable -ArgumentList $Arguments -TimeoutSeconds $Context.CloneTimeoutSeconds
+                }
+                MutationGuard = {
+                    param($Context)
+                    Assert-AtlasoTestVmCheckoutSource -Context $Context
+                }
+            }
+        }
+        $cloneSourcePin = $null
+        try {
+        if ($ownershipContext.Enabled) {
+            $cloneSourcePin = Get-AtlasoTestVmCloneSourcePin `
+                -SourceVmxPath $resolvedSourceVmx `
+                -SourceVmxIdentity $sourceVmxIdentity `
+                -ExpectedSourceCommit $expectedPayloadSourceCommit
+            Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
+        }
+        Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
         & (Join-Path $PSScriptRoot 'create-atlaso-vm.ps1') `
             -Name $Name `
             -ApplianceVmxPath $resolvedSourceVmx `
@@ -3260,9 +3584,19 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
             -SiteANetwork $SiteANetwork `
             -SiteBNetwork $SiteBNetwork `
             -TrunkNetwork $TrunkNetwork `
-            -SkipLabNetworkAdapters:$effectiveSkipLabNetworkAdapters
+            -SkipLabNetworkAdapters:$effectiveSkipLabNetworkAdapters `
+            @cloneOwnershipArguments
         if (-not $?) {
             throw "Atlaso VMware Workstation VM creation failed."
+        }
+        }
+        finally {
+            if ($cloneSourcePin) { $cloneSourcePin.Dispose() }
+            if ($ownershipContext.Enabled -and $ownershipContext.PSObject.Properties['CloneOutputPin'] -and $ownershipContext.CloneOutputPin) {
+                $ownershipContext.CloneOutputPin.Dispose()
+                $ownershipContext.CloneOutputPin = $null
+                if($ownershipContext.PSObject.Properties['RestoredOutputPin']) {$ownershipContext.RestoredOutputPin=$null}
+            }
         }
         $createdThisInvocation = $true
         try {
@@ -3274,8 +3608,11 @@ if ($PSCmdlet.ShouldProcess($targetVmx, "Create Atlaso Workstation test VM from 
                 -Name $Name `
                 -OutputDirectory $resolvedOutputDirectory `
                 -DataDiskStates $rollbackDataDiskStates `
-                -MarkerPathReference ([ref]$developmentCaCleanupMarkerPath) | Out-Null
+                -MarkerPathReference ([ref]$developmentCaCleanupMarkerPath) `
+                -OwnershipContext $ownershipContext `
+                -AllowExistingCleanupIdentity | Out-Null
             try {
+                Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
                 Invoke-AtlasoTestVmCredentialStage `
                     -BridgeState $credentialBridgeState `
                     -VmxPath $targetVmx `
@@ -3341,6 +3678,7 @@ if (-not $WhatIfPreference) {
             -ExpectedPhase staged `
             -Phase secret-child-active
         try {
+            Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
             Invoke-OnePasswordDevelopmentCaChild `
                 -EnvironmentId $OnePasswordEnvironmentId `
                 -OpPath $resolvedOpPath `
@@ -3376,6 +3714,7 @@ if (-not $WhatIfPreference) {
             -ExpectedPhase staged `
             -Phase vm-start-child-active
         try {
+            Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
             Invoke-AtlasoBoundedProcess `
                 -FilePath $powerShellPath `
                 -ArgumentList @(
@@ -3417,7 +3756,8 @@ if (-not $WhatIfPreference) {
         Complete-AtlasoDevelopmentCaSuccessfulImport `
             -Marker $successfulImportMarker `
             -VmrunPath $resolvedVmrunPath `
-            -TimeoutSeconds $TimeoutSeconds
+            -TimeoutSeconds $TimeoutSeconds `
+            -OwnershipContext $ownershipContext
         $developmentCaCleanupMarkerPath = ''
     }
     catch {
@@ -3455,6 +3795,7 @@ if (-not $WhatIfPreference) {
         }
         if ($createdThisInvocation -and (Test-Path -LiteralPath $targetVmx -PathType Leaf)) {
             $rollbackErrors = [System.Collections.Generic.List[string]]::new()
+            $restoredMarkerRetirement = [pscustomobject]@{Completed=$false}
             $quarantineDirectory = ''
             $runtimeSignerScrubbed = $false
             $runtimeSignerScrubError = ''
@@ -3528,6 +3869,7 @@ if (-not $WhatIfPreference) {
                             -OutputDirectory $resolvedOutputDirectory `
                             -DataDiskStates $rollbackDataDiskStates `
                             -MarkerPathReference ([ref]$developmentCaCleanupMarkerPath) `
+                            -OwnershipContext $ownershipContext `
                             -InitialPhase stopped-vmx-scrubbed `
                             -AllowExistingCleanupIdentity | Out-Null
                     }
@@ -3556,16 +3898,25 @@ if (-not $WhatIfPreference) {
                         -Phase removal-child-active
                 }
                 try {
+                    $rollbackOwnershipArguments = @()
+                    if ($ownershipContext.Enabled) {
+                        $rollbackReceipt = Assert-AtlasoTestVmOriginalOwnership -Context $ownershipContext
+                        $rollbackOwnershipArguments = @(
+                            '-ExpectedRootIdentity', [string]$rollbackReceipt.Record.original_identities.directory,
+                            '-ExpectedPersistentVmIdentitySha256', [string]$rollbackReceipt.Record.persistent_vm_identity_sha256
+                        )
+                    }
+                    Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
                     Invoke-AtlasoBoundedProcess `
                         -FilePath (Get-Process -Id $PID).Path `
-                        -ArgumentList @(
+                        -ArgumentList (@(
                             '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
                             (Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1'),
                             '-VmxPath', $targetVmx,
                             '-VmrunPath', $rollbackVmrunPath,
                             '-ExpectedName', $Name,
                             '-Confirm:$false'
-                        ) `
+                        ) + $rollbackOwnershipArguments) `
                         -TimeoutSeconds $TimeoutSeconds `
                         -Action 'Remove the exact failed normal test VM during rollback' | Out-Null
                 }
@@ -3600,18 +3951,29 @@ if (-not $WhatIfPreference) {
                         -MarkerPath $developmentCaCleanupMarkerPath `
                         -MarkerRoot (Get-AtlasoDevelopmentCaCleanupMarkerRoot)).Phase -ceq 'removal-child-active'
                 )
-                if ($quarantineDirectory -and -not $removalTreeUnproven) {
+                if (($quarantineDirectory -or ($ownershipContext.Enabled -and $developmentCaCleanupMarkerPath)) -and -not $removalTreeUnproven) {
                     try {
+                        if (-not $quarantineDirectory) {
+                            $quarantineDirectory = Join-Path (Split-Path -Parent $resolvedOutputDirectory) `
+                                ('.atlaso-development-ca-cleanup-' + [IO.Path]::GetFileNameWithoutExtension($developmentCaCleanupMarkerPath))
+                        }
                         Restore-AtlasoRollbackDataDisksFromQuarantine `
                             -DataDiskStates $rollbackDataDiskStates `
-                            -QuarantineDirectory $quarantineDirectory
+                            -QuarantineDirectory $quarantineDirectory `
+                            -OwnershipContext $ownershipContext `
+                            -OnRestored {
+                                if ($rollbackErrors.Count -eq 0 -and $developmentCaCleanupMarkerPath) {
+                                    Remove-AtlasoDevelopmentCaCleanupMarker -MarkerPath $developmentCaCleanupMarkerPath
+                                    $restoredMarkerRetirement.Completed = $true
+                                }
+                            }
                     }
                     catch {
                         $rollbackErrors.Add($_.Exception.Message)
                     }
                 }
             }
-            if ($rollbackErrors.Count -eq 0 -and $developmentCaCleanupMarkerPath) {
+            if ($rollbackErrors.Count -eq 0 -and $developmentCaCleanupMarkerPath -and -not $restoredMarkerRetirement.Completed) {
                 try {
                     Remove-AtlasoDevelopmentCaCleanupMarker `
                         -MarkerPath $developmentCaCleanupMarkerPath
@@ -3639,6 +4001,7 @@ $readinessIdentity = $null
 if (-not $WhatIfPreference) {
     # Prove exact VMX, NIC, hostname, and host-facing address ownership before
     # printing ready state or any connection endpoint.
+    Assert-AtlasoTestVmCheckoutSource -Context $ownershipContext
     $readinessIdentity = & (Join-Path $PSScriptRoot 'get-atlaso-vm-ip.ps1') `
         -VmxPath $targetVmx `
         -ExpectedHostname $FirstBootFqdn `
@@ -3654,6 +4017,9 @@ else {
     Write-Host "Atlaso Workstation test VM prepared without readiness proof: $Name"
 }
 Write-Host "Appliance VMX: $targetVmx"
+if ($ownershipContext.Enabled -and $ownershipContext.ReceiptPath) {
+    Write-Host "Test VM ownership intent: $($ownershipContext.IntentPath) (SHA-256 $($ownershipContext.IntentSha256))"
+}
 if ($resolvedSshPublicKeyPath) {
     Write-Host "Development SSH access: admin key from $resolvedSshPublicKeyPath with test-only passwordless sudo"
 }
@@ -3692,4 +4058,15 @@ if (($waitForIpEnabled -or $TrustRootCa) -and $readinessIdentity) {
 }
 elseif ($readinessIdentity) {
     Write-Host 'Management wait and development-root verification were explicitly disabled with -WaitForIp:$false.' -ForegroundColor DarkGray
+}
+}
+finally {
+    if ($ownershipContext.PSObject.Properties['CheckoutSourcePin'] -and $ownershipContext.CheckoutSourcePin) {
+        $ownershipContext.CheckoutSourcePin.Dispose()
+        $ownershipContext.CheckoutSourcePin=$null
+    }
+    if ($ownershipContext.PSObject.Properties['RestoredOutputPin'] -and $ownershipContext.RestoredOutputPin) {
+        $ownershipContext.RestoredOutputPin.Dispose()
+        $ownershipContext.RestoredOutputPin=$null
+    }
 }

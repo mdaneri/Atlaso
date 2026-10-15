@@ -16,7 +16,7 @@ unchanged and does not require them to resolve.
 #>
 
 Set-StrictMode -Version Latest
-if (-not ('Atlaso.WorkstationCapturedContentsV1' -as [type])) {
+if (-not ('Atlaso.WorkstationCapturedContentsV2' -as [type])) {
         Add-Type -TypeDefinition @'
 using System;
 using System.IO;
@@ -25,7 +25,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 namespace Atlaso {
-    public sealed class WorkstationCapturedContentsV1 : IDisposable {
+    public sealed class WorkstationCapturedContentsV2 : IDisposable {
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
         private static extern SafeFileHandle CreateFileW(string p, uint a, uint s, IntPtr x, uint d, uint f, IntPtr t);
         [DllImport("kernel32.dll", SetLastError=true)]
@@ -111,13 +111,15 @@ namespace Atlaso {
             }
             return h;
         }
-        public WorkstationCapturedContentsV1(string path, string expectedRoot, IDictionary<string,string> inventory) {
+        public WorkstationCapturedContentsV2(string path, string expectedRoot, IDictionary<string,string> inventory)
+            : this(path, expectedRoot, inventory, false) { }
+        public WorkstationCapturedContentsV2(string path, string expectedRoot, IDictionary<string,string> inventory, bool deleteRoot) {
             Root = Path.GetFullPath(path);
             try {
                 var chain = new Stack<string>();
                 for (var p = Directory.GetParent(Root); p != null; p = p.Parent) chain.Push(p.FullName);
                 foreach (var p in chain) ancestors.Add(Open(p, false, true));
-                entries.Add(Open(Root, false, true, true));
+                entries.Add(Open(Root, deleteRoot, true, true));
                 rootIdentity = Identity(entries[0]);
                 if (rootIdentity != expectedRoot) throw new IOException("Cleanup root identity changed.");
                 foreach (var entry in inventory) expected.Add(Path.GetFullPath(Path.Combine(Root, entry.Key)), entry.Value);
@@ -160,6 +162,16 @@ namespace Atlaso {
                     throw new Win32Exception(Marshal.GetLastWin32Error());
                 entries[i].Dispose();
             }
+        }
+        public void RemoveRoot() {
+            // The same delete-capable root handle excludes rename/replacement
+            // from admission through retirement; no pathname is reopened.
+            Remove();
+            RestorePermissions();
+            byte delete = 1;
+            if (!SetFileInformationByHandle(entries[0], 4, ref delete, 1))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            entries[0].Dispose();
         }
         public void Dispose() {
             try { RestorePermissions(); }
@@ -295,6 +307,125 @@ namespace Atlaso
                 Handles.Clear();
             }
         }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct UnicodeString { public ushort Length, MaximumLength; public IntPtr Buffer; }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ObjectAttributes
+        {
+            public uint Length;
+            public IntPtr RootDirectory, ObjectName;
+            public uint Attributes;
+            public IntPtr SecurityDescriptor, SecurityQualityOfService;
+        }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct IoStatusBlock { public IntPtr Status; public UIntPtr Information; }
+        [DllImport("ntdll.dll")]
+        private static extern int NtCreateFile(out IntPtr handle, uint access,
+            ref ObjectAttributes attributes, out IoStatusBlock status, IntPtr allocationSize,
+            uint fileAttributes, uint share, uint disposition, uint options, IntPtr ea, uint eaLength);
+        public sealed class CreatedDirectoryPins : IDisposable
+        {
+            internal readonly System.Collections.Generic.List<SafeFileHandle> Handles =
+                new System.Collections.Generic.List<SafeFileHandle>();
+            public readonly System.Collections.Generic.Dictionary<string, string> Created =
+                new System.Collections.Generic.Dictionary<string, string>();
+            internal readonly System.Collections.Generic.Dictionary<string, SafeFileHandle> CreatedHandles =
+                new System.Collections.Generic.Dictionary<string, SafeFileHandle>(StringComparer.OrdinalIgnoreCase);
+            public string GetRetainedCreatedIdentity(string path)
+            {
+                SafeFileHandle handle;
+                string full = System.IO.Path.GetFullPath(path).TrimEnd('\\', '/');
+                if (!CreatedHandles.TryGetValue(full, out handle) || handle.IsClosed || handle.IsInvalid)
+                    throw new InvalidOperationException("The original creation handle is no longer retained.");
+                ByHandleFileInformation information;
+                if (!GetFileInformationByHandle(handle, out information))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                return String.Format("{0:X8}:{1:X8}{2:X8}",
+                    information.VolumeSerialNumber, information.FileIndexHigh, information.FileIndexLow);
+            }
+            public void Dispose()
+            {
+                for (int i = Handles.Count - 1; i >= 0; --i) Handles[i].Dispose();
+                Handles.Clear();
+                CreatedHandles.Clear();
+            }
+        }
+        public static CreatedDirectoryPins CreateAndPinOrdinaryDirectoryPath(string path, Action<string, string> publish)
+        {
+            var pins = new CreatedDirectoryPins();
+            try
+            {
+                string full = System.IO.Path.GetFullPath(path).TrimEnd('\\', '/');
+                string current = System.IO.Path.GetPathRoot(full);
+                string[] parts = full.Substring(current.Length).Split(
+                    new char[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
+                SafeFileHandle parent = null;
+                bool creating = false;
+                for (int i = -1; i < parts.Length; ++i)
+                {
+                    if (i >= 0) current = System.IO.Path.Combine(current, parts[i]);
+                    // Once an absent component is observed, create it exclusively
+                    // relative to the retained parent. A concurrent entry is refused.
+                    creating = creating || !System.IO.Directory.Exists(current);
+                    SafeFileHandle handle;
+                    if (creating || i == parts.Length - 1)
+                    {
+                        if (parent == null) throw new InvalidOperationException("Creation needs an ordinary parent.");
+                        IntPtr buffer = Marshal.StringToHGlobalUni(parts[i]);
+                        IntPtr name = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(UnicodeString)));
+                        try
+                        {
+                            var unicode = new UnicodeString { Length = checked((ushort)(parts[i].Length * 2)),
+                                MaximumLength = checked((ushort)((parts[i].Length + 1) * 2)), Buffer = buffer };
+                            Marshal.StructureToPtr(unicode, name, false);
+                            var attributes = new ObjectAttributes { Length = (uint)Marshal.SizeOf(typeof(ObjectAttributes)),
+                                RootDirectory = parent.DangerousGetHandle(), ObjectName = name, Attributes = 0x40 };
+                            IntPtr raw;
+                            IoStatusBlock status;
+                            int result = NtCreateFile(out raw, 0x00110081, ref attributes, out status,
+                                IntPtr.Zero, 0x10, FileShareRead, 2, 0x00200021, IntPtr.Zero, 0);
+                            if (result < 0) throw new InvalidOperationException("Exclusive directory creation refused: " + result);
+                            handle = new SafeFileHandle(raw, true);
+                        }
+                        finally { Marshal.FreeHGlobal(name); Marshal.FreeHGlobal(buffer); }
+                    }
+                    else
+                    {
+                        handle = CreateFileW(current, FileReadAttributes | 0x1, FileShareRead,
+                            IntPtr.Zero, OpenExisting, BackupSemantics | 0x00200000, IntPtr.Zero);
+                    }
+                    pins.Handles.Add(handle);
+                    if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                    ByHandleFileInformation information;
+                    if (!GetFileInformationByHandle(handle, out information))
+                        throw new Win32Exception(Marshal.GetLastWin32Error());
+                    if ((information.FileAttributes & 0x10) == 0 || (information.FileAttributes & 0x400) != 0)
+                        throw new InvalidOperationException("Expected an ordinary directory path.");
+                    if (creating || i == parts.Length - 1)
+                    {
+                        string identity = String.Format("{0:X8}:{1:X8}{2:X8}",
+                            information.VolumeSerialNumber, information.FileIndexHigh, information.FileIndexLow);
+                        pins.Created.Add(current, identity);
+                        pins.CreatedHandles.Add(current, handle);
+                        try { publish(current, identity); }
+                        catch (Exception publicationFailure)
+                        {
+                            // Only this just-created object can be retired. Retain
+                            // its original handle and let nonempty refusal preserve
+                            // any concurrently inserted artifacts.
+                            byte delete = 1;
+                            if (!SetFileInformationByHandle(handle, 4, ref delete, 1))
+                                throw new AggregateException("Directory publication failed and original empty-directory retirement was refused.",
+                                    publicationFailure, new Win32Exception(Marshal.GetLastWin32Error()));
+                            throw;
+                        }
+                    }
+                    parent = handle;
+                }
+                return pins;
+            }
+            catch { pins.Dispose(); throw; }
+        }
         public static IDisposable PinOrdinaryDirectoryPath(string path, bool allowWrites = false)
         {
             var pins = new DirectoryPins();
@@ -329,6 +460,17 @@ namespace Atlaso
                 return pins;
             }
             catch { pins.Dispose(); throw; }
+        }
+        public sealed class ReadOnlySourcePins : IDisposable
+        {
+            private readonly System.Collections.Generic.List<IDisposable> pins =
+                new System.Collections.Generic.List<IDisposable>();
+            public void Add(IDisposable pin) { pins.Add(pin); }
+            public void Dispose()
+            {
+                for (int i = pins.Count - 1; i >= 0; --i) pins[i].Dispose();
+                pins.Clear();
+            }
         }
         public static SafeFileHandle PinOrdinaryReadFile(string path, bool singleLink = false, bool allowDelete = false)
         {
@@ -760,6 +902,68 @@ function Get-AtlasoVmxShutdownInvariant {
     Get-AtlasoVmxDisplayName -Path $Path | Out-Null
     $canonical = $entries | ConvertTo-Json -Compress -Depth 3
     return [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($canonical)))
+}
+<#
+.SYNOPSIS
+Verify a persistent Atlaso VM identity while the VMX is pinned against writes and replacement.
+
+.PARAMETER VmxPath
+Exact VMX whose persistent cleanup identity is checked.
+
+.PARAMETER ExpectedFileIdentity
+Filesystem identity captured in the exact removal-root snapshot.
+
+.PARAMETER ExpectedPersistentVmIdentitySha256
+Independent SHA-256 of the persistent 32-character cleanup identity.
+#>
+function Assert-AtlasoPersistentVmCleanupIdentity {
+    [CmdletBinding()]
+    [OutputType([psobject])]
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][ValidatePattern('^[0-9A-F]{8}:[0-9A-F]{16}$')][string]$ExpectedFileIdentity,
+        [Parameter(Mandatory = $true)][ValidatePattern('^[0-9A-Fa-f]{64}$')][string]$ExpectedPersistentVmIdentitySha256
+    )
+
+    $pin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($VmxPath, $true)
+    try {
+        $identityBefore = Get-AtlasoPathIdentity -Path $VmxPath -Description 'VMware cleanup target'
+        if ($identityBefore -cne $ExpectedFileIdentity) {
+            throw "VMware Workstation VMX no longer matches its captured removal-root identity; artifacts were preserved: $VmxPath"
+        }
+        $fileHashBefore = Get-AtlasoFileSha256 -Path $VmxPath
+        $assignmentPattern = '^\s*guestinfo\.atlaso\.test_vm_cleanup_identity\s*='
+        $identityLines = @(
+            Get-Content -LiteralPath $VmxPath -ErrorAction Stop |
+                Where-Object { $_ -match $assignmentPattern }
+        )
+        if ($identityLines.Count -ne 1 -or
+            $identityLines[0] -notmatch '^\s*guestinfo\.atlaso\.test_vm_cleanup_identity\s*=\s*"(?<identity>[0-9a-f]{32})"\s*$') {
+            throw "VMware cleanup target must contain exactly one valid persistent Atlaso identity; artifacts were preserved: $VmxPath"
+        }
+        $identityBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($Matches.identity)
+        $identitySha256 = [Convert]::ToHexString(
+            [System.Security.Cryptography.SHA256]::HashData($identityBytes)
+        )
+        if (-not $identitySha256.Equals($ExpectedPersistentVmIdentitySha256, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "VMware cleanup target does not match the caller-preserved persistent VM identity; artifacts were preserved: $VmxPath"
+        }
+
+        $shutdownInvariant = Get-AtlasoVmxShutdownInvariant -Path $VmxPath
+        $fileHashAfter = Get-AtlasoFileSha256 -Path $VmxPath
+        $identityAfter = Get-AtlasoPathIdentity -Path $VmxPath -Description 'VMware cleanup target'
+        if ($identityAfter -cne $identityBefore -or $fileHashAfter -cne $fileHashBefore) {
+            throw "VMware cleanup target changed during persistent identity verification; artifacts were preserved: $VmxPath"
+        }
+        return [pscustomobject]@{
+            Identity = $identityAfter
+            FileHash = $fileHashAfter
+            ShutdownInvariant = $shutdownInvariant
+        }
+    }
+    finally {
+        $pin.Dispose()
+    }
 }
 <#
 .SYNOPSIS
@@ -1797,6 +2001,104 @@ function Restore-AtlasoWorkstationExternalVmdks {
 
 <#
 .SYNOPSIS
+Validate the mutually exclusive original-VM and prepared-directory cleanup bindings.
+.PARAMETER RootIdentity
+Original VM directory identity, paired with its persistent identity digest.
+.PARAMETER VmIdentitySha256
+Original persistent VM identity digest.
+.PARAMETER PreparedDirectoryIdentity
+Original pre-clone directory identity, permitted only without any VMX target.
+.PARAMETER VmxCount
+Number of VMX targets supplied to the owning cleanup tool.
+#>
+function Test-AtlasoWorkstationCleanupExpectedIdentityParameters {
+    param([string]$RootIdentity, [string]$VmIdentitySha256, [string]$PreparedDirectoryIdentity, [int]$VmxCount)
+    $vm = -not [string]::IsNullOrEmpty($RootIdentity)
+    if ($vm -ne (-not [string]::IsNullOrEmpty($VmIdentitySha256))) {
+        throw 'Caller-preserved cleanup identities must be supplied together.'
+    }
+    if ($vm -and ($RootIdentity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$' -or
+        $VmIdentitySha256 -cnotmatch '^[0-9A-Fa-f]{64}$' -or $VmxCount -ne 1)) {
+        throw 'Caller-preserved cleanup identities require one VM target and valid original identities.'
+    }
+    if ($PreparedDirectoryIdentity -and ($vm -or $VmxCount -ne 0 -or
+        $PreparedDirectoryIdentity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$')) {
+        throw 'Prepared-directory cleanup requires its original identity and no VMX targets.'
+    }
+    return $vm
+}
+
+<#
+.SYNOPSIS
+Require the fresh cleanup snapshot to retain the caller's original directory identity.
+.PARAMETER Snapshot
+Fresh native root snapshot captured by the owning cleanup tool.
+.PARAMETER VmRootIdentity
+Optional original VM directory identity.
+.PARAMETER PreparedDirectoryIdentity
+Optional original pre-clone directory identity.
+#>
+function Assert-AtlasoWorkstationCleanupRootBinding {
+    param([psobject]$Snapshot, [string]$VmRootIdentity, [string]$PreparedDirectoryIdentity)
+    $expected = if ($VmRootIdentity) { $VmRootIdentity } else { $PreparedDirectoryIdentity }
+    if ($expected -and $Snapshot.RootIdentity -cne $expected) {
+        throw 'Artifact directory differs from its caller-preserved original identity; artifacts were preserved.'
+    }
+}
+
+<#
+.SYNOPSIS
+Admit only the originally receipted empty preparation directory.
+.PARAMETER Root
+Exact original preparation directory.
+.PARAMETER Snapshot
+Fresh directory identity and complete child inventory captured by the owning remover.
+#>
+function Assert-AtlasoPreparedArtifactSnapshot {
+    param([string]$Root, [psobject]$Snapshot)
+    foreach ($relative in $Snapshot.Items.Keys) {
+        if ($relative -eq '.') { continue }
+        # Directory/process receipts do not establish who created a child.
+        # A later cleanup snapshot must never manufacture that provenance.
+        throw 'Prepared cleanup has no original child creation evidence; preserve the nonempty directory.'
+    }
+    Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $Root -Snapshot $Snapshot
+}
+
+<#
+.SYNOPSIS
+Retire captured artifacts through their original directory and file handles.
+.PARAMETER Root
+Exact receipt-bound artifact directory.
+.PARAMETER Snapshot
+Original root identity and complete admitted artifact inventory.
+.PARAMETER KeepRoot
+Retain the original empty root for its caller's subsequent use.
+.PARAMETER PreparedOnly
+Require an empty prepared directory rather than a completed VM inventory.
+#>
+function Remove-AtlasoCapturedArtifactSnapshot {
+    param([string]$Root, [psobject]$Snapshot, [switch]$KeepRoot, [switch]$PreparedOnly)
+    $inventory = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($relative in $Snapshot.Items.Keys) { $inventory.Add($relative, $Snapshot.Items[$relative]) }
+    $removal = [Atlaso.WorkstationCapturedContentsV2]::new($Root, $Snapshot.RootIdentity, $inventory, (-not $KeepRoot))
+    try {
+        Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $Root -Snapshot $Snapshot
+        if ($PreparedOnly) { Assert-AtlasoPreparedArtifactSnapshot -Root $Root -Snapshot $Snapshot }
+        $removal.CaptureSnapshot()
+        if ($KeepRoot) {
+            $removal.Remove()
+            if (@(Get-ChildItem -LiteralPath $Root -Force -ErrorAction Stop).Count) {
+                throw 'VMware artifact root still contains entries after cleanup.'
+            }
+        }
+        else { $removal.RemoveRoot() }
+    }
+    finally { $removal.Dispose() }
+}
+
+<#
+.SYNOPSIS
 Safely remove validated VMware Workstation artifacts under one exact root.
 
 .PARAMETER VmrunPath
@@ -1810,8 +2112,19 @@ Exact non-reparse-point artifact root to remove.
 
 .PARAMETER AllowMissingRegistrationsUnderRoot
 Optional containing scope for narrow stale-registration repair.
+
+.PARAMETER ExpectedRootIdentity
+Optional original filesystem identity from the caller's immutable ownership receipt. Must be paired with
+ExpectedPersistentVmIdentitySha256 and is accepted only for one VMX target.
+
+.PARAMETER ExpectedPersistentVmIdentitySha256
+Optional SHA-256 of the exact persistent Atlaso cleanup identity in the VMX. Must be paired with
+ExpectedRootIdentity and is accepted only for one VMX target.
+
 .PARAMETER KeepRemovalRoot
 Remove validated contents but retain the empty root for a caller holding its lifetime identity pin.
+.PARAMETER ExpectedPreparedDirectoryIdentity
+Original directory creation identity for receipt-bound pre-clone recovery with no VMX files.
 #>
 function Remove-AtlasoWorkstationVmArtifacts {
     [CmdletBinding(SupportsShouldProcess = $true)]
@@ -1820,8 +2133,13 @@ function Remove-AtlasoWorkstationVmArtifacts {
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$VmxPaths,
         [Parameter(Mandatory = $true)][string]$RemovalRoot,
         [Parameter(Mandatory = $false)][AllowEmptyString()][string]$AllowMissingRegistrationsUnderRoot = '',
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ExpectedRootIdentity = '',
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ExpectedPersistentVmIdentitySha256 = '',
+        [AllowEmptyString()][string]$ExpectedPreparedDirectoryIdentity = '',
         [switch]$KeepRemovalRoot
     )
+    $hasExpectedRootIdentity = Test-AtlasoWorkstationCleanupExpectedIdentityParameters -RootIdentity $ExpectedRootIdentity -VmIdentitySha256 $ExpectedPersistentVmIdentitySha256 -PreparedDirectoryIdentity $ExpectedPreparedDirectoryIdentity -VmxCount $VmxPaths.Count
+    $hasExpectedPersistentVmIdentity = $hasExpectedRootIdentity
     $resolvedRemovalRoot = Get-AtlasoCanonicalPath -Path $RemovalRoot
     $filesystemRoot = [System.IO.Path]::GetPathRoot($resolvedRemovalRoot)
     if (-not $filesystemRoot -or (Test-AtlasoSamePath -Left $resolvedRemovalRoot -Right $filesystemRoot)) {
@@ -1858,16 +2176,25 @@ function Remove-AtlasoWorkstationVmArtifacts {
         throw 'VMware artifact root contains an unvalidated VMX; artifacts were preserved.'
     }
     $snapshot = Get-AtlasoRootSnapshot -RemovalRoot $resolvedRemovalRoot
+    Assert-AtlasoWorkstationCleanupRootBinding -Snapshot $snapshot -VmRootIdentity $ExpectedRootIdentity -PreparedDirectoryIdentity $ExpectedPreparedDirectoryIdentity
+    if ($ExpectedPreparedDirectoryIdentity) { Assert-AtlasoPreparedArtifactSnapshot -Root $resolvedRemovalRoot -Snapshot $snapshot }
     $validatedTargetIdentities = @{}
     $validatedTargetHashes = @{}
     $validatedShutdownInvariants = @{}
     foreach ($resolvedVmxPath in $resolvedVmxPaths) {
         $relativeVmxPath = [System.IO.Path]::GetRelativePath($resolvedRemovalRoot, $resolvedVmxPath)
         $validatedTargetIdentities[$resolvedVmxPath] = $snapshot.Items[$relativeVmxPath]
-        $validatedTargetHashes[$resolvedVmxPath] = Get-AtlasoFileSha256 -Path $resolvedVmxPath
-        $validatedShutdownInvariants[$resolvedVmxPath] = Get-AtlasoVmxShutdownInvariant -Path $resolvedVmxPath
-        if ((Get-AtlasoFileSha256 -Path $resolvedVmxPath) -cne $validatedTargetHashes[$resolvedVmxPath]) {
-            throw "VMware Workstation VMX changed during cleanup admission; artifacts were preserved: $resolvedVmxPath"
+        if ($hasExpectedPersistentVmIdentity) {
+            $ownershipProof = Assert-AtlasoPersistentVmCleanupIdentity -VmxPath $resolvedVmxPath -ExpectedFileIdentity $validatedTargetIdentities[$resolvedVmxPath] -ExpectedPersistentVmIdentitySha256 $ExpectedPersistentVmIdentitySha256
+            $validatedTargetHashes[$resolvedVmxPath] = $ownershipProof.FileHash
+            $validatedShutdownInvariants[$resolvedVmxPath] = $ownershipProof.ShutdownInvariant
+        }
+        else {
+            $validatedTargetHashes[$resolvedVmxPath] = Get-AtlasoFileSha256 -Path $resolvedVmxPath
+            $validatedShutdownInvariants[$resolvedVmxPath] = Get-AtlasoVmxShutdownInvariant -Path $resolvedVmxPath
+            if ((Get-AtlasoFileSha256 -Path $resolvedVmxPath) -cne $validatedTargetHashes[$resolvedVmxPath]) {
+                throw "VMware Workstation VMX changed during cleanup admission; artifacts were preserved: $resolvedVmxPath"
+            }
         }
     }
     if (-not $PSCmdlet.ShouldProcess($resolvedRemovalRoot, 'Stop and delete VMware Workstation VM artifacts')) {
@@ -1878,6 +2205,13 @@ function Remove-AtlasoWorkstationVmArtifacts {
     foreach ($resolvedVmxPath in $resolvedVmxPaths) {
         if ((Get-AtlasoPathIdentity -Path $resolvedVmxPath -Description 'VMware cleanup target') -ne $validatedTargetIdentities[$resolvedVmxPath]) { throw "VMware Workstation VMX was replaced after root validation; artifacts were preserved: $resolvedVmxPath" }
         Test-AtlasoWorkstationVmxRegistered -InventoryPath $inventoryPath -VmxPath $resolvedVmxPath -ScopeRoot $resolvedRemovalRoot | Out-Null
+        if ($hasExpectedPersistentVmIdentity) {
+            $ownershipProof = Assert-AtlasoPersistentVmCleanupIdentity -VmxPath $resolvedVmxPath -ExpectedFileIdentity $validatedTargetIdentities[$resolvedVmxPath] -ExpectedPersistentVmIdentitySha256 $ExpectedPersistentVmIdentitySha256
+            if ($ownershipProof.FileHash -cne $validatedTargetHashes[$resolvedVmxPath] -or
+                $ownershipProof.ShutdownInvariant -cne $validatedShutdownInvariants[$resolvedVmxPath]) {
+                throw "VMware Workstation VMX changed before provider stop; artifacts were preserved: $resolvedVmxPath"
+            }
+        }
         $stopped = Confirm-AtlasoWorkstationVmInactive -VmrunPath $VmrunPath -VmxPath $resolvedVmxPath `
             -ExpectedIdentity $validatedTargetIdentities[$resolvedVmxPath] -PassThru
         if ($stopped) {
@@ -1892,6 +2226,13 @@ function Remove-AtlasoWorkstationVmArtifacts {
                     throw "VMware Workstation VMX configuration changed during stop; artifacts were preserved: $resolvedVmxPath"
                 }
                 $stoppedHash = Get-AtlasoFileSha256 -Path $resolvedVmxPath
+                if ($hasExpectedPersistentVmIdentity) {
+                    $ownershipProof = Assert-AtlasoPersistentVmCleanupIdentity -VmxPath $resolvedVmxPath -ExpectedFileIdentity $stoppedIdentity -ExpectedPersistentVmIdentitySha256 $ExpectedPersistentVmIdentitySha256
+                    if ($ownershipProof.FileHash -cne $stoppedHash -or
+                        $ownershipProof.ShutdownInvariant -cne $validatedShutdownInvariants[$resolvedVmxPath]) {
+                        throw "VMware Workstation VMX persistent identity changed during stop; artifacts were preserved: $resolvedVmxPath"
+                    }
+                }
                 $relativeVmxPath = [System.IO.Path]::GetRelativePath($resolvedRemovalRoot, $resolvedVmxPath)
                 $snapshot.Items[$relativeVmxPath] = $stoppedIdentity
                 Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
@@ -1925,6 +2266,12 @@ function Remove-AtlasoWorkstationVmArtifacts {
             $expectedDeleteIdentity = $detachment.ProtectedIdentity
             if ((Get-AtlasoPathIdentity -Path $resolvedVmxPath -Description 'VMware cleanup target') -ne $expectedDeleteIdentity) {
                 throw "VMware Workstation VMX was replaced immediately before deleteVM; artifacts were preserved: $resolvedVmxPath"
+            }
+            if ($hasExpectedPersistentVmIdentity) {
+                $ownershipProof = Assert-AtlasoPersistentVmCleanupIdentity -VmxPath $resolvedVmxPath -ExpectedFileIdentity $expectedDeleteIdentity -ExpectedPersistentVmIdentitySha256 $ExpectedPersistentVmIdentitySha256
+                if ($ownershipProof.FileHash -cne $detachment.ProtectedHash) {
+                    throw "VMware Workstation VMX changed during final ownership verification; artifacts were preserved: $resolvedVmxPath"
+                }
             }
             $currentKnownVmxPaths = @($resolvedVmxPaths | Where-Object { -not $deletedVmxPaths.Contains($_) } | ForEach-Object {
                     $expectedSurvivorIdentity = if (Test-AtlasoSamePath -Left $_ -Right $resolvedVmxPath) { $expectedDeleteIdentity } else { $validatedTargetIdentities[$_] }
@@ -1988,7 +2335,11 @@ function Remove-AtlasoWorkstationVmArtifacts {
     # Re-resolve the inventory because it may have appeared after the initial
     # snapshot; surviving VMX files are safe for direct removal only while unregistered.
     $finalInventoryPath = Resolve-AtlasoWorkstationInventoryPath
-    Remove-AtlasoWorkstationStaleRegistrations -InventoryPath $finalInventoryPath -ScopeRoot $staleScope
+    # An empty preparation receipt owns no VMX or provider registration.
+    # Preserve even newly inserted stale entries instead of adopting them.
+    if (-not $ExpectedPreparedDirectoryIdentity) {
+        Remove-AtlasoWorkstationStaleRegistrations -InventoryPath $finalInventoryPath -ScopeRoot $staleScope
+    }
     foreach ($survivingVmxPath in @($resolvedVmxPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })) {
         if (Test-AtlasoWorkstationVmxRegistered -InventoryPath $finalInventoryPath -VmxPath $survivingVmxPath -ScopeRoot $resolvedRemovalRoot) {
             throw "A VMware Workstation VM became registered during cleanup; artifacts were preserved: $survivingVmxPath"
@@ -2007,21 +2358,13 @@ function Remove-AtlasoWorkstationVmArtifacts {
     if (-not $providerRemovedRoot) {
         Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
         if ($KeepRemovalRoot) {
-            $retainedRootPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($resolvedRemovalRoot, $true)
-            try {
-                Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
-                $capturedInventory = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
-                foreach ($relativePath in $snapshot.Items.Keys) { $capturedInventory.Add($relativePath, $snapshot.Items[$relativePath]) }
-                $capturedRemoval = [Atlaso.WorkstationCapturedContentsV1]::new($resolvedRemovalRoot, $snapshot.RootIdentity, $capturedInventory)
-                try { $capturedRemoval.CaptureSnapshot(); $capturedRemoval.Remove() }
-                finally { $capturedRemoval.Dispose() }
-                if (@(Get-ChildItem -LiteralPath $resolvedRemovalRoot -Force -ErrorAction Stop).Count) {
-                    throw 'VMware artifact root still contains entries after cleanup.'
-                }
-            } finally { $retainedRootPin.Dispose() }
+            Remove-AtlasoCapturedArtifactSnapshot -Root $resolvedRemovalRoot -Snapshot $snapshot -KeepRoot
             return
         }
-        if (Test-Path -LiteralPath $resolvedRemovalRoot) { Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop }
+        if ($ExpectedPreparedDirectoryIdentity -or $ExpectedRootIdentity) {
+            Remove-AtlasoCapturedArtifactSnapshot -Root $resolvedRemovalRoot -Snapshot $snapshot -PreparedOnly:([bool]$ExpectedPreparedDirectoryIdentity)
+        }
+        elseif (Test-Path -LiteralPath $resolvedRemovalRoot) { Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop }
     }
     if (Test-Path -LiteralPath $resolvedRemovalRoot) {
         throw "VMware artifact directory remains after recursive cleanup; refusing to report success: $resolvedRemovalRoot"

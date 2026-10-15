@@ -33,6 +33,10 @@ Configure only the management adapter.
 Optional lifecycle ownership callback invoked with the newly cloned directory and VMX before either is configured.
 .PARAMETER CloneCreatedContext
 Explicit parent ownership data forwarded to the creation callback without consulting child script variables.
+.PARAMETER CloneExecutor
+Optional parent-owned executor that records a suspended clone and prepares its directory before resuming it.
+.PARAMETER MutationGuard
+Optional parent-owned source validator invoked before post-clone configuration and mutable helper launch.
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
@@ -54,7 +58,9 @@ param(
     [string]$BackupDiskSize = '500GB',
     [switch]$SkipLabNetworkAdapters,
     [scriptblock]$CloneCreated,
-    [object]$CloneCreatedContext
+    [object]$CloneCreatedContext,
+    [scriptblock]$CloneExecutor,
+    [scriptblock]$MutationGuard
 )
 
 $ErrorActionPreference = 'Stop'
@@ -356,9 +362,13 @@ foreach ($reusedDataDisk in @(
     }
 }
 
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resolvedOutputDirectory) | Out-Null
 if ($PSCmdlet.ShouldProcess($targetVmx, "Clone Atlaso Workstation VM from $resolvedSourceVmx")) {
-    Invoke-Vmrun -Arguments @('-T', 'ws', 'clone', $resolvedSourceVmx, $targetVmx, 'full', '-cloneName', $Name)
+    $cloneArguments = @('-T', 'ws', 'clone', $resolvedSourceVmx, $targetVmx, 'full', '-cloneName', $Name)
+    if ($CloneExecutor) { & $CloneExecutor $resolvedVmrun $cloneArguments $CloneCreatedContext }
+    else {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resolvedOutputDirectory) | Out-Null
+        Invoke-Vmrun -Arguments $cloneArguments
+    }
 }
 
 if (-not (Test-Path -LiteralPath $targetVmx)) {
@@ -369,13 +379,20 @@ if ($null -ne $CloneCreated) {
     & $CloneCreated $resolvedOutputDirectory $targetVmx $CloneCreatedContext
 }
 
-$null = Get-AtlasoVmwarePayloadLayout -VmxPath $targetVmx -RequireExactlyTwoVmdks
+if ($CloneCreatedContext -and $CloneCreatedContext.Enabled -and $CloneCreatedContext.PSObject.Properties['RestoredDirectoryReceiptPath'] -and $CloneCreatedContext.RestoredDirectoryReceiptPath) {
+    Assert-AtlasoTestVmRestoredClonePayload -Context $CloneCreatedContext -VmxPath $targetVmx
+}
+else {
+    $null = Get-AtlasoVmwarePayloadLayout -VmxPath $targetVmx -RequireExactlyTwoVmdks
+}
+if ($MutationGuard) { & $MutationGuard $CloneCreatedContext }
 Set-VmxValue -Path $targetVmx -Key 'displayName' -Value $Name
 Set-VmxValue -Path $targetVmx -Key 'disk.EnableUUID' -Value 'TRUE'
 New-DataVmdk -Path $resolvedDepotVmdkPath -Size $DepotDiskSize -Label 'VCF Offline Depot'
 New-DataVmdk -Path $resolvedBackupVmdkPath -Size $BackupDiskSize -Label 'VCF Backups'
 Set-VmxScsiDisk -Path $targetVmx -Unit 2 -DiskPath $resolvedDepotVmdkPath
 Set-VmxScsiDisk -Path $targetVmx -Unit 3 -DiskPath $resolvedBackupVmdkPath
+if ($MutationGuard) { & $MutationGuard $CloneCreatedContext }
 & (Join-Path $PSScriptRoot 'set-test-nics.ps1') `
     -VmxPath $targetVmx `
     -ManagementNetwork $ManagementNetwork `
