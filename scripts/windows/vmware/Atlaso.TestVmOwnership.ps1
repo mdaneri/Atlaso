@@ -306,6 +306,26 @@ function Assert-AtlasoTestVmCheckoutSource {
             throw 'Tracked source bytes changed during preflight; infrastructure mutation refused.'
         }
     }
+    $parsedSources = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $loadedCommands = @(Get-Command -CommandType Function -All) + @(Get-PSCallStack | ForEach-Object { $_.InvocationInfo.MyCommand })
+    foreach ($module in (Get-Module -All)) {
+        if ($module.SessionState) {
+            $loadedCommands += @(& $module { Microsoft.PowerShell.Management\Get-ChildItem Function: })
+        }
+    }
+    foreach ($command in $loadedCommands) {
+        if (-not $command -or -not $command.PSObject.Properties['ScriptBlock']) { continue }
+        $block = $command.ScriptBlock
+        if (-not $block -or -not $block.File) { continue }
+        $file = [IO.Path]::GetFullPath($block.File)
+        if (-not $file.StartsWith(([string]$Context.Worktree + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) { continue }
+        if (-not $sourcePin.Files.Contains($file)) { throw 'Loaded checkout code is outside the admitted commit.' }
+        if (-not $parsedSources.ContainsKey($file)) {
+            $parsedSources.Add($file,[IO.File]::ReadAllText($file).Replace("`r`n","`n").TrimStart([char]0xfeff))
+        }
+        $parsed = $block.Ast.Extent.StartScriptPosition.GetFullScript().Replace("`r`n","`n").TrimStart([char]0xfeff)
+        if ($parsed -cne $parsedSources[$file]) { throw 'Already parsed checkout code differs from the admitted source; mutation refused.' }
+    }
     $Context | Add-Member CheckoutSourcePin $sourcePin -Force
     $published = $true
     }

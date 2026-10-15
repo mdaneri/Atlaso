@@ -282,7 +282,7 @@ def test_post_removal_pending_recovery_requires_original_marker_receipt(tmp_path
         assert marker_path.read_text() == "public marker"
 
 
-@pytest.mark.parametrize("failure,retry", [(True, "none"), (False, "reuse"), (False, "reset"), (False, "foreign"), (False, "tampered"), (False, "replacement"), (False, "extra"), (False, "extra_dir"), (False, "disk_replaced"), (False, "missing"), (False, "legacy"), (False, "root_pubfail"), (False, "preinsert"), (False, "clone_extra"), (False, "marker_pins"), (False, "marker_failure"), (False, "restore_extra"), (False, "marker_resume")])
+@pytest.mark.parametrize("failure,retry", [(True, "none"), (False, "reuse"), (False, "reset"), (False, "foreign"), (False, "tampered"), (False, "replacement"), (False, "extra"), (False, "extra_dir"), (False, "disk_replaced"), (False, "missing"), (False, "legacy"), (False, "root_pubfail"), (False, "preinsert"), (False, "clone_extra"), (False, "marker_pins"), (False, "marker_failure"), (False, "restore_extra"), (False, "marker_resume"), (False, "empty"), (False, "empty_preinsert")])
 def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path, failure, retry):
     """Exercise the VMX-locked production callback and publication refusal.
 
@@ -318,7 +318,10 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
     if failure:
         command += "function Publish-AtlasoTestVmOwnershipRecord {throw 'Original proof publication refused'}; "
     command += f"$diskPath={ps_literal(disk)};$diskState=[pscustomobject]@{{Path=$diskPath;RelativePath='preserved.vmdk';Identity=[Atlaso.WorkstationFileIdentity]::Get($diskPath)}};"
-    command += f"$marker=New-AtlasoDevelopmentCaCleanupMarker -VmxPath $vmx -Name $ctx.Name -OutputDirectory $output -DataDiskStates @($diskState) -MarkerRoot {ps_literal(markers)} -InitialPhase stopped-vmx-scrubbed -AllowExistingCleanupIdentity -OwnershipContext $ctx; "
+    command += "$fixtureData=@($diskState);"
+    if retry.startswith("empty"):
+        command += "[IO.File]::Delete($diskPath);$fixtureData=@();"
+    command += f"$marker=New-AtlasoDevelopmentCaCleanupMarker -VmxPath $vmx -Name $ctx.Name -OutputDirectory $output -DataDiskStates $fixtureData -MarkerRoot {ps_literal(markers)} -InitialPhase stopped-vmx-scrubbed -AllowExistingCleanupIdentity -OwnershipContext $ctx; "
     command += "$proofFile=@(Get-ChildItem -LiteralPath $evidence -Filter 'atlaso-test-vm-ca-marker-*')[0];"
     command += "$proof=Get-Content -LiteralPath $proofFile.FullName -Raw | ConvertFrom-Json;"
     command += "$ctx | Add-Member CleanupRecoveryReceiptPath $proofFile.FullName -Force;$ctx | Add-Member CleanupRecoveryReceiptSha256 ((Get-FileHash $proofFile.FullName).Hash.ToLowerInvariant()) -Force;"
@@ -326,10 +329,12 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
     command += "if($proof.original_receipt_sha256 -cne $original.Sha256 -or $proof.marker_projection -cne (Get-AtlasoTestVmMarkerProjection $read)){throw 'Original callback binding mismatch'};"
     command += "$writer=[IO.File]::Open($vmx,'Open','Write','None');$writer.Dispose();"
     command += "$quarantine=$read.QuarantineDirectory;[IO.Directory]::CreateDirectory($quarantine)|Out-Null;"
-    command += "[IO.File]::Move($diskPath,(Join-Path $quarantine 'preserved.vmdk'));[IO.File]::Delete($vmx);[IO.Directory]::Delete($output);"
+    command += "if($fixtureData.Count){[IO.File]::Move($diskPath,(Join-Path $quarantine 'preserved.vmdk'))};[IO.File]::Delete($vmx);[IO.Directory]::Delete($output);"
     command += "function Repair-AtlasoWorkstationStaleRegistrations {param($ScopeRoot,$VmxPath,$ExpectedDisplayName,$OnVerified,[switch]$Confirm) & $OnVerified};"
-    if retry == "preinsert":
+    if retry in {"preinsert", "empty_preinsert"}:
         command += "[IO.Directory]::CreateDirectory($output)|Out-Null;"
+    if retry == "empty_preinsert":
+        command += "function Repair-AtlasoWorkstationStaleRegistrations {throw 'Unowned zero-disk root reached provider reconciliation'};"
     if retry == "root_pubfail":
         command += "$realPublisher=${function:Publish-AtlasoTestVmOwnershipRecord};function Publish-AtlasoTestVmOwnershipRecord {param($Context,$Record,$Kind) if($Kind -eq 'restored-directory'){throw 'Original restored root publication refused'};& $realPublisher @PSBoundParameters};"
     if retry in {"marker_pins", "marker_failure", "marker_resume"}:
@@ -349,7 +354,7 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
     if retry == "marker_resume":
         command += "try{" + pending_command + "throw 'Expected retirement refusal'}catch{if($_.Exception.Message -notlike '*Injected marker retirement refusal*'){throw}};"
     command += pending_command
-    command += "if([Atlaso.WorkstationFileIdentity]::Get($diskPath) -cne $diskState.Identity){throw 'Restoration replaced original data'};"
+    command += "if($fixtureData.Count -and [Atlaso.WorkstationFileIdentity]::Get($diskPath) -cne $diskState.Identity){throw 'Restoration replaced original data'};"
     changes = {
         "none": "", "reuse": "", "reset": "", "foreign": "$ctx.TaskId='foreign-task';",
         "tampered": "[IO.File]::AppendAllText($ctx.RestoredDirectoryReceiptPath,' ');",
@@ -360,6 +365,7 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
         "missing": "$ctx.RestoredDirectoryReceiptSha256='';",
         "legacy": "$ctx.RestoredDirectoryReceiptPath='';",
         "root_pubfail": "", "preinsert": "", "clone_extra": "", "marker_pins": "", "marker_failure": "", "restore_extra": "", "marker_resume": "",
+        "empty": "", "empty_preinsert": "",
     }
     command += changes[retry]
     source = (VMWARE / "create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
@@ -391,7 +397,7 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
     command += "$fresh=Assert-AtlasoTestVmOriginalOwnership -Context $ctx;if($fresh.Record.restored_directory.sha256 -cne $ctx.RestoredDirectoryReceiptSha256){throw 'Fresh clone lost original restored-root binding'};$ctx.CloneOutputPin.Dispose();"
     command += "[pscustomobject]@{marker=$marker;proof=$proofFile.FullName} | ConvertTo-Json -Compress"
     result = run_powershell(command, check=False)
-    succeeds = not failure and retry in {"reuse", "reset", "marker_pins", "marker_resume"}
+    succeeds = not failure and retry in {"reuse", "reset", "marker_pins", "marker_resume", "empty"}
     assert (result.returncode == 0) == succeeds, result.stdout + result.stderr
     if failure:
         assert "Original proof publication refused" in result.stderr
@@ -402,7 +408,11 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
         assert Path(evidence["proof"]).exists()
         assert "Test VM cleanup recovery receipt SHA-256:" in result.stdout
         assert "Test VM restored directory receipt SHA-256:" in result.stdout
-    if retry == "preinsert":
+    if retry == "empty_preinsert":
+        assert "reappeared without an original" in result.stderr
+        assert output.is_dir() and not list(output.iterdir())
+        assert list(markers.iterdir()), "Zero-disk recovery must retain its marker for an unowned root"
+    elif retry == "preinsert":
         assert output.is_dir() and not list(output.iterdir())
         preserved = next(output.parent.glob(".atlaso-development-ca-cleanup-*/preserved.vmdk"))
         assert preserved.read_text() == "public preserved data fixture"
@@ -421,7 +431,7 @@ def test_owned_marker_callback_publishes_original_binding_before_marker(tmp_path
         assert "unproven file" in result.stderr
         assert list(markers.iterdir()), "Final inventory refusal must retain recovery evidence"
         assert disk.read_text() == "public preserved data fixture"
-    elif retry == "reset":
+    elif retry in {"reset", "empty"}:
         assert not disk.exists()
     else:
         preserved = output.with_name(output.name + "-original") / disk.name if retry == "replacement" else (
@@ -1229,6 +1239,9 @@ def test_agent_context_uses_configured_root_and_requires_registered_clean_worktr
     (checkout / "deps").mkdir()
     (checkout / "deps" / "helper-dependency.ps1").write_text("function Get-FixtureMarker { 'original' }\n", encoding="utf-8")
     (checkout / "helper.ps1").write_text(". (Join-Path $PSScriptRoot 'deps/helper-dependency.ps1'); $global:fixtureResult=Get-FixtureMarker\n", encoding="utf-8")
+    (checkout / "deps" / "private-helper.ps1").write_text("function Get-FixturePrivateMarker { 'original' }\n", encoding="utf-8")
+    (checkout / "deps" / "helper-module.psm1").write_text(". (Join-Path $PSScriptRoot 'private-helper.ps1');function Get-FixtureModuleMarker { 'original' };Export-ModuleMember -Function Get-FixtureModuleMarker\n", encoding="utf-8")
+    (checkout / "entry.ps1").write_text("$global:entryMarker='original'; Assert-AtlasoTestVmCheckoutSource -Context $ctx\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(checkout), "add", "."], check=True)
     subprocess.run(["git", "-C", str(checkout), "commit", "-m", "source"], check=True,
                    capture_output=True, text=True)
@@ -1286,6 +1299,7 @@ def test_agent_context_uses_configured_root_and_requires_registered_clean_worktr
         if "function git" in mutation:
             assert "Tracked source bytes changed" in drifted.stderr
         assert not provider_sentinel.exists()
+
         for flag in ("--no-assume-unchanged", "--no-skip-worktree"):
             subprocess.run(["git", "-C", str(checkout), "update-index", flag, "source.txt"],
                            check=True, capture_output=True, text=True)
@@ -1295,6 +1309,14 @@ def test_agent_context_uses_configured_root_and_requires_registered_clean_worktr
                        check=True, capture_output=True, text=True)
     clean = run_powershell(admission + "Assert-AtlasoTestVmCheckoutSource -Context $ctx")
     assert clean.returncode == 0
+
+    stale_entry = admission + f"$entryPath={ps_literal(checkout / 'entry.ps1')};$originalText=[IO.File]::ReadAllText($entryPath);"
+    stale_text = "$global:entryMarker='stale'; Assert-AtlasoTestVmCheckoutSource -Context $ctx; "
+    stale_text += f"[IO.File]::WriteAllText({ps_literal(provider_sentinel)},'provider')"
+    stale_entry += f"[IO.File]::WriteAllText($entryPath,{ps_literal(stale_text)});$tokens=$null;$errors=$null;$parsedEntry=[Management.Automation.Language.Parser]::ParseFile($entryPath,[ref]$tokens,[ref]$errors).GetScriptBlock();[IO.File]::WriteAllText($entryPath,$originalText);& $parsedEntry;"
+    parsed_refusal = run_powershell(stale_entry, check=False)
+    assert parsed_refusal.returncode != 0 and "Already parsed checkout code differs" in parsed_refusal.stderr
+    assert not provider_sentinel.exists()
 
     wrapper = (VMWARE / "create-atlaso-test-vm.ps1").read_text(encoding="utf-8")
     final_release = wrapper.rsplit("\nfinally {", 1)[1].rsplit("\n}", 1)[0]
@@ -1316,6 +1338,24 @@ def test_agent_context_uses_configured_root_and_requires_registered_clean_worktr
     failed_pin += "[IO.Directory]::Move($ctx.Worktree,($ctx.Worktree+'-released'));[IO.Directory]::Move(($ctx.Worktree+'-released'),$ctx.Worktree);"
     partial = run_powershell(failed_pin, check=False)
     assert partial.returncode == 0, partial.stdout + partial.stderr
+
+    for relative, loader, text in [
+        ("deps/helper-dependency.ps1", ".", "function Get-FixtureMarker { 'stale' }"),
+        ("deps/helper-module.psm1", "Import-Module -Force", "function Get-FixtureModuleMarker { 'stale' }"),
+    ]:
+        stale = admission + f"$loadedPath={ps_literal(checkout / relative)};$originalText=[IO.File]::ReadAllText($loadedPath);[IO.File]::WriteAllText($loadedPath,{ps_literal(text)});{loader} $loadedPath;[IO.File]::WriteAllText($loadedPath,$originalText);"
+        stale += "Assert-AtlasoTestVmCheckoutSource -Context $ctx;"
+        stale += f"[IO.File]::WriteAllText({ps_literal(provider_sentinel)},'provider')"
+        refused_parsed = run_powershell(stale, check=False)
+        assert refused_parsed.returncode != 0 and "Already parsed checkout code differs" in refused_parsed.stderr
+        assert not provider_sentinel.exists()
+
+    private_stale = admission + f"$loadedPath={ps_literal(checkout / 'deps' / 'private-helper.ps1')};$originalText=[IO.File]::ReadAllText($loadedPath);[IO.File]::WriteAllText($loadedPath,\"function Get-FixturePrivateMarker {{ 'stale' }}\");Import-Module {ps_literal(checkout / 'deps' / 'helper-module.psm1')} -Force;[IO.File]::WriteAllText($loadedPath,$originalText);"
+    private_stale += "Assert-AtlasoTestVmCheckoutSource -Context $ctx;"
+    private_stale += f"[IO.File]::WriteAllText({ps_literal(provider_sentinel)},'provider')"
+    private_refusal = run_powershell(private_stale, check=False)
+    assert private_refusal.returncode != 0 and "Already parsed checkout code differs" in private_refusal.stderr
+    assert not provider_sentinel.exists()
 
     swapped = admission + "$realGit=(Get-Command git -CommandType Application | Select-Object -First 1).Source;function git {$result=& $realGit @args;$exit=$LASTEXITCODE;if($args -contains '--cached'){"
     swapped += f"[IO.File]::WriteAllText({ps_literal(checkout / 'helper.ps1')},'throw '+[char]39+'changed helper'+[char]39);"

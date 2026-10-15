@@ -1121,9 +1121,12 @@ function Restore-AtlasoRollbackDataDisksFromQuarantine {
 
     $restorationPin=$null
     try {
-    if ($OwnershipContext -and $OwnershipContext.Enabled -and $DataDiskStates.Count -and
+    if ($OwnershipContext -and $OwnershipContext.Enabled -and
         (@($DataDiskStates | Where-Object QuarantinePath).Count -or -not (Test-Path -LiteralPath $OwnershipContext.VmxPath))) {
         if (Test-Path -LiteralPath $OwnershipContext.OutputDirectory) {
+            if (-not $OwnershipContext.PSObject.Properties['RestoredDirectoryReceiptPath'] -or -not $OwnershipContext.RestoredDirectoryReceiptPath) {
+                throw 'Removed output root reappeared without an original restored-directory receipt; preserve recovery marker and directory.'
+            }
             Assert-AtlasoTestVmRestoredDirectory -Context $OwnershipContext -AllowQuarantine | Out-Null
             $restorationPin=$OwnershipContext.RestoredOutputPin
         }
@@ -2588,6 +2591,10 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
             }
             if ($marker.ArtifactsRemoved) {
                 $null = Assert-AtlasoTestVmRemovedMarkerOwnership -Context $OwnershipContext -Marker $marker
+                if ((Test-Path -LiteralPath $OwnershipContext.OutputDirectory) -and
+                    (-not $OwnershipContext.PSObject.Properties['RestoredDirectoryReceiptPath'] -or -not $OwnershipContext.RestoredDirectoryReceiptPath)) {
+                    throw 'Removed output root reappeared without an original restored-directory receipt; preserve recovery marker and directory.'
+                }
             }
             else {
                 if ($OwnershipContext.PSObject.Properties['CleanupRecoveryReceiptPath'] -and
@@ -3944,8 +3951,12 @@ if (-not $WhatIfPreference) {
                         -MarkerPath $developmentCaCleanupMarkerPath `
                         -MarkerRoot (Get-AtlasoDevelopmentCaCleanupMarkerRoot)).Phase -ceq 'removal-child-active'
                 )
-                if ($quarantineDirectory -and -not $removalTreeUnproven) {
+                if (($quarantineDirectory -or ($ownershipContext.Enabled -and $developmentCaCleanupMarkerPath)) -and -not $removalTreeUnproven) {
                     try {
+                        if (-not $quarantineDirectory) {
+                            $quarantineDirectory = Join-Path (Split-Path -Parent $resolvedOutputDirectory) `
+                                ('.atlaso-development-ca-cleanup-' + [IO.Path]::GetFileNameWithoutExtension($developmentCaCleanupMarkerPath))
+                        }
                         Restore-AtlasoRollbackDataDisksFromQuarantine `
                             -DataDiskStates $rollbackDataDiskStates `
                             -QuarantineDirectory $quarantineDirectory `

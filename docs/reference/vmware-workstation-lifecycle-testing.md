@@ -1233,6 +1233,9 @@ identity before checking Git state; a byte-identical replacement checkout cannot
 Verified tracked files and their directories stay pinned against writes, deletion and replacement through invocation
 completion, covering helpers and their checked-in dependencies after each guard returns. The wrapper releases these
 handles in its outer `finally` on success or failure; failed initial admission releases partial pins before returning.
+Within the trusted entrypoint/host contract above, guards also compare the already parsed entry/call-stack scripts
+and loaded checkout functions, including module-private functions, with the pinned commit-verified text. Restoring
+files after parsing cannot authorize stale in-memory code. This does not create an independent host trust boundary.
 Each boundary also rejects assume-unchanged/skip-worktree entries and independently hashes all tracked file bytes
 against the immutable admitted commit tree, applying Git's normal clean conversion for checkout line endings. The staged
 inventory and flags must match that tree; an index swap cannot change the expected helper hashes. Cached status or
@@ -1452,7 +1455,10 @@ redeploy. Legacy markers without original recovery evidence are preserved; never
 Receipt-only recovery runs before Python/1Password SDK artifact admission. Missing SDK tooling cannot strand preserved
 disks; artifact verification remains mandatory before fresh credential or creation work.
 If recovery restores canonical in-directory disk components, it publishes an original restored-directory receipt path
-and SHA-256 before moving them. Preserve both. A later creation retry passes `-RestoredDirectoryReceiptPath` and
+and SHA-256 before moving them. Zero-disk removal recovery also publishes an original empty restored root before
+retiring its marker; preserve those selectors for the next creation retry. Any pre-existing unreceipted replacement
+root is refused before provider reconciliation, even when no disks need restoring.
+Preserve both. A later creation retry passes `-RestoredDirectoryReceiptPath` and
 `-RestoredDirectoryReceiptSha256`. Recovery pins each moved original disk, validates the complete restored inventory,
 and retires the cleanup marker while those pins still exclude writes, deletion and replacement. A failed validation or
 marker retirement preserves the marker for another bounded recovery.

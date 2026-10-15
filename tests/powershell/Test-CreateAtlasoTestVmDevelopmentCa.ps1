@@ -928,7 +928,7 @@ $rollbackRemoval = $wrapperSource.LastIndexOf(
     [System.StringComparison]::Ordinal
 )
 $conditionalRestore = $wrapperSource.LastIndexOf(
-    'if ($quarantineDirectory -and -not $removalTreeUnproven)',
+    'if (($quarantineDirectory -or ($ownershipContext.Enabled -and $developmentCaCleanupMarkerPath)) -and -not $removalTreeUnproven)',
     [System.StringComparison]::Ordinal
 )
 $preSecretRollbackMarker = $wrapperSource.LastIndexOf(
