@@ -6187,7 +6187,16 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
     }
   };
 
-  setupMethod?.addEventListener("change", () => updateSetupMethod({ changed: true }));
+  setupMethod?.addEventListener("change", () => {
+    if (refreshing) {
+      setupMethod.value = "enroll";
+      return;
+    }
+    const selected = setupMethod.value;
+    wizard?.reset();
+    setupMethod.value = selected;
+    updateSetupMethod({ changed: true });
+  });
   credentialMode?.addEventListener("change", () => updateCredentialMode({ changed: true }));
   vaultChoice?.addEventListener("change", () => {
     if (hostname instanceof HTMLInputElement) hostname.value = vaultChoice.selectedOptions[0]?.dataset.hostname || "";

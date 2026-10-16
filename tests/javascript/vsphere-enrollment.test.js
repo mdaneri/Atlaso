@@ -151,6 +151,7 @@ function makeRuntime(respond) {
   const skipped = [];
   const shown = [];
   const page = new FakeElement();
+  const resets = [];
   let options;
   const context = vm.createContext({
     HTMLFormElement: FakeForm,
@@ -168,6 +169,7 @@ function makeRuntime(respond) {
             setError: (message) => errors.push(message),
             showStep: (step, options) => shown.push({ step, options }),
             markClean() {},
+            reset: () => resets.push(true),
           };
         },
       },
@@ -181,7 +183,7 @@ function makeRuntime(respond) {
   vm.runInContext(`${functionSource("initializeVsphereEnrollmentWizard")}; globalThis.initialize = initializeVsphereEnrollmentWizard;`, context);
   const wizard = context.initialize(form, dialog);
   options.onOpen({ context: {} });
-  return { form, wizard, options, errors, skipped, shown, page };
+  return { form, wizard, options, errors, skipped, shown, page, resets };
 }
 
 test("manual enrollment probes without credentials and pins the exact observed fingerprint by checkbox", async () => {
@@ -494,7 +496,7 @@ test("manual setup skips discovery and submits only the existing manual trust fi
 
 test("switching setup methods invalidates pending discovery and clears credential and certificate context", async () => {
   let resolveProbe;
-  const { form, options, wizard, skipped } = makeRuntime(() => new Promise((resolve) => { resolveProbe = resolve; }));
+  const { form, options, wizard, skipped, resets } = makeRuntime(() => new Promise((resolve) => { resolveProbe = resolve; }));
   const pending = options.onNext({ controller: wizard, step: { id: "server" } });
   form.elements.password.value = "request-only";
   form.elements.enrollment_method.value = "manual";
@@ -510,17 +512,20 @@ test("switching setup methods invalidates pending discovery and clears credentia
   assert.equal(form.elements.manual_name.required, false);
   assert.equal(form.elements.manual_name.disabled, true);
   assert.equal(form.elements.password.required, true);
+  assert.equal(resets.length, 2);
   assert.deepEqual(skipped.at(-1), ["manual_identity", "manual_certificate", "manual_state"]);
 });
 
 test("refreshing an existing trusted vCenter stays in enrollment and skips the setup-method step", async () => {
-  const { form, options, wizard, skipped } = makeRuntime(async () => ({}));
+  const { form, options, wizard, skipped, resets } = makeRuntime(async () => ({}));
   options.onOpen({ context: { id: "existing-trust", provider_id: "provider-1", name: "Existing", hostname: "vcsa.lab.example" } });
   assert.equal(form.elements.enrollment_method.disabled, true);
   assert.deepEqual(skipped.at(-1), ["manual_identity", "manual_certificate", "manual_state", "method"]);
   form.elements.enrollment_method.value = "manual";
   await form.elements.enrollment_method.dispatch("change");
   assert.equal(form.elements.manual_name.disabled, true);
+  assert.equal(form.elements.enrollment_method.value, "enroll");
+  assert.equal(resets.length, 0);
   assert.equal((await options.onSubmit({ controller: wizard })).valid, false);
   assert.equal(form.elements.vcenter_id.value, "existing-trust");
 });
