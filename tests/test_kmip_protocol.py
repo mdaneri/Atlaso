@@ -74,6 +74,28 @@ def request(operation: int, *payload: Ttlv, version: tuple[int, int] = (1, 4)) -
     )
 
 
+def multi_request(*items: Ttlv, version: tuple[int, int] = (1, 4)) -> Ttlv:
+    """Return a request containing the supplied batch items.
+
+    Args:
+        *items: Batch Item nodes included in the request.
+        version: KMIP protocol version to place in the request header.
+    """
+    return structure(
+        Tag.REQUEST_MESSAGE,
+        structure(
+            Tag.REQUEST_HEADER,
+            structure(
+                Tag.PROTOCOL_VERSION,
+                integer(Tag.PROTOCOL_VERSION_MAJOR, version[0]),
+                integer(Tag.PROTOCOL_VERSION_MINOR, version[1]),
+            ),
+            integer(Tag.BATCH_COUNT, len(items)),
+        ),
+        *items,
+    )
+
+
 def batch_item(response: Ttlv) -> Ttlv:
     """Return batch item.
 
@@ -81,6 +103,19 @@ def batch_item(response: Ttlv) -> Ttlv:
         response: HTTP or command response being inspected.
     """
     return response.children(Tag.BATCH_ITEM)[0]
+
+
+def batch_item_id(item: Ttlv) -> bytes | None:
+    """Return the optional batch correlation ID from an item.
+
+    Args:
+        item: Batch Item node to inspect.
+    """
+    node = item.child(Tag.UNIQUE_BATCH_ITEM_ID, required=False)
+    if node is None:
+        return None
+    assert isinstance(node.value, bytes)
+    return node.value
 
 
 def response_payload(response: Ttlv) -> Ttlv:
@@ -187,6 +222,190 @@ def created_key_id(service: KmipDispatcher, provider_id: str) -> str:
     assert node is not None
     assert isinstance(node.value, str)
     return node.value
+
+
+def test_unique_batch_item_ids_are_echoed_for_success_and_failure(tmp_path: Path) -> None:
+    """Correlation IDs are copied to both successful and failed response items.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    service, provider_id = dispatcher(tmp_path)
+    create_payload = create_request().children(Tag.BATCH_ITEM)[0].child(Tag.REQUEST_PAYLOAD)
+    assert create_payload is not None
+    response = service.dispatch(
+        provider_id,
+        multi_request(
+            structure(
+                Tag.BATCH_ITEM,
+                enumeration(Tag.OPERATION, Operation.CREATE),
+                byte_string(Tag.UNIQUE_BATCH_ITEM_ID, b"create-01"),
+                create_payload,
+            ),
+            structure(
+                Tag.BATCH_ITEM,
+                enumeration(Tag.OPERATION, Operation.GET),
+                byte_string(Tag.UNIQUE_BATCH_ITEM_ID, b"get-missing"),
+                structure(
+                    Tag.REQUEST_PAYLOAD,
+                    text_string(Tag.UNIQUE_IDENTIFIER, "00000000-0000-0000-0000-000000000001"),
+                ),
+            ),
+        ),
+    )
+
+    items = response.children(Tag.BATCH_ITEM)
+    assert [batch_item_id(item) for item in items] == [b"create-01", b"get-missing"]
+    assert [item.child(Tag.RESULT_STATUS).value for item in items] == [
+        ResultStatus.SUCCESS,
+        ResultStatus.OPERATION_FAILED,
+    ]
+
+
+def test_unique_batch_item_id_requires_byte_string(tmp_path: Path) -> None:
+    """A wrongly typed correlation ID fails the item and is not echoed.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    service, provider_id = dispatcher(tmp_path)
+    response = service.dispatch(
+        provider_id,
+        multi_request(
+            structure(
+                Tag.BATCH_ITEM,
+                enumeration(Tag.OPERATION, Operation.QUERY),
+                text_string(Tag.UNIQUE_BATCH_ITEM_ID, "wrong-type"),
+                structure(Tag.REQUEST_PAYLOAD),
+            )
+        ),
+    )
+
+    item = batch_item(response)
+    assert result_status(response) == ResultStatus.OPERATION_FAILED
+    assert item.child(Tag.RESULT_REASON).value == ResultReason.INVALID_MESSAGE
+    assert batch_item_id(item) is None
+
+
+def test_unique_batch_item_id_is_echoed_when_operation_is_missing(tmp_path: Path) -> None:
+    """A valid correlation ID is preserved when another required field is missing.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    service, provider_id = dispatcher(tmp_path)
+    response = service.dispatch(
+        provider_id,
+        multi_request(
+            structure(
+                Tag.BATCH_ITEM,
+                byte_string(Tag.UNIQUE_BATCH_ITEM_ID, b"operation-missing"),
+                structure(Tag.REQUEST_PAYLOAD),
+            )
+        ),
+    )
+
+    item = batch_item(response)
+    assert result_status(response) == ResultStatus.OPERATION_FAILED
+    assert item.child(Tag.RESULT_REASON).value == ResultReason.MISSING_DATA
+    assert batch_item_id(item) == b"operation-missing"
+
+
+def test_duplicate_unique_batch_item_id_tag_is_rejected(tmp_path: Path) -> None:
+    """A repeated correlation-ID field in one item is rejected as ambiguous.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    service, provider_id = dispatcher(tmp_path)
+    response = service.dispatch(
+        provider_id,
+        multi_request(
+            structure(
+                Tag.BATCH_ITEM,
+                enumeration(Tag.OPERATION, Operation.QUERY),
+                byte_string(Tag.UNIQUE_BATCH_ITEM_ID, b"duplicate-field"),
+                byte_string(Tag.UNIQUE_BATCH_ITEM_ID, b"duplicate-field"),
+                structure(Tag.REQUEST_PAYLOAD),
+            )
+        ),
+    )
+
+    item = batch_item(response)
+    assert result_status(response) == ResultStatus.OPERATION_FAILED
+    assert item.child(Tag.RESULT_REASON).value == ResultReason.INVALID_MESSAGE
+    assert batch_item_id(item) is None
+
+
+def test_multi_item_request_requires_each_unique_batch_item_id(tmp_path: Path) -> None:
+    """Each item in a multi-item request must have a correlation ID.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    service, provider_id = dispatcher(tmp_path)
+    response = service.dispatch(
+        provider_id,
+        multi_request(
+            structure(
+                Tag.BATCH_ITEM,
+                enumeration(Tag.OPERATION, Operation.QUERY),
+                structure(Tag.REQUEST_PAYLOAD),
+            ),
+            structure(
+                Tag.BATCH_ITEM,
+                enumeration(Tag.OPERATION, Operation.QUERY),
+                byte_string(Tag.UNIQUE_BATCH_ITEM_ID, b"with-id"),
+                structure(
+                    Tag.REQUEST_PAYLOAD,
+                    enumeration(Tag.QUERY_FUNCTION, QueryFunction.OPERATIONS),
+                ),
+            ),
+        ),
+    )
+
+    items = response.children(Tag.BATCH_ITEM)
+    assert [item.child(Tag.RESULT_STATUS).value for item in items] == [
+        ResultStatus.OPERATION_FAILED,
+        ResultStatus.SUCCESS,
+    ]
+    assert items[0].child(Tag.RESULT_REASON).value == ResultReason.INVALID_MESSAGE
+    assert [batch_item_id(item) for item in items] == [None, b"with-id"]
+
+
+def test_duplicate_unique_batch_item_ids_fail_and_are_echoed(tmp_path: Path) -> None:
+    """Every batch item with a repeated correlation ID fails but keeps its ID.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    service, provider_id = dispatcher(tmp_path)
+    duplicate_id = b"duplicate-id"
+    response = service.dispatch(
+        provider_id,
+        multi_request(
+            *(
+                structure(
+                    Tag.BATCH_ITEM,
+                    enumeration(Tag.OPERATION, Operation.QUERY),
+                    byte_string(Tag.UNIQUE_BATCH_ITEM_ID, duplicate_id),
+                    structure(Tag.REQUEST_PAYLOAD),
+                )
+                for _ in range(2)
+            )
+        ),
+    )
+
+    items = response.children(Tag.BATCH_ITEM)
+    assert [batch_item_id(item) for item in items] == [duplicate_id, duplicate_id]
+    assert [item.child(Tag.RESULT_STATUS).value for item in items] == [
+        ResultStatus.OPERATION_FAILED,
+        ResultStatus.OPERATION_FAILED,
+    ]
+    assert all(
+        item.child(Tag.RESULT_REASON).value == ResultReason.INVALID_MESSAGE
+        for item in items
+    )
 
 
 def test_create_activate_get_round_trip_returns_only_active_key(tmp_path: Path) -> None:

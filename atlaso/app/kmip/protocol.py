@@ -68,6 +68,7 @@ class Tag(IntEnum):
         SYMMETRIC_KEY: Symbolic value representing 4325519.
         TEMPLATE_ATTRIBUTE: Symbolic value representing 4325521.
         TIME_STAMP: Symbolic value representing 4325522.
+        UNIQUE_BATCH_ITEM_ID: Symbolic value representing 4325523.
         UNIQUE_IDENTIFIER: Symbolic value representing 4325524.
         VENDOR_IDENTIFICATION: Symbolic value representing 4325533.
     """
@@ -107,6 +108,7 @@ class Tag(IntEnum):
     SYMMETRIC_KEY = 0x42008F
     TEMPLATE_ATTRIBUTE = 0x420091
     TIME_STAMP = 0x420092
+    UNIQUE_BATCH_ITEM_ID = 0x420093
     UNIQUE_IDENTIFIER = 0x420094
     VENDOR_IDENTIFICATION = 0x42009D
 
@@ -279,6 +281,27 @@ def _required_child(node: Ttlv, tag: Tag) -> Ttlv:
         raise ProtocolFailure(ResultReason.MISSING_DATA, "A required KMIP field is missing.") from exc
     assert child is not None
     return child
+
+
+def _optional_batch_item_id(node: Ttlv) -> bytes | None:
+    """Return an optional, correctly typed Unique Batch Item ID.
+
+    Args:
+        node: Batch Item whose optional correlation ID is inspected.
+
+    Raises:
+        ProtocolFailure: If the correlation ID has the wrong TTLV type.
+        TtlvError: If the tag is duplicated.
+    """
+    batch_item_id = node.child(Tag.UNIQUE_BATCH_ITEM_ID, required=False)
+    if batch_item_id is None:
+        return None
+    if batch_item_id.type is not TtlvType.BYTE_STRING or not isinstance(batch_item_id.value, bytes):
+        raise ProtocolFailure(
+            ResultReason.INVALID_MESSAGE,
+            "Unique Batch Item ID must be a Byte String.",
+        )
+    return batch_item_id.value
 
 
 def _protocol_version(node: Ttlv) -> tuple[int, int]:
@@ -841,20 +864,31 @@ class KmipDispatcher:
         return handlers[operation](provider_id, payload)
 
     @staticmethod
-    def _failed_batch(operation_value: int, failure: ProtocolFailure) -> Ttlv:
+    def _failed_batch(
+        operation_value: int,
+        failure: ProtocolFailure,
+        batch_item_id: bytes | None = None,
+    ) -> Ttlv:
         """Return failed batch.
 
         Args:
             operation_value: Operation value consumed by failed batch.
             failure: Failure consumed by failed batch.
+            batch_item_id: Optional request correlation ID to echo in the response.
         """
-        return structure(
-            Tag.BATCH_ITEM,
+        children = [
             enumeration(Tag.OPERATION, operation_value),
-            enumeration(Tag.RESULT_STATUS, ResultStatus.OPERATION_FAILED),
-            enumeration(Tag.RESULT_REASON, failure.reason),
-            text_string(Tag.RESULT_MESSAGE, failure.message),
+        ]
+        if batch_item_id is not None:
+            children.append(byte_string(Tag.UNIQUE_BATCH_ITEM_ID, batch_item_id))
+        children.extend(
+            (
+                enumeration(Tag.RESULT_STATUS, ResultStatus.OPERATION_FAILED),
+                enumeration(Tag.RESULT_REASON, failure.reason),
+                text_string(Tag.RESULT_MESSAGE, failure.message),
+            )
         )
+        return structure(Tag.BATCH_ITEM, *children)
 
     def dispatch(self, provider_id: str, request: Ttlv) -> Ttlv:
         """Return dispatch.
@@ -893,17 +927,41 @@ class KmipDispatcher:
         if batch_count != len(batch_items) or not 1 <= batch_count <= MAX_BATCH_ITEMS:
             raise ProtocolFailure(ResultReason.INVALID_MESSAGE, "KMIP Batch Count is invalid.")
 
+        batch_id_counts: dict[bytes, int] = {}
+        for item in batch_items:
+            try:
+                candidate_id = _optional_batch_item_id(item)
+            except (ProtocolFailure, TtlvError):
+                continue
+            if candidate_id is not None:
+                batch_id_counts[candidate_id] = batch_id_counts.get(candidate_id, 0) + 1
+
         responses: list[Ttlv] = []
         for item in batch_items:
             operation_value = 0
+            batch_item_id: bytes | None = None
             try:
                 if item.type is not TtlvType.STRUCTURE:
                     raise ProtocolFailure(ResultReason.INVALID_MESSAGE, "Batch Item must be a structure.")
-                assert_only_tags(item, {Tag.OPERATION, Tag.REQUEST_PAYLOAD})
+                batch_item_id = _optional_batch_item_id(item)
+                assert_only_tags(
+                    item,
+                    {Tag.OPERATION, Tag.UNIQUE_BATCH_ITEM_ID, Tag.REQUEST_PAYLOAD},
+                )
                 operation_value = _integer_value(
                     _required_child(item, Tag.OPERATION),
                     TtlvType.ENUMERATION,
                 )
+                if batch_count > 1 and batch_item_id is None:
+                    raise ProtocolFailure(
+                        ResultReason.INVALID_MESSAGE,
+                        "Unique Batch Item ID is required for multi-item requests.",
+                    )
+                if batch_item_id is not None and batch_id_counts[batch_item_id] > 1:
+                    raise ProtocolFailure(
+                        ResultReason.INVALID_MESSAGE,
+                        "Unique Batch Item IDs must be unique within the request.",
+                    )
                 try:
                     operation = Operation(operation_value)
                 except ValueError as exc:
@@ -917,6 +975,11 @@ class KmipDispatcher:
                     structure(
                         Tag.BATCH_ITEM,
                         enumeration(Tag.OPERATION, operation),
+                        *(
+                            (byte_string(Tag.UNIQUE_BATCH_ITEM_ID, batch_item_id),)
+                            if batch_item_id is not None
+                            else ()
+                        ),
                         enumeration(Tag.RESULT_STATUS, ResultStatus.SUCCESS),
                         structure(Tag.RESPONSE_PAYLOAD, *result),
                     )
@@ -926,24 +989,24 @@ class KmipDispatcher:
                     ResultReason.INVALID_MESSAGE,
                     "Batch Item contains invalid TTLV.",
                 )
-                responses.append(self._failed_batch(operation_value, failure))
+                responses.append(self._failed_batch(operation_value, failure, batch_item_id))
             except KeyNotFoundError:
                 failure = ProtocolFailure(
                     ResultReason.ITEM_NOT_FOUND,
                     "KMIP key was not found in the authenticated provider.",
                 )
-                responses.append(self._failed_batch(operation_value, failure))
+                responses.append(self._failed_batch(operation_value, failure, batch_item_id))
             except KeyStateError:
                 failure = ProtocolFailure(ResultReason.INVALID_FIELD, "KMIP key state is invalid.")
-                responses.append(self._failed_batch(operation_value, failure))
+                responses.append(self._failed_batch(operation_value, failure, batch_item_id))
             except KeyStoreError:
                 failure = ProtocolFailure(
                     ResultReason.GENERAL_FAILURE,
                     "KMIP operational store request failed.",
                 )
-                responses.append(self._failed_batch(operation_value, failure))
+                responses.append(self._failed_batch(operation_value, failure, batch_item_id))
             except ProtocolFailure as failure:
-                responses.append(self._failed_batch(operation_value, failure))
+                responses.append(self._failed_batch(operation_value, failure, batch_item_id))
 
         return structure(
             Tag.RESPONSE_MESSAGE,

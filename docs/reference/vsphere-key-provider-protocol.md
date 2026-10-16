@@ -38,8 +38,10 @@ VCF 9.1 evidence, tests, documentation, and security review.
 
 The candidate contract allows the operations below for implementation and capture. This list is based on the OASIS
 KMIP baseline and symmetric-key lifecycle profiles plus the vSphere `CryptoManagerKmip` integration surface.
-Issue [#957](https://github.com/mdaneri/Atlaso/issues/957) records the initial KMIP 1.1 discovery observed from
-vCenter 9.1.1. This bounded observation does not complete the VCF 9.1 acceptance or recovery matrix.
+Issue [#957](https://github.com/mdaneri/Atlaso/issues/957) records KMIP 1.1 discovery and Create requests with a
+Unique Batch Item ID observed from vCenter 9.1.1. The daemon validates this Byte String correlation field and echoes
+it on success and failure responses. Multi-item requests require distinct identifiers. This bounded observation does
+not complete the VCF 9.1 acceptance or recovery matrix.
 
 | Area | Candidate boundary |
 | --- | --- |
