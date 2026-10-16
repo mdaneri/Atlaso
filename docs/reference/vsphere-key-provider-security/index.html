@@ -4071,7 +4071,7 @@ implementation tracked by issues <a href="https://github.com/mdaneri/Atlaso/issu
 <a href="https://github.com/mdaneri/Atlaso/issues/172">#172</a>. The appliance-native daemon and wrapped store are implemented,
 but they must remain described as experimental until the VCF 9.1 promotion gate is complete.</p>
 <h2 id="architecture-decision">Architecture decision<a class="headerlink" href="#architecture-decision" title="Permanent link">&para;</a></h2>
-<p>Atlaso implements a small Python service with an internal, bounded KMIP 1.4 TTLV codec and operation dispatcher.
+<p>Atlaso implements a small Python service with an internal, bounded KMIP 1.1/1.4 TTLV codec and operation dispatcher.
 It does not embed a general-purpose KMIP request engine, policy engine, storage model, or compatibility wrapper.</p>
 <p>Python keeps the service inside Atlaso's existing build, packaging, logging, testing, and Photon lifecycle. The
 security boundary comes from the narrow checked-in protocol allowlist rather than the language. The adapter must:</p>
@@ -4154,9 +4154,15 @@ the runtime key-encryption key (KEK). The authenticated additional data binds at
 <li>key UUID;</li>
 <li>algorithm and length;</li>
 <li>optional bounded KMIP name;</li>
+<li>the five allowlisted, bounded VMware informational attributes when present;</li>
 <li>creation and activation times; and</li>
 <li>lifecycle state.</li>
 </ul>
+<p>Informational attribute values are authenticated metadata, stored with the same service-only permissions as the
+existing KMIP name. They are not encrypted separately from that metadata and must not contain credentials or key
+material. Logs and interoperability traces include only their fixed attribute names, never their values. Keys created
+without custom attributes retain their original authenticated bytes; enabling this profile does not migrate or
+rewrap existing keys.</p>
 <p>Replacing a provider ID, moving a wrapped blob into another namespace, editing metadata, or rolling a row backward must
 make decryption fail. Every metadata-only read authenticates the same wrapped ciphertext and additional data as
 <code>Get</code>. The encrypted KEK envelope also carries a current store generation and commitment over the complete database.
@@ -4173,7 +4179,9 @@ only <code>ATLASO_SECRETS_KEY</code> through a dedicated root-managed mode-<code
 decrypts it into the service's private runtime credential directory; the daemon does not receive the shared web-session
 or bootstrap-administrator secrets.</p>
 <p>Atlaso never exports plaintext keys through its UI or management API. KMIP <code>Get</code> is the sole plaintext release path
-and is restricted to an authenticated client mapped to the same provider. Mutable buffers are cleared where Python
+and is restricted to an authenticated client mapped to the same provider. Get permits the bounded Pre-Active and
+Active states, including vCenter's observed retrieval immediately after Create. Retrieval leaves lifecycle state
+unchanged and does not perform cryptographic operations. Mutable buffers are cleared where Python
 permits, but encoded protocol bytes and immutable Python objects cannot be guaranteed to be overwritten in place; the
 unprivileged process and short request lifetime are part of the memory-exposure boundary.</p>
 <h2 id="recovery-and-disaster-recovery">Recovery and disaster recovery<a class="headerlink" href="#recovery-and-disaster-recovery" title="Permanent link">&para;</a></h2>

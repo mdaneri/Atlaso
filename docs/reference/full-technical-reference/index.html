@@ -5359,7 +5359,7 @@ appliance-wide listener/server identity. The same fingerprint cannot map to mult
 client-private-key or management key workflow.</p>
 <p>Real internal <code>kms</code> apply stages <code>/var/lib/atlaso/apply/kms/server.json</code> and the public-only
 <code>/var/lib/atlaso/apply/kms/client-trust.pem</code>, installs fixed runtime paths, and manages the hardened, unprivileged
-<code>atlaso-kmip.service</code>. The daemon exposes only the checked-in KMIP 1.4 AES-256 symmetric-key contract, maps each exact
+<code>atlaso-kmip.service</code>. The daemon exposes only the checked-in KMIP 1.1/1.4 AES-256 symmetric-key contract, maps each exact
 peer fingerprint to one provider UUID, and stores only AES-GCM-wrapped operational keys under <code>/var/lib/atlaso/kmip</code>.
 <code>systemd-creds</code> protects the runtime store credential. TLS requires 1.2 or newer and permits partial-chain verification
 for imported public leaves, and the daemon binds every derived selected listener address. Authenticated status returns

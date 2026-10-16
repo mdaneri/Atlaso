@@ -4033,7 +4033,8 @@ yet.</p>
 <h2 id="compatibility-statement">Compatibility statement<a class="headerlink" href="#compatibility-statement" title="Permanent link">&para;</a></h2>
 <ul>
 <li>The only initial product target is VCF 9.1.</li>
-<li>The service uses KMIP 1.4 TTLV over mutually authenticated TLS on TCP 5696.</li>
+<li>The service accepts the bounded KMIP 1.1 and 1.4 TTLV profiles over mutually authenticated TLS on TCP 5696.
+  vCenter 9.1.1 starts discovery with a KMIP 1.1 request; negotiation must answer that request before key operations.</li>
 <li>It manages AES-256 symmetric keys in Raw format.</li>
 <li>It is not a general-purpose KMIP implementation, production HSM, or compatibility claim for other vSphere or VCF
   releases.</li>
@@ -4045,8 +4046,21 @@ object, algorithm, length, format, or attribute outside the checked-in contract.
 VCF 9.1 evidence, tests, documentation, and security review.</p>
 <h2 id="candidate-allowlist">Candidate allowlist<a class="headerlink" href="#candidate-allowlist" title="Permanent link">&para;</a></h2>
 <p>The candidate contract allows the operations below for implementation and capture. This list is based on the OASIS
-KMIP 1.4 baseline and symmetric-key lifecycle profiles plus the vSphere <code>CryptoManagerKmip</code> integration surface. It is
-not an observation of a running VCF 9.1 system.</p>
+KMIP baseline and symmetric-key lifecycle profiles plus the vSphere <code>CryptoManagerKmip</code> integration surface.
+Issue <a href="https://github.com/mdaneri/Atlaso/issues/957">#957</a> records KMIP 1.1 discovery and Create requests with a
+Unique Batch Item ID observed from vCenter 9.1.1. The daemon validates this Byte String correlation field and echoes
+it on success and failure responses. Multi-item requests require distinct identifiers. This bounded observation does
+not complete the VCF 9.1 acceptance or recovery matrix.</p>
+<p>The observed Create profile also includes five VMware informational attributes: <code>x-Component</code>, <code>x-Identifier</code>,
+<code>x-Product</code>, <code>x-Product_Version</code>, and <code>x-Vendor</code>. Only those custom names are accepted, each once as a Text String of
+at most 512 UTF-8 bytes. They are authenticated with the wrapped key, survive activation and restart, and are available
+through provider-scoped Get Attributes and Get Attribute List. Custom values are never included in logs or traces.
+Existing keys without these attributes retain their original authenticated format and are not rewritten on startup.
+Get Attributes omits supported attributes that have no value; a request for only absent attributes returns the key's
+Unique Identifier, as required by KMIP. Unknown attribute names outside this contract remain rejected.</p>
+<p>vCenter 9.1.1 retrieves a newly created key before sending Activate. An authenticated client may therefore Get its
+provider's Pre-Active or Active keys. Get does not activate a key or authorize server-side cryptographic use; explicit
+Activate retains its separate lifecycle transition. Other lifecycle states remain outside this bounded contract.</p>
 <table>
 <thead>
 <tr>
@@ -4081,7 +4095,7 @@ not an observation of a running VCF 9.1 system.</p>
 </tr>
 <tr>
 <td>Transport</td>
-<td>KMIP 1.4 TTLV, TLS 1.2 or newer, mutual TLS, TCP 5696</td>
+<td>KMIP 1.1 and 1.4 TTLV, TLS 1.2 or newer, mutual TLS, TCP 5696</td>
 </tr>
 </tbody>
 </table>
@@ -4185,6 +4199,7 @@ whether the operation is required, document its lifecycle and authorization sema
 before changing the allowlist.</p>
 <h2 id="authoritative-sources">Authoritative sources<a class="headerlink" href="#authoritative-sources" title="Permanent link">&para;</a></h2>
 <ul>
+<li><a href="https://docs.oasis-open.org/kmip/spec/v1.1/os/kmip-spec-v1.1-os.html">OASIS KMIP Specification Version 1.1</a></li>
 <li><a href="https://docs.oasis-open.org/kmip/spec/v1.4/kmip-spec-v1.4.html">OASIS KMIP Specification Version 1.4</a></li>
 <li><a href="https://docs.oasis-open.org/kmip/profiles/v1.4/kmip-profiles-v1.4.html">OASIS KMIP Profiles Version 1.4</a></li>
 <li><a href="https://developer.broadcom.com/xapis/vsphere-web-services-api/latest/vim.encryption.CryptoManagerKmip.html">Broadcom vSphere <code>CryptoManagerKmip</code> API</a></li>
