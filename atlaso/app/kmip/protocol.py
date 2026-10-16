@@ -648,10 +648,10 @@ class KmipDispatcher:
         key_id = _unique_identifier(payload)
         metadata, plaintext = self.store.get_key(provider_id, key_id)
         try:
-            if metadata.state != "Active":
+            if metadata.state not in {"Pre-Active", "Active"}:
                 raise ProtocolFailure(
                     ResultReason.INVALID_FIELD,
-                    "Only active KMIP keys may be retrieved.",
+                    "Only Pre-Active or Active KMIP keys may be retrieved.",
                 )
             return [
                 enumeration(Tag.OBJECT_TYPE, OBJECT_TYPE_SYMMETRIC_KEY),

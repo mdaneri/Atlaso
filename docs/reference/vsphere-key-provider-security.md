@@ -105,7 +105,9 @@ decrypts it into the service's private runtime credential directory; the daemon 
 or bootstrap-administrator secrets.
 
 Atlaso never exports plaintext keys through its UI or management API. KMIP `Get` is the sole plaintext release path
-and is restricted to an authenticated client mapped to the same provider. Mutable buffers are cleared where Python
+and is restricted to an authenticated client mapped to the same provider. Get permits the bounded Pre-Active and
+Active states, including vCenter's observed retrieval immediately after Create. Retrieval leaves lifecycle state
+unchanged and does not perform cryptographic operations. Mutable buffers are cleared where Python
 permits, but encoded protocol bytes and immutable Python objects cannot be guaranteed to be overwritten in place; the
 unprivileged process and short request lifetime are part of the memory-exposure boundary.
 

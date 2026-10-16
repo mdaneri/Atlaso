@@ -49,6 +49,10 @@ at most 512 UTF-8 bytes. They are authenticated with the wrapped key, survive ac
 through provider-scoped Get Attributes and Get Attribute List. Custom values are never included in logs or traces.
 Existing keys without these attributes retain their original authenticated format and are not rewritten on startup.
 
+vCenter 9.1.1 retrieves a newly created key before sending Activate. An authenticated client may therefore Get its
+provider's Pre-Active or Active keys. Get does not activate a key or authorize server-side cryptographic use; explicit
+Activate retains its separate lifecycle transition. Other lifecycle states remain outside this bounded contract.
+
 | Area | Candidate boundary |
 | --- | --- |
 | Discovery | Discover Versions, Query |

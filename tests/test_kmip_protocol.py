@@ -643,7 +643,16 @@ def test_create_activate_get_round_trip_returns_only_active_key(tmp_path: Path) 
         provider_id,
         request(Operation.GET, text_string(Tag.UNIQUE_IDENTIFIER, key_id)),
     )
-    assert result_status(pre_active_get) == ResultStatus.OPERATION_FAILED
+    assert result_status(pre_active_get) == ResultStatus.SUCCESS
+    pre_active_material = (
+        response_payload(pre_active_get)
+        .child(Tag.SYMMETRIC_KEY)
+        .child(Tag.KEY_BLOCK)
+        .child(Tag.KEY_VALUE)
+        .child(Tag.KEY_MATERIAL)
+    )
+    assert pre_active_material is not None and isinstance(pre_active_material.value, bytes)
+    assert service.store.get_metadata(provider_id, key_id).state == "Pre-Active"
 
     activated = service.dispatch(
         provider_id,
@@ -664,6 +673,10 @@ def test_create_activate_get_round_trip_returns_only_active_key(tmp_path: Path) 
         .child(Tag.SYMMETRIC_KEY)
         .child(Tag.KEY_BLOCK)
     )
+    post_active_material = key_block.child(Tag.KEY_VALUE).child(Tag.KEY_MATERIAL)
+    assert post_active_material is not None
+    assert post_active_material.value == pre_active_material.value
+    assert service.store.get_metadata(provider_id, key_id).state == "Active"
     key_material = key_block.child(Tag.KEY_VALUE).child(Tag.KEY_MATERIAL)
 
     assert result_status(retrieved) == ResultStatus.SUCCESS
@@ -736,23 +749,42 @@ def test_unsupported_request_protocol_versions_are_rejected(
 
 
 def test_cross_provider_get_does_not_reveal_key_existence(tmp_path: Path) -> None:
-    """Verify that cross provider get does not reveal key existence.
+    """A pre-active key remains provider-isolated and preserves KMIP 1.1 batch IDs.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     service, provider_id = dispatcher(tmp_path)
-    key_id = created_key_id(service, provider_id)
+    created = service.dispatch(provider_id, custom_create_request(()))
+    assert result_status(created) == ResultStatus.SUCCESS
+    assert batch_item_id(batch_item(created)) == b"vcenter-create-id"
+    key_id_node = response_payload(created).child(Tag.UNIQUE_IDENTIFIER)
+    assert key_id_node is not None and isinstance(key_id_node.value, str)
+    key_id = key_id_node.value
 
     response = service.dispatch(
         str(uuid.uuid4()),
-        request(Operation.GET, text_string(Tag.UNIQUE_IDENTIFIER, key_id)),
+        multi_request(
+            structure(
+                Tag.BATCH_ITEM,
+                enumeration(Tag.OPERATION, Operation.GET),
+                byte_string(Tag.UNIQUE_BATCH_ITEM_ID, b"preactive-cross-provider-get"),
+                structure(
+                    Tag.REQUEST_PAYLOAD,
+                    text_string(Tag.UNIQUE_IDENTIFIER, key_id),
+                ),
+            ),
+            version=(1, 1),
+        ),
     )
     reason = batch_item(response).child(Tag.RESULT_REASON)
 
     assert result_status(response) == ResultStatus.OPERATION_FAILED
     assert reason is not None
     assert reason.value == ResultReason.ITEM_NOT_FOUND
+    assert response_protocol_version(response) == (1, 1)
+    assert batch_item_id(batch_item(response)) == b"preactive-cross-provider-get"
+    assert batch_item(response).child(Tag.RESPONSE_PAYLOAD, required=False) is None
 
 
 def test_query_and_discover_versions_expose_only_bounded_contract(tmp_path: Path) -> None:
