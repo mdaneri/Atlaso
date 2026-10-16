@@ -86,6 +86,12 @@ ATTRIBUTE_DIAGNOSTIC_NAMES = frozenset(
         "Activation Date",
         "Name",
         "Unique Identifier",
+        "x-Component",
+        "x-Identifier",
+        "x-Name",
+        "x-Product",
+        "x-Product_Version",
+        "x-Vendor",
     }
 )
 

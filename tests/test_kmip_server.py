@@ -508,6 +508,14 @@ def test_dispatch_response_failure_logs_numeric_metadata_without_payload(
     caplog.set_level(logging.WARNING, logger="atlaso.kmip")
     thread.start()
     host, port = server.server_address
+    custom_attribute_names = (
+        "x-Component",
+        "x-Identifier",
+        "x-Name",
+        "x-Product",
+        "x-Product_Version",
+        "x-Vendor",
+    )
     request = encode(
         structure(
             Tag.REQUEST_MESSAGE,
@@ -563,6 +571,17 @@ def test_dispatch_response_failure_logs_numeric_metadata_without_payload(
                             text_string(Tag.ATTRIBUTE_NAME, "State"),
                             enumeration(Tag.ATTRIBUTE_VALUE, 1),
                         ),
+                        *(
+                            structure(
+                                Tag.ATTRIBUTE,
+                                text_string(Tag.ATTRIBUTE_NAME, attribute_name),
+                                text_string(
+                                    Tag.ATTRIBUTE_VALUE,
+                                    f"{attribute_name}-value-secret-sentinel",
+                                ),
+                            )
+                            for attribute_name in custom_attribute_names
+                        ),
                     ),
                 ),
             ),
@@ -599,11 +618,23 @@ def test_dispatch_response_failure_logs_numeric_metadata_without_payload(
                 {"fields": [(4325386, 7), (4325387, 7)], "name": "unsupported", "numeric_value": None},
                 {"fields": [(4325386, 7), (4325387, 5)], "name": "Object Type", "numeric_value": 2},
                 {"fields": [(4325386, 7), (4325387, 5)], "name": "State", "numeric_value": 1},
+                *(
+                    {
+                        "fields": [(4325386, 7), (4325387, 7)],
+                        "name": attribute_name,
+                        "numeric_value": None,
+                    }
+                    for attribute_name in custom_attribute_names
+                ),
             ]
         ]
         assert "name-value-secret-sentinel" not in caplog.text
         assert "attribute-name-secret-sentinel" not in caplog.text
         assert "attribute-value-secret-sentinel" not in caplog.text
+        assert all(
+            f"{attribute_name}-value-secret-sentinel" not in caplog.text
+            for attribute_name in custom_attribute_names
+        )
     finally:
         server.shutdown()
         server.server_close()
