@@ -77,8 +77,15 @@ the runtime key-encryption key (KEK). The authenticated additional data binds at
 - key UUID;
 - algorithm and length;
 - optional bounded KMIP name;
+- the five allowlisted, bounded VMware informational attributes when present;
 - creation and activation times; and
 - lifecycle state.
+
+Informational attribute values are authenticated metadata, stored with the same service-only permissions as the
+existing KMIP name. They are not encrypted separately from that metadata and must not contain credentials or key
+material. Logs and interoperability traces include only their fixed attribute names, never their values. Keys created
+without custom attributes retain their original authenticated bytes; enabling this profile does not migrate or
+rewrap existing keys.
 
 Replacing a provider ID, moving a wrapped blob into another namespace, editing metadata, or rolling a row backward must
 make decryption fail. Every metadata-only read authenticates the same wrapped ciphertext and additional data as

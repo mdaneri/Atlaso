@@ -21,7 +21,7 @@ from atlaso.app.kmip.protocol import (
     ResultStatus,
     Tag,
 )
-from atlaso.app.kmip.store import WrappedKeyStore
+from atlaso.app.kmip.store import VSPHERE_CUSTOM_ATTRIBUTES, WrappedKeyStore
 from atlaso.app.kmip.ttlv import (
     Ttlv,
     byte_string,
@@ -186,6 +186,52 @@ def create_request(*, version: tuple[int, int] = (1, 4)) -> Ttlv:
                 Tag.ATTRIBUTE,
                 text_string(Tag.ATTRIBUTE_NAME, "Cryptographic Usage Mask"),
                 integer(Tag.ATTRIBUTE_VALUE, 0x0C),
+            ),
+        ),
+        version=version,
+    )
+
+
+def custom_create_request(
+    custom_attributes: tuple[Ttlv, ...],
+    *,
+    version: tuple[int, int] = (1, 1),
+    batch_item_id: bytes = b"vcenter-create-id",
+) -> Ttlv:
+    """Create a vSphere request with a correlation ID and custom attributes.
+
+    Args:
+        custom_attributes: Custom Attribute structures included in the request.
+        version: KMIP protocol version to place in the request header.
+        batch_item_id: Correlation ID echoed by the server.
+    """
+    return multi_request(
+        structure(
+            Tag.BATCH_ITEM,
+            enumeration(Tag.OPERATION, Operation.CREATE),
+            byte_string(Tag.UNIQUE_BATCH_ITEM_ID, batch_item_id),
+            structure(
+                Tag.REQUEST_PAYLOAD,
+                enumeration(Tag.OBJECT_TYPE, OBJECT_TYPE_SYMMETRIC_KEY),
+                structure(
+                    Tag.TEMPLATE_ATTRIBUTE,
+                    structure(
+                        Tag.ATTRIBUTE,
+                        text_string(Tag.ATTRIBUTE_NAME, "Cryptographic Algorithm"),
+                        enumeration(Tag.ATTRIBUTE_VALUE, CRYPTOGRAPHIC_ALGORITHM_AES),
+                    ),
+                    structure(
+                        Tag.ATTRIBUTE,
+                        text_string(Tag.ATTRIBUTE_NAME, "Cryptographic Length"),
+                        integer(Tag.ATTRIBUTE_VALUE, 256),
+                    ),
+                    structure(
+                        Tag.ATTRIBUTE,
+                        text_string(Tag.ATTRIBUTE_NAME, "Cryptographic Usage Mask"),
+                        integer(Tag.ATTRIBUTE_VALUE, 0x0C),
+                    ),
+                    *custom_attributes,
+                ),
             ),
         ),
         version=version,
@@ -406,6 +452,182 @@ def test_duplicate_unique_batch_item_ids_fail_and_are_echoed(tmp_path: Path) -> 
         item.child(Tag.RESULT_REASON).value == ResultReason.INVALID_MESSAGE
         for item in items
     )
+
+
+def test_vcenter_custom_attributes_survive_create_get_activation_and_restart(
+    tmp_path: Path,
+) -> None:
+    """KMIP 1.1 custom attributes persist and round-trip through metadata APIs.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    service, provider_id = dispatcher(tmp_path)
+    custom_values = {
+        name: "" if name == "x-Identifier" else f"value-{name}"
+        for name in sorted(VSPHERE_CUSTOM_ATTRIBUTES)
+    }
+    request_attributes = tuple(
+        structure(
+            Tag.ATTRIBUTE,
+            text_string(Tag.ATTRIBUTE_NAME, name),
+            text_string(Tag.ATTRIBUTE_VALUE, value),
+        )
+        for name, value in custom_values.items()
+    )
+    created = service.dispatch(provider_id, custom_create_request(request_attributes))
+    assert result_status(created) == ResultStatus.SUCCESS
+    assert response_protocol_version(created) == (1, 1)
+    assert batch_item_id(batch_item(created)) == b"vcenter-create-id"
+    key_id_node = response_payload(created).child(Tag.UNIQUE_IDENTIFIER)
+    assert key_id_node is not None and isinstance(key_id_node.value, str)
+    key_id = key_id_node.value
+
+    activated = service.dispatch(
+        provider_id,
+        request(
+            Operation.ACTIVATE,
+            text_string(Tag.UNIQUE_IDENTIFIER, key_id),
+            version=(1, 1),
+        ),
+    )
+    assert result_status(activated) == ResultStatus.SUCCESS
+    retrieved = service.dispatch(
+        provider_id,
+        request(
+            Operation.GET,
+            text_string(Tag.UNIQUE_IDENTIFIER, key_id),
+            enumeration(Tag.KEY_FORMAT_TYPE, KEY_FORMAT_TYPE_RAW),
+            version=(1, 1),
+        ),
+    )
+    assert result_status(retrieved) == ResultStatus.SUCCESS
+
+    restarted_store = WrappedKeyStore(
+        service.store.database_path,
+        service.store.kek_path,
+        secrets_key="appliance-secrets-key",
+    )
+    restarted = KmipDispatcher(restarted_store)
+    get_attributes = restarted.dispatch(
+        provider_id,
+        request(
+            Operation.GET_ATTRIBUTES,
+            text_string(Tag.UNIQUE_IDENTIFIER, key_id),
+            version=(1, 1),
+        ),
+    )
+    assert result_status(get_attributes) == ResultStatus.SUCCESS
+    returned_values: dict[str, str] = {}
+    for attribute in response_payload(get_attributes).children(Tag.ATTRIBUTE):
+        name_node = attribute.child(Tag.ATTRIBUTE_NAME)
+        value_node = attribute.child(Tag.ATTRIBUTE_VALUE)
+        assert name_node is not None and isinstance(name_node.value, str)
+        assert value_node is not None
+        if name_node.value in custom_values:
+            assert isinstance(value_node.value, str)
+            returned_values[name_node.value] = value_node.value
+    assert returned_values == custom_values
+
+    attribute_list = restarted.dispatch(
+        provider_id,
+        request(
+            Operation.GET_ATTRIBUTE_LIST,
+            text_string(Tag.UNIQUE_IDENTIFIER, key_id),
+            version=(1, 1),
+        ),
+    )
+    listed_names = {
+        node.value for node in response_payload(attribute_list).children(Tag.ATTRIBUTE_NAME)
+    }
+    assert set(custom_values) <= listed_names
+
+    other_provider = str(uuid.uuid4())
+    isolated = restarted.dispatch(
+        other_provider,
+        request(
+            Operation.GET_ATTRIBUTES,
+            text_string(Tag.UNIQUE_IDENTIFIER, key_id),
+            version=(1, 1),
+        ),
+    )
+    assert result_status(isolated) == ResultStatus.OPERATION_FAILED
+    assert batch_item(isolated).child(Tag.RESULT_REASON).value == ResultReason.ITEM_NOT_FOUND
+
+
+@pytest.mark.parametrize(
+    "custom_attribute",
+    [
+        structure(
+            Tag.ATTRIBUTE,
+            text_string(Tag.ATTRIBUTE_NAME, "x-Component"),
+            enumeration(Tag.ATTRIBUTE_VALUE, 1),
+        ),
+        structure(
+            Tag.ATTRIBUTE,
+            text_string(Tag.ATTRIBUTE_NAME, "x-Component"),
+            text_string(Tag.ATTRIBUTE_VALUE, "v" * 513),
+        ),
+        structure(
+            Tag.ATTRIBUTE,
+            text_string(Tag.ATTRIBUTE_NAME, "x-Unsupported"),
+            text_string(Tag.ATTRIBUTE_VALUE, "unsupported"),
+        ),
+    ],
+    ids=["wrong-type", "over-byte-limit", "unknown-name"],
+)
+def test_create_rejects_invalid_custom_attributes_without_storing_key(
+    tmp_path: Path,
+    custom_attribute: Ttlv,
+) -> None:
+    """Malformed or unsupported custom attributes fail before key creation.
+
+    Args:
+        custom_attribute: Invalid custom Attribute supplied to the request.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    service, provider_id = dispatcher(tmp_path)
+    response = service.dispatch(provider_id, custom_create_request((custom_attribute,)))
+
+    assert result_status(response) == ResultStatus.OPERATION_FAILED
+    assert batch_item(response).child(Tag.RESULT_REASON).value == ResultReason.INVALID_FIELD
+    assert service.store.lifecycle_counts([provider_id])[provider_id]["total"] == 0
+
+
+def test_get_attributes_rejects_known_but_unstored_custom_attribute(tmp_path: Path) -> None:
+    """A request for an absent known custom attribute fails without an empty value.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    service, provider_id = dispatcher(tmp_path)
+    created = service.dispatch(
+        provider_id,
+        custom_create_request(
+            (
+                structure(
+                    Tag.ATTRIBUTE,
+                    text_string(Tag.ATTRIBUTE_NAME, "x-Component"),
+                    text_string(Tag.ATTRIBUTE_VALUE, "component-value"),
+                ),
+            )
+        ),
+    )
+    assert result_status(created) == ResultStatus.SUCCESS
+    key_id = response_payload(created).child(Tag.UNIQUE_IDENTIFIER).value
+    absent = next(name for name in sorted(VSPHERE_CUSTOM_ATTRIBUTES) if name != "x-Component")
+
+    response = service.dispatch(
+        provider_id,
+        request(
+            Operation.GET_ATTRIBUTES,
+            text_string(Tag.UNIQUE_IDENTIFIER, key_id),
+            text_string(Tag.ATTRIBUTE_NAME, absent),
+        ),
+    )
+
+    assert result_status(response) == ResultStatus.OPERATION_FAILED
+    assert batch_item(response).child(Tag.RESULT_REASON).value == ResultReason.INVALID_FIELD
 
 
 def test_create_activate_get_round_trip_returns_only_active_key(tmp_path: Path) -> None:

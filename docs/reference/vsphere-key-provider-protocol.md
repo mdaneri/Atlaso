@@ -43,6 +43,12 @@ Unique Batch Item ID observed from vCenter 9.1.1. The daemon validates this Byte
 it on success and failure responses. Multi-item requests require distinct identifiers. This bounded observation does
 not complete the VCF 9.1 acceptance or recovery matrix.
 
+The observed Create profile also includes five VMware informational attributes: `x-Component`, `x-Identifier`,
+`x-Product`, `x-Product_Version`, and `x-Vendor`. Only those custom names are accepted, each once as a Text String of
+at most 512 UTF-8 bytes. They are authenticated with the wrapped key, survive activation and restart, and are available
+through provider-scoped Get Attributes and Get Attribute List. Custom values are never included in logs or traces.
+Existing keys without these attributes retain their original authenticated format and are not rewritten on startup.
+
 | Area | Candidate boundary |
 | --- | --- |
 | Discovery | Discover Versions, Query |

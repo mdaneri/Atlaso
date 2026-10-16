@@ -8,6 +8,8 @@ from datetime import datetime
 from enum import IntEnum
 
 from atlaso.app.kmip.store import (
+    MAX_CUSTOM_ATTRIBUTE_VALUE_BYTES,
+    VSPHERE_CUSTOM_ATTRIBUTES,
     KeyNotFoundError,
     KeyStateError,
     KeyStoreError,
@@ -397,6 +399,9 @@ def _metadata_attribute(name: str, metadata: StoredKey) -> Ttlv:
             text_string(Tag.NAME_VALUE, metadata.name),
             enumeration(Tag.NAME_TYPE, NAME_TYPE_UNINTERPRETED_TEXT_STRING),
         )
+    elif name in dict(metadata.custom_attributes):
+        custom_value = dict(metadata.custom_attributes)[name]
+        return _attribute(name, text_string(Tag.ATTRIBUTE_VALUE, custom_value))
     else:
         raise ProtocolFailure(ResultReason.INVALID_FIELD, "Requested KMIP attribute is unsupported.")
     return _attribute(name, value)
@@ -440,12 +445,14 @@ def _parse_template_attributes(
     template: Ttlv,
     *,
     allowed_names: set[str],
+    string_names: frozenset[str] = frozenset(),
 ) -> dict[str, int | str]:
     """Parse template attributes.
 
     Args:
         template: Candidate template to parse.
         allowed_names: Candidate allowed names to parse.
+        string_names: Allowed attribute names whose values are bounded text strings.
 
 
     Returns:
@@ -476,6 +483,22 @@ def _parse_template_attributes(
         raw_value = _required_child(attribute, Tag.ATTRIBUTE_VALUE)
         if name == "Name":
             result[name] = _parse_name(raw_value)
+            continue
+        if name in string_names:
+            value = _text_value(raw_value)
+            try:
+                value_size = len(value.encode("utf-8"))
+            except UnicodeEncodeError as exc:
+                raise ProtocolFailure(
+                    ResultReason.INVALID_FIELD,
+                    "Custom attribute value is not valid UTF-8 text.",
+                ) from exc
+            if value_size > MAX_CUSTOM_ATTRIBUTE_VALUE_BYTES:
+                raise ProtocolFailure(
+                    ResultReason.INVALID_FIELD,
+                    "Custom attribute values exceed the supported UTF-8 byte limit.",
+                )
+            result[name] = value
             continue
         expected = (
             TtlvType.ENUMERATION
@@ -548,7 +571,9 @@ class KmipDispatcher:
                 "Cryptographic Length",
                 "Cryptographic Usage Mask",
                 "Name",
+                *VSPHERE_CUSTOM_ATTRIBUTES,
             },
+            string_names=frozenset(VSPHERE_CUSTOM_ATTRIBUTES),
         )
         if attributes.get("Cryptographic Algorithm") != CRYPTOGRAPHIC_ALGORITHM_AES:
             raise ProtocolFailure(ResultReason.INVALID_FIELD, "Only AES keys are supported.")
@@ -562,7 +587,19 @@ class KmipDispatcher:
             )
         name = attributes.get("Name")
         assert name is None or isinstance(name, str)
-        metadata = self.store.create_key(provider_id, name=name)
+        custom_attributes = tuple(
+            (attribute_name, attribute_value)
+            for attribute_name in sorted(VSPHERE_CUSTOM_ATTRIBUTES)
+            if isinstance(
+                attribute_value := attributes.get(attribute_name),
+                str,
+            )
+        )
+        metadata = self.store.create_key(
+            provider_id,
+            name=name,
+            custom_attributes=custom_attributes,
+        )
         return [
             enumeration(Tag.OBJECT_TYPE, OBJECT_TYPE_SYMMETRIC_KEY),
             text_string(Tag.UNIQUE_IDENTIFIER, metadata.key_id),
@@ -668,6 +705,8 @@ class KmipDispatcher:
             names.append("Name")
         if metadata.activated_at is not None:
             names.append("Activation Date")
+        custom_attributes = dict(metadata.custom_attributes)
+        names.extend(name for name in sorted(VSPHERE_CUSTOM_ATTRIBUTES) if name in custom_attributes)
         return [
             text_string(Tag.UNIQUE_IDENTIFIER, metadata.key_id),
             *(text_string(Tag.ATTRIBUTE_NAME, name) for name in names),
@@ -693,6 +732,7 @@ class KmipDispatcher:
             ) from exc
         metadata = self.store.get_metadata(provider_id, _unique_identifier(payload))
         names = [_text_value(node) for node in payload.children(Tag.ATTRIBUTE_NAME)]
+        custom_attributes = dict(metadata.custom_attributes)
         if not names:
             names = [
                 "Cryptographic Algorithm",
@@ -706,7 +746,9 @@ class KmipDispatcher:
                 names.append("Name")
             if metadata.activated_at is not None:
                 names.append("Activation Date")
-        if len(names) != len(set(names)) or any(name not in ATTRIBUTE_TAGS for name in names):
+            names.extend(name for name in sorted(VSPHERE_CUSTOM_ATTRIBUTES) if name in custom_attributes)
+        supported_names = set(ATTRIBUTE_TAGS) | set(custom_attributes)
+        if len(names) != len(set(names)) or any(name not in supported_names for name in names):
             raise ProtocolFailure(ResultReason.INVALID_FIELD, "Requested attributes are invalid.")
         return [
             text_string(Tag.UNIQUE_IDENTIFIER, metadata.key_id),

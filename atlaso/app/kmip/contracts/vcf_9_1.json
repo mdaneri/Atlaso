@@ -48,7 +48,12 @@
     "Name",
     "Object Type",
     "State",
-    "Unique Identifier"
+    "Unique Identifier",
+    "x-Component",
+    "x-Identifier",
+    "x-Product",
+    "x-Product_Version",
+    "x-Vendor"
   ],
   "result_statuses": [
     "Success",

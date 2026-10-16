@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from atlaso.app.kmip.store import VSPHERE_CUSTOM_ATTRIBUTES
 from atlaso.app.kmip.trace import (
     TraceValidationError,
     load_contract,
@@ -62,6 +63,15 @@ def test_vcf_9_1_contract_is_explicitly_unverified() -> None:
     assert contract["transport"]["mutual_tls_required"] is True
     assert contract["protocol_versions"] == ["1.1", "1.4"]
     assert contract["algorithms"]["AES"]["lengths"] == [256]
+    assert VSPHERE_CUSTOM_ATTRIBUTES <= set(contract["candidate_attributes"])
+
+
+def test_observed_vmware_attribute_names_are_valid_trace_metadata() -> None:
+    """Allow only fixed VMware labels in traces, never custom values."""
+    summary = validate_trace([event(attribute_names=sorted(VSPHERE_CUSTOM_ATTRIBUTES))])
+    assert summary.event_count == 1
+    with pytest.raises(TraceValidationError, match="attributes are outside"):
+        validate_trace([event(attribute_names=["x-Arbitrary"])])
 
 
 @pytest.mark.parametrize("version", ["1.1", "1.4"])
