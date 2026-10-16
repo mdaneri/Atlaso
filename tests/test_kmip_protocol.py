@@ -767,7 +767,11 @@ def test_get_round_trip_succeeds_before_and_after_activation(tmp_path: Path) -> 
 
 
 def test_kmip_1_1_supports_bounded_create_activate_get_round_trip(tmp_path: Path) -> None:
-    """KMIP 1.1 requests run the same bounded key lifecycle and echo their version."""
+    """KMIP 1.1 requests run the same bounded key lifecycle and echo their version.
+
+    Args:
+        tmp_path: Isolated directory for this test's provider key store.
+    """
     service, provider_id = dispatcher(tmp_path)
     discovery = service.dispatch(
         provider_id,
