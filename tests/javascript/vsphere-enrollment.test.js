@@ -60,7 +60,13 @@ class FakeElement {
     this.listeners = new Map();
     this.dataset = {};
     this.selectedOptions = [];
+    this.children = [];
+    this.attributes = {};
   }
+
+  append(...children) { this.children.push(...children); }
+  replaceChildren(...children) { this.children = children; }
+  setAttribute(name, value) { this.attributes[name] = value; }
 
   addEventListener(name, callback) {
     const callbacks = this.listeners.get(name) || [];
@@ -581,4 +587,34 @@ test("the enrollment launcher starts existing refreshes on Credential and new se
   assert.equal(openings[1].highestStep, "method");
   context.openEnrollment();
   assert.equal(openings[2].step, "method");
+});
+
+test("health icons preserve literal state labels and keep configured runtime neutral", () => {
+  const context = vm.createContext({ document: { createElement: () => new FakeElement() } });
+  vm.runInContext(`${functionSource("vsphereHealthStatusFormatter")}; globalThis.format = vsphereHealthStatusFormatter;`, context);
+  for (const value of ["ready", "configured", "needs attention", "not reported", "__proto__", '<img src=x onerror="bad()">']) {
+    const badge = context.format({ getValue: () => value });
+    assert.equal(badge.children[1].textContent, value);
+    assert.equal(badge.children[0].attributes["aria-hidden"], "true");
+    assert.equal(badge.innerHTML, "");
+    if (value === "configured" || value === "not reported") assert.match(badge.className, /muted/);
+  }
+});
+
+test("key-count icons distinguish unavailable evidence from an observed zero", () => {
+  const context = vm.createContext({ document: {
+    createElement: () => new FakeElement(), createElementNS: () => new FakeElement(),
+  } });
+  vm.runInContext(`${functionSource("appendButtonIcon")}\n${functionSource("vsphereKeyCountFormatter")}; globalThis.format = vsphereKeyCountFormatter;`, context);
+  for (const value of [null, undefined]) {
+    const badge = context.format({ getValue: () => value, getField: () => "total_count" });
+    assert.equal(badge.textContent, "Not reported");
+    assert.equal(badge.children.length, 0);
+  }
+  for (const value of [0, 2]) {
+    const badge = context.format({ getValue: () => value, getField: () => "active_count" });
+    assert.equal(badge.children[1].textContent, String(value));
+    assert.equal(badge.children[0].attributes["aria-hidden"], "true");
+    assert.equal(badge.classList.contains("active"), true);
+  }
 });

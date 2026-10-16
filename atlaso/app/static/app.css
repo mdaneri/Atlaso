@@ -1072,6 +1072,56 @@ textarea {
   color: #64748b;
 }
 
+.vsphere-health-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.vsphere-health-heading img {
+  flex: 0 0 36px;
+}
+
+.vsphere-health-note {
+  margin: 0 0 14px;
+  font-size: 12px;
+}
+
+.vsphere-health-badge,
+.vsphere-key-count {
+  gap: 6px;
+  min-height: 24px;
+  white-space: nowrap;
+}
+
+.vsphere-key-count {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #475569;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.vsphere-key-count.active {
+  background: #dcfce7;
+  color: var(--good);
+}
+
+.vsphere-key-count.muted {
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.vsphere-key-count .button-icon {
+  width: 14px;
+  height: 14px;
+}
+
 .button {
   display: inline-flex;
   align-items: center;

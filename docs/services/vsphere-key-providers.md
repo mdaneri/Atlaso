@@ -86,6 +86,13 @@ Listener settings accept only currently available addressed access or VLAN inter
 and IPv6 listener addresses from those selected interfaces; API callers cannot bind the service to an unrelated address
 by supplying a different `listen_addresses` value.
 
+## Read health and key counts
+
+**Health & lifecycle** uses Atlaso status badges and state symbols to distinguish desired state, readiness, runtime,
+and evidence. Key icons mark the Pre-Active, Active, and Total counts. Labels remain visible alongside the icons.
+**Not reported** means authenticated evidence is unavailable; a reported zero remains zero. **Configured** describes
+runtime configuration and does not by itself prove that vCenter is connected.
+
 ## Rotate or retire public trust
 
 Use **Refresh from vCenter** on the trusted-vCenter row after preparing a replacement client certificate in vCenter.

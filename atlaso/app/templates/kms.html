@@ -53,7 +53,8 @@
       </div>
 
       <div id="vsphere-health-panel" class="tab-panel" role="tabpanel" hidden>
-        <div class="section-head"><div><h2>Health &amp; lifecycle</h2><p class="muted">Authenticated redacted counts. Unavailable evidence is not reported, never zero.</p></div></div>
+        <div class="section-head"><div class="vsphere-health-heading"><img src="/static/brand/atlaso-icon.svg" width="36" height="36" alt="" aria-hidden="true"><div><h2>Health &amp; lifecycle</h2><p class="muted">Provider readiness and key lifecycle at a glance.</p></div></div></div>
+        <p class="muted vsphere-health-note">Authenticated key counts. <strong>Not reported</strong> means evidence is unavailable, never zero. Configured runtime does not verify a vCenter connection.</p>
         <div id="vsphere-health-table" class="tabulator-shell" data-health='{{ vsphere_status_rows|tojson }}' data-fallback-id="vsphere-health-fallback"></div>
         <table id="vsphere-health-fallback" class="data-table dns-fallback-table"><thead><tr><th>Provider</th><th>Desired</th><th>Readiness</th><th>Runtime</th><th>Pre-Active</th><th>Active</th><th>Total</th></tr></thead><tbody>{% for row in vsphere_status_rows %}<tr><td>{{ row.provider_name }}</td><td>{{ row.desired_state }}</td><td>{{ row.readiness }}</td><td>{{ row.runtime_state }}</td><td>{{ row.pre_active_count if row.pre_active_count is not none else 'Not reported' }}</td><td>{{ row.active_count if row.active_count is not none else 'Not reported' }}</td><td>{{ row.total_count if row.total_count is not none else 'Not reported' }}</td></tr>{% else %}<tr><td colspan="7">No provider namespaces configured.</td></tr>{% endfor %}</tbody></table>
       </div>

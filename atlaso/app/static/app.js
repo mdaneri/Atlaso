@@ -5974,6 +5974,43 @@ function updateKmsDerivedAddress(form, payload = {}) {
 let vsphereCertificateWizard = null;
 let vsphereEnrollmentWizard = null;
 
+function vsphereHealthStatusFormatter(cell) {
+  const value = String(cell.getValue() || "Not reported");
+  const styles = {
+    enabled: ["good", "✓"], ready: ["good", "✓"], available: ["good", "✓"],
+    disabled: ["muted", "○"], configured: ["muted", "◇"],
+    "needs attention": ["warn", "!"], "enrollment required": ["warn", "!"],
+    failed: ["error", "✕"],
+  };
+  const [tone, symbol] = Object.hasOwn(styles, value) ? styles[value] : ["muted", "?"];
+  const badge = document.createElement("span");
+  badge.className = `status-pill vsphere-health-badge ${tone}`;
+  const icon = document.createElement("span");
+  icon.setAttribute("aria-hidden", "true");
+  icon.textContent = symbol;
+  const label = document.createElement("span");
+  label.textContent = value;
+  badge.append(icon, label);
+  return badge;
+}
+
+function vsphereKeyCountFormatter(cell) {
+  const value = cell.getValue();
+  const badge = document.createElement("span");
+  badge.className = "vsphere-key-count";
+  if (value === null || value === undefined) {
+    badge.classList.add("muted");
+    badge.textContent = "Not reported";
+    return badge;
+  }
+  if (cell.getField() === "active_count") badge.classList.add("active");
+  appendButtonIcon(badge, ["M15 3a6 6 0 1 1-4.8 9.6L3 20v-4h4v-4l2.4-2.4A6 6 0 0 1 15 3Z", "M16 7h.01"]);
+  const count = document.createElement("span");
+  count.textContent = String(value);
+  badge.append(count);
+  return badge;
+}
+
 function openVsphereEnrollmentWizard(data = {}, launcher = null) {
   const step = data.id && !data.is_new ? "credential" : "method";
   return vsphereEnrollmentWizard?.open({ launcher, context: data, step, highestStep: step });
@@ -6604,16 +6641,16 @@ function initializeVsphereKeyProviderTables() {
       pattern: "read-only",
       emptyMessage: "No provider namespaces configured.",
       options: {
-        data: JSON.parse(healthElement.dataset.health || "[]"), index: "provider_id", height: "420px", rowHeight: 28,
+        data: JSON.parse(healthElement.dataset.health || "[]"), index: "provider_id", height: "420px", rowHeight: 38,
         columns: [
           { title: "Provider", field: "provider_name", minWidth: 190 },
-          { title: "Desired", field: "desired_state", width: 110 },
-          { title: "Readiness", field: "readiness", width: 140 },
-          { title: "Runtime", field: "runtime_state", width: 135 },
-          { title: "Pre-Active", field: "pre_active_count", width: 115, formatter: (cell) => cell.getValue() ?? "Not reported" },
-          { title: "Active", field: "active_count", width: 100, formatter: (cell) => cell.getValue() ?? "Not reported" },
-          { title: "Total", field: "total_count", width: 100, formatter: (cell) => cell.getValue() ?? "Not reported" },
-          { title: "Evidence", field: "count_status", minWidth: 140 },
+          { title: "Desired", field: "desired_state", width: 120, formatter: vsphereHealthStatusFormatter },
+          { title: "Readiness", field: "readiness", width: 170, formatter: vsphereHealthStatusFormatter },
+          { title: "Runtime", field: "runtime_state", width: 155, formatter: vsphereHealthStatusFormatter },
+          { title: "Pre-Active", field: "pre_active_count", width: 125, hozAlign: "right", formatter: vsphereKeyCountFormatter },
+          { title: "Active", field: "active_count", width: 125, hozAlign: "right", formatter: vsphereKeyCountFormatter },
+          { title: "Total", field: "total_count", width: 125, hozAlign: "right", formatter: vsphereKeyCountFormatter },
+          { title: "Evidence", field: "count_status", minWidth: 145, formatter: vsphereHealthStatusFormatter },
         ],
       },
     });
