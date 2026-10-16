@@ -9148,7 +9148,7 @@
           },
           "port": {
             "default": 5696,
-            "description": "TCP port for the KMIP 1.4 listener.",
+            "description": "TCP port for the bounded KMIP 1.1/1.4 listener.",
             "maximum": 65535.0,
             "minimum": 1.0,
             "title": "Port",
@@ -9220,7 +9220,7 @@
           },
           "port": {
             "default": 5696,
-            "description": "TCP port for the KMIP 1.4 listener.",
+            "description": "TCP port for the bounded KMIP 1.1/1.4 listener.",
             "maximum": 65535.0,
             "minimum": 1.0,
             "title": "Port",
