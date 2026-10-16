@@ -584,6 +584,7 @@ class InteropTraceWriter:
         major = version.child(Tag.PROTOCOL_VERSION_MAJOR)
         minor = version.child(Tag.PROTOCOL_VERSION_MINOR)
         assert major is not None and minor is not None
+        assert isinstance(major.value, int) and isinstance(minor.value, int)
         protocol_version = f"{major.value}.{minor.value}"
         events: list[str] = []
         timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -632,8 +633,8 @@ class InteropTraceWriter:
         if not events:
             return
         with self._lock, self.path.open("a", encoding="utf-8", newline="\n") as stream:
-            for event in events:
-                stream.write(event)
+            for rendered_event in events:
+                stream.write(rendered_event)
                 stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
@@ -692,6 +693,8 @@ def _dispatch_request_shape(request: Ttlv) -> dict[str, object]:
     header_fields: list[tuple[int, int]] = []
     protocol_version: tuple[int | None, int | None] | None = None
     operations: list[int] = []
+    batch_fields: list[list[tuple[int, int]]] = []
+    payload_fields: list[list[tuple[int, int]]] = []
     if request.type is TtlvType.STRUCTURE and isinstance(request.value, tuple):
         root_children = request.value[: MAX_BATCH_ITEMS + 1]
         header = next(
@@ -720,15 +723,35 @@ def _dispatch_request_shape(request: Ttlv) -> dict[str, object]:
         for item in root_children:
             if item.tag != Tag.BATCH_ITEM or item.type is not TtlvType.STRUCTURE:
                 continue
+            children = item.value[:16] if isinstance(item.value, tuple) else ()
+            batch_fields.append([(child.tag, int(child.type)) for child in children])
+            payload = next(
+                (
+                    child
+                    for child in children
+                    if child.tag == Tag.REQUEST_PAYLOAD and child.type is TtlvType.STRUCTURE
+                ),
+                None,
+            )
+            payload_children = (
+                payload.value[:16]
+                if payload is not None and isinstance(payload.value, tuple)
+                else ()
+            )
+            payload_fields.append(
+                [(child.tag, int(child.type)) for child in payload_children]
+            )
             operation = _numeric_child_value(item, Tag.OPERATION, TtlvType.ENUMERATION)
             if operation is not None:
                 operations.append(operation)
-            if len(operations) == MAX_BATCH_ITEMS:
+            if len(batch_fields) == MAX_BATCH_ITEMS:
                 break
     return {
         "header_fields": header_fields,
         "protocol_version": protocol_version,
         "operations": operations,
+        "batch_fields": batch_fields,
+        "payload_fields": payload_fields,
     }
 
 
@@ -752,6 +775,39 @@ def _log_dispatch_failure(request: Ttlv, error: Exception) -> None:
         type(error).__name__,
         shape,
     )
+
+
+def _log_response_failures(request: Ttlv, response: Ttlv) -> None:
+    """Log numeric operation failure metadata without response payloads or messages.
+
+    Args:
+        request: Decoded request whose bounded shape is safe to record.
+        response: Dispatcher response containing possible failed batch items.
+    """
+    if response.type is not TtlvType.STRUCTURE or not isinstance(response.value, tuple):
+        return
+    failed_items: list[dict[str, int | None]] = []
+    for item in response.value[: MAX_BATCH_ITEMS + 1]:
+        if item.tag != Tag.BATCH_ITEM or item.type is not TtlvType.STRUCTURE:
+            continue
+        status = _numeric_child_value(item, Tag.RESULT_STATUS, TtlvType.ENUMERATION)
+        if status in {None, ResultStatus.SUCCESS}:
+            continue
+        failed_items.append(
+            {
+                "operation": _numeric_child_value(item, Tag.OPERATION, TtlvType.ENUMERATION),
+                "status": status,
+                "reason": _numeric_child_value(item, Tag.RESULT_REASON, TtlvType.ENUMERATION),
+            }
+        )
+        if len(failed_items) == MAX_BATCH_ITEMS:
+            break
+    if failed_items:
+        LOGGER.warning(
+            "KMIP dispatch returned failed batch items: failures=%r request_shape=%r",
+            failed_items,
+            _dispatch_request_shape(request),
+        )
 
 
 class KmipRequestHandler(socketserver.BaseRequestHandler):
@@ -811,6 +867,7 @@ class KmipRequestHandler(socketserver.BaseRequestHandler):
                 except Exception as exc:
                     _log_dispatch_failure(request, exc)
                     raise
+                _log_response_failures(request, response)
                 response_bytes = encode(response)
                 if self.server.trace_writer is not None:
                     self.server.trace_writer.record(

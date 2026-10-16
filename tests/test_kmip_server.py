@@ -453,6 +453,8 @@ def test_dispatch_rejection_logs_bounded_metadata_without_payload_or_error_text(
             "header_fields": [(4325481, 1), (4325389, 2), (4325522, 9)],
             "protocol_version": (1, 4),
             "operations": [30],
+            "batch_fields": [[(4325468, 5), (4325497, 1)]],
+            "payload_fields": [[(4325533, 7)]],
         }
         assert "payload-secret-sentinel" not in caplog.text
         assert "Request Header contains unsupported fields" not in caplog.text
@@ -477,9 +479,83 @@ def test_unexpected_dispatch_log_omits_exception_text(caplog: pytest.LogCaptureF
     assert "exception_class=RuntimeError" in caplog.text
     assert caplog.records[-1].args == (
         "RuntimeError",
-        {"header_fields": [(4325481, 1), (4325389, 2)], "protocol_version": (1, 4), "operations": [30]},
+        {
+            "header_fields": [(4325481, 1), (4325389, 2)],
+            "protocol_version": (1, 4),
+            "operations": [30],
+            "batch_fields": [[(4325468, 5), (4325497, 1)]],
+            "payload_fields": [[(4325481, 1)]],
+        },
     )
     assert "error-secret-sentinel" not in caplog.text
+
+
+def test_dispatch_response_failure_logs_numeric_metadata_without_payload(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A TLS operation failure logs only numeric status and bounded request shape.
+
+    Args:
+        caplog: Pytest fixture capturing diagnostic logs.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    materials = material(tmp_path)
+    server = build_server(service_config(tmp_path, materials), secrets_key="appliance-secrets-key")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    caplog.set_level(logging.WARNING, logger="atlaso.kmip")
+    thread.start()
+    host, port = server.server_address
+    request = encode(
+        structure(
+            Tag.REQUEST_MESSAGE,
+            structure(
+                Tag.REQUEST_HEADER,
+                structure(
+                    Tag.PROTOCOL_VERSION,
+                    integer(Tag.PROTOCOL_VERSION_MAJOR, 1),
+                    integer(Tag.PROTOCOL_VERSION_MINOR, 4),
+                ),
+                integer(Tag.BATCH_COUNT, 1),
+            ),
+            structure(
+                Tag.BATCH_ITEM,
+                enumeration(Tag.OPERATION, Operation.DISCOVER_VERSIONS),
+                structure(
+                    Tag.REQUEST_PAYLOAD,
+                    text_string(Tag.VENDOR_IDENTIFICATION, "failure-payload-secret-sentinel"),
+                ),
+            ),
+        )
+    )
+    try:
+        with socket.create_connection((host, port), timeout=3) as raw:
+            with client_context(materials, trusted=True).wrap_socket(
+                raw,
+                server_hostname="localhost",
+            ) as secured:
+                secured.sendall(request)
+                response = decode(secured.recv(4096))
+        item = response.children(Tag.BATCH_ITEM)[0]
+        status = item.child(Tag.RESULT_STATUS)
+        reason = item.child(Tag.RESULT_REASON)
+        assert status is not None and status.value == ResultStatus.OPERATION_FAILED
+        assert reason is not None and reason.value == 7
+
+        records = [
+            record for record in caplog.records if "returned failed batch items" in record.getMessage()
+        ]
+        assert len(records) == 1
+        failures, shape = records[0].args
+        assert failures == [{"operation": 30, "status": int(ResultStatus.OPERATION_FAILED), "reason": 7}]
+        assert shape["operations"] == [30]
+        assert shape["payload_fields"] == [[(4325533, 7)]]
+        assert "failure-payload-secret-sentinel" not in caplog.text
+        assert "Discover Versions contains unsupported fields" not in caplog.text
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
 
 
 def test_mtls_server_binds_every_configured_listener_address(tmp_path: Path) -> None:
