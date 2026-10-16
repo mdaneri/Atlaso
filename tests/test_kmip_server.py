@@ -455,6 +455,7 @@ def test_dispatch_rejection_logs_bounded_metadata_without_payload_or_error_text(
             "operations": [30],
             "batch_fields": [[(4325468, 5), (4325497, 1)]],
             "payload_fields": [[(4325533, 7)]],
+            "template_attributes": [[]],
         }
         assert "payload-secret-sentinel" not in caplog.text
         assert "Request Header contains unsupported fields" not in caplog.text
@@ -485,6 +486,7 @@ def test_unexpected_dispatch_log_omits_exception_text(caplog: pytest.LogCaptureF
             "operations": [30],
             "batch_fields": [[(4325468, 5), (4325497, 1)]],
             "payload_fields": [[(4325481, 1)]],
+            "template_attributes": [[]],
         },
     )
     assert "error-secret-sentinel" not in caplog.text
@@ -520,10 +522,48 @@ def test_dispatch_response_failure_logs_numeric_metadata_without_payload(
             ),
             structure(
                 Tag.BATCH_ITEM,
-                enumeration(Tag.OPERATION, Operation.DISCOVER_VERSIONS),
+                enumeration(Tag.OPERATION, Operation.CREATE),
                 structure(
                     Tag.REQUEST_PAYLOAD,
-                    text_string(Tag.VENDOR_IDENTIFICATION, "failure-payload-secret-sentinel"),
+                    enumeration(Tag.OBJECT_TYPE, 2),
+                    structure(
+                        Tag.TEMPLATE_ATTRIBUTE,
+                        structure(
+                            Tag.ATTRIBUTE,
+                            text_string(Tag.ATTRIBUTE_NAME, "Cryptographic Algorithm"),
+                            enumeration(Tag.ATTRIBUTE_VALUE, 3),
+                        ),
+                        structure(
+                            Tag.ATTRIBUTE,
+                            text_string(Tag.ATTRIBUTE_NAME, "Cryptographic Length"),
+                            integer(Tag.ATTRIBUTE_VALUE, 256),
+                        ),
+                        structure(
+                            Tag.ATTRIBUTE,
+                            text_string(Tag.ATTRIBUTE_NAME, "Cryptographic Usage Mask"),
+                            integer(Tag.ATTRIBUTE_VALUE, 0x30),
+                        ),
+                        structure(
+                            Tag.ATTRIBUTE,
+                            text_string(Tag.ATTRIBUTE_NAME, "Name"),
+                            text_string(Tag.ATTRIBUTE_VALUE, "name-value-secret-sentinel"),
+                        ),
+                        structure(
+                            Tag.ATTRIBUTE,
+                            text_string(Tag.ATTRIBUTE_NAME, "attribute-name-secret-sentinel"),
+                            text_string(Tag.ATTRIBUTE_VALUE, "attribute-value-secret-sentinel"),
+                        ),
+                        structure(
+                            Tag.ATTRIBUTE,
+                            text_string(Tag.ATTRIBUTE_NAME, "Object Type"),
+                            enumeration(Tag.ATTRIBUTE_VALUE, 2),
+                        ),
+                        structure(
+                            Tag.ATTRIBUTE,
+                            text_string(Tag.ATTRIBUTE_NAME, "State"),
+                            enumeration(Tag.ATTRIBUTE_VALUE, 1),
+                        ),
+                    ),
                 ),
             ),
         )
@@ -547,11 +587,23 @@ def test_dispatch_response_failure_logs_numeric_metadata_without_payload(
         ]
         assert len(records) == 1
         failures, shape = records[0].args
-        assert failures == [{"operation": 30, "status": int(ResultStatus.OPERATION_FAILED), "reason": 7}]
-        assert shape["operations"] == [30]
-        assert shape["payload_fields"] == [[(4325533, 7)]]
-        assert "failure-payload-secret-sentinel" not in caplog.text
-        assert "Discover Versions contains unsupported fields" not in caplog.text
+        assert failures == [{"operation": 1, "status": int(ResultStatus.OPERATION_FAILED), "reason": 7}]
+        assert shape["operations"] == [1]
+        assert shape["payload_fields"] == [[(4325463, 5), (4325521, 1)]]
+        assert shape["template_attributes"] == [
+            [
+                {"fields": [(4325386, 7), (4325387, 5)], "name": "Cryptographic Algorithm", "numeric_value": 3},
+                {"fields": [(4325386, 7), (4325387, 2)], "name": "Cryptographic Length", "numeric_value": 256},
+                {"fields": [(4325386, 7), (4325387, 2)], "name": "Cryptographic Usage Mask", "numeric_value": 0x30},
+                {"fields": [(4325386, 7), (4325387, 7)], "name": "Name", "numeric_value": None},
+                {"fields": [(4325386, 7), (4325387, 7)], "name": "unsupported", "numeric_value": None},
+                {"fields": [(4325386, 7), (4325387, 5)], "name": "Object Type", "numeric_value": 2},
+                {"fields": [(4325386, 7), (4325387, 5)], "name": "State", "numeric_value": 1},
+            ]
+        ]
+        assert "name-value-secret-sentinel" not in caplog.text
+        assert "attribute-name-secret-sentinel" not in caplog.text
+        assert "attribute-value-secret-sentinel" not in caplog.text
     finally:
         server.shutdown()
         server.server_close()

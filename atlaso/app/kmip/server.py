@@ -73,6 +73,21 @@ RESULT_REASON_NAMES = {
     ResultReason.KEY_FORMAT_TYPE_NOT_SUPPORTED: "Key Format Type Not Supported",
     ResultReason.GENERAL_FAILURE: "General Failure",
 }
+ATTRIBUTE_DIAGNOSTIC_TYPES = {
+    "Cryptographic Algorithm": TtlvType.ENUMERATION,
+    "Cryptographic Length": TtlvType.INTEGER,
+    "Cryptographic Usage Mask": TtlvType.INTEGER,
+    "Object Type": TtlvType.ENUMERATION,
+    "State": TtlvType.ENUMERATION,
+}
+ATTRIBUTE_DIAGNOSTIC_NAMES = frozenset(
+    {
+        *ATTRIBUTE_DIAGNOSTIC_TYPES,
+        "Activation Date",
+        "Name",
+        "Unique Identifier",
+    }
+)
 
 
 class ConfigurationError(ValueError):
@@ -684,6 +699,57 @@ def _numeric_child_value(node: Ttlv, tag: int, expected_type: TtlvType) -> int |
     return None
 
 
+def _template_attribute_shape(payload: Ttlv) -> list[dict[str, object]]:
+    """Return a bounded, redacted projection of Template-Attribute entries.
+
+    Args:
+        payload: Request Payload whose optional Template-Attribute is inspected.
+    """
+    if payload.type is not TtlvType.STRUCTURE or not isinstance(payload.value, tuple):
+        return []
+    template = next(
+        (
+            child
+            for child in payload.value[:16]
+            if child.tag == Tag.TEMPLATE_ATTRIBUTE and child.type is TtlvType.STRUCTURE
+        ),
+        None,
+    )
+    if template is None or not isinstance(template.value, tuple):
+        return []
+
+    projection: list[dict[str, object]] = []
+    for attribute in template.value[:16]:
+        if attribute.tag != Tag.ATTRIBUTE or attribute.type is not TtlvType.STRUCTURE:
+            continue
+        children = attribute.value[:16] if isinstance(attribute.value, tuple) else ()
+        name_node = next(
+            (
+                child
+                for child in children
+                if child.tag == Tag.ATTRIBUTE_NAME
+                and child.type is TtlvType.TEXT_STRING
+                and isinstance(child.value, str)
+            ),
+            None,
+        )
+        name = name_node.value if name_node is not None else None
+        label = name if name in ATTRIBUTE_DIAGNOSTIC_NAMES else "unsupported"
+        expected_type = ATTRIBUTE_DIAGNOSTIC_TYPES.get(label)
+        projection.append(
+            {
+                "fields": [(child.tag, int(child.type)) for child in children],
+                "name": label,
+                "numeric_value": (
+                    _numeric_child_value(attribute, Tag.ATTRIBUTE_VALUE, expected_type)
+                    if expected_type is not None
+                    else None
+                ),
+            }
+        )
+    return projection
+
+
 def _dispatch_request_shape(request: Ttlv) -> dict[str, object]:
     """Return bounded tag/type and numeric protocol metadata for diagnostics.
 
@@ -695,6 +761,7 @@ def _dispatch_request_shape(request: Ttlv) -> dict[str, object]:
     operations: list[int] = []
     batch_fields: list[list[tuple[int, int]]] = []
     payload_fields: list[list[tuple[int, int]]] = []
+    template_attributes: list[list[dict[str, object]]] = []
     if request.type is TtlvType.STRUCTURE and isinstance(request.value, tuple):
         root_children = request.value[: MAX_BATCH_ITEMS + 1]
         header = next(
@@ -741,6 +808,9 @@ def _dispatch_request_shape(request: Ttlv) -> dict[str, object]:
             payload_fields.append(
                 [(child.tag, int(child.type)) for child in payload_children]
             )
+            template_attributes.append(
+                _template_attribute_shape(payload) if payload is not None else []
+            )
             operation = _numeric_child_value(item, Tag.OPERATION, TtlvType.ENUMERATION)
             if operation is not None:
                 operations.append(operation)
@@ -752,6 +822,7 @@ def _dispatch_request_shape(request: Ttlv) -> dict[str, object]:
         "operations": operations,
         "batch_fields": batch_fields,
         "payload_fields": payload_fields,
+        "template_attributes": template_attributes,
     }
 
 
