@@ -147,6 +147,8 @@ credential. This check neither restarts the listener nor recreates its persisten
 reports **Authenticated zero-key runtime evidence is required before deletion**, inspect **Health & lifecycle** and
 run `sudo /opt/atlaso/bin/atlaso-helper kms status --real` on the appliance. Resolve unavailable authentication or
 store-integrity evidence before retrying; never remove the database or KEK to make a provider appear empty.
+The helper passes the status credential through a bounded stdin pipe, without writing a temporary credential file or
+including the secret in command arguments or the child environment.
 
 Providers without a usable approved client certificate show **Enrollment required** and are omitted from the runtime
 namespace until trust is approved. The certificate-only bootstrap listener remains valid.

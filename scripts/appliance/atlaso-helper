@@ -6567,10 +6567,12 @@ def _handle_kms(action: str, args: list[str]) -> int:
             return 2
         config_available = KMS_CONFIG_PATH.is_file()
         credential_available = KMS_CREDENTIAL_PATH.is_file()
-        store_material_available = any(
-            path.exists()
-            for path in (KMS_STATE_DIR / "store.db", KMS_STATE_DIR / "kek.json")
-        )
+        database_available = (KMS_STATE_DIR / "store.db").exists()
+        kek_available = (KMS_STATE_DIR / "kek.json").exists()
+        store_material_available = database_available or kek_available
+        if database_available != kek_available:
+            print("KMIP authenticated runtime status is unavailable.", file=sys.stderr)
+            return 2
         if not config_available and not credential_available and not store_material_available:
             print(
                 json.dumps(
@@ -6610,19 +6612,23 @@ def _handle_kms(action: str, args: list[str]) -> int:
             except ValueError:
                 print("KMIP runtime status credential is unavailable.", file=sys.stderr)
                 return 2
-        with tempfile.TemporaryDirectory(prefix="atlaso-kmip-status-") as temp_root_value:
-            credential_path = Path(temp_root_value) / KMS_CREDENTIAL_NAME
-            credential_path.write_text(secret_value, encoding="utf-8")
-            credential_path.chmod(0o600)
-            environment = os.environ.copy()
-            environment["ATLASO_SECRETS_KEY_FILE"] = str(credential_path)
+        environment = os.environ.copy()
+        environment.pop("ATLASO_SECRETS_KEY", None)
+        environment.pop("ATLASO_SECRETS_KEY_FILE", None)
+        try:
             completed = subprocess.run(
-                [str(ATLASO_KMIP_VENV_PATH), "--config", str(KMS_CONFIG_PATH), "--status"],
+                [str(ATLASO_KMIP_VENV_PATH), "--config", str(KMS_CONFIG_PATH),
+                 "--status", "--status-secret-stdin"],
                 check=False,
                 capture_output=True,
                 text=True,
+                input=secret_value,
                 env=environment,
+                timeout=30,
             )
+        except (OSError, subprocess.TimeoutExpired):
+            print("KMIP authenticated runtime status is unavailable.", file=sys.stderr)
+            return 2
         if completed.returncode != 0:
             print("KMIP authenticated runtime status is unavailable.", file=sys.stderr)
             return completed.returncode
