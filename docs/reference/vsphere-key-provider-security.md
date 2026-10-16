@@ -16,7 +16,7 @@ but they must remain described as experimental until the VCF 9.1 promotion gate 
 
 ## Architecture decision
 
-Atlaso implements a small Python service with an internal, bounded KMIP 1.4 TTLV codec and operation dispatcher.
+Atlaso implements a small Python service with an internal, bounded KMIP 1.1/1.4 TTLV codec and operation dispatcher.
 It does not embed a general-purpose KMIP request engine, policy engine, storage model, or compatibility wrapper.
 
 Python keeps the service inside Atlaso's existing build, packaging, logging, testing, and Photon lifecycle. The

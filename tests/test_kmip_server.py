@@ -261,8 +261,12 @@ def service_config(tmp_path: Path, materials: dict[str, Path]) -> ServiceConfig:
     )
 
 
-def discover_versions_request() -> bytes:
-    """Return discover versions request."""
+def discover_versions_request(version: tuple[int, int] = (1, 4)) -> bytes:
+    """Return a version negotiation request.
+
+    Args:
+        version: Request envelope and offered protocol version.
+    """
     return encode(
         structure(
             Tag.REQUEST_MESSAGE,
@@ -270,8 +274,8 @@ def discover_versions_request() -> bytes:
                 Tag.REQUEST_HEADER,
                 structure(
                     Tag.PROTOCOL_VERSION,
-                    integer(Tag.PROTOCOL_VERSION_MAJOR, 1),
-                    integer(Tag.PROTOCOL_VERSION_MINOR, 4),
+                    integer(Tag.PROTOCOL_VERSION_MAJOR, version[0]),
+                    integer(Tag.PROTOCOL_VERSION_MINOR, version[1]),
                 ),
                 integer(Tag.BATCH_COUNT, 1),
             ),
@@ -282,8 +286,8 @@ def discover_versions_request() -> bytes:
                     Tag.REQUEST_PAYLOAD,
                     structure(
                         Tag.PROTOCOL_VERSION,
-                        integer(Tag.PROTOCOL_VERSION_MAJOR, 1),
-                        integer(Tag.PROTOCOL_VERSION_MINOR, 4),
+                        integer(Tag.PROTOCOL_VERSION_MAJOR, version[0]),
+                        integer(Tag.PROTOCOL_VERSION_MINOR, version[1]),
                     ),
                 ),
             ),
@@ -351,11 +355,15 @@ def client_context(materials: dict[str, Path], *, trusted: bool) -> ssl.SSLConte
     return context
 
 
-def test_mtls_server_accepts_mapped_fingerprint_and_writes_redacted_trace(tmp_path: Path) -> None:
+@pytest.mark.parametrize("version", [(1, 1), (1, 4)])
+def test_mtls_server_accepts_mapped_fingerprint_and_writes_redacted_trace(
+    tmp_path: Path, version: tuple[int, int],
+) -> None:
     """Verify that mtls server accepts mapped fingerprint and writes redacted trace.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        version: Candidate protocol version negotiated by the real TLS client.
     """
     materials = material(tmp_path)
     server = build_server(service_config(tmp_path, materials), secrets_key="appliance-secrets-key")
@@ -368,7 +376,7 @@ def test_mtls_server_accepts_mapped_fingerprint_and_writes_redacted_trace(tmp_pa
                 raw,
                 server_hostname="localhost",
             ) as secured:
-                secured.sendall(discover_versions_request())
+                secured.sendall(discover_versions_request(version))
                 response_bytes = secured.recv(4096)
         response = decode(response_bytes)
         status = response.children(Tag.BATCH_ITEM)[0].child(Tag.RESULT_STATUS)
@@ -379,6 +387,7 @@ def test_mtls_server_accepts_mapped_fingerprint_and_writes_redacted_trace(tmp_pa
         assert validate_trace(trace_lines).event_count == 1
         trace = json.loads(trace_lines[0])
         assert trace["operation"] == "Discover Versions"
+        assert trace["protocol_version"] == f"{version[0]}.{version[1]}"
         assert trace["provider_id"] == server.config.providers[0].id
         assert "payload" not in trace
         assert "key_material" not in trace

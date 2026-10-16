@@ -577,6 +577,14 @@ class InteropTraceWriter:
         """
         request_items = request.children(Tag.BATCH_ITEM)
         response_items = response.children(Tag.BATCH_ITEM)
+        header = request.child(Tag.REQUEST_HEADER)
+        assert header is not None
+        version = header.child(Tag.PROTOCOL_VERSION)
+        assert version is not None
+        major = version.child(Tag.PROTOCOL_VERSION_MAJOR)
+        minor = version.child(Tag.PROTOCOL_VERSION_MINOR)
+        assert major is not None and minor is not None
+        protocol_version = f"{major.value}.{minor.value}"
         events: list[str] = []
         timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         for request_item, response_item in zip(request_items, response_items, strict=True):
@@ -600,7 +608,7 @@ class InteropTraceWriter:
                 "connection_id": connection_id,
                 "client_cert_sha256": client_cert_sha256,
                 "provider_id": provider_id,
-                "protocol_version": "1.4",
+                "protocol_version": protocol_version,
                 "operation": operation_name,
                 "object_type": self._object_type(request_item),
                 "algorithm": algorithm,

@@ -14,6 +14,7 @@
     "mutual_tls_required": true
   },
   "protocol_versions": [
+    "1.1",
     "1.4"
   ],
   "objects": [
@@ -95,6 +96,10 @@
     ]
   },
   "sources": [
+    {
+      "title": "OASIS KMIP Specification Version 1.1",
+      "url": "https://docs.oasis-open.org/kmip/spec/v1.1/os/kmip-spec-v1.1-os.html"
+    },
     {
       "title": "OASIS KMIP Specification Version 1.4",
       "url": "https://docs.oasis-open.org/kmip/spec/v1.4/kmip-spec-v1.4.html"

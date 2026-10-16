@@ -1,4 +1,4 @@
-"""Bounded KMIP 1.4 operation dispatcher for the vSphere Key Provider."""
+"""Bounded KMIP 1.1/1.4 operation dispatcher for the vSphere Key Provider."""
 
 from __future__ import annotations
 
@@ -187,6 +187,7 @@ STATE_PRE_ACTIVE = 1
 STATE_ACTIVE = 2
 USAGE_ENCRYPT_DECRYPT = 0x0000000C
 MAX_BATCH_ITEMS = 16
+SUPPORTED_PROTOCOL_VERSIONS = ((1, 4), (1, 1))
 ATTRIBUTE_TAGS = {
     "Activation Date": Tag.ACTIVATION_DATE,
     "Cryptographic Algorithm": Tag.CRYPTOGRAPHIC_ALGORITHM,
@@ -301,12 +302,16 @@ def _protocol_version(node: Ttlv) -> tuple[int, int]:
     return major, minor
 
 
-def _version_node() -> Ttlv:
-    """Return version node."""
+def _version_node(version: tuple[int, int] = (1, 4)) -> Ttlv:
+    """Return a protocol version node.
+
+    Args:
+        version: Supported protocol version represented by the node.
+    """
     return structure(
         Tag.PROTOCOL_VERSION,
-        integer(Tag.PROTOCOL_VERSION_MAJOR, 1),
-        integer(Tag.PROTOCOL_VERSION_MINOR, 4),
+        integer(Tag.PROTOCOL_VERSION_MAJOR, version[0]),
+        integer(Tag.PROTOCOL_VERSION_MINOR, version[1]),
     )
 
 
@@ -792,13 +797,15 @@ class KmipDispatcher:
                 ResultReason.INVALID_FIELD,
                 "Discover Versions contains unsupported fields.",
             ) from exc
-        versions = [_protocol_version(node) for node in payload.children(Tag.PROTOCOL_VERSION)]
-        if versions and (1, 4) not in versions:
-            raise ProtocolFailure(
-                ResultReason.INVALID_FIELD,
-                "No mutually supported KMIP protocol version was offered.",
-            )
-        return [_version_node()]
+        offered_versions = [_protocol_version(node) for node in payload.children(Tag.PROTOCOL_VERSION)]
+        if not offered_versions:
+            return [_version_node(version) for version in SUPPORTED_PROTOCOL_VERSIONS]
+        offered = set(offered_versions)
+        return [
+            _version_node(version)
+            for version in SUPPORTED_PROTOCOL_VERSIONS
+            if version in offered
+        ]
 
     def _dispatch_operation(
         self,
@@ -875,8 +882,12 @@ class KmipDispatcher:
             )
         except TtlvError as exc:
             raise ProtocolFailure(ResultReason.INVALID_MESSAGE, "Request Header contains unsupported fields.") from exc
-        if _protocol_version(_required_child(header, Tag.PROTOCOL_VERSION)) != (1, 4):
-            raise ProtocolFailure(ResultReason.INVALID_MESSAGE, "Only KMIP 1.4 is supported.")
+        request_version = _protocol_version(_required_child(header, Tag.PROTOCOL_VERSION))
+        if request_version not in SUPPORTED_PROTOCOL_VERSIONS:
+            raise ProtocolFailure(
+                ResultReason.INVALID_MESSAGE,
+                "The requested KMIP protocol version is not supported.",
+            )
         batch_items = request.children(Tag.BATCH_ITEM)
         batch_count = _integer_value(_required_child(header, Tag.BATCH_COUNT))
         if batch_count != len(batch_items) or not 1 <= batch_count <= MAX_BATCH_ITEMS:
@@ -938,7 +949,7 @@ class KmipDispatcher:
             Tag.RESPONSE_MESSAGE,
             structure(
                 Tag.RESPONSE_HEADER,
-                _version_node(),
+                _version_node(request_version),
                 date_time(Tag.TIME_STAMP, int(time.time())),
                 integer(Tag.BATCH_COUNT, len(responses)),
             ),

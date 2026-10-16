@@ -5,6 +5,8 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
+import pytest
+
 from atlaso.app.kmip.protocol import (
     CRYPTOGRAPHIC_ALGORITHM_AES,
     KEY_FORMAT_TYPE_RAW,
@@ -13,6 +15,7 @@ from atlaso.app.kmip.protocol import (
     STATE_ACTIVE,
     KmipDispatcher,
     Operation,
+    ProtocolFailure,
     QueryFunction,
     ResultReason,
     ResultStatus,
@@ -44,12 +47,13 @@ def dispatcher(tmp_path: Path) -> tuple[KmipDispatcher, str]:
     return KmipDispatcher(store), provider_id
 
 
-def request(operation: int, *payload: Ttlv) -> Ttlv:
+def request(operation: int, *payload: Ttlv, version: tuple[int, int] = (1, 4)) -> Ttlv:
     """Return request.
 
     Args:
         operation: Operation supplied to the test scenario.
         *payload: Additional positional arguments accepted by the callable.
+        version: KMIP protocol version to place in the request header.
     """
     return structure(
         Tag.REQUEST_MESSAGE,
@@ -57,8 +61,8 @@ def request(operation: int, *payload: Ttlv) -> Ttlv:
             Tag.REQUEST_HEADER,
             structure(
                 Tag.PROTOCOL_VERSION,
-                integer(Tag.PROTOCOL_VERSION_MAJOR, 1),
-                integer(Tag.PROTOCOL_VERSION_MINOR, 4),
+                integer(Tag.PROTOCOL_VERSION_MAJOR, version[0]),
+                integer(Tag.PROTOCOL_VERSION_MINOR, version[1]),
             ),
             integer(Tag.BATCH_COUNT, 1),
         ),
@@ -102,11 +106,31 @@ def result_status(response: Ttlv) -> int:
     return node.value
 
 
-def create_request() -> Ttlv:
+def response_protocol_version(response: Ttlv) -> tuple[int, int]:
+    """Return the protocol version from a response header.
+
+    Args:
+        response: KMIP response message being inspected.
+    """
+    header = response.child(Tag.RESPONSE_HEADER)
+    assert header is not None
+    version = header.child(Tag.PROTOCOL_VERSION)
+    assert version is not None
+    major = version.child(Tag.PROTOCOL_VERSION_MAJOR)
+    minor = version.child(Tag.PROTOCOL_VERSION_MINOR)
+    assert major is not None and isinstance(major.value, int)
+    assert minor is not None and isinstance(minor.value, int)
+    return major.value, minor.value
+
+
+def create_request(*, version: tuple[int, int] = (1, 4)) -> Ttlv:
     """Create request.
 
     Returns:
         The created request.
+
+    Args:
+        version: KMIP protocol version to place in the request header.
     """
     return request(
         Operation.CREATE,
@@ -129,6 +153,7 @@ def create_request() -> Ttlv:
                 integer(Tag.ATTRIBUTE_VALUE, 0x0C),
             ),
         ),
+        version=version,
     )
 
 
@@ -201,8 +226,72 @@ def test_create_activate_get_round_trip_returns_only_active_key(tmp_path: Path) 
     key_material = key_block.child(Tag.KEY_VALUE).child(Tag.KEY_MATERIAL)
 
     assert result_status(retrieved) == ResultStatus.SUCCESS
+    assert response_protocol_version(retrieved) == (1, 4)
     assert isinstance(key_material.value, bytes)
     assert len(key_material.value) == 32
+
+
+def test_kmip_1_1_supports_bounded_create_activate_get_round_trip(tmp_path: Path) -> None:
+    """KMIP 1.1 requests run the same bounded key lifecycle and echo their version."""
+    service, provider_id = dispatcher(tmp_path)
+    discovery = service.dispatch(
+        provider_id,
+        request(
+            Operation.DISCOVER_VERSIONS,
+            structure(Tag.PROTOCOL_VERSION, integer(Tag.PROTOCOL_VERSION_MAJOR, 1),
+                      integer(Tag.PROTOCOL_VERSION_MINOR, 1)),
+            version=(1, 1),
+        ),
+    )
+    assert result_status(discovery) == ResultStatus.SUCCESS
+    assert response_protocol_version(discovery) == (1, 1)
+    assert _protocol_versions(response_payload(discovery).children(Tag.PROTOCOL_VERSION)) == [(1, 1)]
+
+    create = service.dispatch(provider_id, create_request(version=(1, 1)))
+    assert result_status(create) == ResultStatus.SUCCESS
+    assert response_protocol_version(create) == (1, 1)
+    key_id_node = response_payload(create).child(Tag.UNIQUE_IDENTIFIER)
+    assert key_id_node is not None and isinstance(key_id_node.value, str)
+    key_id = key_id_node.value
+
+    activated = service.dispatch(
+        provider_id,
+        request(Operation.ACTIVATE, text_string(Tag.UNIQUE_IDENTIFIER, key_id), version=(1, 1)),
+    )
+    retrieved = service.dispatch(
+        provider_id,
+        request(
+            Operation.GET,
+            text_string(Tag.UNIQUE_IDENTIFIER, key_id),
+            enumeration(Tag.KEY_FORMAT_TYPE, KEY_FORMAT_TYPE_RAW),
+            version=(1, 1),
+        ),
+    )
+    key_block = response_payload(retrieved).child(Tag.SYMMETRIC_KEY).child(Tag.KEY_BLOCK)
+    key_material = key_block.child(Tag.KEY_VALUE).child(Tag.KEY_MATERIAL)
+
+    assert result_status(activated) == ResultStatus.SUCCESS
+    assert response_protocol_version(activated) == (1, 1)
+    assert result_status(retrieved) == ResultStatus.SUCCESS
+    assert response_protocol_version(retrieved) == (1, 1)
+    assert isinstance(key_material.value, bytes) and len(key_material.value) == 32
+
+
+@pytest.mark.parametrize("version", [(1, 0), (1, 2), (2, 0)])
+def test_unsupported_request_protocol_versions_are_rejected(
+    tmp_path: Path,
+    version: tuple[int, int],
+) -> None:
+    """Only the explicitly supported KMIP 1.1 and 1.4 versions are accepted.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        version: Unsupported protocol version to reject.
+    """
+    service, provider_id = dispatcher(tmp_path)
+
+    with pytest.raises(ProtocolFailure, match="protocol version is not supported"):
+        service.dispatch(provider_id, request(Operation.DISCOVER_VERSIONS, version=version))
 
 
 def test_cross_provider_get_does_not_reveal_key_existence(tmp_path: Path) -> None:
@@ -263,7 +352,66 @@ def test_query_and_discover_versions_expose_only_bounded_contract(tmp_path: Path
         ),
     )
     assert result_status(versions) == ResultStatus.SUCCESS
-    assert len(response_payload(versions).children(Tag.PROTOCOL_VERSION)) == 1
+    discovered = response_payload(versions).children(Tag.PROTOCOL_VERSION)
+    assert len(discovered) == 1
+    assert _protocol_versions(discovered) == [(1, 4)]
+
+
+def _protocol_versions(nodes: list[Ttlv]) -> list[tuple[int, int]]:
+    """Return protocol versions from version structures.
+
+    Args:
+        nodes: Version structures returned by Discover Versions.
+    """
+    result = []
+    for node in nodes:
+        major = node.child(Tag.PROTOCOL_VERSION_MAJOR)
+        minor = node.child(Tag.PROTOCOL_VERSION_MINOR)
+        assert major is not None and isinstance(major.value, int)
+        assert minor is not None and isinstance(minor.value, int)
+        result.append((major.value, minor.value))
+    return result
+
+
+@pytest.mark.parametrize(
+    ("offered", "expected"),
+    [
+        ([(1, 4), (1, 1), (1, 2), (1, 0)], [(1, 4), (1, 1)]),
+        ([(1, 1)], [(1, 1)]),
+        ([(1, 2), (1, 0)], []),
+        ([], [(1, 4), (1, 1)]),
+    ],
+)
+def test_discover_versions_returns_supported_intersection_in_server_preference_order(
+    tmp_path: Path,
+    offered: list[tuple[int, int]],
+    expected: list[tuple[int, int]],
+) -> None:
+    """Discover Versions returns only the supported intersection, newest first.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        offered: Client protocol versions offered to the server.
+        expected: Supported protocol versions expected in the response.
+    """
+    service, provider_id = dispatcher(tmp_path)
+    payload = tuple(
+        structure(
+            Tag.PROTOCOL_VERSION,
+            integer(Tag.PROTOCOL_VERSION_MAJOR, major),
+            integer(Tag.PROTOCOL_VERSION_MINOR, minor),
+        )
+        for major, minor in offered
+    )
+
+    response = service.dispatch(
+        provider_id,
+        request(Operation.DISCOVER_VERSIONS, *payload, version=(1, 1)),
+    )
+
+    assert result_status(response) == ResultStatus.SUCCESS
+    assert response_protocol_version(response) == (1, 1)
+    assert _protocol_versions(response_payload(response).children(Tag.PROTOCOL_VERSION)) == expected
 
 
 def test_unsupported_and_destructive_operations_fail_closed(tmp_path: Path) -> None:
