@@ -1456,9 +1456,11 @@ def _ensure_kms_service_identity() -> tuple[object, object]:
         raise ValueError("KMS service-account reconciliation did not create a usable identity.") from exc
 
 
-def _install_kms_credential() -> None:
-    """Perform install KMS credential.
+def _kms_secrets_key() -> str:
+    """Read the appliance secret for the immediate protected KMIP operation.
 
+    Returns:
+        The secret retained only inside the privileged helper process.
     """
     try:
         source_lines = ATLASO_ENV_PATH.read_text(encoding="utf-8").splitlines()
@@ -1480,6 +1482,12 @@ def _install_kms_credential() -> None:
             break
     if not secret_value:
         raise ValueError("ATLASO_SECRETS_KEY is missing from the Atlaso appliance environment.")
+    return secret_value
+
+
+def _install_kms_credential() -> None:
+    """Install the encrypted credential consumed by the enabled KMIP service."""
+    secret_value = _kms_secrets_key()
     systemd_creds = _command_path("systemd-creds")
     if systemd_creds is None:
         raise ValueError("systemd-creds is required to protect the KMS runtime credential.")
@@ -6559,10 +6567,12 @@ def _handle_kms(action: str, args: list[str]) -> int:
             return 2
         config_available = KMS_CONFIG_PATH.is_file()
         credential_available = KMS_CREDENTIAL_PATH.is_file()
-        store_material_available = any(
-            path.exists()
-            for path in (KMS_STATE_DIR / "store.db", KMS_STATE_DIR / "kek.json")
-        )
+        database_available = (KMS_STATE_DIR / "store.db").exists()
+        kek_available = (KMS_STATE_DIR / "kek.json").exists()
+        store_material_available = database_available or kek_available
+        if database_available != kek_available:
+            print("KMIP authenticated runtime status is unavailable.", file=sys.stderr)
+            return 2
         if not config_available and not credential_available and not store_material_available:
             print(
                 json.dumps(
@@ -6576,34 +6586,49 @@ def _handle_kms(action: str, args: list[str]) -> int:
                 )
             )
             return 0
-        if not config_available or not credential_available:
+        if not config_available:
             print("KMIP authenticated runtime status is unavailable.", file=sys.stderr)
             return 2
-        decrypted = _run(
-            [
-                "systemd-creds",
-                "decrypt",
-                f"--name={KMS_CREDENTIAL_NAME}",
-                str(KMS_CREDENTIAL_PATH),
-                "-",
-            ]
-        )
-        if decrypted.returncode != 0 or not decrypted.stdout:
-            print("KMIP runtime status credential is unavailable.", file=sys.stderr)
-            return 2
-        with tempfile.TemporaryDirectory(prefix="atlaso-kmip-status-") as temp_root_value:
-            credential_path = Path(temp_root_value) / KMS_CREDENTIAL_NAME
-            credential_path.write_text(decrypted.stdout, encoding="utf-8")
-            credential_path.chmod(0o600)
-            environment = os.environ.copy()
-            environment["ATLASO_SECRETS_KEY_FILE"] = str(credential_path)
+        if credential_available:
+            decrypted = _run(
+                [
+                    "systemd-creds",
+                    "decrypt",
+                    f"--name={KMS_CREDENTIAL_NAME}",
+                    str(KMS_CREDENTIAL_PATH),
+                    "-",
+                ]
+            )
+            if decrypted.returncode != 0 or not decrypted.stdout:
+                print("KMIP runtime status credential is unavailable.", file=sys.stderr)
+                return 2
+            secret_value = decrypted.stdout
+        else:
+            # Disable removes the service credential but retains the operational
+            # store. Authenticate read-only status with the same appliance secret,
+            # without recreating that credential or starting either listener.
+            try:
+                secret_value = _kms_secrets_key()
+            except ValueError:
+                print("KMIP runtime status credential is unavailable.", file=sys.stderr)
+                return 2
+        environment = os.environ.copy()
+        environment.pop("ATLASO_SECRETS_KEY", None)
+        environment.pop("ATLASO_SECRETS_KEY_FILE", None)
+        try:
             completed = subprocess.run(
-                [str(ATLASO_KMIP_VENV_PATH), "--config", str(KMS_CONFIG_PATH), "--status"],
+                [str(ATLASO_KMIP_VENV_PATH), "--config", str(KMS_CONFIG_PATH),
+                 "--status", "--status-secret-stdin"],
                 check=False,
                 capture_output=True,
                 text=True,
+                input=secret_value,
                 env=environment,
+                timeout=30,
             )
+        except (OSError, subprocess.TimeoutExpired):
+            print("KMIP authenticated runtime status is unavailable.", file=sys.stderr)
+            return 2
         if completed.returncode != 0:
             print("KMIP authenticated runtime status is unavailable.", file=sys.stderr)
             return completed.returncode

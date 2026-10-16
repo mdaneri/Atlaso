@@ -141,6 +141,15 @@ counts for **Pre-Active**, **Active**, and total operational keys. Counts come f
 through the fixed `atlaso-helper kms status` operation. If authentication, integrity verification, or store access is
 unavailable, Atlaso reports **Not reported** and null counts; it never substitutes zero.
 
+Disabling the KMIP service retains the operational database and KEK. The read-only status check can authenticate that
+retained store using the protected appliance secret even after disabling removes the service's encrypted runtime
+credential. This check neither restarts the listener nor recreates its persistent credential. If provider deletion
+reports **Authenticated zero-key runtime evidence is required before deletion**, inspect **Health & lifecycle** and
+run `sudo /opt/atlaso/bin/atlaso-helper kms status --real` on the appliance. Resolve unavailable authentication or
+store-integrity evidence before retrying; never remove the database or KEK to make a provider appear empty.
+The helper passes the status credential through a bounded stdin pipe, without writing a temporary credential file or
+including the secret in command arguments or the child environment.
+
 Providers without a usable approved client certificate show **Enrollment required** and are omitted from the runtime
 namespace until trust is approved. The certificate-only bootstrap listener remains valid.
 

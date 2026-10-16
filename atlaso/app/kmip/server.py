@@ -10,6 +10,7 @@ import os
 import socket
 import socketserver
 import ssl
+import sys
 import threading
 import uuid
 from dataclasses import dataclass
@@ -1246,6 +1247,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--check", action="store_true", help="Validate TLS, identity, and store configuration.")
     parser.add_argument("--status", action="store_true", help="Return authenticated redacted provider counts.")
+    parser.add_argument("--status-secret-stdin", action="store_true", help="Read the status credential from stdin.")
     args = parser.parse_args(argv)
     logging_options: dict[str, Any] = {
         "level": logging.INFO,
@@ -1260,9 +1262,19 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(**logging_options)
     try:
         config = load_config(args.config)
-        secrets_key = _load_secrets_key()
         if args.check and args.status:
             raise ConfigurationError("KMIP check and status modes are mutually exclusive.")
+        if args.status_secret_stdin and not args.status:
+            raise ConfigurationError("KMIP stdin credentials require status mode.")
+        if args.status_secret_stdin:
+            secrets_key = sys.stdin.read(4097)
+            if not secrets_key or len(secrets_key) > 4096:
+                raise ConfigurationError("KMIP status credential is unavailable.")
+            secrets_key = secrets_key.rstrip("\r\n")
+            if not secrets_key:
+                raise ConfigurationError("KMIP status credential is unavailable.")
+        else:
+            secrets_key = _load_secrets_key()
         if args.check:
             check_config(config, secrets_key=secrets_key)
             print(json.dumps({"atlaso_kmip": "configuration valid"}, sort_keys=True))
@@ -1272,7 +1284,11 @@ def main(argv: list[str] | None = None) -> int:
                 provider.id: {"pre_active": 0, "active": 0, "total": 0}
                 for provider in config.providers
             }
-            if not config.database_path.exists() or not config.kek_path.exists():
+            database_exists = config.database_path.exists()
+            kek_exists = config.kek_path.exists()
+            if database_exists != kek_exists:
+                raise ConfigurationError("KMIP operational store and KEK envelope must exist together.")
+            if not database_exists:
                 print(
                     json.dumps(
                         {

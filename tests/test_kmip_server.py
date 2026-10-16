@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 import socket
@@ -1033,6 +1034,94 @@ def test_status_seeds_authenticated_zero_for_configured_empty_provider(
     assert payload["providers"] == {
         config.providers[0].id: {"pre_active": 0, "active": 0, "total": 0}
     }
+
+
+@pytest.mark.parametrize("total", [0, 2])
+@pytest.mark.parametrize("valid_secret", [False, True])
+def test_status_stdin_authenticates_retained_store(
+    monkeypatch, tmp_path: Path, capsys, total, valid_secret,
+) -> None:
+    """Verify stdin authenticates real retained namespaces while the listener is disabled.
+
+    Args:
+        monkeypatch: Pytest fixture replacing config loading and process stdin.
+        tmp_path: Isolated operational store supplied by pytest.
+        capsys: Pytest fixture capturing the redacted status document.
+        total: Number of existing keys in the provider namespace.
+        valid_secret: Whether stdin contains the original appliance secret.
+    """
+    config = replace(service_config(tmp_path, material(tmp_path)), enabled=False)
+    provider_id = config.providers[0].id
+    store = WrappedKeyStore(config.database_path, config.kek_path, secrets_key="original-secret")
+    for _ in range(total):
+        store.create_key(provider_id)
+    store.close()
+    monkeypatch.setattr("atlaso.app.kmip.server.load_config", lambda _path: config)
+    monkeypatch.setattr("sys.stdin", io.StringIO("original-secret" if valid_secret else "wrong-secret"))
+    # Stdin must be authoritative, regardless of stale inherited credentials.
+    monkeypatch.setenv("ATLASO_SECRETS_KEY_FILE", str(tmp_path / "absent-credential"))
+    result = kmip_main(["--config", str(tmp_path / "server.json"), "--status", "--status-secret-stdin"])
+    captured = capsys.readouterr()
+    if valid_secret:
+        assert result == 0
+        payload = json.loads(captured.out)
+        assert payload["runtime_state"] == "disabled"
+        assert payload["providers"][provider_id] == {"pre_active": total, "active": 0, "total": total}
+    else:
+        assert result == 2
+        assert captured.out == ""
+    store = WrappedKeyStore(config.database_path, config.kek_path, secrets_key="original-secret")
+    try:
+        assert store.lifecycle_counts([provider_id])[provider_id]["total"] == total
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("artifact", ["store.db", "kek.json"])
+@pytest.mark.parametrize("stdin", [False, True])
+def test_status_rejects_incomplete_retained_store(monkeypatch, tmp_path, capsys, artifact, stdin):
+    """Verify neither status credential channel reports a partial store as empty.
+
+    Args:
+        monkeypatch: Pytest fixture replacing runtime config and credential loading.
+        tmp_path: Isolated runtime filesystem supplied by pytest.
+        capsys: Pytest fixture capturing status output.
+        artifact: Sole remaining database or KEK artifact.
+        stdin: Whether status uses the explicit stdin credential handoff.
+    """
+    config = replace(service_config(tmp_path, material(tmp_path)), enabled=False)
+    retained_path = config.database_path if artifact == "store.db" else config.kek_path
+    retained_path.parent.mkdir(parents=True, exist_ok=True)
+    retained_path.write_bytes(b"retained-artifact")
+    monkeypatch.setattr("atlaso.app.kmip.server.load_config", lambda _path: config)
+    monkeypatch.setattr("atlaso.app.kmip.server._load_secrets_key", lambda: "test-secret")
+    monkeypatch.setattr("sys.stdin", io.StringIO("test-secret"))
+    args = ["--config", str(tmp_path / "server.json"), "--status"]
+    if stdin:
+        args.append("--status-secret-stdin")
+    assert kmip_main(args) == 2
+    assert capsys.readouterr().out == ""
+    assert retained_path.read_bytes() == b"retained-artifact"
+    assert config.database_path.exists() != config.kek_path.exists()
+
+
+@pytest.mark.parametrize("secret,status", [("", True), ("\n", True), ("x" * 4097, True), ("secret", False)])
+def test_status_stdin_rejects_invalid_input_and_listener_mode(monkeypatch, capsys, secret, status) -> None:
+    """Verify invalid stdin cannot authorize status or enter listener mode.
+
+    Args:
+        monkeypatch: Pytest fixture replacing config loading and process stdin.
+        capsys: Pytest fixture capturing output from the rejected operation.
+        secret: Bounded, empty, or oversized test input.
+        status: Whether the command explicitly requests status mode.
+    """
+    monkeypatch.setattr("atlaso.app.kmip.server.load_config", lambda _path: object())
+    monkeypatch.setattr("sys.stdin", io.StringIO(secret))
+    args = ["--config", "server.json", "--status-secret-stdin"]
+    if status:
+        args.append("--status")
+    assert kmip_main(args) == 2
+    assert capsys.readouterr().out == ""
 
 
 def test_tcp_server_selects_ipv6_address_family_before_binding(monkeypatch, tmp_path: Path) -> None:

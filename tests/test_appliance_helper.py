@@ -13318,6 +13318,186 @@ def test_kms_helper_status_returns_only_authenticated_redacted_counts(monkeypatc
     assert "key_id" not in output
 
 
+@pytest.mark.parametrize("total,returncode", [(0, 0), (2, 0), (0, 2)])
+def test_kms_status_authenticates_retained_store_without_service_credential(
+    monkeypatch, tmp_path, capsys, total, returncode,
+):
+    """Verify disabled-service status authenticates counts without restoring runtime access.
+
+    Args:
+        monkeypatch: Pytest fixture replacing fixed helper paths and the status child.
+        tmp_path: Isolated filesystem root supplied by pytest.
+        capsys: Pytest fixture capturing redacted helper output.
+        total: Authenticated operational key count returned by the status child.
+        returncode: Status child result, including a failed store-authentication case.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "server.json"
+    config_path.write_text("{}", encoding="utf-8")
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    database_path = state_dir / "store.db"
+    kek_path = state_dir / "kek.json"
+    database_path.write_bytes(b"retained-store")
+    kek_path.write_bytes(b"retained-kek")
+    credential_path = tmp_path / "absent-runtime.cred"
+    environment_path = tmp_path / "appliance.env"
+    environment_path.write_text(
+        "export ATLASO_SECRETS_KEY='protected-appliance-secret'\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(helper, "KMS_CONFIG_PATH", config_path)
+    monkeypatch.setattr(helper, "KMS_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "KMS_CREDENTIAL_PATH", credential_path)
+    monkeypatch.setattr(helper, "ATLASO_ENV_PATH", environment_path)
+    child_calls = []
+    payload = {
+        "status": "available", "store_status": "healthy",
+        "providers": {"885841f9-0878-45c2-aee0-b72bc9fc643f": {
+            "pre_active": 0, "active": total, "total": total,
+        }},
+    }
+
+    def status_child(command, **kwargs):
+        """Verify the bounded child receives the credential only through stdin.
+
+        Args:
+            command: Fixed status command emitted by the helper.
+            **kwargs: Captured child environment and output options.
+
+        Returns:
+            A redacted result or a failed authentication result.
+        """
+        assert command == [str(helper.ATLASO_KMIP_VENV_PATH), "--config", str(config_path),
+                           "--status", "--status-secret-stdin"]
+        assert kwargs["input"] == "protected-appliance-secret"
+        assert "ATLASO_SECRETS_KEY_FILE" not in kwargs["env"]
+        assert "ATLASO_SECRETS_KEY" not in kwargs["env"]
+        assert kwargs["timeout"] == 30
+        child_calls.append(command)
+        return subprocess.CompletedProcess(
+            command, returncode, json.dumps(payload), "protected-appliance-secret"
+        )
+
+    monkeypatch.setattr(helper.subprocess, "run", status_child)
+    assert helper._handle_kms("status", []) == returncode
+    captured = capsys.readouterr()
+    if returncode:
+        assert captured.out == ""
+        assert "unavailable" in captured.err
+    else:
+        assert json.loads(captured.out) == payload
+    assert "protected-appliance-secret" not in captured.out + captured.err
+    assert len(child_calls) == 1
+    assert not credential_path.exists()
+    assert config_path.read_text(encoding="utf-8") == "{}"
+    assert database_path.read_bytes() == b"retained-store"
+    assert kek_path.read_bytes() == b"retained-kek"
+
+
+@pytest.mark.parametrize("artifact", ["store.db", "kek.json"])
+@pytest.mark.parametrize("runtime_credential", [False, True])
+def test_kms_status_rejects_incomplete_store_before_credential_access(
+    monkeypatch, tmp_path, capsys, artifact, runtime_credential,
+):
+    """Verify a partial retained store cannot reach credential fallback or zero evidence.
+
+    Args:
+        monkeypatch: Pytest fixture replacing fixed helper paths and secret access.
+        tmp_path: Isolated runtime filesystem supplied by pytest.
+        capsys: Pytest fixture capturing the redacted failure.
+        artifact: Sole retained operational store artifact.
+        runtime_credential: Whether the encrypted service credential still exists.
+    """
+    helper = load_helper_module()
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / artifact).write_bytes(b"retained-artifact")
+    config_path = tmp_path / "server.json"
+    config_path.write_text("{}", encoding="utf-8")
+    credential_path = tmp_path / "runtime.cred"
+    if runtime_credential:
+        credential_path.write_bytes(b"encrypted")
+    monkeypatch.setattr(helper, "KMS_CONFIG_PATH", config_path)
+    monkeypatch.setattr(helper, "KMS_CREDENTIAL_PATH", credential_path)
+    monkeypatch.setattr(helper, "KMS_STATE_DIR", state_dir)
+
+    def unexpected_secret_access():
+        """Fail if incomplete store inspection proceeds to secret access."""
+        pytest.fail("Incomplete retained store reached credential fallback")
+
+    monkeypatch.setattr(helper, "_kms_secrets_key", unexpected_secret_access)
+    monkeypatch.setattr(helper, "_run", lambda _command: pytest.fail("Unexpected credential decryption"))
+    assert helper._handle_kms("status", []) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "unavailable" in captured.err
+    assert (state_dir / artifact).read_bytes() == b"retained-artifact"
+    assert len(list(state_dir.iterdir())) == 1
+
+
+@pytest.mark.parametrize("timeout", [False, True])
+def test_kms_status_child_failure_is_redacted(monkeypatch, tmp_path, capsys, timeout):
+    """Verify process startup and timeout errors cannot expose the stdin credential.
+
+    Args:
+        monkeypatch: Pytest fixture replacing fixed paths and child execution.
+        tmp_path: Isolated configuration root supplied by pytest.
+        capsys: Pytest fixture capturing helper output.
+        timeout: Whether the child exceeds its deadline instead of failing startup.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "server.json"
+    config_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(helper, "KMS_CONFIG_PATH", config_path)
+    monkeypatch.setattr(helper, "KMS_CREDENTIAL_PATH", tmp_path / "absent-runtime.cred")
+    monkeypatch.setattr(helper, "KMS_STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(helper, "_kms_secrets_key", lambda: "sensitive-marker")
+
+    def failed_child(command, **kwargs):
+        """Raise a secret-bearing child exception to verify redaction.
+
+        Args:
+            command: Fixed KMIP status child command.
+            **kwargs: Child options containing stdin input and timeout.
+        """
+        assert kwargs["input"] == "sensitive-marker"
+        if timeout:
+            raise subprocess.TimeoutExpired(command, 30, output="sensitive-marker")
+        raise OSError("sensitive-marker")
+
+    monkeypatch.setattr(helper.subprocess, "run", failed_child)
+    assert helper._handle_kms("status", []) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "unavailable" in captured.err
+    assert "sensitive-marker" not in captured.err
+
+
+def test_kms_status_without_service_credential_requires_appliance_secret(
+    monkeypatch, tmp_path, capsys,
+):
+    """Verify missing appliance secret cannot turn a retained store into empty evidence.
+
+    Args:
+        monkeypatch: Pytest fixture replacing fixed helper paths.
+        tmp_path: Isolated filesystem root supplied by pytest.
+        capsys: Pytest fixture capturing redacted helper output.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "server.json"
+    config_path.write_text("{}", encoding="utf-8")
+    environment_path = tmp_path / "appliance.env"
+    environment_path.write_text("OTHER_SETTING=value\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "KMS_CONFIG_PATH", config_path)
+    monkeypatch.setattr(helper, "KMS_CREDENTIAL_PATH", tmp_path / "absent-runtime.cred")
+    monkeypatch.setattr(helper, "KMS_STATE_DIR", tmp_path / "retained-state")
+    monkeypatch.setattr(helper, "ATLASO_ENV_PATH", environment_path)
+    assert helper._handle_kms("status", []) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "credential is unavailable" in captured.err
+
+
 def test_kms_helper_status_fails_closed_when_store_material_cannot_be_authenticated(
     monkeypatch,
     tmp_path,
