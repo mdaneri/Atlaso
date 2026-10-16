@@ -24,6 +24,7 @@ from atlaso.app.kmip.protocol import (
 from atlaso.app.kmip.store import VSPHERE_CUSTOM_ATTRIBUTES, WrappedKeyStore
 from atlaso.app.kmip.ttlv import (
     Ttlv,
+    TtlvType,
     byte_string,
     enumeration,
     integer,
@@ -594,8 +595,8 @@ def test_create_rejects_invalid_custom_attributes_without_storing_key(
     assert service.store.lifecycle_counts([provider_id])[provider_id]["total"] == 0
 
 
-def test_get_attributes_rejects_known_but_unstored_custom_attribute(tmp_path: Path) -> None:
-    """A request for an absent known custom attribute fails without an empty value.
+def test_get_attributes_omits_known_but_unstored_custom_attribute(tmp_path: Path) -> None:
+    """An absent known custom attribute is omitted from a successful response.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
@@ -622,7 +623,87 @@ def test_get_attributes_rejects_known_but_unstored_custom_attribute(tmp_path: Pa
         request(
             Operation.GET_ATTRIBUTES,
             text_string(Tag.UNIQUE_IDENTIFIER, key_id),
+            text_string(Tag.ATTRIBUTE_NAME, "Name"),
+            text_string(Tag.ATTRIBUTE_NAME, "Activation Date"),
             text_string(Tag.ATTRIBUTE_NAME, absent),
+        ),
+    )
+
+    assert result_status(response) == ResultStatus.SUCCESS
+    response_payload_node = response_payload(response)
+    assert response_payload_node.children(Tag.ATTRIBUTE) == []
+    returned_key_id = response_payload_node.child(Tag.UNIQUE_IDENTIFIER)
+    assert returned_key_id is not None and returned_key_id.value == key_id
+
+
+def test_get_attributes_omits_absent_optional_standard_and_custom_attributes(
+    tmp_path: Path,
+) -> None:
+    """Get Attributes returns present requested fields and omits absent optional ones.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    service, provider_id = dispatcher(tmp_path)
+    created = service.dispatch(
+        provider_id,
+        custom_create_request(
+            (
+                name_attribute("vSphere test key"),
+                structure(
+                    Tag.ATTRIBUTE,
+                    text_string(Tag.ATTRIBUTE_NAME, "x-Component"),
+                    text_string(Tag.ATTRIBUTE_VALUE, "component-value"),
+                ),
+            )
+        ),
+    )
+    assert result_status(created) == ResultStatus.SUCCESS
+    key_id = response_payload(created).child(Tag.UNIQUE_IDENTIFIER).value
+    activated = service.dispatch(
+        provider_id,
+        request(Operation.ACTIVATE, text_string(Tag.UNIQUE_IDENTIFIER, key_id)),
+    )
+    assert result_status(activated) == ResultStatus.SUCCESS
+
+    response = service.dispatch(
+        provider_id,
+        request(
+            Operation.GET_ATTRIBUTES,
+            text_string(Tag.UNIQUE_IDENTIFIER, key_id),
+            text_string(Tag.ATTRIBUTE_NAME, "Name"),
+            text_string(Tag.ATTRIBUTE_NAME, "Activation Date"),
+            text_string(Tag.ATTRIBUTE_NAME, "x-Component"),
+            text_string(Tag.ATTRIBUTE_NAME, "x-Vendor"),
+        ),
+    )
+
+    assert result_status(response) == ResultStatus.SUCCESS
+    attributes = response_payload(response).children(Tag.ATTRIBUTE)
+    assert [attribute.child(Tag.ATTRIBUTE_NAME).value for attribute in attributes] == [
+        "Name",
+        "Activation Date",
+        "x-Component",
+    ]
+    assert attributes[0].child(Tag.ATTRIBUTE_VALUE).child(Tag.NAME_VALUE).value == "vSphere test key"
+    assert attributes[1].child(Tag.ATTRIBUTE_VALUE).type is TtlvType.DATE_TIME
+    assert attributes[2].child(Tag.ATTRIBUTE_VALUE).value == "component-value"
+
+
+def test_get_attributes_still_rejects_unknown_attribute_names(tmp_path: Path) -> None:
+    """Unknown requested names remain outside the bounded metadata contract.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    service, provider_id = dispatcher(tmp_path)
+    key_id = created_key_id(service, provider_id)
+    response = service.dispatch(
+        provider_id,
+        request(
+            Operation.GET_ATTRIBUTES,
+            text_string(Tag.UNIQUE_IDENTIFIER, key_id),
+            text_string(Tag.ATTRIBUTE_NAME, "x-Unsupported"),
         ),
     )
 
@@ -630,8 +711,8 @@ def test_get_attributes_rejects_known_but_unstored_custom_attribute(tmp_path: Pa
     assert batch_item(response).child(Tag.RESULT_REASON).value == ResultReason.INVALID_FIELD
 
 
-def test_create_activate_get_round_trip_returns_only_active_key(tmp_path: Path) -> None:
-    """Verify that create activate get round trip returns only active key.
+def test_get_round_trip_succeeds_before_and_after_activation(tmp_path: Path) -> None:
+    """Verify that Create/Get preserve the pre-active and active key lifecycle.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.

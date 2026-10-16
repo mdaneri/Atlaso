@@ -48,6 +48,8 @@ The observed Create profile also includes five VMware informational attributes: 
 at most 512 UTF-8 bytes. They are authenticated with the wrapped key, survive activation and restart, and are available
 through provider-scoped Get Attributes and Get Attribute List. Custom values are never included in logs or traces.
 Existing keys without these attributes retain their original authenticated format and are not rewritten on startup.
+Get Attributes omits supported attributes that have no value; a request for only absent attributes returns the key's
+Unique Identifier, as required by KMIP. Unknown attribute names outside this contract remain rejected.
 
 vCenter 9.1.1 retrieves a newly created key before sending Activate. An authenticated client may therefore Get its
 provider's Pre-Active or Active keys. Get does not activate a key or authorize server-side cryptographic use; explicit

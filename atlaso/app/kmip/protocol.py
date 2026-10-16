@@ -747,9 +747,16 @@ class KmipDispatcher:
             if metadata.activated_at is not None:
                 names.append("Activation Date")
             names.extend(name for name in sorted(VSPHERE_CUSTOM_ATTRIBUTES) if name in custom_attributes)
-        supported_names = set(ATTRIBUTE_TAGS) | set(custom_attributes)
+        supported_names = set(ATTRIBUTE_TAGS) | set(VSPHERE_CUSTOM_ATTRIBUTES)
         if len(names) != len(set(names)) or any(name not in supported_names for name in names):
             raise ProtocolFailure(ResultReason.INVALID_FIELD, "Requested attributes are invalid.")
+        present_names = set(names) - set(VSPHERE_CUSTOM_ATTRIBUTES)
+        if metadata.name is None:
+            present_names.discard("Name")
+        if metadata.activated_at is None:
+            present_names.discard("Activation Date")
+        present_names.update(custom_attributes)
+        names = [name for name in names if name in present_names]
         return [
             text_string(Tag.UNIQUE_IDENTIFIER, metadata.key_id),
             *(_metadata_attribute(name, metadata) for name in names),
