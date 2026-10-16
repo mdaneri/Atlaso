@@ -5975,7 +5975,8 @@ let vsphereCertificateWizard = null;
 let vsphereEnrollmentWizard = null;
 
 function openVsphereEnrollmentWizard(data = {}, launcher = null) {
-  vsphereEnrollmentWizard?.open({ launcher, context: data });
+  const step = data.id && !data.is_new ? "credential" : "method";
+  return vsphereEnrollmentWizard?.open({ launcher, context: data, step, highestStep: step });
 }
 
 function openVsphereCertificateWizard(data = {}, launcher = null) {

@@ -566,3 +566,19 @@ test("the grid add control opens method selection while Edit retains the existin
   assert.equal(edited[0].context, existing);
   assert.equal(added.length, 1);
 });
+
+test("the enrollment launcher starts existing refreshes on Credential and new setup on Method", () => {
+  const openings = [];
+  const context = vm.createContext({ controller: { open: (options) => openings.push(options) } });
+  vm.runInContext(`let vsphereEnrollmentWizard = controller; ${functionSource("openVsphereEnrollmentWizard")}; globalThis.openEnrollment = openVsphereEnrollmentWizard;`, context);
+  const existing = { id: "existing-trust" };
+  context.openEnrollment(existing);
+  assert.equal(openings[0].step, "credential");
+  assert.equal(openings[0].highestStep, "credential");
+  assert.equal(openings[0].context, existing);
+  context.openEnrollment({ id: "synthetic-new-row", is_new: true });
+  assert.equal(openings[1].step, "method");
+  assert.equal(openings[1].highestStep, "method");
+  context.openEnrollment();
+  assert.equal(openings[2].step, "method");
+});
