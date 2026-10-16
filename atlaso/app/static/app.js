@@ -1469,6 +1469,7 @@ function initializeAtlasoResourceWizard(config) {
   };
   const openResource = (data, launcher, options = {}) => {
     if (!data?.is_new && !canEdit(data)) return;
+    if (data?.is_new && typeof config.openCreate === "function") return config.openCreate({ data, launcher });
     return wizard?.open({ launcher, context: data?.is_new ? null : data, ...options });
   };
   const deleteResource = async (row) => {
@@ -5989,6 +5990,9 @@ function openVsphereCertificateWizard(data = {}, launcher = null) {
 
 function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
   if (!(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement) || !window.AtlasoUiPatterns) return null;
+  const setupMethod = form.querySelector("[data-vsphere-setup-method]");
+  const manualFields = ["manual_provider_id", "manual_name", "manual_hostname", "manual_certificate_pem", "manual_description", "manual_enabled"];
+  const manualSteps = ["manual_identity", "manual_certificate", "manual_state"];
   const credentialMode = form.querySelector("[data-vsphere-credential-mode]");
   const vaultChoice = form.querySelector("[data-vsphere-vault-entry]");
   const vaultField = form.querySelector("[data-vsphere-vault-field]");
@@ -6003,8 +6007,16 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
   let observedHttpsFingerprint = "";
   let contextRevision = 0;
   let wizard = null;
+  let refreshing = false;
 
-  const isVaultMode = () => credentialMode?.value === "vault";
+  const isManualSetup = () => !refreshing && setupMethod?.value === "manual";
+  const isVaultMode = () => !isManualSetup() && credentialMode?.value === "vault";
+  const updateSkippedSteps = () => {
+    const skipped = isManualSetup() ? ["credential", "server", "tls", "login", "target"] : [...manualSteps];
+    if (!isManualSetup() && isVaultMode()) skipped.push("login");
+    if (refreshing) skipped.push("method");
+    wizard?.setSkippedSteps(skipped);
+  };
   const clearClient = () => {
     form.elements.expected_client_fingerprint.value = "";
     if (clientSummary) clientSummary.textContent = "Client certificate has not been inspected.";
@@ -6022,6 +6034,7 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
     clearServerTrust();
     username.value = "";
     password.value = "";
+    if (form.elements.manual_certificate_pem) form.elements.manual_certificate_pem.value = "";
   };
   const invalidateClient = () => {
     contextRevision += 1;
@@ -6048,19 +6061,22 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
   };
   const updateCredentialMode = ({ changed = false } = {}) => {
     const vault = isVaultMode();
+    const remote = !isManualSetup();
     if (vaultField) vaultField.classList.toggle("hidden", !vault);
     if (vaultChoice instanceof HTMLSelectElement) {
-      vaultChoice.disabled = !vault;
-      vaultChoice.required = vault;
+      vaultChoice.disabled = !remote || !vault;
+      vaultChoice.required = remote && vault;
     }
     if (hostname instanceof HTMLInputElement) {
+      hostname.disabled = !remote;
+      hostname.required = remote;
       hostname.readOnly = vault;
       if (vault) hostname.value = vaultChoice?.selectedOptions[0]?.dataset.hostname || "";
     }
     [username, password].forEach((input) => {
       if (input instanceof HTMLInputElement) {
-        input.disabled = vault;
-        input.required = !vault;
+        input.disabled = !remote || vault;
+        input.required = remote && !vault;
         if (changed || vault) input.value = "";
       }
     });
@@ -6068,14 +6084,41 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
     credentialStatus.textContent = vault
       ? "The saved Vault credential stays on the server. Atlaso never loads its password into this page."
       : "Manual credentials are held in this wizard only and sent for certificate discovery and approval.";
-    wizard?.setSkippedSteps(vault ? ["login"] : []);
+    updateSkippedSteps();
     if (changed) invalidateContext();
+  };
+  const updateSetupMethod = ({ changed = false } = {}) => {
+    const manual = isManualSetup();
+    for (const name of manualFields) {
+      const input = form.elements.namedItem(name);
+      if (!input) continue;
+      input.disabled = !manual;
+      input.required = manual && ["manual_provider_id", "manual_name"].includes(name);
+    }
+    for (const name of ["provider_id", "name", "cluster_id"]) {
+      const input = form.elements.namedItem(name);
+      if (!input) continue;
+      input.disabled = manual;
+      input.required = !manual;
+    }
+    if (tlsConfirm) {
+      tlsConfirm.disabled = manual;
+      tlsConfirm.required = !manual;
+    }
+    clientSummary?.classList.toggle("hidden", manual);
+    form.querySelector("[data-vsphere-enrollment-review-notice]")?.classList.toggle("hidden", manual);
+    form.querySelector("[data-vsphere-manual-review-notice]")?.classList.toggle("hidden", !manual);
+    const submit = form.querySelector("[data-atlaso-wizard-submit]");
+    if (submit) submit.textContent = manual ? "Create trusted vCenter" : "Approve client trust";
+    updateCredentialMode({ changed });
   };
   const buildRequestForm = (operation) => {
     const body = new FormData(form);
     const vault = isVaultMode();
     body.set("credential_source", vault ? "vault" : "manual");
     body.delete("credential_mode");
+    body.delete("enrollment_method");
+    manualFields.forEach((name) => body.delete(name));
     if (vault) {
       body.delete("username");
       body.delete("password");
@@ -6144,6 +6187,7 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
     }
   };
 
+  setupMethod?.addEventListener("change", () => updateSetupMethod({ changed: true }));
   credentialMode?.addEventListener("change", () => updateCredentialMode({ changed: true }));
   vaultChoice?.addEventListener("change", () => {
     if (hostname instanceof HTMLInputElement) hostname.value = vaultChoice.selectedOptions[0]?.dataset.hostname || "";
@@ -6169,14 +6213,25 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
     form,
     dialog,
     steps: [
+      { id: "method", title: "Choose a setup method", description: "Enroll from vCenter or configure its details and public certificate manually." },
       { id: "credential", title: "Choose a credential source", description: "Use manual credentials for this request or select a saved Vault endpoint." },
       { id: "server", title: "Choose the vCenter server", description: "Enter the HTTPS host or use the saved endpoint address." },
       { id: "tls", title: "Verify the vCenter certificate", description: "Review the observed SHA-256 fingerprint and confirm it with a simple checkbox." },
       { id: "login", title: "Sign in to vCenter", description: "Enter credentials used only for this request." },
       { id: "target", title: "Choose the trust destination", description: "Select a provider namespace and the registered KMIP cluster." },
-      { id: "review", title: "Review exact trust", description: "Confirm the inspected public certificate and provider assignment." },
+      { id: "manual_identity", title: "Define the trusted vCenter", description: "Assign its name and optional hostname to one provider namespace." },
+      { id: "manual_certificate", title: "Provide public trust", description: "Paste an optional public X.509 client certificate. Private keys are forbidden." },
+      { id: "manual_state", title: "Choose trusted-vCenter state", description: "Record its purpose and saved desired-state enablement." },
+      { id: "review", title: "Review trusted vCenter", description: "Confirm the details, public trust, and provider assignment." },
     ],
     onOpen: ({ context }) => {
+      refreshing = Boolean(context?.id && !context.is_new);
+      if (setupMethod) {
+        setupMethod.value = "enroll";
+        setupMethod.disabled = refreshing;
+      }
+      const title = dialog.querySelector?.("#vsphere-enrollment-dialog-title");
+      if (title) title.textContent = refreshing ? "Refresh from vCenter" : "Add trusted vCenter";
       form.elements.vcenter_id.value = context?.is_new ? "" : (context?.id || "");
       if (context && !context.is_new) {
         form.elements.provider_id.value = context.provider_id || "";
@@ -6187,16 +6242,20 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
       if (tlsFingerprint) tlsFingerprint.textContent = "Not inspected yet";
       tlsConfirmation?.classList.add("hidden");
       clearClient();
-      updateCredentialMode();
+      updateSetupMethod();
     },
     onClose: () => {
-      contextRevision += 1;
-      username.value = "";
-      password.value = "";
-      clearServerTrust();
+      invalidateContext();
       if (clientSummary) clientSummary.textContent = "";
     },
     onNext: async ({ controller, step }) => {
+      if (step.id === "method") {
+        if (!["enroll", "manual"].includes(setupMethod?.value)) {
+          controller.setError("Choose how to configure the trusted vCenter.");
+          return false;
+        }
+        updateSetupMethod();
+      }
       if (step.id === "credential") {
         updateCredentialMode();
         if (isVaultMode() && !selectVaultEndpoint()) {
@@ -6215,7 +6274,16 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
       }
       return true;
     },
-    prepareReview: () => renderAtlasoWizardReview(form, [
+    prepareReview: () => renderAtlasoWizardReview(form, isManualSetup() ? [
+      { label: "Method", value: () => "Configure manually" },
+      { label: "Provider", field: "manual_provider_id" },
+      { label: "vCenter", field: "manual_name" },
+      { label: "Hostname", field: "manual_hostname" },
+      { label: "Certificate", value: () => form.elements.manual_certificate_pem.value.trim() ? "Public X.509 PEM supplied" : "No new certificate" },
+      { label: "Description", field: "manual_description" },
+      { label: "Enabled", field: "manual_enabled" },
+    ] : [
+      { label: "Method", value: () => "Enroll from vCenter" },
       { label: "Credential source", value: () => isVaultMode() ? "Saved Vault entry" : "Manual, request-only" },
       { label: "Provider", field: "provider_id" },
       { label: "vCenter", field: "name" },
@@ -6224,6 +6292,19 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
       { label: "Approved client SHA-256", field: "expected_client_fingerprint" },
     ]),
     onSubmit: async ({ controller }) => {
+      if (isManualSetup()) {
+        const body = new FormData();
+        body.set("csrf", form.elements.csrf.value);
+        for (const name of ["provider_id", "name", "hostname", "certificate_pem", "description"]) {
+          body.set(name, form.elements.namedItem(`manual_${name}`).value);
+        }
+        if (form.elements.manual_enabled.checked) body.set("enabled", "on");
+        await atlasoGridWizardRequest(managementUiPath("/vsphere-key-providers/trusted-vcenters"), body);
+        invalidateContext();
+        controller.markClean();
+        window.location.reload();
+        return { valid: true };
+      }
       if (!form.elements.expected_client_fingerprint.value) {
         return { valid: false, message: "Inspect the vCenter client certificate before approval.", step: "target" };
       }
@@ -6241,7 +6322,7 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
       return { valid: true };
     },
   });
-  updateCredentialMode();
+  updateSetupMethod();
   launcher?.addEventListener("click", (event) => openVsphereEnrollmentWizard({}, event.currentTarget));
   return wizard;
 }
@@ -6349,6 +6430,9 @@ function initializeVsphereKeyProviderTables() {
     rows: JSON.parse(vcenterElement.dataset.vcenters || "[]"),
     newRow: { id: "__new_vsphere_vcenter__", provider_id: providers[0]?.id || "", name: "", hostname: "", description: "", enabled: false, certificate_pem: "", is_new: true },
     resourceName: "trusted_vcenter",
+    ...(vsphereEnrollmentWizard ? {
+      openCreate: ({ data, launcher }) => openVsphereEnrollmentWizard(data, launcher),
+    } : {}),
     createUrl: managementUiPath("/vsphere-key-providers/trusted-vcenters"),
     editUrl: (id) => managementUiPath(`/vsphere-key-providers/trusted-vcenters/${id}/edit`),
     deleteResource: true,

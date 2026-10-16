@@ -32,6 +32,17 @@ behavior.
 
 *Figure: the provider, trusted-vCenter, certificate, and lifecycle tools with listener settings in the right rail.*
 
+## Add a trusted vCenter
+
+In **Trusted vCenters**, choose the grid's **+ Add trusted vCenter here** row. The **Method** step offers two paths:
+
+- **Enroll from vCenter** discovers the public client certificate using request-only credentials or a saved Vault entry.
+- **Configure manually** lets you enter the provider, name, optional hostname, and optional public client certificate.
+  Add a description and choose enablement, then review and create the trusted vCenter. Private keys are never accepted.
+
+Both paths use one wizard. Existing rows retain **Edit** for saved details and **Refresh from vCenter** for discovery.
+Review pending changes and run global **Appliance Apply** before using newly saved trust.
+
 ## Enroll from vCenter
 
 1. Enable Atlaso's Certificate Authority, configure the KMS hostname and listener, and add an enabled provider namespace.
@@ -46,7 +57,8 @@ behavior.
    stays in vCenter. Use a vCenter account with `Cryptographer.ManageKeyServers` permission for read-only certificate
    discovery. You can enter it for this enrollment or select a saved Atlaso Vault credential. Saved entries need an
    authorized HTTPS URI, including any non-default port; entries without one cannot be selected.
-4. In Atlaso **Trusted vCenters**, choose **Enroll from vCenter**. Choose **Manual** or **Vault**, then confirm the
+4. In Atlaso **Trusted vCenters**, choose **+ Add trusted vCenter here**, then **Enroll from vCenter**. Choose
+   **Enter credentials manually** or **Use a saved Vault credential**, then confirm the
    server address. Manual mode uses HTTPS port 443. A saved URI supplies the hostname and port and keeps the hostname
    read-only; Atlaso checks that binding before probing or decrypting the credential. URI paths do not change the
    vCenter API path. Continue to inspect the public HTTPS certificate without authenticating. Compare its SHA-256

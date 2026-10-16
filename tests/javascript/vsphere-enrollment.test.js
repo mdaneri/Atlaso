@@ -85,12 +85,15 @@ class FakeForm extends FakeElement {
     const names = [
       "csrf", "credential_source", "credential_mode", "vcenter_id", "vault_id", "entry_id", "uri_index",
       "confirmed_https_fingerprint", "expected_client_fingerprint", "hostname", "username", "password",
-      "provider_id", "name", "cluster_id",
+      "provider_id", "name", "cluster_id", "enrollment_method", "manual_provider_id", "manual_name",
+      "manual_hostname", "manual_certificate_pem", "manual_description", "manual_enabled",
     ];
     this.elements = Object.fromEntries(names.map((name) => [name, name.includes("mode") || name.includes("provider")
       ? new FakeSelect(name)
       : new FakeInput(name)]));
     this.elements.credential_mode.value = "manual";
+    this.elements.enrollment_method.value = "enroll";
+    this.elements.manual_enabled.type = "checkbox";
     this.elements.credential_source.value = "manual";
     this.elements.csrf.value = "csrf-token";
     this.elements.vault_id.value = "0";
@@ -110,6 +113,7 @@ class FakeForm extends FakeElement {
     this.error = new FakeElement();
     this.review = new FakeElement();
     this.selectorMap = new Map([
+      ["[data-vsphere-setup-method]", this.elements.enrollment_method],
       ["[data-vsphere-credential-mode]", this.elements.credential_mode],
       ["[data-vsphere-vault-entry]", this.endpoint],
       ["[data-vsphere-vault-field]", this.endpointField],
@@ -129,7 +133,7 @@ class FakeForm extends FakeElement {
 
 class FakeFormData {
   constructor(form) {
-    this.values = new Map(Object.entries(form.elements)
+    this.values = new Map(Object.entries(form?.elements || {})
       .filter(([name, control]) => name !== "namedItem" && !control.disabled)
       .map(([name, control]) => [name, String(control.value ?? "")]));
   }
@@ -241,7 +245,7 @@ test("Vault enrollment locks the saved URI host, skips Login, and never posts ma
   assert.equal(form.elements.hostname.readOnly, true);
   assert.equal(form.elements.username.disabled, true);
   assert.equal(form.elements.password.value, "");
-  assert.deepEqual(skipped.at(-1), ["login"]);
+  assert.deepEqual(skipped.at(-1), ["manual_identity", "manual_certificate", "manual_state", "login"]);
   assert.equal(await options.onNext({ controller: wizard, step: { id: "credential" } }), true);
   assert.equal(await options.onNext({ controller: wizard, step: { id: "server" } }), true);
   assert.equal(requests[0].body.get("credential_source"), "vault");
@@ -456,4 +460,104 @@ test("client inspection with no fingerprint stays on Target instead of opening a
   assert.equal(await options.onNext({ controller: wizard, step: { id: "target" } }), false);
   assert.equal(shown.length, 0);
   assert.equal(form.elements.expected_client_fingerprint.value, "");
+});
+
+test("manual setup skips discovery and submits only the existing manual trust fields", async () => {
+  const requests = [];
+  const { form, options, wizard, skipped } = makeRuntime(async (url, body) => { requests.push({ url, body }); return {}; });
+  form.elements.enrollment_method.value = "manual";
+  await form.elements.enrollment_method.dispatch("change");
+  assert.deepEqual(skipped.at(-1), ["credential", "server", "tls", "login", "target"]);
+  assert.equal(form.elements.password.disabled, true);
+  assert.equal(form.elements.hostname.required, false);
+  assert.equal(form.tlsConfirm.required, false);
+  assert.equal(form.elements.manual_name.required, true);
+  assert.equal(await options.onNext({ controller: wizard, step: { id: "method" } }), true);
+  form.elements.manual_provider_id.value = "provider-1";
+  form.elements.manual_name.value = "Manual vCenter";
+  form.elements.manual_hostname.value = "vcsa.lab.example";
+  form.elements.manual_certificate_pem.value = "public-certificate";
+  form.elements.manual_description.value = "Lab trust";
+  form.elements.manual_enabled.checked = true;
+  form.elements.password.value = "must-not-be-submitted";
+  form.elements.vault_id.value = "99";
+  options.prepareReview();
+  assert.equal(form.reviewItems[0].value(), "Configure manually");
+  assert.equal((await options.onSubmit({ controller: wizard })).valid, true);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "/vsphere-key-providers/trusted-vcenters");
+  assert.deepEqual(Object.fromEntries(requests[0].body.values), {
+    csrf: "csrf-token", provider_id: "provider-1", name: "Manual vCenter", hostname: "vcsa.lab.example",
+    certificate_pem: "public-certificate", description: "Lab trust", enabled: "on",
+  });
+});
+
+test("switching setup methods invalidates pending discovery and clears credential and certificate context", async () => {
+  let resolveProbe;
+  const { form, options, wizard, skipped } = makeRuntime(() => new Promise((resolve) => { resolveProbe = resolve; }));
+  const pending = options.onNext({ controller: wizard, step: { id: "server" } });
+  form.elements.password.value = "request-only";
+  form.elements.enrollment_method.value = "manual";
+  await form.elements.enrollment_method.dispatch("change");
+  resolveProbe({ https_fingerprint: "AA:BB:CC" });
+  assert.equal(await pending, false);
+  assert.equal(form.elements.password.value, "");
+  assert.equal(form.elements.confirmed_https_fingerprint.value, "");
+  form.elements.manual_certificate_pem.value = "public-certificate";
+  form.elements.enrollment_method.value = "enroll";
+  await form.elements.enrollment_method.dispatch("change");
+  assert.equal(form.elements.manual_certificate_pem.value, "");
+  assert.equal(form.elements.manual_name.required, false);
+  assert.equal(form.elements.manual_name.disabled, true);
+  assert.equal(form.elements.password.required, true);
+  assert.deepEqual(skipped.at(-1), ["manual_identity", "manual_certificate", "manual_state"]);
+});
+
+test("refreshing an existing trusted vCenter stays in enrollment and skips the setup-method step", async () => {
+  const { form, options, wizard, skipped } = makeRuntime(async () => ({}));
+  options.onOpen({ context: { id: "existing-trust", provider_id: "provider-1", name: "Existing", hostname: "vcsa.lab.example" } });
+  assert.equal(form.elements.enrollment_method.disabled, true);
+  assert.deepEqual(skipped.at(-1), ["manual_identity", "manual_certificate", "manual_state", "method"]);
+  form.elements.enrollment_method.value = "manual";
+  await form.elements.enrollment_method.dispatch("change");
+  assert.equal(form.elements.manual_name.disabled, true);
+  assert.equal((await options.onSubmit({ controller: wizard })).valid, false);
+  assert.equal(form.elements.vcenter_id.value, "existing-trust");
+});
+
+test("the grid add control opens method selection while Edit retains the existing resource wizard", async () => {
+  const element = new FakeElement();
+  const form = new FakeForm();
+  const dialog = new FakeDialog();
+  const launcher = new FakeElement();
+  const added = [];
+  const edited = [];
+  const context = vm.createContext({
+    HTMLElement: FakeElement, HTMLFormElement: FakeForm, HTMLDialogElement: FakeDialog,
+    HTMLInputElement: FakeInput, HTMLButtonElement: FakeElement,
+    document: {
+      getElementById: (id) => id === "grid" ? element : dialog,
+      querySelector: (selector) => selector === "form" ? form : null,
+    },
+    window: { AtlasoUiPatterns: {
+      createGrid: () => ({ table: {} }),
+      createWizard: () => ({ open: (options) => edited.push(options) }),
+    } },
+  });
+  vm.runInContext(`${functionSource("initializeAtlasoResourceWizard")}; globalThis.initialize = initializeAtlasoResourceWizard;`, context);
+  const newRow = { is_new: true };
+  context.initialize({
+    elementId: "grid", dialogId: "dialog", formSelector: "form", rows: [], newRow,
+    options: { columns: [] }, openCreate: (options) => added.push(options),
+  });
+  await element.dispatch("click", { target: { closest: () => launcher } });
+  assert.equal(added.length, 1);
+  assert.equal(added[0].data, newRow);
+  assert.equal(added[0].launcher, launcher);
+  assert.equal(edited.length, 0);
+  const existing = { id: "existing-trust" };
+  element.atlasoWizardOpen(existing, launcher);
+  assert.equal(edited.length, 1);
+  assert.equal(edited[0].context, existing);
+  assert.equal(added.length, 1);
 });
