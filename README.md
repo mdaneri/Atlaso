@@ -44,9 +44,11 @@ For troubleshooting, correlate significant operation events across [Tasks](docs/
 how verbosity affects App logs, and where native evidence can remain incomplete.
 
 [vSphere Key Providers](docs/services/vsphere-key-providers.md) starts enrollment in vCenter, then requires an Atlaso
-administrator to verify and approve its discovered public client certificate for one provider before Appliance Apply
-permits KMIP key operations. Atlaso CA manages the server identity; certificate cutover retains the prior files and
-service state for recovery. Live VCF 9.1 interoperability and recovery acceptance remain gated by issue #172.
+administrator to confirm the displayed HTTPS certificate with a checkbox before using request-only manual credentials
+or a saved Vault credential. The administrator then inspects and approves the exact public client certificate for one
+provider before Appliance Apply permits KMIP key operations. Atlaso CA manages the server identity; certificate cutover
+retains the prior files and service state for recovery. Live VCF 9.1 interoperability and recovery acceptance remain gated
+by issue #172.
 
 [VCF Helper lab overrides](docs/services/vcf-helper.md#lab--non-production-overrides) let administrators review either
 or both fixed domainmanager properties in a tile-launched wizard on VCF Installer and SDDC Manager 9.0.x / 9.1.x.
