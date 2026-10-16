@@ -6233,9 +6233,22 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
       return;
     }
     const selected = setupMethod.value;
+    const fields = [...manualFields, "credential_mode", "hostname", "provider_id", "name", "cluster_id"];
+    const retained = fields.map((name) => {
+      const input = form.elements.namedItem(name);
+      return input ? { input, value: input.value, checked: input.checked } : null;
+    }).filter(Boolean);
+    const savedEndpoint = vaultChoice?.value;
     wizard?.reset();
+    retained.forEach(({ input, value, checked }) => {
+      input.value = value;
+      if (input.type === "checkbox") input.checked = checked;
+    });
+    if (vaultChoice && savedEndpoint !== undefined) vaultChoice.value = savedEndpoint;
     setupMethod.value = selected;
     updateSetupMethod({ changed: true });
+    const certificate = retained.find(({ input }) => input.name === "manual_certificate_pem");
+    if (certificate) certificate.input.value = certificate.value;
   });
   credentialMode?.addEventListener("change", () => updateCredentialMode({ changed: true }));
   vaultChoice?.addEventListener("change", () => {
@@ -6268,9 +6281,9 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
       { id: "tls", title: "Verify the vCenter certificate", description: "Review the observed SHA-256 fingerprint and confirm it with a simple checkbox." },
       { id: "login", title: "Sign in to vCenter", description: "Enter credentials used only for this request." },
       { id: "target", title: "Choose the trust destination", description: "Select a provider namespace and the registered KMIP cluster." },
-      { id: "manual_identity", title: "Define the trusted vCenter", description: "Assign its name and optional hostname to one provider namespace." },
+      { id: "manual_identity", title: "Define the trusted vCenter", description: "Assign its name, optional hostname, and description to one provider namespace." },
       { id: "manual_certificate", title: "Provide public trust", description: "Paste an optional public X.509 client certificate. Private keys are forbidden." },
-      { id: "manual_state", title: "Choose trusted-vCenter state", description: "Record its purpose and saved desired-state enablement." },
+      { id: "manual_state", title: "Choose trusted-vCenter state", description: "Choose its saved desired-state enablement." },
       { id: "review", title: "Review trusted vCenter", description: "Confirm the details, public trust, and provider assignment." },
     ],
     onOpen: ({ context }) => {

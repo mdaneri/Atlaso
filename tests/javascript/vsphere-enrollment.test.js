@@ -175,7 +175,7 @@ function makeRuntime(respond) {
             setError: (message) => errors.push(message),
             showStep: (step, options) => shown.push({ step, options }),
             markClean() {},
-            reset: () => resets.push(true),
+            reset: () => { resets.push(true); form.reset(); },
           };
         },
       },
@@ -500,7 +500,7 @@ test("manual setup skips discovery and submits only the existing manual trust fi
   });
 });
 
-test("switching setup methods invalidates pending discovery and clears credential and certificate context", async () => {
+test("switching setup methods invalidates pending discovery and clears credentials and inspected trust", async () => {
   let resolveProbe;
   const { form, options, wizard, skipped, resets } = makeRuntime(() => new Promise((resolve) => { resolveProbe = resolve; }));
   const pending = options.onNext({ controller: wizard, step: { id: "server" } });
@@ -514,12 +514,32 @@ test("switching setup methods invalidates pending discovery and clears credentia
   form.elements.manual_certificate_pem.value = "public-certificate";
   form.elements.enrollment_method.value = "enroll";
   await form.elements.enrollment_method.dispatch("change");
-  assert.equal(form.elements.manual_certificate_pem.value, "");
+  assert.equal(form.elements.manual_certificate_pem.value, "public-certificate");
   assert.equal(form.elements.manual_name.required, false);
   assert.equal(form.elements.manual_name.disabled, true);
   assert.equal(form.elements.password.required, true);
   assert.equal(resets.length, 2);
   assert.deepEqual(skipped.at(-1), ["manual_identity", "manual_certificate", "manual_state"]);
+});
+
+test("resetting branch navigation retains entered identity details and manual public trust", async () => {
+  const { form } = makeRuntime(async () => ({}));
+  form.elements.manual_name.value = "Unsaved vCenter";
+  form.elements.manual_description.value = "Keep these details";
+  form.elements.manual_enabled.checked = true;
+  form.elements.manual_certificate_pem.value = "public-certificate";
+  form.elements.password.value = "request-only-secret";
+  form.reset = () => {
+    for (const name of ["manual_name", "manual_description", "manual_certificate_pem"]) form.elements[name].value = "";
+    form.elements.manual_enabled.checked = false;
+  };
+  form.elements.enrollment_method.value = "manual";
+  await form.elements.enrollment_method.dispatch("change");
+  assert.equal(form.elements.manual_name.value, "Unsaved vCenter");
+  assert.equal(form.elements.manual_description.value, "Keep these details");
+  assert.equal(form.elements.manual_enabled.checked, true);
+  assert.equal(form.elements.manual_certificate_pem.value, "public-certificate");
+  assert.equal(form.elements.password.value, "");
 });
 
 test("refreshing an existing trusted vCenter stays in enrollment and skips the setup-method step", async () => {

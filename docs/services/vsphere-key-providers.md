@@ -37,8 +37,8 @@ behavior.
 In **Trusted vCenters**, choose the grid's **+ Add trusted vCenter here** row. The **Method** step offers two paths:
 
 - **Enroll from vCenter** discovers the public client certificate using request-only credentials or a saved Vault entry.
-- **Configure manually** lets you enter the provider, name, optional hostname, and optional public client certificate.
-  Add a description and choose enablement, then review and create the trusted vCenter. Private keys are never accepted.
+- **Configure manually** starts with the provider, name, optional hostname, and description. Supply an optional public
+  client certificate, then choose enablement on its own final step before Review. Private keys are never accepted.
 
 Both paths use one wizard. Existing rows retain **Edit** for saved details and **Refresh from vCenter** for discovery.
 Review pending changes and run global **Appliance Apply** before using newly saved trust.
