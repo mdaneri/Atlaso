@@ -618,3 +618,17 @@ test("key-count icons distinguish unavailable evidence from an observed zero", (
     assert.equal(badge.classList.contains("active"), true);
   }
 });
+
+test("health badges preserve the service-runtime good, warning, and unknown states", () => {
+  const context = vm.createContext({ document: { createElement: () => new FakeElement() } });
+  vm.runInContext(`${functionSource("vsphereHealthStatusFormatter")}; globalThis.format = vsphereHealthStatusFormatter;`, context);
+  for (const [value, tone, symbol] of [
+    ["live", "good", "✓"], ["running", "warn", "!"], ["stopped", "warn", "!"],
+    ["disabled", "muted", "○"], ["unknown", "muted", "?"], ["pending", "warn", "!"],
+  ]) {
+    const badge = context.format({ getValue: () => value });
+    assert.equal(badge.className, `status-pill vsphere-health-badge ${tone}`);
+    assert.equal(badge.children[0].textContent, symbol);
+    assert.equal(badge.children[1].textContent, value);
+  }
+});

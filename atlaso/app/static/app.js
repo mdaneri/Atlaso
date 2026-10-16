@@ -5979,6 +5979,8 @@ function vsphereHealthStatusFormatter(cell) {
   const styles = {
     enabled: ["good", "✓"], ready: ["good", "✓"], available: ["good", "✓"],
     disabled: ["muted", "○"], configured: ["muted", "◇"],
+    live: ["good", "✓"], running: ["warn", "!"], stopped: ["warn", "!"],
+    unknown: ["muted", "?"], pending: ["warn", "!"],
     "needs attention": ["warn", "!"], "enrollment required": ["warn", "!"],
     failed: ["error", "✕"],
   };
