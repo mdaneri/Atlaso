@@ -222,6 +222,29 @@ def test_discovery_rejects_changed_https_identity_before_authentication(
         )
 
 
+@pytest.mark.parametrize("colon_separated", [False, True])
+def test_https_confirmation_normalizes_display_and_plain_digest(colon_separated: bool) -> None:
+    """Accept either existing fingerprint representation without changing its identity.
+
+    Args:
+        colon_separated: Whether the caller supplies the displayed colon-separated form.
+    """
+    fingerprint = enrollment.certificate_fingerprint(b"confirmed-leaf")
+    submitted = fingerprint if colon_separated else fingerprint.replace(":", "").lower()
+    assert enrollment.normalize_https_fingerprint(f" {submitted} ") == fingerprint
+
+
+@pytest.mark.parametrize("value", ["", "AA" * 31, "ZZ" * 32, "AA" * 33])
+def test_https_confirmation_rejects_malformed_digests(value: str) -> None:
+    """Require one complete SHA-256 identity and return only a safe error.
+
+    Args:
+        value: Invalid public fingerprint supplied by the caller.
+    """
+    with pytest.raises(enrollment.EnrollmentError, match="Confirm the current"):
+        enrollment.normalize_https_fingerprint(value)
+
+
 def test_pinned_https_context_uses_only_the_observed_leaf() -> None:
     """The vCenter request must not fall back to the host's system CAs."""
     pem = _client_certificate()

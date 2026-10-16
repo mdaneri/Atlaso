@@ -32,6 +32,17 @@ behavior.
 
 *Figure: the provider, trusted-vCenter, certificate, and lifecycle tools with listener settings in the right rail.*
 
+## Add a trusted vCenter
+
+In **Trusted vCenters**, choose the grid's **+ Add trusted vCenter here** row. The **Method** step offers two paths:
+
+- **Enroll from vCenter** discovers the public client certificate using request-only credentials or a saved Vault entry.
+- **Configure manually** starts with the provider, name, optional hostname, and description. Supply an optional public
+  client certificate, then choose enablement on its own final step before Review. Private keys are never accepted.
+
+Both paths use one wizard. Existing rows retain **Edit** for saved details and **Refresh from vCenter** for discovery.
+Review pending changes and run global **Appliance Apply** before using newly saved trust.
+
 ## Enroll from vCenter
 
 1. Enable Atlaso's Certificate Authority, configure the KMS hostname and listener, and add an enabled provider namespace.
@@ -43,21 +54,28 @@ behavior.
    chain. A root-CA trust choice is preferable where vCenter supports it, because vCenter versions that pin only the
    leaf need trust re-establishment after server-certificate renewal. Confirm the server identity independently.
 3. In vCenter, create or select the KMS cluster's client certificate with **Make KMS trust vCenter**. The private key
-   stays in vCenter. Give an Atlaso Vault entry a vCenter account with `Cryptographer.ManageKeyServers` permission;
-   Save each authorized vCenter HTTPS URI, including its port, on that entry. Atlaso uses it only for authenticated,
-   read-only certificate discovery. Entries without a saved HTTPS URI cannot be selected.
-4. In Atlaso **Trusted vCenters**, choose **Enroll from vCenter**. Select the provider and one saved Vault HTTPS
-   endpoint, then enter the exact KMS cluster ID. The selected URI supplies the hostname and port; Atlaso checks that
-   binding before probing or decrypting the credential. URI paths do not change the vCenter API path. Inspect vCenter
-   HTTPS, confirm its SHA-256 fingerprint through
-   an independent trusted source, then inspect the public KMIP client certificate. Review its exact fingerprint and
-   provider assignment before approval. Atlaso re-reads the certificate on approval and rejects a changed identity.
+   stays in vCenter. Use a vCenter account with `Cryptographer.ManageKeyServers` permission for read-only certificate
+   discovery. You can enter it for this enrollment or select a saved Atlaso Vault credential. Saved entries need an
+   authorized HTTPS URI, including any non-default port; entries without one cannot be selected.
+4. In Atlaso **Trusted vCenters**, choose **+ Add trusted vCenter here**, then **Enroll from vCenter**. Choose
+   **Enter credentials manually** or **Use a saved Vault credential**, then confirm the
+   server address. Manual mode uses HTTPS port 443. A saved URI supplies the hostname and port and keeps the hostname
+   read-only; Atlaso checks that binding before probing or decrypting the credential. URI paths do not change the
+   vCenter API path. Continue to inspect the public HTTPS certificate without authenticating. Compare its SHA-256
+   fingerprint through an independent trusted source and select the confirmation checkbox; no fingerprint retyping
+   is required. In manual mode, enter the username and password on the Login step; Vault mode skips that step.
+   Select the provider and enter the exact KMS cluster ID, then review the discovered public KMIP client certificate
+   and provider assignment before approval. Atlaso re-reads both identities on approval and rejects a changed one.
 5. Review **Pending Appliance Changes** and run global **Appliance Apply** for `kms`. Until that apply completes,
    vCenter's client certificate is not usable for KMIP key operations. Recheck the connection in vCenter.
 
 This path starts in vCenter and does not require a pre-created trusted-vCenter row or manual public-certificate paste
-in Atlaso. The Vault credential is referenced by its stable vault and entry IDs; its password is not copied into
-provider state. Discovery requires the selected vCenter cluster to point only to the configured Atlaso hostname and
+in Atlaso. Manual credentials exist only for the current enrollment requests and are cleared when the wizard closes
+or the page is hidden, including browser Back-cache navigation;
+they are not saved to a Vault, provider state, audit detail, task, or browser storage. A Vault credential is referenced
+by stable vault and entry IDs; its password is never placed in the page. Changing the server or credential source
+clears certificate confirmation and requires another probe before authentication. Discovery requires the selected
+vCenter cluster to point only to the configured Atlaso hostname and
 port. Client authorization remains an exact fingerprint-to-provider-UUID mapping.
 
 Certificate fingerprints are normalized SHA-256 values and are unique appliance-wide. The same fingerprint cannot be
@@ -67,6 +85,13 @@ does not generate, accept, export, or reveal a vCenter client private key.
 Listener settings accept only currently available addressed access or VLAN interfaces. Atlaso derives the saved IPv4
 and IPv6 listener addresses from those selected interfaces; API callers cannot bind the service to an unrelated address
 by supplying a different `listen_addresses` value.
+
+## Read health and key counts
+
+**Health & lifecycle** uses Atlaso status badges and state symbols to distinguish desired state, readiness, runtime,
+and evidence. Key icons mark the Pre-Active, Active, and Total counts. Labels remain visible alongside the icons.
+**Not reported** means authenticated evidence is unavailable; a reported zero remains zero. **Configured** describes
+runtime configuration and does not by itself prove that vCenter is connected.
 
 ## Rotate or retire public trust
 

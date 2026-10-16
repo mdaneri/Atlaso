@@ -44,6 +44,7 @@ The service runs as the unprivileged `atlaso-kmip` identity. Only `/ui/managemen
 | vCenter client identity | Canonical public X.509 PEM and exact SHA-256 fingerprint mapped to one provider UUID; no client private key is accepted or generated |
 | Recovery bundle | Encrypted with a user-supplied passphrase and produced only through an authenticated, audited workflow |
 | Vault-assisted credential | Read only for the selected vCenter operation; never copied into provider records, tasks, or traces |
+| Manual enrollment credential | Request-local username/password used only after the current HTTPS identity matches the confirmed fingerprint; never persisted or logged |
 | Interop evidence | Metadata-only JSONL validated against the bounded protocol contract |
 
 The FastAPI control plane owns desired state and authenticated administration. The KMIP daemon owns protocol handling
