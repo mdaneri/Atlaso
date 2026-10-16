@@ -5987,97 +5987,275 @@ function openVsphereCertificateWizard(data = {}, launcher = null) {
   vsphereCertificateWizard.open({ launcher, context: data });
 }
 
+function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
+  if (!(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement) || !window.AtlasoUiPatterns) return null;
+  const credentialMode = form.querySelector("[data-vsphere-credential-mode]");
+  const vaultChoice = form.querySelector("[data-vsphere-vault-entry]");
+  const vaultField = form.querySelector("[data-vsphere-vault-field]");
+  const credentialStatus = form.querySelector("[data-vsphere-credential-status]");
+  const hostname = form.elements.hostname;
+  const username = form.elements.username;
+  const password = form.elements.password;
+  const tlsConfirmation = form.querySelector("[data-vsphere-tls-confirmation]");
+  const tlsConfirm = form.querySelector("[data-vsphere-tls-confirm]");
+  const tlsFingerprint = form.querySelector("[data-vsphere-tls-fingerprint]");
+  const clientSummary = form.querySelector("[data-vsphere-enrollment-client]");
+  let observedHttpsFingerprint = "";
+  let contextRevision = 0;
+  let wizard = null;
+
+  const isVaultMode = () => credentialMode?.value === "vault";
+  const clearClient = () => {
+    form.elements.expected_client_fingerprint.value = "";
+    if (clientSummary) clientSummary.textContent = "Client certificate has not been inspected.";
+  };
+  const clearServerTrust = () => {
+    observedHttpsFingerprint = "";
+    form.elements.confirmed_https_fingerprint.value = "";
+    if (tlsConfirm instanceof HTMLInputElement) tlsConfirm.checked = false;
+    tlsConfirmation?.classList.add("hidden");
+    if (tlsFingerprint) tlsFingerprint.textContent = "Not inspected yet";
+    clearClient();
+  };
+  const invalidateContext = () => {
+    contextRevision += 1;
+    clearServerTrust();
+    username.value = "";
+    password.value = "";
+  };
+  const invalidateClient = () => {
+    contextRevision += 1;
+    clearClient();
+  };
+  const recoverTlsIdentityError = (error) => {
+    const messages = new Map([
+      ["Confirm the current vCenter HTTPS fingerprint before using credentials.", "Confirm the current vCenter HTTPS certificate again before continuing."],
+      ["The vCenter HTTPS fingerprint differs from the confirmed value.", "The vCenter HTTPS certificate changed. Probe it again and confirm the displayed certificate."],
+    ]);
+    const message = messages.get(error?.message);
+    if (!message) return "";
+    contextRevision += 1;
+    clearServerTrust();
+    username.value = "";
+    password.value = "";
+    return message;
+  };
+  const selectVaultEndpoint = () => {
+    const selected = String(vaultChoice?.value || "").split("|");
+    return selected.length === 3 && selected.every((value) => /^\d+$/.test(value))
+      ? selected.map(Number)
+      : null;
+  };
+  const updateCredentialMode = ({ changed = false } = {}) => {
+    const vault = isVaultMode();
+    if (vaultField) vaultField.classList.toggle("hidden", !vault);
+    if (vaultChoice instanceof HTMLSelectElement) {
+      vaultChoice.disabled = !vault;
+      vaultChoice.required = vault;
+    }
+    if (hostname instanceof HTMLInputElement) {
+      hostname.readOnly = vault;
+      if (vault) hostname.value = vaultChoice?.selectedOptions[0]?.dataset.hostname || "";
+    }
+    [username, password].forEach((input) => {
+      if (input instanceof HTMLInputElement) {
+        input.disabled = vault;
+        input.required = !vault;
+        if (changed || vault) input.value = "";
+      }
+    });
+    form.elements.credential_source.value = vault ? "vault" : "manual";
+    credentialStatus.textContent = vault
+      ? "The saved Vault credential stays on the server. Atlaso never loads its password into this page."
+      : "Manual credentials are held in this wizard only and sent for certificate discovery and approval.";
+    wizard?.setSkippedSteps(vault ? ["login"] : []);
+    if (changed) invalidateContext();
+  };
+  const buildRequestForm = (operation) => {
+    const body = new FormData(form);
+    const vault = isVaultMode();
+    body.set("credential_source", vault ? "vault" : "manual");
+    body.delete("credential_mode");
+    if (vault) {
+      body.delete("username");
+      body.delete("password");
+      const endpoint = selectVaultEndpoint();
+      if (endpoint) {
+        body.set("vault_id", String(endpoint[0]));
+        body.set("entry_id", String(endpoint[1]));
+        body.set("uri_index", String(endpoint[2]));
+      }
+    } else {
+      body.delete("vault_id");
+      body.delete("entry_id");
+      body.delete("uri_index");
+    }
+    if (operation === "probe") {
+      body.delete("username");
+      body.delete("password");
+      body.delete("provider_id");
+      body.delete("name");
+      body.delete("cluster_id");
+      body.delete("confirmed_https_fingerprint");
+      body.delete("expected_client_fingerprint");
+    }
+    return body;
+  };
+  const request = async (operation) => atlasoGridWizardRequest(
+    managementUiPath(`/vsphere-key-providers/enrollment/${operation}`),
+    buildRequestForm(operation),
+  );
+  const runProbe = async (controller) => {
+    const revision = contextRevision;
+    controller.setError("");
+    try {
+      const result = await request("probe");
+      if (revision !== contextRevision) return false;
+      observedHttpsFingerprint = result.https_fingerprint || "";
+      if (!observedHttpsFingerprint) throw new Error("The vCenter HTTPS certificate could not be verified.");
+      tlsFingerprint.textContent = observedHttpsFingerprint;
+      form.elements.confirmed_https_fingerprint.value = "";
+      tlsConfirm.checked = false;
+      tlsConfirmation.classList.remove("hidden");
+      return true;
+    } catch (error) {
+      if (revision === contextRevision) controller.setError(error.message || "Could not inspect vCenter HTTPS.");
+      return false;
+    }
+  };
+  const runInspect = async (controller) => {
+    const revision = contextRevision;
+    controller.setError("");
+    try {
+      const result = await request("inspect");
+      if (revision !== contextRevision) return false;
+      const fingerprint = result.client_fingerprint || "";
+      if (!fingerprint) throw new Error("vCenter did not return a KMIP client certificate fingerprint.");
+      form.elements.expected_client_fingerprint.value = fingerprint;
+      clientSummary.textContent = `Client SHA-256: ${result.client_fingerprint}. Subject: ${result.subject}. Expires: ${result.expires_at}. Cluster: ${result.cluster_id}.`;
+      return true;
+    } catch (error) {
+      if (revision === contextRevision) {
+        const recoveryMessage = recoverTlsIdentityError(error);
+        if (recoveryMessage) controller.showStep("server", { unlock: true });
+        controller.setError(recoveryMessage || error.message || "Could not inspect the vCenter client certificate.");
+      }
+      return false;
+    }
+  };
+
+  credentialMode?.addEventListener("change", () => updateCredentialMode({ changed: true }));
+  vaultChoice?.addEventListener("change", () => {
+    if (hostname instanceof HTMLInputElement) hostname.value = vaultChoice.selectedOptions[0]?.dataset.hostname || "";
+    invalidateContext();
+  });
+  hostname?.addEventListener("input", invalidateContext);
+  hostname?.addEventListener("change", invalidateContext);
+  form.elements.provider_id?.addEventListener("change", invalidateClient);
+  form.elements.cluster_id?.addEventListener("input", invalidateClient);
+  form.elements.cluster_id?.addEventListener("change", invalidateClient);
+  [username, password].forEach((input) => {
+    input?.addEventListener("input", invalidateClient);
+    input?.addEventListener("change", invalidateClient);
+  });
+  tlsConfirm?.addEventListener("change", () => {
+    form.elements.confirmed_https_fingerprint.value = tlsConfirm.checked ? observedHttpsFingerprint : "";
+    clearClient();
+    contextRevision += 1;
+  });
+
+  wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "credential", title: "Choose a credential source", description: "Use manual credentials for this request or select a saved Vault endpoint." },
+      { id: "server", title: "Choose the vCenter server", description: "Enter the HTTPS host or use the saved endpoint address." },
+      { id: "tls", title: "Verify the vCenter certificate", description: "Review the observed SHA-256 fingerprint and confirm it with a simple checkbox." },
+      { id: "login", title: "Sign in to vCenter", description: "Enter credentials used only for this request." },
+      { id: "target", title: "Choose the trust destination", description: "Select a provider namespace and the registered KMIP cluster." },
+      { id: "review", title: "Review exact trust", description: "Confirm the inspected public certificate and provider assignment." },
+    ],
+    onOpen: ({ context }) => {
+      form.elements.vcenter_id.value = context?.is_new ? "" : (context?.id || "");
+      if (context && !context.is_new) {
+        form.elements.provider_id.value = context.provider_id || "";
+        form.elements.name.value = context.name || "";
+        hostname.value = context.hostname || "";
+      }
+      observedHttpsFingerprint = "";
+      if (tlsFingerprint) tlsFingerprint.textContent = "Not inspected yet";
+      tlsConfirmation?.classList.add("hidden");
+      clearClient();
+      updateCredentialMode();
+    },
+    onClose: () => {
+      contextRevision += 1;
+      username.value = "";
+      password.value = "";
+      clearServerTrust();
+      if (clientSummary) clientSummary.textContent = "";
+    },
+    onNext: async ({ controller, step }) => {
+      if (step.id === "credential") {
+        updateCredentialMode();
+        if (isVaultMode() && !selectVaultEndpoint()) {
+          controller.setError("Choose a saved vCenter HTTPS endpoint or switch to manual credentials.");
+          return false;
+        }
+      }
+      if (step.id === "server" && !(await runProbe(controller))) return false;
+      if (step.id === "tls" && !form.elements.confirmed_https_fingerprint.value) {
+        controller.setError("Confirm the displayed vCenter certificate before continuing.", tlsConfirm);
+        return false;
+      }
+      if (step.id === "target") {
+        if (!(await runInspect(controller))) return false;
+        return "review";
+      }
+      return true;
+    },
+    prepareReview: () => renderAtlasoWizardReview(form, [
+      { label: "Credential source", value: () => isVaultMode() ? "Saved Vault entry" : "Manual, request-only" },
+      { label: "Provider", field: "provider_id" },
+      { label: "vCenter", field: "name" },
+      { label: "Host", field: "hostname" },
+      { label: "KMIP cluster", field: "cluster_id" },
+      { label: "Approved client SHA-256", field: "expected_client_fingerprint" },
+    ]),
+    onSubmit: async ({ controller }) => {
+      if (!form.elements.expected_client_fingerprint.value) {
+        return { valid: false, message: "Inspect the vCenter client certificate before approval.", step: "target" };
+      }
+      try {
+        await request("approve");
+      } catch (error) {
+        const recoveryMessage = recoverTlsIdentityError(error);
+        if (recoveryMessage) return { valid: false, message: recoveryMessage, step: "server" };
+        throw error;
+      }
+      username.value = "";
+      password.value = "";
+      controller.markClean();
+      window.location.reload();
+      return { valid: true };
+    },
+  });
+  updateCredentialMode();
+  launcher?.addEventListener("click", (event) => openVsphereEnrollmentWizard({}, event.currentTarget));
+  return wizard;
+}
+
 function initializeVsphereKeyProviderTables() {
   const providerElement = document.getElementById("vsphere-providers-table");
   if (!(providerElement instanceof HTMLElement) || !window.AtlasoUiPatterns) return;
   const enrollmentForm = document.querySelector("[data-vsphere-enrollment-form]");
   const enrollmentDialog = document.getElementById("vsphere-enrollment-dialog");
   if (enrollmentForm instanceof HTMLFormElement && enrollmentDialog instanceof HTMLDialogElement) {
-    const vaultChoice = enrollmentForm.querySelector("[data-vsphere-vault-entry]");
-    const clientSummary = enrollmentForm.querySelector("[data-vsphere-enrollment-client]");
-    const httpsSummary = enrollmentForm.querySelector("[data-vsphere-enrollment-https]");
-    const showError = (message) => {
-      const error = enrollmentForm.querySelector("[data-atlaso-wizard-error]");
-      if (error) { error.textContent = message; error.classList.remove("hidden"); }
-    };
-    const clearClient = () => {
-      enrollmentForm.elements.expected_client_fingerprint.value = "";
-      if (clientSummary) clientSummary.textContent = "";
-    };
-    vaultChoice?.addEventListener("change", () => {
-      enrollmentForm.elements.hostname.value = vaultChoice.selectedOptions[0]?.dataset.hostname || "";
-      enrollmentForm.elements.confirmed_https_fingerprint.value = "";
-      clearClient();
-    });
-    const request = async (suffix) => {
-      const selected = String(vaultChoice?.value || "").split("|");
-      enrollmentForm.elements.vault_id.value = selected[0] || "";
-      enrollmentForm.elements.entry_id.value = selected[1] || "";
-      enrollmentForm.elements.uri_index.value = selected[2] || "";
-      return atlasoGridWizardRequest(
-        managementUiPath(`/vsphere-key-providers/enrollment/${suffix}`),
-        new FormData(enrollmentForm),
-      );
-    };
-    enrollmentForm.querySelector("[data-vsphere-enrollment-probe]")?.addEventListener("click", async (event) => {
-      const button = event.currentTarget;
-      button.disabled = true;
-      clearClient();
-      try {
-        const result = await request("probe");
-        if (httpsSummary) httpsSummary.textContent = `Observed HTTPS SHA-256: ${result.https_fingerprint}. Confirm this through an independent trusted source, then enter it below.`;
-      } catch (error) { showError(error.message || "Could not inspect vCenter HTTPS."); }
-      finally { button.disabled = false; }
-    });
-    enrollmentForm.querySelector("[data-vsphere-enrollment-inspect]")?.addEventListener("click", async (event) => {
-      const button = event.currentTarget;
-      button.disabled = true;
-      clearClient();
-      try {
-        const result = await request("inspect");
-        enrollmentForm.elements.expected_client_fingerprint.value = result.client_fingerprint;
-        if (clientSummary) clientSummary.textContent = `Client SHA-256: ${result.client_fingerprint}. Subject: ${result.subject}. Expires: ${result.expires_at}. Cluster: ${result.cluster_id}.`;
-      } catch (error) { showError(error.message || "Could not inspect the vCenter client certificate."); }
-      finally { button.disabled = false; }
-    });
-    enrollmentForm.querySelectorAll('input[name="hostname"], input[name="cluster_id"], input[name="confirmed_https_fingerprint"], select[name="provider_id"], [data-vsphere-vault-entry]').forEach((input) => {
-      input.addEventListener("input", clearClient);
-      input.addEventListener("change", clearClient);
-    });
-    vsphereEnrollmentWizard = window.AtlasoUiPatterns.createWizard({
-      form: enrollmentForm,
-      dialog: enrollmentDialog,
-      steps: [
-        { id: "target", title: "Choose the vCenter and provider", description: "Start with the registered KMIP cluster in vCenter." },
-        { id: "identity", title: "Verify vCenter identity", description: "Confirm HTTPS independently, then inspect its public KMIP client certificate." },
-        { id: "review", title: "Approve exact trust", description: "Bind the inspected client fingerprint to one provider namespace." },
-      ],
-      onOpen: ({ context }) => {
-        enrollmentForm.reset();
-        enrollmentForm.elements.vcenter_id.value = context?.is_new ? "" : (context?.id || "");
-        if (context && !context.is_new) {
-          enrollmentForm.elements.provider_id.value = context.provider_id || "";
-          enrollmentForm.elements.name.value = context.name || "";
-          enrollmentForm.elements.hostname.value = context.hostname || "";
-        }
-        clearClient();
-        if (httpsSummary) httpsSummary.textContent = "Confirm the shown fingerprint using an independent trusted source before continuing.";
-      },
-      prepareReview: () => renderAtlasoWizardReview(enrollmentForm, [
-        { label: "Provider", field: "provider_id" },
-        { label: "vCenter", field: "name" },
-        { label: "Host", field: "hostname" },
-        { label: "KMIP cluster", field: "cluster_id" },
-        { label: "Approved client SHA-256", field: "expected_client_fingerprint" },
-      ]),
-      onSubmit: async () => {
-        if (!enrollmentForm.elements.expected_client_fingerprint.value) return { valid: false, message: "Inspect the vCenter client certificate before approval." };
-        await request("approve");
-        window.location.reload();
-        return { valid: true };
-      },
-    });
-    document.querySelector("[data-vsphere-enrollment-open]")?.addEventListener("click", (event) => openVsphereEnrollmentWizard({}, event.currentTarget));
+    vsphereEnrollmentWizard = initializeVsphereEnrollmentWizard(
+      enrollmentForm,
+      enrollmentDialog,
+      document.querySelector("[data-vsphere-enrollment-open]"),
+    );
   }
   const vcenterProviderSelect = document.querySelector('[data-vsphere-vcenter-form] select[name="provider_id"]');
   const certificateTargetSelect = document.querySelector('[data-vsphere-certificate-form] select[name="target"]');

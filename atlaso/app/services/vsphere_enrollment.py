@@ -100,6 +100,21 @@ def certificate_fingerprint(leaf: bytes) -> str:
     return ":".join(digest[index : index + 2] for index in range(0, len(digest), 2))
 
 
+def normalize_https_fingerprint(value: str) -> str:
+    """Canonicalize a confirmed SHA-256 value with optional colon separators.
+
+    Args:
+        value: Public certificate fingerprint supplied by the caller.
+
+    Raises:
+        EnrollmentError: If the value is not exactly one SHA-256 digest.
+    """
+    digest = value.strip().replace(":", "").upper()
+    if re.fullmatch(r"[0-9A-F]{64}", digest) is None:
+        raise EnrollmentError("Confirm the current vCenter HTTPS fingerprint before using credentials.")
+    return ":".join(digest[index : index + 2] for index in range(0, 64, 2))
+
+
 def _reference(content: dict, field: str, expected_type: str) -> str:
     """Validate and return a managed-object reference from service metadata.
 
@@ -172,7 +187,7 @@ def discover_vcenter_client(
     Args:
         host: Normalized vCenter hostname or address.
         cluster_id: Registered Atlaso KMIP cluster identifier.
-        username: Vault account name used for discovery.
+        username: Request-local account name used for discovery.
         password: Password held in memory for the pinned session.
         confirmed_https_fingerprint: Out-of-band confirmed HTTPS certificate fingerprint.
         atlaso_host: Expected Atlaso KMIP endpoint hostname.
@@ -188,12 +203,12 @@ def discover_vcenter_client(
         )
     leaf = vcenter_https_leaf(host, port=port)
     observed = certificate_fingerprint(leaf)
-    if observed != confirmed_https_fingerprint.strip().upper():
+    if observed != normalize_https_fingerprint(confirmed_https_fingerprint):
         raise EnrollmentError(
             "The vCenter HTTPS fingerprint differs from the confirmed value."
         )
     if not username or not password:
-        raise EnrollmentError("The selected Vault entry needs a username and password.")
+        raise EnrollmentError("Enter a vCenter username and password.")
     base = f"/sdk/vim25/{VSPHERE_API_RELEASE}"
     api_host = f"[{host}]" if ":" in host else host
     try:
@@ -216,7 +231,7 @@ def discover_vcenter_client(
                 json={"userName": username, "password": password},
             )
             if login.status_code != 200:
-                raise EnrollmentError("vCenter rejected the selected Vault credential.")
+                raise EnrollmentError("vCenter rejected the supplied credential.")
             token = login.headers.get("vmware-api-session-id", "")
             if not token or len(token) > 1024:
                 raise EnrollmentError("vCenter returned no valid API session.")

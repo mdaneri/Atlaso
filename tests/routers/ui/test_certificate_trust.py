@@ -805,3 +805,404 @@ def test_enrollment_saved_endpoint_binding_and_choices(client, monkeypatch) -> N
     response = client.post("/vsphere-key-providers/enrollment/inspect", data=data)
     assert response.status_code == 422
     assert "endpoint captured" in response.text
+
+
+def test_vcenter_enrollment_manual_credentials_are_request_local(client, monkeypatch) -> None:
+    """Enroll with manual credentials without reading or storing a Vault secret.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Fixture replacing public probing, discovery, and secret access.
+    """
+    from atlaso.app.models import AuditEvent
+    from atlaso.app.routers.ui import certificate_trust as transport
+
+    csrf = _login(client)
+    username = "temporary-vcenter-operator"
+    password = "manual-secret-that-must-not-persist"
+    host = "vcsa-manual.example.test"
+    cluster_id = "Atlaso-KMIP"
+    https_leaf = b"manual-vcenter-https-leaf"
+    fingerprint = certificate_fingerprint(https_leaf)
+    public_pem, _ = _public_client_certificate(host)
+    parsed = parse_public_certificate(public_pem)
+    discovered = DiscoveredClient(
+        certificate_pem=public_pem,
+        fingerprint_sha256=str(parsed["fingerprint_sha256"]),
+        subject=str(parsed["subject"]),
+        not_valid_after=str(parsed["not_valid_after"]),
+        cluster_id=cluster_id,
+        vcenter_host=host,
+    )
+    probes = []
+    calls = []
+
+    def probe(observed_host, *, port):
+        """Capture the unauthenticated HTTPS certificate probe.
+
+        Args:
+            observed_host: Endpoint selected for the certificate probe.
+            port: HTTPS port used by the probe.
+        """
+        probes.append((observed_host, port))
+        return https_leaf
+
+    def discover(**kwargs):
+        """Capture request-local credentials passed to authenticated discovery.
+
+        Args:
+            **kwargs: Discovery arguments captured for request-isolation assertions.
+        """
+        calls.append(kwargs)
+        return discovered
+
+    monkeypatch.setattr(transport, "vcenter_https_leaf", probe)
+    monkeypatch.setattr(transport, "discover_vcenter_client", discover)
+    monkeypatch.setattr(
+        transport,
+        "decrypt_secret",
+        lambda _secret: (_ for _ in ()).throw(AssertionError("Vault decrypted")),
+    )
+
+    with SessionLocal() as db:
+        provider = VsphereKeyProvider(
+            id=str(uuid4()), name=f"Manual enrollment {uuid4()}", enabled=True
+        )
+        db.add(provider)
+        db.commit()
+        provider_id = provider.id
+        vault_count_before = db.query(Vault).count()
+        entry_count_before = db.query(VaultEntry).count()
+
+    common = {
+        "credential_source": "manual",
+        "hostname": host,
+        "cluster_id": cluster_id,
+        "username": username,
+        "password": password,
+        "csrf": csrf,
+    }
+    probed = client.post(
+        "/vsphere-key-providers/enrollment/probe", data=common
+    )
+    assert probed.status_code == 200, probed.text
+    assert probed.json() == {"https_fingerprint": fingerprint}
+    assert probes == [(host, 443)]
+    assert calls == []
+
+    inspected = client.post(
+        "/vsphere-key-providers/enrollment/inspect",
+        data={
+            **common,
+            "confirmed_https_fingerprint": fingerprint.replace(":", ""),
+        },
+    )
+    assert inspected.status_code == 200, inspected.text
+    assert inspected.json()["client_fingerprint"] == parsed["fingerprint_sha256"]
+    assert calls[-1]["username"] == username
+    assert calls[-1]["password"] == password
+    assert calls[-1]["port"] == 443
+
+    approved = client.post(
+        "/vsphere-key-providers/enrollment/approve",
+        data={
+            **common,
+            "provider_id": provider_id,
+            "name": "Manual vCenter",
+            "confirmed_https_fingerprint": fingerprint,
+            "expected_client_fingerprint": parsed["fingerprint_sha256"],
+        },
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["status"] == "saved_pending_appliance_apply"
+    assert probes == [(host, 443), (host, 443), (host, 443)]
+    assert len(calls) == 2
+
+    for response in (probed, inspected, approved):
+        assert username not in response.text
+        assert password not in response.text
+    page = client.get("/vsphere-key-providers")
+    assert page.status_code == 200
+    assert username not in page.text
+    assert password not in page.text
+    with SessionLocal() as db:
+        assert db.query(Vault).count() == vault_count_before
+        assert db.query(VaultEntry).count() == entry_count_before
+        trusted = (
+            db.query(VsphereTrustedVcenter)
+            .filter_by(provider_id=provider_id)
+            .one()
+        )
+        assert trusted.name == "Manual vCenter"
+        assert len(trusted.certificates) == 1
+        assert username not in repr(trusted.__dict__)
+        assert password not in repr(trusted.__dict__)
+        audit = db.query(AuditEvent).all()
+        enrollment_audit = [
+            event
+            for event in audit
+            if event.action == "discover_vsphere_client_certificate"
+        ]
+        assert len(enrollment_audit) == 2
+        assert all("credential_source=manual" in event.detail for event in enrollment_audit)
+        assert all(username not in (event.detail or "") for event in audit)
+        assert all(password not in (event.detail or "") for event in audit)
+
+
+def test_vcenter_enrollment_manual_invalid_source_or_host_stops_before_probe(
+    client, monkeypatch
+) -> None:
+    """Reject unsupported credential sources and non-host manual targets early.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Fixture replacing the public HTTPS probe.
+    """
+    from atlaso.app.routers.ui import certificate_trust as transport
+
+    csrf = _login(client)
+    monkeypatch.setattr(
+        transport,
+        "vcenter_https_leaf",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("HTTPS probe should not run")
+        ),
+    )
+    base = {
+        "credential_source": "manual",
+        "hostname": "vcsa.example.test",
+        "csrf": csrf,
+    }
+    for changes in (
+        {"credential_source": "other"},
+        {"hostname": "https://vcsa.example.test/path"},
+        {"hostname": "user@vcsa.example.test"},
+        {"hostname": ""},
+    ):
+        response = client.post(
+            "/vsphere-key-providers/enrollment/probe", data={**base, **changes}
+        )
+        assert response.status_code == 422, response.text
+
+
+def test_vcenter_enrollment_manual_fingerprint_must_be_confirmed_before_discovery(
+    client, monkeypatch
+) -> None:
+    """Missing or changed server pins prevent both discovery and Vault decryption.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Fixture replacing HTTPS probing and credential consumers.
+    """
+    from atlaso.app.routers.ui import certificate_trust as transport
+
+    csrf = _login(client)
+    with SessionLocal() as db:
+        vault = Vault(name=f"pin-check-{uuid4()}", created_by="admin")
+        db.add(vault)
+        db.flush()
+        entry = VaultEntry(
+            vault_id=vault.id,
+            key="vcenter-admin",
+            secret_type="vcf_password",
+            uris_json='["https://vcsa.example.test"]',
+            username="administrator",
+            encrypted_value=encrypt_secret("not-used"),
+            created_by="admin",
+        )
+        db.add(entry)
+        db.commit()
+        vault_id, entry_id = vault.id, entry.id
+
+    monkeypatch.setattr(
+        transport, "vcenter_https_leaf", lambda _host, **_kwargs: b"observed-leaf"
+    )
+    calls = []
+    monkeypatch.setattr(
+        transport,
+        "discover_vcenter_client",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        transport,
+        "decrypt_secret",
+        lambda _secret: (_ for _ in ()).throw(AssertionError("Vault decrypted")),
+    )
+    for data in (
+        {
+            "credential_source": "manual",
+            "hostname": "vcsa.example.test",
+            "cluster_id": "Atlaso-KMIP",
+            "username": "manual-user",
+            "password": "manual-password",
+            "confirmed_https_fingerprint": "",
+            "csrf": csrf,
+        },
+        {
+            "credential_source": "manual",
+            "hostname": "vcsa.example.test",
+            "cluster_id": "Atlaso-KMIP",
+            "username": "manual-user",
+            "password": "manual-password",
+            "confirmed_https_fingerprint": "00" * 32,
+            "csrf": csrf,
+        },
+        {
+            "hostname": "vcsa.example.test",
+            "cluster_id": "Atlaso-KMIP",
+            "vault_id": vault_id,
+            "entry_id": entry_id,
+            "uri_index": 0,
+            "confirmed_https_fingerprint": "00" * 32,
+            "csrf": csrf,
+        },
+    ):
+        response = client.post(
+            "/vsphere-key-providers/enrollment/inspect", data=data
+        )
+        assert response.status_code == 422, response.text
+    assert calls == []
+
+
+def test_vcenter_enrollment_manual_approval_rejects_client_rotation_without_changes(
+    client, monkeypatch
+) -> None:
+    """A rotated client certificate cannot change the reviewed provider record.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Fixture replacing the HTTPS probe and vCenter discovery.
+    """
+    from atlaso.app.routers.ui import certificate_trust as transport
+
+    csrf = _login(client)
+    old_pem, _ = _public_client_certificate("vcsa.example.test")
+    old_parsed = parse_public_certificate(old_pem)
+    replacement_pem, _ = _public_client_certificate("vcsa.example.test")
+    replacement = parse_public_certificate(replacement_pem)
+    cluster_id = "Atlaso-KMIP"
+    host = "vcsa.example.test"
+    confirmed = certificate_fingerprint(b"confirmed-leaf")
+    changed = DiscoveredClient(
+        certificate_pem=replacement_pem,
+        fingerprint_sha256=str(replacement["fingerprint_sha256"]),
+        subject=str(replacement["subject"]),
+        not_valid_after=str(replacement["not_valid_after"]),
+        cluster_id=cluster_id,
+        vcenter_host=host,
+    )
+    monkeypatch.setattr(
+        transport, "vcenter_https_leaf", lambda _host, **_kwargs: b"confirmed-leaf"
+    )
+    monkeypatch.setattr(transport, "discover_vcenter_client", lambda **_kwargs: changed)
+    monkeypatch.setattr(
+        transport,
+        "decrypt_secret",
+        lambda _secret: (_ for _ in ()).throw(AssertionError("Vault decrypted")),
+    )
+    with SessionLocal() as db:
+        provider = VsphereKeyProvider(
+            id=str(uuid4()), name=f"Rotation {uuid4()}", enabled=True
+        )
+        trusted = VsphereTrustedVcenter(
+            id=str(uuid4()),
+            provider_id=provider.id,
+            name="Reviewed vCenter",
+            hostname=host,
+            enabled=True,
+        )
+        trusted.certificates.append(
+            VsphereTrustedVcenterCertificate(
+                id=str(uuid4()),
+                source="uploaded_public",
+                **old_parsed,
+            )
+        )
+        provider.trusted_vcenters.append(trusted)
+        db.add(provider)
+        db.commit()
+        provider_id, vcenter_id = provider.id, trusted.id
+        provider_updated_at = provider.updated_at
+        certificate_id = trusted.certificates[0].id
+
+    response = client.post(
+        "/vsphere-key-providers/enrollment/approve",
+        data={
+            "credential_source": "manual",
+            "provider_id": provider_id,
+            "vcenter_id": vcenter_id,
+            "name": "Must not be applied",
+            "hostname": host,
+            "cluster_id": cluster_id,
+            "username": "manual-user",
+            "password": "manual-password",
+            "confirmed_https_fingerprint": confirmed,
+            "expected_client_fingerprint": old_parsed["fingerprint_sha256"],
+            "csrf": csrf,
+        },
+    )
+    assert response.status_code == 422
+    assert "changed since inspection" in response.text
+    with SessionLocal() as db:
+        provider = db.get(VsphereKeyProvider, provider_id)
+        trusted = db.get(VsphereTrustedVcenter, vcenter_id)
+        assert provider.updated_at.replace(tzinfo=timezone.utc) == provider_updated_at
+        assert trusted.name == "Reviewed vCenter"
+        assert len(trusted.certificates) == 1
+        assert trusted.certificates[0].id == certificate_id
+        assert (
+            trusted.certificates[0].fingerprint_sha256
+            == old_parsed["fingerprint_sha256"]
+        )
+
+
+def test_vcenter_enrollment_manual_routes_keep_admin_and_csrf_guards(
+    client, monkeypatch
+) -> None:
+    """Require an admin session and valid CSRF token on each manual route.
+
+    Args:
+        client: Isolated HTTP test client.
+        monkeypatch: Fixture replacing the public HTTPS probe.
+    """
+    from atlaso.app.routers.ui import certificate_trust as transport
+    from atlaso.app.security import Identity
+
+    csrf = _login(client)
+    monkeypatch.setattr(
+        transport,
+        "vcenter_https_leaf",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("request reached network")
+        ),
+    )
+    common = {
+        "credential_source": "manual",
+        "hostname": "vcsa.example.test",
+        "cluster_id": "Atlaso-KMIP",
+        "username": "manual-user",
+        "password": "manual-password",
+        "confirmed_https_fingerprint": "00" * 32,
+        "provider_id": str(uuid4()),
+        "name": "Guard test",
+        "expected_client_fingerprint": "00" * 32,
+        "csrf": csrf,
+    }
+    for route in ("probe", "inspect", "approve"):
+        unauthorized = client.post(
+            f"/vsphere-key-providers/enrollment/{route}",
+            data={**common, "csrf": "invalid"},
+        )
+        assert unauthorized.status_code == 403
+
+    client.app.dependency_overrides[transport.require_session_identity] = lambda: Identity(
+        "viewer", "viewer", set()
+    )
+    try:
+        for route in ("probe", "inspect", "approve"):
+            forbidden = client.post(
+                f"/vsphere-key-providers/enrollment/{route}", data=common
+            )
+            assert forbidden.status_code == 403
+    finally:
+        client.app.dependency_overrides.pop(transport.require_session_identity, None)
