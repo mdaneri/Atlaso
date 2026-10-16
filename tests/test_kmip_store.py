@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import uuid
@@ -10,7 +11,12 @@ from pathlib import Path
 
 import pytest
 
-from atlaso.app.kmip.store import KeyNotFoundError, KeyStoreError, WrappedKeyStore
+from atlaso.app.kmip.store import (
+    VSPHERE_CUSTOM_ATTRIBUTES,
+    KeyNotFoundError,
+    KeyStoreError,
+    WrappedKeyStore,
+)
 
 
 def store(tmp_path: Path, *, secret: str = "appliance-secrets-key") -> WrappedKeyStore:
@@ -53,6 +59,141 @@ def test_wrapped_store_survives_restart_without_persisting_plaintext(tmp_path: P
 
     assert restored_metadata == metadata
     assert restored_plaintext == plaintext
+
+
+def test_vcenter_custom_attributes_round_trip_and_preserve_existing_rows(
+    tmp_path: Path,
+) -> None:
+    """Authenticate bounded vSphere metadata through activation and restart.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    provider_id = str(uuid.uuid4())
+    operational_store = store(tmp_path)
+    original = operational_store.create_key(provider_id)
+    with sqlite3.connect(tmp_path / "store.db") as connection:
+        original_row_before = connection.execute(
+            "SELECT * FROM wrapped_keys WHERE key_id = ?", (original.key_id,)
+        ).fetchone()
+    operational_store.close()
+
+    reopened = store(tmp_path)
+    with sqlite3.connect(tmp_path / "store.db") as connection:
+        original_row_after_open = connection.execute(
+            "SELECT * FROM wrapped_keys WHERE key_id = ?", (original.key_id,)
+        ).fetchone()
+    assert original_row_after_open == original_row_before
+
+    attributes = (
+        ("x-Product_Version", "9.1.1"),
+        ("x-Component", "vCenter"),
+        ("x-Identifier", "vc-key-17"),
+        ("x-Vendor", "VMware"),
+        ("x-Product", "vSphere"),
+    )
+    created = reopened.create_key(provider_id, custom_attributes=attributes)
+    assert created.custom_attributes == tuple(sorted(attributes))
+    with sqlite3.connect(tmp_path / "store.db") as connection:
+        assert connection.execute(
+            "SELECT * FROM wrapped_keys WHERE key_id = ?", (original.key_id,)
+        ).fetchone() == original_row_before
+
+    _metadata, plaintext = reopened.get_key(provider_id, created.key_id)
+    activated = reopened.activate_key(provider_id, created.key_id)
+    assert activated.custom_attributes == created.custom_attributes
+    reopened.close()
+
+    restored = store(tmp_path)
+    restored_metadata, restored_plaintext = restored.get_key(provider_id, created.key_id)
+    assert restored_metadata.custom_attributes == created.custom_attributes
+    assert restored_metadata.state == "Active"
+    assert restored_plaintext == plaintext
+    with sqlite3.connect(tmp_path / "store.db") as connection:
+        assert connection.execute(
+            "SELECT * FROM wrapped_keys WHERE key_id = ?", (original.key_id,)
+        ).fetchone() == original_row_before
+
+
+@pytest.mark.parametrize(
+    "attributes",
+    [
+        (("x-Unknown", "value"),),
+        (("x-Component", "one"), ("x-Component", "two")),
+        (("x-Component", "é" * 257),),
+        tuple((f"x-Component-{index}", "value") for index in range(6)),
+        (("x-Component", 1),),
+        (("x-Component", "value"), "malformed"),
+    ],
+)
+def test_vcenter_custom_attributes_reject_unsupported_or_unbounded_values(
+    tmp_path: Path, attributes: tuple[object, ...]
+) -> None:
+    """Reject unsupported vSphere metadata before creating a key.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        attributes: Invalid metadata candidate supplied by this test case.
+    """
+    operational_store = store(tmp_path)
+
+    with pytest.raises(ValueError, match="custom_attributes"):
+        operational_store.create_key(str(uuid.uuid4()), custom_attributes=attributes)  # type: ignore[arg-type]  # Invalid cases intentionally exercise runtime validation.
+
+    with sqlite3.connect(tmp_path / "store.db") as connection:
+        assert connection.execute("SELECT COUNT(*) FROM wrapped_keys").fetchone()[0] == 0
+
+
+def test_vcenter_custom_attribute_tamper_and_provider_scope_fail_closed(
+    tmp_path: Path,
+) -> None:
+    """Authenticate vSphere attributes and retain provider namespace isolation.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    provider_id = str(uuid.uuid4())
+    other_provider = str(uuid.uuid4())
+    operational_store = store(tmp_path)
+    metadata = operational_store.create_key(
+        provider_id, custom_attributes=(("x-Component", "vCenter"),)
+    )
+    with pytest.raises(KeyNotFoundError, match="authenticated provider"):
+        operational_store.get_key(other_provider, metadata.key_id)
+    with sqlite3.connect(tmp_path / "store.db") as connection:
+        row = connection.execute(
+            "SELECT * FROM wrapped_keys WHERE key_id = ?", (metadata.key_id,)
+        ).fetchone()
+        aad = json.loads(row[-1])
+        assert set(aad["custom_attributes"]) <= VSPHERE_CUSTOM_ATTRIBUTES
+        aad["custom_attributes"]["x-Component"] = "tampered"
+        connection.execute(
+            "UPDATE wrapped_keys SET aad_json = ? WHERE key_id = ?",
+            (json.dumps(aad, separators=(",", ":"), sort_keys=True), metadata.key_id),
+        )
+
+    with pytest.raises(KeyStoreError, match="rollback or integrity"):
+        operational_store.get_key(provider_id, metadata.key_id)
+    with pytest.raises(KeyStoreError, match="rollback or integrity"):
+        operational_store.get_key(other_provider, metadata.key_id)
+
+
+def test_vcenter_custom_attributes_accept_empty_and_512_byte_values(
+    tmp_path: Path,
+) -> None:
+    """Accept empty values and the inclusive UTF-8 byte limit.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    operational_store = store(tmp_path)
+    attributes = (("x-Component", ""), ("x-Vendor", "é" * 256))
+
+    metadata = operational_store.create_key(
+        str(uuid.uuid4()), custom_attributes=attributes
+    )
+
+    assert metadata.custom_attributes == tuple(sorted(attributes))
 
 
 def test_provider_namespace_isolation_fails_closed(tmp_path: Path) -> None:

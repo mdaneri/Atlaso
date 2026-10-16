@@ -23,8 +23,10 @@ from cryptography.hazmat.primitives import serialization
 
 from atlaso.app.kmip.protocol import (
     CRYPTOGRAPHIC_ALGORITHM_AES,
+    MAX_BATCH_ITEMS,
     KmipDispatcher,
     Operation,
+    ProtocolFailure,
     ResultReason,
     ResultStatus,
     Tag,
@@ -71,6 +73,27 @@ RESULT_REASON_NAMES = {
     ResultReason.KEY_FORMAT_TYPE_NOT_SUPPORTED: "Key Format Type Not Supported",
     ResultReason.GENERAL_FAILURE: "General Failure",
 }
+ATTRIBUTE_DIAGNOSTIC_TYPES = {
+    "Cryptographic Algorithm": TtlvType.ENUMERATION,
+    "Cryptographic Length": TtlvType.INTEGER,
+    "Cryptographic Usage Mask": TtlvType.INTEGER,
+    "Object Type": TtlvType.ENUMERATION,
+    "State": TtlvType.ENUMERATION,
+}
+ATTRIBUTE_DIAGNOSTIC_NAMES = frozenset(
+    {
+        *ATTRIBUTE_DIAGNOSTIC_TYPES,
+        "Activation Date",
+        "Name",
+        "Unique Identifier",
+        "x-Component",
+        "x-Identifier",
+        "x-Name",
+        "x-Product",
+        "x-Product_Version",
+        "x-Vendor",
+    }
+)
 
 
 class ConfigurationError(ValueError):
@@ -575,6 +598,15 @@ class InteropTraceWriter:
         """
         request_items = request.children(Tag.BATCH_ITEM)
         response_items = response.children(Tag.BATCH_ITEM)
+        header = request.child(Tag.REQUEST_HEADER)
+        assert header is not None
+        version = header.child(Tag.PROTOCOL_VERSION)
+        assert version is not None
+        major = version.child(Tag.PROTOCOL_VERSION_MAJOR)
+        minor = version.child(Tag.PROTOCOL_VERSION_MINOR)
+        assert major is not None and minor is not None
+        assert isinstance(major.value, int) and isinstance(minor.value, int)
+        protocol_version = f"{major.value}.{minor.value}"
         events: list[str] = []
         timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         for request_item, response_item in zip(request_items, response_items, strict=True):
@@ -598,7 +630,7 @@ class InteropTraceWriter:
                 "connection_id": connection_id,
                 "client_cert_sha256": client_cert_sha256,
                 "provider_id": provider_id,
-                "protocol_version": "1.4",
+                "protocol_version": protocol_version,
                 "operation": operation_name,
                 "object_type": self._object_type(request_item),
                 "algorithm": algorithm,
@@ -622,8 +654,8 @@ class InteropTraceWriter:
         if not events:
             return
         with self._lock, self.path.open("a", encoding="utf-8", newline="\n") as stream:
-            for event in events:
-                stream.write(event)
+            for rendered_event in events:
+                stream.write(rendered_event)
                 stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
@@ -650,6 +682,209 @@ def _receive_exact(sock: ssl.SSLSocket, size: int) -> bytes:
             raise TtlvError("KMIP connection closed during a message.")
         result.extend(chunk)
     return bytes(result)
+
+
+def _numeric_child_value(node: Ttlv, tag: int, expected_type: TtlvType) -> int | None:
+    """Return an allowlisted numeric child without rendering peer-supplied values.
+
+    Args:
+        node: Decoded parent whose numeric protocol field is inspected.
+        tag: Allowlisted protocol field tag.
+        expected_type: Required numeric TTLV type.
+    """
+    if node.type is not TtlvType.STRUCTURE or not isinstance(node.value, tuple):
+        return None
+    for child in node.value[:16]:
+        if (
+            child.tag == tag
+            and child.type is expected_type
+            and isinstance(child.value, int)
+            and not isinstance(child.value, bool)
+        ):
+            return child.value
+    return None
+
+
+def _template_attribute_shape(payload: Ttlv) -> list[dict[str, object]]:
+    """Return a bounded, redacted projection of Template-Attribute entries.
+
+    Args:
+        payload: Request Payload whose optional Template-Attribute is inspected.
+    """
+    if payload.type is not TtlvType.STRUCTURE or not isinstance(payload.value, tuple):
+        return []
+    template = next(
+        (
+            child
+            for child in payload.value[:16]
+            if child.tag == Tag.TEMPLATE_ATTRIBUTE and child.type is TtlvType.STRUCTURE
+        ),
+        None,
+    )
+    if template is None or not isinstance(template.value, tuple):
+        return []
+
+    projection: list[dict[str, object]] = []
+    for attribute in template.value[:16]:
+        if attribute.tag != Tag.ATTRIBUTE or attribute.type is not TtlvType.STRUCTURE:
+            continue
+        children = attribute.value[:16] if isinstance(attribute.value, tuple) else ()
+        name_node = next(
+            (
+                child
+                for child in children
+                if child.tag == Tag.ATTRIBUTE_NAME
+                and child.type is TtlvType.TEXT_STRING
+                and isinstance(child.value, str)
+            ),
+            None,
+        )
+        name = name_node.value if name_node is not None else None
+        label = name if name in ATTRIBUTE_DIAGNOSTIC_NAMES else "unsupported"
+        expected_type = ATTRIBUTE_DIAGNOSTIC_TYPES.get(label)
+        projection.append(
+            {
+                "fields": [(child.tag, int(child.type)) for child in children],
+                "name": label,
+                "numeric_value": (
+                    _numeric_child_value(attribute, Tag.ATTRIBUTE_VALUE, expected_type)
+                    if expected_type is not None
+                    else None
+                ),
+            }
+        )
+    return projection
+
+
+def _dispatch_request_shape(request: Ttlv) -> dict[str, object]:
+    """Return bounded tag/type and numeric protocol metadata for diagnostics.
+
+    Args:
+        request: Decoded request; payload values are never included.
+    """
+    header_fields: list[tuple[int, int]] = []
+    protocol_version: tuple[int | None, int | None] | None = None
+    operations: list[int] = []
+    batch_fields: list[list[tuple[int, int]]] = []
+    payload_fields: list[list[tuple[int, int]]] = []
+    template_attributes: list[list[dict[str, object]]] = []
+    if request.type is TtlvType.STRUCTURE and isinstance(request.value, tuple):
+        root_children = request.value[: MAX_BATCH_ITEMS + 1]
+        header = next(
+            (
+                child
+                for child in root_children
+                if child.tag == Tag.REQUEST_HEADER and child.type is TtlvType.STRUCTURE
+            ),
+            None,
+        )
+        if header is not None and isinstance(header.value, tuple):
+            header_fields = [(child.tag, int(child.type)) for child in header.value[:16]]
+            version = next(
+                (
+                    child
+                    for child in header.value[:16]
+                    if child.tag == Tag.PROTOCOL_VERSION and child.type is TtlvType.STRUCTURE
+                ),
+                None,
+            )
+            if version is not None:
+                protocol_version = (
+                    _numeric_child_value(version, Tag.PROTOCOL_VERSION_MAJOR, TtlvType.INTEGER),
+                    _numeric_child_value(version, Tag.PROTOCOL_VERSION_MINOR, TtlvType.INTEGER),
+                )
+        for item in root_children:
+            if item.tag != Tag.BATCH_ITEM or item.type is not TtlvType.STRUCTURE:
+                continue
+            children = item.value[:16] if isinstance(item.value, tuple) else ()
+            batch_fields.append([(child.tag, int(child.type)) for child in children])
+            payload = next(
+                (
+                    child
+                    for child in children
+                    if child.tag == Tag.REQUEST_PAYLOAD and child.type is TtlvType.STRUCTURE
+                ),
+                None,
+            )
+            payload_children = (
+                payload.value[:16]
+                if payload is not None and isinstance(payload.value, tuple)
+                else ()
+            )
+            payload_fields.append(
+                [(child.tag, int(child.type)) for child in payload_children]
+            )
+            template_attributes.append(
+                _template_attribute_shape(payload) if payload is not None else []
+            )
+            operation = _numeric_child_value(item, Tag.OPERATION, TtlvType.ENUMERATION)
+            if operation is not None:
+                operations.append(operation)
+            if len(batch_fields) == MAX_BATCH_ITEMS:
+                break
+    return {
+        "header_fields": header_fields,
+        "protocol_version": protocol_version,
+        "operations": operations,
+        "batch_fields": batch_fields,
+        "payload_fields": payload_fields,
+        "template_attributes": template_attributes,
+    }
+
+
+def _log_dispatch_failure(request: Ttlv, error: Exception) -> None:
+    """Log only bounded protocol shape, never exception text or request payloads.
+
+    Args:
+        request: Decoded request whose structural metadata is allowlisted.
+        error: Failure used only for its class and numeric protocol reason.
+    """
+    shape = _dispatch_request_shape(request)
+    if isinstance(error, ProtocolFailure):
+        LOGGER.warning(
+            "KMIP dispatch rejected request: category=protocol_failure reason=%d request_shape=%r",
+            int(error.reason),
+            shape,
+        )
+        return
+    LOGGER.warning(
+        "KMIP dispatch failed: category=unexpected exception_class=%s request_shape=%r",
+        type(error).__name__,
+        shape,
+    )
+
+
+def _log_response_failures(request: Ttlv, response: Ttlv) -> None:
+    """Log numeric operation failure metadata without response payloads or messages.
+
+    Args:
+        request: Decoded request whose bounded shape is safe to record.
+        response: Dispatcher response containing possible failed batch items.
+    """
+    if response.type is not TtlvType.STRUCTURE or not isinstance(response.value, tuple):
+        return
+    failed_items: list[dict[str, int | None]] = []
+    for item in response.value[: MAX_BATCH_ITEMS + 1]:
+        if item.tag != Tag.BATCH_ITEM or item.type is not TtlvType.STRUCTURE:
+            continue
+        status = _numeric_child_value(item, Tag.RESULT_STATUS, TtlvType.ENUMERATION)
+        if status in {None, ResultStatus.SUCCESS}:
+            continue
+        failed_items.append(
+            {
+                "operation": _numeric_child_value(item, Tag.OPERATION, TtlvType.ENUMERATION),
+                "status": status,
+                "reason": _numeric_child_value(item, Tag.RESULT_REASON, TtlvType.ENUMERATION),
+            }
+        )
+        if len(failed_items) == MAX_BATCH_ITEMS:
+            break
+    if failed_items:
+        LOGGER.warning(
+            "KMIP dispatch returned failed batch items: failures=%r request_shape=%r",
+            failed_items,
+            _dispatch_request_shape(request),
+        )
 
 
 class KmipRequestHandler(socketserver.BaseRequestHandler):
@@ -701,7 +936,15 @@ class KmipRequestHandler(socketserver.BaseRequestHandler):
                     raise TtlvError("KMIP request is truncated.")
                 request_bytes = header + body
                 request = decode(request_bytes)
-                response = self.server.dispatcher.dispatch(provider_id, request)
+                try:
+                    response = self.server.dispatcher.dispatch(provider_id, request)
+                except ProtocolFailure as exc:
+                    _log_dispatch_failure(request, exc)
+                    return
+                except Exception as exc:
+                    _log_dispatch_failure(request, exc)
+                    raise
+                _log_response_failures(request, response)
                 response_bytes = encode(response)
                 if self.server.trace_writer is not None:
                     self.server.trace_writer.record(

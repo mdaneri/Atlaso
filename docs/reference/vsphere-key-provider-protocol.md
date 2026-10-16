@@ -22,7 +22,8 @@ The machine-readable source is
 ## Compatibility statement
 
 - The only initial product target is VCF 9.1.
-- The service uses KMIP 1.4 TTLV over mutually authenticated TLS on TCP 5696.
+- The service accepts the bounded KMIP 1.1 and 1.4 TTLV profiles over mutually authenticated TLS on TCP 5696.
+  vCenter 9.1.1 starts discovery with a KMIP 1.1 request; negotiation must answer that request before key operations.
 - It manages AES-256 symmetric keys in Raw format.
 - It is not a general-purpose KMIP implementation, production HSM, or compatibility claim for other vSphere or VCF
   releases.
@@ -36,8 +37,23 @@ VCF 9.1 evidence, tests, documentation, and security review.
 ## Candidate allowlist
 
 The candidate contract allows the operations below for implementation and capture. This list is based on the OASIS
-KMIP 1.4 baseline and symmetric-key lifecycle profiles plus the vSphere `CryptoManagerKmip` integration surface. It is
-not an observation of a running VCF 9.1 system.
+KMIP baseline and symmetric-key lifecycle profiles plus the vSphere `CryptoManagerKmip` integration surface.
+Issue [#957](https://github.com/mdaneri/Atlaso/issues/957) records KMIP 1.1 discovery and Create requests with a
+Unique Batch Item ID observed from vCenter 9.1.1. The daemon validates this Byte String correlation field and echoes
+it on success and failure responses. Multi-item requests require distinct identifiers. This bounded observation does
+not complete the VCF 9.1 acceptance or recovery matrix.
+
+The observed Create profile also includes five VMware informational attributes: `x-Component`, `x-Identifier`,
+`x-Product`, `x-Product_Version`, and `x-Vendor`. Only those custom names are accepted, each once as a Text String of
+at most 512 UTF-8 bytes. They are authenticated with the wrapped key, survive activation and restart, and are available
+through provider-scoped Get Attributes and Get Attribute List. Custom values are never included in logs or traces.
+Existing keys without these attributes retain their original authenticated format and are not rewritten on startup.
+Get Attributes omits supported attributes that have no value; a request for only absent attributes returns the key's
+Unique Identifier, as required by KMIP. Unknown attribute names outside this contract remain rejected.
+
+vCenter 9.1.1 retrieves a newly created key before sending Activate. An authenticated client may therefore Get its
+provider's Pre-Active or Active keys. Get does not activate a key or authorize server-side cryptographic use; explicit
+Activate retains its separate lifecycle transition. Other lifecycle states remain outside this bounded contract.
 
 | Area | Candidate boundary |
 | --- | --- |
@@ -47,7 +63,7 @@ not an observation of a running VCF 9.1 system.
 | Object | Symmetric Key only |
 | Algorithm | AES-256 only |
 | Format | Raw only |
-| Transport | KMIP 1.4 TTLV, TLS 1.2 or newer, mutual TLS, TCP 5696 |
+| Transport | KMIP 1.1 and 1.4 TTLV, TLS 1.2 or newer, mutual TLS, TCP 5696 |
 
 The contract explicitly excludes cryptographic execution such as Encrypt, Decrypt, Sign, and MAC; asymmetric or secret
 data objects; key-pair creation; Register; Re-Key; Revoke; Archive; Recover; and every destructive operation. A future
@@ -106,6 +122,7 @@ before changing the allowlist.
 
 ## Authoritative sources
 
+- [OASIS KMIP Specification Version 1.1](https://docs.oasis-open.org/kmip/spec/v1.1/os/kmip-spec-v1.1-os.html)
 - [OASIS KMIP Specification Version 1.4](https://docs.oasis-open.org/kmip/spec/v1.4/kmip-spec-v1.4.html)
 - [OASIS KMIP Profiles Version 1.4](https://docs.oasis-open.org/kmip/profiles/v1.4/kmip-profiles-v1.4.html)
 - [Broadcom vSphere `CryptoManagerKmip` API](https://developer.broadcom.com/xapis/vsphere-web-services-api/latest/vim.encryption.CryptoManagerKmip.html)

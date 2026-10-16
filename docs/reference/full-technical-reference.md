@@ -978,7 +978,7 @@ client-private-key or management key workflow.
 
 Real internal `kms` apply stages `/var/lib/atlaso/apply/kms/server.json` and the public-only
 `/var/lib/atlaso/apply/kms/client-trust.pem`, installs fixed runtime paths, and manages the hardened, unprivileged
-`atlaso-kmip.service`. The daemon exposes only the checked-in KMIP 1.4 AES-256 symmetric-key contract, maps each exact
+`atlaso-kmip.service`. The daemon exposes only the checked-in KMIP 1.1/1.4 AES-256 symmetric-key contract, maps each exact
 peer fingerprint to one provider UUID, and stores only AES-GCM-wrapped operational keys under `/var/lib/atlaso/kmip`.
 `systemd-creds` protects the runtime store credential. TLS requires 1.2 or newer and permits partial-chain verification
 for imported public leaves, and the daemon binds every derived selected listener address. Authenticated status returns

@@ -16,7 +16,7 @@ but they must remain described as experimental until the VCF 9.1 promotion gate 
 
 ## Architecture decision
 
-Atlaso implements a small Python service with an internal, bounded KMIP 1.4 TTLV codec and operation dispatcher.
+Atlaso implements a small Python service with an internal, bounded KMIP 1.1/1.4 TTLV codec and operation dispatcher.
 It does not embed a general-purpose KMIP request engine, policy engine, storage model, or compatibility wrapper.
 
 Python keeps the service inside Atlaso's existing build, packaging, logging, testing, and Photon lifecycle. The
@@ -77,8 +77,15 @@ the runtime key-encryption key (KEK). The authenticated additional data binds at
 - key UUID;
 - algorithm and length;
 - optional bounded KMIP name;
+- the five allowlisted, bounded VMware informational attributes when present;
 - creation and activation times; and
 - lifecycle state.
+
+Informational attribute values are authenticated metadata, stored with the same service-only permissions as the
+existing KMIP name. They are not encrypted separately from that metadata and must not contain credentials or key
+material. Logs and interoperability traces include only their fixed attribute names, never their values. Keys created
+without custom attributes retain their original authenticated bytes; enabling this profile does not migrate or
+rewrap existing keys.
 
 Replacing a provider ID, moving a wrapped blob into another namespace, editing metadata, or rolling a row backward must
 make decryption fail. Every metadata-only read authenticates the same wrapped ciphertext and additional data as
@@ -98,7 +105,9 @@ decrypts it into the service's private runtime credential directory; the daemon 
 or bootstrap-administrator secrets.
 
 Atlaso never exports plaintext keys through its UI or management API. KMIP `Get` is the sole plaintext release path
-and is restricted to an authenticated client mapped to the same provider. Mutable buffers are cleared where Python
+and is restricted to an authenticated client mapped to the same provider. Get permits the bounded Pre-Active and
+Active states, including vCenter's observed retrieval immediately after Create. Retrieval leaves lifecycle state
+unchanged and does not perform cryptographic operations. Mutable buffers are cleared where Python
 permits, but encoded protocol bytes and immutable Python objects cannot be guaranteed to be overwritten in place; the
 unprivileged process and short request lifetime are part of the memory-exposure boundary.
 
