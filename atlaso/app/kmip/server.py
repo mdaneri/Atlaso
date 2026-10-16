@@ -23,8 +23,10 @@ from cryptography.hazmat.primitives import serialization
 
 from atlaso.app.kmip.protocol import (
     CRYPTOGRAPHIC_ALGORITHM_AES,
+    MAX_BATCH_ITEMS,
     KmipDispatcher,
     Operation,
+    ProtocolFailure,
     ResultReason,
     ResultStatus,
     Tag,
@@ -652,6 +654,98 @@ def _receive_exact(sock: ssl.SSLSocket, size: int) -> bytes:
     return bytes(result)
 
 
+def _numeric_child_value(node: Ttlv, tag: int, expected_type: TtlvType) -> int | None:
+    """Return an allowlisted numeric child without rendering peer-supplied values.
+
+    Args:
+        node: Decoded parent whose numeric protocol field is inspected.
+        tag: Allowlisted protocol field tag.
+        expected_type: Required numeric TTLV type.
+    """
+    if node.type is not TtlvType.STRUCTURE or not isinstance(node.value, tuple):
+        return None
+    for child in node.value[:16]:
+        if (
+            child.tag == tag
+            and child.type is expected_type
+            and isinstance(child.value, int)
+            and not isinstance(child.value, bool)
+        ):
+            return child.value
+    return None
+
+
+def _dispatch_request_shape(request: Ttlv) -> dict[str, object]:
+    """Return bounded tag/type and numeric protocol metadata for diagnostics.
+
+    Args:
+        request: Decoded request; payload values are never included.
+    """
+    header_fields: list[tuple[int, int]] = []
+    protocol_version: tuple[int | None, int | None] | None = None
+    operations: list[int] = []
+    if request.type is TtlvType.STRUCTURE and isinstance(request.value, tuple):
+        root_children = request.value[: MAX_BATCH_ITEMS + 1]
+        header = next(
+            (
+                child
+                for child in root_children
+                if child.tag == Tag.REQUEST_HEADER and child.type is TtlvType.STRUCTURE
+            ),
+            None,
+        )
+        if header is not None and isinstance(header.value, tuple):
+            header_fields = [(child.tag, int(child.type)) for child in header.value[:16]]
+            version = next(
+                (
+                    child
+                    for child in header.value[:16]
+                    if child.tag == Tag.PROTOCOL_VERSION and child.type is TtlvType.STRUCTURE
+                ),
+                None,
+            )
+            if version is not None:
+                protocol_version = (
+                    _numeric_child_value(version, Tag.PROTOCOL_VERSION_MAJOR, TtlvType.INTEGER),
+                    _numeric_child_value(version, Tag.PROTOCOL_VERSION_MINOR, TtlvType.INTEGER),
+                )
+        for item in root_children:
+            if item.tag != Tag.BATCH_ITEM or item.type is not TtlvType.STRUCTURE:
+                continue
+            operation = _numeric_child_value(item, Tag.OPERATION, TtlvType.ENUMERATION)
+            if operation is not None:
+                operations.append(operation)
+            if len(operations) == MAX_BATCH_ITEMS:
+                break
+    return {
+        "header_fields": header_fields,
+        "protocol_version": protocol_version,
+        "operations": operations,
+    }
+
+
+def _log_dispatch_failure(request: Ttlv, error: Exception) -> None:
+    """Log only bounded protocol shape, never exception text or request payloads.
+
+    Args:
+        request: Decoded request whose structural metadata is allowlisted.
+        error: Failure used only for its class and numeric protocol reason.
+    """
+    shape = _dispatch_request_shape(request)
+    if isinstance(error, ProtocolFailure):
+        LOGGER.warning(
+            "KMIP dispatch rejected request: category=protocol_failure reason=%d request_shape=%r",
+            int(error.reason),
+            shape,
+        )
+        return
+    LOGGER.warning(
+        "KMIP dispatch failed: category=unexpected exception_class=%s request_shape=%r",
+        type(error).__name__,
+        shape,
+    )
+
+
 class KmipRequestHandler(socketserver.BaseRequestHandler):
     """Represent kmip request handler.
 
@@ -701,7 +795,14 @@ class KmipRequestHandler(socketserver.BaseRequestHandler):
                     raise TtlvError("KMIP request is truncated.")
                 request_bytes = header + body
                 request = decode(request_bytes)
-                response = self.server.dispatcher.dispatch(provider_id, request)
+                try:
+                    response = self.server.dispatcher.dispatch(provider_id, request)
+                except ProtocolFailure as exc:
+                    _log_dispatch_failure(request, exc)
+                    return
+                except Exception as exc:
+                    _log_dispatch_failure(request, exc)
+                    raise
                 response_bytes = encode(response)
                 if self.server.trace_writer is not None:
                     self.server.trace_writer.record(

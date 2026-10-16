@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import socket
 import socketserver
 import ssl
@@ -26,6 +27,7 @@ from atlaso.app.kmip.protocol import (
     OBJECT_TYPE_SYMMETRIC_KEY,
     KmipDispatcher,
     Operation,
+    ResultReason,
     ResultStatus,
     Tag,
 )
@@ -37,6 +39,7 @@ from atlaso.app.kmip.server import (
     ServiceConfig,
     ServiceLimits,
     _load_secrets_key,
+    _log_dispatch_failure,
     build_server,
     certificate_sha256,
     parse_config,
@@ -47,6 +50,7 @@ from atlaso.app.kmip.server import (
 from atlaso.app.kmip.store import WrappedKeyStore
 from atlaso.app.kmip.trace import validate_trace
 from atlaso.app.kmip.ttlv import (
+    date_time,
     decode,
     encode,
     enumeration,
@@ -382,6 +386,91 @@ def test_mtls_server_accepts_mapped_fingerprint_and_writes_redacted_trace(tmp_pa
         server.shutdown()
         server.server_close()
         thread.join(timeout=3)
+
+
+def test_dispatch_rejection_logs_bounded_metadata_without_payload_or_error_text(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A real rejected TLS request logs only bounded request shape metadata.
+
+    Args:
+        caplog: Pytest fixture capturing structured diagnostic logs.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    materials = material(tmp_path)
+    server = build_server(service_config(tmp_path, materials), secrets_key="appliance-secrets-key")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    caplog.set_level(logging.WARNING, logger="atlaso.kmip")
+    thread.start()
+    host, port = server.server_address
+    request = encode(
+        structure(
+            Tag.REQUEST_MESSAGE,
+            structure(
+                Tag.REQUEST_HEADER,
+                structure(
+                    Tag.PROTOCOL_VERSION,
+                    integer(Tag.PROTOCOL_VERSION_MAJOR, 1),
+                    integer(Tag.PROTOCOL_VERSION_MINOR, 4),
+                ),
+                integer(Tag.BATCH_COUNT, 1),
+                date_time(Tag.TIME_STAMP, 1_800_000_000),
+            ),
+            structure(
+                Tag.BATCH_ITEM,
+                enumeration(Tag.OPERATION, Operation.DISCOVER_VERSIONS),
+                structure(
+                    Tag.REQUEST_PAYLOAD,
+                    text_string(Tag.VENDOR_IDENTIFICATION, "payload-secret-sentinel"),
+                ),
+            ),
+        )
+    )
+    try:
+        with socket.create_connection((host, port), timeout=3) as raw:
+            with client_context(materials, trusted=True).wrap_socket(
+                raw,
+                server_hostname="localhost",
+            ) as secured:
+                secured.sendall(request)
+                assert secured.recv(1) == b""
+        records = [
+            record for record in caplog.records if "dispatch rejected request" in record.getMessage()
+        ]
+        assert len(records) == 1
+        assert records[0].args[0] == int(ResultReason.INVALID_MESSAGE)
+        assert records[0].args[1] == {
+            "header_fields": [(4325481, 1), (4325389, 2), (4325522, 9)],
+            "protocol_version": (1, 4),
+            "operations": [30],
+        }
+        assert "payload-secret-sentinel" not in caplog.text
+        assert "Request Header contains unsupported fields" not in caplog.text
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_unexpected_dispatch_log_omits_exception_text(caplog: pytest.LogCaptureFixture) -> None:
+    """Unexpected dispatch diagnostics include class and shape but omit exception text.
+
+    Args:
+        caplog: Pytest fixture capturing structured diagnostic logs.
+    """
+    request = decode(discover_versions_request())
+
+    caplog.set_level(logging.WARNING, logger="atlaso.kmip")
+    _log_dispatch_failure(request, RuntimeError("error-secret-sentinel"))
+
+    assert "category=unexpected" in caplog.text
+    assert "exception_class=RuntimeError" in caplog.text
+    assert caplog.records[-1].args == (
+        "RuntimeError",
+        {"header_fields": [(4325481, 1), (4325389, 2)], "protocol_version": (1, 4), "operations": [30]},
+    )
+    assert "error-secret-sentinel" not in caplog.text
 
 
 def test_mtls_server_binds_every_configured_listener_address(tmp_path: Path) -> None:
