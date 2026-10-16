@@ -58,7 +58,8 @@ behavior.
    vCenter's client certificate is not usable for KMIP key operations. Recheck the connection in vCenter.
 
 This path starts in vCenter and does not require a pre-created trusted-vCenter row or manual public-certificate paste
-in Atlaso. Manual credentials exist only for the current enrollment requests and are cleared when the wizard closes;
+in Atlaso. Manual credentials exist only for the current enrollment requests and are cleared when the wizard closes
+or the page is hidden, including browser Back-cache navigation;
 they are not saved to a Vault, provider state, audit detail, task, or browser storage. A Vault credential is referenced
 by stable vault and entry IDs; its password is never placed in the page. Changing the server or credential source
 clears certificate confirmation and requires another probe before authentication. Discovery requires the selected

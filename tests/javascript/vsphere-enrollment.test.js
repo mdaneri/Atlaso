@@ -146,6 +146,7 @@ function makeRuntime(respond) {
   const errors = [];
   const skipped = [];
   const shown = [];
+  const page = new FakeElement();
   let options;
   const context = vm.createContext({
     HTMLFormElement: FakeForm,
@@ -154,6 +155,7 @@ function makeRuntime(respond) {
     HTMLSelectElement: FakeSelect,
     FormData: FakeFormData,
     window: {
+      addEventListener: (name, callback) => page.addEventListener(name, callback),
       AtlasoUiPatterns: {
         createWizard: (wizardOptions) => {
           options = wizardOptions;
@@ -175,7 +177,7 @@ function makeRuntime(respond) {
   vm.runInContext(`${functionSource("initializeVsphereEnrollmentWizard")}; globalThis.initialize = initializeVsphereEnrollmentWizard;`, context);
   const wizard = context.initialize(form, dialog);
   options.onOpen({ context: {} });
-  return { form, wizard, options, errors, skipped, shown };
+  return { form, wizard, options, errors, skipped, shown, page };
 }
 
 test("manual enrollment probes without credentials and pins the exact observed fingerprint by checkbox", async () => {
@@ -311,6 +313,54 @@ test("closing the wizard invalidates an in-flight probe and clears credentials",
   assert.equal(form.elements.confirmed_https_fingerprint.value, "");
   assert.equal(form.tlsFingerprint.textContent, "Not inspected yet");
   assert.equal(form.tlsConfirmContainer.classList.contains("hidden"), true);
+});
+
+test("pagehide clears manual credentials and inspected trust before Back-cache restoration", async () => {
+  const requests = [];
+  const { form, options, wizard, page } = makeRuntime(async (url) => {
+    requests.push(url);
+    return {
+      https_fingerprint: "AA:BB:CC", client_fingerprint: "11:22",
+      subject: "vCenter KMIP", expires_at: "2030-01-01", cluster_id: "cluster-1",
+    };
+  });
+  form.elements.hostname.value = "vcsa.lab.example";
+  form.elements.username.value = "administrator@vsphere.local";
+  form.elements.password.value = "request-only-password";
+  await options.onNext({ controller: wizard, step: { id: "server" } });
+  form.tlsConfirm.checked = true;
+  await form.tlsConfirm.dispatch("change");
+  await options.onNext({ controller: wizard, step: { id: "target" } });
+  assert.equal(form.elements.expected_client_fingerprint.value, "11:22");
+
+  await page.dispatch("pagehide", { persisted: true });
+  assert.equal(form.elements.username.value, "");
+  assert.equal(form.elements.password.value, "");
+  assert.equal(form.elements.confirmed_https_fingerprint.value, "");
+  assert.equal(form.elements.expected_client_fingerprint.value, "");
+  assert.equal(form.tlsConfirm.checked, false);
+  assert.equal(form.tlsFingerprint.textContent, "Not inspected yet");
+  assert.equal(form.tlsConfirmContainer.classList.contains("hidden"), true);
+  const result = await options.onSubmit({ controller: wizard });
+  assert.equal(result.valid, false);
+  assert.equal(requests.length, 2);
+});
+
+test("an inspection finishing after pagehide cannot restore approval state", async () => {
+  let resolveInspect;
+  const { form, options, wizard, page } = makeRuntime(() => new Promise((resolve) => {
+    resolveInspect = resolve;
+  }));
+  form.elements.username.value = "administrator@vsphere.local";
+  form.elements.password.value = "request-only-password";
+  form.elements.confirmed_https_fingerprint.value = "AA:BB:CC";
+  const pending = options.onNext({ controller: wizard, step: { id: "target" } });
+  await page.dispatch("pagehide", { persisted: true });
+  resolveInspect({ client_fingerprint: "11:22" });
+  assert.equal(await pending, false);
+  assert.equal(form.elements.expected_client_fingerprint.value, "");
+  assert.equal(form.elements.username.value, "");
+  assert.equal(form.elements.password.value, "");
 });
 
 test("changing login credentials invalidates client inspection but keeps the confirmed HTTPS pin", async () => {

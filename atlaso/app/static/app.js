@@ -6163,6 +6163,7 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
     clearClient();
     contextRevision += 1;
   });
+  window.addEventListener("pagehide", invalidateContext);
 
   wizard = window.AtlasoUiPatterns.createWizard({
     form,
