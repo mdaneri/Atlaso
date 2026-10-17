@@ -1628,6 +1628,8 @@ def _restore_settings_archive_data(db: Session, data: dict[str, Any]) -> dict[st
     # assign wider IDs, so admit the actual flushed publication before commit.
     db.flush()
     restored_proxies = proxy_runtime_snapshot(db)
+    if any(not 1 <= proxy["id"] <= 0xFFFFFF for proxy in restored_proxies):
+        raise ValueError("Reverse-proxy identity capacity is exhausted; contact the appliance maintainer.")
     validate_publication_size(restored_proxies, appliance_addresses(db))
     reconcile_proxy_dns(db, restored_proxies)
     counts["dns_records"] = len(db.scalars(select(DnsRecord)).all())

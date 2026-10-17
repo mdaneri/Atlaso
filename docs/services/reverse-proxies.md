@@ -219,3 +219,6 @@ redirect behavior, managed HTTPS certificates, every-connection fingerprint enfo
 warnings, normal application authentication, WebSocket traffic, coordinated Firewall/DNS/Public Services publication,
 rollback, and state after reboot. Remove this section and change the page status to `current` only after that evidence
 has been recorded.
+
+Archive restore also checks actual database-assigned proxy identities against the helper capacity before committing.
+An exhausted retained sequence rejects the entire restore without replacing desired state or recovery payloads.
