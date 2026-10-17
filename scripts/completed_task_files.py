@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import os
 import stat
+import struct
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
@@ -156,11 +158,16 @@ def read_bounded_regular(path: Path, limit: int) -> bytes:
 class WindowsFiles:
     """Pin ancestors and delete only the exact no-follow object whose identity was checked."""
 
-    def __init__(self) -> None:
-        """Bind documented Win32 file APIs without compiling or staging helper files."""
+    def __init__(self, *, allow_internal_symlinks: bool = False) -> None:
+        """Bind documented Win32 file APIs without compiling or staging helper files.
+
+        Args:
+            allow_internal_symlinks: Opt into checked internal symbolic-link leaves for pytest output.
+        """
         if os.name != "nt":
             raise FileRefusal("Generated-tree release requires Windows handle-bound deletion.")
         self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.allow_internal_symlinks = allow_internal_symlinks
         self.kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
                                            ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
         self.kernel.CreateFileW.restype = ctypes.c_void_p
@@ -189,13 +196,14 @@ class WindowsFiles:
             self.kernel.CloseHandle(handle)
 
     @contextmanager
-    def opened(self, path: Path, *, delete: bool = False, directory: bool = False):
+    def opened(self, path: Path, *, delete: bool = False, directory: bool = False, reparse: bool = False):
         """Deny replacement/writers while reading attributes or setting exact-object disposition.
 
         Args:
             path: Filesystem path examined by this operation.
             delete: Request deletion access while retaining the checked object handle.
             directory: Whether the handle must refer to a directory.
+            reparse: Admit a symbolic link object only in the explicit pytest mode.
         """
         # READ_DATA/LIST_DIRECTORY makes the share restriction effective. OPEN_REPARSE_POINT
         # inspects the entry itself; BACKUP_SEMANTICS permits ordinary directory handles.
@@ -208,7 +216,8 @@ class WindowsFiles:
             if not self.kernel.GetFileInformationByHandle(handle, information):
                 raise FileRefusal("Cannot read pinned filesystem identity.")
             attributes = information[0]
-            if attributes & 0x400 or bool(attributes & 0x10) != directory:
+            if bool(attributes & 0x400) != reparse or (reparse and not self.allow_internal_symlinks) \
+                    or bool(attributes & 0x10) != directory:
                 raise FileRefusal("Reparse point or entry type changed; preserve the tree.")
             if not directory and information[10] != 1:
                 raise FileRefusal("Shared hard-linked output file is not eligible.")
@@ -217,6 +226,46 @@ class WindowsFiles:
             yield handle, identity, stamp
         finally:
             self.kernel.CloseHandle(handle)
+
+    def link_data(self, handle: int, path: Path, root: Path) -> str:
+        """Check the pinned symbolic link's raw target without resolving or traversing it.
+
+        Args:
+            handle: No-follow handle pinned against writers and replacement.
+            path: Link entry inside the owned root.
+            root: Independently owned ordinary generated-tree root.
+        """
+        self.kernel.DeviceIoControl.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p,
+                                               ctypes.c_uint32, ctypes.c_void_p, ctypes.c_uint32,
+                                               ctypes.POINTER(ctypes.c_uint32), ctypes.c_void_p]
+        self.kernel.DeviceIoControl.restype = ctypes.c_int
+        buffer = ctypes.create_string_buffer(16384)
+        count = ctypes.c_uint32()
+        if not self.kernel.DeviceIoControl(handle, 0x900A8, None, 0, buffer, len(buffer), ctypes.byref(count), None):
+            raise FileRefusal("Cannot inspect pinned symbolic link data; preserve the tree.")
+        raw = buffer.raw[:count.value]
+        if len(raw) < 20:
+            raise FileRefusal("Invalid symbolic link reparse data; preserve the tree.")
+        tag, length, _reserved, offset, size, _print_offset, _print_size, flags = struct.unpack_from("<I6HI", raw)
+        if tag != 0xA000000C or length + 8 != len(raw) or flags not in {0, 1} \
+                or offset % 2 or size % 2 or not size or 20 + offset + size > len(raw):
+            raise FileRefusal("Only bounded symbolic links are supported; junctions and unknown reparse tags are refused.")
+        try:
+            target = raw[20 + offset:20 + offset + size].decode("utf-16-le")
+        except UnicodeError as exc:
+            raise FileRefusal("Invalid symbolic link target encoding.") from exc
+        if not flags and target.startswith("\\??\\"):
+            target = target[4:]
+        candidate = Path(target)
+        if "\0" in target or bool(flags) == candidate.is_absolute() \
+                or (flags and (candidate.drive or candidate.root)):
+            raise FileRefusal("Unsupported symbolic link target path.")
+        candidate = Path(os.path.abspath(path.parent / candidate if flags else candidate))
+        if candidate == root or not candidate.is_relative_to(root) \
+                or os.path.isreserved(str(candidate)) \
+                or any(part.endswith((".", " ")) or "~" in part or ":" in part for part in candidate.parts[1:]):
+            raise FileRefusal("Symbolic link target must stay strictly inside its owned generated tree.")
+        return hashlib.sha256(raw).hexdigest()
 
     @contextmanager
     def ancestors(self, path: Path):
@@ -248,11 +297,17 @@ class WindowsFiles:
             """
             if len(result) >= 50000 or len(path.relative_to(root).parts) > 128:
                 raise FileRefusal("Generated tree exceeds bounded inventory limits; split its owned resource inventory.")
-            directory = path.is_dir()
-            with self.opened(path, directory=directory) as (_, identity, stamp):
+            info = path.lstat()
+            reparse = bool(info.st_file_attributes & 0x400)
+            directory = bool(info.st_file_attributes & 0x10)
+            if path == root and reparse:
+                raise FileRefusal("Reparse root is not an owned ordinary generated tree.")
+            with self.opened(path, directory=directory, reparse=reparse) as (handle, identity, stamp):
                 result[str(path.relative_to(root))] = {"identity": list(identity), "stamp": list(stamp),
                                                        "directory": directory}
-                if directory:
+                if reparse:
+                    result[str(path.relative_to(root))]["link_sha256"] = self.link_data(handle, path, root)
+                if directory and not reparse:
                     for child in sorted(path.iterdir()):
                         visit(child)
 
@@ -269,6 +324,9 @@ class WindowsFiles:
         """
         if self.snapshot(root) != expected:
             raise FileRefusal("Generated output changed after inspection; obtain a fresh preview.")
+        if self.allow_internal_symlinks:
+            self.remove_pinned(root, expected)
+            return
         for relative in sorted(expected, key=lambda value: len(Path(value).parts), reverse=True):
             path = root / relative
             entry = expected[relative]
@@ -280,6 +338,34 @@ class WindowsFiles:
                 self.dispose(handle)
             if path.exists():
                 raise FileRefusal("Output absence verification failed.")
+
+    def remove_pinned(self, root: Path, expected: dict[str, dict]) -> None:
+        """Verify and hold every object before disposing any pytest output or link.
+
+        Args:
+            root: Ordinary owned root whose ancestors must remain ordinary.
+            expected: Complete snapshot, including each link's raw-data digest.
+        """
+        with self.ancestors(root), ExitStack() as stack:
+            pinned = {}
+            for relative in sorted(expected, key=lambda value: len(Path(value).parts)):
+                entry = expected[relative]
+                path = root / relative
+                owner = ExitStack()
+                stack.callback(owner.close)
+                reparse = "link_sha256" in entry
+                handle, identity, stamp = owner.enter_context(self.opened(
+                    path, delete=True, directory=entry["directory"], reparse=reparse))
+                if list(identity) != entry["identity"] or list(stamp) != entry["stamp"] \
+                        or (reparse and self.link_data(handle, path, root) != entry["link_sha256"]):
+                    raise FileRefusal("Pytest output or symbolic link changed before pinned release.")
+                pinned[relative] = (handle, owner)
+            for relative in sorted(expected, key=lambda value: len(Path(value).parts), reverse=True):
+                handle, owner = pinned[relative]
+                self.dispose(handle)
+                owner.close()
+                if os.path.lexists(root / relative):
+                    raise FileRefusal("Pytest output absence verification failed.")
 
     def dispose(self, handle: int) -> None:
         """Mark one already verified handle for ordinary deletion without changing file attributes.
