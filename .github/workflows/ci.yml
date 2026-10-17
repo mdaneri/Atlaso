@@ -194,7 +194,7 @@ jobs:
           New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
           $env:TEMP = $stateRoot
           $env:TMP = $stateRoot
-          python -B -m pytest tests/test_pytest_git_fixtures.py tests/test_completed_task_cleanup.py::test_generated_tree_handles_delete_only_snapshot --basetemp "$stateRoot/pytest"
+          python -B -m pytest tests/test_pytest_git_fixtures.py tests/test_pytest_link_cleanup.py tests/test_completed_task_cleanup.py::test_generated_tree_handles_delete_only_snapshot --basetemp "$stateRoot/pytest"
       - name: Verify published software preserves the Windows source snapshot
         shell: pwsh
         run: |

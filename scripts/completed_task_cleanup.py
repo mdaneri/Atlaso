@@ -440,9 +440,19 @@ class Cleanup:
         if self.target.exists():
             require(list((self.target.stat().st_dev, self.target.stat().st_ino)) == self.handoff["worktree_identity"],
                     "Worktree filesystem identity differs from the creation handoff.")
+            admitted_links: set[Path] = set()
+            for resource in self.handoff["resources"]:
+                if resource.get("kind") == "generated_tree" and resource.get("cleanup_tool") == "PytestGeneratedTree":
+                    self.validate_resource_identity(resource)
+                    path = self.generated_path(resource)
+                    if path.exists():
+                        _files, snapshot = self.generated_snapshot(resource)
+                        admitted_links.update(path / name for name, entry in snapshot.items() if "link_sha256" in entry)
             for parent, directories, files in os.walk(self.target, followlinks=False):
                 for name in [*directories, *files]:
-                    ordinary(Path(parent) / name)
+                    path = Path(parent) / name
+                    if path not in admitted_links:
+                        ordinary(path)
             require(len(targets) == 1 and owners == targets, "Worktree/local branch registration is not exclusive.")
             require("locked" not in targets[0] and "prunable" not in targets[0], "Locked or prunable worktree must be reconciled first.")
             require(targets[0].get("HEAD") == self.head, "Worktree HEAD differs from recorded PR head.")
@@ -635,6 +645,56 @@ class Cleanup:
                 require(path.relative_to(self.target) in source_directories,
                         "Unreleased directory remains outside tracked source; reconcile its inventory and owning-tool release.")
 
+    def generated_path(self, resource: dict) -> Path:
+        """Validate a generated scope even when a previously released root is absent.
+
+        Args:
+            resource: Creation-bound generated-tree inventory entry.
+        """
+        path = ordinary(Path(resource["path"]))
+        require(beneath(path, self.target), "Generated output must be a strict descendant of this task worktree.")
+        pytest_mode = resource.get("cleanup_tool") == "PytestGeneratedTree"
+        relative_parts = [part.casefold() for part in path.relative_to(self.target).parts]
+        require(".git" not in relative_parts and (".atlaso-local" not in relative_parts or
+                pytest_mode and relative_parts == [".atlaso-local"]),
+                "Git metadata and credential/recovery roots require their owning tools.")
+        return path
+
+    def generated_snapshot(self, resource: dict) -> tuple[WindowsFiles, dict[str, dict]]:
+        """Capture only the checked owned scope, with pytest links selected explicitly.
+
+        Args:
+            resource: Creation-bound generated-tree inventory entry.
+        """
+        path = self.generated_path(resource)
+        pytest_mode = resource.get("cleanup_tool") == "PytestGeneratedTree"
+        require(path.is_dir(), "Generated-tree target must be an ordinary directory.")
+        relative = path.relative_to(self.target).as_posix()
+        require(not self.git("-C", str(self.target), "ls-files", "--", relative),
+                "Generated output contains tracked source; preserve it.")
+        if path == self.target / ".atlaso-local":
+            allowed = {"pytest", "markdown", "mypy", "ruff", "native-policy", "node-compile-cache", "npm-cache", "packer-plugins"}
+            require(all(child.name.casefold() in allowed or re.fullmatch(r"pytest-[a-z0-9_-]+|packer-plugin-[0-9]+\.zip",
+                                                                       child.name.casefold())
+                        for child in path.iterdir()),
+                    "Pytest validation root contains unknown or credential/recovery output; preserve it.")
+        files = WindowsFiles(allow_internal_symlinks=True) if pytest_mode else WindowsFiles()
+        snapshot = files.snapshot(path)
+        require(not any(".git" in {part.casefold() for part in Path(entry).parts} for entry in snapshot),
+                "Nested repositories are not generated output trees.")
+        require(not any(".atlaso-local" in {part.casefold() for part in Path(entry).parts} for entry in snapshot),
+                "Nested credential/recovery roots require their owning cleanup workflow.")
+        children: dict[Path, set[str]] = {}
+        for entry in snapshot:
+            relative_entry = Path(entry)
+            children.setdefault(relative_entry.parent, set()).add(relative_entry.name.casefold())
+        require(not any({"head", "objects", "refs"} <= names or {"head", "objects", "packed-refs"} <= names
+                        for names in children.values()),
+                "Bare repositories are not generated output trees; use their owning cleanup workflow.")
+        require(snapshot["."]["identity"] == resource["root_identity"],
+                "Generated root differs from its inventoried creation identity.")
+        return files, snapshot
+
     def resources(self) -> None:
         """Delegate specialized resources to their owning tools and demand independent absence readback."""
         identities: set[str] = set()
@@ -685,31 +745,9 @@ class Cleanup:
             self.proposed.append({"resource": identity, "action": "release through verified owning tool"})
             generated = resource.get("kind") == "generated_tree"
             if generated:
-                path = ordinary(Path(resource["path"]))
-                require(beneath(path, self.target), "Generated output must be a strict descendant of this task worktree.")
-                require(not {".git", ".atlaso-local"} & {part.casefold() for part in path.relative_to(self.target).parts},
-                        "Git metadata and credential/recovery roots require their owning tools.")
-                require(not (path / ".git").exists(), "Nested repositories are not generated output trees.")
+                path = self.generated_path(resource)
                 if path.exists():
-                    require(path.is_dir(), "Generated-tree target must be an ordinary directory.")
-                    relative = path.relative_to(self.target).as_posix()
-                    require(not self.git("-C", str(self.target), "ls-files", "--", relative),
-                            "Generated output contains tracked source; preserve it.")
-                    files = WindowsFiles()
-                    snapshot = files.snapshot(path)
-                    require(not any(".git" in {part.casefold() for part in Path(entry).parts} for entry in snapshot),
-                            "Nested repositories are not generated output trees.")
-                    require(not any(".atlaso-local" in {part.casefold() for part in Path(entry).parts} for entry in snapshot),
-                            "Nested credential/recovery roots require their owning cleanup workflow.")
-                    children: dict[Path, set[str]] = {}
-                    for entry in snapshot:
-                        relative_entry = Path(entry)
-                        children.setdefault(relative_entry.parent, set()).add(relative_entry.name.casefold())
-                    require(not any({"head", "objects", "refs"} <= names or {"head", "objects", "packed-refs"} <= names
-                                    for names in children.values()),
-                            "Bare repositories are not generated output trees; use their owning cleanup workflow.")
-                    require(snapshot["."]["identity"] == resource["root_identity"],
-                            "Generated root differs from its inventoried creation identity.")
+                    files, snapshot = self.generated_snapshot(resource)
                     self.proposed[-1] = {"resource": identity, "path": str(path), "entries": snapshot,
                                          "action": "remove exact generated tree through checked handles"}
                     if self.execute:

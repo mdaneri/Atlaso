@@ -2204,8 +2204,12 @@ def test_reparse_output_preserves_external_target(tmp_path: Path) -> None:
     (external / "keep.txt").write_text("user owned", encoding="utf-8")
     link = tmp_path / "output"
     subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(external)], check=True, capture_output=True)
-    with pytest.raises(Refusal, match="Reparse"):
-        ordinary(link)
-    with pytest.raises(FileRefusal, match="Reparse"):
-        WindowsFiles().snapshot(link)
-    assert (external / "keep.txt").read_text(encoding="utf-8") == "user owned"
+    try:
+        with pytest.raises(Refusal, match="Reparse"):
+            ordinary(link)
+        with pytest.raises(FileRefusal, match="Reparse"):
+            WindowsFiles().snapshot(link)
+        assert (external / "keep.txt").read_text(encoding="utf-8") == "user owned"
+    finally:
+        # Release only this test-created junction entry; never recurse into its target.
+        link.rmdir()
