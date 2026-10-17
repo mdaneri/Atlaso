@@ -4206,6 +4206,22 @@ def _validate_archive_database_relationships(db: Session, data: dict[str, list[d
     Raises:
         ValueError: If a relationship target is absent from retained desired state.
     """
+    if data.get("reverse_proxy_routes"):
+        from atlaso.app.services.reverse_proxies import (
+            _host_literal,
+            _interface_address_inventory,
+        )
+
+        # Archive rows omit automatic address lists, and replacement clears the
+        # target inventory. Consult its complete observations before that loss.
+        target_addresses = _interface_address_inventory(
+            list(db.scalars(select(PhysicalInterface))), list(db.scalars(select(VlanInterface))),
+        )
+        for route in data["reverse_proxy_routes"]:
+            literal = _host_literal(str(route["upstream_host"]).strip())
+            if literal is not None and str(literal) in target_addresses:
+                raise ValueError("Settings archive reverse-proxy upstream cannot be an observed target appliance address.")
+
     users = {row.username: bool(row.enabled) for row in db.execute(select(User)).scalars().all()}
     usernames = set(users)
     for row_index, row in enumerate(data.get("oidc_subjects", []), start=1):

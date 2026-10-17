@@ -698,3 +698,59 @@ def test_archive_rejects_management_socket_scope_mismatch(client, address, schem
         db.expire_all()
         assert list(db.scalars(select(AuditEvent.id))) == audits
         assert export_settings_archive(db, actor="test")["data"] == before
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("upstream", ["2001:db8:55::10", "2001:db8:55::20"])
+def test_restore_checks_complete_target_ipv6_inventory_before_replacement(client, enabled, upstream):
+    """Reject foreign archive upstreams matching any current automatic target address.
+
+    Args:
+        client: Initialized appliance fixture.
+        enabled: Enabled publication or retained disabled proxy intent.
+        upstream: First or secondary observed IPv6 address omitted from the archive.
+    """
+    with SessionLocal() as db:
+        observed = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        observed.ipv6_enabled = True
+        observed.ipv6_cidr = None
+        observed.host_ipv6_cidr = None
+        observed.host_ipv6_cidrs = ["2001:db8:55::10/64", "2001:db8:55::20/64"]
+        db.commit()
+        listener = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        saved = save_proxy(db, payload(enabled=enabled, scheme="http", port=8084, redirect_http=False,
+                                       listeners=[{"interface": "eth2", "address": listener.ip_cidr.split("/")[0]}]), actor="test")
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        before = deepcopy(archive["data"])
+        audits = list(db.scalars(select(AuditEvent.id)))
+        for interface in archive["data"]["physical_interfaces"]:
+            assert "host_ipv6_cidrs" not in interface
+            interface["host_ipv6_cidr"] = None
+        archive["data"]["reverse_proxy_routes"][0]["upstream_host"] = upstream
+        with pytest.raises(ValueError, match="observed target appliance address"):
+            restore_settings_archive(db, archive)
+        db.expire_all()
+        assert export_settings_archive(db, actor="test")["data"] == before
+        assert list(db.scalars(select(AuditEvent.id))) == audits
+        assert db.get(ReverseProxy, saved.id).routes[0].upstream_host == "10.10.20.30"
+        assert db.get(PhysicalInterface, observed.id).host_ipv6_cidrs == ["2001:db8:55::10/64", "2001:db8:55::20/64"]
+
+
+def test_restore_allows_external_ipv6_upstream_with_target_observations(client):
+    """Keep an external upstream admissible while target automatic addresses exist.
+
+    Args:
+        client: Initialized appliance fixture.
+    """
+    with SessionLocal() as db:
+        observed = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        observed.host_ipv6_cidrs = ["2001:db8:55::10/64", "2001:db8:55::20/64"]
+        db.commit()
+        listener = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        save_proxy(db, payload(enabled=True, scheme="http", port=8084, redirect_http=False,
+                               listeners=[{"interface": "eth2", "address": listener.ip_cidr.split("/")[0]}]), actor="test")
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        archive["data"]["reverse_proxy_routes"][0]["upstream_host"] = "2001:db8:99::55"
+        restore_settings_archive(db, archive)
+        restored = db.scalar(select(ReverseProxy))
+        assert restored.enabled and restored.routes[0].upstream_host == "2001:db8:99::55"
