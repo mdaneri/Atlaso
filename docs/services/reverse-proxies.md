@@ -55,6 +55,8 @@ Service hostname edits also preserve saved proxy names and upstream targets, inc
 Disable HTTPS proxies before disabling their CA. Conflicting service or CA changes are rejected without saving them.
 
 Interface edits also reject changes that remove an enabled proxy's exact interface and address binding.
+VLAN create, edit and enable operations also recheck service and management socket scopes before saving, including
+Management UI exposure introduced on a duplicate address. Rejected changes preserve the prior VLAN and proxy state.
 Physical-interface and VLAN writers also reject assigning an enabled proxy's literal upstream address to the appliance,
 even when the changed interface is unrelated to the proxy's listeners. Disable or move that upstream first.
 Disable or move the proxy before changing its address, renaming or deleting its VLAN, or making its parent unavailable.

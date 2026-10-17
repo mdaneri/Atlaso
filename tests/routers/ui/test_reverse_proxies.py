@@ -874,3 +874,87 @@ def test_network_boot_host_writers_preserve_unpublished_proxy_names(client, monk
     assert events == ["lock", hostname]
     with SessionLocal() as db:
         assert snapshot(db) == before
+
+
+@pytest.mark.parametrize("operation", ["api-create", "api-edit", "api-enable", "ui-create"])
+@pytest.mark.parametrize("address", ["192.168.87.10", "2001:db8:87::10"])
+@pytest.mark.parametrize(("scheme", "port", "redirect"), [("http", 80, False), ("https", 443, False), ("https", 9443, True)])
+def test_vlan_writers_reject_new_management_socket_scope(client, operation, address, scheme, port, redirect):
+    """Reject actual VLAN writers that introduce a cross-interface management socket.
+
+    Args:
+        client: Initialized appliance HTTP client.
+        operation: Candidate VLAN writer introducing its management front door.
+        address: Duplicate IPv4 or IPv6 destination shared with a proxy.
+        scheme: Existing proxy protocol.
+        port: Existing primary proxy port.
+        redirect: Whether the conflicting socket is the HTTP redirect.
+    """
+    from atlaso.app.models import (
+        AuditEvent,
+        CaSettings,
+        PhysicalInterface,
+        VlanInterface,
+    )
+    from atlaso.app.services.reverse_proxies import runtime_snapshot, save_proxy
+    from tests.routers.api_v1.helpers import create_token
+    from tests.routers.api_v1.test_reverse_proxies import _payload
+
+    login(client)
+    csrf = client.get("/vlan-interfaces").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    token, _metadata = create_token(client, ["write:vlans"])
+
+    def snapshot(db):
+        """Capture VLAN, proxy and audit state around a refused transport operation.
+
+        Args:
+            db: Caller-owned appliance database session.
+        """
+        return (
+            [(r.id, r.name, r.enabled, r.access_management_ui_enabled, r.ip_cidr, r.ipv6_cidr)
+             for r in db.scalars(select(VlanInterface).order_by(VlanInterface.id))],
+            runtime_snapshot(db), list(db.scalars(select(AuditEvent.id).order_by(AuditEvent.id))),
+        )
+
+    with SessionLocal() as db:
+        parent = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        parent.mode = "trunk"
+        parent.admin_state = "up"
+        parent.oper_state = "up"
+        access = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        access.ip_cidr = "192.168.87.10/24"
+        access.ipv6_enabled = True
+        access.ipv6_cidr = "2001:db8:87::10/64"
+        access.check_duplicate_ip_addresses = False
+        db.scalar(select(CaSettings)).enabled = True
+        db.commit()
+        save_proxy(db, _payload(enabled=True, scheme=scheme, port=port, redirect_http=redirect, redirect_port=80,
+                                listeners=[{"interface": "eth2", "address": address}]), actor="test")
+        vlan_id = None
+        if operation in {"api-edit", "api-enable"}:
+            vlan = VlanInterface(name="eth1.3025", parent_interface="eth1", vlan_id=3025,
+                                 role="access", ip_cidr="192.168.87.10/24", ipv6_cidr="2001:db8:87::10/64",
+                                 enabled=operation != "api-enable", access_management_ui_enabled=operation == "api-enable",
+                                 check_duplicate_ip_addresses=False)
+            db.add(vlan)
+            db.commit()
+            vlan_id = vlan.id
+        before = snapshot(db)
+    data = {"parent_interface": "eth1", "vlan_id": 3025, "role": "access", "enabled": True,
+            "ip_cidr": "192.168.87.10/24", "ipv6_cidr": "2001:db8:87::10/64",
+            "access_management_ui_enabled": True, "check_duplicate_ip_addresses": False}
+    headers = {"Authorization": f"Bearer {token}"}
+    if operation == "api-create":
+        response = client.post("/api/v1/vlans", headers=headers, json=data)
+    elif operation == "api-edit":
+        response = client.patch(f"/api/v1/vlans/{vlan_id}", headers=headers, json=data)
+    elif operation == "api-enable":
+        response = client.post(f"/api/v1/vlans/{vlan_id}/enable", headers=headers)
+    else:
+        response = client.post("/vlan-interfaces", data={**data, "csrf": csrf, "enabled": "on",
+                               "access_management_ui_enabled": "on", "check_duplicate_ip_addresses": "false"},
+                               follow_redirects=False)
+    assert response.status_code == 422, response.text
+    assert "Service listener conflicts" in response.text
+    with SessionLocal() as db:
+        assert snapshot(db) == before

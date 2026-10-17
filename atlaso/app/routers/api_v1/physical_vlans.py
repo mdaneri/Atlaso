@@ -36,7 +36,10 @@ from atlaso.app.services.physical_interfaces import (
     PhysicalInterfaceMutationAudit,
     mutate_physical_interface_desired_state,
 )
-from atlaso.app.services.reverse_proxies import validate_interface_proxy_bindings
+from atlaso.app.services.reverse_proxies import (
+    validate_interface_proxy_bindings,
+    validate_service_listener_sockets,
+)
 
 Endpoint = Callable[..., Any]
 
@@ -58,7 +61,7 @@ class PhysicalVlanApiRouter:
 
 
 def _validate_proxy_interface_edit(db: Session, name: str) -> None:
-    """Reject a candidate VLAN transaction before commit if an enabled proxy loses its binding.
+    """Reject candidate VLAN binding, upstream and shared-socket conflicts before commit.
 
     Args:
         db: Candidate-state database transaction holding the Network Objects lock.
@@ -66,6 +69,7 @@ def _validate_proxy_interface_edit(db: Session, name: str) -> None:
     """
     try:
         validate_interface_proxy_bindings(db, {name})
+        validate_service_listener_sockets(db)
     except ValueError as exc:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(exc)) from exc
