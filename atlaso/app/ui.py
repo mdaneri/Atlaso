@@ -8638,6 +8638,7 @@ def allocate_vcf_generated_records(
     network_prefix: str,
     component_keys: list[str],
     hostnames: list[str],
+    dns_settings: DnsSettings | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]], list[str]]:
     """Return allocate vcf generated records.
 
@@ -8651,8 +8652,9 @@ def allocate_vcf_generated_records(
         network_prefix: Network prefix supplied by the caller.
         component_keys: Catalog component keys submitted by the caller.
         hostnames: Reviewed hostname labels paired with the submitted component keys.
+        dns_settings: Already refreshed settings when allocation is inside a writer transaction.
     """
-    domains = dns_domains_for_settings(get_dns_settings_row(db))
+    domains = dns_domains_for_settings(dns_settings if dns_settings is not None else get_dns_settings_row(db))
     normalized_domain = domain.strip().strip(".").lower()
     if normalized_domain not in domains:
         return [], [], [f"DNS domain {normalized_domain or '(blank)'} is not managed by Atlaso."]
@@ -8754,6 +8756,14 @@ def create_vcf_generated_dns_records(
     Returns:
         The created vcf generated dns records.
     """
+    from atlaso.app.services.reverse_proxy_publication import proxy_owns_dns_hostname
+
+    acquire_network_objects_write_lock(db)
+    settings = get_dns_settings_row(db)
+    # Default initialization may commit. Allocation must not release the writer
+    # lock again through a settings getter before ownership and record inserts.
+    acquire_network_objects_write_lock(db)
+    db.refresh(settings)
     created, skipped, errors = allocate_vcf_generated_records(
         db,
         target=target,
@@ -8764,9 +8774,12 @@ def create_vcf_generated_dns_records(
         network_prefix=network_prefix,
         component_keys=component_keys,
         hostnames=hostnames,
+        dns_settings=settings,
     )
     if errors:
         return [], skipped, errors
+    if any(proxy_owns_dns_hostname(db, row["fqdn"]) for row in created):
+        return [], skipped, ["Generated VCF FQDNs include a DNS hostname managed by Reverse Proxies."]
     if (
         expected_created is not None
         and expected_skipped is not None
@@ -9690,12 +9703,20 @@ def _add_deployed_vcf_dns(db: Session, fqdn: str, addresses: list[str], *, job_i
     Returns:
         The add deployed vcf dns result.
     """
+    from atlaso.app.services.reverse_proxy_publication import proxy_owns_dns_hostname
+
+    acquire_network_objects_write_lock(db)
     settings = get_dns_settings_row(db)
+    acquire_network_objects_write_lock(db)
+    db.refresh(settings)
     normalized = fqdn.strip().strip(".").lower()
     domains = [item.lower() for item in dns_domains_for_settings(settings)]
     managed = next((domain for domain in domains if normalized == domain or normalized.endswith(f".{domain}")), "")
     if not settings.enabled or not managed:
         return {"status": "skipped", "reason": "DNS is disabled or the FQDN is outside managed domains."}
+    if proxy_owns_dns_hostname(db, normalized):
+        return {"status": "warning", "created": [],
+                "conflicts": ["This DNS hostname is managed by Reverse Proxies."]}
     created: list[str] = []
     conflicts: list[str] = []
     for raw_address in addresses:

@@ -647,3 +647,92 @@ def test_unrelated_public_service_admission_never_observes_proxy_runtime(client,
         assert binding and binding["role"] != "management"
         assert ui.request_allows_public_service(db, request, service_id) is False
         assert ui.request_public_service_route_allowed(db, request, service_id) is False
+
+
+@pytest.mark.parametrize("writer", ["generate", "deployment"])
+@pytest.mark.parametrize("authoritative", [False, True])
+@pytest.mark.parametrize("getter_commits", [False, True])
+def test_vcf_dns_writers_preserve_unpublished_proxy_names(client, monkeypatch, writer, authoritative, getter_commits):
+    """Both VCF writers honor saved proxy intent under retained writer admission.
+
+    Args:
+        client: Fixture initializing the isolated appliance database.
+        monkeypatch: Observe locking and simulate a settings getter that commits.
+        writer: Complete generated collection or deployed-appliance DNS follow-up.
+        authoritative: Disabled authority or an authority serving another zone.
+        getter_commits: Exercise reacquisition after default initialization commits.
+    """
+    from sqlalchemy.exc import OperationalError
+
+    from atlaso.app import ui
+    from atlaso.app.models import DnsRecord, DnsSettings
+    from atlaso.app.services import reverse_proxy_publication
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+    from atlaso.app.services.reverse_proxies import runtime_snapshot, save_proxy
+    from tests.routers.api_v1.test_reverse_proxies import (
+        _enable_test_listener,
+        _payload,
+    )
+    from tests.test_ui import vcf_hostname_form_data
+
+    _enable_test_listener()
+    hostname = "reserved-proxy.atlaso.internal"
+    with SessionLocal() as db:
+        settings = db.scalar(select(DnsSettings))
+        settings.enabled = True
+        settings.authoritative = authoritative
+        settings.domain = "other.test" if authoritative else "atlaso.internal"
+        settings.disabled_domains = "atlaso.internal" if authoritative else ""
+        db.commit()
+        save_proxy(db, _payload(enabled=True, managed_dns=True, hostname=hostname), actor="test")
+        assert not db.scalars(select(DnsRecord).where(DnsRecord.hostname == hostname)).all()
+        before = [(row.id, row.hostname, row.address) for row in db.scalars(select(DnsRecord))]
+        proxy_before = runtime_snapshot(db)
+
+    original_guard = reverse_proxy_publication.proxy_owns_dns_hostname
+    observations = []
+
+    def guarded(session, name):
+        """Require the ownership check to exclude an actual competing SQLite writer.
+
+        Args:
+            session: Admitted VCF writer transaction.
+            name: DNS hostname whose ownership is being checked.
+        """
+        with SessionLocal() as competitor:
+            competitor.connection().exec_driver_sql("PRAGMA busy_timeout=0")
+            with pytest.raises(OperationalError, match="locked"):
+                acquire_network_objects_write_lock(competitor)
+        observations.append(name)
+        return original_guard(session, name)
+
+    getter = ui.get_dns_settings_row
+
+    def settings_row(session):
+        """Model legacy default-row commits before ownership admission is reacquired.
+
+        Args:
+            session: Session used by the real VCF writer.
+        """
+        settings = getter(session)
+        if getter_commits:
+            session.commit()
+        return settings
+
+    monkeypatch.setattr(reverse_proxy_publication, "proxy_owns_dns_hostname", guarded)
+    monkeypatch.setattr(ui, "get_dns_settings_row", settings_row)
+    with SessionLocal() as db:
+        if writer == "generate":
+            mapping = vcf_hostname_form_data()
+            mapping["hostname"][-1] = "reserved-proxy"
+            created, _skipped, errors = ui.create_vcf_generated_dns_records(db,
+                target="vcf-9.1", domain="atlaso.internal", prefix="", suffix="", start_ipv4="192.0.2.100/24",
+                network_prefix="", component_keys=mapping["component_key"], hostnames=mapping["hostname"], actor="test")
+            assert created == [] and any("managed by Reverse Proxies" in error for error in errors)
+        else:
+            result = ui._add_deployed_vcf_dns(db, hostname.upper() + ".", ["192.0.2.100", "2001:db8::100"], job_id="test")
+            assert result["status"] == "warning" and result["created"] == []
+            assert any("managed by Reverse Proxies" in conflict for conflict in result["conflicts"])
+        assert observations and hostname in observations
+        assert [(row.id, row.hostname, row.address) for row in db.scalars(select(DnsRecord))] == before
+        assert runtime_snapshot(db) == proxy_before

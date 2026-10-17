@@ -173,20 +173,22 @@ def test_archive_rejects_legacy_numeric_names_before_replacement(client, target,
 
 @pytest.mark.parametrize("target", ["served", "upstream"])
 @pytest.mark.parametrize("configured", ["Ns1.Example.Test.", ""])
-def test_archive_reserves_authoritative_primary_before_replacement(client, target, configured):
+@pytest.mark.parametrize("authoritative", [False, True])
+def test_archive_reserves_authoritative_primary_before_replacement(client, target, configured, authoritative):
     """Reject archived nameserver collisions without replacing saved sections.
 
     Args:
         client: Initialized appliance test fixture.
         target: Served hostname or upstream route that claims the nameserver.
         configured: Explicit primary name or empty value selecting the canonical default.
+        authoritative: Active or dormant authoritative settings in the archive.
     """
     with SessionLocal() as db:
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
         save_proxy(db, payload(listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]), actor="test")
         before = export_settings_archive(db, actor="test")["data"]
         archive = deepcopy(export_settings_archive(db, actor="test"))
-        archive["data"]["dns_settings"][0].update(authoritative=True, domain="example.test", disabled_domains="",
+        archive["data"]["dns_settings"][0].update(authoritative=authoritative, domain="example.test", disabled_domains="",
                                                   authoritative_server=configured, authoritative_admin="hostmaster.example.test")
         if target == "served":
             archive["data"]["reverse_proxies"][0]["hostname"] = "ns1.example.test"

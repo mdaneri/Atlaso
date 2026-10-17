@@ -264,7 +264,7 @@ def _service_hostnames(db: Session) -> set[str]:
     ))
 
     dns_settings = db.scalar(select(models.DnsSettings))
-    if dns_settings is not None and dns_settings.authoritative:
+    if dns_settings is not None:
         try:
             names.add(_canonical_dns_name(authoritative_server_name(dns_settings), require_fqdn=False))
         except ValueError:

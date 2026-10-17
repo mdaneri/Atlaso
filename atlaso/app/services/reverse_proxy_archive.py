@@ -160,8 +160,7 @@ def validate_candidates(proxies: list[models.ReverseProxy], data: dict[str, Any]
         domain=dns_settings.get("domain", ""), disabled_domains=dns_settings.get("disabled_domains", ""),
         authoritative_server=dns_settings.get("authoritative_server", ""),
     )
-    if archived_dns.authoritative:
-        names.add(authoritative_server_name(archived_dns))
+    names.add(authoritative_server_name(archived_dns))
     context = {"targets": targets, "listeners": options, "addresses": addresses,
                "service_hostnames": names - {""}, "claims": claims, "port_forwards": forwards,
                "ca_enabled": any(row.get("enabled", False) for row in data.get("ca_settings", []))}

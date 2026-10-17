@@ -91,7 +91,8 @@ remain without errors, including before browser scripts run; review these warnin
 
 1. **Identity**: enter a unique **Name** and **Hostname**. Add a **Description** to record the application's purpose.
    Atlaso reserves its own service hostnames, generated interface/address targets, retained app-owned DNS aliases,
-   and the explicit or default authoritative DNS primary hostname. Selected service targets remain reserved while
+   and the explicit or default authoritative DNS primary hostname, including while authoritative DNS is disabled.
+   Selected service targets remain reserved while
    their bindings are unavailable. These names cannot be used as upstream targets either. Identity rejects invalid
    fully qualified hostnames and IP literals before Next.
 2. **Listener**: select one or more exact **Listener addresses**, then choose the **Listener scheme** and **Listener

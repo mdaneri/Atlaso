@@ -426,6 +426,10 @@ Existing FQDNs are never overwritten. Existing A and AAAA addresses are shown in
 remaining network cannot provide an address for every missing FQDN, allocation fails transactionally and creates no
 records.
 
+Enabled managed-DNS reverse proxies reserve their hostnames even when authoritative DNS is off or does not serve
+their zone. If a generated FQDN claims one of these names, creation rejects the entire collection without adding
+records. Deployment DNS follow-up reports a conflict and preserves that name; the deployed VM is retained.
+
 IPv4 network and broadcast addresses are not allocatable. The IPv6 network address is treated as the subnet-router
 anycast address and is not allocatable.
 

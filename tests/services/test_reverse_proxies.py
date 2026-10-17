@@ -361,18 +361,21 @@ def test_live_https_requires_ca_for_save_enable_and_publication_readiness():
 
 @pytest.mark.parametrize(("configured", "target"), [("Ns1.Example.Test.", "served"), ("Ns1.Example.Test.", "upstream"),
                                                        ("", "served"), ("", "upstream")])
-def test_authoritative_dns_primary_hostname_is_reserved(configured, target):
+@pytest.mark.parametrize("enabled,authoritative", [(True, True), (True, False), (False, False)])
+def test_authoritative_dns_primary_hostname_is_reserved(configured, target, enabled, authoritative):
     """Reserve explicit and default nameserver identities in both proxy positions.
 
     Args:
         configured: Canonicalizable configured primary hostname or empty default.
         target: Served proxy hostname or upstream route target.
+        enabled: Whether the DNS service is enabled.
+        authoritative: Whether authoritative mode is active or dormant.
     """
     from atlaso.app.models import DnsSettings
 
     engine, db = create_db()
     try:
-        db.add(DnsSettings(enabled=True, authoritative=True, domain="example.test", authoritative_server=configured))
+        db.add(DnsSettings(enabled=enabled, authoritative=authoritative, domain="example.test", authoritative_server=configured))
         db.commit()
         request = payload()
         if target == "served":
