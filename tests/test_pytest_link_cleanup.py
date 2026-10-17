@@ -16,7 +16,13 @@ pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows symbolic-link c
 
 
 def _symlink(path: Path, target: str | Path, *, directory: bool = False) -> None:
-    """Create a symbolic link or skip where the Windows host lacks link privileges."""
+    """Create a symbolic link or skip where the Windows host lacks link privileges.
+
+    Args:
+        path: Test-owned link entry to create.
+        target: Raw symbolic-link target used by the test.
+        directory: Whether Windows should create a directory symbolic link.
+    """
     try:
         path.symlink_to(target, target_is_directory=directory)
     except (NotImplementedError, OSError) as exc:

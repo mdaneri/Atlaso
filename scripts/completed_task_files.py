@@ -159,7 +159,11 @@ class WindowsFiles:
     """Pin ancestors and delete only the exact no-follow object whose identity was checked."""
 
     def __init__(self, *, allow_internal_symlinks: bool = False) -> None:
-        """Bind documented Win32 file APIs without compiling or staging helper files."""
+        """Bind documented Win32 file APIs without compiling or staging helper files.
+
+        Args:
+            allow_internal_symlinks: Opt into checked internal symbolic-link leaves for pytest output.
+        """
         if os.name != "nt":
             raise FileRefusal("Generated-tree release requires Windows handle-bound deletion.")
         self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
