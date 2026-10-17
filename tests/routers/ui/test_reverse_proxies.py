@@ -1027,3 +1027,162 @@ def test_appliance_settings_reject_cross_scope_terminal_https(client, transport,
     assert "Service listener conflicts" in response.text
     with SessionLocal() as db:
         assert snapshot(db) == before
+
+
+@pytest.mark.parametrize("transport", ["api", "ui"])
+@pytest.mark.parametrize("operation", ["create", "update"])
+@pytest.mark.parametrize("naming", ["ip", "interface"])
+@pytest.mark.parametrize("family", ["ipv4", "ipv6"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_storage_share_writers_preserve_proxy_alias_names(client, monkeypatch, transport, operation, naming, family, enabled):
+    """Guard generated storage aliases under exclusive writer admission atomically.
+
+    Args:
+        client: Initialized appliance HTTP client.
+        monkeypatch: Observe candidate validation and competing writer exclusion.
+        transport: Actual API or UI share writer.
+        operation: Create or retarget an existing share.
+        naming: Canonical IP or interface target naming.
+        family: IPv4 or IPv6 target address family.
+        enabled: Enabled proxy or retained disabled intent.
+    """
+    import importlib
+
+    from sqlalchemy.exc import OperationalError
+
+    from atlaso.app.models import (
+        ApplianceSettings,
+        AuditEvent,
+        DnsRecord,
+        EsxNfsShare,
+        EsxStorageSettings,
+        EsxStorageVolume,
+        PhysicalInterface,
+    )
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+    from atlaso.app.services.reverse_proxies import (
+        runtime_snapshot,
+        save_proxy,
+        validate_service_proxy_dependencies,
+    )
+    from atlaso.app.services.service_dns_names import storage_alias_names
+    from tests.routers.api_v1.helpers import create_token
+    from tests.routers.api_v1.test_reverse_proxies import (
+        _enable_test_listener,
+        _payload,
+    )
+
+    _enable_test_listener()
+    login(client)
+    csrf = client.get("/esx-storage").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    token, _metadata = create_token(client, ["write:esx-storage"])
+
+    def snapshot(db):
+        """Capture share, DNS, proxy and audit rows around the refused write.
+
+        Args:
+            db: Caller-owned appliance database transaction.
+        """
+        return ([(r.id, r.interface_name, r.address_families, r.datastore_name) for r in db.scalars(select(EsxNfsShare).order_by(EsxNfsShare.id))],
+                [(r.id, r.hostname, r.record_type, r.address, r.enabled) for r in db.scalars(select(DnsRecord).order_by(DnsRecord.id))],
+                runtime_snapshot(db), list(db.scalars(select(AuditEvent.id).order_by(AuditEvent.id))))
+
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        interface.ipv6_enabled, interface.ipv6_cidr = True, "2001:db8:77::10/64"
+        db.scalar(select(ApplianceSettings)).service_dns_target_naming = naming
+        storage = db.scalar(select(EsxStorageSettings))
+        if storage is None:
+            storage = EsxStorageSettings()
+            db.add(storage)
+        storage.hostname, storage.enabled = "nfs.example.test", True
+        volume = EsxStorageVolume(name="alias-test", source_type="mounted_ext4", stable_device_id="alias-test", mount_path="/mnt/alias-test")
+        db.add(volume)
+        db.commit()
+        volume_id = volume.id
+        share_id = None
+        if operation == "update":
+            share = EsxNfsShare(datastore_name="alias-test", volume_id=volume_id, interface_name="eth2", address_families=family,
+                                relative_path="before", enabled=True)
+            db.add(share)
+            db.commit()
+            share_id = share.id
+        hostname = next(iter(storage_alias_names(storage.hostname, "eth1", ["192.0.2.10", "2001:db8:77::10"], family, naming)))
+        save_proxy(db, _payload(enabled=enabled, hostname=hostname), actor="test")
+        before = snapshot(db)
+    events = []
+
+    def guarded(db):
+        """Prove the alias check excludes a real competing SQLite writer.
+
+        Args:
+            db: Candidate share transaction under test.
+        """
+        assert snapshot(db)[1:] == before[1:]
+        with SessionLocal() as competitor:
+            competitor.connection().exec_driver_sql("PRAGMA busy_timeout=0")
+            with pytest.raises(OperationalError, match="locked"):
+                acquire_network_objects_write_lock(competitor)
+        events.append("guard")
+        validate_service_proxy_dependencies(db)
+
+    module = importlib.import_module("atlaso.app.routers." + ("api_v1" if transport == "api" else "ui") + ".esx_storage")
+    monkeypatch.setattr(module, "validate_service_proxy_dependencies", guarded)
+    data = {"datastore_name": "alias-test", "volume_id": volume_id, "relative_path": "after", "interface_name": "eth1",
+            "address_families": [family], "enabled": True}
+    path = "/esx-storage/shares" + (f"/{share_id}" if share_id else "")
+    if transport == "api":
+        response = client.request("PATCH" if share_id else "POST", "/api/v1" + path,
+                                  headers={"Authorization": f"Bearer {token}"}, json=data)
+    else:
+        response = client.post(path, data={**data, "csrf": csrf, "enabled": "on"}, follow_redirects=False)
+    assert response.status_code == 409, response.text
+    assert events == ["guard"]
+    with SessionLocal() as db:
+        assert snapshot(db) == before
+
+
+def test_storage_dns_reconciliation_keeps_share_and_audits_uncommitted(client, monkeypatch):
+    """Keep generated DNS and audit additions/removals in the share writer transaction.
+
+    Args:
+        client: Initialized appliance fixture.
+        monkeypatch: Fail on any hidden commit during reconciliation.
+    """
+    from atlaso.app import ui
+    from atlaso.app.models import (
+        AuditEvent,
+        EsxNfsShare,
+        EsxStorageSettings,
+        EsxStorageVolume,
+    )
+
+    with SessionLocal() as db:
+        storage = db.scalar(select(EsxStorageSettings))
+        if storage is None:
+            storage = EsxStorageSettings()
+            db.add(storage)
+        storage.enabled = True
+        storage.hostname = "nfs.example.test"
+        volume = EsxStorageVolume(name="transaction-test", stable_device_id="transaction-test", source_type="mounted_ext4", mount_path="/mnt/test")
+        db.add(volume)
+        db.commit()
+        audits = list(db.scalars(select(AuditEvent.id)))
+        share = EsxNfsShare(datastore_name="transaction-test", volume_id=volume.id, interface_name="eth2", relative_path="data", enabled=True)
+        db.add(share)
+        db.flush()
+        transaction = db.get_transaction()
+
+        def refuse_commit():
+            """Keep the candidate and generated audit rows under caller ownership."""
+            pytest.fail("DNS reconciliation must not commit the share writer")
+
+        monkeypatch.setattr(db, "commit", refuse_commit)
+        assert ui.ensure_dns_for_esx_storage(db, "test")
+        assert db.get_transaction() is transaction
+        assert len(list(db.scalars(select(AuditEvent.id)))) > len(audits)
+        share.interface_name = "eth0"
+        assert ui.ensure_dns_for_esx_storage(db, "test")
+        assert db.get_transaction() is transaction
+        db.rollback()
+        assert list(db.scalars(select(AuditEvent.id))) == audits

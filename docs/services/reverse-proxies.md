@@ -55,6 +55,8 @@ participate too, including directory port 80 when the service uses a custom prot
 archive preflight reject conflicting terminal selections before changing settings, proxies or audit records.
 API settings writers return **409 Conflict** for this case.
 Service hostname edits also preserve saved proxy names and upstream targets, including disabled proxy intent.
+NFS share create and retarget operations validate generated storage aliases under the same writer lock.
+Conflicting API and UI saves return 409 without changing the share, DNS records or audit history.
 Disable HTTPS proxies before disabling their CA. Conflicting service or CA changes are rejected without saving them.
 
 Interface edits also reject changes that remove an enabled proxy's exact interface and address binding.

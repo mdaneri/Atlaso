@@ -7274,19 +7274,26 @@ def ensure_dns_for_esx_storage(db: Session, actor: str | None, *, previous_hostn
         The ensure dns for esx storage result.
     """
     remember_applied_service_dns_records(db)
-    settings = get_esx_storage_settings_row(db)
+    settings = db.scalar(select(EsxStorageSettings))
+    if settings is None:
+        appliance = db.scalar(select(ApplianceSettings))
+        settings = EsxStorageSettings(enabled=False, hostname=factory_service_hostname(
+            "nfs", appliance.fqdn if appliance is not None else "core.atlaso.internal"))
+        db.add(settings)
+        db.flush()
     settings.hostname = normalize_dns_hostname(settings.hostname)
     volumes = db.execute(select(EsxStorageVolume).order_by(EsxStorageVolume.name)).scalars().all()
     shares = db.execute(select(EsxNfsShare).order_by(EsxNfsShare.datastore_name)).scalars().all()
     _listen_interface, _listen_address, interfaces = esx_storage_bind_state(db, shares)
     dns = db.execute(select(DnsSettings).order_by(DnsSettings.id)).scalars().first()
+    appliance = db.scalar(select(ApplianceSettings))
     manifest = render_esx_storage_manifest(
         settings,
         volumes,
         shares,
         interfaces,
         dns_enabled=bool(dns and dns.enabled),
-        dns_naming_mode=get_appliance_settings_row(db).service_dns_target_naming or "ip",
+        dns_naming_mode=(appliance.service_dns_target_naming if appliance is not None else "ip") or "ip",
     )
     desired = desired_esx_storage_dns_records(manifest) if settings.enabled and any(share.enabled for share in shares) else []
     desired_keys = {(row["hostname"], row["record_type"], row["address"]) for row in desired}
@@ -7298,14 +7305,13 @@ def ensure_dns_for_esx_storage(db: Session, actor: str | None, *, previous_hostn
         db.delete(record)
         actions.append("removed-stale")
         if actor:
-            record_audit(
-                db,
+            db.add(AuditEvent(
                 actor=actor,
                 action="delete_dns_record_from_esx_storage_stale_endpoint",
                 resource_type="dns_record",
                 resource_id=str(record.id),
                 detail=f"{record.hostname} {record.record_type} -> {record.address}",
-            )
+            ))
     for desired_record in desired:
         matching = db.execute(
             select(DnsRecord).where(
@@ -7335,14 +7341,13 @@ def ensure_dns_for_esx_storage(db: Session, actor: str | None, *, previous_hostn
         db.flush()
         actions.append("created")
         if actor:
-            record_audit(
-                db,
+            db.add(AuditEvent(
                 actor=actor,
                 action="create_dns_record_from_esx_storage",
                 resource_type="dns_record",
                 resource_id=str(record.id),
                 detail=f"{record.hostname} {record.record_type} -> {record.address}",
-            )
+            ))
     if previous_hostname and normalize_dns_hostname(previous_hostname) != settings.hostname:
         actions.append("removed-old")
     if actions:
