@@ -2970,7 +2970,7 @@ class VsphereKeyProviderSettingsUpdate(BaseModel):
             )
         ),
     ]
-    port: Annotated[int, Field(description="TCP port for the KMIP 1.4 listener.", ge=1, le=65535)] = 5696
+    port: Annotated[int, Field(description="TCP port for the bounded KMIP 1.1/1.4 listener.", ge=1, le=65535)] = 5696
     hostname: Annotated[str, Field(description="DNS hostname advertised for the shared vSphere Key Provider endpoint.", min_length=1, max_length=253)]
 
 

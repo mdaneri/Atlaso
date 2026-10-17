@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from atlaso.app.kmip.store import VSPHERE_CUSTOM_ATTRIBUTES
 from atlaso.app.kmip.trace import (
     TraceValidationError,
     load_contract,
@@ -60,17 +61,32 @@ def test_vcf_9_1_contract_is_explicitly_unverified() -> None:
     }
     assert contract["status"] == "candidate-unverified"
     assert contract["transport"]["mutual_tls_required"] is True
-    assert contract["protocol_versions"] == ["1.4"]
+    assert contract["protocol_versions"] == ["1.1", "1.4"]
     assert contract["algorithms"]["AES"]["lengths"] == [256]
+    assert VSPHERE_CUSTOM_ATTRIBUTES <= set(contract["candidate_attributes"])
 
 
-def test_trace_validator_summarizes_only_allowlisted_metadata() -> None:
-    """Verify that trace validator summarizes only allowlisted metadata."""
+def test_observed_vmware_attribute_names_are_valid_trace_metadata() -> None:
+    """Allow only fixed VMware labels in traces, never custom values."""
+    summary = validate_trace([event(attribute_names=sorted(VSPHERE_CUSTOM_ATTRIBUTES))])
+    assert summary.event_count == 1
+    with pytest.raises(TraceValidationError, match="attributes are outside"):
+        validate_trace([event(attribute_names=["x-Arbitrary"])])
+
+
+@pytest.mark.parametrize("version", ["1.1", "1.4"])
+def test_trace_validator_summarizes_only_allowlisted_metadata(version: str) -> None:
+    """Verify that trace validator summarizes only allowlisted metadata.
+
+    Args:
+        version: Candidate protocol version recorded by the trace producer.
+    """
     summary = validate_trace(
         [
-            event(),
+            event(protocol_version=version),
             event(
                 operation="Get",
+                protocol_version=version,
                 algorithm=None,
                 key_length=None,
                 key_format_type=None,
@@ -82,7 +98,7 @@ def test_trace_validator_summarizes_only_allowlisted_metadata() -> None:
 
     assert summary.event_count == 2
     assert summary.operations == {"Create": 1, "Get": 1}
-    assert summary.protocol_versions == ["1.4"]
+    assert summary.protocol_versions == [version]
     assert summary.providers == ["provider-1"]
     assert len(summary.contract_sha256) == 64
 

@@ -70,6 +70,7 @@ from atlaso.app.services.vsphere_enrollment import (
     EnrollmentError,
     certificate_fingerprint,
     discover_vcenter_client,
+    normalize_https_fingerprint,
     vcenter_https_endpoint,
     vcenter_https_leaf,
 )
@@ -1834,9 +1835,14 @@ def build_routers(
         )
 
     def _enrollment_target(
-        db: Session, host: str, vault_id: int, entry_id: int, uri_index: int
+        db: Session,
+        host: str,
+        vault_id: int,
+        entry_id: int,
+        uri_index: int,
+        credential_source: str = "vault",
     ):
-        """Bind a selected Vault URI before probing or decrypting credentials.
+        """Bind a manual host or selected Vault URI before credential access.
 
         Args:
             db: Active database session.
@@ -1844,7 +1850,15 @@ def build_routers(
             vault_id: Selected Vault identifier.
             entry_id: Selected Vault entry identifier.
             uri_index: Selected saved URI position.
+            credential_source: Manual request-local login or saved Vault selection.
         """
+        if credential_source == "manual":
+            normalized_host = normalize_vsphere_vcenter_hostname(host)
+            if not normalized_host:
+                raise EnrollmentError("Enter a vCenter hostname or address.")
+            return None, normalized_host, 443
+        if credential_source != "vault":
+            raise EnrollmentError("Choose manual credentials or a saved Vault entry.")
         entry = db.execute(
             select(VaultEntry).where(
                 VaultEntry.id == entry_id, VaultEntry.vault_id == vault_id
@@ -1879,8 +1893,11 @@ def build_routers(
         entry_id: int,
         uri_index: int,
         confirmed_https_fingerprint: str,
+        credential_source: str = "vault",
+        username: str = "",
+        password: str = "",
     ):
-        """Resolve one Vault credential after out-of-band HTTPS confirmation.
+        """Use one request-local credential after HTTPS confirmation.
 
         Args:
             db: Active database session.
@@ -1891,20 +1908,33 @@ def build_routers(
             entry_id: Selected Vault entry identifier.
             uri_index: Selected saved HTTPS URI position.
             confirmed_https_fingerprint: Out-of-band confirmed HTTPS certificate fingerprint.
+            credential_source: Manual request-local login or saved Vault selection.
+            username: Manual account name, unused for saved credentials.
+            password: Manual request-local password, never persisted.
         """
-        entry, host, port = _enrollment_target(db, host, vault_id, entry_id, uri_index)
+        entry, host, port = _enrollment_target(
+            db, host, vault_id, entry_id, uri_index, credential_source
+        )
+        confirmed = normalize_https_fingerprint(confirmed_https_fingerprint)
         observed = certificate_fingerprint(vcenter_https_leaf(host, port=port))
-        if observed != confirmed_https_fingerprint.strip().upper():
+        if observed != confirmed:
             raise EnrollmentError(
-                "Confirm the current vCenter HTTPS fingerprint before using a Vault credential."
+                "Confirm the current vCenter HTTPS fingerprint before using credentials."
             )
+        if entry is None:
+            username = username.strip()
+            if not 1 <= len(username) <= 256 or not 1 <= len(password) <= 8192:
+                raise EnrollmentError("Enter a vCenter username and password within the supported limits.")
+        else:
+            username = entry.username
+            password = decrypt_secret(entry.encrypted_value)
         settings = get_kms_settings_row(db)
         discovered = discover_vcenter_client(
             host=host,
             port=port,
             cluster_id=cluster_id,
-            username=entry.username,
-            password=decrypt_secret(entry.encrypted_value),
+            username=username,
+            password=password,
             confirmed_https_fingerprint=observed,
             atlaso_host=settings.hostname,
             atlaso_port=settings.port,
@@ -1913,9 +1943,12 @@ def build_routers(
             db,
             actor=identity.username,
             action="discover_vsphere_client_certificate",
-            resource_type="vault_entry",
-            resource_id=str(entry.id),
-            detail=f"vault_id={vault_id}; cluster_id={cluster_id}; public_certificate=true",
+            resource_type="vault_entry" if entry is not None else "vsphere_vcenter_enrollment",
+            resource_id=str(entry.id) if entry is not None else host,
+            detail=(
+                (f"vault_id={vault_id}; " if entry is not None else "credential_source=manual; ")
+                + f"cluster_id={cluster_id}; public_certificate=true"
+            ),
         )
         return discovered
 
@@ -1923,9 +1956,10 @@ def build_routers(
     def probe_vsphere_enrollment(
         request: Request,
         hostname: str = Form(...),
-        vault_id: int = Form(...),
-        entry_id: int = Form(...),
-        uri_index: int = Form(...),
+        vault_id: int = Form(0),
+        entry_id: int = Form(0),
+        uri_index: int = Form(0),
+        credential_source: str = Form("vault"),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
@@ -1938,6 +1972,7 @@ def build_routers(
             vault_id: Selected Vault identifier.
             entry_id: Selected Vault entry identifier.
             uri_index: Selected saved HTTPS URI position.
+            credential_source: Manual request-local login or saved Vault selection.
             db: Active database session.
             csrf: CSRF token authorizing this request.
             identity: Authenticated administrator identity.
@@ -1947,7 +1982,7 @@ def build_routers(
             raise HTTPException(status_code=403, detail="Administrator role required.")
         try:
             _entry, host, port = _enrollment_target(
-                db, hostname, vault_id, entry_id, uri_index
+                db, hostname, vault_id, entry_id, uri_index, credential_source
             )
             fingerprint = certificate_fingerprint(vcenter_https_leaf(host, port=port))
         except (ValueError, EnrollmentError) as exc:
@@ -1959,9 +1994,12 @@ def build_routers(
         request: Request,
         hostname: str = Form(...),
         cluster_id: str = Form(...),
-        vault_id: int = Form(...),
-        entry_id: int = Form(...),
-        uri_index: int = Form(...),
+        vault_id: int = Form(0),
+        entry_id: int = Form(0),
+        uri_index: int = Form(0),
+        credential_source: str = Form("vault"),
+        username: str = Form(""),
+        password: str = Form(""),
         confirmed_https_fingerprint: str = Form(...),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
@@ -1976,7 +2014,10 @@ def build_routers(
             vault_id: Selected Vault identifier.
             entry_id: Selected Vault entry identifier.
             uri_index: Selected saved HTTPS URI position.
+            credential_source: Manual request-local login or saved Vault selection.
             confirmed_https_fingerprint: Out-of-band confirmed HTTPS certificate fingerprint.
+            username: Manual account name, unused for saved credentials.
+            password: Manual request-local password, never persisted.
             csrf: CSRF token authorizing this request.
             identity: Authenticated administrator identity.
             db: Active database session.
@@ -1994,6 +2035,9 @@ def build_routers(
                 entry_id=entry_id,
                 uri_index=uri_index,
                 confirmed_https_fingerprint=confirmed_https_fingerprint,
+                credential_source=credential_source,
+                username=username,
+                password=password,
             )
         except (ValueError, EnrollmentError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -2015,9 +2059,12 @@ def build_routers(
         name: str = Form(...),
         hostname: str = Form(...),
         cluster_id: str = Form(...),
-        vault_id: int = Form(...),
-        entry_id: int = Form(...),
-        uri_index: int = Form(...),
+        vault_id: int = Form(0),
+        entry_id: int = Form(0),
+        uri_index: int = Form(0),
+        credential_source: str = Form("vault"),
+        username: str = Form(""),
+        password: str = Form(""),
         confirmed_https_fingerprint: str = Form(...),
         expected_client_fingerprint: str = Form(...),
         csrf: str = Form(...),
@@ -2036,7 +2083,10 @@ def build_routers(
             vault_id: Selected Vault identifier.
             entry_id: Selected Vault entry identifier.
             uri_index: Selected saved HTTPS URI position.
+            credential_source: Manual request-local login or saved Vault selection.
             confirmed_https_fingerprint: Out-of-band confirmed HTTPS certificate fingerprint.
+            username: Manual account name, unused for saved credentials.
+            password: Manual request-local password, never persisted.
             expected_client_fingerprint: Public client certificate fingerprint approved after inspection.
             csrf: CSRF token authorizing this request.
             identity: Authenticated administrator identity.
@@ -2060,6 +2110,9 @@ def build_routers(
                 entry_id=entry_id,
                 uri_index=uri_index,
                 confirmed_https_fingerprint=confirmed_https_fingerprint,
+                credential_source=credential_source,
+                username=username,
+                password=password,
             )
             if (
                 discovered.fingerprint_sha256

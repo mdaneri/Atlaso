@@ -1,4 +1,4 @@
-"""Bounded KMIP 1.4 operation dispatcher for the vSphere Key Provider."""
+"""Bounded KMIP 1.1/1.4 operation dispatcher for the vSphere Key Provider."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ from datetime import datetime
 from enum import IntEnum
 
 from atlaso.app.kmip.store import (
+    MAX_CUSTOM_ATTRIBUTE_VALUE_BYTES,
+    VSPHERE_CUSTOM_ATTRIBUTES,
     KeyNotFoundError,
     KeyStateError,
     KeyStoreError,
@@ -68,6 +70,7 @@ class Tag(IntEnum):
         SYMMETRIC_KEY: Symbolic value representing 4325519.
         TEMPLATE_ATTRIBUTE: Symbolic value representing 4325521.
         TIME_STAMP: Symbolic value representing 4325522.
+        UNIQUE_BATCH_ITEM_ID: Symbolic value representing 4325523.
         UNIQUE_IDENTIFIER: Symbolic value representing 4325524.
         VENDOR_IDENTIFICATION: Symbolic value representing 4325533.
     """
@@ -107,6 +110,7 @@ class Tag(IntEnum):
     SYMMETRIC_KEY = 0x42008F
     TEMPLATE_ATTRIBUTE = 0x420091
     TIME_STAMP = 0x420092
+    UNIQUE_BATCH_ITEM_ID = 0x420093
     UNIQUE_IDENTIFIER = 0x420094
     VENDOR_IDENTIFICATION = 0x42009D
 
@@ -187,6 +191,7 @@ STATE_PRE_ACTIVE = 1
 STATE_ACTIVE = 2
 USAGE_ENCRYPT_DECRYPT = 0x0000000C
 MAX_BATCH_ITEMS = 16
+SUPPORTED_PROTOCOL_VERSIONS = ((1, 4), (1, 1))
 ATTRIBUTE_TAGS = {
     "Activation Date": Tag.ACTIVATION_DATE,
     "Cryptographic Algorithm": Tag.CRYPTOGRAPHIC_ALGORITHM,
@@ -280,6 +285,27 @@ def _required_child(node: Ttlv, tag: Tag) -> Ttlv:
     return child
 
 
+def _optional_batch_item_id(node: Ttlv) -> bytes | None:
+    """Return an optional, correctly typed Unique Batch Item ID.
+
+    Args:
+        node: Batch Item whose optional correlation ID is inspected.
+
+    Raises:
+        ProtocolFailure: If the correlation ID has the wrong TTLV type.
+        TtlvError: If the tag is duplicated.
+    """
+    batch_item_id = node.child(Tag.UNIQUE_BATCH_ITEM_ID, required=False)
+    if batch_item_id is None:
+        return None
+    if batch_item_id.type is not TtlvType.BYTE_STRING or not isinstance(batch_item_id.value, bytes):
+        raise ProtocolFailure(
+            ResultReason.INVALID_MESSAGE,
+            "Unique Batch Item ID must be a Byte String.",
+        )
+    return batch_item_id.value
+
+
 def _protocol_version(node: Ttlv) -> tuple[int, int]:
     """Return protocol version.
 
@@ -301,12 +327,16 @@ def _protocol_version(node: Ttlv) -> tuple[int, int]:
     return major, minor
 
 
-def _version_node() -> Ttlv:
-    """Return version node."""
+def _version_node(version: tuple[int, int] = (1, 4)) -> Ttlv:
+    """Return a protocol version node.
+
+    Args:
+        version: Supported protocol version represented by the node.
+    """
     return structure(
         Tag.PROTOCOL_VERSION,
-        integer(Tag.PROTOCOL_VERSION_MAJOR, 1),
-        integer(Tag.PROTOCOL_VERSION_MINOR, 4),
+        integer(Tag.PROTOCOL_VERSION_MAJOR, version[0]),
+        integer(Tag.PROTOCOL_VERSION_MINOR, version[1]),
     )
 
 
@@ -369,6 +399,9 @@ def _metadata_attribute(name: str, metadata: StoredKey) -> Ttlv:
             text_string(Tag.NAME_VALUE, metadata.name),
             enumeration(Tag.NAME_TYPE, NAME_TYPE_UNINTERPRETED_TEXT_STRING),
         )
+    elif name in dict(metadata.custom_attributes):
+        custom_value = dict(metadata.custom_attributes)[name]
+        return _attribute(name, text_string(Tag.ATTRIBUTE_VALUE, custom_value))
     else:
         raise ProtocolFailure(ResultReason.INVALID_FIELD, "Requested KMIP attribute is unsupported.")
     return _attribute(name, value)
@@ -412,12 +445,14 @@ def _parse_template_attributes(
     template: Ttlv,
     *,
     allowed_names: set[str],
+    string_names: frozenset[str] = frozenset(),
 ) -> dict[str, int | str]:
     """Parse template attributes.
 
     Args:
         template: Candidate template to parse.
         allowed_names: Candidate allowed names to parse.
+        string_names: Allowed attribute names whose values are bounded text strings.
 
 
     Returns:
@@ -448,6 +483,22 @@ def _parse_template_attributes(
         raw_value = _required_child(attribute, Tag.ATTRIBUTE_VALUE)
         if name == "Name":
             result[name] = _parse_name(raw_value)
+            continue
+        if name in string_names:
+            value = _text_value(raw_value)
+            try:
+                value_size = len(value.encode("utf-8"))
+            except UnicodeEncodeError as exc:
+                raise ProtocolFailure(
+                    ResultReason.INVALID_FIELD,
+                    "Custom attribute value is not valid UTF-8 text.",
+                ) from exc
+            if value_size > MAX_CUSTOM_ATTRIBUTE_VALUE_BYTES:
+                raise ProtocolFailure(
+                    ResultReason.INVALID_FIELD,
+                    "Custom attribute values exceed the supported UTF-8 byte limit.",
+                )
+            result[name] = value
             continue
         expected = (
             TtlvType.ENUMERATION
@@ -520,7 +571,9 @@ class KmipDispatcher:
                 "Cryptographic Length",
                 "Cryptographic Usage Mask",
                 "Name",
+                *VSPHERE_CUSTOM_ATTRIBUTES,
             },
+            string_names=frozenset(VSPHERE_CUSTOM_ATTRIBUTES),
         )
         if attributes.get("Cryptographic Algorithm") != CRYPTOGRAPHIC_ALGORITHM_AES:
             raise ProtocolFailure(ResultReason.INVALID_FIELD, "Only AES keys are supported.")
@@ -534,7 +587,19 @@ class KmipDispatcher:
             )
         name = attributes.get("Name")
         assert name is None or isinstance(name, str)
-        metadata = self.store.create_key(provider_id, name=name)
+        custom_attributes = tuple(
+            (attribute_name, attribute_value)
+            for attribute_name in sorted(VSPHERE_CUSTOM_ATTRIBUTES)
+            if isinstance(
+                attribute_value := attributes.get(attribute_name),
+                str,
+            )
+        )
+        metadata = self.store.create_key(
+            provider_id,
+            name=name,
+            custom_attributes=custom_attributes,
+        )
         return [
             enumeration(Tag.OBJECT_TYPE, OBJECT_TYPE_SYMMETRIC_KEY),
             text_string(Tag.UNIQUE_IDENTIFIER, metadata.key_id),
@@ -583,10 +648,10 @@ class KmipDispatcher:
         key_id = _unique_identifier(payload)
         metadata, plaintext = self.store.get_key(provider_id, key_id)
         try:
-            if metadata.state != "Active":
+            if metadata.state not in {"Pre-Active", "Active"}:
                 raise ProtocolFailure(
                     ResultReason.INVALID_FIELD,
-                    "Only active KMIP keys may be retrieved.",
+                    "Only Pre-Active or Active KMIP keys may be retrieved.",
                 )
             return [
                 enumeration(Tag.OBJECT_TYPE, OBJECT_TYPE_SYMMETRIC_KEY),
@@ -640,6 +705,8 @@ class KmipDispatcher:
             names.append("Name")
         if metadata.activated_at is not None:
             names.append("Activation Date")
+        custom_attributes = dict(metadata.custom_attributes)
+        names.extend(name for name in sorted(VSPHERE_CUSTOM_ATTRIBUTES) if name in custom_attributes)
         return [
             text_string(Tag.UNIQUE_IDENTIFIER, metadata.key_id),
             *(text_string(Tag.ATTRIBUTE_NAME, name) for name in names),
@@ -665,6 +732,7 @@ class KmipDispatcher:
             ) from exc
         metadata = self.store.get_metadata(provider_id, _unique_identifier(payload))
         names = [_text_value(node) for node in payload.children(Tag.ATTRIBUTE_NAME)]
+        custom_attributes = dict(metadata.custom_attributes)
         if not names:
             names = [
                 "Cryptographic Algorithm",
@@ -678,8 +746,17 @@ class KmipDispatcher:
                 names.append("Name")
             if metadata.activated_at is not None:
                 names.append("Activation Date")
-        if len(names) != len(set(names)) or any(name not in ATTRIBUTE_TAGS for name in names):
+            names.extend(name for name in sorted(VSPHERE_CUSTOM_ATTRIBUTES) if name in custom_attributes)
+        supported_names = set(ATTRIBUTE_TAGS) | set(VSPHERE_CUSTOM_ATTRIBUTES)
+        if len(names) != len(set(names)) or any(name not in supported_names for name in names):
             raise ProtocolFailure(ResultReason.INVALID_FIELD, "Requested attributes are invalid.")
+        present_names = set(names) - set(VSPHERE_CUSTOM_ATTRIBUTES)
+        if metadata.name is None:
+            present_names.discard("Name")
+        if metadata.activated_at is None:
+            present_names.discard("Activation Date")
+        present_names.update(custom_attributes)
+        names = [name for name in names if name in present_names]
         return [
             text_string(Tag.UNIQUE_IDENTIFIER, metadata.key_id),
             *(_metadata_attribute(name, metadata) for name in names),
@@ -792,13 +869,15 @@ class KmipDispatcher:
                 ResultReason.INVALID_FIELD,
                 "Discover Versions contains unsupported fields.",
             ) from exc
-        versions = [_protocol_version(node) for node in payload.children(Tag.PROTOCOL_VERSION)]
-        if versions and (1, 4) not in versions:
-            raise ProtocolFailure(
-                ResultReason.INVALID_FIELD,
-                "No mutually supported KMIP protocol version was offered.",
-            )
-        return [_version_node()]
+        offered_versions = [_protocol_version(node) for node in payload.children(Tag.PROTOCOL_VERSION)]
+        if not offered_versions:
+            return [_version_node(version) for version in SUPPORTED_PROTOCOL_VERSIONS]
+        offered = set(offered_versions)
+        return [
+            _version_node(version)
+            for version in SUPPORTED_PROTOCOL_VERSIONS
+            if version in offered
+        ]
 
     def _dispatch_operation(
         self,
@@ -834,20 +913,31 @@ class KmipDispatcher:
         return handlers[operation](provider_id, payload)
 
     @staticmethod
-    def _failed_batch(operation_value: int, failure: ProtocolFailure) -> Ttlv:
+    def _failed_batch(
+        operation_value: int,
+        failure: ProtocolFailure,
+        batch_item_id: bytes | None = None,
+    ) -> Ttlv:
         """Return failed batch.
 
         Args:
             operation_value: Operation value consumed by failed batch.
             failure: Failure consumed by failed batch.
+            batch_item_id: Optional request correlation ID to echo in the response.
         """
-        return structure(
-            Tag.BATCH_ITEM,
+        children = [
             enumeration(Tag.OPERATION, operation_value),
-            enumeration(Tag.RESULT_STATUS, ResultStatus.OPERATION_FAILED),
-            enumeration(Tag.RESULT_REASON, failure.reason),
-            text_string(Tag.RESULT_MESSAGE, failure.message),
+        ]
+        if batch_item_id is not None:
+            children.append(byte_string(Tag.UNIQUE_BATCH_ITEM_ID, batch_item_id))
+        children.extend(
+            (
+                enumeration(Tag.RESULT_STATUS, ResultStatus.OPERATION_FAILED),
+                enumeration(Tag.RESULT_REASON, failure.reason),
+                text_string(Tag.RESULT_MESSAGE, failure.message),
+            )
         )
+        return structure(Tag.BATCH_ITEM, *children)
 
     def dispatch(self, provider_id: str, request: Ttlv) -> Ttlv:
         """Return dispatch.
@@ -875,24 +965,52 @@ class KmipDispatcher:
             )
         except TtlvError as exc:
             raise ProtocolFailure(ResultReason.INVALID_MESSAGE, "Request Header contains unsupported fields.") from exc
-        if _protocol_version(_required_child(header, Tag.PROTOCOL_VERSION)) != (1, 4):
-            raise ProtocolFailure(ResultReason.INVALID_MESSAGE, "Only KMIP 1.4 is supported.")
+        request_version = _protocol_version(_required_child(header, Tag.PROTOCOL_VERSION))
+        if request_version not in SUPPORTED_PROTOCOL_VERSIONS:
+            raise ProtocolFailure(
+                ResultReason.INVALID_MESSAGE,
+                "The requested KMIP protocol version is not supported.",
+            )
         batch_items = request.children(Tag.BATCH_ITEM)
         batch_count = _integer_value(_required_child(header, Tag.BATCH_COUNT))
         if batch_count != len(batch_items) or not 1 <= batch_count <= MAX_BATCH_ITEMS:
             raise ProtocolFailure(ResultReason.INVALID_MESSAGE, "KMIP Batch Count is invalid.")
 
+        batch_id_counts: dict[bytes, int] = {}
+        for item in batch_items:
+            try:
+                candidate_id = _optional_batch_item_id(item)
+            except (ProtocolFailure, TtlvError):
+                continue
+            if candidate_id is not None:
+                batch_id_counts[candidate_id] = batch_id_counts.get(candidate_id, 0) + 1
+
         responses: list[Ttlv] = []
         for item in batch_items:
             operation_value = 0
+            batch_item_id: bytes | None = None
             try:
                 if item.type is not TtlvType.STRUCTURE:
                     raise ProtocolFailure(ResultReason.INVALID_MESSAGE, "Batch Item must be a structure.")
-                assert_only_tags(item, {Tag.OPERATION, Tag.REQUEST_PAYLOAD})
+                batch_item_id = _optional_batch_item_id(item)
+                assert_only_tags(
+                    item,
+                    {Tag.OPERATION, Tag.UNIQUE_BATCH_ITEM_ID, Tag.REQUEST_PAYLOAD},
+                )
                 operation_value = _integer_value(
                     _required_child(item, Tag.OPERATION),
                     TtlvType.ENUMERATION,
                 )
+                if batch_count > 1 and batch_item_id is None:
+                    raise ProtocolFailure(
+                        ResultReason.INVALID_MESSAGE,
+                        "Unique Batch Item ID is required for multi-item requests.",
+                    )
+                if batch_item_id is not None and batch_id_counts[batch_item_id] > 1:
+                    raise ProtocolFailure(
+                        ResultReason.INVALID_MESSAGE,
+                        "Unique Batch Item IDs must be unique within the request.",
+                    )
                 try:
                     operation = Operation(operation_value)
                 except ValueError as exc:
@@ -906,6 +1024,11 @@ class KmipDispatcher:
                     structure(
                         Tag.BATCH_ITEM,
                         enumeration(Tag.OPERATION, operation),
+                        *(
+                            (byte_string(Tag.UNIQUE_BATCH_ITEM_ID, batch_item_id),)
+                            if batch_item_id is not None
+                            else ()
+                        ),
                         enumeration(Tag.RESULT_STATUS, ResultStatus.SUCCESS),
                         structure(Tag.RESPONSE_PAYLOAD, *result),
                     )
@@ -915,30 +1038,30 @@ class KmipDispatcher:
                     ResultReason.INVALID_MESSAGE,
                     "Batch Item contains invalid TTLV.",
                 )
-                responses.append(self._failed_batch(operation_value, failure))
+                responses.append(self._failed_batch(operation_value, failure, batch_item_id))
             except KeyNotFoundError:
                 failure = ProtocolFailure(
                     ResultReason.ITEM_NOT_FOUND,
                     "KMIP key was not found in the authenticated provider.",
                 )
-                responses.append(self._failed_batch(operation_value, failure))
+                responses.append(self._failed_batch(operation_value, failure, batch_item_id))
             except KeyStateError:
                 failure = ProtocolFailure(ResultReason.INVALID_FIELD, "KMIP key state is invalid.")
-                responses.append(self._failed_batch(operation_value, failure))
+                responses.append(self._failed_batch(operation_value, failure, batch_item_id))
             except KeyStoreError:
                 failure = ProtocolFailure(
                     ResultReason.GENERAL_FAILURE,
                     "KMIP operational store request failed.",
                 )
-                responses.append(self._failed_batch(operation_value, failure))
+                responses.append(self._failed_batch(operation_value, failure, batch_item_id))
             except ProtocolFailure as failure:
-                responses.append(self._failed_batch(operation_value, failure))
+                responses.append(self._failed_batch(operation_value, failure, batch_item_id))
 
         return structure(
             Tag.RESPONSE_MESSAGE,
             structure(
                 Tag.RESPONSE_HEADER,
-                _version_node(),
+                _version_node(request_version),
                 date_time(Tag.TIME_STAMP, int(time.time())),
                 integer(Tag.BATCH_COUNT, len(responses)),
             ),

@@ -2868,22 +2868,29 @@ def test_management_handoff_scopes_ipv4_only_bootstrap(monkeypatch, tmp_path, ht
     site.write_text(text, encoding="utf-8")
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
     installed = []
-    monkeypatch.setattr(helper, "_install_nginx_site", lambda _path, value: installed.append(value) or 0)
-    helper._scope_management_handoff_old_listener({
+    states = []
+    monkeypatch.setattr(helper, "_write_management_handoff_state", lambda state, phase: states.append((state.copy(), phase)))
+    monkeypatch.setattr(
+        helper, "_install_nginx_site",
+        lambda _path, value, **kwargs: installed.append((value, kwargs)) or 0,
+    )
+    state = {
         "previous_https_enabled": bool(tls_port),
         "previous_management_public_port": tls_port or http_port,
         "previous_management_addresses": ["192.0.2.10"],
-    })
-    assert len(installed) == 3
-    assert "default_server reuseport;" in installed[0]
-    assert "default_server reuseport;" in installed[1]
-    assert "reuseport" not in installed[-1]
-    assert f"listen 192.0.2.10:{http_port} default_server;" in installed[-1]
-    assert f"listen 127.0.0.1:{http_port} default_server;" in installed[-1]
-    assert "[::]" not in installed[-1]
+    }
+    helper._scope_management_handoff_old_listener(state)
+    assert len(installed) == 2
+    assert states[0][0]["nginx_reuseport_bridge"] is True
+    assert installed[0][1] == {"verify_activation": True}
+    assert installed[1][1] == {"verify_activation": True}
+    assert f"listen {http_port} default_server reuseport;" in installed[0][0]
+    assert f"listen 192.0.2.10:{http_port} default_server reuseport;" in installed[1][0]
+    assert f"listen 127.0.0.1:{http_port} default_server reuseport;" in installed[1][0]
+    assert "[::]" not in installed[1][0]
     if tls_port:
-        assert f"listen 192.0.2.10:{tls_port} ssl default_server;" in installed[-1]
-    assert f"listen {http_port} default_server;" not in installed[-1]
+        assert f"listen 192.0.2.10:{tls_port} ssl default_server reuseport;" in installed[1][0]
+    assert f"listen {http_port} default_server;" not in installed[1][0]
 
 
 def test_management_handoff_scopes_old_tls_before_new_address_activation(monkeypatch, tmp_path):
@@ -2903,19 +2910,23 @@ def test_management_handoff_scopes_old_tls_before_new_address_activation(monkeyp
     )
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
     installed = []
-    monkeypatch.setattr(helper, "_install_nginx_site", lambda _path, text: installed.append(text) or 0)
+    monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
+    monkeypatch.setattr(
+        helper, "_install_nginx_site",
+        lambda _path, text, **kwargs: installed.append((text, kwargs)) or 0,
+    )
     helper._scope_management_handoff_old_listener({
         "previous_https_enabled": True,
         "previous_management_addresses": ["192.0.2.10", "2001:db8::10"],
     })
-    assert len(installed) == 3
-    assert "default_server reuseport;" in installed[0]
-    assert "default_server reuseport;" in installed[1]
-    assert "reuseport" not in installed[-1]
-    assert "listen 192.0.2.10:443 ssl default_server;" in installed[-1]
-    assert "listen [2001:db8::10]:443 ssl default_server;" in installed[-1]
-    assert "listen 443 ssl default_server;" not in installed[-1]
-    assert "listen [::]:443 ssl default_server;" not in installed[-1]
+    assert len(installed) == 2
+    assert all(kwargs == {"verify_activation": True} for _text, kwargs in installed)
+    assert "listen 443 ssl default_server reuseport;" in installed[0][0]
+    assert "listen [::]:443 ssl default_server reuseport;" in installed[0][0]
+    assert "listen 192.0.2.10:443 ssl default_server reuseport;" in installed[1][0]
+    assert "listen [2001:db8::10]:443 ssl default_server reuseport;" in installed[1][0]
+    assert "listen 443 ssl default_server;" not in installed[1][0]
+    assert "listen [::]:443 ssl default_server;" not in installed[1][0]
 
 
 @pytest.mark.parametrize("https,port", [(True, 443), (True, 8443), (False, 80)])
@@ -2961,38 +2972,60 @@ def test_management_handoff_wildcard_migration_preserves_public_ownership(
         "snapshots": [{"path": str(public), "backup": str(backup)}],
     }
     installed = []
+    events = []
 
-    def install(path, text):
+    def install(path, text, *, verify_activation=False):
         """Capture the migration and reject duplicated explicit defaults.
 
         Args:
             path: Target management site.
             text: Migrated management configuration.
+            verify_activation: Require a new accepting nginx worker generation.
         """
+        installed.append((text, verify_activation))
+        events.append(("install", text, verify_activation))
         sockets = re.findall(r"listen (\S+)(?: ssl)? default_server;", text + public_text)
         assert len(sockets) == len(set(sockets))
         path.write_text(text, encoding="utf-8")
-        installed.append(text)
         return 0
 
+    states = []
+
+    def write_state(current, phase):
+        """Capture the durable handoff journal transition.
+
+        Args:
+            current: Handoff state being persisted.
+            phase: Durable transaction phase name.
+        """
+        states.append((current.copy(), phase))
+        events.append(("journal", current.copy(), phase))
+
+    monkeypatch.setattr(helper, "_write_management_handoff_state", write_state)
     monkeypatch.setattr(helper, "_install_nginx_site", install)
     helper._scope_management_handoff_old_listener(state)
     migrated = management.read_text(encoding="utf-8")
+    assert len(installed) == 2
+    assert all(verified for _text, verified in installed)
+    assert states[0][0]["nginx_reuseport_bridge"] is True
+    assert [event[0] for event in events[:3]] == ["journal", "install", "install"]
+    assert f"listen {port}{' ssl' if https else ''} default_server reuseport;" in installed[0][0]
+    assert (
+        f"listen 192.0.2.10:{port}{' ssl' if https else ''} default_server reuseport;" in installed[1][0]
+    ) == (not https or port != 443)
     for address in ("192.0.2.10", "[2001:db8::10]"):
-        assert (f"listen {address}:{port}{' ssl' if https else ''} default_server;" in migrated) == (
+        assert (f"listen {address}:{port}{' ssl' if https else ''} default_server reuseport;" in migrated) == (
             not https or port != 443
         )
-        assert f"listen {address}:80 default_server;" in migrated
-    assert f"listen 127.0.0.1:{port}{' ssl' if https else ''} default_server;" in migrated
-    assert f"listen [::1]:{port}{' ssl' if https else ''} default_server;" in migrated
+        assert f"listen {address}:80 default_server reuseport;" in migrated
+    assert f"listen {port}{' ssl' if https else ''} default_server reuseport;" in installed[0][0]
+    assert f"listen 127.0.0.1:{port}{' ssl' if https else ''} default_server reuseport;" in migrated
+    assert f"listen [::1]:{port}{' ssl' if https else ''} default_server reuseport;" in migrated
     if mixed:
-        assert f"listen 192.0.2.20:{port}{' ssl' if https else ''} default_server;" in migrated
-        assert f"listen [2001:db8::20]:{port}{' ssl' if https else ''} default_server;" in migrated
+        assert f"listen 192.0.2.20:{port}{' ssl' if https else ''} default_server reuseport;" in migrated
+        assert f"listen [2001:db8::20]:{port}{' ssl' if https else ''} default_server reuseport;" in migrated
     helper._scope_management_handoff_old_listener(state)
-    assert len(installed) == 3
-    assert "default_server reuseport;" in installed[0]
-    assert "default_server reuseport;" in installed[1]
-    assert "reuseport" not in installed[-1]
+    assert len(installed) == 2
     assert public.read_text(encoding="utf-8") == public_text
 
 
@@ -3023,8 +3056,10 @@ def test_management_handoff_wildcard_validation_failure_restores_sites(monkeypat
     monkeypatch.setattr(helper, "_nginx_binary", lambda: "nginx")
     monkeypatch.setattr(helper, "_install_nginx_include", lambda: None)
     monkeypatch.setattr(helper, "_nginx_site_conflict", lambda *_args: None)
-    monkeypatch.setattr(helper, "_reload_nginx", lambda: 0)
+    monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
+    monkeypatch.setattr(helper, "_reload_nginx", lambda **_kwargs: reloads.append(len(validated)) or 0)
     validated = []
+    reloads = []
 
     def validate():
         """Observe the staged configuration before returning a failed nginx test."""
@@ -3035,20 +3070,20 @@ def test_management_handoff_wildcard_validation_failure_restores_sites(monkeypat
         )
 
     monkeypatch.setattr(helper, "_nginx_test_command", validate)
-    with pytest.raises(ValueError, match="previous management nginx listener could not be address scoped"):
+    error = "previous wildcard nginx socket could not be prepared" if failing_stage == 1 else "previous management nginx listener could not be address scoped"
+    with pytest.raises(ValueError, match=error):
         helper._scope_management_handoff_old_listener({
             "previous_https_enabled": True,
             "previous_management_addresses": ["192.0.2.10"],
             "snapshots": [{"path": str(public), "backup": str(backup)}],
         })
     assert len(validated) == failing_stage
-    assert "default_server reuseport;" in validated[0]
+    assert reloads == ([] if failing_stage == 1 else [1])
+    assert "listen 443 ssl default_server reuseport;" in validated[0]
     if failing_stage == 2:
         assert "listen 192.0.2.10:443 ssl default_server reuseport;" not in validated[1]
         assert "listen 127.0.0.1:443 ssl default_server reuseport;" in validated[1]
-    expected = original if failing_stage == 1 else original.replace(
-        "default_server;", "default_server reuseport;",
-    )
+    expected = original if failing_stage == 1 else original.replace("default_server;", "default_server reuseport;")
     assert management.read_text(encoding="utf-8") == expected
     assert public.read_text(encoding="utf-8") == public_text
 
@@ -3069,21 +3104,24 @@ def test_management_handoff_scopes_old_http_before_new_address_activation(monkey
     )
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
     installed = []
-    monkeypatch.setattr(helper, "_install_nginx_site", lambda _path, text: installed.append(text) or 0)
+    monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
+    monkeypatch.setattr(
+        helper, "_install_nginx_site",
+        lambda _path, text, **kwargs: installed.append((text, kwargs)) or 0,
+    )
 
     helper._scope_management_handoff_old_listener({
         "previous_https_enabled": False,
         "previous_management_addresses": ["192.0.2.10", "2001:db8::10"],
     })
 
-    assert len(installed) == 3
-    assert "default_server reuseport;" in installed[0]
-    assert "default_server reuseport;" in installed[1]
-    assert "reuseport" not in installed[-1]
-    assert "listen 192.0.2.10:80 default_server;" in installed[-1]
-    assert "listen [2001:db8::10]:80 default_server;" in installed[-1]
-    assert "listen 80 default_server;" not in installed[-1]
-    assert "listen [::]:80 default_server;" not in installed[-1]
+    assert len(installed) == 2
+    assert all(kwargs == {"verify_activation": True} for _text, kwargs in installed)
+    assert "listen 80 default_server reuseport;" in installed[0][0]
+    assert "listen 192.0.2.10:80 default_server reuseport;" in installed[1][0]
+    assert "listen [2001:db8::10]:80 default_server reuseport;" in installed[1][0]
+    assert "listen 80 default_server;" not in installed[1][0]
+    assert "listen [::]:80 default_server;" not in installed[1][0]
 
 
 @pytest.mark.parametrize("https_enabled", [False, True])
@@ -3102,17 +3140,18 @@ def test_management_handoff_scopes_canonical_ipv4_only_site(monkeypatch, tmp_pat
                     ("server {\n  listen 443 ssl default_server;\n}\n" if https_enabled else ""), encoding="utf-8")
     monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
     installed = []
-    monkeypatch.setattr(helper, "_install_nginx_site", lambda _path, text: installed.append(text) or 0)
+    monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda _path, text, **kwargs: installed.append((text, kwargs)) or 0)
     helper._scope_management_handoff_old_listener({"previous_https_enabled": https_enabled,
                                                  "previous_management_addresses": ["192.0.2.10"]})
-    assert len(installed) == 3
-    assert "default_server reuseport;" in installed[0]
-    assert "default_server reuseport;" in installed[1]
-    assert "reuseport" not in installed[-1]
-    assert "listen 192.0.2.10:80 default_server;" in installed[-1]
-    assert "[::]" not in installed[-1]
+    assert len(installed) == 2
+    assert all(kwargs == {"verify_activation": True} for _text, kwargs in installed)
+    assert "default_server reuseport;" in installed[0][0]
+    assert "listen 192.0.2.10:80 default_server reuseport;" in installed[1][0]
+    assert "[::]" not in installed[1][0]
     if https_enabled:
-        assert "listen 192.0.2.10:443 ssl default_server;" in installed[-1]
+        assert "listen 192.0.2.10:443 ssl default_server reuseport;" in installed[1][0]
+
 
 
 @pytest.mark.parametrize("addresses,tls_lines", [
@@ -13348,6 +13387,186 @@ def test_kms_helper_status_returns_only_authenticated_redacted_counts(monkeypatc
     assert json.loads(output) == status_payload
     assert "protected-runtime-secret" not in output
     assert "key_id" not in output
+
+
+@pytest.mark.parametrize("total,returncode", [(0, 0), (2, 0), (0, 2)])
+def test_kms_status_authenticates_retained_store_without_service_credential(
+    monkeypatch, tmp_path, capsys, total, returncode,
+):
+    """Verify disabled-service status authenticates counts without restoring runtime access.
+
+    Args:
+        monkeypatch: Pytest fixture replacing fixed helper paths and the status child.
+        tmp_path: Isolated filesystem root supplied by pytest.
+        capsys: Pytest fixture capturing redacted helper output.
+        total: Authenticated operational key count returned by the status child.
+        returncode: Status child result, including a failed store-authentication case.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "server.json"
+    config_path.write_text("{}", encoding="utf-8")
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    database_path = state_dir / "store.db"
+    kek_path = state_dir / "kek.json"
+    database_path.write_bytes(b"retained-store")
+    kek_path.write_bytes(b"retained-kek")
+    credential_path = tmp_path / "absent-runtime.cred"
+    environment_path = tmp_path / "appliance.env"
+    environment_path.write_text(
+        "export ATLASO_SECRETS_KEY='protected-appliance-secret'\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(helper, "KMS_CONFIG_PATH", config_path)
+    monkeypatch.setattr(helper, "KMS_STATE_DIR", state_dir)
+    monkeypatch.setattr(helper, "KMS_CREDENTIAL_PATH", credential_path)
+    monkeypatch.setattr(helper, "ATLASO_ENV_PATH", environment_path)
+    child_calls = []
+    payload = {
+        "status": "available", "store_status": "healthy",
+        "providers": {"885841f9-0878-45c2-aee0-b72bc9fc643f": {
+            "pre_active": 0, "active": total, "total": total,
+        }},
+    }
+
+    def status_child(command, **kwargs):
+        """Verify the bounded child receives the credential only through stdin.
+
+        Args:
+            command: Fixed status command emitted by the helper.
+            **kwargs: Captured child environment and output options.
+
+        Returns:
+            A redacted result or a failed authentication result.
+        """
+        assert command == [str(helper.ATLASO_KMIP_VENV_PATH), "--config", str(config_path),
+                           "--status", "--status-secret-stdin"]
+        assert kwargs["input"] == "protected-appliance-secret"
+        assert "ATLASO_SECRETS_KEY_FILE" not in kwargs["env"]
+        assert "ATLASO_SECRETS_KEY" not in kwargs["env"]
+        assert kwargs["timeout"] == 30
+        child_calls.append(command)
+        return subprocess.CompletedProcess(
+            command, returncode, json.dumps(payload), "protected-appliance-secret"
+        )
+
+    monkeypatch.setattr(helper.subprocess, "run", status_child)
+    assert helper._handle_kms("status", []) == returncode
+    captured = capsys.readouterr()
+    if returncode:
+        assert captured.out == ""
+        assert "unavailable" in captured.err
+    else:
+        assert json.loads(captured.out) == payload
+    assert "protected-appliance-secret" not in captured.out + captured.err
+    assert len(child_calls) == 1
+    assert not credential_path.exists()
+    assert config_path.read_text(encoding="utf-8") == "{}"
+    assert database_path.read_bytes() == b"retained-store"
+    assert kek_path.read_bytes() == b"retained-kek"
+
+
+@pytest.mark.parametrize("artifact", ["store.db", "kek.json"])
+@pytest.mark.parametrize("runtime_credential", [False, True])
+def test_kms_status_rejects_incomplete_store_before_credential_access(
+    monkeypatch, tmp_path, capsys, artifact, runtime_credential,
+):
+    """Verify a partial retained store cannot reach credential fallback or zero evidence.
+
+    Args:
+        monkeypatch: Pytest fixture replacing fixed helper paths and secret access.
+        tmp_path: Isolated runtime filesystem supplied by pytest.
+        capsys: Pytest fixture capturing the redacted failure.
+        artifact: Sole retained operational store artifact.
+        runtime_credential: Whether the encrypted service credential still exists.
+    """
+    helper = load_helper_module()
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / artifact).write_bytes(b"retained-artifact")
+    config_path = tmp_path / "server.json"
+    config_path.write_text("{}", encoding="utf-8")
+    credential_path = tmp_path / "runtime.cred"
+    if runtime_credential:
+        credential_path.write_bytes(b"encrypted")
+    monkeypatch.setattr(helper, "KMS_CONFIG_PATH", config_path)
+    monkeypatch.setattr(helper, "KMS_CREDENTIAL_PATH", credential_path)
+    monkeypatch.setattr(helper, "KMS_STATE_DIR", state_dir)
+
+    def unexpected_secret_access():
+        """Fail if incomplete store inspection proceeds to secret access."""
+        pytest.fail("Incomplete retained store reached credential fallback")
+
+    monkeypatch.setattr(helper, "_kms_secrets_key", unexpected_secret_access)
+    monkeypatch.setattr(helper, "_run", lambda _command: pytest.fail("Unexpected credential decryption"))
+    assert helper._handle_kms("status", []) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "unavailable" in captured.err
+    assert (state_dir / artifact).read_bytes() == b"retained-artifact"
+    assert len(list(state_dir.iterdir())) == 1
+
+
+@pytest.mark.parametrize("timeout", [False, True])
+def test_kms_status_child_failure_is_redacted(monkeypatch, tmp_path, capsys, timeout):
+    """Verify process startup and timeout errors cannot expose the stdin credential.
+
+    Args:
+        monkeypatch: Pytest fixture replacing fixed paths and child execution.
+        tmp_path: Isolated configuration root supplied by pytest.
+        capsys: Pytest fixture capturing helper output.
+        timeout: Whether the child exceeds its deadline instead of failing startup.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "server.json"
+    config_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(helper, "KMS_CONFIG_PATH", config_path)
+    monkeypatch.setattr(helper, "KMS_CREDENTIAL_PATH", tmp_path / "absent-runtime.cred")
+    monkeypatch.setattr(helper, "KMS_STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(helper, "_kms_secrets_key", lambda: "sensitive-marker")
+
+    def failed_child(command, **kwargs):
+        """Raise a secret-bearing child exception to verify redaction.
+
+        Args:
+            command: Fixed KMIP status child command.
+            **kwargs: Child options containing stdin input and timeout.
+        """
+        assert kwargs["input"] == "sensitive-marker"
+        if timeout:
+            raise subprocess.TimeoutExpired(command, 30, output="sensitive-marker")
+        raise OSError("sensitive-marker")
+
+    monkeypatch.setattr(helper.subprocess, "run", failed_child)
+    assert helper._handle_kms("status", []) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "unavailable" in captured.err
+    assert "sensitive-marker" not in captured.err
+
+
+def test_kms_status_without_service_credential_requires_appliance_secret(
+    monkeypatch, tmp_path, capsys,
+):
+    """Verify missing appliance secret cannot turn a retained store into empty evidence.
+
+    Args:
+        monkeypatch: Pytest fixture replacing fixed helper paths.
+        tmp_path: Isolated filesystem root supplied by pytest.
+        capsys: Pytest fixture capturing redacted helper output.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "server.json"
+    config_path.write_text("{}", encoding="utf-8")
+    environment_path = tmp_path / "appliance.env"
+    environment_path.write_text("OTHER_SETTING=value\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "KMS_CONFIG_PATH", config_path)
+    monkeypatch.setattr(helper, "KMS_CREDENTIAL_PATH", tmp_path / "absent-runtime.cred")
+    monkeypatch.setattr(helper, "KMS_STATE_DIR", tmp_path / "retained-state")
+    monkeypatch.setattr(helper, "ATLASO_ENV_PATH", environment_path)
+    assert helper._handle_kms("status", []) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "credential is unavailable" in captured.err
 
 
 def test_kms_helper_status_fails_closed_when_store_material_cannot_be_authenticated(

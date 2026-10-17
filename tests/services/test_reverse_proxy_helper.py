@@ -605,7 +605,12 @@ def test_nginx_generation_observer_rejects_unavailable_service_identity(monkeypa
     assert calls == [(["systemctl", "show", "nginx", "--property=MainPID", "--value"], 5)]
 
 
-@pytest.mark.parametrize("observations,accepted", [([(100, {101}), (100, {101, 102})], True), ([(100, {101})], False)])
+@pytest.mark.parametrize("observations,accepted", [
+    ([(100, {(101, 1)}), (100, {(102, 2)})], True),
+    ([(100, {(101, 1)}), (100, {(101, 2)})], True),
+    ([(100, {(101, 1)})], False),
+    ([(100, {(101, 1), (102, 2)})], False),
+])
 def test_nginx_reload_generation_requires_new_master_children(monkeypatch, observations, accepted):
     """Bound reload confirmation and reject the unchanged old generation.
     Args:
@@ -619,7 +624,7 @@ def test_nginx_reload_generation_requires_new_master_children(monkeypatch, obser
     monkeypatch.setattr(helper, "_nginx_worker_generation", lambda: next(generations))
     monkeypatch.setattr(helper.time, "monotonic", lambda: next(clock))
     monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
-    assert helper._wait_nginx_reload_generation((100, {101})) is accepted
+    assert helper._wait_nginx_reload_generation((100, {(101, 1)})) is accepted
 
 
 def test_nginx_reload_generation_preserves_unexpected_master_change(monkeypatch):

@@ -1457,9 +1457,11 @@ def _ensure_kms_service_identity() -> tuple[object, object]:
         raise ValueError("KMS service-account reconciliation did not create a usable identity.") from exc
 
 
-def _install_kms_credential() -> None:
-    """Perform install KMS credential.
+def _kms_secrets_key() -> str:
+    """Read the appliance secret for the immediate protected KMIP operation.
 
+    Returns:
+        The secret retained only inside the privileged helper process.
     """
     try:
         source_lines = ATLASO_ENV_PATH.read_text(encoding="utf-8").splitlines()
@@ -1481,6 +1483,12 @@ def _install_kms_credential() -> None:
             break
     if not secret_value:
         raise ValueError("ATLASO_SECRETS_KEY is missing from the Atlaso appliance environment.")
+    return secret_value
+
+
+def _install_kms_credential() -> None:
+    """Install the encrypted credential consumed by the enabled KMIP service."""
+    secret_value = _kms_secrets_key()
     systemd_creds = _command_path("systemd-creds")
     if systemd_creds is None:
         raise ValueError("systemd-creds is required to protect the KMS runtime credential.")
@@ -6560,10 +6568,12 @@ def _handle_kms(action: str, args: list[str]) -> int:
             return 2
         config_available = KMS_CONFIG_PATH.is_file()
         credential_available = KMS_CREDENTIAL_PATH.is_file()
-        store_material_available = any(
-            path.exists()
-            for path in (KMS_STATE_DIR / "store.db", KMS_STATE_DIR / "kek.json")
-        )
+        database_available = (KMS_STATE_DIR / "store.db").exists()
+        kek_available = (KMS_STATE_DIR / "kek.json").exists()
+        store_material_available = database_available or kek_available
+        if database_available != kek_available:
+            print("KMIP authenticated runtime status is unavailable.", file=sys.stderr)
+            return 2
         if not config_available and not credential_available and not store_material_available:
             print(
                 json.dumps(
@@ -6577,34 +6587,49 @@ def _handle_kms(action: str, args: list[str]) -> int:
                 )
             )
             return 0
-        if not config_available or not credential_available:
+        if not config_available:
             print("KMIP authenticated runtime status is unavailable.", file=sys.stderr)
             return 2
-        decrypted = _run(
-            [
-                "systemd-creds",
-                "decrypt",
-                f"--name={KMS_CREDENTIAL_NAME}",
-                str(KMS_CREDENTIAL_PATH),
-                "-",
-            ]
-        )
-        if decrypted.returncode != 0 or not decrypted.stdout:
-            print("KMIP runtime status credential is unavailable.", file=sys.stderr)
-            return 2
-        with tempfile.TemporaryDirectory(prefix="atlaso-kmip-status-") as temp_root_value:
-            credential_path = Path(temp_root_value) / KMS_CREDENTIAL_NAME
-            credential_path.write_text(decrypted.stdout, encoding="utf-8")
-            credential_path.chmod(0o600)
-            environment = os.environ.copy()
-            environment["ATLASO_SECRETS_KEY_FILE"] = str(credential_path)
+        if credential_available:
+            decrypted = _run(
+                [
+                    "systemd-creds",
+                    "decrypt",
+                    f"--name={KMS_CREDENTIAL_NAME}",
+                    str(KMS_CREDENTIAL_PATH),
+                    "-",
+                ]
+            )
+            if decrypted.returncode != 0 or not decrypted.stdout:
+                print("KMIP runtime status credential is unavailable.", file=sys.stderr)
+                return 2
+            secret_value = decrypted.stdout
+        else:
+            # Disable removes the service credential but retains the operational
+            # store. Authenticate read-only status with the same appliance secret,
+            # without recreating that credential or starting either listener.
+            try:
+                secret_value = _kms_secrets_key()
+            except ValueError:
+                print("KMIP runtime status credential is unavailable.", file=sys.stderr)
+                return 2
+        environment = os.environ.copy()
+        environment.pop("ATLASO_SECRETS_KEY", None)
+        environment.pop("ATLASO_SECRETS_KEY_FILE", None)
+        try:
             completed = subprocess.run(
-                [str(ATLASO_KMIP_VENV_PATH), "--config", str(KMS_CONFIG_PATH), "--status"],
+                [str(ATLASO_KMIP_VENV_PATH), "--config", str(KMS_CONFIG_PATH),
+                 "--status", "--status-secret-stdin"],
                 check=False,
                 capture_output=True,
                 text=True,
+                input=secret_value,
                 env=environment,
+                timeout=30,
             )
+        except (OSError, subprocess.TimeoutExpired):
+            print("KMIP authenticated runtime status is unavailable.", file=sys.stderr)
+            return 2
         if completed.returncode != 0:
             print("KMIP authenticated runtime status is unavailable.", file=sys.stderr)
             return completed.returncode
@@ -9482,7 +9507,7 @@ def _nginx_test_command() -> subprocess.CompletedProcess[str]:
     return _run([nginx, "-t"])
 
 
-def _nginx_worker_generation() -> tuple[int, set[int]] | None:
+def _nginx_worker_generation() -> tuple[int, set[tuple[int, int]]] | None:
     """Observe the admitted nginx master and its current child generation."""
     if os.name != "posix":
         return None
@@ -9496,13 +9521,13 @@ def _nginx_worker_generation() -> tuple[int, set[int]] | None:
     process = Path("/proc") / str(pid)
     if nginx is None or process.stat().st_uid != 0 or not _vcf_depot_listener_is_nginx(pid, Path(nginx)):
         raise ValueError("nginx master ownership changed")
-    children = (process / "task" / str(pid) / "children").read_text(encoding="ascii").split()
-    if any(not value.isdigit() for value in children):
-        raise ValueError("nginx child generation is invalid")
-    return pid, {int(value) for value in children}
+    master, workers = _nginx_active_workers()
+    if master != pid:
+        raise ValueError("nginx master changed during ownership observation")
+    return master, workers
 
 
-def _wait_nginx_reload_generation(previous: tuple[int, set[int]]) -> bool:
+def _wait_nginx_reload_generation(previous: tuple[int, set[tuple[int, int]]]) -> bool:
     """A successful signal command does not prove the master accepted a config.
 
     Args:
@@ -9513,16 +9538,61 @@ def _wait_nginx_reload_generation(previous: tuple[int, set[int]]) -> bool:
         current = _nginx_worker_generation()
         if current is None or current[0] != previous[0]:
             raise ValueError("nginx master changed during reload confirmation")
-        if current[1] - previous[1]:
+        if current[1] and current[1].isdisjoint(previous[1]):
             return True
         time.sleep(0.1)
     return False
 
 
-def _reload_nginx() -> int:
+def _nginx_active_workers() -> tuple[int, set[tuple[int, int]]]:
+    """Observe the service master and accepting workers with process identities."""
+    result = _run(["systemctl", "show", "nginx.service", "--property=MainPID", "--value"], timeout=5)
+    value = result.stdout.strip()
+    if result.returncode or not value.isdecimal() or int(value) <= 1:
+        raise ValueError("nginx master identity is unavailable")
+    master = int(value)
+    proc = Path("/proc")
+    children = (proc / str(master) / "task" / str(master) / "children").read_text().split()
+    workers: set[tuple[int, int]] = set()
+    for child in children:
+        try:
+            command = (proc / child / "cmdline").read_bytes().replace(b"\0", b" ").strip()
+            if command != b"nginx: worker process":
+                continue
+            fields = (proc / child / "stat").read_text().rsplit(")", 1)[1].split()
+            workers.add((int(child), int(fields[19])))
+        except FileNotFoundError:
+            # A gracefully retired child may disappear between these reads.
+            continue
+    return master, workers
+
+
+def _reload_nginx(*, verify_activation: bool = False) -> int:
     """Perform reload nginx.
 
+    Args:
+        verify_activation: Require a new accepting generation without restarting.
     """
+    if verify_activation:
+        try:
+            master, previous = _nginx_active_workers()
+            if not previous:
+                raise ValueError("nginx has no accepting worker before reload")
+            result = _run(["systemctl", "reload", "nginx"], timeout=10)
+            if result.returncode:
+                raise ValueError("nginx graceful reload command failed")
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                observed_master, current = _nginx_active_workers()
+                if observed_master != master:
+                    raise ValueError("nginx master changed during graceful reload")
+                if current and current.isdisjoint(previous):
+                    return 0
+                time.sleep(0.1)
+            raise ValueError("nginx did not activate a new accepting worker generation")
+        except (OSError, ValueError, subprocess.SubprocessError):
+            print("nginx graceful activation could not be verified; restart was not attempted", file=sys.stderr)
+            return 1
     previous = _nginx_worker_generation()
     commands = [["systemctl", "enable", "--now", "nginx"]]
     reload_result = _run(["systemctl", "reload", "nginx"])
@@ -9551,7 +9621,7 @@ def _nginx_site_metadata(text: str) -> list[tuple[str, set[str]]]:
             if line.startswith("server_name "):
                 names.update(item for item in line.split()[1:] if item != "_")
             elif line.startswith("listen "):
-                value = " ".join(part for part in line.split()[1:] if part not in {"ssl", "http2", "default_server"})
+                value = " ".join(part for part in line.split()[1:] if part not in {"ssl", "http2", "default_server", "bind", "reuseport"})
                 listens.add(value)
         for name in names:
             metadata.append((name, listens))
@@ -9632,18 +9702,23 @@ def _validate_nginx_site_candidate(site_path: Path, text: str | None) -> subproc
         return _run([nginx, "-t", "-c", str(main_path), "-p", f"{nginx_root}{os.sep}"])
 
 
-def _install_nginx_site(site_path: Path, text: str) -> int:
+def _install_nginx_site(site_path: Path, text: str, *, verify_activation: bool = False) -> int:
     """Perform install nginx site.
 
     Args:
         site_path: Filesystem path used for site.
         text: Text content consumed by the operation.
+        verify_activation: Require graceful worker activation without a restart fallback.
     """
     nginx = _nginx_binary()
     if nginx is None:
         print("nginx command not found", file=sys.stderr)
         return 127
     _install_nginx_include()
+    if verify_activation:
+        text = _management_handoff_reuseport_site(
+            text, shared_sites=_management_handoff_other_nginx_sites({site_path}),
+        )
     conflict = _nginx_site_conflict(site_path, text)
     if conflict:
         print(conflict, file=sys.stderr)
@@ -9664,14 +9739,15 @@ def _install_nginx_site(site_path: Path, text: str) -> int:
             site_path.write_text(previous, encoding="utf-8")
             os.chmod(site_path, 0o644)
         return validation.returncode
-    return _reload_nginx()
+    return _reload_nginx(verify_activation=True) if verify_activation else _reload_nginx()
 
 
-def _remove_nginx_site(site_path: Path) -> int:
+def _remove_nginx_site(site_path: Path, *, verify_activation: bool = False) -> int:
     """Remove nginx site.
 
     Args:
         site_path: Filesystem path used for site.
+        verify_activation: Require graceful activation without a restart fallback.
     """
     if not site_path.exists():
         return 0
@@ -9682,7 +9758,7 @@ def _remove_nginx_site(site_path: Path) -> int:
     print(validation.stderr, end="", file=sys.stderr)
     if validation.returncode != 0:
         return validation.returncode
-    return _reload_nginx()
+    return _reload_nginx(verify_activation=True) if verify_activation else _reload_nginx()
 
 
 def _validate_public_services_config_path(path_value: str) -> Path:
@@ -10422,13 +10498,16 @@ def _public_services_prod_alias_path(alias: str) -> Path:
     return Path(normalized)
 
 
-def _handle_public_services(action: str, args: list[str], *, transitional_text: str | None = None) -> int:
+def _handle_public_services(
+    action: str, args: list[str], *, transitional_text: str | None = None, verify_activation: bool = False,
+) -> int:
     """Handle public services.
 
     Args:
         action: Action consumed by handle public services.
         args: Parsed command-line options consumed by the operation.
         transitional_text: Candidate listeners joined with snapshotted old listeners.
+        verify_activation: Require graceful activation during wildcard migration.
     """
     if action == "reverse-proxy-status":
         if args:
@@ -10480,11 +10559,13 @@ def _handle_public_services(action: str, args: list[str], *, transitional_text: 
                     return 2
         text = transitional_text if transitional_text is not None else config_path.read_text(encoding="utf-8")
         if "server {" not in text and not candidate["proxies"]:
-            result = _remove_nginx_site(NGINX_PUBLIC_SERVICES_SITE_PATH)
+            result = (_remove_nginx_site(NGINX_PUBLIC_SERVICES_SITE_PATH, verify_activation=True)
+                      if verify_activation else _remove_nginx_site(NGINX_PUBLIC_SERVICES_SITE_PATH))
         else:
             if _vcf_depot_auth_required(text) and _write_vcf_depot_htpasswd(_vcf_depot_auth_username(text)) != 0:
                 return 2
-            result = _install_nginx_site(NGINX_PUBLIC_SERVICES_SITE_PATH, text)
+            result = (_install_nginx_site(NGINX_PUBLIC_SERVICES_SITE_PATH, text, verify_activation=True)
+                      if verify_activation else _install_nginx_site(NGINX_PUBLIC_SERVICES_SITE_PATH, text))
         if result != 0:
             return result
         print(json.dumps({"public_services": "apply complete", "site_path": str(NGINX_PUBLIC_SERVICES_SITE_PATH)}, sort_keys=True))
@@ -10665,9 +10746,9 @@ def _existing_management_scoped_addresses() -> tuple[list[str], list[str], int, 
     listeners = [line.strip() for line in site.splitlines() if line.strip().startswith("listen ")]
     if not listeners:
         raise ValueError("existing management listener inventory is empty")
-    if any(re.fullmatch(r"listen (?:\d+|\[::\]:\d+)(?: ssl)? default_server;", line)
+    if any(re.fullmatch(r"listen (?:\d+|\[::\]:\d+)(?: ssl)? default_server(?: reuseport)?;", line)
            for line in listeners):
-        if any(not re.fullmatch(r"listen (?:\d+|\[::\]:\d+)(?: ssl)? default_server;", line)
+        if any(not re.fullmatch(r"listen (?:\d+|\[::\]:\d+)(?: ssl)? default_server(?: reuseport)?;", line)
                for line in listeners):
             raise ValueError("existing management listeners mix wildcard and scoped sockets")
         return None
@@ -10675,7 +10756,7 @@ def _existing_management_scoped_addresses() -> tuple[list[str], list[str], int, 
     ports: dict[bool, set[int]] = {False: set(), True: set()}
     for line in listeners:
         match = re.fullmatch(
-            r"listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+)( ssl)? default_server;", line,
+            r"listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+)( ssl)? default_server(?: reuseport)?;", line,
         )
         if match is None:
             raise ValueError("existing management listener inventory is not canonical")
@@ -10745,6 +10826,7 @@ def _configure_atlaso_management_https(
     listen_addresses: list[str] | None = None,
     http_listen_addresses: list[str] | None = None,
     https_listen_addresses: list[str] | None = None,
+    handoff_reuseport: bool = False,
 ) -> tuple[int, int | None]:
     """Install the management front door without interrupting its upstream.
 
@@ -10755,6 +10837,7 @@ def _configure_atlaso_management_https(
         listen_addresses: Exact addresses exposed by the management listener.
         http_listen_addresses: Addresses allowed on the HTTP redirect during a handoff.
         https_listen_addresses: Addresses owned by this site on HTTPS.
+        handoff_reuseport: Preserve graceful wildcard rollback during a protected handoff.
     """
     enabled = bool(payload.get("management_https_enabled"))
     port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
@@ -10782,6 +10865,8 @@ def _configure_atlaso_management_https(
         raise ValueError("management handoff has no verified listener address")
     if site_suffix.strip():
         site_text += "\n" + site_suffix.strip() + "\n"
+    if handoff_reuseport:
+        site_text = _management_handoff_reuseport_site(site_text)
 
     if _factory_reset_runtime_cleanup_is_admitted():
         verify_front_door = False
@@ -10862,7 +10947,10 @@ def _configure_atlaso_management_https(
             return daemon_reload.returncode, None
 
     try:
-        site_apply = _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, site_text)
+        site_apply = (
+            _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, site_text, verify_activation=True)
+            if handoff_reuseport else _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, site_text)
+        )
     except (OSError, subprocess.SubprocessError) as exc:
         rollback_errors = (
             _rollback_management_front_door(previous_files)
@@ -31710,8 +31798,8 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
     scoped_ports: dict[bool, set[int]] = {False: set(), True: set()}
     allowed = {str(address) for address in addresses} | {"127.0.0.1", "::1"}
     for line in site.splitlines():
-        ipv4 = re.fullmatch(r"(\s*)listen (\d+)( (?:ssl )?default_server);", line)
-        ipv6 = re.fullmatch(r"(\s*)listen \[::\]:(\d+)( (?:ssl )?default_server);", line)
+        ipv4 = re.fullmatch(r"(\s*)listen (\d+)( (?:ssl )?default_server)(?: reuseport)?;", line)
+        ipv6 = re.fullmatch(r"(\s*)listen \[::\]:(\d+)( (?:ssl )?default_server)(?: reuseport)?;", line)
         if ipv4 or ipv6:
             match = ipv4 or ipv6
             listeners += 1
@@ -31735,7 +31823,7 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
                     scoped.append(f"{match.group(1)}listen {binding}:{match.group(2)}{match.group(3)};")
         elif re.match(r"\s*listen\s", line):
             match = re.fullmatch(
-                r"\s*listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+)( ssl)? default_server;",
+                r"\s*listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+)( ssl)? default_server(?: reuseport)?;",
                 line,
             )
             if match is None:
@@ -31782,19 +31870,125 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
         for tls in required_protocols
     )):
         raise ValueError("previous management nginx listener inventory is incomplete")
-    # Linux cannot bind a specific address while the previous wildcard socket
-    # remains open without SO_REUSEPORT on both sockets. First upgrade the
-    # existing socket in place; confirmed reloads preserve the old endpoint
-    # while the next generation opens the scoped sockets. No new addresses have
-    # been activated yet. The final site returns to the canonical directive form.
-    reusable_wildcard = re.sub(
-        r"(?m)^(\s*listen (?:\d+|\[::\]:\d+)(?: ssl)? default_server);$",
-        r"\1 reuseport;", site,
-    )
-    reusable_scoped = re.sub(r"(?m)^(\s*listen [^;]+);$", r"\1 reuseport;", "\n".join(scoped) + "\n")
-    for candidate in (reusable_wildcard, reusable_scoped, "\n".join(scoped) + "\n"):
-        if _install_nginx_site(NGINX_MANAGEMENT_SITE_PATH, candidate) != 0:
-            raise ValueError("previous management nginx listener could not be address scoped")
+    # nginx opens replacement sockets before closing the inherited wildcard.
+    # Arm SO_REUSEPORT on that inherited socket in a verified graceful cycle
+    # before asking it to bind the address-specific replacements. A successful
+    # `nginx -s reload` alone proves only signal delivery, not socket activation.
+    state["nginx_reuseport_bridge"] = True
+    _write_management_handoff_state(state, str(state.get("phase") or "old-path-retained"))
+    if _install_nginx_site(
+        NGINX_MANAGEMENT_SITE_PATH, _management_handoff_reuseport_site(site), verify_activation=True,
+    ) != 0:
+        raise ValueError("previous wildcard nginx socket could not be prepared for graceful isolation")
+    if _install_nginx_site(
+        NGINX_MANAGEMENT_SITE_PATH,
+        _management_handoff_reuseport_site("\n".join(scoped) + "\n"),
+        verify_activation=True,
+    ) != 0:
+        raise ValueError("previous management nginx listener could not be address scoped")
+
+
+def _management_handoff_other_nginx_sites(excluded: set[Path]) -> list[str]:
+    """Read unchanged managed sites whose socket option owners must be preserved.
+
+    Args:
+        excluded: Sites being replaced together by the current publication.
+    """
+    resolved = {path.resolve() for path in excluded}
+    return [path.read_text(encoding="utf-8") for path in sorted(NGINX_SITES_DIR.glob("*.conf"))
+            if path.is_file() and path.resolve() not in resolved]
+
+
+def _management_handoff_reuseport_site(text: str, *, shared_sites: list[str] | None = None) -> str:
+    """Enable overlap once per socket shared by managed virtual hosts.
+
+    Args:
+        text: Managed nginx site text containing numeric listen endpoints.
+        shared_sites: Unchanged sites whose existing socket option owners take precedence.
+    """
+    pattern = re.compile(r"(?m)^([ \t]*listen[ \t]+)([^;\n]+);")
+    listeners = list(pattern.finditer(text))
+    shared_listeners = [listener for site in shared_sites or [] for listener in pattern.finditer(site)
+                        if "reuseport" in listener.group(2).split()]
+    sockets: list[tuple[str, int]] = []
+    first: dict[tuple[str, int], int] = {}
+    existing: dict[tuple[str, int], int] = {}
+    for index, listener in enumerate([*listeners, *shared_listeners]):
+        fields = listener.group(2).split()
+        endpoint = fields[0]
+        if endpoint.isdecimal():
+            address, port = "0.0.0.0", endpoint
+        elif endpoint.startswith("["):
+            address, port = endpoint[1:].split("]:", 1)
+        else:
+            address, port = endpoint.rsplit(":", 1)
+            if address == "*":
+                address = "0.0.0.0"
+        identity = (str(ip_address(address)), int(port))
+        sockets.append(identity)
+        first.setdefault(identity, index)
+        if "reuseport" in fields:
+            if index < len(listeners):
+                existing.setdefault(identity, index)
+            else:
+                existing[identity] = index
+    owners = first | existing
+    chunks: list[str] = []
+    position = 0
+    for index, listener in enumerate(listeners):
+        directive = listener.group(2)
+        if owners[sockets[index]] == index:
+            if "reuseport" not in directive.split():
+                directive += " reuseport"
+        else:
+            directive = re.sub(r"[ \t]+reuseport(?=[ \t]|$)", "", directive)
+        chunks.extend((text[position:listener.start()], listener.group(1) + directive + ";"))
+        position = listener.end()
+    chunks.append(text[position:])
+    return "".join(chunks)
+
+
+def _restore_management_handoff_nginx_bridge(state: dict) -> None:
+    """Restore a snapshotted wildcard without colliding with candidate sockets.
+
+    Args:
+        state: Durable evidence that the wildcard migration may have begun.
+    """
+    if not state.get("nginx_reuseport_bridge"):
+        return
+    probe = _run(["systemctl", "show", "nginx.service", "--property=ActiveState,MainPID"], timeout=5)
+    status = dict(line.split("=", 1) for line in probe.stdout.splitlines() if "=" in line)
+    active, pid = status.get("ActiveState"), status.get("MainPID", "")
+    if probe.returncode or not pid.isdecimal():
+        raise ValueError("nginx rollback service state is unavailable")
+    if active in {"inactive", "failed"} and pid == "0":
+        # After a reboot or failed service start there is no inherited socket
+        # to bridge. Start the already-restored exact configuration instead.
+        if _nginx_test_command().returncode or _run(["systemctl", "start", "nginx.service"], timeout=10).returncode:
+            raise ValueError("previous nginx service could not be started")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if _nginx_active_workers()[1]:
+                return
+            time.sleep(0.1)
+        raise ValueError("previous nginx service has no accepting workers")
+    if active not in {"active", "reloading"} or int(pid) <= 1:
+        raise ValueError("nginx rollback service state is indeterminate")
+    original = NGINX_MANAGEMENT_SITE_PATH.read_bytes()
+    try:
+        if _install_nginx_site(
+            NGINX_MANAGEMENT_SITE_PATH,
+            _management_handoff_reuseport_site(original.decode("utf-8")),
+            verify_activation=True,
+        ) != 0:
+            raise ValueError("previous nginx wildcard socket could not be restored gracefully")
+    finally:
+        # The transient bridge is never the rollback's persistent configuration.
+        NGINX_MANAGEMENT_SITE_PATH.write_bytes(original)
+        _fsync_file(NGINX_MANAGEMENT_SITE_PATH)
+        _fsync_directory(NGINX_MANAGEMENT_SITE_PATH.parent)
+    if _nginx_test_command().returncode or _reload_nginx(verify_activation=True):
+        raise ValueError("exact previous nginx configuration activation failed")
 
 
 def _snapshot_management_handoff(payload: dict) -> dict:
@@ -32635,7 +32829,7 @@ def _management_handoff_previous_public_tls_addresses(state: dict) -> set[str]:
     previous = {str(ip_address(value)) for value in state.get("previous_management_addresses", [])}
     owned: set[str] = set()
     for line in site.splitlines():
-        match = re.fullmatch(r"\s*listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+) ssl default_server;", line)
+        match = re.fullmatch(r"\s*listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+) ssl default_server(?: reuseport)?;", line)
         if match is None or int(match.group(3)) != public_port:
             continue
         address = ip_address(match.group(1) or match.group(2))
@@ -32657,7 +32851,7 @@ def _management_handoff_candidate_public_tls_addresses(path: Path, port: int) ->
     owned: set[str] = set()
     for line in site.splitlines():
         match = re.fullmatch(
-            r"\s*listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+) ssl(?: default_server)?;", line,
+            r"\s*listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):(\d+) ssl(?: default_server)?(?: reuseport)?;", line,
         )
         if match is not None and int(match.group(3)) == port:
             owned.add(str(ip_address(match.group(1) or match.group(2))))
@@ -32774,12 +32968,15 @@ def _management_handoff_public_site_with_holdover(
     return previous_site.rstrip() + "\n\n" + "\n\n".join(additions) + "\n"
 
 
-def _management_handoff_publish_final_sites(management_site: str, public_site: str) -> int:
+def _management_handoff_publish_final_sites(
+    management_site: str, public_site: str, *, verify_activation: bool = False,
+) -> int:
     """Validate and reload both final nginx sites in one listener transition.
 
     Args:
         management_site: Final dedicated management site text.
         public_site: Final Public Services site text, possibly with no servers.
+        verify_activation: Require a new accepting generation for wildcard migration.
 
     Returns:
         Zero after a single successful reload, or a nonzero validation/reload code.
@@ -32791,6 +32988,10 @@ def _management_handoff_publish_final_sites(management_site: str, public_site: s
     ) != 0:
         return 2
     _install_nginx_include()
+    if verify_activation:
+        peers = _management_handoff_other_nginx_sites({NGINX_MANAGEMENT_SITE_PATH, NGINX_PUBLIC_SERVICES_SITE_PATH})
+        management_site = _management_handoff_reuseport_site(management_site, shared_sites=[public_site, *peers])
+        public_site = _management_handoff_reuseport_site(public_site, shared_sites=[management_site, *peers])
     sites: tuple[tuple[Path, str | None], ...] = (
         (NGINX_MANAGEMENT_SITE_PATH, management_site),
         (NGINX_PUBLIC_SERVICES_SITE_PATH, public_site if "server {" in public_site or "# Managed reverse-proxy generation: " in public_site else None),
@@ -32833,7 +33034,7 @@ def _management_handoff_publish_final_sites(management_site: str, public_site: s
         print(validation.stderr, end="", file=sys.stderr)
         if validation.returncode != 0:
             return validation.returncode
-        result = _reload_nginx()
+        result = _reload_nginx(verify_activation=True) if verify_activation else _reload_nginx()
         if result == 0:
             published = True
             return 0
@@ -33576,7 +33777,8 @@ def _restore_management_handoff(state: dict, *, startup: bool = False) -> dict:
         """
         try:
             operation()
-        except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError, shutil.Error) as exc:
+        except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError, shutil.Error,
+                subprocess.SubprocessError) as exc:
             errors.append(f"{stage}: {type(exc).__name__}")
 
     attempt(
@@ -33778,8 +33980,10 @@ def _restore_management_handoff(state: dict, *, startup: bool = False) -> dict:
     addresses_ready = len(errors) == address_ready_before
     if addresses_ready:
         attempt("nginx validation", validate_nginx)
+        if state.get("nginx_reuseport_bridge"):
+            attempt("nginx wildcard restore", lambda: _restore_management_handoff_nginx_bridge(state))
     service_commands = [["systemctl", "start", "atlaso.service"]]
-    if addresses_ready:
+    if addresses_ready and not state.get("nginx_reuseport_bridge"):
         service_commands.append(["systemctl", "reload-or-restart", "nginx.service"])
     for command in service_commands:
         def run_service(command: list[str] = command) -> None:
@@ -34136,7 +34340,7 @@ def _recover_management_handoff(*, startup: bool = False) -> int:
                               "helper_state": helper_state}, sort_keys=True))
             return 0
         evidence = _restore_management_handoff(state, startup=True) if startup else _restore_management_handoff(state)
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
         print(
             json.dumps(
                 {
@@ -34551,6 +34755,7 @@ def _apply_management_handoff(payload: dict) -> int:
             listen_addresses=initial_listener_addresses,
             http_listen_addresses=initial_http_addresses,
             https_listen_addresses=initial_https_addresses if candidate_https else None,
+            **({"handoff_reuseport": True} if state.get("nginx_reuseport_bridge") else {}),
         )
         if management_https_result != 0:
             raise ValueError("candidate management nginx apply failed")
@@ -34561,9 +34766,15 @@ def _apply_management_handoff(payload: dict) -> int:
             transitional_public_site = _management_handoff_public_site_with_holdover(
                 state, public_site, deferred_sockets=deferred_public_sockets,
             )
+        if state.get("nginx_reuseport_bridge"):
+            if transitional_public_site is None:
+                transitional_public_site = Path(str(payload["public_services_config_path"])).read_text(encoding="utf-8")
+            transitional_public_site = _management_handoff_reuseport_site(transitional_public_site)
+            transitional_public_needed = True
         if _handle_public_services(
             "apply", [str(payload["public_services_config_path"])],
             **({"transitional_text": transitional_public_site} if transitional_public_needed else {}),
+            **({"verify_activation": True} if state.get("nginx_reuseport_bridge") else {}),
         ) != 0:
             raise ValueError("candidate public-services nginx apply failed")
         if _nginx_test_command().returncode != 0:
@@ -34715,7 +34926,13 @@ def _apply_management_handoff(payload: dict) -> int:
                 https_listen_addresses=final_https_addresses,
             ).rstrip() + "\n"
             final_public_site = Path(str(payload["public_services_config_path"])).read_text(encoding="utf-8")
-            if _management_handoff_publish_final_sites(final_management_site, final_public_site) != 0:
+            if state.get("nginx_reuseport_bridge"):
+                final_management_site = _management_handoff_reuseport_site(final_management_site)
+                final_public_site = _management_handoff_reuseport_site(final_public_site)
+            if _management_handoff_publish_final_sites(
+                final_management_site, final_public_site,
+                **({"verify_activation": True} if state.get("nginx_reuseport_bridge") else {}),
+            ) != 0:
                 raise ValueError("candidate nginx could not publish verified final listeners together")
         else:
             management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
@@ -34757,11 +34974,11 @@ def _apply_management_handoff(payload: dict) -> int:
         _sync_management_handoff_candidate(state, payload)
         state["candidate_addresses"] = candidate_addresses
         _write_management_handoff_state(state, "awaiting-application-commit")
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
         rollback_error = ""
         try:
             rollback = _restore_management_handoff(state)
-        except (OSError, ValueError, json.JSONDecodeError) as rollback_exc:
+        except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as rollback_exc:
             rollback = {}
             rollback_error = str(rollback_exc)
         if not rollback_error:

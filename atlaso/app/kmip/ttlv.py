@@ -1,4 +1,4 @@
-"""Minimal, bounded KMIP 1.4 TTLV codec."""
+"""Minimal, bounded KMIP 1.1/1.4 TTLV codec."""
 
 from __future__ import annotations
 

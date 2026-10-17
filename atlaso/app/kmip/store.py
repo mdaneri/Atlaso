@@ -34,6 +34,16 @@ KEY_AAD_FIELDS = (
     "created_at",
     "activated_at",
 )
+VSPHERE_CUSTOM_ATTRIBUTES = frozenset(
+    {
+        "x-Component",
+        "x-Identifier",
+        "x-Vendor",
+        "x-Product",
+        "x-Product_Version",
+    }
+)
+MAX_CUSTOM_ATTRIBUTE_VALUE_BYTES = 512
 
 
 class KeyStoreError(RuntimeError):
@@ -61,6 +71,7 @@ class StoredKey:
         state: Current lifecycle state.
         created_at: UTC timestamp when the resource was created.
         activated_at: UTC timestamp associated with activated.
+        custom_attributes: Immutable vSphere custom attribute name/value pairs.
     """
     provider_id: str
     key_id: str
@@ -70,6 +81,7 @@ class StoredKey:
     state: str
     created_at: str
     activated_at: str | None
+    custom_attributes: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -124,8 +136,46 @@ def _canonical_aad(metadata: StoredKey) -> bytes:
         "created_at": metadata.created_at,
         "activated_at": metadata.activated_at,
     }
-    assert tuple(document) == KEY_AAD_FIELDS
+    if metadata.custom_attributes:
+        document["custom_attributes"] = dict(metadata.custom_attributes)
+    assert tuple(document) == KEY_AAD_FIELDS + (
+        ("custom_attributes",) if metadata.custom_attributes else ()
+    )
     return json.dumps(document, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+
+def _validated_custom_attributes(
+    custom_attributes: Iterable[tuple[str, str]],
+) -> tuple[tuple[str, str], ...]:
+    """Return normalized supported vSphere custom attributes.
+
+    Args:
+        custom_attributes: Candidate immutable attribute name/value pairs.
+
+    Raises:
+        ValueError: If an attribute is unsupported, repeated, or out of bounds.
+    """
+    try:
+        pairs = tuple(custom_attributes)
+    except TypeError as exc:
+        raise ValueError("custom_attributes must contain supported name/value pairs.") from exc
+    if len(pairs) > len(VSPHERE_CUSTOM_ATTRIBUTES):
+        raise ValueError("custom_attributes contains too many entries.")
+    normalized: dict[str, str] = {}
+    for pair in pairs:
+        if not isinstance(pair, (tuple, list)) or len(pair) != 2:
+            raise ValueError("custom_attributes must contain supported name/value pairs.")
+        attribute, value = pair
+        if (
+            not isinstance(attribute, str)
+            or attribute not in VSPHERE_CUSTOM_ATTRIBUTES
+            or attribute in normalized
+            or not isinstance(value, str)
+            or len(value.encode("utf-8")) > MAX_CUSTOM_ATTRIBUTE_VALUE_BYTES
+        ):
+            raise ValueError("custom_attributes contains an unsupported or invalid entry.")
+        normalized[attribute] = value
+    return tuple(sorted(normalized.items()))
 
 
 def _master_key(secrets_key: str) -> bytes:
@@ -527,12 +577,19 @@ class WrappedKeyStore:
             )
         )
 
-    def create_key(self, provider_id: str, *, name: str | None = None) -> StoredKey:
+    def create_key(
+        self,
+        provider_id: str,
+        *,
+        name: str | None = None,
+        custom_attributes: Iterable[tuple[str, str]] = (),
+    ) -> StoredKey:
         """Create key.
 
         Args:
             provider_id: Stable identifier of the associated provider resource.
             name: Stable name identifying the resource or operation.
+            custom_attributes: Supported provider metadata to authenticate with the key.
 
 
         Returns:
@@ -542,6 +599,7 @@ class WrappedKeyStore:
             ValueError: If an input value is invalid.
         """
         normalized_provider = _validated_uuid(provider_id, label="provider_id")
+        normalized_custom_attributes = _validated_custom_attributes(custom_attributes)
         if name is not None and (
             not isinstance(name, str) or not 1 <= len(name) <= 256
         ):
@@ -557,6 +615,7 @@ class WrappedKeyStore:
             state="Pre-Active",
             created_at=created_at,
             activated_at=None,
+            custom_attributes=normalized_custom_attributes,
         )
         aad = _canonical_aad(metadata)
         plaintext = bytearray(os.urandom(32))
@@ -630,6 +689,18 @@ class WrappedKeyStore:
         Args:
             row: Persistent database row affected by the operation.
         """
+        try:
+            aad_document = json.loads(row["aad_json"])
+            if not isinstance(aad_document, dict):
+                raise ValueError
+            raw_custom_attributes = aad_document.get("custom_attributes", {})
+            if not isinstance(raw_custom_attributes, dict):
+                raise ValueError
+            custom_attributes = _validated_custom_attributes(
+                tuple(raw_custom_attributes.items())
+            )
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise KeyStoreError("KMIP key metadata integrity validation failed.") from exc
         return StoredKey(
             provider_id=row["provider_id"],
             key_id=row["key_id"],
@@ -639,6 +710,7 @@ class WrappedKeyStore:
             state=row["state"],
             created_at=row["created_at"],
             activated_at=row["activated_at"],
+            custom_attributes=custom_attributes,
         )
 
     def _decrypt_row(self, row: sqlite3.Row) -> tuple[StoredKey, bytes]:
@@ -725,6 +797,7 @@ class WrappedKeyStore:
                 state="Active",
                 created_at=metadata.created_at,
                 activated_at=datetime.now(UTC).isoformat(),
+                custom_attributes=metadata.custom_attributes,
             )
             nonce = os.urandom(12)
             new_aad = _canonical_aad(updated)
