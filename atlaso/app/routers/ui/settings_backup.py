@@ -575,11 +575,11 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
             previous_appliance_fqdn=previous_fqdn,
         )
         from atlaso.app.services.reverse_proxies import (
-            validate_service_proxy_dependencies,
+            validate_service_listener_sockets,
         )
 
         try:
-            validate_service_proxy_dependencies(db)
+            validate_service_listener_sockets(db)
         except ValueError as exc:
             db.rollback()
             raise HTTPException(status_code=409, detail=str(exc)) from exc

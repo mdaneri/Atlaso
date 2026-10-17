@@ -2045,7 +2045,7 @@ def _archive_port_forward_listener_claims(data: dict[str, list[dict[str, Any]]])
     identities without borrowing the destination appliance's listener settings.
     """
     service_sections = (
-        "kms_settings", "ldap_settings",
+        "kms_settings", "ldap_settings", "ca_settings",
         "oidc_provider_settings", "ntp_settings", "vcf_backup_settings",
         "vcf_offline_depot_settings", "vcf_private_registry_settings",
     )

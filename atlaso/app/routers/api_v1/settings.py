@@ -103,7 +103,7 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
         response_model=SettingsResponse,
         tags=["Settings"],
         operation_id="updateSettings",
-        responses={409: {"model": ProblemDetails, "description": "Appliance or derived service hostname conflicts with saved reverse-proxy ownership; settings remain unchanged."}},
+        responses={409: {"model": ProblemDetails, "description": "Appliance hostname or browser listener scope conflicts with saved reverse-proxy ownership; settings remain unchanged."}},
     )
     def update_app_settings(
         payload: SettingsUpdate,
@@ -115,7 +115,7 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
 
         Requires the `admin:all` API scope. The operation updates only properties present in the request,
         preserves every omitted property, and does not bypass the documented global Appliance Apply or
-        service lifecycle boundary. Appliance and derived service hostname conflicts with saved
+        service lifecycle boundary. Appliance hostname and browser listener scope conflicts with saved
         reverse proxies return 409 without saving changes.
 
         Args:
@@ -236,6 +236,15 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
                     status_code=422,
                     detail=" ".join(ca_state_errors),
                 )
+        from atlaso.app.services.reverse_proxies import (
+            validate_service_listener_sockets,
+        )
+
+        try:
+            validate_service_listener_sockets(db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         db.add(desired)
         db.commit()
         db.refresh(desired)

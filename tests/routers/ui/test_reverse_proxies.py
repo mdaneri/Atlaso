@@ -958,3 +958,72 @@ def test_vlan_writers_reject_new_management_socket_scope(client, operation, addr
     assert "Service listener conflicts" in response.text
     with SessionLocal() as db:
         assert snapshot(db) == before
+
+
+@pytest.mark.parametrize("transport", ["api", "ui"])
+@pytest.mark.parametrize("address", ["192.168.87.10", "2001:db8:87::10"])
+@pytest.mark.parametrize("selection_change", [False, True])
+def test_appliance_settings_reject_cross_scope_terminal_https(client, transport, address, selection_change):
+    """Refuse terminal selection changes atomically even when the FQDN is unchanged.
+
+    Args:
+        client: Initialized appliance HTTP client.
+        transport: API or form writer.
+        address: Duplicate IPv4 or IPv6 destination.
+        selection_change: Change scopes on an already enabled terminal.
+    """
+    import json
+
+    from atlaso.app.models import (
+        ApplianceSettings,
+        AuditEvent,
+        CaSettings,
+        PhysicalInterface,
+    )
+    from atlaso.app.services.reverse_proxies import runtime_snapshot, save_proxy
+    from tests.routers.api_v1.helpers import create_token
+    from tests.routers.api_v1.test_reverse_proxies import _payload
+
+    login(client)
+    csrf = client.get("/settings").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    token, _metadata = create_token(client, ["admin:all"])
+
+    def snapshot(db):
+        """Capture settings, proxy and audit state.
+
+        Args:
+            db: Caller-owned appliance database session.
+        """
+        settings = db.scalar(select(ApplianceSettings))
+        return (settings.fqdn, settings.web_terminal_enabled, settings.web_terminal_interfaces_json,
+                runtime_snapshot(db), list(db.scalars(select(AuditEvent.id).order_by(AuditEvent.id))))
+
+    with SessionLocal() as db:
+        for name in ("eth1", "eth2"):
+            interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == name))
+            interface.role, interface.mode = "access", "access"
+            interface.admin_state, interface.oper_state = "up", "up"
+            interface.ip_cidr, interface.ipv6_cidr = "192.168.87.10/24", "2001:db8:87::10/64"
+            interface.ipv6_enabled = True
+            interface.check_duplicate_ip_addresses = False
+        settings = db.scalar(select(ApplianceSettings))
+        settings.management_https_enabled = True
+        settings.web_terminal_enabled = selection_change
+        settings.web_terminal_interfaces_json = json.dumps(["eth2"])
+        db.scalar(select(CaSettings)).enabled = True
+        db.commit()
+        save_proxy(db, _payload(enabled=True, port=443, redirect_http=False,
+                                listeners=[{"interface": "eth2", "address": address}]), actor="test")
+        before = snapshot(db)
+    if transport == "api":
+        response = client.patch("/api/v1/settings", headers={"Authorization": f"Bearer {token}"},
+                                json={"web_terminal_enabled": True, "web_terminal_interfaces": ["eth1"]})
+    else:
+        response = client.post("/settings", data={"csrf": csrf, "fqdn": before[0],
+                               "management_https_enabled": "on", "web_terminal_enabled": "on",
+                               "web_terminal_interfaces_present": "on", "web_terminal_interfaces": "eth1"},
+                               follow_redirects=False)
+    assert response.status_code == 409, response.text
+    assert "Service listener conflicts" in response.text
+    with SessionLocal() as db:
+        assert snapshot(db) == before

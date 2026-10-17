@@ -754,3 +754,45 @@ def test_restore_allows_external_ipv6_upstream_with_target_observations(client):
         restore_settings_archive(db, archive)
         restored = db.scalar(select(ReverseProxy))
         assert restored.enabled and restored.routes[0].upstream_host == "2001:db8:99::55"
+
+
+@pytest.mark.parametrize("address", ["192.168.49.10", "2001:db8:49::10"])
+def test_restore_rejects_independent_terminal_scope(client, address):
+    """Reject cross-scope terminal HTTPS before replacing any archived state.
+
+    Args:
+        client: Initialized appliance fixture.
+        address: Duplicate IPv4 or IPv6 destination.
+    """
+    import json
+
+    from atlaso.app import ui
+    from atlaso.app.models import ApplianceSettings, CaSettings
+
+    with SessionLocal() as db:
+        listener = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        listener.ip_cidr = "192.168.49.10/24"
+        listener.ipv6_enabled = True
+        listener.ipv6_cidr = "2001:db8:49::10/64"
+        db.scalar(select(CaSettings)).enabled = True
+        db.scalar(select(ApplianceSettings)).management_https_enabled = True
+        db.commit()
+        assert ui.ensure_ca_state(db) == []
+        save_proxy(db, payload(enabled=True, port=9444, redirect_http=False,
+                               listeners=[{"interface": "eth2", "address": address}]), actor="test")
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        before = deepcopy(archive["data"])
+        other = archive["data"]["vlan_interfaces"][0]
+        other.update(role="access", enabled=True, ip_cidr="192.168.49.10/24", ipv6_cidr="2001:db8:49::10/64")
+        other["check_duplicate_ip_addresses"] = False
+        for interface in archive["data"]["physical_interfaces"]:
+            interface["check_duplicate_ip_addresses"] = False
+        settings = archive["data"]["appliance_settings"][0]
+        settings.update(management_https_enabled=True, web_terminal_enabled=True, web_terminal_interfaces_json=json.dumps([other["name"]]))
+        archive["data"]["reverse_proxies"][0]["port"] = 443
+        audits = list(db.scalars(select(AuditEvent.id)))
+        with pytest.raises(ValueError, match="exclusive Atlaso service socket"):
+            restore_settings_archive(db, archive)
+        db.expire_all()
+        assert list(db.scalars(select(AuditEvent.id))) == audits
+        assert export_settings_archive(db, actor="test")["data"] == before

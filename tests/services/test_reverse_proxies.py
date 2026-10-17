@@ -1721,3 +1721,118 @@ def test_management_scope_includes_observed_dynamic_addresses(address):
     finally:
         db.close()
         engine.dispose()
+
+
+@pytest.mark.parametrize("address", ["192.168.1.10", "2001:db8:1::10"])
+@pytest.mark.parametrize("matching", [False, True])
+@pytest.mark.parametrize("vlan", [False, True])
+def test_terminal_https_scope_guards_both_write_orders(address, matching, vlan):
+    """Reserve independently admitted terminal scopes for both write orders.
+
+    Args:
+        address: Duplicate IPv4 or IPv6 destination.
+        matching: Whether terminal and proxy select the same interface.
+        vlan: Whether the independent terminal scope is a VLAN.
+    """
+    from atlaso.app.models import VlanInterface
+
+    engine, db = create_db()
+    try:
+        access = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        access.ipv6_enabled = True
+        access.ipv6_cidr = "2001:db8:1::10/64"
+        other = PhysicalInterface(name="eth2", mac_address="02:00:00:00:00:03", role="access",
+                                  mode="trunk" if vlan else "access", admin_state="up", oper_state="up",
+                                  ip_cidr="192.168.1.10/24", ipv6_enabled=True, ipv6_cidr="2001:db8:1::10/64")
+        db.add(other)
+        name = "eth2"
+        if vlan:
+            name = "eth2.77"
+            db.add(VlanInterface(name=name, parent_interface="eth2", vlan_id=77, role="access", enabled=True,
+                                 ip_cidr="192.168.1.10/24", ipv6_cidr="2001:db8:1::10/64"))
+        appliance = db.scalar(select(ApplianceSettings))
+        appliance.web_terminal_enabled = False
+        db.commit()
+        proxy = save_proxy(db, payload(enabled=True, port=443, redirect_http=False,
+                                      listeners=[{"interface": "eth1", "address": address}]), actor="test")
+        appliance.web_terminal_enabled = True
+        appliance.web_terminal_interfaces_json = json.dumps(["eth1" if matching else name])
+        db.flush()
+        if matching:
+            validate_service_listener_sockets(db)
+        else:
+            with pytest.raises(ValueError, match="Service listener conflicts"):
+                validate_service_listener_sockets(db)
+            with pytest.raises(ValueError, match="exclusive Atlaso service socket"):
+                save_proxy(db, payload(enabled=True, port=443, redirect_http=False,
+                                       listeners=[{"interface": "eth1", "address": address}]), actor="test", proxy_id=proxy.id)
+    finally:
+        db.rollback()
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize(("model_name", "scheme", "port"), [("CaSettings", "http", 80), ("CaSettings", "https", 443),
+                                                           ("VcfOfflineDepotSettings", "http", 80),
+                                                           ("VcfPrivateRegistrySettings", "http", 80), ("pxe", "http", 80)])
+@pytest.mark.parametrize("address", ["192.168.1.10", "2001:db8:1::10"])
+@pytest.mark.parametrize("matching", [False, True])
+def test_service_directory_standard_http_scope_with_custom_protocol_port(model_name, scheme, port, address, matching):
+    """Protect directory ingress independently of custom service ports.
+
+    Args:
+        model_name: Service exposing standard browser ingress.
+        scheme: Browser transport protocol.
+        port: Standard browser port.
+        address: Duplicate IPv4 or IPv6 destination.
+        matching: Whether the proxy shares the complete service scope.
+    """
+    from atlaso.app import models
+    from atlaso.app.services.esxi_pxe import (
+        esxi_pxe_boot_settings,
+        save_esxi_pxe_boot_settings,
+    )
+
+    engine, db = create_db()
+    try:
+        access = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        access.ipv6_enabled = True
+        access.ipv6_cidr = "2001:db8:1::10/64"
+        db.add(PhysicalInterface(name="eth2", mac_address="02:00:00:00:00:03", role="access", mode="access",
+                                 admin_state="up", oper_state="up", ip_cidr="192.168.1.10/24",
+                                 ipv6_enabled=True, ipv6_cidr="2001:db8:1::10/64"))
+        db.commit()
+        proxy = save_proxy(db, payload(enabled=True, scheme=scheme, port=port, redirect_http=False,
+                                      listeners=[{"interface": "eth1", "address": address}]), actor="test")
+        name = "eth1" if matching else "eth2"
+        if model_name == "pxe":
+            boot = esxi_pxe_boot_settings(db)
+            if not matching:
+                with pytest.raises(ValueError, match="Service listener conflicts"):
+                    save_esxi_pxe_boot_settings(db, enabled=True, hostname="pxe.example.test", listen_interface=name,
+                                               listen_address=address, http_port=9443, tftp_root=boot["tftp_root"],
+                                               bios_bootfile=boot["bios_bootfile"], uefi_bootfile=boot["uefi_bootfile"])
+                return
+            save_esxi_pxe_boot_settings(db, enabled=True, hostname="pxe.example.test", listen_interface=name,
+                                       listen_address=address, http_port=9443, tftp_root=boot["tftp_root"],
+                                       bios_bootfile=boot["bios_bootfile"], uefi_bootfile=boot["uefi_bootfile"])
+        else:
+            model = getattr(models, model_name)
+            service = db.scalar(select(model))
+            if service is None:
+                service = model()
+                db.add(service)
+            service.enabled, service.listen_interface, service.listen_address = True, name, address
+            if model_name != "CaSettings":
+                service.port = 9443
+        db.flush()
+        if matching:
+            validate_service_listener_sockets(db)
+        else:
+            with pytest.raises(ValueError, match="Service listener conflicts"):
+                validate_service_listener_sockets(db)
+            assert "exclusive Atlaso service" in " ".join(validate_proxy(proxy, validation_context(db), [proxy], exclude_id=proxy.id))
+    finally:
+        db.rollback()
+        db.close()
+        engine.dispose()

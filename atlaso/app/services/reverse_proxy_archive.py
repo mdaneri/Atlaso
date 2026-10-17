@@ -10,7 +10,7 @@ from atlaso.app.services.dnsmasq import authoritative_server_name
 from atlaso.app.services.esxi_pxe import ESXI_PXE_HOSTNAME_KEY, _normalize_hostname
 from atlaso.app.services.port_forwarding import ListenerClaim
 from atlaso.app.services.reverse_proxies import (
-    management_listener_claims,
+    browser_listener_claims,
     publication_snapshot,
     validate_proxy,
 )
@@ -165,9 +165,10 @@ def validate_candidates(proxies: list[models.ReverseProxy], data: dict[str, Any]
         authoritative_server=dns_settings.get("authoritative_server", ""),
     )
     names.add(authoritative_server_name(archived_dns))
-    claims = [*claims, *management_listener_claims(
+    claims = [*claims, *browser_listener_claims(
         [models.PhysicalInterface(**row) for row in data["physical_interfaces"]],
         [models.VlanInterface(**row) for row in data["vlan_interfaces"]],
+        models.ApplianceSettings(**data["appliance_settings"][0]) if data.get("appliance_settings") else None,
     )]
     context = {"targets": targets, "listeners": options, "addresses": addresses,
                "service_hostnames": names - {""}, "claims": claims, "port_forwards": forwards,

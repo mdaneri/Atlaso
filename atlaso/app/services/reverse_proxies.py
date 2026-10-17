@@ -314,14 +314,16 @@ def _service_hostnames(db: Session) -> set[str]:
     return names
 
 
-def management_listener_claims(
+def browser_listener_claims(
     interfaces: list[models.PhysicalInterface], vlans: list[models.VlanInterface],
+    appliance: models.ApplianceSettings | None = None,
 ) -> list[ListenerClaim]:
-    """Project management front-door scopes alongside structural nginx claims.
+    """Project management and terminal scopes alongside structural nginx claims.
 
     Args:
         interfaces: Desired physical interface rows, including observed dynamic addresses.
         vlans: Desired VLAN rows from the same live or archive candidate.
+        appliance: Candidate settings selecting independently exposed Web Terminal interfaces.
     """
     from atlaso.app.services.networking import (
         normalize_interface_mode,
@@ -351,6 +353,20 @@ def management_listener_claims(
             if _valid_listener_address(address):
                 claims.extend(ListenerClaim(name, address, "tcp", port, port, "nginx", scheme)
                               for port, scheme in ((80, "http"), (443, "https")))
+    if appliance is not None and appliance.web_terminal_enabled:
+        from atlaso.app.services.appliance_settings import (
+            management_ui_context,
+            normalized_web_terminal_interfaces,
+            web_terminal_interface_options,
+            web_terminal_listener_interfaces,
+        )
+
+        options = web_terminal_interface_options(interfaces, vlans)
+        selected = web_terminal_listener_interfaces(
+            normalized_web_terminal_interfaces(appliance, management_ui_context(interfaces, vlans)), options,
+        )
+        claims.extend(ListenerClaim(str(option["name"]), str(address), "tcp", 443, 443, "nginx", "https")
+                      for option in options if option["name"] in selected for address in option["addresses"])
     return claims
 
 
@@ -368,7 +384,7 @@ def validation_context(db: Session) -> dict[str, Any]:
         "addresses": _interface_address_inventory(interfaces, vlans),
         "service_hostnames": _service_hostnames(db),
         "ca_enabled": bool((ca := db.scalar(select(models.CaSettings))) is not None and ca.enabled),
-        "claims": [*listener_claims(db, include_reverse_proxies=False), *management_listener_claims(interfaces, vlans)],
+        "claims": [*listener_claims(db, include_reverse_proxies=False), *browser_listener_claims(interfaces, vlans, db.scalar(select(models.ApplianceSettings)))],
         "port_forwards": list(db.scalars(select(models.PortForward))),
     }
 
@@ -461,8 +477,9 @@ def validate_service_listener_sockets(db: Session) -> None:
         ValueError: If service state conflicts with proxy names, CA or sockets.
     """
     validate_service_proxy_dependencies(db)
-    claims = [*listener_claims(db, include_reverse_proxies=False), *management_listener_claims(
+    claims = [*listener_claims(db, include_reverse_proxies=False), *browser_listener_claims(
         list(db.scalars(select(models.PhysicalInterface))), list(db.scalars(select(models.VlanInterface))),
+        db.scalar(select(models.ApplianceSettings)),
     )]
     for proxy in desired_rows(db):
         if not proxy.enabled:
