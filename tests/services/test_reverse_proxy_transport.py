@@ -1,11 +1,13 @@
 """Verify the upstream transport refuses unsafe destinations and TLS peers."""
 
 import asyncio
+import errno
 import hashlib
 import json
 import socket
 import ssl
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -303,3 +305,105 @@ def test_probe_path_bound_still_rejects_oversized_untrusted_manifest():
     manifest["generation"] = transport.manifest_generation(manifest)
     with pytest.raises(ValueError, match="bounded public route"):
         transport.validate_manifest(manifest)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_stage", ["open", "write", "replace"])
+async def test_health_cache_publication_recovers_after_storage_errors(tmp_path, monkeypatch, failure_stage):
+    """Retry failed publications without losing sampling or replacing valid cache bytes.
+
+    Args:
+        tmp_path: Isolated filesystem root supplied by pytest.
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+        failure_stage: Atomic publication operation that temporarily fails.
+    """
+    manifest = {"generation": "a" * 64, "routes": [route()], "forbidden_addresses": []}
+    cache_path = tmp_path / "health.json"
+    cache_path.write_text('{"previous":"atomic"}', encoding="utf-8")
+    original = cache_path.read_bytes()
+    samples = 0
+    pauses = 0
+    real_open, real_dump, real_replace = transport.os.open, transport.json.dump, Path.replace
+
+    async def sample(_route, _forbidden):
+        """Return successive probe results while cache storage is unavailable.
+
+        Args:
+            _route: Selected route under observation.
+            _forbidden: Appliance addresses excluded from probes.
+        """
+        nonlocal samples
+        samples += 1
+        return {"status": "healthy" if samples == 1 else "degraded",
+                "last_success": "2026-10-17T16:34:00+00:00" if samples == 1 else None,
+                "failure_class": None if samples == 1 else "unavailable",
+                "http_status": 204 if samples == 1 else None, "tls_status": "trusted_ca"}
+
+    def fail_open(*args, **kwargs):
+        """Inject a temporary open failure before obtaining a descriptor.
+
+        Args:
+            *args: Arguments forwarded to the real filesystem operation.
+            **kwargs: Keyword arguments forwarded to the real operation.
+        """
+        if samples <= 2:
+            raise OSError(errno.ENOSPC, "storage full")
+        return real_open(*args, **kwargs)
+
+    def fail_write(*args, **kwargs):
+        """Inject a partial write failure while the descriptor is owned by its stream.
+
+        Args:
+            *args: Payload and stream passed to the serializer.
+            **kwargs: Serializer options.
+        """
+        if samples <= 2:
+            args[1].write('{"partial":')
+            raise OSError(errno.ENOSPC, "storage full")
+        return real_dump(*args, **kwargs)
+
+    def fail_replace(source, target):
+        """Inject a rename failure without modifying the published cache.
+
+        Args:
+            source: Pending publication path.
+            target: Published observation path.
+        """
+        if samples <= 2:
+            raise OSError(errno.EACCES, "publication unavailable")
+        return real_replace(source, target)
+
+    async def pause(seconds):
+        """Require normal pacing and stop by cancellation after storage recovers.
+
+        Args:
+            seconds: Requested pause between sampling cycles.
+        """
+        nonlocal pauses
+        pauses += 1
+        assert seconds == transport.HEALTH_CYCLE_PAUSE
+        assert samples == pauses
+        if pauses <= 2:
+            assert cache_path.read_bytes() == original
+            return
+        recovered = json.loads(cache_path.read_text(encoding="utf-8"))
+        observation = recovered["health"]["1-1"]
+        assert recovered["generation"] == manifest["generation"]
+        assert observation["last_success"] == "2026-10-17T16:34:00+00:00"
+        assert observation["status"] == "degraded"
+        assert observation["failure_class"] == "unavailable"
+        assert observation["observed_at"]
+        assert not (tmp_path / "health.pending").exists()
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(transport, "probe", sample)
+    monkeypatch.setattr(transport.asyncio, "sleep", pause)
+    if failure_stage == "open":
+        monkeypatch.setattr(transport.os, "open", fail_open)
+    elif failure_stage == "write":
+        monkeypatch.setattr(transport.json, "dump", fail_write)
+    else:
+        monkeypatch.setattr(Path, "replace", fail_replace)
+    with pytest.raises(asyncio.CancelledError):
+        await transport.observe_health(manifest, tmp_path)
+    assert samples == pauses == 3

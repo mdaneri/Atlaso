@@ -157,6 +157,8 @@ The transport worker publishes cached route health after each batch, pausing 30 
 64 probes running at once. At the 256-route limit, four batches with ten-second probe deadlines and the pause have a
 70-second budget, leaving margin for scheduling and publication within the freshness window. Every route retains its
 own observation time; samples older than 90 seconds are unavailable even when another batch has just published.
+Temporary health-cache write failures retain the last atomic publication and do not stop sampling. The worker retries
+on the next bounded batch or cycle; retained observations still expire normally until publication recovers.
 Each probe sends `HEAD` to the configured public hostname and route path and
 keeps no response body. Fingerprint trust checks
 the SHA-256 digest of the leaf certificate on the connected upstream TLS session before forwarding data. Insecure TLS

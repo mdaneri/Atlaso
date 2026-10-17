@@ -360,10 +360,15 @@ async def observe_health(manifest: dict[str, Any], root: Path) -> None:
             payload = {"schema": 1, "generation": manifest["generation"], "health": previous,
                        "observed_at": datetime.now(timezone.utc).isoformat()}
             temporary = root / "health.pending"
-            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o640)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                json.dump(payload, stream, sort_keys=True, separators=(",", ":"))
-            temporary.replace(root / "health.json")
+            try:
+                descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o640)
+                with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                    json.dump(payload, stream, sort_keys=True, separators=(",", ":"))
+                temporary.replace(root / "health.json")
+            except OSError:
+                # Keep sampling through temporary storage failures. The last atomic
+                # publication ages normally; retry on the next bounded batch/cycle.
+                pass
         await asyncio.sleep(HEALTH_CYCLE_PAUSE)
 
 

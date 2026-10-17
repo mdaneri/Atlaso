@@ -47,16 +47,33 @@ def sha256(path: str) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def test_image_build_inputs_remain_lf_in_windows_checkouts(tmp_path: Path) -> None:
-    """Materialize line-ending-sensitive image inputs with Windows conversion enabled.
+def release_owned_data_disk_policies() -> list[tuple[Path, Path]]:
+    """Return data-disk policy sources and destinations from the release inventory."""
+    spec = importlib.util.spec_from_file_location(
+        "build_release_bundle", Path("scripts/build_release_bundle.py")
+    )
+    assert spec and spec.loader
+    bundle_builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bundle_builder)
+    policies = [
+        (source.relative_to(bundle_builder.ROOT), destination)
+        for source, destination in bundle_builder.RELEASE_OWNED_ASSETS
+        if destination.parts[0] == "data-disks"
+    ]
+    assert policies
+    return policies
+
+
+def materialize_windows_checkout_inputs(tmp_path: Path, paths: list[Path]) -> Path:
+    """Checkout line-ending-sensitive inputs with Windows conversion enabled.
 
     Args:
         tmp_path: Pytest-provided isolated checkout destination.
+        paths: Repository-relative tracked paths to materialize.
+
+    Returns:
+        Isolated checkout directory containing the materialized inputs.
     """
-    policies = (
-        Path("image/common/data-disks.conf"),
-        Path("image/common/guest-agents/atlaso-qemu-guest-agent.spec"),
-    )
     checkout = tmp_path / "checkout"
     checkout.mkdir()
     completed = subprocess.run(
@@ -68,7 +85,7 @@ def test_image_build_inputs_remain_lf_in_windows_checkouts(tmp_path: Path) -> No
             "--force",
             f"--prefix={checkout.as_posix()}/",
             "--",
-            *(path.as_posix() for path in policies),
+            *(path.as_posix() for path in paths),
         ],
         check=False,
         capture_output=True,
@@ -76,10 +93,86 @@ def test_image_build_inputs_remain_lf_in_windows_checkouts(tmp_path: Path) -> No
     )
 
     assert completed.returncode == 0, completed.stderr
-    for policy in policies:
-        materialized = (checkout / policy).read_bytes()
+    for path in paths:
+        materialized = (checkout / path).read_bytes()
         assert materialized.endswith(b"\n")
         assert b"\r" not in materialized
+    return checkout
+
+
+def test_image_build_inputs_remain_lf_in_windows_checkouts(tmp_path: Path) -> None:
+    """Keep all release data-disk policies and the guest-agent spec LF in Windows checkouts.
+
+    Args:
+        tmp_path: Pytest-provided isolated checkout destination.
+    """
+    policies = release_owned_data_disk_policies()
+    checkout_paths = [source for source, _destination in policies]
+    checkout_paths.append(Path("image/common/guest-agents/atlaso-qemu-guest-agent.spec"))
+    materialize_windows_checkout_inputs(tmp_path, checkout_paths)
+
+
+def test_release_data_disk_policies_load_and_reject_crlf(tmp_path: Path) -> None:
+    """Exercise the real shell loader on POSIX for Windows-materialized policies.
+
+    Args:
+        tmp_path: Pytest-provided isolated checkout destination.
+    """
+    if os.name == "nt" or shutil.which("sh") is None:
+        pytest.skip("the data-disk policy loader check requires a native POSIX shell")
+
+    policies = release_owned_data_disk_policies()
+    checkout = materialize_windows_checkout_inputs(
+        tmp_path, [source for source, _destination in policies]
+    )
+    shell = shutil.which("sh")
+    assert shell is not None
+
+    mount_script = Path("scripts/appliance/atlaso-mount-data-disks").read_text(encoding="utf-8")
+    function_start = mount_script.index("load_policy() {")
+    function_end = mount_script.index("\n}\n\nroot_disk() {", function_start) + 2
+    loader = mount_script[function_start:function_end]
+    for index, (source, destination) in enumerate(policies):
+        platform = {
+            "hyperv.conf": "hyperv",
+            "vmware.conf": "vmware",
+            "virtualization.conf": "vmware",
+        }[destination.name]
+        policy = checkout / source
+        marker = tmp_path / f"platform-{index}.marker"
+        marker.write_text(f"platform={platform}\n", encoding="utf-8", newline="\n")
+        harness = tmp_path / f"load-policy-{index}.sh"
+        harness.write_bytes(
+            (
+                "#!/bin/sh\n"
+                "set -eu\n"
+                'POLICY_PATH="$1"\n'
+                'GUEST_AGENT_MARKER_PATH="$2"\n'
+                "fail() { printf '%s\\n' \"$*\" >&2; exit 1; }\n"
+                f"{loader}\n"
+                "load_policy\n"
+                "printf '%s\\n' 'policy loaded'\n"
+            ).encode("utf-8")
+        )
+        accepted = subprocess.run(
+            [shell, str(harness), str(policy), str(marker)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert accepted.returncode == 0, accepted.stderr
+        assert "policy loaded" in accepted.stdout
+
+        crlf_policy = tmp_path / f"crlf-policy-{index}.conf"
+        crlf_policy.write_bytes(policy.read_bytes().replace(b"\n", b"\r\n"))
+        rejected = subprocess.run(
+            [shell, str(harness), str(crlf_policy), str(marker)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert rejected.returncode != 0
+        assert "data-disk capacity policy is invalid" in rejected.stderr
 
 
 def test_photon_image_installs_fixed_size_atlaso_grub_branding():
