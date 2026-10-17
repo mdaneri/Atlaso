@@ -736,3 +736,141 @@ def test_vcf_dns_writers_preserve_unpublished_proxy_names(client, monkeypatch, w
         assert observations and hostname in observations
         assert [(row.id, row.hostname, row.address) for row in db.scalars(select(DnsRecord))] == before
         assert runtime_snapshot(db) == proxy_before
+
+
+@pytest.mark.parametrize("transport", ["api", "ui"])
+@pytest.mark.parametrize("operation", ["create", "update"])
+@pytest.mark.parametrize("authoritative", [False, True])
+@pytest.mark.parametrize("short_name", [False, True])
+def test_network_boot_host_writers_preserve_unpublished_proxy_names(client, monkeypatch, transport, operation, authoritative, short_name):
+    """Reject specialized host DNS conflicts under writer admission without changing state.
+
+    Args:
+        client: Initialized isolated appliance client.
+        monkeypatch: Observe writer admission and DNS ownership checks.
+        transport: Real API or UI host writer.
+        operation: Host creation or update of existing managed records.
+        authoritative: Disabled authority or authority serving a different zone.
+        short_name: Expand a DHCP-scope-relative host name instead of using its FQDN.
+    """
+    from ipaddress import ip_network
+
+    from sqlalchemy.exc import OperationalError
+
+    from atlaso.app.models import (
+        AuditEvent,
+        DhcpReservation,
+        DhcpScope,
+        DnsRecord,
+        DnsSettings,
+        EsxiPxeHost,
+        Setting,
+    )
+    from atlaso.app.services import network_objects, reverse_proxy_publication
+    from atlaso.app.services.esxi_pxe import (
+        ESXI_PXE_DHCP_SCOPE_IDS_KEY,
+        esxi_pxe_boot_settings,
+        sync_esxi_pxe_host_network_records,
+    )
+    from atlaso.app.services.reverse_proxies import runtime_snapshot, save_proxy
+    from tests.routers.api_v1.helpers import create_token
+    from tests.routers.api_v1.test_reverse_proxies import (
+        _enable_test_listener,
+        _payload,
+    )
+
+    _enable_test_listener()
+    login(client)
+    csrf = client.get("/esxi-pxe").text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    token, _metadata = create_token(client, ["write:esxi-pxe"])
+    hostname = "reserved-proxy.atlaso.internal"
+
+    def snapshot(db):
+        """Capture rows that a rejected host write must preserve.
+
+        Args:
+            db: Transaction holding the isolated appliance state.
+        """
+        return (
+            [(r.id, r.hostname, r.mac_address, r.ip_address, r.enabled, r.description)
+             for r in db.scalars(select(DhcpReservation).order_by(DhcpReservation.id))],
+            [(r.id, r.hostname, r.record_type, r.address, r.enabled, r.description)
+             for r in db.scalars(select(DnsRecord).order_by(DnsRecord.id))],
+            [(r.id, r.hostname, r.mac_address, r.ip_address, r.enabled)
+             for r in db.scalars(select(EsxiPxeHost).order_by(EsxiPxeHost.id))],
+            list(db.scalars(select(AuditEvent.id).order_by(AuditEvent.id))),
+            runtime_snapshot(db),
+        )
+
+    with SessionLocal() as db:
+        scope = db.scalar(select(DhcpScope).where(DhcpScope.name == "SiteA"))
+        scope.domain_name = "atlaso.internal"
+        scope.enabled = True
+        address = str(ip_network(f"{scope.site_address}/{scope.prefix_length}", strict=False).network_address + 150)
+        setting = db.scalar(select(Setting).where(Setting.key == ESXI_PXE_DHCP_SCOPE_IDS_KEY))
+        if setting is None:
+            setting = Setting(key=ESXI_PXE_DHCP_SCOPE_IDS_KEY)
+            db.add(setting)
+        setting.value = str(scope.id)
+        settings = db.scalar(select(DnsSettings))
+        settings.enabled = True
+        settings.authoritative = authoritative
+        settings.domain = "other.test" if authoritative else "atlaso.internal"
+        settings.disabled_domains = "atlaso.internal" if authoritative else ""
+        db.commit()
+        host_id = None
+        if operation == "update":
+            host = EsxiPxeHost(hostname="before", mac_address="00:50:56:ab:cd:ef", ip_address=address,
+                               variables_json="{}", enabled=True)
+            db.add(host)
+            sync_esxi_pxe_host_network_records(db, host, esxi_pxe_boot_settings(db))
+            db.commit()
+            host_id = host.id
+        save_proxy(db, _payload(enabled=True, managed_dns=True, hostname=hostname), actor="test")
+        assert not db.scalars(select(DnsRecord).where(DnsRecord.hostname == hostname)).all()
+        before = snapshot(db)
+
+    real_lock = network_objects.acquire_network_objects_write_lock
+    real_guard = reverse_proxy_publication.proxy_owns_dns_hostname
+    events = []
+
+    def locked(db):
+        """Record explicit Network Objects admission before the specialized guard.
+
+        Args:
+            db: Caller-owned host transaction.
+        """
+        real_lock(db)
+        events.append("lock")
+
+    def guarded(db, name):
+        """Prove writer exclusion and no reservation/DNS mutation before rejection.
+
+        Args:
+            db: Admitted host transaction.
+            name: Canonical scope-expanded hostname.
+        """
+        assert events and events[-1] == "lock"
+        assert snapshot(db)[:2] == before[:2]
+        with SessionLocal() as competitor:
+            competitor.connection().exec_driver_sql("PRAGMA busy_timeout=0")
+            with pytest.raises(OperationalError, match="locked"):
+                real_lock(competitor)
+        events.append(name)
+        return real_guard(db, name)
+
+    monkeypatch.setattr(network_objects, "acquire_network_objects_write_lock", locked)
+    monkeypatch.setattr(reverse_proxy_publication, "proxy_owns_dns_hostname", guarded)
+    host_path = "/esxi-pxe/hosts" + (f"/{host_id}" if host_id else "")
+    data = {"hostname": "reserved-proxy" if short_name else hostname.upper() + ".",
+            "mac_address": "00:50:56:ab:cd:ef", "ip_address": address, "enabled": True}
+    if transport == "api":
+        response = client.request("PUT" if host_id else "POST", "/api/v1" + host_path,
+                                  headers={"Authorization": f"Bearer {token}"}, json=data)
+    else:
+        response = client.post(host_path, data={**data, "csrf": csrf, "enabled": "on"}, follow_redirects=False)
+    assert response.status_code == 409, response.text
+    assert "Reverse Proxies" in response.text
+    assert events == ["lock", hostname]
+    with SessionLocal() as db:
+        assert snapshot(db) == before

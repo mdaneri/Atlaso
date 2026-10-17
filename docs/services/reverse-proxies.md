@@ -64,6 +64,8 @@ does not permit a native service to take an enabled proxy's socket.
 PXE HTTP and a proxy can use the same port on distinct addresses. Sharing an exact socket still requires compatible
 HTTP publication and the same interface ownership; HTTPS cannot take the PXE HTTP socket.
 DHCP reservation create and edit reject proxy-owned DNS names, including short names expanded by their scope.
+Network Boot host reservation and DNS synchronization uses the same saved-name guard under the shared writer lock,
+including when a proxy record has not yet been published because its authoritative zone is disabled or unserved.
 Enabled managed-DNS proxies reserve their names even while authoritative DNS is disabled or cannot serve their zone.
 Ordinary DNS create, edit, hosts import, and zone import enforce the same reservation before changing any rows.
 The reservation and generated DNS changes remain atomic; ownership conflicts return **409 Conflict**.
