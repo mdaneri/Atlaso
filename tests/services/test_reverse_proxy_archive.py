@@ -655,3 +655,46 @@ def test_archive_reserves_retained_service_dns_alias(client, target):
             restore_settings_archive(db, archive)
         db.expire_all()
         assert export_settings_archive(db, actor="test")["data"] == before
+
+
+@pytest.mark.parametrize("address", ["192.168.49.10", "2001:db8:49::10"])
+@pytest.mark.parametrize(("scheme", "port", "redirect"), [("http", 80, False), ("https", 443, False), ("https", 9443, True)])
+def test_archive_rejects_management_socket_scope_mismatch(client, address, scheme, port, redirect):
+    """Project archived management ingress before replacing desired state.
+
+    Args:
+        client: Initialized appliance fixture.
+        address: Shared IPv4 or IPv6 destination in the candidate archive.
+        scheme: Candidate proxy protocol.
+        port: Candidate primary port.
+        redirect: Whether conflict uses its HTTP redirect socket.
+    """
+    with SessionLocal() as db:
+        access = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        access.ipv6_enabled = True
+        access.ipv6_cidr = "2001:db8:49::10/64"
+        access.ip_cidr = "192.168.49.10/24"
+        from atlaso.app.models import CaSettings
+
+        db.scalar(select(CaSettings)).enabled = True
+        db.commit()
+        save_proxy(db, payload(enabled=True, scheme=scheme, port=9444, redirect_http=False,
+                               listeners=[{"interface": "eth2", "address": address}]), actor="test")
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        before = deepcopy(archive["data"])
+        management = next(row for row in archive["data"]["physical_interfaces"] if row["role"] == "management")
+        management["ip_cidr"] = "192.168.49.10/24"
+        management["ipv6_enabled"] = True
+        management["ipv6_cidr"] = "2001:db8:49::10/64"
+        # This archive deliberately permits duplicate addresses; proxy socket
+        # ownership still must not inherit another interface's management scope.
+        for interface in archive["data"]["physical_interfaces"]:
+            interface["check_duplicate_ip_addresses"] = False
+        proxy = archive["data"]["reverse_proxies"][0]
+        proxy.update(port=port, redirect_http=redirect)
+        audits = list(db.scalars(select(AuditEvent.id)))
+        with pytest.raises(ValueError, match="exclusive Atlaso service socket"):
+            restore_settings_archive(db, archive)
+        db.expire_all()
+        assert list(db.scalars(select(AuditEvent.id))) == audits
+        assert export_settings_archive(db, actor="test")["data"] == before

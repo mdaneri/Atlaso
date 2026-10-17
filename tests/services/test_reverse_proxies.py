@@ -1604,3 +1604,120 @@ def test_pxe_exact_listener_claim_preserves_proxy_address_and_protocol_boundarie
         db.rollback()
         db.close()
         engine.dispose()
+
+
+@pytest.mark.parametrize("kind", ["dedicated", "access", "vlan"])
+@pytest.mark.parametrize("address", ["192.168.1.10", "2001:db8:1::10"])
+@pytest.mark.parametrize(("scheme", "port", "redirect"), [("http", 80, False), ("https", 443, False), ("https", 9443, True)])
+def test_management_scopes_guard_proxy_and_service_writes(kind, address, scheme, port, redirect):
+    """Reject cross-interface management sharing on primary and redirect sockets atomically.
+
+    Args:
+        kind: Dedicated, flagged physical or flagged VLAN management listener.
+        address: Shared IPv4 or IPv6 destination.
+        scheme: Candidate proxy protocol.
+        port: Candidate primary listener port.
+        redirect: Whether the conflicting socket is the HTTP redirect.
+    """
+    from atlaso.app.models import VlanInterface
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+
+    engine, db = create_db()
+    try:
+        access = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        access.ipv6_enabled = True
+        access.ipv6_cidr = "2001:db8:1::10/64"
+        existing = save_proxy(db, payload(enabled=True, port=9444, redirect_http=False,
+                                         listeners=[{"interface": "eth1", "address": address}]), actor="test")
+        if kind == "dedicated":
+            management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        else:
+            management = PhysicalInterface(name="eth2", mac_address="02:00:00:00:00:03", admin_state="up",
+                                           oper_state="up", role="access", mode="access",
+                                           access_management_ui_enabled=True)
+            db.add(management)
+            if kind == "vlan":
+                management.mode = "trunk"
+                management.access_management_ui_enabled = False
+                management = VlanInterface(name="eth2.77", parent_interface="eth2", vlan_id=77,
+                                           role="access", enabled=True, access_management_ui_enabled=True)
+                db.add(management)
+        access.check_duplicate_ip_addresses = False
+        management.check_duplicate_ip_addresses = False
+        management.ip_cidr = "192.168.1.10/24"
+        management.ipv6_cidr = "2001:db8:1::10/64"
+        if isinstance(management, PhysicalInterface):
+            management.ipv6_enabled = True
+        db.commit()
+        before_audits = list(db.scalars(select(AuditEvent.id)))
+        candidate = payload(enabled=True, scheme=scheme, port=port, redirect_http=redirect,
+                            listeners=[{"interface": "eth1", "address": address}])
+        with pytest.raises(ValueError, match="exclusive Atlaso service socket"):
+            save_proxy(db, candidate, actor="test", proxy_id=existing.id)
+        assert existing.port == 9444 and not existing.redirect_http
+        assert list(db.scalars(select(AuditEvent.id))) == before_audits
+        acquire_network_objects_write_lock(db)
+        existing.scheme, existing.port, existing.redirect_http = scheme, port, redirect
+        db.flush()
+        with pytest.raises(ValueError, match="Service listener conflicts"):
+            validate_service_listener_sockets(db)
+        db.rollback()
+        assert existing.port == 9444 and not existing.redirect_http
+        assert list(db.scalars(select(AuditEvent.id))) == before_audits
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("address", ["192.168.1.10", "2001:db8:1::10"])
+@pytest.mark.parametrize(("scheme", "port"), [("http", 80), ("https", 443)])
+def test_management_access_socket_allows_identical_proxy_scope(address, scheme, port):
+    """Retain ordinary cohosting on the same management-enabled access interface.
+
+    Args:
+        address: Shared IPv4 or IPv6 destination.
+        scheme: Shared front-door protocol.
+        port: Shared front-door port.
+    """
+    engine, db = create_db()
+    try:
+        access = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        access.access_management_ui_enabled = True
+        access.ipv6_enabled = True
+        access.ipv6_cidr = "2001:db8:1::10/64"
+        db.commit()
+        proxy = save_proxy(db, payload(enabled=True, scheme=scheme, port=port, redirect_http=False,
+                                       listeners=[{"interface": "eth1", "address": address}]), actor="test")
+        validate_service_listener_sockets(db)
+        assert proxy.enabled
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("address", ["192.168.1.10", "2001:db8:1::10"])
+def test_management_scope_includes_observed_dynamic_addresses(address):
+    """Reserve DHCP and automatic IPv6 front doors before a proxy can share them.
+
+    Args:
+        address: Observed management destination reused by a public interface.
+    """
+    engine, db = create_db()
+    try:
+        management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        management.ip_cidr = None
+        management.ipv4_method = "dhcp"
+        management.host_ip_cidr = "192.168.1.10/24"
+        management.ipv6_enabled = True
+        management.ipv6_cidr = None
+        management.host_ipv6_cidrs = ["2001:db8:2::10/64", "2001:db8:1::10/64"]
+        access = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        access.ipv6_enabled = True
+        access.ipv6_cidr = "2001:db8:1::10/64"
+        db.commit()
+        with pytest.raises(ValueError, match="exclusive Atlaso service socket"):
+            save_proxy(db, payload(enabled=True, listeners=[{"interface": "eth1", "address": address}]), actor="test")
+        assert not desired_rows(db)
+    finally:
+        db.close()
+        engine.dispose()

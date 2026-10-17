@@ -314,6 +314,46 @@ def _service_hostnames(db: Session) -> set[str]:
     return names
 
 
+def management_listener_claims(
+    interfaces: list[models.PhysicalInterface], vlans: list[models.VlanInterface],
+) -> list[ListenerClaim]:
+    """Project management front-door scopes alongside structural nginx claims.
+
+    Args:
+        interfaces: Desired physical interface rows, including observed dynamic addresses.
+        vlans: Desired VLAN rows from the same live or archive candidate.
+    """
+    from atlaso.app.services.networking import (
+        normalize_interface_mode,
+        normalize_interface_role,
+        physical_ipv6_cidrs,
+    )
+
+    bindings: list[tuple[str, list[str | None]]] = []
+    for interface in interfaces:
+        if interface.oper_state == "missing" or interface.admin_state != "up":
+            continue
+        role = normalize_interface_role(interface.role)
+        if role == "management" or (role == "access" and normalize_interface_mode(interface.mode) == "access"
+                                    and interface.access_management_ui_enabled):
+            bindings.append((interface.name, [interface.ip_cidr or interface.host_ip_cidr,
+                                             *physical_ipv6_cidrs(interface)]))
+    for vlan in vlans:
+        if vlan.enabled and normalize_interface_role(vlan.role) == "access" and vlan.access_management_ui_enabled:
+            bindings.append((vlan.name, [vlan.ip_cidr, vlan.ipv6_cidr]))
+    claims: list[ListenerClaim] = []
+    for name, cidrs in bindings:
+        for cidr in cidrs:
+            try:
+                address = str(ipaddress.ip_interface(cidr or "").ip)
+            except ValueError:
+                continue
+            if _valid_listener_address(address):
+                claims.extend(ListenerClaim(name, address, "tcp", port, port, "nginx", scheme)
+                              for port, scheme in ((80, "http"), (443, "https")))
+    return claims
+
+
 def validation_context(db: Session) -> dict[str, Any]:
     """Capture eligible listeners, appliance identities, socket claims and peer state.
 
@@ -328,7 +368,7 @@ def validation_context(db: Session) -> dict[str, Any]:
         "addresses": _interface_address_inventory(interfaces, vlans),
         "service_hostnames": _service_hostnames(db),
         "ca_enabled": bool((ca := db.scalar(select(models.CaSettings))) is not None and ca.enabled),
-        "claims": listener_claims(db, include_reverse_proxies=False),
+        "claims": [*listener_claims(db, include_reverse_proxies=False), *management_listener_claims(interfaces, vlans)],
         "port_forwards": list(db.scalars(select(models.PortForward))),
     }
 
@@ -421,7 +461,9 @@ def validate_service_listener_sockets(db: Session) -> None:
         ValueError: If service state conflicts with proxy names, CA or sockets.
     """
     validate_service_proxy_dependencies(db)
-    claims = listener_claims(db, include_reverse_proxies=False)
+    claims = [*listener_claims(db, include_reverse_proxies=False), *management_listener_claims(
+        list(db.scalars(select(models.PhysicalInterface))), list(db.scalars(select(models.VlanInterface))),
+    )]
     for proxy in desired_rows(db):
         if not proxy.enabled:
             continue

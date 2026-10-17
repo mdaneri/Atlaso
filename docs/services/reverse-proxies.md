@@ -47,7 +47,9 @@ Exclusive Atlaso services cannot take an address and port used by an enabled pro
 Service settings saves reject this conflict
 before changing desired state; move or disable the proxy first. Matching HTTP or HTTPS virtual hosts can share nginx
 sockets only when every virtual host selects the same interface scope for that address and port. HTTP and HTTPS cannot
-occupy the same address and port even across different interfaces.
+occupy the same address and port even across different interfaces. Management front doors, including enabled
+Management UI exposure on access interfaces and VLANs, participate in the same scope comparison. A proxy cannot share
+a management address and port through a different interface selection, even when duplicate-address checks are disabled.
 API settings writers return **409 Conflict** for this case.
 Service hostname edits also preserve saved proxy names and upstream targets, including disabled proxy intent.
 Disable HTTPS proxies before disabling their CA. Conflicting service or CA changes are rejected without saving them.
