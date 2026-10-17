@@ -272,3 +272,10 @@ Local Edge checks cover review invalidation, recoverable submission errors,
 automatic credential-free SSH probing, explicit approval, current-value editing, and automatic task-details
 navigation after successful submission at desktop and narrow viewports. Native VCF acceptance and
 deployed-appliance UI verification remain outstanding.
+
+## Reverse proxy acceptance
+
+`partials/reverse_proxies.html` uses the existing Traffic Publishing grid, server-rendered fallback, shared wizard,
+and read-only health grid. `reverse-proxy-dialog` reuses the step-wizard validation and review interaction.
+Behavioral tests cover wizard payloads and fallback visibility; native desktop and narrow-viewport screenshot acceptance
+remains pending under issue #723. This entry records interaction coverage without claiming deployed acceptance.

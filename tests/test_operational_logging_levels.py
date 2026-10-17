@@ -445,7 +445,8 @@ def test_helper_observation_transitions_are_quiet_and_independent(caplog, monkey
     failed = system.AdapterResult(command=["ignored"], dry_run=False, returncode=1,
                                   stderr="permission denied password=synthetic-secret")
     system._log_helper_outcome("network", "status", healthy)
-    for group, action in (("logs", "page"), ("network", "address-status"), ("appliance-update", "status-inspect")):
+    for group, action in (("logs", "page"), ("network", "address-status"),
+                          ("appliance-update", "status-inspect"), ("public-services", "reverse-proxy-status")):
         for _ in range(3):
             system._log_helper_outcome(group, action, healthy)
     assert not caplog.records

@@ -31,7 +31,7 @@ MAX_PORT_FORWARDS = 256
 MAX_MAPPED_PORTS = 65535
 type ServiceListenerSettings = (models.KmsSettings | models.LdapSettings | models.OidcProviderSettings
                                | models.NtpSettings | models.VcfBackupSettings | models.VcfOfflineDepotSettings
-                               | models.VcfPrivateRegistrySettings)
+                               | models.VcfPrivateRegistrySettings | models.CaSettings)
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,8 @@ class ListenerClaim:
     protocol: str
     start: int
     end: int
+    owner: str = "exclusive"
+    scheme: str = ""
 
 
 def unicast_address(value: str, family: int) -> IPv4Address | IPv6Address:
@@ -80,18 +82,30 @@ def source_networks(source: str, family: int, groups: list[dict[str, Any]]) -> l
     return sorted({str(network) for network in networks})
 
 
-def listener_claims(db: Session) -> list[ListenerClaim]:
+def listener_claims(db: Session, *, include_reverse_proxies: bool = True) -> list[ListenerClaim]:
     """Resolve desired listener settings in the owning transaction.
 
     Args:
         db: Desired-state transaction containing service configurations.
+        include_reverse_proxies: Include exact active nginx sockets when checking exclusive destination NAT.
     """
     settings = [row for model in (
         models.KmsSettings, models.LdapSettings, models.OidcProviderSettings,
         models.NtpSettings, models.VcfBackupSettings, models.VcfOfflineDepotSettings,
-        models.VcfPrivateRegistrySettings,
+        models.VcfPrivateRegistrySettings, models.CaSettings,
     ) if (row := cast(ServiceListenerSettings | None, db.scalar(select(model)))) is not None]
-    return listener_claims_for_settings(settings, esxi_pxe_boot_settings(db))
+    claims = listener_claims_for_settings(settings, esxi_pxe_boot_settings(db))
+    if include_reverse_proxies:
+        for proxy in db.scalars(select(models.ReverseProxy)):
+            if not proxy.enabled:
+                continue
+            ports = [proxy.port, *([proxy.redirect_port] if proxy.redirect_http else [])]
+            for listener in proxy.listeners:
+                claims.extend(
+                    ListenerClaim(str(listener["interface"]), str(listener["address"]), "tcp", int(port), int(port))
+                    for port in ports
+                )
+    return claims
 
 
 def listener_claims_for_settings(settings: list[ServiceListenerSettings], pxe: dict[str, Any]) -> list[ListenerClaim]:
@@ -105,7 +119,9 @@ def listener_claims_for_settings(settings: list[ServiceListenerSettings], pxe: d
         settings: Live or archived service listener configurations.
         pxe: Network Boot settings resolved from the same candidate state.
     """
-    claims = [ListenerClaim("*", "*", "tcp", port, port) for port in (22, 80, 443)]
+    claims = [ListenerClaim("*", "*", "tcp", 22, 22),
+              ListenerClaim("*", "*", "tcp", 80, 80, "nginx", "http"),
+              ListenerClaim("*", "*", "tcp", 443, 443, "nginx", "https")]
     specs = (
         (models.KmsSettings, "port", "tcp"),
         (models.LdapSettings, "port", "tcp"),
@@ -127,17 +143,33 @@ def listener_claims_for_settings(settings: list[ServiceListenerSettings], pxe: d
             continue
         port = int(getattr(row, field))
         addresses = [str(ip_address(address)) for address in split_addresses(row.listen_address)] or ["*"]
+        shared_nginx = isinstance(row, (models.OidcProviderSettings, models.VcfOfflineDepotSettings))
         for name in re.split(r"[,\s]+", row.listen_interface or ""):
             if name:
-                claims.extend(ListenerClaim(name, address, protocol, port, port) for address in addresses)
+                claims.extend(ListenerClaim(name, address, protocol, port, port,
+                                             "nginx" if shared_nginx else "exclusive", "https" if shared_nginx else "")
+                              for address in addresses)
+    # Browser firewall admission on standard ports also shares nginx sockets,
+    # independently of a service's custom protocol port.
+    for browser_row in settings:
+        if not browser_row.enabled or not isinstance(browser_row, (models.CaSettings, models.VcfOfflineDepotSettings, models.VcfPrivateRegistrySettings)):
+            continue
+        browser_ports = [(80, "http"), *([(443, "https")] if isinstance(browser_row, models.CaSettings) else [])]
+        addresses = [str(ip_address(address)) for address in split_addresses(browser_row.listen_address)] or ["*"]
+        for name in re.split(r"[,\s]+", browser_row.listen_interface or ""):
+            if name:
+                claims.extend(ListenerClaim(name, address, "tcp", port, port, "nginx", scheme)
+                              for address in addresses for port, scheme in browser_ports)
     # DNS/DHCP and Network Boot include socket-activated protocol endpoints;
     # their ports must never become a destination-translation editing shortcut.
     for protocol, ports in (("udp", (53, 67, 68, 69, 111, 547)), ("tcp", (53, 111, 2049, 20048))):
         claims.extend(ListenerClaim("*", "*", protocol, port, port) for port in ports)
     if pxe["enabled"]:
+        addresses = [str(ip_address(address)) for address in split_addresses(str(pxe.get("listen_address") or ""))] or ["*"]
         for name in re.split(r"[,\s]+", pxe["listen_interface"]):
             if name:
-                claims.append(ListenerClaim(name, "*", "tcp", pxe["http_port"], pxe["http_port"]))
+                claims.extend(ListenerClaim(name, address, "tcp", port, port, "nginx", "http")
+                              for address in addresses for port in {80, pxe["http_port"]})
     return claims
 
 

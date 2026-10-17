@@ -217,8 +217,19 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
         Returns:
             The endpoint response.
         """
+        from atlaso.app.services.network_objects import (
+            acquire_network_objects_write_lock,
+        )
+        from atlaso.app.services.reverse_proxies import (
+            validate_service_listener_sockets,
+        )
+
         dependencies.verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         settings = dependencies.get_ldap_settings_row(db)
+        # Default-row readers may commit; reacquire before editing their result.
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
         previous_hostname = settings.hostname
         selected_interfaces, selected_addresses = (
             dependencies.resolve_ldap_bind_targets(
@@ -238,6 +249,11 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
         settings.port = port
         settings.ldap_enabled = ldap_enabled is not None
         settings.ldap_port = ldap_port
+        try:
+            validate_service_listener_sockets(db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         settings.min_password_length = min_password_length
         settings.require_uppercase = require_uppercase is not None
         settings.require_lowercase = require_lowercase is not None

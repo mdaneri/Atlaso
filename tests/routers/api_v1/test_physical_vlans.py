@@ -1991,3 +1991,62 @@ def test_vlan_api_writers_require_capture_lock_before_lookup(client, monkeypatch
     ):
         with pytest.raises(RuntimeError, match="capture lock unavailable"):
             client.request(method, path, headers=headers, json=body)
+
+
+@pytest.mark.parametrize("operation", ["address", "rename", "disable", "delete"])
+def test_vlan_api_rolls_back_enabled_proxy_binding_loss(client, operation):
+    """Reject all direct VLAN API writers before listener and owned DNS become stale.
+
+    Args:
+        client: Isolated application HTTP client.
+        operation: VLAN desired-state mutation to exercise.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        DnsRecord,
+        PhysicalInterface,
+        ReverseProxy,
+        ReverseProxyRoute,
+        VlanInterface,
+    )
+    from atlaso.app.services.reverse_proxy_publication import DNS_OWNER_PREFIX
+
+    with SessionLocal() as db:
+        parent = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        parent.mode = "trunk"
+        parent.admin_state = "up"
+        parent.oper_state = "up"
+        vlan = VlanInterface(name="eth1.470", parent_interface="eth1", vlan_id=470,
+                             ip_cidr="192.168.70.1/24", role="access", enabled=True)
+        db.add(vlan)
+        db.add(ReverseProxy(name="test", hostname="proxy.example.test", enabled=True,
+                            scheme="http", port=9443, managed_dns=True,
+                            listeners=[{"interface": "eth1.470", "address": "192.168.70.1"}],
+                            routes=[ReverseProxyRoute(position=0, path_prefix="/", upstream_host="192.0.2.50", upstream_port=8080)]))
+        db.add(DnsRecord(hostname="proxy.example.test", record_type="A", address="192.168.70.1",
+                         description=DNS_OWNER_PREFIX + "1"))
+        db.commit()
+        vlan_id = vlan.id
+        records_before = [(r.id, r.address, r.description) for r in db.scalars(select(DnsRecord))]
+    token, _metadata = create_token(client, scopes=["write:vlans"])
+    headers = {"Authorization": f"Bearer {token}"}
+    url = f"/api/v1/vlans/{vlan_id}"
+    if operation in {"address", "rename"}:
+        response = client.patch(url, headers=headers, json={
+            "parent_interface": "eth1", "vlan_id": 471 if operation == "rename" else 470,
+            "ip_cidr": "192.168.70.2/24" if operation == "address" else "192.168.70.1/24",
+            "role": "access", "enabled": True,
+        })
+    elif operation == "disable":
+        response = client.post(url + "/disable", headers=headers)
+    else:
+        response = client.delete(url, headers=headers)
+    assert response.status_code == 422, response.text
+    assert "Enabled reverse proxy" in response.text
+    with SessionLocal() as db:
+        vlan = db.get(VlanInterface, vlan_id)
+        assert vlan.name == "eth1.470" and vlan.enabled and vlan.ip_cidr == "192.168.70.1/24"
+        assert db.scalar(select(ReverseProxy)).listeners == [{"interface": "eth1.470", "address": "192.168.70.1"}]
+        assert [(r.id, r.address, r.description) for r in db.scalars(select(DnsRecord))] == records_before

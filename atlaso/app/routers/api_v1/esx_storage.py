@@ -26,6 +26,7 @@ from atlaso.app.schemas import (
     EsxStorageVolumeCreate,
     EsxStorageVolumeResponse,
     EsxStorageVolumeUpdate,
+    ProblemDetails,
 )
 from atlaso.app.security import Identity, require_scope
 from atlaso.app.services.esx_storage import (
@@ -40,6 +41,8 @@ from atlaso.app.services.esx_storage import (
 from atlaso.app.services.esx_storage import (
     split_lines as split_esx_storage_lines,
 )
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+from atlaso.app.services.reverse_proxies import validate_service_proxy_dependencies
 
 Endpoint = Callable[..., Any]
 
@@ -110,6 +113,7 @@ def build_router(dependencies: EsxStorageApiDependencies) -> EsxStorageApiRouter
         response_model=EsxStorageStatusResponse,
         tags=["ESX Storage"],
         operation_id="updateEsxStorageSettings",
+        responses={409: {"model": ProblemDetails, "description": "Service hostname conflicts with saved reverse-proxy ownership; settings remain unchanged."}},
     )
     def update_esx_storage_settings(
         payload: EsxStorageSettingsUpdate,
@@ -118,15 +122,26 @@ def build_router(dependencies: EsxStorageApiDependencies) -> EsxStorageApiRouter
     ) -> EsxStorageStatusResponse:
         """Update Esx Storage Settings.
 
-        Requires the `write:esx-storage` API scope. The request is evaluated without persisting desired
-        state or mutating appliance runtime state.
+        Requires `write:esx-storage`. Saves desired state under the Network Objects lock; global
+        Appliance Apply publishes runtime state. A hostname that invalidates saved reverse-proxy
+        ownership returns 409 without saving changes.
 
         Args:
             payload: Validated request or task payload consumed by the operation.
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        from atlaso.app.services.network_objects import (
+            acquire_network_objects_write_lock,
+        )
+        from atlaso.app.services.reverse_proxies import (
+            validate_service_proxy_dependencies,
+        )
+
+        acquire_network_objects_write_lock(db)
         row = dependencies.get_esx_storage_settings(db)
+        acquire_network_objects_write_lock(db)
+        db.refresh(row)
         previous_hostname = row.hostname
         hostname = (payload.hostname or row.hostname).strip().lower().rstrip(".")
         if "." not in hostname:
@@ -137,6 +152,11 @@ def build_router(dependencies: EsxStorageApiDependencies) -> EsxStorageApiRouter
         row.enabled = payload.enabled
         row.hostname = hostname
         row.updated_at = utcnow()
+        try:
+            validate_service_proxy_dependencies(db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         dependencies.reconcile_esx_storage_dns(
             db, identity.username, previous_hostname=previous_hostname
         )
@@ -453,6 +473,7 @@ def build_router(dependencies: EsxStorageApiDependencies) -> EsxStorageApiRouter
         status_code=201,
         tags=["ESX Storage"],
         operation_id="createEsxNfsShare",
+        responses={409: {"model": ProblemDetails, "description": "Datastore name or generated DNS alias conflicts; share and DNS state remain unchanged."}},
     )
     def create_esx_nfs_share(
         payload: EsxNfsShareCreate,
@@ -470,6 +491,7 @@ def build_router(dependencies: EsxStorageApiDependencies) -> EsxStorageApiRouter
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         if db.get(EsxStorageVolume, payload.volume_id) is None:
             raise HTTPException(
                 status_code=422, detail="Selected ESX Storage volume does not exist."
@@ -480,15 +502,19 @@ def build_router(dependencies: EsxStorageApiDependencies) -> EsxStorageApiRouter
         apply_esx_share_payload(row, payload)
         db.add(row)
         try:
+            db.flush()
+            validate_service_proxy_dependencies(db)
+            dependencies.reconcile_esx_storage_dns(db, identity.username)
             db.commit()
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except IntegrityError as exc:
             db.rollback()
             raise HTTPException(
                 status_code=409, detail="Datastore name already exists."
             ) from exc
         db.refresh(row)
-        dependencies.reconcile_esx_storage_dns(db, identity.username)
-        db.commit()
         record_audit(
             db,
             actor=identity.username,
@@ -506,6 +532,7 @@ def build_router(dependencies: EsxStorageApiDependencies) -> EsxStorageApiRouter
         response_model=EsxNfsShareResponse,
         tags=["ESX Storage"],
         operation_id="updateEsxNfsShare",
+        responses={409: {"model": ProblemDetails, "description": "Generated DNS alias conflicts with saved proxy ownership; share and DNS state remain unchanged."}},
     )
     def update_esx_nfs_share(
         share_id: Annotated[
@@ -529,6 +556,7 @@ def build_router(dependencies: EsxStorageApiDependencies) -> EsxStorageApiRouter
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         row = db.get(EsxNfsShare, share_id)
         if row is None:
             raise HTTPException(
@@ -542,8 +570,14 @@ def build_router(dependencies: EsxStorageApiDependencies) -> EsxStorageApiRouter
                 status_code=422, detail="Selected ESX Storage volume does not exist."
             )
         apply_esx_share_payload(row, payload)
-        dependencies.reconcile_esx_storage_dns(db, identity.username)
-        db.commit()
+        try:
+            db.flush()
+            validate_service_proxy_dependencies(db)
+            dependencies.reconcile_esx_storage_dns(db, identity.username)
+            db.commit()
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         db.refresh(row)
         record_audit(
             db,
@@ -584,6 +618,7 @@ def build_router(dependencies: EsxStorageApiDependencies) -> EsxStorageApiRouter
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        acquire_network_objects_write_lock(db)
         row = db.get(EsxNfsShare, share_id)
         if row is None:
             raise HTTPException(

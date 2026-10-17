@@ -1761,3 +1761,55 @@ def test_handoff_synthetic_own_hostname_preserves_all_wire_checks(monkeypatch, f
             (records, {"nameserver": "127.0.0.1", "port": 5353, "prior_records": [],
                        "require_authoritative": True}),
         ]
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("primary_scalar", [False, True])
+def test_secondary_slaac_management_dns_provenance_survives_prefix_change(client, legacy, primary_scalar):
+    """Track all observed AAAA sources and retire secondary address/PTR records.
+
+    Args:
+        client: Seeded appliance client.
+        legacy: Recover source attribution from an older applied inventory.
+        primary_scalar: Retain a scalar first observation alongside the complete list.
+    """
+    from ipaddress import ip_address
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+
+    login(client)
+    old_addresses = ["2001:db8:71::10", "2001:db8:72::10", "2001:db8:73::10"]
+    new_address = "2001:db8:81::10"
+    with SessionLocal() as db:
+        management, _access = _prepare_service_address_baseline(db, ui)
+        management.ipv6_enabled = True
+        management.ipv6_cidr = None
+        management.host_ipv6_cidr = old_addresses[0] + "/64" if primary_scalar else None
+        management.host_ipv6_cidrs = [address + "/64" for address in old_addresses]
+        db.flush()
+        appliance = ui.get_appliance_settings_row(db)
+        ui.ensure_dns_for_appliance_settings(db, appliance, previous_fqdn=appliance.fqdn, actor=None)
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        baselines = ui.load_appliance_apply_baselines(db)
+        records = [row for row in baselines["dnsmasq"]["service_dns_records"]
+                   if row["description"] == ui.APPLIANCE_DNS_RECORD_DESCRIPTION and row["record_type"] == "AAAA"]
+        assert {row["address"] for row in records} == set(old_addresses)
+        assert {row["source_interface"] for row in records} == {management.name}
+        if legacy:
+            for row in baselines["dnsmasq"]["service_dns_records"]:
+                if row["description"] == ui.APPLIANCE_DNS_RECORD_DESCRIPTION and row["record_type"] == "AAAA":
+                    row["source_interface"] = ""
+            ui.save_appliance_apply_baselines(db, baselines)
+        management.ipv6_cidr = new_address + "/64"
+        db.flush()
+        units = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        projected = ui.network_generated_dns_unit(db, units)
+        assert projected is not None and projected["validation_errors"] == []
+        config = projected["raw_config_preview"]
+        fqdn = ui.get_appliance_settings_row(db).fqdn
+        assert f"host-record={fqdn},{new_address}" in config
+        for address in old_addresses:
+            assert f"host-record={fqdn},{address}" not in config
+            assert f"ptr-record={ip_address(address).reverse_pointer},{fqdn}" not in config

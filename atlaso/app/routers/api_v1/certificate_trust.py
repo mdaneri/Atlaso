@@ -28,8 +28,8 @@ from atlaso.app.models import (
     utcnow,
 )
 from atlaso.app.openapi import DocumentedAPIRoute
-from atlaso.app.schemas import SettingsUpdate as SettingsUpdate
 from atlaso.app.schemas import (
+    ProblemDetails,
     VsphereKeyProviderCreate,
     VsphereKeyProviderResponse,
     VsphereKeyProviderSettingsResponse,
@@ -45,6 +45,7 @@ from atlaso.app.schemas import (
     VsphereTrustedVcenterResponse,
     VsphereTrustedVcenterUpdate,
 )
+from atlaso.app.schemas import SettingsUpdate as SettingsUpdate
 from atlaso.app.security import (
     Identity,
     require_scope,
@@ -301,6 +302,7 @@ def build_router(
         response_model=VsphereKeyProviderSettingsResponse,
         tags=["vSphere Key Providers"],
         operation_id="updateVsphereKeyProviderSettings",
+        responses={409: {"model": ProblemDetails, "description": "Service hostname, CA dependency or listener conflicts with saved reverse proxies; no service edits are saved."}},
     )
     def update_vsphere_key_provider_settings(
         payload: VsphereKeyProviderSettingsUpdate,
@@ -310,16 +312,30 @@ def build_router(
         """Update saved listener desired state without mutating the appliance host.
 
         Requires the `write:kms` API scope. Enforcement remains exclusively in global Appliance Apply.
+        Listener writes share the Network Objects transaction lock and return 409 without saving changes
+        when a saved reverse proxy owns the requested hostname or upstream, its CA dependency is invalid,
+        or an enabled proxy owns the requested exclusive socket.
 
         Args:
             payload: Validated listener desired state.
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
+        from atlaso.app.services.network_objects import (
+            acquire_network_objects_write_lock,
+        )
+        from atlaso.app.services.reverse_proxies import (
+            validate_service_listener_sockets,
+        )
+
+        acquire_network_objects_write_lock(db)
+        settings = get_kms_settings_row(db)
+        # Default-row readers may commit; reacquire before editing their result.
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
         interfaces, addresses, hostname = _normalize_vsphere_listener_values(
             payload, db
         )
-        settings = get_kms_settings_row(db)
         settings.enabled = payload.enabled
         settings.listen_interface = join_csv(interfaces)
         settings.listen_address = join_csv(addresses)
@@ -330,6 +346,11 @@ def build_router(
         settings.require_client_cert = True
         settings.allow_register = False
         settings.allow_destroy = False
+        try:
+            validate_service_listener_sockets(db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         settings.updated_at = utcnow()
         db.commit()
         record_audit(

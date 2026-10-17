@@ -37,6 +37,8 @@ from atlaso.app.services.esx_storage import (
 from atlaso.app.services.esx_storage import (
     validate_mounted_volume_path as validate_esx_storage_mounted_volume_path,
 )
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+from atlaso.app.services.reverse_proxies import validate_service_proxy_dependencies
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
 Endpoint = Callable[..., Any]
@@ -148,7 +150,17 @@ def build_router(dependencies: EsxStorageUiDependencies) -> EsxStorageUiRouter:
         """
         dependencies.verify_csrf(request, csrf)
         require_esx_storage_write(identity)
+        from atlaso.app.services.network_objects import (
+            acquire_network_objects_write_lock,
+        )
+        from atlaso.app.services.reverse_proxies import (
+            validate_service_proxy_dependencies,
+        )
+
+        acquire_network_objects_write_lock(db)
         settings = dependencies.get_esx_storage_settings_row(db)
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
         previous_hostname = settings.hostname
         normalized_hostname = dependencies.normalize_dns_hostname(
             hostname.strip() or settings.hostname
@@ -161,6 +173,11 @@ def build_router(dependencies: EsxStorageUiDependencies) -> EsxStorageUiRouter:
         settings.enabled = enabled == "on"
         settings.hostname = normalized_hostname
         settings.updated_at = utcnow()
+        try:
+            validate_service_proxy_dependencies(db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         dns_action = dependencies.ensure_dns_for_esx_storage(
             db, identity.username, previous_hostname=previous_hostname
         )
@@ -362,6 +379,7 @@ def build_router(dependencies: EsxStorageUiDependencies) -> EsxStorageUiRouter:
         """
         dependencies.verify_csrf(request, csrf)
         require_esx_storage_write(identity)
+        acquire_network_objects_write_lock(db)
         if db.get(EsxStorageVolume, volume_id) is None:
             raise HTTPException(
                 status_code=400, detail="Selected storage volume does not exist."
@@ -386,14 +404,18 @@ def build_router(dependencies: EsxStorageUiDependencies) -> EsxStorageUiRouter:
         )
         db.add(row)
         try:
+            db.flush()
+            validate_service_proxy_dependencies(db)
+            dependencies.ensure_dns_for_esx_storage(db, identity.username)
             db.commit()
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except IntegrityError as exc:
             db.rollback()
             raise HTTPException(
                 status_code=400, detail="A datastore with this name already exists."
             ) from exc
-        dependencies.ensure_dns_for_esx_storage(db, identity.username)
-        db.commit()
         record_audit(
             db,
             actor=identity.username,
@@ -447,6 +469,7 @@ def build_router(dependencies: EsxStorageUiDependencies) -> EsxStorageUiRouter:
         """
         dependencies.verify_csrf(request, csrf)
         require_esx_storage_write(identity)
+        acquire_network_objects_write_lock(db)
         row = db.get(EsxNfsShare, share_id)
         if row is None:
             raise HTTPException(
@@ -474,14 +497,18 @@ def build_router(dependencies: EsxStorageUiDependencies) -> EsxStorageUiRouter:
         row.enabled = enabled == "on"
         row.updated_at = utcnow()
         try:
+            db.flush()
+            validate_service_proxy_dependencies(db)
+            dependencies.ensure_dns_for_esx_storage(db, identity.username)
             db.commit()
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except IntegrityError as exc:
             db.rollback()
             raise HTTPException(
                 status_code=400, detail="A datastore with this name already exists."
             ) from exc
-        dependencies.ensure_dns_for_esx_storage(db, identity.username)
-        db.commit()
         record_audit(
             db,
             actor=identity.username,
@@ -517,6 +544,7 @@ def build_router(dependencies: EsxStorageUiDependencies) -> EsxStorageUiRouter:
         """
         dependencies.verify_csrf(request, csrf)
         require_esx_storage_write(identity)
+        acquire_network_objects_write_lock(db)
         row = db.get(EsxNfsShare, share_id)
         if row is None:
             raise HTTPException(

@@ -1,0 +1,303 @@
+"""Read and validate bounded observations from the applied proxy runtime."""
+
+from __future__ import annotations
+
+import json
+import re
+import threading
+import time
+from copy import deepcopy
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from atlaso.app.adapters.system import SystemAdapter
+from atlaso.app.services.reverse_proxies import MAX_TOTAL_PROXY_ROUTES, runtime_snapshot
+from atlaso.app.services.reverse_proxy_publication import MAX_PUBLICATION_BYTES
+
+# Publication metadata already uses ASCII-escaped compact JSON. The helper's
+# default JSON spacing adds at most one byte per compact punctuation byte.
+# Include the helper's bounded health file and its small fixed envelope.
+MAX_HELPER_OUTPUT = 2 * MAX_PUBLICATION_BYTES + 262_144 + 4096
+MAX_OBSERVATION_AGE = timedelta(seconds=90)
+MAX_FUTURE_SKEW = timedelta(seconds=5)
+_GENERATION = re.compile(r"[0-9a-f]{64}\Z")
+_SOCKET_ID = re.compile(r"[1-9][0-9]{0,9}-[1-9][0-9]{0,9}\Z")
+_STATUSES = {"healthy", "degraded", "unavailable"}
+_FAILURES = {"insecure_verification", "invalid_http", "tls_verification", "unavailable", "upstream_http"}
+_TLS_STATUSES = {"failed", "fingerprint", "insecure", "not_applicable", "not_probed", "trusted_ca"}
+PUBLIC_SNAPSHOT_CACHE_SECONDS = 15
+_public_cache_lock = threading.Lock()
+_public_refresh_lock = threading.Lock()
+_public_cache: tuple[list[dict[str, Any]], datetime | None, float, int] = ([], None, 0.0, 0)
+
+
+def invalidate_public_proxy_snapshot() -> None:
+    """Discard public evidence after an applied-state boundary changes."""
+    global _public_cache
+    with _public_cache_lock:
+        _public_cache = ([], None, 0.0, _public_cache[3] + 1)
+
+
+def observe_reverse_proxy_health(db: Session, *, now: datetime | None = None) -> list[dict[str, Any]]:
+    """Compare saved intent with one bounded helper snapshot and project route health.
+
+    No network probe is performed here. The helper only returns its cached
+    observation, and malformed, unavailable, or stale results are fail-closed.
+
+    Args:
+        db: Read-only session containing current desired proxy state.
+        now: Optional aware UTC time used by deterministic freshness checks.
+    """
+    desired = runtime_snapshot(db)
+    desired_routes = sum(len(proxy["routes"]) for proxy in desired)
+    if len(desired) > 256 or desired_routes > MAX_TOTAL_PROXY_ROUTES:
+        return _unavailable_items(desired, "desired_state_exceeds_limit")
+
+    try:
+        result = SystemAdapter().reverse_proxy_status()
+        if result.dry_run or result.returncode != 0 or len(result.stdout.encode("utf-8")) > MAX_HELPER_OUTPUT:
+            return _unavailable_items(desired, "runtime_observer_unavailable")
+        observation = json.loads(result.stdout)
+        parsed = _validate_observation(observation, now=now)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return _unavailable_items(desired, "runtime_observer_unavailable")
+
+    if parsed["proxies"] != desired:
+        return _pending_items(desired)
+
+    health = parsed["health"]
+    items: list[dict[str, Any]] = []
+    for proxy in desired:
+        for route in proxy["routes"]:
+            socket_id = f"{proxy['id']}-{route['id']}"
+            observed = health.get(socket_id)
+            if not proxy["enabled"]:
+                item = _base_item(proxy, route, status="disabled", applied=True, pending=False,
+                                  failure_class="", tls_status="not_probed", http_status=None, last_success=None)
+                item["warning"] = "This saved proxy is disabled in the applied runtime."
+            elif observed is None:
+                item = _base_item(proxy, route, status="unavailable", applied=True, pending=False,
+                                  failure_class="health_unavailable", tls_status="not_probed", http_status=None, last_success=None)
+                item["warning"] = "The applied proxy has no current route-health observation."
+            else:
+                status = observed["status"]
+                failure_class = observed["failure_class"] or ""
+                warning = ""
+                if route["trust_mode"] == "insecure":
+                    status = "degraded"
+                    failure_class = failure_class or "insecure_verification"
+                    warning = "Upstream certificate verification is disabled; this route remains degraded."
+                elif status == "degraded":
+                    warning = "The applied upstream route is degraded; review its bounded health details."
+                elif status == "unavailable":
+                    warning = "The applied upstream route is unavailable."
+                item = _base_item(proxy, route, status=status, applied=True, pending=False,
+                                  failure_class=failure_class, tls_status=observed["tls_status"],
+                                  http_status=observed["http_status"], last_success=observed["last_success"])
+                item["warning"] = warning
+            items.append(item)
+    return items[:MAX_TOTAL_PROXY_ROUTES]
+
+
+def applied_reverse_proxy_snapshot(*, now: datetime | None = None) -> list[dict[str, Any]]:
+    """Read a short, single-flight cache without queueing public requests behind helpers.
+
+    Args:
+        now: Optional aware UTC time used by deterministic freshness checks.
+    """
+    global _public_cache
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None or current.utcoffset() is None:
+        return []
+    with _public_cache_lock:
+        proxies, observed_at, retry_at, epoch = _public_cache
+        cached = deepcopy(proxies) if observed_at and -MAX_FUTURE_SKEW <= current - observed_at <= MAX_OBSERVATION_AGE else []
+        if time.monotonic() < retry_at:
+            return cached
+    if not _public_refresh_lock.acquire(blocking=False):
+        return cached
+    try:
+        # Another reader may have completed between inspection and admission.
+        with _public_cache_lock:
+            if time.monotonic() < _public_cache[2] or epoch != _public_cache[3]:
+                if epoch != _public_cache[3]:
+                    return []
+                latest, sampled_at, _, _ = _public_cache
+                return deepcopy(latest) if sampled_at and -MAX_FUTURE_SKEW <= current - sampled_at <= MAX_OBSERVATION_AGE else []
+        fresh, observed_at = _read_applied_reverse_proxy_snapshot(now=now)
+        with _public_cache_lock:
+            if epoch != _public_cache[3]:
+                return []
+            _public_cache = (fresh, observed_at, time.monotonic() + PUBLIC_SNAPSHOT_CACHE_SECONDS, epoch)
+        return deepcopy(fresh)
+    finally:
+        _public_refresh_lock.release()
+
+
+def _read_applied_reverse_proxy_snapshot(*, now: datetime | None) -> tuple[list[dict[str, Any]], datetime | None]:
+    """Read canonical applied intent for public listings, independently of desired edits.
+
+    Args:
+        now: Optional aware UTC time used by deterministic freshness checks.
+    """
+    from atlaso.app.services.reverse_proxy_publication import (
+        render_proxy_servers,
+        transport_manifest,
+        validated_snapshot,
+    )
+
+    try:
+        result = SystemAdapter().reverse_proxy_status()
+        if result.dry_run or result.returncode != 0 or len(result.stdout.encode("utf-8")) > MAX_HELPER_OUTPUT:
+            return [], None
+        parsed = _validate_observation(json.loads(result.stdout), now=now)
+        proxies = parsed["proxies"]
+        if not proxies:
+            return [], None
+        if parsed["generation"] is None:
+            return [], None
+        # Reuse the publication owner's complete schema and semantic validation.
+        # No desired database inventory can invalidate the still-applied snapshot.
+        manifest = transport_manifest(proxies, [])
+        canonical, _manifest = validated_snapshot(render_proxy_servers(proxies, manifest))
+        return canonical, _parse_timestamp(parsed["observed_at"])
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return [], None
+
+
+def _validate_observation(value: Any, *, now: datetime | None) -> dict[str, Any]:
+    """Validate the complete bounded helper response and its cache freshness.
+
+    Args:
+        value: Candidate value to normalize or validate.
+        now: Input used by  validate observation.
+    """
+    required = {"schema", "proxies", "generation", "health", "observed_at"}
+    if not isinstance(value, dict) or set(value) != required or type(value.get("schema")) is not int or value["schema"] != 1:
+        raise ValueError("Invalid reverse-proxy observation schema.")
+    proxies = value["proxies"]
+    health = value["health"]
+    generation = value["generation"]
+    if not isinstance(proxies, list) or len(proxies) > 256 or not isinstance(health, dict) or len(health) > MAX_TOTAL_PROXY_ROUTES:
+        raise ValueError("Reverse-proxy observation exceeds its limit.")
+    if sum(len(proxy.get("routes", [])) for proxy in proxies if isinstance(proxy, dict)) > MAX_TOTAL_PROXY_ROUTES:
+        raise ValueError("Applied reverse-proxy route limit exceeded.")
+    if generation is not None and (not isinstance(generation, str) or not _GENERATION.fullmatch(generation)):
+        raise ValueError("Invalid reverse-proxy generation.")
+    observed_at = _parse_timestamp(value["observed_at"])
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None or current.utcoffset() is None:
+        raise ValueError("Observation comparison time must be timezone-aware.")
+    age = current.astimezone(timezone.utc) - observed_at
+    if age > MAX_OBSERVATION_AGE or age < -MAX_FUTURE_SKEW:
+        raise ValueError("Reverse-proxy observation is stale or from the future.")
+    for socket_id, record in health.items():
+        if not isinstance(socket_id, str) or not _SOCKET_ID.fullmatch(socket_id):
+            raise ValueError("Invalid reverse-proxy health identity.")
+        record_fields = {"status", "last_success", "failure_class", "http_status", "tls_status"}
+        if not isinstance(record, dict) or set(record) not in (record_fields, record_fields | {"observed_at"}):
+            raise ValueError("Invalid reverse-proxy health record.")
+        if record["status"] not in _STATUSES:
+            raise ValueError("Invalid reverse-proxy health status.")
+        failure = record["failure_class"]
+        if failure is not None and failure not in _FAILURES:
+            raise ValueError("Invalid reverse-proxy failure class.")
+        if record["tls_status"] not in _TLS_STATUSES:
+            raise ValueError("Invalid reverse-proxy TLS status.")
+        status = record["http_status"]
+        if status is not None and (type(status) is not int or not 100 <= status <= 599):
+            raise ValueError("Invalid observed upstream HTTP status.")
+        if record["last_success"] is not None:
+            _parse_timestamp(record["last_success"])
+    fresh_health = {}
+    for socket_id, record in health.items():
+        sampled = _parse_timestamp(record.get("observed_at", value["observed_at"]))
+        sampled_age = current.astimezone(timezone.utc) - sampled
+        if sampled_age < -MAX_FUTURE_SKEW:
+            raise ValueError("Reverse-proxy route sample is from the future.")
+        if sampled_age <= MAX_OBSERVATION_AGE:
+            fresh_health[socket_id] = record
+    return {**value, "health": fresh_health}
+
+
+def _parse_timestamp(value: Any) -> datetime:
+    """Parse one bounded ISO timestamp and require an explicit UTC offset.
+
+    Args:
+        value: Candidate value to normalize or validate.
+    """
+    if not isinstance(value, str) or len(value) > 64:
+        raise ValueError("Invalid reverse-proxy observation timestamp.")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("Invalid reverse-proxy observation timestamp.") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("Reverse-proxy timestamps must include a UTC offset.")
+    return parsed.astimezone(timezone.utc)
+
+
+def _pending_items(proxies: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build desired-state rows while a different applied snapshot is active.
+
+    Args:
+        proxies: Complete bounded proxy desired-state collection.
+    """
+    return [
+        _base_item(proxy, route, status="pending", applied=False, pending=True,
+                   failure_class="desired_state_pending", tls_status="not_probed", http_status=None, last_success=None,
+                   warning="Saved desired state differs from the applied proxy snapshot; submit global Appliance Apply.")
+        for proxy in proxies for route in proxy["routes"]
+    ][:MAX_TOTAL_PROXY_ROUTES]
+
+
+def _unavailable_items(proxies: list[dict[str, Any]], failure: str) -> list[dict[str, Any]]:
+    """Build explicit unavailable rows when helper evidence cannot be trusted.
+
+    Args:
+        proxies: Complete bounded proxy desired-state collection.
+        failure: Input used by  unavailable items.
+    """
+    return [
+        _base_item(proxy, route, status="unavailable", applied=False, pending=True,
+                   failure_class=failure, tls_status="not_probed", http_status=None, last_success=None,
+                   warning="Runtime observation is unavailable or stale; no request-time probe was performed.")
+        for proxy in proxies for route in proxy["routes"]
+    ][:MAX_TOTAL_PROXY_ROUTES]
+
+
+def _base_item(
+    proxy: dict[str, Any], route: dict[str, Any], *, status: str, applied: bool, pending: bool,
+    failure_class: str, tls_status: str, http_status: int | None, last_success: str | None,
+    warning: str = "",
+) -> dict[str, Any]:
+    """Return the stable, body-free API and browser health projection.
+
+    Args:
+        proxy: Desired-state proxy model or projection.
+        route: Input used by  base item.
+        status: Input used by  base item.
+        applied: Input used by  base item.
+        pending: Input used by  base item.
+        failure_class: Input used by  base item.
+        tls_status: Input used by  base item.
+        http_status: Input used by  base item.
+        last_success: Input used by  base item.
+        warning: Input used by  base item.
+    """
+    return {
+        "proxy_id": proxy["id"],
+        "route_id": route["id"],
+        "proxy_name": proxy["name"],
+        "path_prefix": route["path_prefix"],
+        "status": status,
+        "last_success": last_success,
+        "failure_class": failure_class,
+        "http_status": http_status,
+        "tls_status": tls_status,
+        "pending": pending,
+        "applied": applied,
+        "warning": warning,
+    }

@@ -23,6 +23,10 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+Reverse proxies can opt into Atlaso-managed A/AAAA records when their hostname belongs to an enabled authoritative
+zone. Otherwise the [reverse-proxy guide](reverse-proxies.md) shows the exact listener records to configure in external
+DNS. Existing operator-owned records are not replaced to satisfy a proxy hostname conflict.
+
 When DNS is disabled and has no selected bind interface, `GET /api/v1/dns/settings` returns the saved empty
 `listen_interface`. The settings update request still requires a nonempty interface; use DNS validation to review bind
 targets before applying desired state. DNS settings changes reach the appliance only through the global Appliance Apply

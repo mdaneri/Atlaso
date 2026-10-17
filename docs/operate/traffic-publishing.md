@@ -25,6 +25,11 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+Managed HTTP/HTTPS reverse proxies are tracked by issue #723. The [reverse-proxy workflow](../services/reverse-proxies.md)
+describes their desired-state collection, trust choices, cached health, and native acceptance requirements. The branch
+implementation publishes them through global Appliance Apply; native appliance acceptance remains pending, so this
+page makes no claim about a released appliance.
+
 ## Configure source translation
 
 1. Configure two distinct addressed lab targets in Physical Interfaces or VLAN Interfaces. Use enabled `access` or

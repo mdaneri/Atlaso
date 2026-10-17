@@ -28,7 +28,7 @@ def _log_helper_outcome(group: str, action: str, result: "AdapterResult") -> Non
     stage = "validation" if action.startswith("validate") else "recovery" if action.startswith("recover") else "cleanup" if action in {"cleanup", "reset-tool"} else "execution"
     observing = action in {"status", "logs", "leases", "access-logs", "error-logs", "source", "read-log", "check",
                            "page", "inventory", "address-status", "dhcp-dns", "capabilities", "verify-pool",
-                           "read-software-depot-id", "status-inspect", "restart-inspect"}
+                           "read-software-depot-id", "status-inspect", "restart-inspect", "reverse-proxy-status"}
     reason = failure_reason(result.stderr, result.returncode) if result.returncode else "none"
     if stage == "validation" and reason == "helper_failed":
         reason = "validation_rejected"
@@ -200,6 +200,19 @@ class SystemAdapter:
         """Read bounded applied destination-translation counters without mutation."""
         return self._helper_result("nat", "status", timeout_seconds=10,
                                    dry_run_message='{"available":false,"rules":[],"runtime_has_port_forwards":false}')
+
+    def reverse_proxy_status(self) -> AdapterResult:
+        """Read one bounded cached reverse-proxy runtime observation without probing upstreams.
+
+        Returns:
+            The helper's applied snapshot and cached health fields, or an explicit unavailable result in dry-run mode.
+        """
+        return self._helper_result(
+            "public-services",
+            "reverse-proxy-status",
+            timeout_seconds=10,
+            dry_run_message='{"schema":1,"proxies":[],"generation":null,"health":{},"observed_at":null}',
+        )
 
     def validate_traffic_publishing(
         self, job_id: str, nat_path: str, firewall_path: str,
