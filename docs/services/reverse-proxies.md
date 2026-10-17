@@ -81,6 +81,7 @@ Appliance Apply so the proxy listener and its DNS records publish together. Mana
 observed IPv6 address, so address changes retire secondary AAAA records and their generated PTR records together.
 When an applied native service owns a
 replacement proxy's socket, review its shutdown with the proxy changes; the service stops before nginx activates.
+Registry handoffs account for every applied listener address, including non-first addresses in a multi-address binding.
 For an enabled service moving to another socket, keep the replacement proxy disabled, apply the service move first,
 then enable and apply the proxy. This preserves certificate setup and listener release ordering.
 When a native service takes a disabled or moved proxy's still-applied socket, review Public Services with that service.

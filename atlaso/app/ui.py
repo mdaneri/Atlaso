@@ -1,5 +1,6 @@
 """Serve the admin portal and orchestrate its desired-state workflows."""
 
+import ast
 import difflib
 import hashlib
 import hmac
@@ -18783,11 +18784,20 @@ def proxy_socket_release_dependencies(
                 ))
             elif unit_id == "vcf_private_registry" and preview:
                 port_match = re.search(r"(?m)^https:\s*\n\s+port:\s*([0-9]+)", preview)
-                addresses = next((line.partition(":")[2] for line in preview.splitlines()
-                                  if line.startswith("atlaso_listen_address:")), "")
-                if port_match:
-                    owned.update((address, int(port_match[1])) for address in split_addresses(addresses))
-        except (ValueError, KeyError, TypeError, AttributeError):
+                plural = next((line.partition(":")[2].strip() for line in preview.splitlines()
+                               if line.startswith("atlaso_listen_addresses:")), None)
+                if plural is not None:
+                    addresses = ast.literal_eval(plural)
+                    if not isinstance(addresses, list) or any(not isinstance(address, str) for address in addresses):
+                        raise ValueError("Invalid registry listener address metadata.")
+                else:
+                    # Older applied previews carried only a scalar metadata field.
+                    legacy = re.search(r"(?m)^atlaso_listen_address:([^\n]*(?:\n(?!atlaso_)[^\n]*)*)", preview)
+                    addresses = split_addresses(legacy[1]) if legacy else []
+                if not port_match or not addresses:
+                    raise ValueError("Missing registry listener ownership metadata.")
+                owned.update((str(ip_address(address)), int(port_match[1])) for address in addresses)
+        except (ValueError, KeyError, TypeError, AttributeError, SyntaxError):
             # Invalid applied evidence cannot prove that a candidate socket is free.
             if preview:
                 releases.add(unit_id)

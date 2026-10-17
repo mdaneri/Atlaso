@@ -116,7 +116,7 @@ def test_proxy_review_requires_shutdown_and_orders_it_before_protected_group(cli
 
 @pytest.mark.parametrize("address", ["192.0.2.10", "2001:db8::10"])
 @pytest.mark.parametrize("redirect", [False, True])
-@pytest.mark.parametrize("service", ["kms", "esxi_pxe"])
+@pytest.mark.parametrize("service", ["kms", "esxi_pxe", "vcf_private_registry"])
 def test_service_takeover_requires_reviewed_proxy_retirement_first(client, monkeypatch, address, redirect, service):
     """A service-only Apply cannot bind a still-applied nginx listener.
 
@@ -150,10 +150,19 @@ def test_service_takeover_requires_reviewed_proxy_retirement_first(client, monke
         Args:
             target: Candidate listener address in either IP family.
         """
+        if service == "vcf_private_registry":
+            from atlaso.app.models import VcfPrivateRegistrySettings
+            from atlaso.app.services.vcf_private_registry import render_harbor_config
+
+            return render_harbor_config(VcfPrivateRegistrySettings(
+                enabled=True, hostname="registry.example.test", port=5696, listen_interface="eth1",
+                listen_address="198.51.100.99\n" + target))
         return json.dumps({"enabled": True, "listen": {"addresses": [target], "port": 5696}}
                           if service == "kms" else {"boot": {"enabled": True, "listen_address": target, "http_port": 5696}})
 
     context = {"kms_settings": SimpleNamespace(enabled=True)} if service == "kms" else {"esxi_pxe_boot": {"enabled": True}}
+    if service == "vcf_private_registry":
+        context = {"vcf_registry_settings": SimpleNamespace(enabled=True)}
     unit_map[service].update(changed=True, config_preview=preview_for(address), context=context)
     with SessionLocal() as db:
         baselines = ui.load_appliance_apply_baselines(db)
@@ -857,3 +866,84 @@ def test_explicit_coupled_roots_can_be_cleared_without_selection_cycle(client, m
     assert cleared["requested_units"] == []
     assert cleared["execution_count"] == 0
     assert not any(unit["selected"] for unit in cleared["units"])
+
+
+@pytest.mark.parametrize("address", ["192.0.2.20", "2001:db8::20"])
+@pytest.mark.parametrize("redirect", [False, True])
+def test_registry_plural_socket_release_requires_reviewed_shutdown(client, monkeypatch, address, redirect):
+    """Require registry release for a non-first listener from its actual renderer.
+
+    Args:
+        client: Isolated appliance HTTP client.
+        monkeypatch: Capture reviewed jobs without native mutation.
+        address: Non-first IPv4 or IPv6 registry listener being taken over.
+        redirect: Proxy redirect socket instead of its primary socket.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VcfPrivateRegistrySettings
+    from atlaso.app.services.vcf_private_registry import render_harbor_config
+
+    units, _csrf, ui = _prepare_network_handoff_review(client, monkeypatch)
+    unit_map = {unit["id"]: unit for unit in units}
+    for unit in units:
+        unit["changed"] = False
+    settings = VcfPrivateRegistrySettings(enabled=True, hostname="registry.example.test", port=8445,
+                                          listen_interface="eth1", listen_address="192.0.2.10\n" + address)
+    preview = render_harbor_config(settings)
+    state = SimpleNamespace(enabled=False)
+    unit_map["vcf_private_registry"].update(changed=True, context={"vcf_registry_settings": state})
+    unit_map["public_services"].update(changed=True, snapshot_marker={"reverse_proxy_intent_sha256": "takeover"})
+    unit_map["public_services"]["context"]["reverse_proxies"] = [{
+        "enabled": True, "port": 8443 if redirect else 8445, "redirect_http": redirect, "redirect_port": 8445,
+        "listeners": [{"interface": "eth1", "address": address}],
+    }]
+    with SessionLocal() as db:
+        baselines = ui.load_appliance_apply_baselines(db)
+        baselines["vcf_private_registry"]["config_preview"] = preview
+        ui.save_appliance_apply_baselines(db, baselines)
+        db.commit()
+        assert ui.proxy_socket_release_dependencies(unit_map, baselines) == {"vcf_private_registry"}
+        with pytest.raises(ui.ApplianceApplyPlanError) as denied:
+            ui.appliance_apply_execution_plan(db, units, {"public_services"})
+        assert "reverse-proxy publication dependencies" in denied.value.public_detail
+        plan = ui.appliance_apply_execution_plan(db, units, {"public_services", "vcf_private_registry"})
+        order = [unit["id"] for unit in plan["selected_ordered_units"]]
+        assert order.index("vcf_private_registry") < min(order.index(key) for key in ui.MANAGEMENT_HANDOFF_UNIT_IDS)
+        state.enabled = True
+        with pytest.raises(ui.ApplianceApplyPlanError, match="planning refused"):
+            ui.appliance_apply_execution_plan(db, units, {"public_services", "vcf_private_registry"})
+
+
+@pytest.mark.parametrize("metadata", ["not-a-list", "[17]", "['invalid-address']", "[]"])
+def test_registry_invalid_plural_metadata_cannot_prove_socket_free(metadata):
+    """Conservatively retain the dependency when applied plural evidence is invalid.
+
+    Args:
+        metadata: Unsupported or malformed plural listener ownership metadata.
+    """
+    from atlaso.app import ui
+
+    units = {"public_services": {"context": {"reverse_proxies": [{"enabled": True, "port": 8445,
+             "listeners": [{"address": "192.0.2.20"}]}]}}, "vcf_private_registry": {"changed": True}}
+    baseline = {"vcf_private_registry": {"config_preview": "https:\n  port: 8445\natlaso_listen_addresses: " + metadata + "\n"}}
+    assert ui.proxy_socket_release_dependencies(units, baseline) == {"vcf_private_registry"}
+
+
+@pytest.mark.parametrize("address", ["192.0.2.20", "2001:db8::20"])
+def test_registry_legacy_multiline_metadata_retains_nonfirst_socket(address):
+    """Keep older multi-line applied previews compatible without plural metadata.
+
+    Args:
+        address: Non-first IPv4 or IPv6 listener in retained legacy metadata.
+    """
+    from atlaso.app import ui
+    from atlaso.app.models import VcfPrivateRegistrySettings
+    from atlaso.app.services.vcf_private_registry import render_harbor_config
+
+    preview = render_harbor_config(VcfPrivateRegistrySettings(
+        enabled=True, hostname="registry.example.test", port=8445, listen_interface="eth1",
+        listen_address="192.0.2.10\n" + address))
+    preview = "\n".join(line for line in preview.splitlines() if not line.startswith("atlaso_listen_addresses:"))
+    units = {"public_services": {"context": {"reverse_proxies": [{"enabled": True, "port": 8445,
+             "listeners": [{"address": address}]}]}}, "vcf_private_registry": {"changed": True}}
+    assert ui.proxy_socket_release_dependencies(units, {"vcf_private_registry": {"config_preview": preview}}) == {"vcf_private_registry"}
