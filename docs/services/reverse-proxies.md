@@ -77,7 +77,9 @@ Enabled managed-DNS proxies reserve their names even while authoritative DNS is 
 Ordinary DNS create, edit, hosts import, and zone import enforce the same reservation before changing any rows.
 The reservation and generated DNS changes remain atomic; ownership conflicts return **409 Conflict**.
 Legacy DNS, DHCP and Firewall Apply endpoints return **409 Conflict** while proxy publication is pending. Use global
-Appliance Apply so the proxy listener and its DNS records publish together. When an applied native service owns a
+Appliance Apply so the proxy listener and its DNS records publish together. Management DNS provenance includes every
+observed IPv6 address, so address changes retire secondary AAAA records and their generated PTR records together.
+When an applied native service owns a
 replacement proxy's socket, review its shutdown with the proxy changes; the service stops before nginx activates.
 For an enabled service moving to another socket, keep the replacement proxy disabled, apply the service move first,
 then enable and apply the proxy. This preserves certificate setup and listener release ordering.

@@ -7411,7 +7411,8 @@ def network_generated_dns_unit(db: Session, units_by_id: dict[str, dict[str, Any
             continue
         # Upgrade inventories written before management-source attribution.
         sources = {interface.name for interface in db.scalars(select(PhysicalInterface))
-                   if record["address"] in {address_from_cidr(interface.host_ip_cidr), address_from_cidr(interface.host_ipv6_cidr)}}
+                   if record["address"] in {address_from_cidr(cidr) for cidr in (
+                       interface.host_ip_cidr, interface.host_ipv6_cidr, *(interface.host_ipv6_cidrs or []))}}
         if len(sources) == 1:
             record["source_interface"] = next(iter(sources))
     # Applied DHCP rows have no desired ip_cidr. Recover the old address only

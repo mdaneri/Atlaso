@@ -257,7 +257,8 @@ def owned_service_dns_records(db: Session, config: str) -> list[dict[str, str]]:
     # Its generated FQDN still needs provenance, including the assigned DHCP
     # address retained in observations while a static candidate is reviewed.
     for interface in db.scalars(select(PhysicalInterface)):
-        for cidr in (interface.ip_cidr, interface.ipv6_cidr, interface.host_ip_cidr, interface.host_ipv6_cidr):
+        for cidr in (interface.ip_cidr, interface.ipv6_cidr, interface.host_ip_cidr, interface.host_ipv6_cidr,
+                     *(interface.host_ipv6_cidrs or [])):
             address = address_from_cidr(cidr)
             if address:
                 address_sources.setdefault(address, interface.name)
