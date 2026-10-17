@@ -272,20 +272,38 @@ def test_proxy_renderer_keeps_exact_host_custom_redirect_and_route_metadata():
 def test_public_directory_visibility_is_independent_of_dns_and_listener_scoped():
     """List opted-in routes only on the selected address regardless of DNS ownership."""
     proxy = proxy_payload()
-
-    without_managed_dns = directory_entries([proxy], "192.0.2.10")
+    binding = {"interface": "eth1", "address": "192.0.2.10"}
+    without_managed_dns = directory_entries([proxy], binding)
     proxy["managed_dns"] = True
-    with_managed_dns = directory_entries([proxy], "192.0.2.10")
+    with_managed_dns = directory_entries([proxy], binding)
 
     assert with_managed_dns == without_managed_dns
     assert [entry["href"] for entry in without_managed_dns] == [
         "https://portal.example.test:8443/app/",
         "https://portal.example.test:8443/socket/",
     ]
-    assert directory_entries([proxy], "192.0.2.99") == []
+    assert directory_entries([proxy], {**binding, "address": "192.0.2.99"}) == []
 
     proxy["public_listing"] = False
-    assert directory_entries([proxy], "192.0.2.10") == []
+    assert directory_entries([proxy], binding) == []
+
+
+@pytest.mark.parametrize("binding,visible", [
+    ({"interface": "eth1", "address": "192.0.2.10"}, True),
+    ({"interface": "eth2", "address": "192.0.2.10"}, False),
+    ({"interface": "vlan20", "address": "2001:db8::10"}, True),
+    ({"interface": "eth1", "address": "2001:db8::10"}, False),
+    ({"interface": "eth1", "address": "192.0.2.10", "interface_ambiguous": True}, False),
+    ({"address": "192.0.2.10"}, False),
+])
+def test_public_directory_requires_unambiguous_interface_address_tuple(binding, visible):
+    """A shared address cannot advertise a proxy admitted only on a different NIC.
+
+    Args:
+        binding: Request binding, including unavailable or ambiguous ingress.
+        visible: Whether the selected exact tuple can publish its cards.
+    """
+    assert bool(directory_entries([proxy_payload()], binding)) is visible
 
 
 @pytest.mark.parametrize(("route_count", "proxy_count"), [(10, 1), (64, 1), (64, 4)])

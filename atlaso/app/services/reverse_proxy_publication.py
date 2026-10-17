@@ -320,16 +320,21 @@ def render_proxy_servers(proxies: list[dict[str, Any]], manifest: dict[str, Any]
     return "\n".join(lines) + "\n"
 
 
-def directory_entries(proxies: list[dict[str, Any]], address: str) -> list[dict[str, Any]]:
-    """Publish opted-in resources only on the called listener address.
+def directory_entries(proxies: list[dict[str, Any]], binding: dict[str, Any]) -> list[dict[str, Any]]:
+    """Publish opted-in resources only on an unambiguous exact listener tuple.
 
     Args:
         proxies: Complete canonical applied proxy collection.
-        address: Input used by directory entries.
+        binding: Resolved request interface/address and its ambiguity observation.
     """
+    if binding.get("interface_ambiguous") or not binding.get("interface"):
+        return []
+    listener = (binding["interface"], binding.get("address"))
     entries = []
     for proxy in proxies:
-        if not proxy["enabled"] or not proxy["public_listing"] or address not in {item["address"] for item in proxy["listeners"]}:
+        if not proxy["enabled"] or not proxy["public_listing"] or listener not in {
+            (item["interface"], item["address"]) for item in proxy["listeners"]
+        }:
             continue
         port = "" if proxy["port"] == (443 if proxy["scheme"] == "https" else 80) else f":{proxy['port']}"
         for route in proxy["routes"]:

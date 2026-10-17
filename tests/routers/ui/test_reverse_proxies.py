@@ -556,6 +556,73 @@ def test_public_directory_preserves_applied_proxy_links_until_apply(client, monk
         assert "https://application.example.test:8443/" not in committed.text
 
 
+@pytest.mark.parametrize("family", [4, 6])
+@pytest.mark.parametrize("name,source", [
+    ("eth0proxy", "static"), ("eth2proxy", "static"), ("eth2proxy", "observed"), ("vlan3020", "vlan"),
+])
+def test_public_directory_hides_proxy_cards_for_ambiguous_ingress(client, monkeypatch, family, name, source):
+    """Do not advertise a firewall-scoped proxy through an address shared by NICs.
+
+    Args:
+        client: Fixture initializing the real application database.
+        monkeypatch: Supply an admitted applied proxy snapshot without helper calls.
+        family: IPv4 or IPv6 listener address family.
+        name: Competing interface before or after the selected NIC in inventory order.
+        source: Desired physical, observed physical, or enabled VLAN address.
+    """
+    from atlaso.app import ui
+    from atlaso.app.models import PhysicalInterface, VlanInterface
+    from atlaso.app.services import reverse_proxy_observation
+    from atlaso.app.services.reverse_proxies import runtime_snapshot, save_proxy
+    from tests.routers.api_v1.test_reverse_proxies import (
+        _enable_test_listener,
+        _payload,
+    )
+
+    _enable_test_listener()
+    address = "192.0.2.10" if family == 4 else "2001:db8::10"
+    cidr = address + ("/24" if family == 4 else "/64")
+    with SessionLocal() as db:
+        selected = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        selected.check_duplicate_ip_addresses = False
+        if family == 6:
+            selected.ipv6_enabled = True
+            selected.ipv6_cidr = cidr
+            selected.host_ipv6_cidrs = [cidr]
+        else:
+            selected.host_ip_cidr = cidr
+        db.commit()
+        save_proxy(db, _payload(enabled=True, listeners=[{"interface": "eth1", "address": address}]), actor="test")
+        applied = runtime_snapshot(db)
+    monkeypatch.setattr(reverse_proxy_observation, "applied_reverse_proxy_snapshot", lambda: applied)
+
+    with SessionLocal() as db:
+        binding = ui.request_host_interface_binding(address, db)
+        assert binding["interface_ambiguous"] is False
+        assert any(row["id"].startswith("reverse_proxy:") for row in
+                   ui.public_service_directory_context(db, binding)["public_services"])
+        if source == "vlan":
+            duplicate = VlanInterface(name=name, parent_interface="eth1", vlan_id=3020, enabled=True,
+                                      role="access", check_duplicate_ip_addresses=False,
+                                      **{"ip_cidr" if family == 4 else "ipv6_cidr": cidr})
+        else:
+            duplicate = PhysicalInterface(name=name, mac_address="02:00:00:00:00:22", role="access",
+                mode="access", admin_state="up", oper_state="up", ipv6_enabled=family == 6,
+                check_duplicate_ip_addresses=False)
+            if source == "static":
+                setattr(duplicate, "ip_cidr" if family == 4 else "ipv6_cidr", cidr)
+            elif family == 4:
+                duplicate.host_ip_cidr = cidr
+            else:
+                duplicate.host_ipv6_cidrs = [cidr]
+        db.add(duplicate)
+        db.commit()
+        binding = ui.request_host_interface_binding(address, db)
+        assert binding["interface_ambiguous"] is True
+        assert not any(row["id"].startswith("reverse_proxy:") for row in
+                       ui.public_service_directory_context(db, binding)["public_services"])
+
+
 @pytest.mark.parametrize("service_id", ["ca", "vcf_offline_depot"])
 def test_unrelated_public_service_admission_never_observes_proxy_runtime(client, monkeypatch, service_id):
     """Evaluate a real public binding without invoking the proxy helper path.

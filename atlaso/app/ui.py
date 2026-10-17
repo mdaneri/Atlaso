@@ -5102,7 +5102,16 @@ def request_host_interface_binding(request_host: str, db: Session) -> dict[str, 
             }
             for binding in applied_bindings
         )
-    by_address = {entry["address"].lower(): entry for entry in entries}
+    interfaces_by_address: dict[str, set[str]] = {}
+    for entry in entries:
+        interfaces_by_address.setdefault(entry["address"].lower(), set()).add(entry["interface"])
+    by_address = {
+        entry["address"].lower(): {
+            **entry,
+            "interface_ambiguous": len(interfaces_by_address[entry["address"].lower()]) > 1,
+        }
+        for entry in entries
+    }
     try:
         parsed_host = str(ip_address(request_host.strip("[]"))).lower()
     except ValueError:
@@ -5154,7 +5163,7 @@ def request_host_interface_binding(request_host: str, db: Session) -> dict[str, 
     return None
 
 
-def public_service_directory_context(db: Session, binding: dict[str, str], *, include_proxies: bool = True) -> dict[str, Any]:
+def public_service_directory_context(db: Session, binding: dict[str, Any], *, include_proxies: bool = True) -> dict[str, Any]:
     """Return public service directory context.
 
     Args:
@@ -5204,7 +5213,7 @@ def public_service_directory_context(db: Session, binding: dict[str, str], *, in
     )
 
     if include_proxies:
-        services.extend(proxy_directory_entries(applied_reverse_proxy_snapshot(), binding["address"]))
+        services.extend(proxy_directory_entries(applied_reverse_proxy_snapshot(), binding))
     services = [
         {
             **service,
