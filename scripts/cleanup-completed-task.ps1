@@ -6,7 +6,7 @@ Run from the primary checkout. Preview is the default and emits only JSON lines.
 The controller answers fresh requests on stdin using supported Codex tools.
 Execution revalidates every transition and never bypasses tool policy.
 .PARAMETER Handoff
-Absolute path to the durable schema-1 cleanup-ready handoff.
+Absolute path to the durable schema-1 cleanup-ready handoff or schema-2 single-task batch manifest.
 .PARAMETER Evidence
 Absolute durable evidence directory under the configured worktree root, outside the target.
 .PARAMETER Config
