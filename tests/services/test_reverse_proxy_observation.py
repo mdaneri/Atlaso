@@ -339,3 +339,27 @@ def test_public_snapshot_single_flight_and_invalidated_refresh(monkeypatch):
         command=["atlaso-helper"], dry_run=False, stdout=json.dumps(_payload()),
     ))
     assert observation.applied_reverse_proxy_snapshot(now=now) == _desired()
+
+
+@pytest.mark.parametrize("failure", ["unavailable", "invalid_http", "upstream_http", "tls_verification", None])
+def test_insecure_observation_preserves_failure_and_policy_warning(monkeypatch, failure):
+    """Keep cached outage evidence visible while retaining insecure degradation.
+
+    Args:
+        monkeypatch: Supply a bounded body-free cached observation.
+        failure: Specific probe failure or successful insecure observation.
+    """
+    desired = _desired()
+    desired[0]["routes"][0].update(trust_mode="insecure", fingerprint="")
+    payload = _payload(proxies=desired)
+    payload["health"]["1-2"].update(status="degraded" if failure else "healthy", failure_class=failure,
+                                  http_status=503 if failure == "upstream_http" else None if failure else 204,
+                                  tls_status="insecure")
+    _configure(monkeypatch, payload)
+    monkeypatch.setattr(observation, "runtime_snapshot", lambda _db: desired)
+    item = observation.observe_reverse_proxy_health(object(), now=datetime(2026, 10, 7, tzinfo=timezone.utc))[0]
+    assert item["status"] == "degraded"
+    assert item["failure_class"] == (failure or "insecure_verification")
+    assert item["http_status"] == payload["health"]["1-2"]["http_status"]
+    assert item["last_success"] == payload["health"]["1-2"]["last_success"]
+    assert "verification is disabled" in item["warning"]

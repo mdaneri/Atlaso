@@ -97,6 +97,22 @@ repositories, and Git/credential-recovery roots. It pins ancestors and deletes m
 handles; changed objects or new children stop removal and preserve remaining entries. Partial releases require a fresh
 inspection on retry. Never retrofit ownership merely because a directory is called `node_modules` or `site`.
 
+Pytest validation output may use `kind: "generated_tree"` with the exact `cleanup_tool: "PytestGeneratedTree"` to
+select the bounded internal-link policy. Generic generated-tree resources and every ordinary cleanup call continue to
+refuse links. The opt-in accepts only Win32 symbolic-link leaves whose raw targets stay lexically inside the
+originally receipted root; it records the link object identity and raw reparse-data digest, permits internal chains and
+dangling links, and never traverses a link target. Junctions, external targets, root or ancestor links, and unknown
+reparse types remain refusals. Cleanup pins every snapshotted object and link before deleting any entry, then checks
+identity, stamp, and link digest; a changed link, new child, or replacement preserves the tree for fresh inspection.
+
+The opt-in may select the top-level worktree `.atlaso-local` root only as an originally receipted pytest validation
+resource. Its immediate children are limited to `pytest`, `markdown`, `mypy`, `ruff`, `native-policy`,
+`node-compile-cache`, `npm-cache`, `packer-plugins`, names matching `pytest-<suffix>`, or
+`packer-plugin-<number>.zip`. Other content, including credentials and recovery state, remains ineligible; nested
+`.atlaso-local` paths stay rejected. If a maintainer authorizes reselecting an existing validation root, bind it to its
+original creation receipt and keep the original ownership manifest and hash. A later link scan does not create
+per-link provenance or replace the root's original receipt; missing original evidence means preserve the root.
+
 Primary-checkout restoration, private advisory cleanup, non-task-owned branch/checkout exceptions, multi-PR tasks, and
 issue-less Dependabot tasks retain their existing policy workflows. This entry point refuses unsupported eligibility
 instead of relaxing their gates. Do not use its directory removal primitive for those exceptions.

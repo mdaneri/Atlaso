@@ -227,3 +227,6 @@ has been recorded.
 
 Archive restore also checks actual database-assigned proxy identities against the helper capacity before committing.
 An exhausted retained sequence rejects the entire restore without replacing desired state or recovery payloads.
+
+Insecure upstream routes remain degraded and retain their TLS policy warning. Connectivity, timeout and HTTP failures
+remain visible in health details instead of being replaced by that policy warning.

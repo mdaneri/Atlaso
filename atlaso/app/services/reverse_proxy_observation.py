@@ -87,7 +87,7 @@ def observe_reverse_proxy_health(db: Session, *, now: datetime | None = None) ->
                 warning = ""
                 if route["trust_mode"] == "insecure":
                     status = "degraded"
-                    failure_class = "insecure_verification"
+                    failure_class = failure_class or "insecure_verification"
                     warning = "Upstream certificate verification is disabled; this route remains degraded."
                 elif status == "degraded":
                     warning = "The applied upstream route is degraded; review its bounded health details."

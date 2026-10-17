@@ -407,3 +407,31 @@ async def test_health_cache_publication_recovers_after_storage_errors(tmp_path, 
     with pytest.raises(asyncio.CancelledError):
         await transport.observe_health(manifest, tmp_path)
     assert samples == pauses == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("outcome", "failure"), [("connect", "unavailable"), ("timeout", "unavailable"),
+                                                ("invalid", "invalid_http"), ("server", "upstream_http"),
+                                                ("success", "insecure_verification")])
+async def test_insecure_probe_retains_observed_failures(monkeypatch, outcome, failure):
+    """Preserve connectivity/HTTP evidence alongside acknowledged insecure policy.
+
+    Args:
+        monkeypatch: Replace outbound streams without making network connections.
+        outcome: Simulated connectivity or HTTP result.
+        failure: Expected bounded failure evidence.
+    """
+    reader, writer = Mock(), Mock()
+    writer.drain = AsyncMock()
+    reader.readuntil = AsyncMock(return_value={"invalid": b"invalid\r\n", "server": b"HTTP/1.1 503 Down\r\n"}.get(outcome, b"HTTP/1.1 204 OK\r\n"))
+    opening = AsyncMock(return_value=(reader, writer))
+    if outcome in {"connect", "timeout"}:
+        opening.side_effect = OSError("unavailable") if outcome == "connect" else TimeoutError()
+    monkeypatch.setattr(transport, "open_upstream", opening)
+    observed = await transport.probe(route(trust_mode="insecure", fingerprint=""), set())
+    assert observed["status"] == "degraded"
+    assert observed["failure_class"] == failure
+    assert observed["http_status"] == (503 if outcome == "server" else 204 if outcome == "success" else None)
+    assert bool(observed["last_success"]) is (outcome == "success")
+    if outcome not in {"connect", "timeout"}:
+        writer.close.assert_called_once()

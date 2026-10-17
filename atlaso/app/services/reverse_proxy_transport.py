@@ -399,7 +399,7 @@ async def probe(route: dict[str, Any], forbidden: set[str]) -> dict[str, Any]:
         result["last_success"] = datetime.now(timezone.utc).isoformat() if result["status"] == "healthy" else None
         if route["trust_mode"] == "insecure":
             result["status"] = "degraded"
-            result["failure_class"] = "insecure_verification"
+            result["failure_class"] = result["failure_class"] or "insecure_verification"
     except ssl.SSLCertVerificationError:
         result.update(failure_class="tls_verification", tls_status="failed")
     except (OSError, TimeoutError, ssl.SSLError, asyncio.IncompleteReadError, asyncio.LimitOverrunError):
