@@ -109,9 +109,20 @@ The opt-in may select the top-level worktree `.atlaso-local` root only as an ori
 resource. Its immediate children are limited to `pytest`, `markdown`, `mypy`, `ruff`, `native-policy`,
 `node-compile-cache`, `npm-cache`, `packer-plugins`, names matching `pytest-<suffix>`, or
 `packer-plugin-<number>.zip`. Other content, including credentials and recovery state, remains ineligible; nested
-`.atlaso-local` paths stay rejected. If a maintainer authorizes reselecting an existing validation root, bind it to its
+`.atlaso-local` paths stay rejected except for the explicitly selected fixed regression probes below. If a maintainer
+authorizes reselecting an existing validation root, bind it to its
 original creation receipt and keep the original ownership manifest and hash. A later link scan does not create
 per-link provenance or replace the root's original receipt; missing original evidence means preserve the root.
+
+For the directory-gate cleanup regression only, `PytestGeneratedTree` may receive the explicit
+`synthetic_directory_probes` resource field. It must list each selected nested root using the exact relative layout
+`pytest[-suffix]/test_real_directory_gate_prune<digits>/worktree/.atlaso-local`; the bounded profile accepts at most
+16 unique selections. Every selected root must contain exactly an empty `nested empty` directory and an ordinary
+`result with spaces.txt` file whose bytes are `generated`. The complete originally receipted pytest output root is
+still inventoried, and the profile rejects unselected recovery roots, extra entries, changed types, and links.
+It verifies the fixed file contents through the snapshot handle and checks them again on fresh deletion handles after
+all entries are pinned and before deleting any entry. A changed payload preserves the entire output root. This field
+does not broaden ordinary generated-tree cleanup or make `.atlaso-local` a general credential/recovery exemption.
 
 Primary-checkout restoration, private advisory cleanup, non-task-owned branch/checkout exceptions, and issue-less
 Dependabot tasks retain their existing policy workflows. A single Codex task spanning multiple pull requests follows the
@@ -394,7 +405,8 @@ Generated-tree deletion repeats resource-specific ownership, inactivity, retenti
 after task eligibility reconciliation, immediately before recording its prepared gate and removing the checked tree.
 Generated snapshots reject `.git` entries and bare-repository structures (`HEAD`, `objects`, and `refs` or `packed-refs`)
 at any depth. These repositories require separate inventory and their owning cleanup workflow.
-Nested `.atlaso-local` credential/recovery directories are also preserved for their owning cleanup workflow.
+Nested `.atlaso-local` credential/recovery directories are also preserved for their owning cleanup workflow; only the
+explicit fixed synthetic regression-probe profile described above admits its known harmless fixture directories.
 Recovered journals and blobs use the same regular-file reader with the 64 MiB evidence limit. Before final ref/worktree
 removal, every remaining directory must be a parent of tracked source; empty ignored or untracked directories require
 inventory reconciliation and owning-tool release because Git's cleanliness checks do not report them.

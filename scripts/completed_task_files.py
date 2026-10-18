@@ -360,12 +360,22 @@ class WindowsFiles:
                         or (reparse and self.link_data(handle, path, root) != entry["link_sha256"]):
                     raise FileRefusal("Pytest output or symbolic link changed before pinned release.")
                 pinned[relative] = (handle, owner)
+            self.verify_pinned_contents(root, expected, {relative: handle for relative, (handle, _owner) in pinned.items()})
             for relative in sorted(expected, key=lambda value: len(Path(value).parts), reverse=True):
                 handle, owner = pinned[relative]
                 self.dispose(handle)
                 owner.close()
                 if os.path.lexists(root / relative):
                     raise FileRefusal("Pytest output absence verification failed.")
+
+    def verify_pinned_contents(self, root: Path, expected: dict[str, dict], handles: dict[str, int]) -> None:
+        """Let an owning profile check contents after every fresh handle is pinned, before any deletion.
+
+        Args:
+            root: Owned output root whose objects are pinned against writers and replacement.
+            expected: Complete no-follow snapshot already matched by the pinned objects.
+            handles: Fresh object handles with file offsets still at zero, held through deletion.
+        """
 
     def dispose(self, handle: int) -> None:
         """Mark one already verified handle for ordinary deletion without changing file attributes.
