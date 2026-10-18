@@ -172,10 +172,12 @@ def _reconcile_interface_address_check_columns(connection: Connection) -> None:
                 f"ALTER TABLE {table_name} ADD COLUMN "
                 "check_duplicate_ip_addresses BOOLEAN NOT NULL DEFAULT TRUE"
             ))
-        if table_name == "physical_interfaces" and "host_ipv6_cidrs" not in columns:
-            connection.execute(text(
-                "ALTER TABLE physical_interfaces ADD COLUMN host_ipv6_cidrs JSON NOT NULL DEFAULT '[]'"
-            ))
+        if table_name == "physical_interfaces":
+            for name in ("host_ip_cidrs", "host_ipv6_cidrs"):
+                if name not in columns:
+                    connection.execute(text(
+                        f"ALTER TABLE physical_interfaces ADD COLUMN {name} JSON NOT NULL DEFAULT '[]'"
+                    ))
 
 
 def _reconcile_task_cancellation_columns(connection: Connection) -> None:

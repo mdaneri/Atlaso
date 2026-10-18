@@ -612,7 +612,8 @@ def test_public_directory_hides_proxy_cards_for_ambiguous_ingress(client, monkey
             if source == "static":
                 setattr(duplicate, "ip_cidr" if family == 4 else "ipv6_cidr", cidr)
             elif family == 4:
-                duplicate.host_ip_cidr = cidr
+                duplicate.host_ip_cidr = "192.0.2.99/24"
+                duplicate.host_ip_cidrs = ["192.0.2.99/24", cidr]
             else:
                 duplicate.host_ipv6_cidrs = [cidr]
         db.add(duplicate)

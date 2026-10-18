@@ -1179,6 +1179,7 @@ def _preserve_management_dhcp_dns_on_static_conversion(
         access_management_ui_enabled=new_management_ui_enabled,
         ipv4_method=old_ipv4_method,
         host_ip_cidr=interface.host_ip_cidr,
+        host_ip_cidrs=list(interface.host_ip_cidrs or []),
         ip_cidr=interface.ip_cidr,
         ipv6_enabled=interface.ipv6_enabled,
         ipv6_cidr=interface.ipv6_cidr,

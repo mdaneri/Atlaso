@@ -5084,7 +5084,8 @@ def request_host_interface_binding(request_host: str, db: Session) -> dict[str, 
     for interface in physical_interfaces:
         if interface.oper_state == "missing":
             continue
-        for cidr in (interface.host_ip_cidr, *(interface.host_ipv6_cidrs or [interface.host_ipv6_cidr])):
+        for cidr in (interface.host_ip_cidr, *(interface.host_ip_cidrs or []),
+                     *(interface.host_ipv6_cidrs or [interface.host_ipv6_cidr])):
             address = interface_address(cidr)
             if address:
                 entries.append(
@@ -10902,6 +10903,7 @@ def refresh_management_handoff_dynamic_observations(
         if path.get("ipv6_enabled", "").lower() == "true" and not path.get("ipv6_cidr"):
             interface.host_ipv6_cidrs = list(native_automatic_ipv6_cidrs(observed))
             interface.host_ipv6_cidr = interface.host_ipv6_cidrs[0]
+        interface.host_ip_cidrs = list(observed.host_ip_cidrs or ((observed.host_ip_cidr,) if observed.host_ip_cidr else ()))
     db.flush()
 
 

@@ -936,3 +936,32 @@ def test_archive_reserves_dormant_interface_named_storage_alias(client, availabi
         db.expire_all()
         assert export_settings_archive(db, actor="test")["data"] == before
         assert list(db.scalars(select(AuditEvent.id))) == audits
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_restore_rejects_secondary_observed_ipv4_upstream(client, enabled):
+    """Exclude plural IPv4 observations from archives while protecting the live target.
+
+    Args:
+        client: Initialized appliance fixture.
+        enabled: Enabled publication or disabled saved intent.
+    """
+    with SessionLocal() as db:
+        observed = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        observed.host_ip_cidrs = ["192.168.55.10/24", "192.168.55.20/24"]
+        db.commit()
+        listener = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        saved = save_proxy(db, payload(enabled=enabled, scheme="http", port=8084, redirect_http=False,
+                                       listeners=[{"interface": "eth2", "address": listener.ip_cidr.split("/")[0]}]), actor="test")
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        before = deepcopy(archive["data"])
+        audits = list(db.scalars(select(AuditEvent.id)))
+        assert all("host_ip_cidrs" not in row for row in archive["data"]["physical_interfaces"])
+        archive["data"]["reverse_proxy_routes"][0]["upstream_host"] = "192.168.55.20"
+        with pytest.raises(ValueError, match="observed target appliance address"):
+            restore_settings_archive(db, archive)
+        db.expire_all()
+        assert export_settings_archive(db, actor="test")["data"] == before
+        assert list(db.scalars(select(AuditEvent.id))) == audits
+        assert db.get(ReverseProxy, saved.id).routes[0].upstream_host == "10.10.20.30"
+        assert observed.host_ip_cidrs == ["192.168.55.10/24", "192.168.55.20/24"]

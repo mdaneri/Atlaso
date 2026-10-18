@@ -1206,6 +1206,7 @@ def reconcile_host_physical_interfaces(
         interface.host_ip_cidr = (
             host.host_dhcp_ip_cidr if normalize_ipv4_method(ipv4_method) == "dhcp" else host.host_ip_cidr
         )
+        interface.host_ip_cidrs = list(host.host_ip_cidrs or ((host.host_ip_cidr,) if host.host_ip_cidr else ()))
         ipv6_enabled, ipv6_cidr = (applied_ipv6_modes or {}).get(
             host_mac, (bool(interface.ipv6_enabled), interface.ipv6_cidr),
         )

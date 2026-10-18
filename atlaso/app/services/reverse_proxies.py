@@ -193,6 +193,7 @@ def _interface_address_inventory(
         candidates = [getattr(interface, field, "") for field in
                       ("ip_cidr", "ipv6_cidr", "host_ip_cidr", "host_ipv6_cidr")]
         candidates.extend(getattr(interface, "host_ipv6_cidrs", None) or [])
+        candidates.extend(getattr(interface, "host_ip_cidrs", None) or [])
         for cidr in candidates:
             try:
                 addresses.add(str(ipaddress.ip_interface(str(cidr or "")).ip))
@@ -339,6 +340,7 @@ def browser_listener_claims(
         if role == "management" or (role == "access" and normalize_interface_mode(interface.mode) == "access"
                                     and interface.access_management_ui_enabled):
             bindings.append((interface.name, [interface.ip_cidr or interface.host_ip_cidr,
+                                             *(interface.host_ip_cidrs or []),
                                              *physical_ipv6_cidrs(interface)]))
     for vlan in vlans:
         if vlan.enabled and normalize_interface_role(vlan.role) == "access" and vlan.access_management_ui_enabled:

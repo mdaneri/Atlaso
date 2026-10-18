@@ -1898,3 +1898,93 @@ def test_dormant_interface_storage_alias_remains_reserved(availability, kind, ta
     finally:
         db.close()
         engine.dispose()
+
+
+@pytest.mark.parametrize("kind", ["dedicated", "access"])
+@pytest.mark.parametrize("method", ["static", "dhcp"])
+@pytest.mark.parametrize(("scheme", "port", "redirect"), [("http", 80, False), ("https", 443, False), ("https", 9443, True)])
+def test_management_secondary_ipv4_scope_survives_native_reconciliation(kind, method, scheme, port, redirect):
+    """Reject cross-scope secondary IPv4 through both proxy and service writers.
+
+    Args:
+        kind: Dedicated or flagged access management interface.
+        method: Applied static or DHCP acquisition.
+        scheme: Candidate public protocol.
+        port: Primary public port.
+        redirect: Whether port 80 is introduced by a redirect.
+    """
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+    from atlaso.app.services.networking import (
+        HostPhysicalInterface,
+        reconcile_host_physical_interfaces,
+    )
+
+    engine, db = create_db()
+    try:
+        management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        management.desired_state_source = "console"
+        management.role = "management" if kind == "dedicated" else "access"
+        management.access_management_ui_enabled = kind == "access"
+        management.ipv4_method = method
+        management.ip_cidr = "192.168.49.1/24" if method == "static" else None
+        management.check_duplicate_ip_addresses = False
+        access = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        access.check_duplicate_ip_addresses = False
+        db.commit()
+        saved = save_proxy(db, payload(enabled=True, port=9444, redirect_http=False), actor="test")
+        host = HostPhysicalInterface(name=management.name, mac_address=management.mac_address,
+                                     driver="test", speed=None, host_mtu=1500,
+                                     host_ip_cidr="192.168.49.1/24", host_dhcp_ip_cidr="192.168.49.1/24",
+                                     host_ip_cidrs=("192.168.49.1/24", "192.168.1.10/24"),
+                                     host_admin_state="up", oper_state="up")
+        reconcile_host_physical_interfaces([management], [host])
+        db.commit()
+        db.expire_all()
+        assert management.host_ip_cidrs == ["192.168.49.1/24", "192.168.1.10/24"]
+        audits = list(db.scalars(select(AuditEvent.id)))
+        with pytest.raises(ValueError, match="exclusive Atlaso service socket"):
+            save_proxy(db, payload(enabled=True, scheme=scheme, port=port, redirect_http=redirect),
+                       actor="test", proxy_id=saved.id)
+        assert saved.port == 9444 and not saved.redirect_http
+        acquire_network_objects_write_lock(db)
+        saved.scheme, saved.port, saved.redirect_http = scheme, port, redirect
+        db.flush()
+        with pytest.raises(ValueError, match="Service listener conflicts"):
+            validate_service_listener_sockets(db)
+        db.rollback()
+        assert saved.port == 9444 and not saved.redirect_http
+        assert list(db.scalars(select(AuditEvent.id))) == audits
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("method", ["static", "dhcp"])
+def test_applied_management_bindings_include_secondary_ipv4(method):
+    """Keep all observed IPv4 scopes when desired state changes after Apply.
+
+    Args:
+        method: Acquisition mode captured in the applied network baseline.
+    """
+    from atlaso.app.services.management_bindings import applied_management_bindings
+    from atlaso.app.services.networking import render_network_config
+
+    engine, db = create_db()
+    try:
+        management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        management.ipv4_method = method
+        management.ip_cidr = "192.168.49.1/24" if method == "static" else None
+        management.host_ip_cidr = "192.168.49.1/24"
+        management.host_ip_cidrs = ["192.168.49.1/24", "192.168.49.2/24"]
+        db.add(Setting(key="appliance_apply.baselines.v1", value=json.dumps({"network": {
+            "config_preview": render_network_config(interfaces=[management], vlans=[]),
+        }})))
+        db.commit()
+        management.ip_cidr = "192.168.50.1/24"
+        bindings = applied_management_bindings(db)
+        assert {(row["interface"], row["address"]) for row in bindings} == {
+            ("eth0", "192.168.49.1"), ("eth0", "192.168.49.2"),
+        }
+    finally:
+        db.close()
+        engine.dispose()
