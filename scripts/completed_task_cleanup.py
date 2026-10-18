@@ -32,6 +32,7 @@ from scripts.completed_task_title import (
     completed_task_title,
     verify_completed_task_title,
 )
+from scripts.pytest_directory_probes import PytestDirectoryProbeFiles
 
 MAX_EVIDENCE_BYTES = 64 * 1024 * 1024
 MAX_CHILD_BYTES = 4 * 1024 * 1024
@@ -521,6 +522,9 @@ class Cleanup:
         """
         required = {"id", "kind", "task_id", "source_commit", "repository", "pr", "ownership_manifest"}
         require(isinstance(resource, dict) and required <= set(resource), "Resource identity fields are incomplete.")
+        require("synthetic_directory_probes" not in resource or resource.get("kind") == "generated_tree"
+                and resource.get("cleanup_tool") == "PytestGeneratedTree",
+                "Synthetic directory probes require an explicit generated pytest resource.")
         require(resource["repository"] == self.repository and resource["pr"] == self.handoff["pr"],
                 "Resource repository/PR identity differs from this handoff.")
         require(any(isinstance(resource.get(key), str) and resource[key].strip() for key in ("path", "provider_id")),
@@ -712,11 +716,14 @@ class Cleanup:
                                                                        child.name.casefold())
                         for child in path.iterdir()),
                     "Pytest validation root contains unknown or credential/recovery output; preserve it.")
-        files = WindowsFiles(allow_internal_symlinks=True) if pytest_mode else WindowsFiles()
+        probe_mode = "synthetic_directory_probes" in resource
+        require(not probe_mode or pytest_mode, "Synthetic directory probes require explicit PytestGeneratedTree ownership.")
+        files = (PytestDirectoryProbeFiles(resource["synthetic_directory_probes"]) if probe_mode else
+                 WindowsFiles(allow_internal_symlinks=True) if pytest_mode else WindowsFiles())
         snapshot = files.snapshot(path)
         require(not any(".git" in {part.casefold() for part in Path(entry).parts} for entry in snapshot),
                 "Nested repositories are not generated output trees.")
-        require(not any(".atlaso-local" in {part.casefold() for part in Path(entry).parts} for entry in snapshot),
+        require(probe_mode or not any(".atlaso-local" in {part.casefold() for part in Path(entry).parts} for entry in snapshot),
                 "Nested credential/recovery roots require their owning cleanup workflow.")
         children: dict[Path, set[str]] = {}
         for entry in snapshot:
@@ -736,7 +743,8 @@ class Cleanup:
             self.validate_resource_identity(resource)
             require(isinstance(resource, dict) and set(resource) <= {
                 "id", "kind", "task_id", "source_commit", "path", "root_identity", "provider_id",
-                "ownership_manifest", "cleanup_tool", "repository", "pr"}, "Resource fields differ from the bounded sanitized schema.")
+                "ownership_manifest", "cleanup_tool", "repository", "pr", "synthetic_directory_probes"},
+                    "Resource fields differ from the bounded sanitized schema.")
             if "path" in resource:
                 resource_path = ordinary(Path(resource["path"]))
                 require(not self.evidence.is_relative_to(resource_path)
