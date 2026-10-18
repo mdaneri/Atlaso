@@ -882,3 +882,57 @@ def test_restore_checks_assigned_proxy_identity_capacity_atomically(client, monk
         finally:
             for model in (ReverseProxy, ReverseProxyRoute):
                 event.remove(model, "before_insert", assign_advanced_id)
+
+
+@pytest.mark.parametrize("availability", ["down", "missing", "unaddressed"])
+@pytest.mark.parametrize("target", ["served", "upstream"])
+def test_archive_reserves_dormant_interface_named_storage_alias(client, availability, target):
+    """Reserve deterministic share names in portable candidates before replacement.
+
+    Args:
+        client: Initialized appliance fixture.
+        availability: Candidate interface unavailable state.
+        target: Proxy hostname or upstream using the reserved alias.
+    """
+    from atlaso.app.models import (
+        ApplianceSettings,
+        EsxNfsShare,
+        EsxStorageSettings,
+        EsxStorageVolume,
+    )
+    from atlaso.app.services.esx_storage import target_hostname, target_token
+
+    with SessionLocal() as db:
+        db.scalar(select(ApplianceSettings)).service_dns_target_naming = "interface"
+        storage = db.scalar(select(EsxStorageSettings))
+        if storage is None:
+            storage = EsxStorageSettings()
+            db.add(storage)
+        storage.hostname, storage.enabled = "nfs.example.test", False
+        volume = EsxStorageVolume(name="dormant", stable_device_id="dormant")
+        db.add(volume)
+        db.flush()
+        db.add(EsxNfsShare(datastore_name="dormant", volume_id=volume.id, interface_name="eth2", enabled=False))
+        db.commit()
+        listener = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        save_proxy(db, payload(enabled=False, listeners=[{"interface": "eth2", "address": listener.ip_cidr.split("/")[0]}]), actor="test")
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        before = deepcopy(archive["data"])
+        audits = list(db.scalars(select(AuditEvent.id)))
+        interface = next(row for row in archive["data"]["physical_interfaces"] if row["name"] == "eth2")
+        if availability == "unaddressed":
+            interface.update(ip_cidr=None, ipv6_cidr=None, host_ip_cidr=None, host_ipv6_cidr=None)
+        elif availability == "down":
+            interface["admin_state"] = "down"
+        else:
+            interface["oper_state"] = "missing"
+        alias = target_hostname(storage.hostname, target_token("", "interface", "eth2"))
+        if target == "served":
+            archive["data"]["reverse_proxies"][0]["hostname"] = alias
+        else:
+            archive["data"]["reverse_proxy_routes"][0]["upstream_host"] = alias
+        with pytest.raises(ValueError, match="Atlaso.*service"):
+            restore_settings_archive(db, archive)
+        db.expire_all()
+        assert export_settings_archive(db, actor="test")["data"] == before
+        assert list(db.scalars(select(AuditEvent.id))) == audits

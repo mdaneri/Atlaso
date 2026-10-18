@@ -56,6 +56,7 @@ archive preflight reject conflicting terminal selections before changing setting
 API settings writers return **409 Conflict** for this case.
 Service hostname edits also preserve saved proxy names and upstream targets, including disabled proxy intent.
 NFS share create and retarget operations validate generated storage aliases under the same writer lock.
+Interface-named NFS aliases remain reserved while their interface is down, missing or unaddressed.
 Conflicting API and UI saves return 409 without changing the share, DNS records or audit history.
 Disable HTTPS proxies before disabling their CA. Conflicting service or CA changes are rejected without saving them.
 

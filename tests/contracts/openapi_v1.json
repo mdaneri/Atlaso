@@ -12780,6 +12780,16 @@
             },
             "description": "Create Esx Nfs Share. The response body matches the documented success schema."
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Datastore name or generated DNS alias conflicts; share and DNS state remain unchanged."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -12880,6 +12890,16 @@
               }
             },
             "description": "Update Esx Nfs Share. The response body matches the documented success schema."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Generated DNS alias conflicts with saved proxy ownership; share and DNS state remain unchanged."
           },
           "422": {
             "content": {
@@ -19625,7 +19645,7 @@
         ]
       },
       "patch": {
-        "description": "Update Settings.\n\nRequires the `admin:all` API scope. The operation updates only properties present in the request,\npreserves every omitted property, and does not bypass the documented global Appliance Apply or\nservice lifecycle boundary. Appliance and derived service hostname conflicts with saved\nreverse proxies return 409 without saving changes.",
+        "description": "Update Settings.\n\nRequires the `admin:all` API scope. The operation updates only properties present in the request,\npreserves every omitted property, and does not bypass the documented global Appliance Apply or\nservice lifecycle boundary. Appliance hostname and browser listener scope conflicts with saved\nreverse proxies return 409 without saving changes.",
         "operationId": "updateSettings",
         "requestBody": {
           "content": {
@@ -19656,7 +19676,7 @@
                 }
               }
             },
-            "description": "Appliance or derived service hostname conflicts with saved reverse-proxy ownership; settings remain unchanged."
+            "description": "Appliance hostname or browser listener scope conflicts with saved reverse-proxy ownership; settings remain unchanged."
           },
           "422": {
             "content": {

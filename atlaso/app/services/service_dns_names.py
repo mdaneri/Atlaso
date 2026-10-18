@@ -95,6 +95,8 @@ def storage_alias_names(hostname: str, interface_name: str, addresses: list[str]
 
     try:
         families = normalize_families(address_families)
+        if naming_strategy == "interface" and interface_name and families:
+            return {target_hostname(hostname, target_token("", naming_strategy, interface_name))}
         return {target_hostname(hostname, target_token(address, naming_strategy, interface_name))
                 for address in addresses if ("ipv6" if ":" in address else "ipv4") in families}
     except ValueError:

@@ -1836,3 +1836,65 @@ def test_service_directory_standard_http_scope_with_custom_protocol_port(model_n
         db.rollback()
         db.close()
         engine.dispose()
+
+
+@pytest.mark.parametrize("availability", ["down", "missing", "unaddressed"])
+@pytest.mark.parametrize("kind", ["physical", "vlan"])
+@pytest.mark.parametrize("target", ["served", "upstream"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_dormant_interface_storage_alias_remains_reserved(availability, kind, target, enabled):
+    """Keep deterministic share aliases reserved without an available address.
+
+    Args:
+        availability: Unavailable listener state.
+        kind: Physical or VLAN share target.
+        target: Served proxy hostname or upstream destination.
+        enabled: Enabled publication or retained disabled proxy intent.
+    """
+    from atlaso.app.models import (
+        EsxNfsShare,
+        EsxStorageSettings,
+        EsxStorageVolume,
+        VlanInterface,
+    )
+    from atlaso.app.services.esx_storage import target_hostname, target_token
+
+    engine, db = create_db()
+    try:
+        db.scalar(select(ApplianceSettings)).service_dns_target_naming = "interface"
+        interface = PhysicalInterface(name="eth2", mac_address="02:00:00:00:00:03", role="access",
+                                      mode="trunk" if kind == "vlan" else "access", admin_state="up", oper_state="up")
+        db.add(interface)
+        selected = interface
+        if kind == "vlan":
+            selected = VlanInterface(name="eth2.77", parent_interface="eth2", vlan_id=77, role="access", enabled=True)
+            db.add(selected)
+        selected.ip_cidr = None if availability == "unaddressed" else "192.0.2.10/24"
+        if availability == "down":
+            if kind == "vlan":
+                selected.enabled = False
+            else:
+                selected.admin_state = "down"
+        elif availability == "missing":
+            interface.oper_state = "missing"
+        storage = EsxStorageSettings(hostname="nfs.example.test", enabled=False)
+        volume = EsxStorageVolume(name="dormant", stable_device_id="dormant")
+        db.add_all([storage, volume])
+        db.flush()
+        db.add(EsxNfsShare(datastore_name="dormant", volume_id=volume.id, interface_name=selected.name,
+                          address_families="ipv4", enabled=False))
+        db.commit()
+        alias = target_hostname(storage.hostname, target_token("", "interface", selected.name))
+        values = payload(enabled=enabled)
+        if target == "served":
+            values["hostname"] = alias
+        else:
+            values["routes"][0]["upstream_host"] = alias
+        audits = list(db.scalars(select(AuditEvent.id)))
+        with pytest.raises(ValueError, match="Atlaso.*service"):
+            save_proxy(db, values, actor="test")
+        assert not desired_rows(db)
+        assert list(db.scalars(select(AuditEvent.id))) == audits
+    finally:
+        db.close()
+        engine.dispose()
