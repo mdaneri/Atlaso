@@ -950,7 +950,10 @@ class BatchCleanup:
         self.anchor = self.members[0]
         issues = sorted({issue for member in self.members for issue in member.handoff["issues"]})
         prs = sorted(member.handoff["pr"] for member in self.members)
-        self.expected_title = completed_task_title(self.handoff["description"], issues, prs)
+        try:
+            self.expected_title = completed_task_title(self.handoff["description"], issues, prs)
+        except ValueError as exc:
+            raise Refusal(str(exc)) from exc
         self.batch_binding = {"batch_sha256": self.digest, "manifest": str(handoff), "members": [
             {"handoff_sha256": member.digest, "pr": member.handoff["pr"], "worktree": str(member.target),
              "branch": member.branch} for member in self.members]}

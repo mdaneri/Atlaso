@@ -503,6 +503,43 @@ def test_cli_preserves_member_gates_on_title_readback_refusal_and_retries_withou
     assert [state["mutations"] for state in FakeMember.states.values()] == [1, 1]
 
 
+def test_cli_surfaces_aggregate_title_budget_refusal_before_any_member_transition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Expose the aggregate identifier-budget limit before mutation while each member title still fits.
+
+    Args:
+        tmp_path: Pytest-owned disposable fixture root.
+        monkeypatch: Scoped environment, module, and CLI argument substitutions.
+        capsys: Pytest capture fixture for the structured cleanup result.
+    """
+    import sys
+
+    prs = (2_000_000_000, 2_000_000_001, 2_000_000_002)
+    for index, pr in enumerate(prs):
+        assert completed_task_title("Repair batch", [100 + index], [pr])
+
+    controller = BatchController()
+    batch_path, evidence, config, _document, children = _fixture_batch(
+        tmp_path, monkeypatch, count=3, execute=True, pr_numbers=prs,
+    )
+    monkeypatch.setattr(cleanup_module, "Controller", lambda: controller)
+    monkeypatch.setattr(sys, "argv", ["cleanup", "--handoff", str(batch_path), "--evidence", str(evidence),
+                                     "--config", str(config), "--execute"])
+
+    assert cleanup_module.main() == 1
+    refused = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert refused["status"] == "refused"
+    assert refused["gates"] == []
+    assert refused["retry_condition"] == (
+        "All issue/PR identifiers and Done exceed the title budget; maintainer direction is required."
+    )
+    assert batch_path.is_file() and all(child.is_file() for child in children)
+    assert len(FakeMember.states) == len(prs)
+    assert all(state["mutations"] == 0 for state in FakeMember.states.values())
+    assert controller.calls == []
+
+
 class TaskProbeController:
     """Supply controlled responses to the real single-member task and title methods."""
 
