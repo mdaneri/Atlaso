@@ -51,7 +51,9 @@ occupy the same address and port even across different interfaces. Management fr
 Management UI exposure on access interfaces and VLANs, participate in the same scope comparison. A proxy cannot share
 a management address and port through a different interface selection, even when duplicate-address checks are disabled.
 Every observed management IPv4 address participates, including secondary addresses on static or DHCP interfaces.
-Runtime address observations remain excluded from portable settings archives.
+Runtime address observations remain excluded from portable settings archives. Restore preflight checks the target
+appliance's observed management and Web Terminal socket scopes before replacing desired state, including newly
+selected terminal interfaces. Conflicting enabled proxies are rejected; disabled intent remains inactive.
 Web Terminal HTTPS selections include secondary observed IPv4 and preferred automatic IPv6 addresses.
 CA browser HTTP/HTTPS, and Depot, Registry and Network Boot directory HTTP ingress
 participate too, including directory port 80 when the service uses a custom protocol port. Appliance Settings saves and

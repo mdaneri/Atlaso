@@ -4209,20 +4209,75 @@ def _validate_archive_database_relationships(db: Session, data: dict[str, list[d
         ValueError: If a relationship target is absent from retained desired state.
     """
     if data.get("reverse_proxy_routes"):
+        from atlaso.app.services.management_bindings import applied_management_bindings
         from atlaso.app.services.reverse_proxies import (
             _host_literal,
             _interface_address_inventory,
+            browser_listener_claims,
+            validate_proxy,
+        )
+        from atlaso.app.services.reverse_proxy_archive import candidates
+
+        physical = list(db.scalars(select(PhysicalInterface)))
+        vlans = list(db.scalars(select(VlanInterface)))
+        target_settings = db.scalar(select(ApplianceSettings))
+        # Claims cover both currently exposed paths and candidate exposure on the
+        # same target interface. Observations remain local to this locked preflight;
+        # foreign archive observations must never become runtime evidence.
+        projected = [PhysicalInterface(**_model_kwargs_with_scalar_defaults(PhysicalInterface, row))
+                     for row in data.get("physical_interfaces", [])]
+        by_name = {interface.name: interface for interface in physical}
+        by_mac: dict[str, list[PhysicalInterface]] = {}
+        for observed in physical:
+            mac = (observed.mac_address or "").strip().lower()
+            if mac:
+                by_mac.setdefault(mac, []).append(observed)
+        for interface in projected:
+            matches = by_mac.get((interface.mac_address or "").strip().lower(), [])
+            # Stable unique MAC matching retains observations across candidate
+            # renames; name matching also protects foreign archive selections.
+            observed = matches[0] if len(matches) == 1 else by_name.get(interface.name)
+            if observed is not None:
+                interface.host_ip_cidr = observed.host_ip_cidr
+                interface.host_ip_cidrs = list(observed.host_ip_cidrs or [])
+                interface.host_ipv6_cidr = observed.host_ipv6_cidr
+                interface.host_ipv6_cidrs = list(observed.host_ipv6_cidrs or [])
+                # Candidate static/disable edits cannot erase addresses still on
+                # the target while restored browser exposure is being admitted.
+                interface.ipv6_enabled = bool(interface.host_ipv6_cidrs or interface.host_ipv6_cidr)
+                interface.ipv6_cidr = None
+        projected_settings = ApplianceSettings(**_model_kwargs_with_scalar_defaults(
+            ApplianceSettings, data["appliance_settings"][0],
+        ))
+        claims = [*browser_listener_claims(physical, vlans, target_settings), *browser_listener_claims(
+            projected, [VlanInterface(**_model_kwargs_with_scalar_defaults(VlanInterface, row))
+                        for row in data.get("vlan_interfaces", [])], projected_settings,
+        )]
+
+        claims.extend(
+            ListenerClaim(binding["interface"], binding["address"], "tcp", port, port, "nginx", scheme)
+            for binding in applied_management_bindings(db) or []
+            for port, scheme in ((80, "http"), (443, "https"))
         )
 
         # Archive rows omit automatic address lists, and replacement clears the
         # target inventory. Consult its complete observations before that loss.
-        target_addresses = _interface_address_inventory(
-            list(db.scalars(select(PhysicalInterface))), list(db.scalars(select(VlanInterface))),
-        )
+        target_addresses = _interface_address_inventory(physical, vlans)
         for route in data["reverse_proxy_routes"]:
             literal = _host_literal(str(route["upstream_host"]).strip())
             if literal is not None and str(literal) in target_addresses:
                 raise ValueError("Settings archive reverse-proxy upstream cannot be an observed target appliance address.")
+
+        proxies = candidates(data)
+        for proxy in proxies:
+            if not proxy.enabled:
+                continue
+            # Portable binding, CA, DNS and service validation already completed.
+            # This second pass adds the nonportable target browser socket claims.
+            errors = validate_proxy(proxy, {"claims": claims}, proxies, exclude_id=proxy.id,
+                                    require_binding=False, require_managed_ca=False)
+            if errors:
+                raise ValueError(f"Settings archive reverse proxy {proxy.name} conflicts with target browser scopes: {errors[0]}")
 
     users = {row.username: bool(row.enabled) for row in db.execute(select(User)).scalars().all()}
     usernames = set(users)

@@ -965,3 +965,95 @@ def test_restore_rejects_secondary_observed_ipv4_upstream(client, enabled):
         assert list(db.scalars(select(AuditEvent.id))) == audits
         assert db.get(ReverseProxy, saved.id).routes[0].upstream_host == "10.10.20.30"
         assert observed.host_ip_cidrs == ["192.168.55.10/24", "192.168.55.20/24"]
+
+
+@pytest.mark.parametrize(("kind", "redirect"), [("management", False), ("management", True),
+                                                   ("flagged", False), ("flagged", True),
+                                                   ("terminal", False), ("enable_terminal", False), ("rename_terminal", False),
+                                                   ("matching_terminal", False), ("disabled_proxy", False),
+                                                   ("applied_management", False), ("applied_management", True)])
+@pytest.mark.parametrize("family", [4, 6])
+def test_restore_checks_target_observed_browser_socket_scopes(client, kind, family, redirect):
+    """Reject nonportable target scope conflicts before any desired-state replacement.
+
+    Args:
+        client: Initialized appliance fixture.
+        kind: Current management/terminal exposure or terminal enabled only by the archive.
+        family: Secondary observed IPv4 or automatic IPv6 address.
+        redirect: HTTP redirect conflict for management, or HTTPS primary for terminal.
+    """
+    import json
+
+    from atlaso.app import ui
+    from atlaso.app.models import ApplianceSettings, CaSettings
+    from atlaso.app.services.networking import render_network_config
+
+    address = "192.168.55.20" if family == 4 else "2001:db8:55::20"
+    with SessionLocal() as db:
+        source = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        if kind != "management":
+            source = PhysicalInterface(name="eth9", mac_address="02:00:00:00:00:99", role="access", mode="access",
+                                       admin_state="up", oper_state="up", ip_cidr="192.168.55.10/24",
+                                       access_management_ui_enabled=kind == "flagged")
+            db.add(source)
+        source.check_duplicate_ip_addresses = False
+        source.host_ip_cidrs = ["192.168.55.10/24", "192.168.55.20/24"]
+        source.ipv6_enabled, source.ipv6_cidr = True, None
+        source.host_ipv6_cidrs = ["2001:db8:55::10/64", "2001:db8:55::20/64"]
+        listener = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        listener.ip_cidr, listener.ipv6_cidr = "192.168.55.20/24", "2001:db8:55::20/64"
+        listener.ipv6_enabled, listener.check_duplicate_ip_addresses = True, False
+        settings = db.scalar(select(ApplianceSettings))
+        settings.management_https_enabled = True
+        settings.web_terminal_enabled = kind in {"terminal", "disabled_proxy"}
+        settings.web_terminal_interfaces_json = json.dumps([source.name])
+        db.scalar(select(CaSettings)).enabled = True
+        if kind == "applied_management":
+            source.role = "management"
+            preview = render_network_config(interfaces=[source], vlans=[])
+            source.role = "access"
+            baseline = db.scalar(select(Setting).where(Setting.key == "appliance_apply.baselines.v1"))
+            if baseline is None:
+                baseline = Setting(key="appliance_apply.baselines.v1")
+                db.add(baseline)
+            baseline.value = json.dumps({"network": {"config_preview": preview}})
+        db.commit()
+        assert ui.ensure_ca_state(db) == []
+        saved = save_proxy(db, payload(enabled=True, port=9444, redirect_http=False,
+                                       listeners=[{"interface": "eth2", "address": address}]), actor="test")
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        before = deepcopy(archive["data"])
+        audits = list(db.scalars(select(AuditEvent.id)))
+        for row in archive["data"]["physical_interfaces"]:
+            assert "host_ip_cidrs" not in row and "host_ipv6_cidrs" not in row
+        if kind in {"enable_terminal", "matching_terminal", "rename_terminal"}:
+            archive["data"]["appliance_settings"][0]["web_terminal_enabled"] = True
+            if kind == "matching_terminal":
+                archive["data"]["appliance_settings"][0]["web_terminal_interfaces_json"] = json.dumps([listener.name])
+            if family == 6:
+                next(row for row in archive["data"]["physical_interfaces"] if row["name"] == source.name)["ipv6_cidr"] = "2001:db8:66::1/64"
+        if kind == "rename_terminal":
+            next(row for row in archive["data"]["physical_interfaces"] if row["name"] == source.name)["name"] = "eth8"
+            archive["data"]["appliance_settings"][0]["web_terminal_interfaces_json"] = json.dumps(["eth8"])
+        proxy = archive["data"]["reverse_proxies"][0]
+        if kind in {"management", "flagged", "applied_management"} and redirect:
+            proxy.update(port=9443, redirect_http=True, redirect_port=80)
+        else:
+            proxy.update(port=443, redirect_http=False)
+        if kind == "disabled_proxy":
+            proxy["enabled"] = False
+        if kind in {"matching_terminal", "disabled_proxy"}:
+            restore_settings_archive(db, archive)
+            restored = db.scalar(select(ReverseProxy))
+            assert restored.enabled == (kind == "matching_terminal") and restored.port == 443
+            assert db.scalar(select(ApplianceSettings)).web_terminal_enabled
+            assert all(not row.host_ip_cidrs and not row.host_ipv6_cidrs for row in db.scalars(select(PhysicalInterface)))
+            return
+        with pytest.raises(ValueError, match="target browser scopes.*exclusive Atlaso service socket"):
+            restore_settings_archive(db, archive)
+        db.expire_all()
+        assert export_settings_archive(db, actor="test")["data"] == before
+        assert list(db.scalars(select(AuditEvent.id))) == audits
+        assert db.get(ReverseProxy, saved.id).port == 9444
+        assert source.host_ip_cidrs == ["192.168.55.10/24", "192.168.55.20/24"]
+        assert source.host_ipv6_cidrs == ["2001:db8:55::10/64", "2001:db8:55::20/64"]
