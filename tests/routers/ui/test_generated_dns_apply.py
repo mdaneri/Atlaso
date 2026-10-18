@@ -1765,13 +1765,15 @@ def test_handoff_synthetic_own_hostname_preserves_all_wire_checks(monkeypatch, f
 
 @pytest.mark.parametrize("legacy", [False, True])
 @pytest.mark.parametrize("primary_scalar", [False, True])
-def test_secondary_slaac_management_dns_provenance_survives_prefix_change(client, legacy, primary_scalar):
-    """Track all observed AAAA sources and retire secondary address/PTR records.
+@pytest.mark.parametrize("family", [4, 6])
+def test_secondary_management_dns_provenance_survives_address_change(client, legacy, primary_scalar, family):
+    """Track all observed A/AAAA sources and retire secondary address/PTR records.
 
     Args:
         client: Seeded appliance client.
         legacy: Recover source attribution from an older applied inventory.
         primary_scalar: Retain a scalar first observation alongside the complete list.
+        family: IPv4 secondary or preferred automatic IPv6 observations.
     """
     from ipaddress import ip_address
 
@@ -1779,14 +1781,20 @@ def test_secondary_slaac_management_dns_provenance_survives_prefix_change(client
     from atlaso.app.database import SessionLocal
 
     login(client)
-    old_addresses = ["2001:db8:71::10", "2001:db8:72::10", "2001:db8:73::10"]
-    new_address = "2001:db8:81::10"
+    old_addresses = ["192.168.71.10", "192.168.72.10", "192.168.73.10"] if family == 4 else ["2001:db8:71::10", "2001:db8:72::10", "2001:db8:73::10"]
+    new_address = "192.168.81.10" if family == 4 else "2001:db8:81::10"
+    record_type = "A" if family == 4 else "AAAA"
     with SessionLocal() as db:
         management, _access = _prepare_service_address_baseline(db, ui)
-        management.ipv6_enabled = True
-        management.ipv6_cidr = None
-        management.host_ipv6_cidr = old_addresses[0] + "/64" if primary_scalar else None
-        management.host_ipv6_cidrs = [address + "/64" for address in old_addresses]
+        if family == 4:
+            management.ipv4_method, management.ip_cidr = "dhcp", None
+            management.host_ip_cidr = old_addresses[0] + "/24" if primary_scalar else None
+            management.host_ip_cidrs = [address + "/24" for address in old_addresses]
+        else:
+            management.ipv6_enabled = True
+            management.ipv6_cidr = None
+            management.host_ipv6_cidr = old_addresses[0] + "/64" if primary_scalar else None
+            management.host_ipv6_cidrs = [address + "/64" for address in old_addresses]
         db.flush()
         appliance = ui.get_appliance_settings_row(db)
         ui.ensure_dns_for_appliance_settings(db, appliance, previous_fqdn=appliance.fqdn, actor=None)
@@ -1794,15 +1802,18 @@ def test_secondary_slaac_management_dns_provenance_survives_prefix_change(client
         ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
         baselines = ui.load_appliance_apply_baselines(db)
         records = [row for row in baselines["dnsmasq"]["service_dns_records"]
-                   if row["description"] == ui.APPLIANCE_DNS_RECORD_DESCRIPTION and row["record_type"] == "AAAA"]
+                   if row["description"] == ui.APPLIANCE_DNS_RECORD_DESCRIPTION and row["record_type"] == record_type]
         assert {row["address"] for row in records} == set(old_addresses)
         assert {row["source_interface"] for row in records} == {management.name}
         if legacy:
             for row in baselines["dnsmasq"]["service_dns_records"]:
-                if row["description"] == ui.APPLIANCE_DNS_RECORD_DESCRIPTION and row["record_type"] == "AAAA":
+                if row["description"] == ui.APPLIANCE_DNS_RECORD_DESCRIPTION and row["record_type"] == record_type:
                     row["source_interface"] = ""
             ui.save_appliance_apply_baselines(db, baselines)
-        management.ipv6_cidr = new_address + "/64"
+        if family == 4:
+            management.ipv4_method, management.ip_cidr = "static", new_address + "/24"
+        else:
+            management.ipv6_cidr = new_address + "/64"
         db.flush()
         units = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
         projected = ui.network_generated_dns_unit(db, units)
@@ -1813,3 +1824,56 @@ def test_secondary_slaac_management_dns_provenance_survives_prefix_change(client
         for address in old_addresses:
             assert f"host-record={fqdn},{address}" not in config
             assert f"ptr-record={ip_address(address).reverse_pointer},{fqdn}" not in config
+
+
+def test_static_management_secondary_ipv4_dns_survives_mtu_only_network_edit(client):
+    """Do not mistake secondary static-link observations for a selected address move.
+
+    Args:
+        client: Seeded appliance fixture.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        management, _access = _prepare_service_address_baseline(db, ui)
+        management.host_ip_cidrs = ["192.168.71.10/24", "192.168.72.10/24"]
+        db.flush()
+        appliance = ui.get_appliance_settings_row(db)
+        ui.ensure_dns_for_appliance_settings(db, appliance, previous_fqdn=appliance.fqdn, actor=None)
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        baseline = ui.load_appliance_apply_baselines(db)["dnsmasq"]["config_preview"]
+        management.mtu = 1450
+        db.flush()
+        projected = ui.network_generated_dns_unit(db, {unit["id"]: unit for unit in ui.appliance_apply_units(db)})
+        config = projected["raw_config_preview"] if projected else baseline
+        for address in ("192.168.71.10", "192.168.72.10"):
+            assert f"host-record={appliance.fqdn},{address}" in config
+
+
+def test_management_secondary_ipv4_dns_ignores_unrelated_service_address_move(client):
+    """Retain a management alias even when a service uses and then leaves its address.
+
+    Args:
+        client: Seeded appliance fixture.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        management, access = _prepare_service_address_baseline(db, ui)
+        management.host_ip_cidrs = [access.ip_cidr]
+        db.flush()
+        appliance = ui.get_appliance_settings_row(db)
+        ui.ensure_dns_for_appliance_settings(db, appliance, previous_fqdn=appliance.fqdn, actor=None)
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        owned = ui.load_appliance_apply_baselines(db)["dnsmasq"]["service_dns_records"]
+        assert {row["source_interface"] for row in owned if row["description"] == ui.APPLIANCE_DNS_RECORD_DESCRIPTION
+                and row["address"] == "192.0.2.10"} == {management.name}
+        access.ip_cidr = "192.0.2.20/24"
+        db.flush()
+        projected = ui.network_generated_dns_unit(db, {unit["id"]: unit for unit in ui.appliance_apply_units(db)})
+        assert projected is not None and projected["validation_errors"] == []
+        assert f"host-record={appliance.fqdn},192.0.2.10" in projected["raw_config_preview"]

@@ -2431,7 +2431,8 @@ def management_ui_addresses(db: Session) -> list[str]:
         )
         if interface.oper_state == "missing" or not enabled:
             continue
-        for cidr in (interface.ip_cidr or interface.host_ip_cidr, *physical_ipv6_cidrs(interface)):
+        for cidr in (interface.ip_cidr or interface.host_ip_cidr, *(interface.host_ip_cidrs or []),
+                     *physical_ipv6_cidrs(interface)):
             address = interface_address(cidr)
             if address and address not in addresses:
                 addresses.append(address)
@@ -7414,19 +7415,27 @@ def network_generated_dns_unit(db: Session, units_by_id: dict[str, dict[str, Any
         # Upgrade inventories written before management-source attribution.
         sources = {interface.name for interface in db.scalars(select(PhysicalInterface))
                    if record["address"] in {address_from_cidr(cidr) for cidr in (
-                       interface.host_ip_cidr, interface.host_ipv6_cidr, *(interface.host_ipv6_cidrs or []))}}
+                       interface.host_ip_cidr, *(interface.host_ip_cidrs or []),
+                       interface.host_ipv6_cidr, *(interface.host_ipv6_cidrs or []))}}
         if len(sources) == 1:
             record["source_interface"] = next(iter(sources))
     # Applied DHCP rows have no desired ip_cidr. Recover the old address only
     # from the owned inventory and bind it to this reviewed candidate interface.
+    retired_management_records: set[tuple[str, str, str]] = set()
     for record in previous_records:
         candidate = candidate_network.get(record.get("source_interface", ""), {})
         field = "ip_cidr" if record["record_type"] == "A" else "ipv6_cidr"
-        if record["record_type"] in {"A", "AAAA"} and candidate.get(field):
+        old = previous_network.get(record.get("source_interface", ""), {})
+        address_mode_changed = old.get(field) != candidate.get(field) or (
+            field == "ip_cidr" and old.get("ipv4_method") != candidate.get("ipv4_method")
+        )
+        if record["record_type"] in {"A", "AAAA"} and candidate.get(field) and address_mode_changed:
             target = address_from_cidr(candidate[field])
             if target != record["address"]:
                 moved_addresses.add(record["address"])
                 replacements[record["address"]] = target
+                if record["description"] == APPLIANCE_DNS_RECORD_DESCRIPTION:
+                    retired_management_records.add((record.get("source_interface", ""), record["record_type"], record["address"]))
     affected = {row["description"] for row in previous_records if row["record_type"] in {"A", "AAAA"} and row["address"] in moved_addresses}
     effective_options = {row["name"]: set(row["addresses"]) for row in service_bind_options(db)}
     management_addresses = set(management_ui_addresses(db))
@@ -7461,6 +7470,13 @@ def network_generated_dns_unit(db: Session, units_by_id: dict[str, dict[str, Any
     previous_records = [row for row in previous_records if row["description"] in affected]
     desired_config = str(dns_unit.get("raw_config_preview") or "")
     desired_records = [row for row in owned_service_dns_records(db, desired_config) if row["description"] in affected]
+    # Management identity includes every address still observed on the old link.
+    # A reviewed static move retires only its proven old owned records; those
+    # observations must not be copied back into the post-Network DNS projection.
+    desired_records = [row for row in desired_records if not (
+        row["description"] == APPLIANCE_DNS_RECORD_DESCRIPTION
+        and (row.get("source_interface", ""), row["record_type"], row["address"]) in retired_management_records
+    )]
     identity_errors = []
     for description in tuple(affected):
         identity_type = "A" if description == APPLIANCE_DNS_RECORD_DESCRIPTION else "CNAME"

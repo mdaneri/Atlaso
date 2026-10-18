@@ -256,12 +256,21 @@ def owned_service_dns_records(db: Session, config: str) -> list[dict[str, str]]:
     # The management plane is deliberately excluded from service bind choices.
     # Its generated FQDN still needs provenance, including the assigned DHCP
     # address retained in observations while a static candidate is reviewed.
+    management_sources: dict[str, set[str]] = {}
     for interface in db.scalars(select(PhysicalInterface)):
+        management = interface.oper_state != "missing" and (
+            normalize_interface_role(interface.role) == "management" or (
+                normalize_interface_role(interface.role) == "access" and normalize_interface_mode(interface.mode) == "access"
+                and interface.admin_state == "up" and interface.access_management_ui_enabled
+            )
+        )
         for cidr in (interface.ip_cidr, interface.ipv6_cidr, interface.host_ip_cidr, interface.host_ipv6_cidr,
-                     *(interface.host_ipv6_cidrs or [])):
+                     *(interface.host_ip_cidrs or []), *(interface.host_ipv6_cidrs or [])):
             address = address_from_cidr(cidr)
             if address:
                 address_sources.setdefault(address, interface.name)
+                if management:
+                    management_sources.setdefault(address, set()).add(interface.name)
     result = []
     for row in db.scalars(select(DnsRecord).where(DnsRecord.description.in_(descriptions))):
         if not row.enabled or row.record_type not in {"A", "AAAA", "CNAME"}:
@@ -270,11 +279,15 @@ def owned_service_dns_records(db: Session, config: str) -> list[dict[str, str]]:
         if directive not in directives:
             continue
         generated_ptr = row.record_type in {"A", "AAAA"} and ip_address(row.address).reverse_pointer not in explicit_ptrs
+        source = service_interfaces.get(row.description or "", address_sources.get(row.address, ""))
+        if row.description == APPLIANCE_DNS_RECORD_DESCRIPTION:
+            matches = management_sources.get(row.address, set())
+            source = next(iter(matches)) if len(matches) == 1 else ""
         result.append({
             "hostname": row.hostname, "record_type": row.record_type,
             "address": row.address, "description": row.description or "",
             "generated_ptr": "true" if generated_ptr else "false",
-            "source_interface": service_interfaces.get(row.description or "", address_sources.get(row.address, "")),
+            "source_interface": source,
         })
     captured = {(row["hostname"], row["record_type"], row["address"]) for row in result}
     # A partial DNS publication can retain applied owned rows whose desired

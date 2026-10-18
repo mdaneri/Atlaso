@@ -871,7 +871,7 @@ def _management_ips(db: Session) -> list[str]:
         if interface.oper_state == "missing" or not exposes_management:
             continue
         ipv4_cidr = interface.host_ip_cidr if normalize_ipv4_method(interface.ipv4_method) == "dhcp" else interface.ip_cidr
-        for candidate_cidr in (ipv4_cidr, *physical_ipv6_cidrs(interface)):
+        for candidate_cidr in (ipv4_cidr, *(interface.host_ip_cidrs or []), *physical_ipv6_cidrs(interface)):
             if not candidate_cidr:
                 continue
             try:
