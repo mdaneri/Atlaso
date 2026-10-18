@@ -646,22 +646,38 @@ class Cleanup:
             scopes[resource["id"]] = current
         return scopes
 
-    def verify_directory_release(self) -> None:
-        """Reject filesystem directories Git cannot report, including empty locks and artifacts."""
+    def verify_directory_release(self, *, excluded_scopes: tuple[Path, ...] = ()) -> None:
+        """Reject residue outside tracked source and already validated resource scopes.
+
+        Args:
+            excluded_scopes: Checked owning-tool scopes admitted only during read-only batch preflight.
+        """
         if not self.target.exists():
             return
+        excluded = tuple(scope for scope in excluded_scopes if beneath(scope, self.target))
         tracked = self.git("-C", str(self.target), "ls-files", "-z").split("\0")
         source_files = {Path(entry) for entry in tracked if entry}
         source_directories = {parent for entry in tracked if entry for parent in Path(entry).parents}
         for parent, directories, files in os.walk(self.target, followlinks=False):
             for name in files:
-                path = ordinary(Path(parent) / name)
+                path = Path(parent) / name
+                if any(path.is_relative_to(scope) for scope in excluded):
+                    continue
+                ordinary(path)
                 require(path.relative_to(self.target) in source_files or path == self.target / ".git",
                         "Unreleased file remains outside tracked source; reconcile its inventory and owning-tool release.")
-            for name in directories:
-                path = ordinary(Path(parent) / name)
+            for name in directories[:]:
+                path = Path(parent) / name
+                if any(path.is_relative_to(scope) for scope in excluded):
+                    directories.remove(name)
+                    continue
+                ordinary(path)
                 require(path.relative_to(self.target) in source_directories,
                         "Unreleased directory remains outside tracked source; reconcile its inventory and owning-tool release.")
+        ignored = self.git("-C", str(self.target), "ls-files", "--others", "--ignored", "--exclude-standard", "-z")
+        require(all(any((self.target / name).is_relative_to(scope) for scope in excluded)
+                    for name in ignored.split("\0") if name),
+                "Unreleased ignored files remain outside validated resource scopes; reconcile inventory before cleanup.")
 
     def generated_path(self, resource: dict) -> Path:
         """Validate a generated scope even when a previously released root is absent.
@@ -996,6 +1012,7 @@ class BatchCleanup:
                 member.eligibility()
                 for resource in member.handoff["resources"]:
                     member.validate_resource_identity(resource)
+                member.verify_resources_absent(completed_only=True)
             scopes: list[Path] = []
             protected = [self.handoff_path, self.evidence, self.anchor.repo, self.anchor.config,
                          *[member.target for member in self.members], *[member.handoff_path for member in self.members],
@@ -1012,6 +1029,8 @@ class BatchCleanup:
                                 and not any(scope.is_relative_to(prior) or prior.is_relative_to(scope) for prior in scopes),
                                 "Batch removal scopes overlap or contain protected peer state.")
                         scopes.append(scope)
+                member.verify_directory_release(excluded_scopes=tuple(
+                    Path(value) for values in member_scopes.values() for value in values))
                 if not full:
                     continue
                 previous_execute, previous_proposed = member.execute, member.proposed[:]

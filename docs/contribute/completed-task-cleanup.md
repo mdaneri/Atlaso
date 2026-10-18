@@ -515,6 +515,8 @@ have been verified. All children are preflighted before the first mutation. Exec
 member lock, revalidates the complete batch before each member transition, and records child progress as
 `member_complete`; child journals never record `task_title_done`. Per-member journals live under
 `<evidence>/<batch_sha256>/<child_handoff_sha256>` and stay bound to each child's original handoff digest.
+Every preflight checks ignored files and empty untracked directories outside the validated resource removal scopes.
+It also rechecks absence for resources already released, so later residue or reappearing resources block further cleanup.
 
 After every member has passed its resource, remote-ref, worktree, and local-ref gates, refresh the complete inventory
 and all child eligibility evidence. Then issue one `task.title` request with the aggregate title and batch binding;

@@ -11,6 +11,7 @@ import pytest
 
 import scripts.completed_task_cleanup as cleanup_module
 from scripts.completed_task_cleanup import BatchCleanup, Refusal
+from scripts.completed_task_cleanup import Cleanup as RealCleanup
 from scripts.completed_task_title import completed_task_title
 
 
@@ -106,8 +107,11 @@ class FakeMember:
         self.gates: list[str] = []
         self.proposed: list[dict] = []
         self.resource_evidence: list[dict] = []
-        self.state = self.states.setdefault(self.digest, {"mutations": 0, "gates": [], "fail_reconcile": False,
-                                                            "pending": False, "change_batch": False, "scopes": []})
+        self.state = self.states.setdefault(self.digest, {
+            "mutations": 0, "gates": [], "fail_reconcile": False, "pending": False,
+            "change_batch": False, "scopes": [], "resource_checks": 0, "resource_reappeared": False,
+            "directory_checks": 0, "directory_residue": False, "directory_scopes": [],
+        })
         self.gates = list(self.state["gates"])
         self.evidence_path = evidence
 
@@ -136,6 +140,28 @@ class FakeMember:
     def inventory_scopes(self) -> dict[str, list[str]]:
         """Return no extra fixture scopes for members with empty resource inventories."""
         return {"generated_tree": list(self.state["scopes"])}
+
+    def verify_resources_absent(self, *, completed_only: bool = False) -> None:
+        """Check fake released-resource absence and optionally inject a reappearance.
+
+        Args:
+            completed_only: Limit the check to resources already recorded as released.
+        """
+        self.state["resource_checks"] += 1
+        if completed_only and "resource_released:fixture" in self.state["gates"] \
+                and self.state["resource_reappeared"]:
+            raise Refusal("Previously released resource reappeared in a peer member.")
+
+    def verify_directory_release(self, *, excluded_scopes: tuple[Path, ...] = ()) -> None:
+        """Check peer filesystem residue with an optional deterministic refusal hook.
+
+        Args:
+            excluded_scopes: Exact resource roots pruned from the member's source walk.
+        """
+        self.state["directory_checks"] += 1
+        self.state["directory_scopes"] = [str(scope) for scope in excluded_scopes]
+        if self.state["directory_residue"]:
+            raise Refusal("Unreleased file or directory remains outside tracked source.")
 
     def resources(self) -> None:
         """Collect a read-only resource proposal for this empty-resource member."""
@@ -347,6 +373,125 @@ def test_incomplete_peer_inventory_blocks_before_first_member_mutation(
         batch.run()
     assert all(member.state["mutations"] == 0 for member in batch.members)
     assert not any(operation == "task.title" for operation, _payload in controller.calls)
+
+
+@pytest.mark.parametrize("residue", ["ignored-file", "empty-directory"])
+def test_second_member_filesystem_residue_blocks_before_first_member_transition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, residue: str,
+) -> None:
+    """Run the real directory gate on a later peer before allowing the first member to transition.
+
+    Args:
+        tmp_path: Pytest-owned disposable fixture root.
+        monkeypatch: Scoped environment and Cleanup substitution.
+        residue: Untracked file or empty directory deliberately retained in peer two.
+    """
+    batch = _make_batch(tmp_path, monkeypatch, BatchController(), execute=True)
+    peer = batch.members[1]
+    tracked = peer.target / "tracked source with spaces.py"
+    tracked.write_text("tracked fixture", encoding="utf-8")
+
+    def git(*arguments: str) -> str:
+        """Return tracked paths and an empty Git-ignored inventory.
+
+        Args:
+            *arguments: Git argument vector requested by the real directory gate.
+        """
+        return "" if "--others" in arguments else "tracked source with spaces.py\0"
+
+    def verify_directory_release(*, excluded_scopes: tuple[Path, ...] = ()) -> None:
+        """Run the real directory gate while recording the peer preflight check.
+
+        Args:
+            excluded_scopes: Exact generated roots admitted by the batch inventory.
+        """
+        peer.state["directory_checks"] += 1
+        RealCleanup.verify_directory_release(peer, excluded_scopes=excluded_scopes)
+
+    peer.git = git
+    peer.verify_directory_release = verify_directory_release
+    if residue == "ignored-file":
+        (peer.target / "ignored output with spaces.txt").write_text("retain", encoding="utf-8")
+    else:
+        (peer.target / "empty output").mkdir()
+
+    with pytest.raises(Refusal, match="Unreleased"):
+        batch.run()
+    assert [member.state["mutations"] for member in batch.members] == [0, 0]
+    assert peer.state["directory_checks"] > 0
+    assert not any(operation == "task.title" for operation, _payload in batch.controller.calls)
+
+
+def test_reappeared_completed_peer_resource_blocks_member_transition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recheck completed resources across peers before allowing any later cleanup transition.
+
+    Args:
+        tmp_path: Pytest-owned disposable fixture root.
+        monkeypatch: Scoped environment and Cleanup substitution.
+    """
+    batch = _make_batch(tmp_path, monkeypatch, BatchController(), execute=True)
+    peer = batch.members[1]
+    peer.state["gates"] = ["resource_released:fixture"]
+    peer.state["resource_reappeared"] = True
+    with pytest.raises(Refusal, match="Previously released resource reappeared"):
+        batch.run()
+    assert [member.state["mutations"] for member in batch.members] == [0, 0]
+    assert all(member.state["resource_checks"] > 0 for member in batch.members)
+
+
+def test_real_directory_gate_prunes_only_inventoried_scopes_and_rejects_other_residue(
+    tmp_path: Path,
+) -> None:
+    """Verify exact generated-scope exclusions while retaining Git-invisible files and directories.
+
+    Args:
+        tmp_path: Pytest-owned fixture root for the synthetic worktree and generated scope.
+    """
+    target = tmp_path / "worktree"
+    target.mkdir()
+    tracked = target / "tracked source with spaces.py"
+    tracked.write_text("tracked", encoding="utf-8")
+    scope = target / ".atlaso-local"
+    (scope / "nested empty").mkdir(parents=True)
+    (scope / "result with spaces.txt").write_text("generated", encoding="utf-8")
+    member = object.__new__(RealCleanup)
+    member.target = target
+    calls: list[tuple[str, ...]] = []
+    ignored_paths = [".atlaso-local/result with spaces.txt"]
+
+    def git(*arguments: str) -> str:
+        """Return the NUL-delimited tracked inventory without creating a repository.
+
+        Args:
+            *arguments: Git argument vector requested by the real directory gate.
+        """
+        calls.append(arguments)
+        return "\0".join(ignored_paths) + "\0" if "--others" in arguments else "tracked source with spaces.py\0"
+
+    member.git = git
+    member.verify_directory_release(excluded_scopes=(scope,))
+    assert calls[0][-2:] == ("ls-files", "-z")
+    assert any("--others" in call for call in calls)
+    ignored_paths.append(".atlaso-local-copy/result with spaces.txt")
+    with pytest.raises(Refusal, match="Unreleased ignored files remain"):
+        member.verify_directory_release(excluded_scopes=(scope,))
+    ignored_paths.pop()
+
+    ignored_file = target / "ignored file with spaces.txt"
+    ignored_file.write_text("retain", encoding="utf-8")
+    with pytest.raises(Refusal, match="Unreleased file"):
+        member.verify_directory_release(excluded_scopes=(scope,))
+    assert ignored_file.read_text(encoding="utf-8") == "retain"
+    ignored_file.unlink()
+
+    empty_directory = target / "empty untracked directory"
+    empty_directory.mkdir()
+    with pytest.raises(Refusal, match="Unreleased directory"):
+        member.verify_directory_release(excluded_scopes=(scope,))
+    assert empty_directory.is_dir()
+
 
 def test_overlapping_specialized_scope_into_peer_blocks_batch_preflight(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -566,14 +711,14 @@ class TaskProbeController:
         return {"persisted_readback": True, "observed_title": payload["expected_title"]}
 
 
-def _real_task_probe(tmp_path: Path, result: dict) -> cleanup_module.Cleanup:
+def _real_task_probe(tmp_path: Path, result: dict) -> RealCleanup:
     """Construct a minimal real Cleanup instance for task-inspection contract coverage.
 
     Args:
         tmp_path: Pytest-owned path used only as a nonexistent target identity.
         result: Independent task-inspection result returned by the controller stub.
     """
-    member = object.__new__(cleanup_module.Cleanup)
+    member = object.__new__(RealCleanup)
     member.handoff = {
         "task_id": "batch-task",
         "task_title": "Repair batch · Issues #100, #101 · PRs #200, #201",
@@ -701,7 +846,7 @@ def test_real_cleanup_reconcile_defers_title_only_for_batch_members(
         is_batch: Whether the cleanup member has a batch coordinator binding.
         expected_status: Expected member or ordinary cleanup status.
     """
-    member = object.__new__(cleanup_module.Cleanup)
+    member = object.__new__(RealCleanup)
     member.execute = True
     member.handoff = {"task_id": "batch-task", "task_title": "Repair batch", "resources": []}
     member.digest = "d" * 64
