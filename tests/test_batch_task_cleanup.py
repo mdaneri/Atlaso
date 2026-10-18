@@ -453,13 +453,13 @@ def test_real_directory_gate_prunes_only_inventoried_scopes_and_rejects_other_re
     target.mkdir()
     tracked = target / "tracked source with spaces.py"
     tracked.write_text("tracked", encoding="utf-8")
-    scope = target / ".atlaso-local"
+    scope = target / "generated-output"
     (scope / "nested empty").mkdir(parents=True)
     (scope / "result with spaces.txt").write_text("generated", encoding="utf-8")
     member = object.__new__(RealCleanup)
     member.target = target
     calls: list[tuple[str, ...]] = []
-    ignored_paths = [".atlaso-local/result with spaces.txt"]
+    ignored_paths = ["generated-output/result with spaces.txt"]
 
     def git(*arguments: str) -> str:
         """Return the NUL-delimited tracked inventory without creating a repository.
@@ -474,7 +474,7 @@ def test_real_directory_gate_prunes_only_inventoried_scopes_and_rejects_other_re
     member.verify_directory_release(excluded_scopes=(scope,))
     assert calls[0][-2:] == ("ls-files", "-z")
     assert any("--others" in call for call in calls)
-    ignored_paths.append(".atlaso-local-copy/result with spaces.txt")
+    ignored_paths.append("generated-output-copy/result with spaces.txt")
     with pytest.raises(Refusal, match="Unreleased ignored files remain"):
         member.verify_directory_release(excluded_scopes=(scope,))
     ignored_paths.pop()
