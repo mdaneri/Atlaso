@@ -20467,7 +20467,12 @@ def test_inventory_ipv4_observation_uses_applied_mode(client, monkeypatch, renam
         assert interface.host_ip_cidr == expected
         assert interface.ipv4_method == ("static" if applied == "dhcp" else "dhcp")
         assert interface.ip_cidr == ("192.0.2.99/24" if applied == "dhcp" else None)
-        assert {row["address"] for row in applied_management_bindings(db)} == ({expected.split("/")[0]} if expected else set())
+        # Native static aliases remain real listeners alongside an applied DHCP lease.
+        assert interface.host_ip_cidrs == ["192.0.2.11/24"]
+        expected_addresses = {"192.0.2.11"}
+        if expected:
+            expected_addresses.add(expected.split("/")[0])
+        assert {row["address"] for row in applied_management_bindings(db)} == expected_addresses
         if expected:
             assert ui.request_host_interface_binding(expected.split("/")[0], db)["management_ui"] is True
         pending_binding = ui.request_host_interface_binding("192.0.2.99", db)
@@ -20527,7 +20532,10 @@ interface=eth0
         assert interface.host_ipv6_cidrs == ["2001:db8::7/64", "2001:db8:1::7/64"]
         assert interface.ipv6_enabled is (pending != "disabled")
         assert interface.ipv6_cidr == ("2001:db8:9::7/64" if pending == "static" else None)
-        assert {row["address"] for row in applied_management_bindings(db)} == {"2001:db8::7", "2001:db8:1::7"}
+        expected_addresses = {"2001:db8::7", "2001:db8:1::7"}
+        if interface.host_ip_cidr:
+            expected_addresses.add(interface.host_ip_cidr.split("/")[0])
+        assert {row["address"] for row in applied_management_bindings(db)} == expected_addresses
         for address in ("2001:db8::7", "2001:db8:1::7"):
             assert ui.request_host_interface_binding(address, db)["management_ui"] is True
         pending_binding = ui.request_host_interface_binding("2001:db8:9::7", db)
@@ -20540,7 +20548,9 @@ interface=eth0
         db.commit()
         networking.sync_host_physical_interfaces(db)
         assert interface.host_ipv6_cidrs == [] and interface.host_ipv6_cidr is None
-        assert applied_management_bindings(db) == []
+        assert {row["address"] for row in applied_management_bindings(db)} == (
+            {interface.host_ip_cidr.split("/")[0]} if interface.host_ip_cidr else set()
+        )
 
 
 @pytest.mark.parametrize("transport", ["api", "ui"])

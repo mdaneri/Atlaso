@@ -4154,7 +4154,16 @@ ipv6_cidr=
         db.commit()
 
     with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        assert interface.host_ip_cidr == "192.168.167.134/24"
+        assert interface.host_ip_cidrs == ["192.168.49.10/24"]
         assert applied_management_bindings(db) == [
+            {
+                "interface": "eth0",
+                "role": "management",
+                "address": "192.168.49.10",
+                "management_ui": "true",
+            },
             {
                 "interface": "eth0",
                 "role": "management",
