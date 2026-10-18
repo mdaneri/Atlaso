@@ -22,6 +22,7 @@ class BatchController:
         self.calls: list[tuple[str, dict]] = []
         self.pending_pr: int | None = None
         self.title_capability_unavailable = False
+        self.observed_title: str | None = None
 
     def call(self, operation: str, payload: dict) -> dict:
         """Return a batch-bound inventory or persisted title readback.
@@ -56,7 +57,8 @@ class BatchController:
         assert operation == "task.title"
         if self.title_capability_unavailable:
             return {"capability": "unavailable", "capability_evidence": "No supported mutable task-title control."}
-        return {"persisted_readback": True, "observed_title": payload["expected_title"]}
+        return {"persisted_readback": True,
+                "observed_title": self.observed_title or payload["expected_title"]}
 
 
 class FakeMember:
@@ -459,6 +461,46 @@ def test_changed_batch_manifest_during_member_transition_blocks_later_member_and
     assert batch.members[0].state["mutations"] == 1
     assert batch.members[1].state["mutations"] == 0
     assert not any(operation == "task.title" for operation, _payload in controller.calls)
+
+
+def test_cli_preserves_member_gates_on_title_readback_refusal_and_retries_without_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
+    """Report title verification as an actionable refusal and retry the same completed batch safely.
+
+    Args:
+        tmp_path: Pytest-owned disposable fixture root.
+        monkeypatch: Scoped environment, module, and CLI argument substitutions.
+        capsys: Pytest capture fixture for the structured cleanup result.
+    """
+    import sys
+
+    controller = BatchController()
+    controller.observed_title = "Stale and truncated title"
+    batch_path, evidence, config, _document, _children = _fixture_batch(tmp_path, monkeypatch, execute=True)
+    monkeypatch.setattr(cleanup_module, "Controller", lambda: controller)
+    monkeypatch.setattr(sys, "argv", ["cleanup", "--handoff", str(batch_path), "--evidence", str(evidence),
+                                     "--config", str(config), "--execute"])
+
+    assert cleanup_module.main() == 1
+    refused = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert refused["status"] == "refused"
+    assert refused["retry_condition"] == (
+        "Persisted title differs from the expected title; task_title_done remains blocked."
+    )
+    assert "pr:200:worktree_removed" in refused["gates"]
+    assert "pr:201:worktree_removed" in refused["gates"]
+    assert not any("batch_title_readback_verified" in gate or "batch_task_title_done" in gate
+                   for gate in refused["gates"])
+    assert [state["mutations"] for state in FakeMember.states.values()] == [1, 1]
+
+    controller.observed_title = None
+    assert cleanup_module.main() == 0
+    completed = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert completed["status"] == "complete"
+    assert "pr:200:batch_title_readback_verified" in completed["gates"]
+    assert "pr:200:batch_task_title_done" in completed["gates"]
+    assert [state["mutations"] for state in FakeMember.states.values()] == [1, 1]
 
 
 class TaskProbeController:

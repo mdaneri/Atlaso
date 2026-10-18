@@ -1049,7 +1049,10 @@ class BatchCleanup:
                 self.anchor.record("batch_title_done:not_applicable")
             else:
                 require(result.get("persisted_readback") is True, "Batch title requires supported persisted readback.")
-                verify_completed_task_title(self.expected_title, result.get("observed_title", ""))
+                try:
+                    verify_completed_task_title(self.expected_title, result.get("observed_title", ""))
+                except ValueError as exc:
+                    raise Refusal(str(exc)) from exc
                 self.anchor.record("batch_title_readback_verified")
             self.preflight()
             self.anchor.record("batch_task_title_done")
