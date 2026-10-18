@@ -840,6 +840,7 @@ def test_candidate_new_address_never_becomes_a_held_old_source(monkeypatch, tmp_
     assert "Before=systemd-networkd.service" in unit
     assert unit.index("ExecStartPre=/opt/atlaso/.venv/bin/python -I -m atlaso.route_domains --transition-start") < unit.index(
         "ExecStartPre=/opt/atlaso/.venv/bin/python -I -m atlaso.route_domains --once")
-    assert commands[:3] == [["systemctl", "daemon-reload"],
+    assert commands[:4] == [["/opt/atlaso/.venv/bin/python", "-I", "-m", "atlaso.route_domains", "--once"],
+                            ["systemctl", "daemon-reload"],
                             ["systemctl", "enable", "--now", "route-domains.service"],
                             ["systemctl", "restart", "route-domains.service"]]

@@ -13331,6 +13331,10 @@ def _install_route_domain_intent(
     os.chmod(ROUTE_DOMAIN_SERVICE_PATH, 0o644)
     _fsync_file(ROUTE_DOMAIN_SERVICE_PATH)
     _fsync_directory(ROUTE_DOMAIN_SERVICE_PATH.parent)
+    # Migrate exact held sources under the reconciliation lock before the
+    # watcher's ExecStartPre seeds the newly published domain. Otherwise an
+    # intentional table-100 to table-200 handoff appears to be foreign ownership.
+    _reconcile_route_domains()
     # enable --now starts a new unit but leaves an already-running watcher on
     # its old imported Python code after an appliance upgrade.
     for command in (["systemctl", "daemon-reload"],
@@ -13338,7 +13342,6 @@ def _install_route_domain_intent(
                     ["systemctl", "restart", ROUTE_DOMAIN_SERVICE_PATH.name]):
         if _run(command).returncode:
             raise ValueError("routing-domain service activation failed")
-    _reconcile_route_domains()
 
 
 def _snapshot_route_domain_service() -> dict[str, bool]:
