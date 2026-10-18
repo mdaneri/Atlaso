@@ -16,18 +16,18 @@ from pydantic import (
 
 from atlaso.app.schemas import validate_firewall_description
 
-MAX_NGINX_PARAMETER_BYTES = 4095
+MAX_NGINX_PARAMETER_BYTES = 4000
 
 
 def strip_rewrite_pattern(prefix: str) -> str:
-    """Build a literal strip regex that fits NGINX's 4096-byte token buffer.
+    """Build a literal strip regex with margin below NGINX's token buffer.
 
     Args:
         prefix: Validated non-trailing-slash path prefix to remove upstream.
     """
     pattern = "^" + re.escape(prefix) + "/?(.*)$"
     if len(pattern.encode("utf-8")) > MAX_NGINX_PARAMETER_BYTES:
-        raise ValueError("Strip path prefix exceeds the 4095-byte escaped UTF-8 rewrite token limit.")
+        raise ValueError("Strip path prefix exceeds the 4000-byte escaped UTF-8 rewrite token limit.")
     return pattern
 
 

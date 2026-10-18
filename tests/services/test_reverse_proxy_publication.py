@@ -789,7 +789,7 @@ def test_dns_writers_reserve_unpublished_proxy_intent_atomically(client, transpo
         assert db.scalar(select(DnsRecord.id).where(DnsRecord.hostname == "distinct.atlaso.internal")) is not None
 
 
-@pytest.mark.parametrize("ending,token_bytes,accepted", [("é", 4095, True), ("中", 4096, False), ("😀", 4097, False)])
+@pytest.mark.parametrize("ending,token_bytes,accepted", [("abc", 4000, True), ("abcd", 4001, False), ("", 4101, False)])
 @pytest.mark.parametrize("enabled", [False, True])
 def test_strip_rewrite_utf8_token_boundary_is_validated_atomically(ending, token_bytes, accepted, enabled):
     """Validate the escaped rendered token before any desired-state mutation.
@@ -797,7 +797,7 @@ def test_strip_rewrite_utf8_token_boundary_is_validated_atomically(ending, token
     Args:
         ending: Final Unicode character selecting the exact UTF-8 byte boundary.
         token_bytes: Size of the rendered rewrite regex parameter.
-        accepted: Whether the parameter fits NGINX's configuration reader.
+        accepted: Whether the parameter fits Atlaso's supported parser budget.
         enabled: Whether the desired proxy publishes its route immediately.
     """
     from pydantic import ValidationError
@@ -813,7 +813,7 @@ def test_strip_rewrite_utf8_token_boundary_is_validated_atomically(ending, token
     )
     from tests.services.test_reverse_proxies import create_db, payload
 
-    prefix = "/" + "😀" * 1021 + ending
+    prefix = "/" + "\U0001f600" * (1023 if token_bytes == 4101 else 997) + ending
     assert len(("^" + re.escape(prefix) + "/?(.*)$").encode("utf-8")) == token_bytes
     engine, db = create_db()
     try:
@@ -877,12 +877,12 @@ def test_full_unicode_prefix_without_rewrite_remains_supported(behavior, trailin
 
 
 @pytest.mark.parametrize("accepted", [False, True])
-def test_native_nginx_strip_rewrite_token_byte_boundary(tmp_path, accepted):
-    """Check the documented buffer boundary with a real syntax-only NGINX process.
+def test_native_nginx_strip_rewrite_supported_budget_and_overlong_token(tmp_path, accepted):
+    """Check the supported budget and known overlong token with real NGINX.
 
     Args:
         tmp_path: Pytest-owned retained validation subdirectory.
-        accepted: Select the final supported byte size or first unsupported size.
+        accepted: Select the supported byte budget or a known parser rejection.
     """
     import shutil
     import subprocess
@@ -890,9 +890,9 @@ def test_native_nginx_strip_rewrite_token_byte_boundary(tmp_path, accepted):
     nginx = shutil.which("nginx")
     if nginx is None:
         pytest.skip("Native NGINX executable is unavailable on this host.")
-    prefix = "/" + "\U0001f600" * 1021 + ("\u00e9" if accepted else "\u4e2d")
+    prefix = "/" + "\U0001f600" * (997 if accepted else 1021) + ("abc" if accepted else "\u4e2d")
     pattern = "^" + re.escape(prefix) + "/?(.*)$"
-    assert len(pattern.encode("utf-8")) == (4095 if accepted else 4096)
+    assert len(pattern.encode("utf-8")) == (4000 if accepted else 4096)
     config = tmp_path / "nginx.conf"
     config.write_text(
         "error_log stderr; pid nginx.pid; events {} http { access_log off; "
