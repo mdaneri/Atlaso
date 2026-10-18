@@ -799,15 +799,22 @@ def test_restore_rejects_independent_terminal_scope(client, address):
 
 
 @pytest.mark.parametrize("enabled", [False, True])
-@pytest.mark.parametrize("assigned_id", [0xFFFFFF, 0x1000000])
-def test_restore_checks_assigned_proxy_identity_capacity_atomically(client, monkeypatch, enabled, assigned_id):
+@pytest.mark.parametrize("identity_kind,assigned_id,limit", [
+    ("proxy", 0xFFFFFF, 0xFFFFFF),
+    ("proxy", 0x1000000, 0xFFFFFF),
+    ("route", 9_999_999_999, 9_999_999_999),
+    ("route", 10_000_000_000, 9_999_999_999),
+])
+def test_restore_checks_assigned_identity_capacity_atomically(client, monkeypatch, enabled, identity_kind, assigned_id, limit):
     """Enforce the helper identity limit after database assignment before committing.
 
     Args:
         client: Initialized appliance fixture.
         monkeypatch: Scoped dependency replacements supplied by pytest.
         enabled: Whether the restored proxy publishes a listener.
+        identity_kind: Database sequence to advance independently.
         assigned_id: Last supported identity or first unsupported identity.
+        limit: Helper capacity for the selected identity kind.
     """
     from atlaso.app.services import reverse_proxy_publication as publication
     from atlaso.app.services.ldap import LDAP_PENDING_RECOVERY_PAYLOADS
@@ -840,9 +847,13 @@ def test_restore_checks_assigned_proxy_identity_capacity_atomically(client, monk
 
         preflight_size = rendered_size(synthetic)
         assigned = deepcopy(synthetic)
-        assigned[0]["id"] = assigned[0]["routes"][0]["id"] = assigned_id
-        assigned_size = rendered_size(assigned)
-        assert assigned_size > preflight_size
+        assigned_row = assigned[0] if identity_kind == "proxy" else assigned[0]["routes"][0]
+        assigned_row["id"] = assigned_id
+        # Oversized enabled route IDs already fail transport rendering. Keep the
+        # byte budget permissive so this matrix isolates the pre-commit ID guard.
+        assigned_size = rendered_size(assigned) if assigned_id <= limit else preflight_size
+        if assigned_id <= limit:
+            assert assigned_size > preflight_size
         monkeypatch.setattr(publication, "MAX_PUBLICATION_BYTES", max(assigned_size, preflight_size) + 10000)
         recovery_bytes = b"synthetic retained recovery payload"
         monkeypatch.setitem(LDAP_PENDING_RECOVERY_PAYLOADS, recovery_id, recovery_bytes)
@@ -860,15 +871,16 @@ def test_restore_checks_assigned_proxy_identity_capacity_atomically(client, monk
             # could allocate; no PostgreSQL server is required by this fixture.
             row.id = assigned_id
 
-        for model in (ReverseProxy, ReverseProxyRoute):
-            event.listen(model, "before_insert", assign_advanced_id)
+        model = ReverseProxy if identity_kind == "proxy" else ReverseProxyRoute
+        event.listen(model, "before_insert", assign_advanced_id)
         try:
-            if assigned_id <= 0xFFFFFF:
+            if assigned_id <= limit:
                 counts = restore_settings_archive(db, archive)
                 assert counts["reverse_proxies"] == counts["reverse_proxy_routes"] == 1
                 db.expire_all()
                 restored = db.scalar(select(ReverseProxy))
-                assert restored.id == restored.routes[0].id == assigned_id
+                actual_id = restored.id if identity_kind == "proxy" else restored.routes[0].id
+                assert actual_id == assigned_id
                 assert restored.description == "Restored candidate" and restored.enabled is enabled
                 assert recovery_id not in LDAP_PENDING_RECOVERY_PAYLOADS
             else:
@@ -880,8 +892,7 @@ def test_restore_checks_assigned_proxy_identity_capacity_atomically(client, monk
                 assert db.get(LdapRecoveryArchive, recovery_id).filename == "retained.ldif"
                 assert LDAP_PENDING_RECOVERY_PAYLOADS[recovery_id] == recovery_bytes
         finally:
-            for model in (ReverseProxy, ReverseProxyRoute):
-                event.remove(model, "before_insert", assign_advanced_id)
+            event.remove(model, "before_insert", assign_advanced_id)
 
 
 @pytest.mark.parametrize("availability", ["down", "missing", "unaddressed"])

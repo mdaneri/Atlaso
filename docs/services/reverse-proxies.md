@@ -233,8 +233,9 @@ warnings, normal application authentication, WebSocket traffic, coordinated Fire
 rollback, and state after reboot. Remove this section and change the page status to `current` only after that evidence
 has been recorded.
 
-Archive restore also checks actual database-assigned proxy identities against the helper capacity before committing.
-An exhausted retained sequence rejects the entire restore without replacing desired state or recovery payloads.
+Archive restore also checks actual database-assigned proxy and route identities against their separate helper limits
+before committing, including disabled proxies. An exhausted retained sequence rejects the entire restore without
+replacing desired state or recovery payloads.
 
 Insecure upstream routes remain degraded and retain their TLS policy warning. Connectivity, timeout and HTTP failures
 remain visible in health details instead of being replaced by that policy warning.
