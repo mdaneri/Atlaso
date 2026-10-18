@@ -379,7 +379,8 @@ class Cleanup:
             allowed_titles.add(self.expected_title)
         batch = getattr(self, "batch_coordinator", None)
         if batch is not None and ("batch_title_readback_verified" in batch.anchor.gates
-                                  or "batch_task_title_done" in batch.anchor.gates):
+                                  or ("batch_task_title_done" in batch.anchor.gates
+                                      and "batch_title_done:not_applicable" not in batch.anchor.gates)):
             allowed_titles = {self.expected_title}
         require(result.get("observed_title") in allowed_titles,
                 "Live task title differs from the recorded handoff title; revalidate task identity.")

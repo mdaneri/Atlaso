@@ -21,6 +21,7 @@ class BatchController:
         """Initialize controller state used to inject an incomplete peer inventory."""
         self.calls: list[tuple[str, dict]] = []
         self.pending_pr: int | None = None
+        self.title_capability_unavailable = False
 
     def call(self, operation: str, payload: dict) -> dict:
         """Return a batch-bound inventory or persisted title readback.
@@ -53,6 +54,8 @@ class BatchController:
                                      "head_sha": "b" * 40, "event": "push"}],
             }
         assert operation == "task.title"
+        if self.title_capability_unavailable:
+            return {"capability": "unavailable", "capability_evidence": "No supported mutable task-title control."}
         return {"persisted_readback": True, "observed_title": payload["expected_title"]}
 
 
@@ -389,6 +392,29 @@ def test_two_members_complete_with_one_title_transition_and_read_only_retry(
     assert title_calls[1]["verify_only"] is True
 
 
+def test_unavailable_title_capability_is_preserved_across_idempotent_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep title capability evidence and avoid replaying completed member mutations on retry.
+
+    Args:
+        tmp_path: Pytest-owned disposable fixture root.
+        monkeypatch: Scoped environment and Cleanup substitution.
+    """
+    controller = BatchController()
+    controller.title_capability_unavailable = True
+    batch = _make_batch(tmp_path, monkeypatch, controller, execute=True)
+    assert batch.run()["status"] == "complete"
+    assert "batch_title_done:not_applicable" in batch.anchor.gates
+    assert "batch_task_title_done" in batch.anchor.gates
+
+    retry = BatchCleanup(batch.handoff_path, batch.evidence, batch.anchor.config, True, controller)
+    assert retry.run()["status"] == "complete"
+    assert [member.state["mutations"] for member in retry.members] == [1, 1]
+    assert "batch_title_done:not_applicable" in retry.anchor.gates
+    assert "batch_task_title_done" in retry.anchor.gates
+
+
 def test_member_failure_blocks_aggregate_title_and_retry_does_not_repeat_completed_member(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -552,6 +578,37 @@ def test_real_cleanup_task_accepts_matching_complete_batch_attestation(tmp_path:
     member = _real_task_probe(tmp_path, _eligible_task_inspection())
     member.task()
     assert member.resource_evidence[0]["operation"] == "task.inspect"
+
+
+def test_real_cleanup_task_allows_original_title_after_unavailable_batch_title_control(tmp_path: Path) -> None:
+    """Allow the recorded title when batch completion is explicitly not applicable.
+
+    Args:
+        tmp_path: Pytest-owned path used as an absent worktree target.
+    """
+    result = _eligible_task_inspection()
+    result["observed_title"] = "Original recorded title"
+    member = _real_task_probe(tmp_path, result)
+    member.handoff["task_title"] = "Original recorded title"
+    anchor = type("Anchor", (), {"gates": ["batch_title_done:not_applicable", "batch_task_title_done"]})()
+    member.batch_coordinator = type("Batch", (), {"anchor": anchor})()
+    member.task()
+
+
+def test_real_cleanup_task_rejects_original_title_after_batch_title_readback(tmp_path: Path) -> None:
+    """Reject the old title after a batch title readback was already verified.
+
+    Args:
+        tmp_path: Pytest-owned path used as an absent worktree target.
+    """
+    result = _eligible_task_inspection()
+    result["observed_title"] = "Original recorded title"
+    member = _real_task_probe(tmp_path, result)
+    member.handoff["task_title"] = "Original recorded title"
+    anchor = type("Anchor", (), {"gates": ["batch_title_readback_verified", "batch_task_title_done"]})()
+    member.batch_coordinator = type("Batch", (), {"anchor": anchor})()
+    with pytest.raises(Refusal, match="Live task title differs"):
+        member.task()
 
 
 @pytest.mark.parametrize("is_batch,expected_status", [(True, "member_complete"), (False, "complete")])
