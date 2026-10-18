@@ -15,6 +15,7 @@ import sys
 import threading
 import tomllib
 import uuid
+from contextlib import ExitStack
 from pathlib import Path
 
 from scripts.completed_task_files import (
@@ -338,11 +339,20 @@ class Cleanup:
 
     def task(self) -> None:
         """Require the controller to independently reread ownership, holds, activity, and inventory."""
-        result = self.controller.call("task.inspect", {"handoff": self.handoff, "sha256": self.digest,
+        payload = {"handoff": self.handoff, "sha256": self.digest,
                                                        "config": str(self.config), "configured_root": str(self.root),
                                                        "evidence": str(self.evidence),
-                                                       "mode": "execute" if self.execute else "preview"})
+                                                       "mode": "execute" if self.execute else "preview"}
+        binding = getattr(self, "batch_binding", None)
+        if binding:
+            payload["batch"] = binding
+        result = self.controller.call("task.inspect", payload)
         require(result.get("handoff_sha256") == self.digest, "Controller did not bind this handoff.")
+        if binding:
+            require(result.get("batch_sha256") == binding["batch_sha256"]
+                    and result.get("batch_identity_verified") is True
+                    and result.get("batch_membership_complete") is True,
+                    "Complete independently verified batch membership is required.")
         for field in ("identity_verified", "exclusive_ownership_verified", "idle", "unpinned",
                       "holds_clear", "downstream_clear", "inventory_verified", "post_merge_complete",
                       "reviews_complete", "supported_tools_used"):
@@ -367,6 +377,11 @@ class Cleanup:
         if not self.target.exists() and not self.git("for-each-ref", "--format=%(objectname)", f"refs/heads/{self.branch}") \
                 and not self.git("ls-remote", "--refs", "origin", f"refs/heads/{self.branch}"):
             allowed_titles.add(self.expected_title)
+        batch = getattr(self, "batch_coordinator", None)
+        if batch is not None and ("batch_title_readback_verified" in batch.anchor.gates
+                                  or ("batch_task_title_done" in batch.anchor.gates
+                                      and "batch_title_done:not_applicable" not in batch.anchor.gates)):
+            allowed_titles = {self.expected_title}
         require(result.get("observed_title") in allowed_titles,
                 "Live task title differs from the recorded handoff title; revalidate task identity.")
         self.resource_evidence.append({"operation": "task.inspect", "evidence_refs": result["evidence_refs"]})
@@ -382,6 +397,9 @@ class Cleanup:
 
     def eligibility(self) -> None:
         """Independently verify live GitHub identity, issues, current main reachability, and task state."""
+        batch = getattr(self, "batch_coordinator", None)
+        if batch is not None:
+            batch.preflight()
         require(hashlib.sha256(read_handoff(self.handoff_path)).hexdigest() == self.digest,
                 "Handoff changed during execution; preserve remaining resources and restart verification.")
         ordinary(self.repo)
@@ -628,22 +646,38 @@ class Cleanup:
             scopes[resource["id"]] = current
         return scopes
 
-    def verify_directory_release(self) -> None:
-        """Reject filesystem directories Git cannot report, including empty locks and artifacts."""
+    def verify_directory_release(self, *, excluded_scopes: tuple[Path, ...] = ()) -> None:
+        """Reject residue outside tracked source and already validated resource scopes.
+
+        Args:
+            excluded_scopes: Checked owning-tool scopes admitted only during read-only batch preflight.
+        """
         if not self.target.exists():
             return
+        excluded = tuple(scope for scope in excluded_scopes if beneath(scope, self.target))
         tracked = self.git("-C", str(self.target), "ls-files", "-z").split("\0")
         source_files = {Path(entry) for entry in tracked if entry}
         source_directories = {parent for entry in tracked if entry for parent in Path(entry).parents}
         for parent, directories, files in os.walk(self.target, followlinks=False):
             for name in files:
-                path = ordinary(Path(parent) / name)
+                path = Path(parent) / name
+                if any(path.is_relative_to(scope) for scope in excluded):
+                    continue
+                ordinary(path)
                 require(path.relative_to(self.target) in source_files or path == self.target / ".git",
                         "Unreleased file remains outside tracked source; reconcile its inventory and owning-tool release.")
-            for name in directories:
-                path = ordinary(Path(parent) / name)
+            for name in directories[:]:
+                path = Path(parent) / name
+                if any(path.is_relative_to(scope) for scope in excluded):
+                    directories.remove(name)
+                    continue
+                ordinary(path)
                 require(path.relative_to(self.target) in source_directories,
                         "Unreleased directory remains outside tracked source; reconcile its inventory and owning-tool release.")
+        ignored = self.git("-C", str(self.target), "ls-files", "--others", "--ignored", "--exclude-standard", "-z")
+        require(all(any((self.target / name).is_relative_to(scope) for scope in excluded)
+                    for name in ignored.split("\0") if name),
+                "Unreleased ignored files remain outside validated resource scopes; reconcile inventory before cleanup.")
 
     def generated_path(self, resource: dict) -> Path:
         """Validate a generated scope even when a previously released root is absent.
@@ -815,7 +849,9 @@ class Cleanup:
         self.proposed += [{"remote_ref": self.branch, "expected_sha": self.head},
                           {"worktree": str(self.target), "local_ref": self.branch}]
         expected = self.expected_title
-        self.proposed.append({"task_id": self.handoff["task_id"], "title": expected})
+        batch = getattr(self, "batch_coordinator", None)
+        if batch is None:
+            self.proposed.append({"task_id": self.handoff["task_id"], "title": expected})
         if not self.execute:
             return {"status": "preview", "proposed": self.proposed, "gates": [], "handoff_sha256": self.digest}
         self.eligibility()
@@ -839,6 +875,8 @@ class Cleanup:
         require(not self.target.exists() and not any(Path(item["worktree"]) == self.target for item in self.worktrees()),
                 "Worktree path or registration remains; retry only after independent reconciliation.")
         self.task()
+        if batch is not None:
+            batch.preflight()
         require(not any(item.get("branch") == f"refs/heads/{self.branch}" for item in self.worktrees()),
                 "Local branch is referenced by a worktree; preserve it.")
         local = self.git("for-each-ref", "--format=%(objectname)", f"refs/heads/{self.branch}")
@@ -853,6 +891,9 @@ class Cleanup:
         self.record("local_task_branch_absent")
         self.record("worktree_removed")
         self.eligibility()
+        if batch is not None:
+            self.record("member_complete")
+            return {"status": "member_complete", "gates": self.gates, "handoff_sha256": self.digest}
         result = self.controller.call("task.title", {"task_id": self.handoff["task_id"], "expected_title": expected,
                                                      "handoff_sha256": self.digest})
         if result.get("capability") == "unavailable":
@@ -872,6 +913,174 @@ class Cleanup:
         return {"status": "complete", "gates": self.gates, "handoff_sha256": self.digest}
 
 
+class BatchCleanup:
+    """Coordinate immutable single-task handoffs without exposing a standalone defer-title bypass."""
+
+    def __init__(self, handoff: Path, evidence: Path, config: Path, execute: bool, controller: Controller) -> None:
+        """Validate the complete batch and protect every member before any transition.
+
+        Args:
+            handoff: Immutable schema-2 manifest referencing the schema-1 handoffs by hash.
+            evidence: Durable batch journal directory outside every disposable root.
+            config: Active supported Codex configuration.
+            execute: Select guarded execution instead of read-only preview.
+            controller: Live independent task/resource bridge.
+        """
+        self.handoff_path = ordinary(handoff)
+        raw = read_handoff(handoff)
+        self.digest = hashlib.sha256(raw).hexdigest()
+        self.handoff = json.loads(raw)
+        require(isinstance(self.handoff, dict) and set(self.handoff) ==
+                {"schema", "task_id", "task_title", "description", "handoffs"}
+                and self.handoff["schema"] == 2, "Invalid bounded batch schema.")
+        entries = self.handoff["handoffs"]
+        require(isinstance(entries, list) and 2 <= len(entries) <= 16, "A batch requires two to sixteen exact handoffs.")
+        self.root = configured_root(config)
+        self.evidence = ordinary(evidence)
+        require(beneath(handoff, self.root) and beneath(evidence, self.root),
+                "Batch manifest and evidence must stay beneath the configured root.")
+        self.execute = execute
+        self.controller = controller
+        self.members: list[Cleanup] = []
+        self._checking = False
+        for entry in entries:
+            require(isinstance(entry, dict) and set(entry) == {"path", "sha256"}
+                    and isinstance(entry["sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]),
+                    "Invalid immutable batch member reference.")
+            path = ordinary(Path(entry["path"]))
+            child_raw = read_handoff(path)
+            require(hashlib.sha256(child_raw).hexdigest() == entry["sha256"], "Batch member handoff changed.")
+            # Separate batch journals cannot consume or overwrite a prior standalone journal.
+            member = Cleanup(path, evidence / self.digest / entry["sha256"], config, execute, controller)
+            require(member.digest == entry["sha256"], "Batch member changed while binding its cleanup journal.")
+            for key in ("task_id", "task_title", "description"):
+                require(member.handoff[key] == self.handoff[key], "Batch task identity, title or description differs.")
+            if self.members:
+                require(member.repo == self.members[0].repo and member.repository == self.members[0].repository,
+                        "Batch members must share one repository and primary checkout.")
+            require(all(member.handoff["pr"] != previous.handoff["pr"] and member.branch != previous.branch
+                        and not member.target.is_relative_to(previous.target)
+                        and not previous.target.is_relative_to(member.target) for previous in self.members),
+                    "Duplicate or overlapping PR, branch or worktree in batch.")
+            self.members.append(member)
+        self.anchor = self.members[0]
+        issues = sorted({issue for member in self.members for issue in member.handoff["issues"]})
+        prs = sorted(member.handoff["pr"] for member in self.members)
+        try:
+            self.expected_title = completed_task_title(self.handoff["description"], issues, prs)
+        except ValueError as exc:
+            raise Refusal(str(exc)) from exc
+        self.batch_binding = {"batch_sha256": self.digest, "manifest": str(handoff), "members": [
+            {"handoff_sha256": member.digest, "pr": member.handoff["pr"], "worktree": str(member.target),
+             "branch": member.branch} for member in self.members]}
+        protected = [self.handoff_path, self.evidence, *[member.handoff_path for member in self.members]]
+        protected.extend(Path(resource["ownership_manifest"]["path"])
+                         for member in self.members for resource in member.handoff["resources"])
+        require(all(not path.is_relative_to(member.target) for path in protected for member in self.members),
+                "Batch metadata must survive outside every member worktree.")
+        for member in self.members:
+            member.expected_title = self.expected_title
+            member.batch_binding = self.batch_binding
+            member.batch_coordinator = self
+        identity = ["github.com", self.anchor.repository.lower(), self.handoff["task_id"], "batch"]
+        self.lock_digest = hashlib.sha256(json.dumps(identity, separators=(",", ":")).encode()).hexdigest()
+
+    @property
+    def gates(self) -> list[str]:
+        """Expose per-member progress without treating a single removed worktree as task completion."""
+        return [f"pr:{member.handoff['pr']}:{gate}" for member in self.members for gate in member.gates]
+
+    @property
+    def proposed(self) -> list[dict]:
+        """Expose one aggregate title after all member proposals."""
+        return [*[item for member in self.members for item in member.proposed],
+                {"task_id": self.handoff["task_id"], "title": self.expected_title}]
+
+    def preflight(self, *, full: bool = False) -> None:
+        """Revalidate every peer before a member can pass a destructive transition boundary.
+
+        Args:
+            full: Include read-only resource capability and cross-member scope inspection.
+        """
+        if self._checking:
+            return
+        self._checking = True
+        try:
+            require(hashlib.sha256(read_handoff(self.handoff_path)).hexdigest() == self.digest,
+                    "Batch manifest changed; preserve remaining members.")
+            for member in self.members:
+                member.eligibility()
+                for resource in member.handoff["resources"]:
+                    member.validate_resource_identity(resource)
+                member.verify_resources_absent(completed_only=True)
+            scopes: list[Path] = []
+            protected = [self.handoff_path, self.evidence, self.anchor.repo, self.anchor.config,
+                         *[member.target for member in self.members], *[member.handoff_path for member in self.members],
+                         *[member.evidence for member in self.members]]
+            protected.extend(Path(resource["ownership_manifest"]["path"])
+                             for member in self.members for resource in member.handoff["resources"])
+            for member in self.members:
+                member_scopes = member.inventory_scopes()
+                for values in member_scopes.values():
+                    for value in values:
+                        scope = ordinary(Path(value))
+                        require(not any(path.is_relative_to(scope) for path in protected)
+                                and not any(scope.is_relative_to(peer.target) for peer in self.members if peer is not member)
+                                and not any(scope.is_relative_to(prior) or prior.is_relative_to(scope) for prior in scopes),
+                                "Batch removal scopes overlap or contain protected peer state.")
+                        scopes.append(scope)
+                member.verify_directory_release(excluded_scopes=tuple(
+                    Path(value) for values in member_scopes.values() for value in values))
+                if not full:
+                    continue
+                previous_execute, previous_proposed = member.execute, member.proposed[:]
+                try:
+                    member.execute = False
+                    member.resources()
+                finally:
+                    member.execute, member.proposed = previous_execute, previous_proposed
+        finally:
+            self._checking = False
+
+    def run(self) -> dict:
+        """Hold group and all member locks, then finish exactly one aggregate title transition."""
+        with ExitStack() as locks:
+            if self.execute:
+                locks.enter_context(cleanup_lock(self.root, self.lock_digest))
+                for member in sorted(self.members, key=lambda member: member.lock_digest):
+                    locks.enter_context(cleanup_lock(self.root, member.lock_digest))
+                    member.gates, member.resource_evidence = [], []
+                    member.restore_gates()
+            self.preflight(full=True)
+            for member in self.members:
+                member.resource_evidence.append({"operation": "batch.binding", **self.batch_binding})
+                member.reconcile()
+            if not self.execute:
+                return {"status": "preview", "gates": [], "proposed": self.proposed, "handoff_sha256": self.digest}
+            self.preflight()
+            required = {"validation_resources_released", "remote_branch_absent", "local_task_branch_absent", "worktree_removed"}
+            require(all(required <= set(member.gates) for member in self.members),
+                    "Every batch member must finish resource, ref and worktree removal before Done.")
+            result = self.controller.call("task.title", {
+                "task_id": self.handoff["task_id"], "expected_title": self.expected_title,
+                "handoff_sha256": self.digest, "batch": self.batch_binding,
+                "verify_only": "batch_title_readback_verified" in self.anchor.gates})
+            if result.get("capability") == "unavailable":
+                require(result.get("capability_evidence"), "Unavailable title controls require concrete capability evidence.")
+                self.anchor.resource_evidence.append({"operation": "batch.title", "capability_evidence": result["capability_evidence"]})
+                self.anchor.record("batch_title_done:not_applicable")
+            else:
+                require(result.get("persisted_readback") is True, "Batch title requires supported persisted readback.")
+                try:
+                    verify_completed_task_title(self.expected_title, result.get("observed_title", ""))
+                except ValueError as exc:
+                    raise Refusal(str(exc)) from exc
+                self.anchor.record("batch_title_readback_verified")
+            self.preflight()
+            self.anchor.record("batch_task_title_done")
+            return {"status": "complete", "gates": self.gates, "handoff_sha256": self.digest}
+
+
 def main() -> int:
     """Expose a JSON-lines protocol with structured refusals and no guard bypass."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -882,7 +1091,9 @@ def main() -> int:
     args = parser.parse_args()
     cleanup = None
     try:
-        cleanup = Cleanup(args.handoff, args.evidence, args.config, args.execute, Controller())
+        document = json.loads(read_handoff(args.handoff))
+        cleanup_type = BatchCleanup if isinstance(document, dict) and document.get("schema") == 2 else Cleanup
+        cleanup = cleanup_type(args.handoff, args.evidence, args.config, args.execute, Controller())
         result = cleanup.run()
     except (Refusal, FileRefusal, ValueError, KeyError, TypeError, OSError) as exc:
         result = {"status": "refused", "gates": cleanup.gates if cleanup else [],

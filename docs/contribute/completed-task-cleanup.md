@@ -113,9 +113,10 @@ resource. Its immediate children are limited to `pytest`, `markdown`, `mypy`, `r
 original creation receipt and keep the original ownership manifest and hash. A later link scan does not create
 per-link provenance or replace the root's original receipt; missing original evidence means preserve the root.
 
-Primary-checkout restoration, private advisory cleanup, non-task-owned branch/checkout exceptions, multi-PR tasks, and
-issue-less Dependabot tasks retain their existing policy workflows. This entry point refuses unsupported eligibility
-instead of relaxing their gates. Do not use its directory removal primitive for those exceptions.
+Primary-checkout restoration, private advisory cleanup, non-task-owned branch/checkout exceptions, and issue-less
+Dependabot tasks retain their existing policy workflows. A single Codex task spanning multiple pull requests follows the
+schema-2 batch workflow below. This entry point refuses unsupported eligibility instead of relaxing its gates. Do not
+use its directory removal primitive for those exceptions.
 
 ## Preview and execute
 
@@ -496,6 +497,34 @@ A stale, truncated, missing, or duplicated completion marker blocks Done and req
 after revalidating earlier gates. Do not repeat destructive cleanup on a title retry. If title controls are unavailable,
 retain the existing capability-evidence exception. Private remediation keeps its sanitized title and private evidence;
 never pass advisory identifiers to this public formatter, and still require exact supported-tool title readback.
+
+### Batch cleanup for tasks with multiple pull requests
+
+When one Codex task owns multiple pull requests, use the batch cleanup entry point with a schema-2 manifest containing
+exactly `schema`, `task_id`, `task_title`, `description`, and `handoffs`. `schema` is integer `2`; `handoffs` contains
+2–16 entries, each exactly an absolute child `path` and its raw-file `sha256`. Each child remains a schema-1 cleanup
+handoff. The batch and every child must bind the same task ID, title, description, repository, and primary checkout;
+PR numbers, branches, and worktrees must be distinct. Every removal scope must be disjoint, and no protected batch,
+child, or ownership evidence may be inside any removal root.
+
+The batch controller independently inventories the full task and verifies all members before execution. For every
+`task.inspect`, return `batch_identity_verified: true`, the exact `batch_sha256`, and
+`batch_membership_complete: true` only
+when the complete task-to-PR inventory and every child's identity, merge, issue, review, resource, and lifecycle gates
+have been verified. All children are preflighted before the first mutation. Execution holds the batch lock plus every
+member lock, revalidates the complete batch before each member transition, and records child progress as
+`member_complete`; child journals never record `task_title_done`. Per-member journals live under
+`<evidence>/<batch_sha256>/<child_handoff_sha256>` and stay bound to each child's original handoff digest.
+Every preflight checks ignored files and empty untracked directories outside the validated resource removal scopes.
+It also rechecks absence for resources already released, so later residue or reappearing resources block further cleanup.
+
+After every member has passed its resource, remote-ref, worktree, and local-ref gates, refresh the complete inventory
+and all child eligibility evidence. Then issue one `task.title` request with the aggregate title and batch binding;
+the controller must read back the persisted title. Only the anchor member journal records
+`batch_task_title_done`. A retry reloads the original journals and revalidates all members before attempting title
+completion, so a completed child is not cleaned up again. Manifest or child digest changes, duplicate or overlapping
+members, missing PRs, pending peers, or ambiguous ownership refuse the batch before mutation or block the aggregate
+title. A single-PR task continues through the ordinary schema-1 flow and does not need a batch manifest.
 
 Terminal order:
 

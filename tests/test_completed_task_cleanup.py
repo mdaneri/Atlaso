@@ -1973,10 +1973,13 @@ def test_changed_handoff_blocks_before_mutation(cleanup: Cleanup) -> None:
     assert not cleanup.evidence.exists()
 
 
-def test_main_preserves_gates_on_late_controller_refusal(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+def test_main_preserves_gates_on_late_controller_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+) -> None:
     """The CLI returns completed gate evidence when malformed input arrives at the final title request.
 
     Args:
+        tmp_path: Pytest-owned directory for the ordinary schema-1 dispatch handoff.
         monkeypatch: Pytest fixture for scoped substitutions restored after the test.
         capsys: Pytest capture fixture for validating sanitized protocol output.
     """
@@ -1995,7 +1998,10 @@ def test_main_preserves_gates_on_late_controller_refusal(monkeypatch: pytest.Mon
             return command.Controller().call("task.title", {"task_id": "fixture-task"})
 
     monkeypatch.setattr(command, "Cleanup", lambda *args: LateRequest())
-    monkeypatch.setattr("sys.argv", ["cleanup", "--handoff", "fixture", "--evidence", "fixture", "--config", "fixture"])
+    handoff = tmp_path / "handoff.json"
+    handoff.write_text(json.dumps({"schema": 1}), encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["cleanup", "--handoff", str(handoff), "--evidence",
+                                     str(tmp_path / "evidence"), "--config", str(tmp_path / "config.toml")])
     monkeypatch.setattr("sys.stdin", io.StringIO("[]\n"))
     assert command.main() == 1
     result = json.loads(capsys.readouterr().out.splitlines()[-1])
