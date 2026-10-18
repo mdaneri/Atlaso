@@ -16044,7 +16044,9 @@ def _applied_wan_network_state(*, include_handoff_held_sources: bool = False) ->
     for family in (4, 6):
         for route in snapshot["routes"][str(family)]:
             destination = route.get("dst", "default")
-            if destination == "default" or route.get("gateway") or route.get("type", "unicast") != "unicast":
+            # Canonical numeric iproute2 output spells RTN_UNICAST as "1".
+            if (destination == "default" or route.get("gateway")
+                    or str(route.get("type", "unicast")) not in {"unicast", "1"}):
                 continue
             network = str(ip_network(destination, strict=False))
             key = (route.get("dev", ""), network)
@@ -33010,8 +33012,9 @@ def _verify_management_handoff_migrated_defaults(state: dict, payload: dict | No
             ]
             ready = False
             for route in applied["default_routes"]:
+                # The isolated observation uses ip -N, including numeric types.
                 if (route["family"] != family or route.get("dev") != name
-                        or route.get("type", "unicast") != "unicast"
+                        or str(route.get("type", "unicast")) not in {"unicast", "1"}
                         or set(route.get("flags", [])) & {"dead", "linkdown"}):
                     continue
                 try:

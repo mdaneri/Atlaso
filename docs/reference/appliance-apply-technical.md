@@ -517,6 +517,10 @@ rules and ordinary static routes, and retains connected routes and local-source 
 for Access interfaces exposing management remain in table 200 as well as main, preserving off-subnet management replies
 without enabling forwarding. Applied intent records management exposure separately from pending settings. Older intent
 without that metadata requires Network to be reapplied before WAN can classify a management default.
+Native WAN observations use numeric iproute2 JSON. Connected-route ownership and candidate default readiness admit
+the numeric unicast type (`1`) as well as its named form, while rejecting other route types. During a same-address
+management-to-Access handoff, the exact held source remains in table 100 until the usable candidate default in table 200
+passes gateway, interface, metric, and link-state checks.
 After migration, Network owns connected routes and dedicated-management defaults; WAN-only
 Apply does not rewrite them from pending Network edits.
 Static-route removal uses the saved metric and next hop when its destination and interface overlap a connected route;
