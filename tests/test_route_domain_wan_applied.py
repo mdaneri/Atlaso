@@ -449,13 +449,15 @@ def test_wan_projection_reports_bounded_failed_stage(helper, modern, monkeypatch
         helper._applied_wan_network_state()
 
 
-def test_same_address_handoff_requires_candidate_default_before_source_switch(helper, modern, tmp_path):
+@pytest.mark.parametrize("route_type", [None, "unicast", "1", 1], ids=["default", "named", "numeric-string", "numeric-int"])
+def test_same_address_handoff_requires_candidate_default_before_source_switch(helper, modern, tmp_path, route_type):
     """Only an exact held old source may stage a usable Access default.
 
     Args:
         helper: Loaded privileged helper.
         modern: Admitted native routing snapshot.
         tmp_path: Owned candidate WAN configuration directory.
+        route_type: Native unicast representation returned by iproute2.
     """
     state, _commands = modern
     old_interface = {"name": "eth1", "mac": "02:00:00:00:00:01", "table": 100}
@@ -470,8 +472,11 @@ def test_same_address_handoff_requires_candidate_default_before_source_switch(he
     with pytest.raises(ValueError, match="candidate IPv4 default is not ready"):
         helper._verify_management_handoff_migrated_defaults(previous)
 
-    state["routes"]["4"].append({"dst": "default", "dev": "eth1", "table": 200,
-                                  "gateway": "192.0.2.1", "metric": 100})
+    native_default = {"dst": "default", "dev": "eth1", "table": 200,
+                      "gateway": "192.0.2.1", "metric": 100}
+    if route_type is not None:
+        native_default["type"] = route_type
+    state["routes"]["4"].append(native_default)
     helper._verify_management_handoff_migrated_defaults(previous)
 
     candidate = tmp_path / "candidate-wan.conf"
@@ -490,6 +495,61 @@ def test_same_address_handoff_requires_candidate_default_before_source_switch(he
     assert ("eth1", "192.0.2.0/24") not in helper._applied_wan_network_state(
         include_handoff_held_sources=True,
     )["prefixes"]
+
+
+@pytest.mark.parametrize(
+    ("native_fields", "candidate_gateway"),
+    [
+        ({"type": "blackhole"}, "192.0.2.1"),
+        ({"type": 6}, "192.0.2.1"),
+        ({"type": "unreachable"}, "192.0.2.1"),
+        ({"type": 7}, "192.0.2.1"),
+        ({"flags": ["dead"]}, "192.0.2.1"),
+        ({"flags": ["linkdown"]}, "192.0.2.1"),
+        ({}, "192.0.2.3"),
+    ],
+    ids=["blackhole", "numeric-blackhole", "unreachable", "numeric-unreachable", "dead", "linkdown", "wrong-gateway"],
+)
+def test_same_address_handoff_rejects_unusable_native_default(helper, modern, tmp_path, native_fields,
+                                                              candidate_gateway):
+    """Non-unicast, failed, and mismatched defaults cannot authorize migration.
+
+    Args:
+        helper: Loaded privileged helper.
+        modern: Admitted native routing snapshot.
+        tmp_path: Owned candidate WAN configuration directory.
+        native_fields: Unsafe native route fields under test.
+        candidate_gateway: Expected candidate next hop.
+    """
+    state, _commands = modern
+    old_interface = {"name": "eth1", "mac": "02:00:00:00:00:01", "table": 100}
+    state["intent"]["held_addresses"] = [{"interface": old_interface, "address": "192.0.2.10"}]
+    state["sources"]["192.0.2.10"] = 100
+    previous = {"previous_management_routing": {"eth1": {
+        "table": 100, "mac": old_interface["mac"], "cidrs": ["192.0.2.10/24"],
+        "routes": [{"destination": "0.0.0.0/0", "gateway": "192.0.2.1"}],
+    }}}
+    candidate = tmp_path / "candidate-wan.conf"
+    candidate.write_text("[routes]\nroute=0.0.0.0/0\n  interface=eth1\n"
+                         f"  gateway={candidate_gateway}\n  metric=100\n  enabled=true\n", encoding="utf-8")
+    state["routes"]["4"].append({"dst": "default", "dev": "eth1", "table": 200,
+                                  "gateway": "192.0.2.1", "metric": 100, **native_fields})
+
+    with pytest.raises(ValueError, match="candidate IPv4 default is not ready"):
+        helper._verify_management_handoff_migrated_defaults(previous, {"wan_config_path": str(candidate)})
+
+
+def test_numeric_unicast_connected_route_retains_network_ownership(helper, modern):
+    """The native integer unicast type still proves connected Network ownership.
+
+    Args:
+        helper: Loaded privileged helper.
+        modern: Admitted native routing snapshot.
+    """
+    state, _commands = modern
+    state["routes"]["4"][0]["type"] = 1
+
+    assert helper._applied_wan_network_state()["connected"][("eth1", "192.0.2.0/24")] == {0}
 
 
 @pytest.mark.parametrize("family", [4, 6])
