@@ -787,3 +787,120 @@ def test_dns_writers_reserve_unpublished_proxy_intent_atomically(client, transpo
     with SessionLocal() as db:
         assert db.scalar(select(ReverseProxy.hostname)) == "proxy.atlaso.internal"
         assert db.scalar(select(DnsRecord.id).where(DnsRecord.hostname == "distinct.atlaso.internal")) is not None
+
+
+@pytest.mark.parametrize("ending,token_bytes,accepted", [("é", 4095, True), ("中", 4096, False), ("😀", 4097, False)])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_strip_rewrite_utf8_token_boundary_is_validated_atomically(ending, token_bytes, accepted, enabled):
+    """Validate the escaped rendered token before any desired-state mutation.
+
+    Args:
+        ending: Final Unicode character selecting the exact UTF-8 byte boundary.
+        token_bytes: Size of the rendered rewrite regex parameter.
+        accepted: Whether the parameter fits NGINX's configuration reader.
+        enabled: Whether the desired proxy publishes its route immediately.
+    """
+    from pydantic import ValidationError
+    from sqlalchemy import select
+
+    from atlaso.app.models import AuditEvent, ReverseProxyRoute
+    from atlaso.app.reverse_proxy_schemas import ReverseProxyCreate
+    from atlaso.app.services.reverse_proxies import (
+        runtime_snapshot,
+        save_proxy,
+        validate_proxy,
+        validation_context,
+    )
+    from tests.services.test_reverse_proxies import create_db, payload
+
+    prefix = "/" + "😀" * 1021 + ending
+    assert len(("^" + re.escape(prefix) + "/?(.*)$").encode("utf-8")) == token_bytes
+    engine, db = create_db()
+    try:
+        value = payload(enabled=enabled, scheme="http", port=8084, redirect_http=False)
+        value["routes"][0].update(path_prefix=prefix, path_behavior="strip")
+        if accepted:
+            proxy = save_proxy(db, value, actor="operator")
+            snapshot = runtime_snapshot(db)
+            manifest = transport_manifest(snapshot, [])
+            assert validated_snapshot(render_proxy_servers(snapshot, manifest)) == (snapshot, manifest)
+            assert proxy.routes[0].path_prefix == prefix
+        else:
+            with pytest.raises(ValidationError, match="rewrite token"):
+                ReverseProxyCreate.model_validate(value)
+            with pytest.raises(ValueError, match="rewrite token"):
+                save_proxy(db, value, actor="operator")
+            assert runtime_snapshot(db) == []
+            assert list(db.scalars(select(AuditEvent.id))) == []
+            raw = proxy_payload()
+            raw["routes"] = [dict(raw["routes"][0], path_prefix=prefix, path_behavior="strip")]
+            with pytest.raises(ValueError, match="rewrite token"):
+                render_proxy_servers([raw], transport_manifest([raw], []))
+            # Direct model validation must enforce the same bound for existing rows.
+            valid = payload(enabled=enabled, scheme="http", port=8084, redirect_http=False)
+            proxy = save_proxy(db, valid, actor="operator")
+            proxy.routes[0].path_prefix = prefix
+            proxy.routes[0].path_behavior = "strip"
+            assert any("rewrite token" in error for error in validate_proxy(proxy, validation_context(db), [proxy], exclude_id=proxy.id))
+            db.rollback()
+            assert db.scalar(select(ReverseProxyRoute.path_prefix)) == "/"
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("behavior,trailing", [("preserve", False), ("strip", True)])
+def test_full_unicode_prefix_without_rewrite_remains_supported(behavior, trailing):
+    """Keep maximum code-point paths when stripping needs no rewrite parameter.
+
+    Args:
+        behavior: Existing forwarding path policy.
+        trailing: Whether stripping uses NGINX's native trailing-slash substitution.
+    """
+    from atlaso.app.services.reverse_proxies import runtime_snapshot, save_proxy
+    from tests.services.test_reverse_proxies import create_db, payload
+
+    engine, db = create_db()
+    try:
+        prefix = "/" + "\U0001f600" * (1022 if trailing else 1023) + ("/" if trailing else "")
+        value = payload(enabled=True, scheme="http", port=8084, redirect_http=False)
+        value["routes"][0].update(path_prefix=prefix, path_behavior=behavior)
+        save_proxy(db, value, actor="operator")
+        snapshot = runtime_snapshot(db)
+        manifest = transport_manifest(snapshot, [])
+        rendered = render_proxy_servers(snapshot, manifest)
+        assert "    rewrite " not in rendered
+        assert validated_snapshot(rendered) == (snapshot, manifest)
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("accepted", [False, True])
+def test_native_nginx_strip_rewrite_token_byte_boundary(tmp_path, accepted):
+    """Check the documented buffer boundary with a real syntax-only NGINX process.
+
+    Args:
+        tmp_path: Pytest-owned retained validation subdirectory.
+        accepted: Select the final supported byte size or first unsupported size.
+    """
+    import shutil
+    import subprocess
+
+    nginx = shutil.which("nginx")
+    if nginx is None:
+        pytest.skip("Native NGINX executable is unavailable on this host.")
+    prefix = "/" + "\U0001f600" * 1021 + ("\u00e9" if accepted else "\u4e2d")
+    pattern = "^" + re.escape(prefix) + "/?(.*)$"
+    assert len(pattern.encode("utf-8")) == (4095 if accepted else 4096)
+    config = tmp_path / "nginx.conf"
+    config.write_text(
+        "error_log stderr; pid nginx.pid; events {} http { access_log off; "
+        "server { listen 127.0.0.1:18080; location / { rewrite " + pattern + " /$1 break; } } }",
+        encoding="utf-8",
+    )
+    result = subprocess.run([nginx, "-t", "-p", str(tmp_path), "-c", str(config)],
+                            capture_output=True, text=True, timeout=15)
+    assert (result.returncode == 0) is accepted, result.stderr
+    if not accepted:
+        assert "too long parameter" in result.stderr

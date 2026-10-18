@@ -16,6 +16,20 @@ from pydantic import (
 
 from atlaso.app.schemas import validate_firewall_description
 
+MAX_NGINX_PARAMETER_BYTES = 4095
+
+
+def strip_rewrite_pattern(prefix: str) -> str:
+    """Build a literal strip regex that fits NGINX's 4096-byte token buffer.
+
+    Args:
+        prefix: Validated non-trailing-slash path prefix to remove upstream.
+    """
+    pattern = "^" + re.escape(prefix) + "/?(.*)$"
+    if len(pattern.encode("utf-8")) > MAX_NGINX_PARAMETER_BYTES:
+        raise ValueError("Strip path prefix exceeds the 4095-byte escaped UTF-8 rewrite token limit.")
+    return pattern
+
 
 class ReverseProxyListener(BaseModel):
     """Select one exact eligible appliance interface address."""
@@ -137,6 +151,13 @@ class ReverseProxyRouteInput(BaseModel):
             ):
                 raise ValueError("Enter an upstream DNS hostname or IP literal without a URL, port, or credentials.") from None
             return normalized
+
+    @model_validator(mode="after")
+    def validate_strip_rewrite(self) -> "ReverseProxyRouteInput":
+        """Reject strip patterns that NGINX cannot parse before desired-state writes."""
+        if self.path_behavior == "strip" and not self.path_prefix.endswith("/"):
+            strip_rewrite_pattern(self.path_prefix)
+        return self
 
     @model_validator(mode="after")
     def validate_trust_choice(self) -> "ReverseProxyRouteInput":

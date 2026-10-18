@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from atlaso.app import models
-from atlaso.app.reverse_proxy_schemas import ReverseProxyCreate
+from atlaso.app.reverse_proxy_schemas import ReverseProxyCreate, strip_rewrite_pattern
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.port_forwarding import ListenerClaim, listener_claims
 from atlaso.app.services.traffic_publishing import nat_targets
@@ -699,6 +699,11 @@ def validate_proxy(
             or any(segment in {".", ".."} for segment in path.split("/"))
         ):
             errors.append("Use an absolute path prefix without encoded, dot, backslash or ambiguous path segments.")
+        if getattr(route, "path_behavior", "") == "strip" and not path.endswith("/"):
+            try:
+                strip_rewrite_pattern(path)
+            except ValueError as exc:
+                errors.append(str(exc))
         if path.startswith("/") and _reserved_route_path(path):
             errors.append("Reverse-proxy routes cannot shadow reserved Atlaso browser or machine paths.")
         if any(_route_overlap(path, other) for other in paths):

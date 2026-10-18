@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from atlaso.app import models
+from atlaso.app.reverse_proxy_schemas import strip_rewrite_pattern
 from atlaso.app.services.ca import (
     CA_SERVER_PROFILE_NAME,
     ManagedCertificateSpec,
@@ -290,8 +291,8 @@ def render_proxy_servers(proxies: list[dict[str, Any]], manifest: dict[str, Any]
                     # URI substitution would prepend '/' to a suffix that
                     # already starts with '/'. Stay in the selected location
                     # and pass the changed URI, retaining the original args.
-                    pattern = re.escape(route["path_prefix"])
-                    rewrite = [f"    rewrite ^{pattern}/?(.*)$ /$1 break;"]
+                    pattern = strip_rewrite_pattern(route["path_prefix"])
+                    rewrite = [f"    rewrite {pattern} /$1 break;"]
                     suffix = ""
                 lines.extend([f"  # Upstream TLS policy: {route['trust_mode']}{' - WARNING: certificate verification is disabled' if route['trust_mode'] == 'insecure' else ''}",
                               f"  location {route['path_prefix']} {{", *rewrite, f"    proxy_pass http://unix:{path}{suffix};",

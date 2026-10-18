@@ -131,7 +131,8 @@ remain without errors, including before browser scripts run; review these warnin
    reserved and IPv4-mapped IPv6 addresses. Legacy shortened, octal and hexadecimal numeric spellings are rejected
    on Identity and Routes and during desired-state save or archive restore; use canonical IP literals for upstreams.
    Route prefixes must not overlap one another or reserved Atlaso and machine paths. The 1024-character limit counts
-   Unicode code points, including one character per astral symbol.
+   Unicode code points, including one character per astral symbol. Strip prefixes without a trailing slash also
+   require their escaped rewrite parameter to fit within 4095 UTF-8 bytes; shorten the prefix if that limit is exceeded.
    Atlaso reserves protocol roots, including favicon, certificate downloads, OAuth/OpenID/OIDC, and the `/PROD` prefix;
    catch-all application routes reject requests for these namespaces before forwarding them upstream.
    The Routes step rejects encoded
