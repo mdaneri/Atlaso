@@ -52,7 +52,8 @@ Management UI exposure on access interfaces and VLANs, participate in the same s
 a management address and port through a different interface selection, even when duplicate-address checks are disabled.
 Every observed management IPv4 address participates, including secondary addresses on static or DHCP interfaces.
 Runtime address observations remain excluded from portable settings archives.
-Web Terminal HTTPS selections, CA browser HTTP/HTTPS, and Depot, Registry and Network Boot directory HTTP ingress
+Web Terminal HTTPS selections include secondary observed IPv4 and preferred automatic IPv6 addresses.
+CA browser HTTP/HTTPS, and Depot, Registry and Network Boot directory HTTP ingress
 participate too, including directory port 80 when the service uses a custom protocol port. Appliance Settings saves and
 archive preflight reject conflicting terminal selections before changing settings, proxies or audit records.
 API settings writers return **409 Conflict** for this case.

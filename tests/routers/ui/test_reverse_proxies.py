@@ -964,7 +964,8 @@ def test_vlan_writers_reject_new_management_socket_scope(client, operation, addr
 @pytest.mark.parametrize("transport", ["api", "ui"])
 @pytest.mark.parametrize("address", ["192.168.87.10", "2001:db8:87::10"])
 @pytest.mark.parametrize("selection_change", [False, True])
-def test_appliance_settings_reject_cross_scope_terminal_https(client, transport, address, selection_change):
+@pytest.mark.parametrize("observed", [False, True])
+def test_appliance_settings_reject_cross_scope_terminal_https(client, transport, address, selection_change, observed):
     """Refuse terminal selection changes atomically even when the FQDN is unchanged.
 
     Args:
@@ -972,6 +973,7 @@ def test_appliance_settings_reject_cross_scope_terminal_https(client, transport,
         transport: API or form writer.
         address: Duplicate IPv4 or IPv6 destination.
         selection_change: Change scopes on an already enabled terminal.
+        observed: Duplicate address is a secondary observation on the selected interface.
     """
     import json
 
@@ -1007,6 +1009,11 @@ def test_appliance_settings_reject_cross_scope_terminal_https(client, transport,
             interface.ip_cidr, interface.ipv6_cidr = "192.168.87.10/24", "2001:db8:87::10/64"
             interface.ipv6_enabled = True
             interface.check_duplicate_ip_addresses = False
+        if observed:
+            selected = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+            selected.ip_cidr, selected.ipv6_cidr = "192.168.87.11/24", None
+            selected.host_ip_cidrs = ["192.168.87.11/24", "192.168.87.10/24"]
+            selected.host_ipv6_cidrs = ["2001:db8:87::11/64", "2001:db8:87::10/64"]
         settings = db.scalar(select(ApplianceSettings))
         settings.management_https_enabled = True
         settings.web_terminal_enabled = selection_change

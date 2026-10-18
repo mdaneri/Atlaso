@@ -1988,3 +1988,51 @@ def test_applied_management_bindings_include_secondary_ipv4(method):
     finally:
         db.close()
         engine.dispose()
+
+
+@pytest.mark.parametrize("method", ["static", "dhcp"])
+@pytest.mark.parametrize("address", ["192.168.1.10", "2001:db8:1::10"])
+@pytest.mark.parametrize("matching", [False, True])
+def test_terminal_secondary_observed_scope_guards_both_writers(method, address, matching):
+    """Use full native terminal scopes for proxy-first and terminal-first admission.
+
+    Args:
+        method: Static or DHCP address mode of the terminal interface.
+        address: Secondary IPv4 or automatic IPv6 destination.
+        matching: Proxy and terminal share one interface instead of distinct interfaces.
+    """
+    engine, db = create_db()
+    try:
+        appliance = db.scalar(select(ApplianceSettings))
+        appliance.web_terminal_enabled = False
+        access = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        access.check_duplicate_ip_addresses = False
+        access.ipv6_enabled, access.ipv6_cidr = True, "2001:db8:1::10/64"
+        other = PhysicalInterface(name="eth2", mac_address="02:00:00:00:00:03", role="access",
+                                  mode="access", admin_state="up", oper_state="up", ipv4_method=method,
+                                  ip_cidr="192.168.1.11/24" if method == "static" else None,
+                                  host_ip_cidr="192.168.1.11/24", check_duplicate_ip_addresses=False,
+                                  host_ip_cidrs=["bad-cidr", "192.168.1.11/24", "192.168.1.10/24"],
+                                  ipv6_enabled=True, ipv6_cidr=None,
+                                  host_ipv6_cidrs=["2001:db8:1::11/64", "2001:db8:1::10/64"])
+        db.add(other)
+        db.commit()
+        proxy = save_proxy(db, payload(enabled=True, port=443, redirect_http=False,
+                                      listeners=[{"interface": "eth1", "address": address}]), actor="test")
+        audits = list(db.scalars(select(AuditEvent.id)))
+        appliance.web_terminal_enabled = True
+        appliance.web_terminal_interfaces_json = json.dumps(["eth1" if matching else "eth2"])
+        db.flush()
+        if matching:
+            validate_service_listener_sockets(db)
+        else:
+            with pytest.raises(ValueError, match="Service listener conflicts"):
+                validate_service_listener_sockets(db)
+            with pytest.raises(ValueError, match="exclusive Atlaso service socket"):
+                save_proxy(db, payload(enabled=True, port=443, redirect_http=False,
+                                       listeners=[{"interface": "eth1", "address": address}]), actor="test", proxy_id=proxy.id)
+            assert list(db.scalars(select(AuditEvent.id))) == audits
+    finally:
+        db.rollback()
+        db.close()
+        engine.dispose()

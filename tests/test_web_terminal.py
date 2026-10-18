@@ -413,3 +413,19 @@ def test_selected_listener_header_is_accepted_only_from_loopback_proxy(monkeypat
     assert web_terminal._request_uses_selected_listener(headers, "127.0.0.1", ["192.168.87.32"]) is True
     assert web_terminal._request_uses_selected_listener(headers, "10.0.0.10", ["192.168.87.32"]) is False
     assert web_terminal._request_uses_selected_listener(headers, "127.0.0.1", ["192.168.88.32"]) is False
+
+
+def test_web_terminal_options_retain_and_withdraw_complete_observed_addresses():
+    """Keep secondary IPv4 and preferred IPv6 scopes without duplicates or malformed values."""
+    interface = PhysicalInterface(name="eth1", role="access", mode="access", admin_state="up", oper_state="up",
+                                  ipv4_method="static", ip_cidr="192.168.49.1/24", ipv6_enabled=True,
+                                  host_ip_cidrs=["192.168.49.1/24", "invalid", "192.168.49.2/24"],
+                                  host_ipv6_cidrs=["2001:db8::1/64", "2001:db8::2/64"])
+    assert web_terminal_interface_options([interface], [])[0]["addresses"] == [
+        "192.168.49.1", "192.168.49.2", "2001:db8::1", "2001:db8::2",
+    ]
+    interface.host_ip_cidrs = ["192.168.49.1/24"]
+    interface.host_ipv6_cidrs = ["2001:db8::1/64"]
+    assert web_terminal_interface_options([interface], [])[0]["addresses"] == ["192.168.49.1", "2001:db8::1"]
+    interface.oper_state = "missing"
+    assert web_terminal_interface_options([interface], []) == []
