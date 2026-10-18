@@ -834,6 +834,8 @@ def save_proxy(
         db.flush()
         if not 1 <= current.id <= 0xFFFFFF:
             raise ValueError("Reverse-proxy identity capacity is exhausted; contact the appliance maintainer.")
+        if any(not 1 <= route.id <= 9_999_999_999 for route in current.routes):
+            raise ValueError("Reverse-proxy route identity capacity is exhausted; contact the appliance maintainer.")
         from atlaso.app.services.reverse_proxy_publication import (
             appliance_addresses,
             validate_publication_size,

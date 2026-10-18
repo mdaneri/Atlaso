@@ -4,7 +4,7 @@ import json
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
 
 from atlaso.app.models import (
@@ -2034,5 +2034,67 @@ def test_terminal_secondary_observed_scope_guards_both_writers(method, address, 
             assert list(db.scalars(select(AuditEvent.id))) == audits
     finally:
         db.rollback()
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("editing", [False, True])
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("assigned_id", [9_999_999_999, 10_000_000_000])
+def test_save_checks_flushed_route_identity_capacity_atomically(editing, enabled, assigned_id):
+    """Reject independently advanced route IDs before publishing desired state.
+
+    Args:
+        editing: Add a route while editing an existing proxy rather than creating.
+        enabled: Whether the candidate proxy publishes a listener.
+        assigned_id: Last supported route identity or first unsupported identity.
+    """
+    from atlaso.app.models import DnsRecord
+
+    engine, db = create_db()
+    model = ReverseProxyRoute
+    try:
+        db.add(DnsRecord(hostname="retained.example.test", record_type="A", address="192.0.2.42"))
+        db.commit()
+        values = payload(scheme="http", port=8084, redirect_http=False, enabled=enabled)
+        current = save_proxy(db, values, actor="operator") if editing else None
+        proxy_id = current.id if current is not None else None
+        if current is not None:
+            values["routes"] = [
+                {**values["routes"][0], "id": current.routes[0].id, "path_prefix": "/retained"},
+                {**values["routes"][0], "path_prefix": "/new"},
+            ]
+        before = runtime_snapshot(db)
+        audits = list(db.scalars(select(AuditEvent.id).order_by(AuditEvent.id)))
+        dns = [(row.id, row.hostname, row.record_type, row.address) for row in db.scalars(select(DnsRecord).order_by(DnsRecord.id))]
+
+        def assign_advanced_id(_mapper, _connection, row):
+            """Assign the independent route sequence value during the actual insert.
+
+            Args:
+                _mapper: Mapper invoking the insertion callback.
+                _connection: Transaction connection for the insertion.
+                row: Newly inserted route receiving the retained sequence value.
+            """
+            row.id = assigned_id
+
+        event.listen(model, "before_insert", assign_advanced_id)
+        try:
+            if assigned_id <= 9_999_999_999:
+                saved = save_proxy(db, values, actor="operator", proxy_id=proxy_id)
+                assert saved.routes[-1].id == assigned_id
+                assert len(saved.routes) == (2 if editing else 1)
+                assert saved.enabled is enabled
+                assert len(list(db.scalars(select(AuditEvent.id)))) == len(audits) + 1
+            else:
+                with pytest.raises(ValueError, match="route identity capacity is exhausted"):
+                    save_proxy(db, values, actor="operator", proxy_id=proxy_id)
+                db.expire_all()
+                assert runtime_snapshot(db) == before
+                assert list(db.scalars(select(AuditEvent.id).order_by(AuditEvent.id))) == audits
+                assert [(row.id, row.hostname, row.record_type, row.address) for row in db.scalars(select(DnsRecord).order_by(DnsRecord.id))] == dns
+        finally:
+            event.remove(model, "before_insert", assign_advanced_id)
+    finally:
         db.close()
         engine.dispose()
