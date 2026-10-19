@@ -5,6 +5,7 @@ import importlib.util
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -272,3 +273,51 @@ def test_provisional_upgrade_preserves_original_main_for_transaction_rollback(tm
     monkeypatch.setattr(helper, "_nginx_test_command", lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "", ""))
     assert helper._guard_interrupted_release_startup()["success"] is True
     assert main.read_text(encoding="utf-8") == source
+
+
+def test_concurrent_startup_waits_then_rechecks_completed_migration(tmp_path, monkeypatch):
+    """A second service waits for its peer and observes its completed cleanup."""
+    helper = load_helper_module()
+    main = tmp_path / "nginx.conf"
+    main.write_text("http {\n" + STOCK_SERVER + "\n}\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main)
+    attempts = []
+    sleeps = []
+
+    def flock(_descriptor, flags):
+        """Model the peer completing migration while this guard waits."""
+        attempts.append(flags)
+        if len(attempts) == 1:
+            main.write_text("http {\n\n}\n", encoding="utf-8")
+            raise BlockingIOError("peer guard holds lock")
+
+    def unexpected_validation():
+        """A completed peer migration must not be overwritten or revalidated."""
+        raise AssertionError("peer already migrated this configuration")
+
+    monkeypatch.setattr(helper, "fcntl", SimpleNamespace(flock=flock, LOCK_EX=2, LOCK_NB=4))
+    monkeypatch.setattr(helper.time, "sleep", sleeps.append)
+    monkeypatch.setattr(helper, "_nginx_test_command", unexpected_validation)
+    assert helper._prepare_stock_nginx_listener_startup()["success"] is True
+    assert attempts == [6, 6]
+    assert sleeps == [0.05]
+    assert main.read_text(encoding="utf-8") == "http {\n\n}\n"
+
+
+def test_startup_lock_wait_is_bounded_and_preserves_configuration(tmp_path, monkeypatch):
+    """A stuck peer blocks admission without changing the main configuration."""
+    helper = load_helper_module()
+    main = tmp_path / "nginx.conf"
+    source = ("http {\n" + STOCK_SERVER + "\n}\n").encode("utf-8")
+    main.write_bytes(source)
+    monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main)
+
+    def busy(_descriptor, _flags):
+        """Keep the peer lock held past the bounded acquisition deadline."""
+        raise BlockingIOError("peer guard holds lock")
+
+    ticks = iter([0, 46])
+    monkeypatch.setattr(helper, "fcntl", SimpleNamespace(flock=busy, LOCK_EX=2, LOCK_NB=4))
+    monkeypatch.setattr(helper.time, "monotonic", lambda: next(ticks))
+    assert helper._prepare_stock_nginx_listener_startup()["success"] is False
+    assert main.read_bytes() == source

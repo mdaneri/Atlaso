@@ -23187,7 +23187,15 @@ def _prepare_stock_nginx_listener_startup() -> dict:
         descriptor = os.open(lock_path, flags, 0o600)
         with os.fdopen(descriptor, "rb+") as lock:
             if fcntl is not None:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                deadline = time.monotonic() + 45
+                while True:
+                    try:
+                        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("nginx startup configuration is still locked") from None
+                        time.sleep(0.05)
             original = NGINX_MAIN_CONFIG_PATH.read_bytes()
             text = original.decode("utf-8")
             cleaned = _without_stock_nginx_welcome_server(text)
