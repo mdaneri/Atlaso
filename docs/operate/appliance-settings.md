@@ -27,6 +27,10 @@ management front door, including on appliances upgraded from an older image.
 This keeps the scoped management and Public Services listeners able to start
 after a reboot. Custom nginx virtual hosts are preserved; remove conflicting
 custom wildcard listeners before applying a management-listener change.
+After an upgrade, the installed service-start guard performs the same cleanup
+before nginx opens its sockets. An unfinished release transaction retains its
+original configuration for recovery; a failed nginx configuration check blocks
+startup and restores the configuration from before cleanup.
 
 ## Configure authentication lifetimes
 

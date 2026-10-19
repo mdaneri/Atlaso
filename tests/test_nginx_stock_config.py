@@ -2,6 +2,8 @@
 
 import importlib.machinery
 import importlib.util
+import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -197,3 +199,76 @@ def test_existing_include_leaves_custom_main_config_byte_identical(tmp_path, mon
     helper._ensure_nginx_main_config_includes_atlaso()
 
     assert main_config.read_text(encoding="utf-8") == source
+
+
+@pytest.mark.parametrize("status", [None, "success", "failed"])
+def test_installed_helper_migrates_settled_upgrade_before_service_start(tmp_path, monkeypatch, status):
+    """An older updater still installs the fresh helper consumed by pre-start."""
+    helper = load_helper_module()
+    main = tmp_path / "nginx.conf"
+    source = "events {}\nhttp {\n" + STOCK_SERVER + "\n}\n"
+    main.write_text(source, encoding="utf-8")
+    finalizer = tmp_path / "finalizer.json"
+    if status is not None:
+        finalizer.write_text(json.dumps({"status": status, "rolled_back": True}), encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", finalizer)
+    monkeypatch.setattr(helper, "_guard_appliance_update_status_startup", lambda: {"success": True})
+    checked = []
+
+    def validate():
+        """Prove migration precedes nginx's own configuration/start admission."""
+        checked.append(main.read_text(encoding="utf-8"))
+        return subprocess.CompletedProcess(["nginx", "-t"], 0, "", "")
+
+    monkeypatch.setattr(helper, "_nginx_test_command", validate)
+    assert helper._guard_interrupted_release_startup()["success"] is True
+    assert checked == ["events {}\nhttp {\n\n}\n"]
+    assert helper._guard_interrupted_release_startup()["success"] is True
+    assert len(checked) == 1
+    for relative in ["image/common/systemd/nginx-atlaso-data-disks.conf",
+                     "image/common/systemd/atlaso-require-data-disks.conf"]:
+        unit = (HELPER_PATH.parents[2] / relative).read_text(encoding="utf-8")
+        assert "ExecStartPre=+/opt/atlaso/bin/atlaso-helper appliance-update guard-release --real" in unit
+
+
+@pytest.mark.parametrize("raises", [False, True])
+@pytest.mark.parametrize("ending", ["\n", "\r\n"])
+def test_startup_migration_restores_original_on_nginx_validation_failure(tmp_path, monkeypatch, raises, ending):
+    """A failed or interrupted validator blocks startup and restores exact bytes."""
+    helper = load_helper_module()
+    main = tmp_path / "nginx.conf"
+    source = "# retained operator header\nhttp {\n" + STOCK_SERVER + "\n}\n"
+    original = source.replace("\n", ending).encode("utf-8")
+    main.write_bytes(original)
+    monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main)
+
+    def validate():
+        """Reject the migrated configuration after publication."""
+        if raises:
+            raise OSError("validator unavailable")
+        return subprocess.CompletedProcess(["nginx", "-t"], 1, "", "invalid")
+
+    monkeypatch.setattr(helper, "_nginx_test_command", validate)
+    assert helper._prepare_stock_nginx_listener_startup()["success"] is False
+    assert main.read_bytes() == original
+
+
+def test_provisional_upgrade_preserves_original_main_for_transaction_rollback(tmp_path, monkeypatch):
+    """Pre-start must not migrate uncheckpointed files during an older update."""
+    helper = load_helper_module()
+    main = tmp_path / "nginx.conf"
+    source = "http {\n" + STOCK_SERVER + "\n}\n"
+    main.write_text(source, encoding="utf-8")
+    finalizer = tmp_path / "finalizer.json"
+    finalizer.write_text(json.dumps({"status": "restart_pending"}), encoding="utf-8")
+    management = tmp_path / "management.conf"
+    management.write_text("server {\n  listen 80 default_server;\n}\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main)
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", management)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_FINALIZER_PATH", finalizer)
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_MAINTENANCE_PATH", tmp_path / "maintenance")
+    monkeypatch.setattr(helper, "_guard_appliance_update_status_startup", lambda: {"success": True})
+    monkeypatch.setattr(helper, "_nginx_test_command", lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "", ""))
+    assert helper._guard_interrupted_release_startup()["success"] is True
+    assert main.read_text(encoding="utf-8") == source
