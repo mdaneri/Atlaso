@@ -6428,13 +6428,18 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null, onSave
           body.set(name, form.elements.namedItem(`manual_${name}`).value);
         }
         if (form.elements.manual_enabled.checked) body.set("enabled", "on");
-        const payload = await atlasoGridWizardRequest(managementUiPath("/vsphere-key-providers/trusted-vcenters"), body);
-        const resource = payload.trusted_vcenter;
-        if (!resource?.id || !resource.provider_id || !resource.name) {
-          throw new Error("The server did not return the saved trusted vCenter.");
+        try {
+          const payload = await atlasoGridWizardRequest(managementUiPath("/vsphere-key-providers/trusted-vcenters"), body);
+          const resource = payload.trusted_vcenter;
+          if (!resource?.id || !resource.provider_id || !resource.name) {
+            throw new Error("The server did not return the saved trusted vCenter.");
+          }
+          await onSaved?.({ payload, resource, refreshing: false });
+        } catch (error) {
+          if (submittedRevision !== contextRevision) return { ignored: true };
+          throw error;
         }
-        await onSaved?.({ payload, resource, refreshing: false });
-        if (submittedRevision !== contextRevision) return { valid: true };
+        if (submittedRevision !== contextRevision) return { ignored: true };
         invalidateContext();
         controller.markClean();
         return { valid: true };
@@ -6450,12 +6455,12 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null, onSave
         }
         await onSaved?.({ payload, resource, refreshing });
       } catch (error) {
-        if (submittedRevision !== contextRevision) return { valid: true };
+        if (submittedRevision !== contextRevision) return { ignored: true };
         const recoveryMessage = recoverTlsIdentityError(error);
         if (recoveryMessage) return { valid: false, message: recoveryMessage, step: "server" };
         throw error;
       }
-      if (submittedRevision !== contextRevision) return { valid: true };
+      if (submittedRevision !== contextRevision) return { ignored: true };
       username.value = "";
       password.value = "";
       invalidateContext();

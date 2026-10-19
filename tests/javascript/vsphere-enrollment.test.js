@@ -581,10 +581,26 @@ test("a completed enrollment updates the grid without overwriting a later wizard
     certificates: [],
   });
 
-  assert.equal((await pending).valid, true);
+  assert.equal((await pending).ignored, true);
   assert.equal(saved.length, 1);
   assert.equal(saved[0].resource.name, "First vCenter");
   assert.equal(form.elements.name.value, "Second vCenter in progress");
+});
+
+test("a completed manual setup cannot close a later wizard session", async () => {
+  let resolveSave;
+  const saved = [];
+  const { form, options, wizard } = makeRuntime(() => new Promise((resolve) => { resolveSave = resolve; }), (result) => saved.push(result));
+  form.elements.enrollment_method.value = "manual";
+  form.elements.manual_provider_id.value = "provider-1";
+  form.elements.manual_name.value = "First manual vCenter";
+  const pending = options.onSubmit({ controller: wizard });
+  options.onOpen({ context: { id: "new-row", is_new: true } });
+  form.elements.manual_name.value = "Second manual vCenter in progress";
+  resolveSave({ trusted_vcenter: { id: "trusted-manual", provider_id: "provider-1", name: "First manual vCenter" } });
+  assert.equal((await pending).ignored, true);
+  assert.equal(saved.length, 1);
+  assert.equal(form.elements.manual_name.value, "Second manual vCenter in progress");
 });
 
 test("a stale TLS approval failure cannot clear a later wizard session", async () => {
@@ -608,12 +624,24 @@ test("a stale TLS approval failure cannot clear a later wizard session", async (
   form.elements.confirmed_https_fingerprint.value = "DD:EE:FF";
   rejectApproval(new Error("The vCenter HTTPS fingerprint differs from the confirmed value."));
 
-  assert.equal((await pending).valid, true);
+  assert.equal((await pending).ignored, true);
   assert.equal(form.elements.name.value, "Second vCenter in progress");
   assert.equal(form.elements.hostname.value, "second.lab.example");
   assert.equal(form.elements.username.value, "second-user");
   assert.equal(form.elements.password.value, "second-password");
   assert.equal(form.elements.confirmed_https_fingerprint.value, "DD:EE:FF");
+});
+
+test("a stale manual setup failure cannot add errors to a later wizard session", async () => {
+  let rejectSave;
+  const { form, options, wizard } = makeRuntime(() => new Promise((_resolve, reject) => { rejectSave = reject; }));
+  form.elements.enrollment_method.value = "manual";
+  const pending = options.onSubmit({ controller: wizard });
+  options.onOpen({ context: { id: "new-row", is_new: true } });
+  form.elements.manual_name.value = "New manual setup";
+  rejectSave(new Error("The earlier request failed."));
+  assert.equal((await pending).ignored, true);
+  assert.equal(form.elements.manual_name.value, "New manual setup");
 });
 
 test("the enrollment callback inserts authoritative vCenter, certificate, and provider rows", async () => {

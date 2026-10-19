@@ -596,6 +596,8 @@
       if (submitButton) submitButton.disabled = true;
       try {
         const result = await config.onSubmit({ controller, form, dialog, step: steps[currentIndex], index: currentIndex });
+        // A completed request can belong to a wizard session that has since closed.
+        if (result?.ignored) return;
         const normalized = normalizeValidationResult(result);
         if (!normalized.valid) {
           if (normalized.step !== undefined) showStep(normalized.step, { force: true, unlock: true });
