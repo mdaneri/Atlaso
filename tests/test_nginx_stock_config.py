@@ -87,7 +87,12 @@ def test_matches_stock_tokens_across_whitespace_and_comments():
     ],
 )
 def test_preserves_server_when_any_stock_directive_is_changed_or_extended(old, new):
-    """A near match remains operator-owned when its semantics differ from stock."""
+    """A near match remains operator-owned when its semantics differ from stock.
+
+    Args:
+        old: Stock directive text replaced in the input configuration.
+        new: Custom directive text that must be preserved.
+    """
     helper = load_helper_module()
     source = "http {\n" + STOCK_SERVER.replace(old, new, 1) + "\n}\n"
 
@@ -157,14 +162,23 @@ def test_quoted_escaped_braces_and_comment_markers_do_not_change_scan_boundaries
     ],
 )
 def test_preserves_malformed_or_ambiguous_configuration(source):
-    """Malformed or multiply-scoped inputs are returned untouched."""
+    """Malformed or multiply-scoped inputs are returned untouched.
+
+    Args:
+        source: Malformed or ambiguous configuration that must remain unchanged.
+    """
     helper = load_helper_module()
 
     assert helper._without_stock_nginx_welcome_server(source) == source
 
 
 def test_existing_include_still_triggers_stock_removal_and_is_idempotent(tmp_path, monkeypatch):
-    """An existing Atlaso include does not skip the cold-start stock cleanup."""
+    """An existing Atlaso include does not skip the cold-start stock cleanup.
+
+    Args:
+        tmp_path: Isolated pytest directory for configuration and recovery evidence.
+        monkeypatch: Fixture replacing helper paths and native operations for this case.
+    """
     helper = load_helper_module()
     main_config = tmp_path / "nginx.conf"
     include_path = tmp_path / "sites-enabled" / "atlaso.conf"
@@ -183,7 +197,12 @@ def test_existing_include_still_triggers_stock_removal_and_is_idempotent(tmp_pat
 
 
 def test_existing_include_leaves_custom_main_config_byte_identical(tmp_path, monkeypatch):
-    """An already-managed file without the stock block is not rewritten."""
+    """An already-managed file without the stock block is not rewritten.
+
+    Args:
+        tmp_path: Isolated pytest directory for configuration and recovery evidence.
+        monkeypatch: Fixture replacing helper paths and native operations for this case.
+    """
     helper = load_helper_module()
     main_config = tmp_path / "nginx.conf"
     include_path = tmp_path / "sites-enabled" / "atlaso.conf"
@@ -204,7 +223,13 @@ def test_existing_include_leaves_custom_main_config_byte_identical(tmp_path, mon
 
 @pytest.mark.parametrize("status", [None, "success", "failed"])
 def test_installed_helper_migrates_settled_upgrade_before_service_start(tmp_path, monkeypatch, status):
-    """An older updater still installs the fresh helper consumed by pre-start."""
+    """An older updater still installs the fresh helper consumed by pre-start.
+
+    Args:
+        tmp_path: Isolated pytest directory for configuration and recovery evidence.
+        monkeypatch: Fixture replacing helper paths and native operations for this case.
+        status: Release-finalizer state exercised by the startup guard.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
     main = tmp_path / "nginx.conf"
@@ -237,7 +262,14 @@ def test_installed_helper_migrates_settled_upgrade_before_service_start(tmp_path
 @pytest.mark.parametrize("raises", [False, True])
 @pytest.mark.parametrize("ending", ["\n", "\r\n"])
 def test_startup_migration_restores_original_on_nginx_validation_failure(tmp_path, monkeypatch, raises, ending):
-    """A failed or interrupted validator blocks startup and restores exact bytes."""
+    """A failed or interrupted validator blocks startup and restores exact bytes.
+
+    Args:
+        tmp_path: Isolated pytest directory for configuration and recovery evidence.
+        monkeypatch: Fixture replacing helper paths and native operations for this case.
+        raises: Whether nginx validation raises instead of returning failure.
+        ending: Original configuration newline convention to retain.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
     main = tmp_path / "nginx.conf"
@@ -259,7 +291,13 @@ def test_startup_migration_restores_original_on_nginx_validation_failure(tmp_pat
 
 @pytest.mark.parametrize("status", ["transaction_pending", "restart_pending", "rollback_pending", "activation_committed"])
 def test_provisional_upgrade_keeps_nginx_bootable_and_original_bytes(tmp_path, monkeypatch, status):
-    """Recovery can cold-start nginx while retaining original configuration evidence."""
+    """Recovery can cold-start nginx while retaining original configuration evidence.
+
+    Args:
+        tmp_path: Isolated pytest directory for configuration and recovery evidence.
+        monkeypatch: Fixture replacing helper paths and native operations for this case.
+        status: Release-finalizer state exercised by the startup guard.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
     main = tmp_path / "nginx.conf"
@@ -289,7 +327,12 @@ def test_provisional_upgrade_keeps_nginx_bootable_and_original_bytes(tmp_path, m
 
 
 def test_concurrent_startup_waits_then_rechecks_completed_migration(tmp_path, monkeypatch):
-    """A second service waits for its peer and observes its completed cleanup."""
+    """A second service waits for its peer and observes its completed cleanup.
+
+    Args:
+        tmp_path: Isolated pytest directory for configuration and recovery evidence.
+        monkeypatch: Fixture replacing helper paths and native operations for this case.
+    """
     helper = load_helper_module()
     main = tmp_path / "nginx.conf"
     main.write_text("http {\n" + STOCK_SERVER + "\n}\n", encoding="utf-8")
@@ -298,7 +341,12 @@ def test_concurrent_startup_waits_then_rechecks_completed_migration(tmp_path, mo
     sleeps = []
 
     def flock(_descriptor, flags):
-        """Model the peer completing migration while this guard waits."""
+        """Model the peer completing migration while this guard waits.
+
+        Args:
+            _descriptor: Unused descriptor supplied by the startup lock operation.
+            flags: Requested lock flags recorded for the contention assertion.
+        """
         attempts.append(flags)
         if len(attempts) == 1:
             main.write_text("http {\n\n}\n", encoding="utf-8")
@@ -318,7 +366,12 @@ def test_concurrent_startup_waits_then_rechecks_completed_migration(tmp_path, mo
 
 
 def test_startup_lock_wait_is_bounded_and_preserves_configuration(tmp_path, monkeypatch):
-    """A stuck peer blocks admission without changing the main configuration."""
+    """A stuck peer blocks admission without changing the main configuration.
+
+    Args:
+        tmp_path: Isolated pytest directory for configuration and recovery evidence.
+        monkeypatch: Fixture replacing helper paths and native operations for this case.
+    """
     helper = load_helper_module()
     main = tmp_path / "nginx.conf"
     source = ("http {\n" + STOCK_SERVER + "\n}\n").encode("utf-8")
@@ -326,7 +379,12 @@ def test_startup_lock_wait_is_bounded_and_preserves_configuration(tmp_path, monk
     monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main)
 
     def busy(_descriptor, _flags):
-        """Keep the peer lock held past the bounded acquisition deadline."""
+        """Keep the peer lock held past the bounded acquisition deadline.
+
+        Args:
+            _descriptor: Unused descriptor supplied by the startup lock operation.
+            _flags: Unused lock flags supplied by the startup guard.
+        """
         raise BlockingIOError("peer guard holds lock")
 
     ticks = iter([0, 46])
@@ -337,7 +395,12 @@ def test_startup_lock_wait_is_bounded_and_preserves_configuration(tmp_path, monk
 
 
 def test_backup_failure_blocks_migration_before_main_write(tmp_path, monkeypatch):
-    """Original configuration must be durable before a recovery repair starts."""
+    """Original configuration must be durable before a recovery repair starts.
+
+    Args:
+        tmp_path: Isolated pytest directory for configuration and recovery evidence.
+        monkeypatch: Fixture replacing helper paths and native operations for this case.
+    """
     helper = load_helper_module()
     main = tmp_path / "nginx.conf"
     original = ("http {\n" + STOCK_SERVER + "\n}\n").encode("utf-8")
@@ -345,7 +408,12 @@ def test_backup_failure_blocks_migration_before_main_write(tmp_path, monkeypatch
     monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main)
 
     def unavailable(_original, _cleaned):
-        """Refuse a missing recovery-evidence capability."""
+        """Refuse a missing recovery-evidence capability.
+
+        Args:
+            _original: Unused original configuration bytes supplied for backup.
+            _cleaned: Unused repaired configuration bytes supplied for backup.
+        """
         raise OSError("backup unavailable")
 
     monkeypatch.setattr(helper, "_backup_stock_nginx_listener", unavailable)

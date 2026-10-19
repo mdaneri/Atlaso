@@ -24,7 +24,12 @@ def load_helper_module():
 
 
 def test_stock_listener_backup_is_byte_exact_private_and_idempotent(tmp_path, monkeypatch):
-    """Persist exact original bytes and stable digest evidence on repeated calls."""
+    """Persist exact original bytes and stable digest evidence on repeated calls.
+
+    Args:
+        tmp_path: Isolated pytest directory for configuration and recovery evidence.
+        monkeypatch: Fixture replacing helper paths and native operations for this case.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
     target = tmp_path / "nginx.conf"
@@ -69,7 +74,12 @@ def test_stock_listener_backup_is_byte_exact_private_and_idempotent(tmp_path, mo
 def test_conflicting_original_backup_is_preserved_and_startup_repair_refused(
     tmp_path, monkeypatch
 ):
-    """A conflicting digest path blocks repair without changing either copy."""
+    """A conflicting digest path blocks repair without changing either copy.
+
+    Args:
+        tmp_path: Isolated pytest directory for configuration and recovery evidence.
+        monkeypatch: Fixture replacing helper paths and native operations for this case.
+    """
     helper = load_helper_module()
     backup_root = tmp_path / "backups"
     main_config = tmp_path / "nginx.conf"
@@ -111,7 +121,12 @@ def test_conflicting_original_backup_is_preserved_and_startup_repair_refused(
 
 
 def test_backup_refuses_symlinked_evidence_directory_when_supported(tmp_path, monkeypatch):
-    """Do not follow an evidence-directory symlink into another location."""
+    """Do not follow an evidence-directory symlink into another location.
+
+    Args:
+        tmp_path: Isolated pytest directory for configuration and recovery evidence.
+        monkeypatch: Fixture replacing helper paths and native operations for this case.
+    """
     helper = load_helper_module()
     backup_root = tmp_path / "backups"
     outside = tmp_path / "outside"
@@ -132,7 +147,12 @@ def test_backup_refuses_symlinked_evidence_directory_when_supported(tmp_path, mo
 
 
 def test_backup_refuses_hardlinked_existing_original_when_supported(tmp_path, monkeypatch):
-    """Reject an existing digest path with another hardlink name."""
+    """Reject an existing digest path with another hardlink name.
+
+    Args:
+        tmp_path: Isolated pytest directory for configuration and recovery evidence.
+        monkeypatch: Fixture replacing helper paths and native operations for this case.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
     original = b"original configuration"
