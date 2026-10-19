@@ -620,7 +620,7 @@ def management_nic(**changes):
     ({"ip_cidr": None}, "eth0", "", "up", False, True),
     ({"ip_cidr": "169.254.1.2/16"}, "eth0", "", "up", False, True),
     ({"ip_cidr": "invalid"}, "eth0", "", "up", False, True),
-    ({"ip_cidr": None, "ipv6_enabled": True, "ipv6_cidr": "2001:db8::20/64"},
+    ({"ip_cidr": None, "ipv6_enabled": True, "ipv6_cidr": "2001:db8::20/64", "host_ipv6_cidr": "2001:db8::20/64"},
      "eth0", "2001:db8::20/64", "up", True, True),
     ({"ip_cidr": None, "ipv6_enabled": True, "host_ipv6_cidrs": ["fe80::1/64", "2001:db8::21/64"]},
      "eth0", "2001:db8::21/64", "up", True, True),
@@ -763,6 +763,8 @@ def test_dashboard_access_snapshot_html_and_data_preserve_other_failures(client,
         physical.access_management_ui_enabled = True
         physical.ipv4_method = "static"
         physical.ip_cidr = "192.0.2.20/24"
+        physical.host_ip_cidr = "192.0.2.20/24"
+        ui.save_appliance_apply_baselines(db, {"network": {"config_preview": ui.render_network_config(interfaces=list(db.scalars(select(PhysicalInterface)).all()), vlans=[])}})
         physical.oper_state = "up"
         db.add(Job(id="job_access_dashboard", type="appliance-apply", status="succeeded", created_by="admin"))
         db.commit()
@@ -779,3 +781,141 @@ def test_dashboard_access_snapshot_html_and_data_preserve_other_failures(client,
     html = client.get("/ui/management/dashboard")
     assert html.status_code == 200
     assert "192.0.2.20/24" in html.text and "Appliance Settings changes are invalid" in html.text
+
+
+@pytest.mark.parametrize("pending", [
+    {"ip_cidr": "192.0.2.99/24"},
+    {"access_management_ui_enabled": False},
+    {"role": "unused", "mode": "unused", "admin_state": "down"},
+    {"ipv4_method": "dhcp", "ip_cidr": None},
+])
+def test_dashboard_pending_physical_edits_keep_applied_listener(pending):
+    """Keep applied identity/address while desired edits await Apply.
+
+    Args:
+        pending: Desired fields saved after capturing the applied baseline.
+    """
+    from atlaso.app import ui
+
+    interface = management_nic()
+    baseline = {"config_preview": ui.render_network_config(interfaces=[interface], vlans=[])}
+    for key, value in pending.items():
+        setattr(interface, key, value)
+    summary, discovered = ui._dashboard_management_summary([interface], [], applied_network=baseline)
+    assert summary == dict(name="eth0", address="192.0.2.20/24", link="up", healthy=True)
+    assert discovered
+    assert all(getattr(interface, key) == value for key, value in pending.items())
+
+
+@pytest.mark.parametrize("observed", [
+    {"host_ip_cidr": None},
+    {"host_ip_cidr": "192.0.2.99/24"},
+    {"oper_state": "down"},
+    {"host_admin_state": "down"},
+    {"mac_address": "02:00:00:00:00:ff"},
+])
+def test_dashboard_applied_physical_requires_observed_address_link_and_identity(observed):
+    """An applied binding cannot substitute for native evidence.
+
+    Args:
+        observed: Changed physical observations after the successful apply.
+    """
+    from atlaso.app import ui
+
+    interface = management_nic()
+    baseline = {"config_preview": ui.render_network_config(interfaces=[interface], vlans=[])}
+    for key, value in observed.items():
+        setattr(interface, key, value)
+    summary, _ = ui._dashboard_management_summary([interface], [], applied_network=baseline)
+    expected_name = "Not discovered" if "mac_address" in observed else "eth0"
+    assert summary["name"] == expected_name and not summary["healthy"]
+
+
+def test_dashboard_new_flag_and_authoritative_empty_baseline_do_not_fall_back():
+    """A pending flag must not promote an unapplied listener.
+    """
+    from atlaso.app import ui
+
+    interface = management_nic(access_management_ui_enabled=False)
+    baseline = {"config_preview": ui.render_network_config(interfaces=[interface], vlans=[])}
+    interface.access_management_ui_enabled = True
+    for applied in (baseline, {"config_preview": "[physical_interfaces]\n"}):
+        summary, discovered = ui._dashboard_management_summary([interface], [], applied_network=applied)
+        assert summary == dict(name="Not discovered", address="", link="missing", healthy=False)
+        assert not discovered
+
+
+def test_dashboard_applied_alias_and_ipv6_survive_pending_disable():
+    """Use applied aliases and IPv6 controls independently of pending desired changes.
+    """
+    from atlaso.app import ui
+
+    interface = management_nic(ip_cidr=None, ipv6_enabled=True, ipv6_cidr="2001:db8::20/64",
+                               host_ipv6_cidr="2001:db8::20/64")
+    baseline = {"config_preview": ui.render_network_config(interfaces=[interface], vlans=[]),
+                "physical_interface_aliases": {"eth0": "renamed0"}}
+    interface.name = "renamed0"
+    interface.ipv6_enabled = False
+    interface.ipv6_cidr = None
+    interface.access_management_ui_enabled = False
+    summary, discovered = ui._dashboard_management_summary([interface], [], applied_network=baseline)
+    assert summary == dict(name="renamed0", address="2001:db8::20/64", link="up", healthy=True)
+    assert discovered
+
+
+def test_dashboard_applied_dhcp_pending_keeps_dedicated_precedence():
+    """Pending static intent cannot replace the applied dedicated DHCP listener.
+    """
+    from atlaso.app import ui
+
+    dedicated = management_nic(name="eth1", role="management", ipv4_method="dhcp", ip_cidr=None, host_ip_cidr=None)
+    access = management_nic()
+    baseline = {"config_preview": ui.render_network_config(interfaces=[dedicated, access], vlans=[])}
+    dedicated.role = "unused"
+    dedicated.ipv4_method = "static"
+    dedicated.ip_cidr = "192.0.2.99/24"
+    summary, discovered = ui._dashboard_management_summary([dedicated, access], [], applied_network=baseline)
+    assert summary == dict(name="eth1", address="", link="up", healthy=False)
+    assert discovered
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+def test_dashboard_applied_vlan_ignores_pending_edit_or_delete(monkeypatch, deleted):
+    """Prove the applied VLAN even if its desired row or parent is changed.
+
+    Args:
+        monkeypatch: Dependency replacement fixture.
+        deleted: Whether desired state no longer contains the applied VLAN row.
+    """
+    from atlaso.app import ui
+    from atlaso.app.models import VlanInterface
+
+    parent = management_nic(mode="trunk", role="unused", access_management_ui_enabled=False)
+    vlan = VlanInterface(name="eth0.20", parent_interface="eth0", vlan_id=20, enabled=True, role="access",
+                         access_management_ui_enabled=True, ip_cidr="192.0.2.30/24", ipv6_cidr=None)
+    baseline = {"config_preview": ui.render_network_config(interfaces=[parent], vlans=[vlan])}
+    parent.mode = "access"
+    parent.admin_state = "down"
+    vlan.enabled = False
+    vlan.access_management_ui_enabled = False
+    vlan.ip_cidr = "192.0.2.99/24"
+    calls = []
+
+    def prove_applied(paths, *, timeout):
+        """Inspect the exact applied path supplied to the native verifier.
+
+        Args:
+            paths: Applied VLAN paths.
+            timeout: Bounded native observation deadline.
+        """
+        assert timeout == 2.0
+        calls.extend(paths)
+        return True
+
+    monkeypatch.setattr(ui, "verify_native_management_vlans", prove_applied)
+    summary, discovered = ui._dashboard_management_summary([parent], [] if deleted else [vlan], applied_network=baseline)
+    assert summary == dict(name="eth0.20", address="192.0.2.30/24", link="up", healthy=True)
+    assert discovered and len(calls) == 1
+    assert calls[0]["vlan_id"] == "20" and calls[0]["parent_mac"] == parent.mac_address
+    assert calls[0]["ip_cidr"] == "192.0.2.30/24"
+    assert parent.admin_state == "down" and not vlan.enabled

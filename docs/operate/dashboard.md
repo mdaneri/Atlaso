@@ -46,7 +46,11 @@ Readiness covers management-interface discovery, management address/link health,
 desired-state validity, and the first successful global appliance apply. Readiness mode ends only after the management
 path is healthy and a global appliance-apply task has succeeded.
 
-The Network summary uses the preferred effective Management UI listener: a dedicated Management interface takes
+The Network summary selects from the last successfully applied Network baseline, so pending role, listener, address,
+or VLAN edits cannot replace the running management path. Only appliances without a baseline use desired state as a
+bootstrap fallback. Physical health also requires a matching observed address; configured CIDRs alone are insufficient.
+
+The preferred Management UI listener is selected from that state: a dedicated Management interface takes
 precedence, including DHCP while waiting for its lease, followed by flagged Access physical interfaces and enabled
 flagged Access VLANs. Physical listeners need a usable address, admin-up desired state, and an observed active link.
 Link-local addresses do not satisfy readiness. A VLAN needs an available trunk parent and a bounded native check of

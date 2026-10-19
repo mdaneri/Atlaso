@@ -13280,15 +13280,75 @@ def _appliance_apply_failure_is_resolved(job: Job, successful_applies: list[Job]
     return unresolved_units <= retried_units
 
 
+def _dashboard_applied_network(
+    interfaces: list[PhysicalInterface], baseline: dict[str, Any],
+) -> tuple[list[PhysicalInterface], list[VlanInterface]]:
+    """Build transient applied intent views without changing persisted desired state.
+
+    Args:
+        interfaces: Current physical observations, including pending desired edits.
+        baseline: Last successfully applied Network snapshot and physical aliases.
+    """
+    rows = network_interface_entries(str(baseline.get("config_preview") or ""))
+    raw_aliases = baseline.get("physical_interface_aliases")
+    aliases = raw_aliases if isinstance(raw_aliases, dict) else {}
+    observed = {item.name: item for item in interfaces}
+    physical: list[PhysicalInterface] = []
+    vlans: list[VlanInterface] = []
+    for row in rows:
+        name = str(aliases.get(row["name"], row["name"]))
+        if row["kind"] == "physical":
+            live = observed.get(name)
+            mac = row.get("mac", "").lower()
+            parent_pins = {item["parent_mac"].lower() for item in rows
+                           if item.get("parent") == row["name"] and item.get("parent_mac")}
+            if len(parent_pins) > 1 or (mac and parent_pins and mac not in parent_pins):
+                live = None
+            if not mac and len(parent_pins) == 1:
+                mac = next(iter(parent_pins))
+            if live is not None and mac and str(live.mac_address or "").lower() != mac:
+                live = None
+            physical.append(PhysicalInterface(
+                name=name, mac_address=mac or (live.mac_address if live else ""),
+                role=row.get("role", "unused"), mode=row.get("mode", "unused"),
+                admin_state=row.get("admin_state", "down"),
+                access_management_ui_enabled=row.get("access_management_ui_enabled", "false").lower() == "true",
+                ipv4_method=row.get("ipv4_method", "static"), ip_cidr=row.get("ip_cidr") or None,
+                ipv6_enabled=row.get("ipv6_enabled", "false").lower() == "true",
+                ipv6_cidr=row.get("ipv6_cidr") or None,
+                oper_state=live.oper_state if live else "missing",
+                host_admin_state=live.host_admin_state if live else None,
+                host_ip_cidr=live.host_ip_cidr if live else None,
+                host_ipv6_cidr=live.host_ipv6_cidr if live else None,
+                host_ipv6_cidrs=list(live.host_ipv6_cidrs or []) if live else [],
+            ))
+        elif row["kind"] == "vlan":
+            tag = row.get("vlan_id", "")
+            if not tag.isdecimal() or not 1 <= int(tag) <= 4094:
+                continue
+            vlans.append(VlanInterface(
+                name=row["name"], parent_interface=str(aliases.get(row.get("parent", ""), row.get("parent", ""))),
+                vlan_id=int(tag), role=row.get("role", "unused"),
+                enabled=row.get("enabled", "true").lower() == "true",
+                access_management_ui_enabled=row.get("access_management_ui_enabled", "false").lower() == "true",
+                ip_cidr=row.get("ip_cidr") or None, ipv6_cidr=row.get("ipv6_cidr") or None,
+            ))
+    return physical, vlans
+
+
 def _dashboard_management_summary(
     interfaces: list[PhysicalInterface], vlans: list[VlanInterface],
+    *, applied_network: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Project preferred listener identity separately from observed health.
 
     Args:
         interfaces: Physical interfaces with desired and observed state.
         vlans: Desired VLAN listeners, which require native runtime proof.
+        applied_network: Authoritative Network baseline, or None for bootstrap fallback.
     """
+    if applied_network is not None:
+        interfaces, vlans = _dashboard_applied_network(interfaces, applied_network)
     context = management_ui_context(interfaces, vlans)
     name = str(context.get("name") or "")
     physical = next((item for item in interfaces if item.name == name), None)
@@ -13303,6 +13363,14 @@ def _dashboard_management_summary(
                              and item.oper_state != "missing"), None)
         name = physical.name if physical else ""
     address = ""
+    observed_addresses = set()
+    if physical is not None:
+        for observed_cidr in (physical.host_ip_cidr, physical.host_ipv6_cidr, *(physical.host_ipv6_cidrs or [])):
+            try:
+                observed_addresses.add(str(ip_interface(observed_cidr or "")))
+            except ValueError:
+                continue
+    address_observed = False
     cidrs = (
         (physical.host_ip_cidr if physical.ipv4_method == "dhcp" else physical.ip_cidr,
          *physical_ipv6_cidrs(physical)) if physical is not None
@@ -13314,11 +13382,16 @@ def _dashboard_management_summary(
         except ValueError:
             continue
         if not (parsed.ip.is_link_local or parsed.ip.is_unspecified or parsed.ip.is_loopback or parsed.ip.is_multicast):
-            address = str(parsed)
-            break
+            if not address:
+                address = str(parsed)
+            if str(parsed) in observed_addresses:
+                address = str(parsed)
+                address_observed = True
+                break
     discovered = bool(physical and physical.oper_state != "missing")
     link = str(physical.oper_state or "unknown") if physical else "missing"
-    healthy = bool(discovered and address and physical.admin_state == "up" and link == "up")
+    healthy = bool(discovered and address_observed and physical.admin_state == "up"
+                   and physical.host_admin_state != "down" and link == "up")
     if vlan is not None:
         # VLAN intent and an up parent alone do not prove the tagged listener.
         parent = next((item for item in interfaces if item.name == vlan.parent_interface), None)
@@ -13413,7 +13486,9 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
         if str(interface.oper_state or "").lower() == "missing"
         or (str(interface.admin_state or "").lower() == "up" and str(interface.oper_state or "").lower() not in {"up", "unknown"})
     ]
-    management, management_discovered = _dashboard_management_summary(interfaces, vlans)
+    management, management_discovered = _dashboard_management_summary(
+        interfaces, vlans, applied_network=load_appliance_apply_baselines(db, refresh=True).get("network"),
+    )
     management_address = management["address"]
     management_healthy = management["healthy"]
 
