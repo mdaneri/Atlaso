@@ -873,6 +873,20 @@ cat >/etc/nginx/conf.d/atlaso.conf <<'EOF'
 include /etc/atlaso/nginx/sites.d/*.conf;
 EOF
 chmod 0644 /etc/nginx/conf.d/atlaso.conf
+# Share exact-stock recognition with later Settings/Network activation.
+# Custom virtual hosts remain untouched.
+python3 - "$ATLASO_HOME/bin/atlaso-helper" <<'PY'
+import runpy
+import sys
+from pathlib import Path
+
+path = Path("/etc/nginx/nginx.conf")
+if path.is_file():
+    text = path.read_text(encoding="utf-8")
+    cleaned = runpy.run_path(sys.argv[1])["_without_stock_nginx_welcome_server"](text)
+    if cleaned != text:
+        path.write_text(cleaned, encoding="utf-8")
+PY
 if [ -f /etc/nginx/nginx.conf ] &&
   ! grep -Eq 'include[[:space:]]+/etc/nginx/conf\.d/\*\.conf;' /etc/nginx/nginx.conf &&
   ! grep -Fq '/etc/nginx/conf.d/atlaso.conf' /etc/nginx/nginx.conf; then
