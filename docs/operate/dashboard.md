@@ -50,7 +50,8 @@ The Network summary selects from the last successfully applied Network baseline,
 or VLAN edits cannot replace the running management path. Only appliances without a baseline use desired state as a
 bootstrap fallback. Physical health also requires a matching observed address; configured CIDRs alone are insufficient.
 Each Dashboard refresh performs bounded, read-only native discovery. Failed discovery cannot reuse cached health and
-does not reconcile or change saved interface configuration.
+does not reconcile or change saved interface configuration. DHCP and automatic IPv6 listeners require native
+automatic-address evidence; leftover static addresses do not satisfy readiness.
 
 The preferred Management UI listener is selected from that state: a dedicated Management interface takes
 precedence, including DHCP while waiting for its lease, followed by flagged Access physical interfaces and enabled

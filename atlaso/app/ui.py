@@ -13357,11 +13357,15 @@ def _dashboard_observed_physical_interfaces(interfaces: list[PhysicalInterface])
         view.oper_state = live.oper_state if live else "unknown" if observations is None else "missing"
         view.host_admin_state = live.host_admin_state if live else None
         view.host_ip_cidr = (
-            live.host_ip_cidr if interface.ipv4_method == "dhcp"
+            live.host_dhcp_ip_cidr if interface.ipv4_method == "dhcp"
             else native_static_ip_cidr(live, interface.ip_cidr or "")
         ) if live else None
-        view.host_ipv6_cidr = live.host_ipv6_cidr if live else None
-        view.host_ipv6_cidrs = list(live.host_ipv6_cidrs or ()) if live else []
+        ipv6 = (
+            tuple(live.host_ipv6_cidrs or ()) or ((live.host_ipv6_cidr,) if live.host_ipv6_cidr else ())
+            if interface.ipv6_cidr else native_automatic_ipv6_cidrs(live)
+        ) if live and interface.ipv6_enabled else ()
+        view.host_ipv6_cidr = next(iter(ipv6), None)
+        view.host_ipv6_cidrs = list(ipv6)
         result.append(view)
     return result
 

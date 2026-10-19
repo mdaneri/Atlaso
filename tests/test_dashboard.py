@@ -1009,3 +1009,36 @@ def dashboard_native_inventory(client, monkeypatch):
     monkeypatch.setattr(ui, "discover_host_physical_interfaces", observe)
     yield
     assert calls, "Dashboard transports must request current native observations"
+
+
+@pytest.mark.parametrize("ipv6", [False, True])
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_dashboard_automatic_listener_rejects_static_native_holdovers(monkeypatch, ipv6, dynamic):
+    """Require address-source evidence for automatic listeners in both families.
+
+    Args:
+        monkeypatch: Fixture replacing bounded native discovery.
+        ipv6: Whether the applied automatic listener uses IPv6 rather than DHCPv4.
+        dynamic: Whether native inventory proves the address came from automatic acquisition.
+    """
+    from atlaso.app import ui
+    from atlaso.app.services.networking import HostPhysicalInterface
+
+    interface = management_nic(role="management", ipv4_method="dhcp", ip_cidr=None,
+                               ipv6_enabled=ipv6, ipv6_cidr=None)
+    baseline = {"config_preview": ui.render_network_config(interfaces=[interface], vlans=[])}
+    observed = HostPhysicalInterface(
+        name="eth0", mac_address=interface.mac_address, driver=None, speed=None,
+        host_ip_cidr=None if ipv6 else "192.0.2.20/24", host_mtu=1500,
+        host_admin_state="up", oper_state="up",
+        host_dhcp_ip_cidr="192.0.2.20/24" if dynamic and not ipv6 else None,
+        host_ipv6_cidr="2001:db8::20/64" if ipv6 else None,
+        host_ipv6_cidrs=("2001:db8::20/64",) if ipv6 else (),
+        host_dynamic_ipv6_cidr="2001:db8::20/64" if ipv6 and dynamic else None,
+        host_dynamic_ipv6_cidrs=("2001:db8::20/64",) if ipv6 and dynamic else (),
+    )
+    monkeypatch.setattr(ui, "discover_host_physical_interfaces", lambda **_kwargs: [observed])
+    summary, _ = ui._dashboard_management_summary([interface], [], applied_network=baseline, observe_native=True)
+    assert summary["healthy"] is dynamic
+    expected_address = ("2001:db8::20/64" if ipv6 else "192.0.2.20/24") if dynamic else ""
+    assert summary["address"] == expected_address
