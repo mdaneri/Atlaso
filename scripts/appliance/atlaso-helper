@@ -9474,6 +9474,64 @@ def _http_block_end_offset(text: str) -> int:
     return -1
 
 
+def _without_stock_nginx_welcome_server(text: str) -> str:
+    """Retire only Photon's exact stock HTTP welcome server.
+
+    Args:
+        text: Existing main configuration, including operator-owned content.
+
+    The vendor wildcard socket conflicts with scoped reuseport sockets on a cold
+    start. Recognize the complete stock directive sequence rather than deleting
+    arbitrary wildcard servers. Keep quoted strings and comments opaque so their
+    braces cannot change block ownership. Ambiguous syntax is left for nginx -t.
+    """
+    pattern = re.compile(
+        r'''\#[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\\.|[{};]|[^\s{};\#"'\\]+'''
+    )
+    tokens: list[tuple[str, int, int]] = []
+    position = 0
+    for match in pattern.finditer(text):
+        if text[position:match.start()].strip():
+            return text
+        position = match.end()
+        if match.group().startswith("#"):
+            # Inside an unquoted nginx word, # is data rather than a comment.
+            # Leave such uncommon custom syntax untouched instead of guessing.
+            if match.start() and text[match.start() - 1] not in " \t\r\n;{}":
+                return text
+        else:
+            tokens.append((match.group(), match.start(), match.end()))
+    if text[position:].strip():
+        return text
+    stock = (
+        "server { listen 80 ; server_name localhost ; "
+        "location / { root html ; index index.html index.htm ; } "
+        "error_page 500 502 503 504 /50x.html ; "
+        "location = /50x.html { root html ; } }"
+    ).split()
+    stack: list[str] = []
+    http_blocks = 0
+    removals: list[tuple[int, int]] = []
+    for index, (token, start, _end) in enumerate(tokens):
+        if token == "server" and stack == ["http"]:
+            candidate = tokens[index:index + len(stock)]
+            if [value for value, _, _ in candidate] == stock:
+                removals.append((start, candidate[-1][2]))
+        if token == "{":
+            if not stack and index and tokens[index - 1][0] == "http":
+                http_blocks += 1
+            stack.append(tokens[index - 1][0] if index else "")
+        elif token == "}":
+            if not stack:
+                return text
+            stack.pop()
+    if stack or http_blocks != 1:
+        return text
+    for start, end in reversed(removals):
+        text = text[:start] + text[end:]
+    return text
+
+
 def _ensure_nginx_main_config_includes_atlaso() -> None:
     """Ensure nginx main config includes atlaso.
 
@@ -9481,15 +9539,17 @@ def _ensure_nginx_main_config_includes_atlaso() -> None:
     if not NGINX_MAIN_CONFIG_PATH.exists():
         return
     text = NGINX_MAIN_CONFIG_PATH.read_text(encoding="utf-8")
+    next_text = _without_stock_nginx_welcome_server(text)
     include_line = f"    include {NGINX_CONF_INCLUDE_PATH};"
-    if str(NGINX_CONF_INCLUDE_PATH) in text:
+    if str(NGINX_CONF_INCLUDE_PATH) not in next_text:
+        end_offset = _http_block_end_offset(next_text)
+        if end_offset < 0:
+            return
+        prefix = next_text[:end_offset].rstrip()
+        suffix = next_text[end_offset:]
+        next_text = f"{prefix}\n\n    # Managed by Atlaso. Local changes may be overwritten.\n{include_line}\n{suffix}"
+    if next_text == text:
         return
-    end_offset = _http_block_end_offset(text)
-    if end_offset < 0:
-        return
-    prefix = text[:end_offset].rstrip()
-    suffix = text[end_offset:]
-    next_text = f"{prefix}\n\n    # Managed by Atlaso. Local changes may be overwritten.\n{include_line}\n{suffix}"
     tmp_target = NGINX_MAIN_CONFIG_PATH.with_suffix(".conf.tmp")
     tmp_target.write_text(next_text, encoding="utf-8")
     os.chmod(tmp_target, 0o644)

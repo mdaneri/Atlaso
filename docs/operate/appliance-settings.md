@@ -11,6 +11,12 @@ status: current
 Open **Appliance Settings** to edit appliance-wide desired state: the appliance FQDN, OS hostname, resolver mode and
 servers, management UI HTTPS preference, and root SSH login preference.
 
+Atlaso retires Photon's unchanged nginx HTTP welcome server when preparing the
+management front door, including on appliances upgraded from an older image.
+This keeps the scoped management and Public Services listeners able to start
+after a reboot. Custom nginx virtual hosts are preserved; remove conflicting
+custom wildcard listeners before applying a management-listener change.
+
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
