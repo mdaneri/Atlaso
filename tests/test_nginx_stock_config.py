@@ -206,6 +206,7 @@ def test_existing_include_leaves_custom_main_config_byte_identical(tmp_path, mon
 def test_installed_helper_migrates_settled_upgrade_before_service_start(tmp_path, monkeypatch, status):
     """An older updater still installs the fresh helper consumed by pre-start."""
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
     main = tmp_path / "nginx.conf"
     source = "events {}\nhttp {\n" + STOCK_SERVER + "\n}\n"
     main.write_text(source, encoding="utf-8")
@@ -238,6 +239,7 @@ def test_installed_helper_migrates_settled_upgrade_before_service_start(tmp_path
 def test_startup_migration_restores_original_on_nginx_validation_failure(tmp_path, monkeypatch, raises, ending):
     """A failed or interrupted validator blocks startup and restores exact bytes."""
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
     main = tmp_path / "nginx.conf"
     source = "# retained operator header\nhttp {\n" + STOCK_SERVER + "\n}\n"
     original = source.replace("\n", ending).encode("utf-8")
@@ -255,14 +257,17 @@ def test_startup_migration_restores_original_on_nginx_validation_failure(tmp_pat
     assert main.read_bytes() == original
 
 
-def test_provisional_upgrade_preserves_original_main_for_transaction_rollback(tmp_path, monkeypatch):
-    """Pre-start must not migrate uncheckpointed files during an older update."""
+@pytest.mark.parametrize("status", ["transaction_pending", "restart_pending", "rollback_pending", "activation_committed"])
+def test_provisional_upgrade_keeps_nginx_bootable_and_original_bytes(tmp_path, monkeypatch, status):
+    """Recovery can cold-start nginx while retaining original configuration evidence."""
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", tmp_path / "backups")
     main = tmp_path / "nginx.conf"
     source = "http {\n" + STOCK_SERVER + "\n}\n"
     main.write_text(source, encoding="utf-8")
     finalizer = tmp_path / "finalizer.json"
-    finalizer.write_text(json.dumps({"status": "restart_pending"}), encoding="utf-8")
+    original = main.read_bytes()
+    finalizer.write_text(json.dumps({"status": status}), encoding="utf-8")
     management = tmp_path / "management.conf"
     management.write_text("server {\n  listen 80 default_server;\n}\n", encoding="utf-8")
     monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main)
@@ -272,7 +277,15 @@ def test_provisional_upgrade_preserves_original_main_for_transaction_rollback(tm
     monkeypatch.setattr(helper, "_guard_appliance_update_status_startup", lambda: {"success": True})
     monkeypatch.setattr(helper, "_nginx_test_command", lambda: subprocess.CompletedProcess(["nginx", "-t"], 0, "", ""))
     assert helper._guard_interrupted_release_startup()["success"] is True
-    assert main.read_text(encoding="utf-8") == source
+    assert main.read_text(encoding="utf-8") == "http {\n\n}\n"
+    backups = list((tmp_path / "backups/nginx-stock-listeners").glob("*.conf"))
+    assert len(backups) == 1 and backups[0].read_bytes() == original
+    evidence = json.loads(backups[0].with_suffix(".json").read_text(encoding="utf-8"))
+    assert evidence["target"] == str(main)
+    assert (tmp_path / "maintenance").is_file()
+    assert "return 503" in management.read_text(encoding="utf-8")
+    assert helper._guard_interrupted_release_startup()["success"] is True
+    assert backups[0].read_bytes() == original
 
 
 def test_concurrent_startup_waits_then_rechecks_completed_migration(tmp_path, monkeypatch):
@@ -321,3 +334,20 @@ def test_startup_lock_wait_is_bounded_and_preserves_configuration(tmp_path, monk
     monkeypatch.setattr(helper.time, "monotonic", lambda: next(ticks))
     assert helper._prepare_stock_nginx_listener_startup()["success"] is False
     assert main.read_bytes() == source
+
+
+def test_backup_failure_blocks_migration_before_main_write(tmp_path, monkeypatch):
+    """Original configuration must be durable before a recovery repair starts."""
+    helper = load_helper_module()
+    main = tmp_path / "nginx.conf"
+    original = ("http {\n" + STOCK_SERVER + "\n}\n").encode("utf-8")
+    main.write_bytes(original)
+    monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", main)
+
+    def unavailable(_original, _cleaned):
+        """Refuse a missing recovery-evidence capability."""
+        raise OSError("backup unavailable")
+
+    monkeypatch.setattr(helper, "_backup_stock_nginx_listener", unavailable)
+    assert helper._prepare_stock_nginx_listener_startup()["success"] is False
+    assert main.read_bytes() == original

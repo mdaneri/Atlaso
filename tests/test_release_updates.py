@@ -1042,6 +1042,7 @@ def test_release_startup_guard_holds_maintenance_before_control_plane(monkeypatc
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "NGINX_MAIN_CONFIG_PATH", tmp_path / "absent-main.conf")
     finalizer = tmp_path / "finalizer.json"
     finalizer.write_text(
         json.dumps(

@@ -23171,13 +23171,53 @@ def _recover_interrupted_release_transaction() -> dict:
     }
 
 
+def _backup_stock_nginx_listener(original: bytes, cleaned: bytes) -> None:
+    """Persist protected, content-addressed original configuration before repair.
+
+    Args:
+        original: Exact main configuration bytes retained for recovery evidence.
+        cleaned: Configuration with only the recognized vendor server removed.
+    """
+    directory = ATLASO_UPDATE_BACKUP_DIR / "nginx-stock-listeners"
+    if directory.is_symlink():
+        raise ValueError("nginx migration backup directory is unsafe")
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    metadata = directory.stat()
+    if os.name == "posix" and (
+        (os.geteuid() == 0 and metadata.st_uid != 0) or metadata.st_mode & 0o077
+    ):
+        raise ValueError("nginx migration backups must be root-owned and private")
+    digest = hashlib.sha256(original).hexdigest()
+    evidence = json.dumps({
+        "schema": 1, "target": str(NGINX_MAIN_CONFIG_PATH), "original_sha256": digest,
+        "cleaned_sha256": hashlib.sha256(cleaned).hexdigest(),
+        "repair": "retire-exact-vendor-welcome-listener",
+    }, sort_keys=True).encode("utf-8")
+    for path, data in [(directory / f"{digest}.conf", original), (directory / f"{digest}.json", evidence)]:
+        if path.exists() or path.is_symlink():
+            metadata = path.lstat()
+            if (
+                not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                or (os.name == "posix" and (
+                    (os.geteuid() == 0 and metadata.st_uid != 0) or metadata.st_mode & 0o077
+                ))
+                or path.read_bytes() != data
+            ):
+                raise ValueError("nginx migration backup conflicts with original evidence")
+        else:
+            _write_appliance_update_runtime_file(path, data, mode=0o600)
+    _fsync_directory(directory.parent)
+    _fsync_directory(ATLASO_UPDATE_BACKUP_DIR.parent)
+
+
 def _prepare_stock_nginx_listener_startup() -> dict:
-    """Migrate a settled appliance before nginx opens its cold-start sockets.
+    """Migrate an appliance before nginx opens its cold-start sockets.
 
     The installed helper runs through both service pre-start guards even when an
     older updater installed this release. Do not depend on that older parent's
-    in-memory implementation to perform the migration. Provisional transactions
-    are excluded by the caller so their exact configuration rollback is retained.
+    in-memory implementation to perform the migration. Retain original bytes in
+    protected recovery evidence, including when provisional release maintenance
+    requires nginx to cold-start before worker recovery can complete.
     """
     try:
         if not NGINX_MAIN_CONFIG_PATH.is_file():
@@ -23201,6 +23241,7 @@ def _prepare_stock_nginx_listener_startup() -> dict:
             cleaned = _without_stock_nginx_welcome_server(text)
             if cleaned == text:
                 return _release_check("nginx_stock_listener", True, "No stock nginx welcome listener remains.")
+            _backup_stock_nginx_listener(original, cleaned.encode("utf-8"))
             mode = stat.S_IMODE(NGINX_MAIN_CONFIG_PATH.stat().st_mode)
             try:
                 _write_appliance_update_runtime_file(NGINX_MAIN_CONFIG_PATH, cleaned.encode("utf-8"), mode=mode)
@@ -23289,11 +23330,7 @@ def _guard_interrupted_release_startup() -> dict:
                 False,
                 "The guarded management nginx configuration is invalid; maintenance remains held.",
             )
-    return _release_check(
-        "release_startup_guard",
-        True,
-        "Provisional release recovery is guarded by maintenance before service startup.",
-    )
+    return _prepare_stock_nginx_listener_startup()
 
 
 def _refresh_release_data_disk_identity(*, validate: bool) -> list[dict]:

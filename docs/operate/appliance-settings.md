@@ -28,9 +28,13 @@ This keeps the scoped management and Public Services listeners able to start
 after a reboot. Custom nginx virtual hosts are preserved; remove conflicting
 custom wildcard listeners before applying a management-listener change.
 After an upgrade, the installed service-start guard performs the same cleanup
-before nginx opens its sockets. An unfinished release transaction retains its
-original configuration for recovery; a failed nginx configuration check blocks
-startup and restores the configuration from before cleanup.
+before nginx opens its sockets, including during unfinished release recovery.
+Original configuration bytes are retained in root-only, content-addressed backups
+under `/var/lib/atlaso/update-backups/nginx-stock-listeners/` before cleanup.
+The vendor-listener repair persists across release rollback while existing
+maintenance guards keep the front door closed until recovery completes.
+A failed nginx configuration check blocks startup and restores the configuration
+from before cleanup.
 
 ## Configure authentication lifetimes
 
