@@ -2,7 +2,9 @@
 
 import json
 from datetime import timedelta
+from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import select
 
 
@@ -584,3 +586,196 @@ def test_dashboard_html_removes_old_inventory_and_javascript_refresh_is_resilien
     narrow = css.split("@media (max-width: 640px)", 1)[1]
     assert ".dashboard-primary-grid" in narrow
     assert "grid-template-columns: 1fr;" in narrow
+
+
+def management_nic(**changes):
+    """Build an explicitly observed management listener without a database fixture.
+
+    Args:
+        **changes: Desired or observed fields varied by the scenario.
+    """
+    from atlaso.app.models import PhysicalInterface
+
+    fields = dict(name="eth0", role="access", mode="access", admin_state="up", oper_state="up",
+                  access_management_ui_enabled=True, ipv4_method="static", ip_cidr="192.0.2.20/24",
+                  host_ip_cidr="192.0.2.20/24", ipv6_enabled=False, ipv6_cidr=None,
+                  host_ipv6_cidr=None, host_ipv6_cidrs=[], mac_address="02:00:00:00:00:01")
+    return PhysicalInterface(**(fields | changes))
+
+
+@pytest.mark.parametrize(("changes", "name", "address", "link", "healthy", "discovered"), [
+    ({}, "eth0", "192.0.2.20/24", "up", True, True),
+    ({"ipv4_method": "dhcp", "ip_cidr": "192.0.2.99/24", "host_ip_cidr": "192.0.2.21/24"},
+     "eth0", "192.0.2.21/24", "up", True, True),
+    ({"ipv4_method": "dhcp", "host_ip_cidr": None}, "eth0", "", "up", False, True),
+    ({"oper_state": "down"}, "eth0", "192.0.2.20/24", "down", False, True),
+    ({"oper_state": "unknown"}, "eth0", "192.0.2.20/24", "unknown", False, True),
+    ({"role": "management", "oper_state": "missing"}, "eth0", "192.0.2.20/24", "missing", False, False),
+    ({"role": "management", "admin_state": "down"}, "eth0", "192.0.2.20/24", "up", False, True),
+    ({"oper_state": "missing"}, "Not discovered", "", "missing", False, False),
+    ({"admin_state": "down"}, "Not discovered", "", "missing", False, False),
+    ({"access_management_ui_enabled": False}, "Not discovered", "", "missing", False, False),
+    ({"mode": "trunk"}, "Not discovered", "", "missing", False, False),
+    ({"role": "unused", "mode": "unused"}, "Not discovered", "", "missing", False, False),
+    ({"ip_cidr": None}, "eth0", "", "up", False, True),
+    ({"ip_cidr": "169.254.1.2/16"}, "eth0", "", "up", False, True),
+    ({"ip_cidr": "invalid"}, "eth0", "", "up", False, True),
+    ({"ip_cidr": None, "ipv6_enabled": True, "ipv6_cidr": "2001:db8::20/64"},
+     "eth0", "2001:db8::20/64", "up", True, True),
+    ({"ip_cidr": None, "ipv6_enabled": True, "host_ipv6_cidrs": ["fe80::1/64", "2001:db8::21/64"]},
+     "eth0", "2001:db8::21/64", "up", True, True),
+    ({"ip_cidr": None, "ipv6_enabled": True, "ipv6_cidr": "fe80::1/64"},
+     "eth0", "", "up", False, True),
+    ({"ip_cidr": None, "ipv6_enabled": False, "ipv6_cidr": "2001:db8::20/64"},
+     "eth0", "", "up", False, True),
+])
+def test_dashboard_effective_physical_management(changes, name, address, link, healthy, discovered):
+    """Check listener eligibility independently of address and observed link health.
+
+    Args:
+        changes: Physical state under test.
+        name: Expected selected identity.
+        address: Expected usable address.
+        link: Expected observed link state.
+        healthy: Expected readiness health.
+        discovered: Expected discovery status.
+    """
+    from atlaso.app import ui
+
+    summary, observed = ui._dashboard_management_summary([management_nic(**changes)], [])
+    assert summary == dict(name=name, address=address, link=link, healthy=healthy)
+    assert observed is discovered
+
+
+@pytest.mark.parametrize("pending_dhcp", [False, True])
+def test_dashboard_dedicated_management_precedence(pending_dhcp):
+    """Keep dedicated identity ahead of flagged Access, including DHCP without a lease.
+
+    Args:
+        pending_dhcp: Whether the dedicated listener has yet to receive its lease.
+    """
+    from atlaso.app import ui
+
+    dedicated = management_nic(name="eth1", role="management", ipv4_method="dhcp" if pending_dhcp else "static",
+                               host_ip_cidr=None if pending_dhcp else "192.0.2.20/24")
+    summary, discovered = ui._dashboard_management_summary([management_nic(), dedicated], [])
+    assert summary["name"] == "eth1"
+    assert summary["healthy"] is not pending_dhcp
+    assert summary["address"] == ("" if pending_dhcp else "192.0.2.20/24")
+    assert discovered is True
+
+
+@pytest.mark.parametrize("fault", [None, "unavailable", "timeout", "missing", "missing-parent", "tag", "parent-mac", "parent-index", "parent-down", "vlan-down", "address", "parent-mode", "parent-disabled", "disabled", "unflagged"])
+@pytest.mark.parametrize("ipv6", [False, True])
+def test_dashboard_vlan_requires_exact_native_listener(monkeypatch, fault, ipv6):
+    """Exercise the real bounded VLAN verifier rather than trusting configured CIDRs.
+
+    Args:
+        monkeypatch: Dependency replacement fixture.
+        fault: Missing or mismatched native/desired evidence to inject.
+        ipv6: Whether the selected VLAN has IPv6-only addressing.
+    """
+    from atlaso.app import ui
+    from atlaso.app.models import VlanInterface
+    from atlaso.app.services import networking
+
+    parent = management_nic(mode="trunk", role="unused", access_management_ui_enabled=False)
+    vlan = VlanInterface(name="eth0.20", parent_interface="eth0", vlan_id=20, enabled=True,
+                         role="access", access_management_ui_enabled=True, ip_cidr="192.0.2.30/24", ipv6_cidr=None)
+    rows = [
+        dict(ifname="eth0", ifindex=2, link_type="ether", address=parent.mac_address, flags=["UP"], operstate="UP"),
+        dict(ifname="eth0.20", ifindex=3, link_index=2, flags=["UP"], operstate="UP",
+             linkinfo={"info_kind": "vlan", "info_data": {"id": 20}},
+             addr_info=[{"family": "inet", "local": "192.0.2.30", "prefixlen": 24, "scope": "global"}]),
+    ]
+    if ipv6:
+        vlan.ip_cidr = None
+        vlan.ipv6_cidr = "2001:db8::30/64"
+        rows[1]["addr_info"] = [{"family": "inet6", "local": "2001:db8::30", "prefixlen": 64, "scope": "global"}]
+    if fault == "missing":
+        rows.pop()
+    elif fault == "tag":
+        rows[1]["linkinfo"]["info_data"]["id"] = 21
+    elif fault == "parent-mac":
+        rows[0]["address"] = "02:00:00:00:00:ff"
+    elif fault == "parent-index":
+        rows[1]["link_index"] = 99
+    elif fault == "parent-down":
+        rows[0]["operstate"] = "DOWN"
+    elif fault == "vlan-down":
+        rows[1]["flags"] = []
+    elif fault == "address":
+        rows[1]["addr_info"][0]["local"] = "2001:db8::31" if ipv6 else "192.0.2.31"
+    elif fault == "parent-mode":
+        parent.mode = "access"
+    elif fault == "parent-disabled":
+        parent.admin_state = "down"
+    elif fault == "disabled":
+        vlan.enabled = False
+    elif fault == "unflagged":
+        vlan.access_management_ui_enabled = False
+    calls = []
+
+    def native_read(args, **kwargs):
+        """Return bounded native output or a capability failure.
+
+        Args:
+            args: Native command arguments.
+            **kwargs: Native subprocess options.
+        """
+        calls.append((args, kwargs))
+        if fault == "unavailable":
+            raise FileNotFoundError("native ip unavailable")
+        if fault == "timeout":
+            raise networking.subprocess.TimeoutExpired(args, 2.0)
+        return SimpleNamespace(returncode=0, stdout=json.dumps(rows))
+
+    monkeypatch.setattr(networking.subprocess, "run", native_read)
+    summary, discovered = ui._dashboard_management_summary([] if fault == "missing-parent" else [parent], [vlan])
+    assert summary["healthy"] is (fault is None)
+    assert discovered is (fault is None)
+    if fault in {"disabled", "unflagged"}:
+        assert summary["name"] == "Not discovered"
+    else:
+        assert summary["name"] == "eth0.20"
+        assert summary["link"] == ("up" if fault is None else "unknown")
+    if calls:
+        assert calls[0][0] == ["ip", "-d", "-j", "address", "show"]
+        assert calls[0][1]["timeout"] == 2.0
+
+
+def test_dashboard_access_snapshot_html_and_data_preserve_other_failures(client, monkeypatch):
+    """Expose the corrected Access listener consistently without clearing independent validation.
+
+    Args:
+        client: HTTP test client.
+        monkeypatch: Dependency replacement fixture.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, PhysicalInterface
+
+    monkeypatch.setattr(ui, "dashboard_appliance_apply_units", lambda _db: controlled_units(invalid_changed=True))
+    with SessionLocal() as db:
+        physical = db.execute(select(PhysicalInterface).where(PhysicalInterface.role == "management")).scalar_one()
+        physical.role = "access"
+        physical.mode = "access"
+        physical.access_management_ui_enabled = True
+        physical.ipv4_method = "static"
+        physical.ip_cidr = "192.0.2.20/24"
+        physical.oper_state = "up"
+        db.add(Job(id="job_access_dashboard", type="appliance-apply", status="succeeded", created_by="admin"))
+        db.commit()
+        snapshot = ui.dashboard_snapshot(db)
+    assert snapshot["network"]["management"] == dict(name=physical.name, address="192.0.2.20/24", link="up", healthy=True)
+    readiness = {item["id"]: item["complete"] for item in snapshot["readiness"]["items"]}
+    assert readiness["management-discovery"] and readiness["management-network"]
+    assert not readiness["appliance-settings"] and not readiness["desired-state"]
+    assert snapshot["overall"]["state"] == "needs-attention"
+    login(client)
+    data = client.get("/ui/management/dashboard/data")
+    assert data.status_code == 200
+    assert data.json()["network"]["management"] == snapshot["network"]["management"]
+    html = client.get("/ui/management/dashboard")
+    assert html.status_code == 200
+    assert "192.0.2.20/24" in html.text and "Appliance Settings changes are invalid" in html.text

@@ -46,6 +46,14 @@ Readiness covers management-interface discovery, management address/link health,
 desired-state validity, and the first successful global appliance apply. Readiness mode ends only after the management
 path is healthy and a global appliance-apply task has succeeded.
 
+The Network summary uses the preferred effective Management UI listener: a dedicated Management interface takes
+precedence, including DHCP while waiting for its lease, followed by flagged Access physical interfaces and enabled
+flagged Access VLANs. Physical listeners need a usable address, admin-up desired state, and an observed active link.
+Link-local addresses do not satisfy readiness. A VLAN needs an available trunk parent and a bounded native check of
+its exact tag, parent identity, active links, and addresses; configured addresses alone never establish VLAN health.
+If native verification is unavailable, the VLAN link remains unknown and management readiness remains incomplete.
+These checks do not clear independent Appliance Settings, service, or desired-state validation failures.
+
 Actionable exceptions use this fixed priority:
 
 1. changed appliance-apply units that fail validation;

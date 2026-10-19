@@ -484,6 +484,7 @@ from atlaso.app.services.networking import (
     render_network_config,
     trunk_parent_option,
     validate_network_state,
+    verify_native_management_vlans,
     vlan_interface_to_dict,
 )
 from atlaso.app.services.ntp import (
@@ -13279,6 +13280,61 @@ def _appliance_apply_failure_is_resolved(job: Job, successful_applies: list[Job]
     return unresolved_units <= retried_units
 
 
+def _dashboard_management_summary(
+    interfaces: list[PhysicalInterface], vlans: list[VlanInterface],
+) -> tuple[dict[str, Any], bool]:
+    """Project preferred listener identity separately from observed health.
+
+    Args:
+        interfaces: Physical interfaces with desired and observed state.
+        vlans: Desired VLAN listeners, which require native runtime proof.
+    """
+    context = management_ui_context(interfaces, vlans)
+    name = str(context.get("name") or "")
+    physical = next((item for item in interfaces if item.name == name), None)
+    vlan = next((item for item in vlans if item.name == name), None)
+    if not name:
+        # Retain discovery/diagnostics for a dedicated or addressless Access NIC.
+        physical = next((item for item in interfaces if item.role == "management"), None)
+        if physical is None:
+            physical = next((item for item in sorted(interfaces, key=lambda item: (item.name != "eth0", item.name))
+                             if item.role == "access" and item.mode == "access"
+                             and item.access_management_ui_enabled and item.admin_state == "up"
+                             and item.oper_state != "missing"), None)
+        name = physical.name if physical else ""
+    address = ""
+    cidrs = (
+        (physical.host_ip_cidr if physical.ipv4_method == "dhcp" else physical.ip_cidr,
+         *physical_ipv6_cidrs(physical)) if physical is not None
+        else (vlan.ip_cidr, vlan.ipv6_cidr) if vlan is not None else ()
+    )
+    for cidr in cidrs:
+        try:
+            parsed = ip_interface(cidr or "")
+        except ValueError:
+            continue
+        if not (parsed.ip.is_link_local or parsed.ip.is_unspecified or parsed.ip.is_loopback or parsed.ip.is_multicast):
+            address = str(parsed)
+            break
+    discovered = bool(physical and physical.oper_state != "missing")
+    link = str(physical.oper_state or "unknown") if physical else "missing"
+    healthy = bool(discovered and address and physical.admin_state == "up" and link == "up")
+    if vlan is not None:
+        # VLAN intent and an up parent alone do not prove the tagged listener.
+        parent = next((item for item in interfaces if item.name == vlan.parent_interface), None)
+        eligible_parent = bool(parent and parent.mode == "trunk" and parent.admin_state == "up"
+                               and parent.oper_state != "missing")
+        verified = bool(eligible_parent and address and verify_native_management_vlans([{
+            "kind": "vlan", "name": vlan.name, "parent": vlan.parent_interface,
+            "parent_mac": str(parent.mac_address or ""), "vlan_id": str(vlan.vlan_id),
+            "ip_cidr": str(vlan.ip_cidr or ""), "ipv6_cidr": str(vlan.ipv6_cidr or ""),
+        }], timeout=2.0))
+        discovered = verified
+        healthy = verified
+        link = "up" if verified else "unknown"
+    return {"name": name or "Not discovered", "address": address, "link": link, "healthy": healthy}, discovered
+
+
 def dashboard_snapshot(db: Session) -> dict[str, Any]:
     """Build the private operator dashboard without exposing task or audit details.
 
@@ -13357,18 +13413,9 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
         if str(interface.oper_state or "").lower() == "missing"
         or (str(interface.admin_state or "").lower() == "up" and str(interface.oper_state or "").lower() not in {"up", "unknown"})
     ]
-    management = next((interface for interface in configured_interfaces if str(interface.role or "").lower() == "management"), None)
-    management_discovered = bool(management and str(management.oper_state or "").lower() != "missing")
-    management_address = ""
-    if management is not None:
-        management_address = str(management.host_ip_cidr if management.ipv4_method == "dhcp" else management.ip_cidr or "")
-        management_address = management_address or str(management.ipv6_cidr or "")
-    management_healthy = bool(
-        management_discovered
-        and management_address
-        and str(management.admin_state or "").lower() == "up"
-        and str(management.oper_state or "").lower() == "up"
-    )
+    management, management_discovered = _dashboard_management_summary(interfaces, vlans)
+    management_address = management["address"]
+    management_healthy = management["healthy"]
 
     settings_unit = next((unit for unit in units if unit["id"] == "appliance_settings"), None)
     all_desired_state_valid = all(unit["valid"] for unit in units)
@@ -13377,7 +13424,7 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
             "id": "management-discovery",
             "label": "Management interface discovered",
             "complete": management_discovered,
-            "summary": management.name if management_discovered and management else "Discover a management interface from the appliance host.",
+            "summary": management["name"] if management_discovered else "Discover a management interface from the appliance host.",
             "url": "/physical-interfaces",
         },
         {
@@ -13548,12 +13595,7 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
             "url": "/services",
         },
         "network": {
-            "management": {
-                "name": management.name if management else "Not discovered",
-                "address": management_address,
-                "link": str(management.oper_state if management else "missing"),
-                "healthy": management_healthy,
-            },
+            "management": management,
             "configured": len(configured_interfaces),
             "physical": len(interfaces),
             "vlans": len([vlan for vlan in vlans if vlan.enabled]),
