@@ -477,6 +477,7 @@ from atlaso.app.services.networking import (
     discover_host_physical_interfaces,
     is_canonical_network_role,
     native_automatic_ipv6_cidrs,
+    native_static_ip_cidr,
     normalize_interface_mode,
     normalize_interface_role,
     physical_interface_to_dict,
@@ -13336,9 +13337,38 @@ def _dashboard_applied_network(
     return physical, vlans
 
 
+def _dashboard_observed_physical_interfaces(interfaces: list[PhysicalInterface]) -> list[PhysicalInterface]:
+    """Overlay bounded native health onto detached views without inventory reconciliation.
+
+    Args:
+        interfaces: Applied physical bindings, or bootstrap desired bindings.
+    """
+    try:
+        observations = {item.name: item for item in discover_host_physical_interfaces(timeout=2.0, require_success=True)}
+    except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError):
+        observations = None
+    result = []
+    for interface in interfaces:
+        view = PhysicalInterface(**{column.key: getattr(interface, column.key)
+                                    for column in PhysicalInterface.__table__.columns})
+        live = observations.get(interface.name) if observations is not None else None
+        if live is not None and str(live.mac_address).lower() != str(interface.mac_address).lower():
+            live = None
+        view.oper_state = live.oper_state if live else "unknown" if observations is None else "missing"
+        view.host_admin_state = live.host_admin_state if live else None
+        view.host_ip_cidr = (
+            live.host_ip_cidr if interface.ipv4_method == "dhcp"
+            else native_static_ip_cidr(live, interface.ip_cidr or "")
+        ) if live else None
+        view.host_ipv6_cidr = live.host_ipv6_cidr if live else None
+        view.host_ipv6_cidrs = list(live.host_ipv6_cidrs or ()) if live else []
+        result.append(view)
+    return result
+
+
 def _dashboard_management_summary(
     interfaces: list[PhysicalInterface], vlans: list[VlanInterface],
-    *, applied_network: dict[str, Any] | None = None,
+    *, applied_network: dict[str, Any] | None = None, observe_native: bool = False,
 ) -> tuple[dict[str, Any], bool]:
     """Project preferred listener identity separately from observed health.
 
@@ -13346,9 +13376,12 @@ def _dashboard_management_summary(
         interfaces: Physical interfaces with desired and observed state.
         vlans: Desired VLAN listeners, which require native runtime proof.
         applied_network: Authoritative Network baseline, or None for bootstrap fallback.
+        observe_native: Refresh physical health with bounded read-only native discovery.
     """
     if applied_network is not None:
         interfaces, vlans = _dashboard_applied_network(interfaces, applied_network)
+    if observe_native:
+        interfaces = _dashboard_observed_physical_interfaces(interfaces)
     context = management_ui_context(interfaces, vlans)
     name = str(context.get("name") or "")
     physical = next((item for item in interfaces if item.name == name), None)
@@ -13488,6 +13521,7 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
     ]
     management, management_discovered = _dashboard_management_summary(
         interfaces, vlans, applied_network=load_appliance_apply_baselines(db, refresh=True).get("network"),
+        observe_native=True,
     )
     management_address = management["address"]
     management_healthy = management["healthy"]

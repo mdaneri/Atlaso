@@ -51,12 +51,13 @@ def controlled_units(*, invalid_changed: bool = False, valid_changed: bool = Fal
     ]
 
 
-def test_dashboard_setup_exit_healthy_and_needs_attention_states(client, monkeypatch):
+def test_dashboard_setup_exit_healthy_and_needs_attention_states(client, monkeypatch, dashboard_native_inventory):
     """Verify that dashboard setup exit healthy and needs attention states.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
+        dashboard_native_inventory: Controlled native observations for transport/readiness assertions.
     """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
@@ -106,12 +107,13 @@ def test_dashboard_setup_exit_healthy_and_needs_attention_states(client, monkeyp
         assert attention["overall"]["primary_action"]["url"] == "/tasks?job_id=job_dashboard_failed"
 
 
-def test_dashboard_successful_appliance_apply_resolves_retried_units(client, monkeypatch):
+def test_dashboard_successful_appliance_apply_resolves_retried_units(client, monkeypatch, dashboard_native_inventory):
     """Verify that dashboard successful appliance apply resolves retried units.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
+        dashboard_native_inventory: Controlled native observations for transport/readiness assertions.
     """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
@@ -168,12 +170,13 @@ def test_dashboard_successful_appliance_apply_resolves_retried_units(client, mon
     assert "/tasks?job_id=job_dashboard_apply_recovered" in activity_urls
 
 
-def test_dashboard_unrelated_success_does_not_resolve_apply_failure(client, monkeypatch):
+def test_dashboard_unrelated_success_does_not_resolve_apply_failure(client, monkeypatch, dashboard_native_inventory):
     """Verify that dashboard unrelated success does not resolve apply failure.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
+        dashboard_native_inventory: Controlled native observations for transport/readiness assertions.
     """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
@@ -547,11 +550,12 @@ def test_dashboard_snapshot_does_not_call_desired_state_reconcilers(client, monk
     assert set(snapshot["pending_changes"]) == {"count", "invalid_count", "units", "url"}
 
 
-def test_dashboard_html_removes_old_inventory_and_javascript_refresh_is_resilient(client):
+def test_dashboard_html_removes_old_inventory_and_javascript_refresh_is_resilient(client, dashboard_native_inventory):
     """Verify that dashboard html removes old inventory and javascript refresh is resilient.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        dashboard_native_inventory: Controlled native observations for transport/readiness assertions.
     """
     from pathlib import Path
 
@@ -744,12 +748,13 @@ def test_dashboard_vlan_requires_exact_native_listener(monkeypatch, fault, ipv6)
         assert calls[0][1]["timeout"] == 2.0
 
 
-def test_dashboard_access_snapshot_html_and_data_preserve_other_failures(client, monkeypatch):
+def test_dashboard_access_snapshot_html_and_data_preserve_other_failures(client, monkeypatch, dashboard_native_inventory):
     """Expose the corrected Access listener consistently without clearing independent validation.
 
     Args:
         client: HTTP test client.
         monkeypatch: Dependency replacement fixture.
+        dashboard_native_inventory: Controlled native observations for transport/readiness assertions.
     """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
@@ -919,3 +924,88 @@ def test_dashboard_applied_vlan_ignores_pending_edit_or_delete(monkeypatch, dele
     assert calls[0]["vlan_id"] == "20" and calls[0]["parent_mac"] == parent.mac_address
     assert calls[0]["ip_cidr"] == "192.0.2.30/24"
     assert parent.admin_state == "down" and not vlan.enabled
+
+
+@pytest.mark.parametrize("fault", [None, "carrier", "address", "missing", "replacement", "timeout", "failure"])
+def test_dashboard_refresh_uses_current_native_health_without_mutating_inventory(monkeypatch, fault):
+    """Observe current health on each refresh while persisted observations stay unchanged.
+
+    Args:
+        monkeypatch: Fixture replacing bounded native discovery.
+        fault: Native change or discovery failure following a healthy observation.
+    """
+    import subprocess
+
+    from atlaso.app import ui
+    from atlaso.app.services.networking import HostPhysicalInterface
+
+    interface = management_nic()
+    baseline = {"config_preview": ui.render_network_config(interfaces=[interface], vlans=[])}
+    calls = []
+
+    def discover(*, timeout, require_success):
+        """Return successive observations without editing inventory.
+
+        Args:
+            timeout: Required bounded observation deadline.
+            require_success: Required explicit error propagation selection.
+        """
+        assert timeout == 2.0 and require_success is True
+        calls.append(True)
+        active_fault = fault if len(calls) > 1 else None
+        if active_fault == "timeout":
+            raise subprocess.TimeoutExpired("ip", timeout)
+        if active_fault == "failure":
+            raise RuntimeError("native discovery failed")
+        if active_fault == "missing":
+            return []
+        return [HostPhysicalInterface(
+            name="eth0", mac_address="02:00:00:00:00:ff" if active_fault == "replacement" else interface.mac_address,
+            driver=None, speed=None, host_ip_cidr=None if active_fault == "address" else "192.0.2.20/24",
+            host_mtu=1500, host_admin_state="up", oper_state="down" if active_fault == "carrier" else "up",
+        )]
+
+    monkeypatch.setattr(ui, "discover_host_physical_interfaces", discover)
+    assert ui._dashboard_management_summary([interface], [], applied_network=baseline, observe_native=True)[0]["healthy"]
+    summary, _ = ui._dashboard_management_summary([interface], [], applied_network=baseline, observe_native=True)
+    assert summary["healthy"] is (fault is None)
+    assert len(calls) == 2
+    assert interface.oper_state == "up" and interface.host_ip_cidr == "192.0.2.20/24"
+    assert interface.access_management_ui_enabled and interface.ip_cidr == "192.0.2.20/24"
+
+
+@pytest.fixture()
+def dashboard_native_inventory(client, monkeypatch):
+    """Supply controlled native health to tests of unrelated readiness and transport behavior.
+
+    Args:
+        client: Initialized isolated application and database fixture.
+        monkeypatch: Fixture replacing native discovery at its read boundary.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.services.networking import HostPhysicalInterface
+
+    calls = []
+
+    def observe(*, timeout, require_success):
+        """Project explicitly seeded fixture observations as native input.
+
+        Args:
+            timeout: Bounded native discovery deadline.
+            require_success: Explicit failure propagation setting.
+        """
+        assert timeout == 2.0 and require_success
+        calls.append(True)
+        with SessionLocal() as db:
+            return [HostPhysicalInterface(
+                name=row.name, mac_address=row.mac_address, driver=None, speed=None,
+                host_ip_cidr=row.host_ip_cidr, host_mtu=row.host_mtu,
+                host_admin_state=row.host_admin_state, oper_state=row.oper_state,
+                host_ipv6_cidr=row.host_ipv6_cidr, host_ipv6_cidrs=tuple(row.host_ipv6_cidrs or []),
+            ) for row in db.scalars(select(PhysicalInterface)).all()]
+
+    monkeypatch.setattr(ui, "discover_host_physical_interfaces", observe)
+    yield
+    assert calls, "Dashboard transports must request current native observations"
