@@ -225,7 +225,11 @@ replacing saved state. Disabled HTTPS intent and enabled HTTP proxies remain por
 Preflight also reserves service names that factory-default identity migration will create under the restored appliance
 domain, including ESXi PXE, before replacing any saved rows. The database-bound preflight also reserves service aliases
 from the target appliance’s observed automatic addresses on the restored interfaces. Rejection preserves saved state
-and audit records. Operator-chosen service names remain unchanged.
+and audit records. Automatic listener rebasing checks the same ownership under the Network Objects writer lock before
+publishing aliases; a conflict preserves cached listeners and DNS while retaining the new observation for diagnosis.
+Startup defers that refresh with a warning; the Apply preview remains available with validation errors until the proxy
+conflict is repaired.
+Operator-chosen service names remain unchanged.
 
 <!-- ATLASO-REVERSE-PROXY-ACCEPTANCE-PENDING -->
 ## Native appliance acceptance pending

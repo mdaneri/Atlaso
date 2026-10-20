@@ -113,9 +113,15 @@ def refresh_startup_host_inventory(db: Session, *, environment: str) -> None:
         # ownership before host discovery replaces that observation.
         remember_applied_service_dns_records(db)
         sync_host_physical_interfaces(db)
+        from atlaso.app.services.reverse_proxies import ServiceDnsAliasConflict
         from atlaso.app.ui import refresh_interface_service_dns_aliases
 
-        refresh_interface_service_dns_aliases(db, actor=None)
+        try:
+            refresh_interface_service_dns_aliases(db, actor=None)
+        except ServiceDnsAliasConflict:
+            REQUEST_LOGGER.warning(
+                "Service DNS alias refresh deferred: a saved reverse proxy owns a derived service alias."
+            )
         db.commit()
 
 

@@ -2098,3 +2098,165 @@ def test_save_checks_flushed_route_identity_capacity_atomically(editing, enabled
     finally:
         db.close()
         engine.dispose()
+
+
+@pytest.mark.parametrize("target", ["served", "upstream"])
+def test_proxy_save_reserves_observed_service_alias_before_rebase(target):
+    """Protect newly observed alias names while cached listener addresses are stale.
+
+    Args:
+        target: Served hostname or upstream claiming the next observed alias.
+    """
+    from atlaso.app.models import KmsSettings
+
+    engine, db = create_db()
+    try:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        interface.ipv6_enabled, interface.ipv6_cidr = True, None
+        interface.host_ipv6_cidr = "2001:db8::20/64"
+        db.scalar(select(ApplianceSettings)).service_dns_target_naming = "ip"
+        db.add(KmsSettings(hostname="owned.example.test", listen_interface="eth1", listen_address="192.168.1.10"))
+        db.commit()
+        request = payload(scheme="http", port=8084, redirect_http=False)
+        alias = "owned-2001-db8-0-0-0-0-0-20.example.test"
+        if target == "served":
+            request["hostname"] = alias
+        else:
+            request["routes"][0]["upstream_host"] = alias
+        audits = list(db.scalars(select(AuditEvent.id)))
+        with pytest.raises(ValueError, match="Atlaso.*service"):
+            save_proxy(db, request, actor="test")
+        assert desired_rows(db) == []
+        assert list(db.scalars(select(AuditEvent.id))) == audits
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("target", ["served", "upstream"])
+@pytest.mark.parametrize(("refresh_mode", "actor"), [("direct", None), ("direct", "observer"), ("startup", None)])
+def test_dynamic_service_alias_refresh_rejects_atomically_under_writer_lock(monkeypatch, target, refresh_mode, actor):
+    """Keep cached bindings and DNS unchanged even if a caller commits after rejection.
+
+    Args:
+        monkeypatch: Observe the real shared writer lock and ownership validator.
+        target: Served hostname or upstream claiming a future service alias.
+        actor: Background refresh or named observer audit context.
+        refresh_mode: Strict refresh or startup caller that defers alias conflicts.
+    """
+    from atlaso.app import ui
+    from atlaso.app.models import DnsRecord, KmsSettings
+
+    engine, db = create_db()
+    try:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        interface.ipv6_enabled, interface.ipv6_cidr = True, None
+        interface.host_ipv6_cidr = "2001:db8::10/64"
+        db.scalar(select(ApplianceSettings)).service_dns_target_naming = "ip"
+        service = KmsSettings(enabled=True, hostname="owned.example.test", listen_interface="eth1",
+                              listen_address="192.168.1.10\n2001:db8::10")
+        db.add(service)
+        db.commit()
+        ui.refresh_interface_service_dns_aliases(db, actor=None)
+        db.commit()
+        request = payload(scheme="http", port=8084, redirect_http=False)
+        alias = "owned-2001-db8-0-0-0-0-0-20.example.test"
+        if target == "served":
+            request["hostname"] = alias
+        else:
+            request["routes"][0]["upstream_host"] = alias
+        save_proxy(db, request, actor="test")
+        interface.host_ipv6_cidr = "2001:db8::20/64"
+        db.commit()
+        binding = service.listen_address
+        records = [(row.id, row.hostname, row.address) for row in db.scalars(select(DnsRecord).order_by(DnsRecord.id))]
+        settings = [(row.key, row.value) for row in db.scalars(select(Setting).order_by(Setting.key))]
+        audits = list(db.scalars(select(AuditEvent.id)))
+        calls = []
+        lock = ui.acquire_network_objects_write_lock
+        from atlaso.app.services import reverse_proxies as proxy_service
+
+        validate = proxy_service.validate_service_proxy_dependencies
+
+        def observed_lock(session):
+            """Record shared-lock acquisition while retaining the real implementation.
+
+            Args:
+                session: Refresh caller's database transaction.
+            """
+            calls.append("lock")
+            lock(session)
+
+        def observed_validation(session):
+            """Require lock acquisition before deriving candidate service aliases.
+
+            Args:
+                session: Refresh caller's candidate database transaction.
+            """
+            assert calls == ["lock"]
+            calls.append("validate")
+            validate(session)
+
+        monkeypatch.setattr(ui, "acquire_network_objects_write_lock", observed_lock)
+        monkeypatch.setattr(proxy_service, "validate_service_proxy_dependencies", observed_validation)
+        if refresh_mode == "startup":
+            from atlaso.app import main
+
+            monkeypatch.setattr(main, "sync_host_physical_interfaces", lambda session: None)
+            main.refresh_startup_host_inventory(db, environment="appliance")
+        else:
+            with pytest.raises(ValueError, match="Service hostname conflicts"):
+                ui.refresh_interface_service_dns_aliases(db, actor=actor)
+        db.commit()
+        db.expire_all()
+        assert calls == ["lock", "validate"]
+        assert service.listen_address == binding
+        assert interface.host_ipv6_cidr == "2001:db8::20/64"
+        assert [(row.id, row.hostname, row.address) for row in db.scalars(select(DnsRecord).order_by(DnsRecord.id))] == records
+        assert [(row.key, row.value) for row in db.scalars(select(Setting).order_by(Setting.key))] == settings
+        assert list(db.scalars(select(AuditEvent.id))) == audits
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_apply_preview_reports_dynamic_service_alias_conflict_without_reconciling(client):
+    """Keep Apply inspection usable without committing a rejected automatic alias.
+
+    Args:
+        client: Seeded appliance fixture with isolated desired state.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord, KmsSettings
+
+    with SessionLocal() as db:
+        interface = PhysicalInterface(name="eth9", mac_address="02:00:00:00:00:99", role="access", mode="access",
+                                      admin_state="up", oper_state="up", ip_cidr="192.0.2.8/24",
+                                      ipv6_enabled=True, host_ipv6_cidr="2001:db8::10/64")
+        db.add(interface)
+        db.scalar(select(ApplianceSettings)).service_dns_target_naming = "ip"
+        service = db.scalar(select(KmsSettings))
+        service.enabled, service.hostname = True, "owned.example.test"
+        service.listen_interface, service.listen_address = "eth9", "192.0.2.8\n2001:db8::10"
+        db.flush()
+        ui.refresh_interface_service_dns_aliases(db, actor=None)
+        ui.appliance_apply_units(db, reconcile=False)
+        listener = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        save_proxy(db, payload(enabled=True, scheme="http", port=8084, redirect_http=False,
+                               hostname="owned-2001-db8-0-0-0-0-0-20.example.test",
+                               listeners=[{"interface": "eth2", "address": listener.ip_cidr.split("/")[0]}]), actor="test")
+        interface.host_ipv6_cidr = "2001:db8::20/64"
+        db.commit()
+        binding = service.listen_address
+        records = [(row.id, row.hostname, row.address) for row in db.scalars(select(DnsRecord).order_by(DnsRecord.id))]
+        audits = list(db.scalars(select(AuditEvent.id)))
+        ui.kms_context(db, include_runtime_counts=False)
+        assert service.listen_address == binding
+        units = {row["id"]: row for row in ui.appliance_apply_units(db)}
+        assert any("owned by an Atlaso service" in error for error in units["public_services"]["validation_errors"])
+        db.commit()
+        db.expire_all()
+        assert service.listen_address == binding
+        assert [(row.id, row.hostname, row.address) for row in db.scalars(select(DnsRecord).order_by(DnsRecord.id))] == records
+        assert list(db.scalars(select(AuditEvent.id))) == audits

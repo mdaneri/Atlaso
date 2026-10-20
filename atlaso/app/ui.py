@@ -2038,6 +2038,26 @@ def resolve_single_service_bind(db: Session, listen_interface: str, listen_addre
     return selected_interface, ""
 
 
+def _service_dns_reconciliation_allowed(db: Session) -> bool:
+    """Keep service inspection read-only when automatic aliases conflict with proxies.
+
+    Args:
+        db: Caller-owned session before automatic service reconciliation.
+    """
+    from atlaso.app.services.reverse_proxies import (
+        ServiceDnsAliasConflict,
+        validate_service_proxy_dependencies,
+    )
+
+    acquire_network_objects_write_lock(db)
+    try:
+        validate_service_proxy_dependencies(db)
+    except ServiceDnsAliasConflict:
+        APPLY_LOGGER.warning("Service DNS reconciliation deferred: a saved reverse proxy owns a derived service alias.")
+        return False
+    return True
+
+
 def normalize_service_bind_settings(db: Session, settings: Any) -> bool:
     """Normalize service bind settings.
 
@@ -2166,6 +2186,7 @@ def vcf_backup_context(db: Session, *, reconcile: bool = True) -> dict:
         db: Active database session.
         reconcile: Whether dependent desired state should be reconciled.
     """
+    reconcile = reconcile and _service_dns_reconciliation_allowed(db)
     settings = get_vcf_backup_settings_row(db, reconcile_default_user=reconcile)
     if reconcile and normalize_service_bind_settings(db, settings):
         db.commit()
@@ -2227,6 +2248,7 @@ def ntp_context(db: Session, *, include_runtime_health: bool = False, reconcile:
         include_runtime_health: Include runtime health supplied by the caller.
         reconcile: Whether dependent desired state should be reconciled.
     """
+    reconcile = reconcile and _service_dns_reconciliation_allowed(db)
     settings = get_ntp_settings_row(db)
     if reconcile and normalize_service_bind_settings(db, settings):
         db.commit()
@@ -3678,6 +3700,7 @@ def vcf_private_registry_context(db: Session, *, reconcile: bool = True) -> dict
         db: Active database session.
         reconcile: Whether dependent desired state should be reconciled.
     """
+    reconcile = reconcile and _service_dns_reconciliation_allowed(db)
     settings = get_vcf_private_registry_settings_row(db, reconcile=reconcile)
     if reconcile and normalize_service_bind_settings(db, settings):
         db.commit()
@@ -3745,6 +3768,7 @@ def vcf_offline_depot_context(db: Session, *, reconcile: bool = True) -> dict:
         db: Active database session.
         reconcile: Whether dependent desired state should be reconciled.
     """
+    reconcile = reconcile and _service_dns_reconciliation_allowed(db)
     settings = get_vcf_offline_depot_settings_row(db, reconcile_default_user=reconcile, reconcile=reconcile)
     appliance_settings = get_appliance_settings_row(db)
     if reconcile and normalize_service_bind_settings(db, settings):
@@ -4659,6 +4683,7 @@ def ca_context(db: Session, *, reconcile: bool = True) -> dict:
         db: Active database session.
         reconcile: Whether dependent desired state should be reconciled.
     """
+    reconcile = reconcile and _service_dns_reconciliation_allowed(db)
     state_errors = ensure_ca_state(db) if reconcile else []
     settings = get_ca_settings_row(db)
     if reconcile and normalize_service_bind_settings(db, settings):
@@ -4742,6 +4767,7 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
         db: Active database session.
         reconcile: Whether dependent desired state should be reconciled.
     """
+    reconcile = reconcile and _service_dns_reconciliation_allowed(db)
     from atlaso.app.services.reverse_proxy_publication import context as proxy_context
 
     proxy_publication = proxy_context(db)
@@ -5339,6 +5365,7 @@ def kms_context(db: Session, *, reconcile: bool = True, include_runtime_counts: 
         reconcile: Whether dependent desired state should be reconciled.
         include_runtime_counts: Read live provider counts for the detail page.
     """
+    reconcile = reconcile and _service_dns_reconciliation_allowed(db)
     settings = get_kms_settings_row(db)
     available_interfaces = service_bind_options(db)
     changed = False
@@ -5483,6 +5510,7 @@ def ldap_context(db: Session, *, reconcile: bool = True, selected_organization_i
         reconcile: Whether dependent desired state should be reconciled.
         selected_organization_id: Identifier of the selected organization.
     """
+    reconcile = reconcile and _service_dns_reconciliation_allowed(db)
     settings = get_ldap_settings_row(db)
     available_interfaces = ldap_service_bind_options(db)
     available_by_name = {option["name"]: option for option in available_interfaces}
@@ -5863,6 +5891,7 @@ def dnsmasq_context(db: Session, *, reconcile: bool = True, include_leases: bool
         reconcile: Whether dependent desired state should be reconciled.
         include_leases: Read current client leases for the DNS/DHCP detail page.
     """
+    reconcile = reconcile and _service_dns_reconciliation_allowed(db)
     dns_settings = get_dns_settings_row(db)
     if reconcile and normalize_service_bind_settings(db, dns_settings):
         db.commit()
@@ -7083,23 +7112,40 @@ def refresh_interface_service_dns_aliases(db: Session, actor: str | None = None)
         actor: Optional audit actor. Atomic interface mutations pass ``None`` so nested audit commits
             cannot split the transaction.
     """
-    remember_applied_service_dns_records(db)
-    changed: list[str] = []
+    from atlaso.app.services.reverse_proxies import validate_service_proxy_dependencies
 
-    # Console, restore, and observation refresh paths can update interface rows
-    # without running the desired-interface mutation service. Re-derive cached
-    # listener addresses before reconciling their owned records.
-    for model in (CaSettings, KmsSettings, NtpSettings, VcfOfflineDepotSettings, VcfPrivateRegistrySettings):
-        for settings in db.execute(select(model)).scalars():
-            normalize_service_bind_settings(db, settings)
-    for model in (LdapSettings, OidcProviderSettings):
-        for settings in db.execute(select(model)).scalars():
-            interfaces, addresses = resolve_ldap_bind_targets(
-                db, [], current_interface=settings.listen_interface,
-            )
-            settings.listen_interface = interfaces
-            settings.listen_address = addresses
-    db.flush()
+    acquire_network_objects_write_lock(db)
+    # Rejection restores cached listeners and legacy DNS ownership even if the
+    # caller catches the error and commits newly observed interface addresses.
+    with db.begin_nested():
+        remember_applied_service_dns_records(db)
+
+        # Console, restore, and observation refresh paths can update interface rows
+        # without running the desired-interface mutation service. Re-derive cached
+        # listener addresses before reconciling their owned records.
+        for model in (CaSettings, KmsSettings, NtpSettings, VcfOfflineDepotSettings, VcfPrivateRegistrySettings):
+            for settings in db.execute(select(model)).scalars():
+                normalize_service_bind_settings(db, settings)
+        for model in (LdapSettings, OidcProviderSettings):
+            for settings in db.execute(select(model)).scalars():
+                interfaces, addresses = resolve_ldap_bind_targets(
+                    db, [], current_interface=settings.listen_interface,
+                )
+                settings.listen_interface = interfaces
+                settings.listen_address = addresses
+
+        esxi_boot = esxi_pxe_boot_settings(db)
+        _interfaces, addresses = resolve_service_bind_targets(
+            db, [], [], current_interface=str(esxi_boot.get("listen_interface") or ""),
+            current_address=str(esxi_boot.get("listen_address") or ""), listen_addresses_present="1",
+        )
+        if addresses != esxi_boot.get("listen_address"):
+            set_setting_value(db, ESXI_PXE_LISTEN_ADDRESS_KEY, addresses)
+            esxi_boot["listen_address"] = addresses
+        db.flush()
+        validate_service_proxy_dependencies(db)
+
+    changed: list[str] = []
 
     def mark(label: str, action: str | None) -> None:
         """Record an alias unit only when its reconciler changed state.
@@ -7183,14 +7229,6 @@ def refresh_interface_service_dns_aliases(db: Session, actor: str | None = None)
                 previous_hostname=ca_settings.portal_hostname,
             ),
         )
-    esxi_boot = esxi_pxe_boot_settings(db)
-    _interfaces, addresses = resolve_service_bind_targets(
-        db, [], [], current_interface=str(esxi_boot.get("listen_interface") or ""),
-        current_address=str(esxi_boot.get("listen_address") or ""), listen_addresses_present="1",
-    )
-    if addresses != esxi_boot.get("listen_address"):
-        set_setting_value(db, ESXI_PXE_LISTEN_ADDRESS_KEY, addresses)
-        esxi_boot["listen_address"] = addresses
     mark(
         "ESXi PXE",
         ensure_dns_for_esxi_pxe(
@@ -12079,6 +12117,7 @@ def esx_storage_context(db: Session, *, reconcile: bool = True, include_disk_inv
         reconcile: Whether dependent desired state should be reconciled.
         include_disk_inventory: Read candidate disks for the storage detail page.
     """
+    reconcile = reconcile and _service_dns_reconciliation_allowed(db)
     settings = get_esx_storage_settings_row(db)
     volumes = db.execute(select(EsxStorageVolume).order_by(EsxStorageVolume.name)).scalars().all()
     shares = db.execute(select(EsxNfsShare).order_by(EsxNfsShare.datastore_name)).scalars().all()
@@ -12203,12 +12242,19 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
         applying_dns: Include the resolver intent that follows selected DNS activation.
     """
     from atlaso.app.services.network_boot import load_esxi_applied_runtime
+    from atlaso.app.services.reverse_proxies import ServiceDnsAliasConflict
 
     if not reconcile and db.scalar(select(CaSettings)) is None:
         raise ValueError("Read-only Apply capture requires existing CA settings; initialize appliance state before capture.")
     if reconcile:
         remember_applied_service_dns_records(db)
-        refresh_interface_service_dns_aliases(db, actor=None)
+        try:
+            refresh_interface_service_dns_aliases(db, actor=None)
+        except ServiceDnsAliasConflict:
+            APPLY_LOGGER.warning(
+                "Service DNS alias refresh deferred: a saved reverse proxy owns a derived service alias."
+            )
+            reconcile = False
     baselines = load_appliance_apply_baselines(db)
     local_users = local_users_apply_context(db, baselines.get("local_users"))
     network = network_context(db)

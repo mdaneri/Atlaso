@@ -18,6 +18,11 @@ from atlaso.app.services.port_forwarding import ListenerClaim, listener_claims
 from atlaso.app.services.traffic_publishing import nat_targets
 from atlaso.app.ui_routes import PROTOCOL_EXACT_PATHS, PROTOCOL_PATH_PREFIXES
 
+
+class ServiceDnsAliasConflict(ValueError):
+    """A candidate service alias would take a saved proxy hostname or upstream."""
+
+
 MAX_REVERSE_PROXIES = 256
 MAX_PROXY_ROUTES = 64
 MAX_TOTAL_PROXY_ROUTES = 256
@@ -246,7 +251,7 @@ def _service_hostnames(db: Session) -> set[str]:
     from atlaso.app.services.appliance_settings import (
         normalize_service_dns_target_naming,
     )
-    from atlaso.app.services.dnsmasq import authoritative_server_name
+    from atlaso.app.services.dnsmasq import authoritative_server_name, split_interfaces
     from atlaso.app.services.service_dns_defaults import (
         ESXI_PXE_DNS_DESCRIPTION,
         FACTORY_SERVICE_IDENTITIES,
@@ -270,6 +275,9 @@ def _service_hostnames(db: Session) -> set[str]:
             names.add(_canonical_dns_name(authoritative_server_name(dns_settings), require_fqdn=False))
         except ValueError:
             pass
+    from atlaso.app.services.applied_service_dns import service_bind_options
+
+    options = {option["name"]: option["addresses"] for option in service_bind_options(db)}
     for model in _SERVICE_SETTING_MODELS:
         row = cast(_ServiceHostnameSettings | None, db.scalar(select(model)))
         if row is None:
@@ -286,6 +294,11 @@ def _service_hostnames(db: Session) -> set[str]:
                     value, row.listen_interface, row.listen_address, naming,
                     shared_target_token="service" if isinstance(row, models.NtpSettings) else None,
                 ))
+                for interface_name in split_interfaces(row.listen_interface):
+                    names.update(service_alias_names(
+                        value, interface_name, "\n".join(options.get(interface_name, [])), naming,
+                        shared_target_token="service" if isinstance(row, models.NtpSettings) else None,
+                    ))
         except ValueError:
             continue
     appliance = db.scalar(select(models.ApplianceSettings))
@@ -294,11 +307,8 @@ def _service_hostnames(db: Session) -> set[str]:
             names.add(_canonical_dns_name(appliance.fqdn, require_fqdn=False))
         except ValueError:
             pass
-    from atlaso.app.services.applied_service_dns import service_bind_options
-
     storage = db.scalar(select(models.EsxStorageSettings))
     if storage is not None:
-        options = {option["name"]: option["addresses"] for option in service_bind_options(db)}
         for share in db.scalars(select(models.EsxNfsShare)):
             names.update(storage_alias_names(storage.hostname, share.interface_name,
                          options.get(share.interface_name, []), share.address_families, naming))
@@ -459,9 +469,9 @@ def validate_service_proxy_dependencies(db: Session) -> None:
     ca = db.scalar(select(models.CaSettings))
     for proxy in proxies:
         if proxy.hostname.strip().rstrip(".").casefold() in names:
-            raise ValueError(f"Service hostname conflicts with saved reverse proxy {proxy.name}. Move or remove the proxy before saving this service hostname.")
+            raise ServiceDnsAliasConflict(f"Service hostname conflicts with saved reverse proxy {proxy.name}. Move or remove the proxy before saving this service hostname.")
         if any(route.upstream_host.strip().rstrip(".").casefold() in names for route in proxy.routes):
-            raise ValueError(f"Service hostname conflicts with an upstream of saved reverse proxy {proxy.name}. Change that upstream before saving this service hostname.")
+            raise ServiceDnsAliasConflict(f"Service hostname conflicts with an upstream of saved reverse proxy {proxy.name}. Change that upstream before saving this service hostname.")
         if proxy.enabled and proxy.scheme == "https" and (ca is None or not ca.enabled):
             raise ValueError("Disable enabled HTTPS reverse proxies before disabling their Certificate Authority.")
 
