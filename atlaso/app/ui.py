@@ -12625,6 +12625,22 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
             validation_errors=kms["kms_validation_errors"],
             config_path=KMS_STAGED_CONFIG_PATH,
             config_preview=kms["kms_config_preview"],
+            # The deletion guard keys off updated_at even when edits render to the same daemon JSON.
+            snapshot_marker={
+                "providers": [
+                    {
+                        "id": provider.id,
+                        "updated_at": (
+                            provider.updated_at.replace(tzinfo=timezone.utc)
+                            if provider.updated_at.tzinfo is None
+                            else provider.updated_at.astimezone(timezone.utc)
+                        ).isoformat(),
+                    }
+                    for provider in sorted(
+                        kms["vsphere_key_providers"], key=lambda item: item.id
+                    )
+                ]
+            },
             baseline=baselines.get("kms"),
         ),
         make_appliance_apply_unit(

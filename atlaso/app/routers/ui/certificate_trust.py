@@ -2193,11 +2193,25 @@ def build_routers(
             resource_id=vcenter.id,
             detail=f"provider_id={provider.id}; fingerprint_sha256={certificate.fingerprint_sha256}; public_certificate=true",
         )
+        refreshed_provider = next(
+            item for item in provider_rows(db) if item.id == provider.id
+        )
+        refreshed_vcenter = next(
+            item
+            for item in refreshed_provider.trusted_vcenters
+            if item.id == vcenter.id
+        )
         return JSONResponse(
             {
                 "status": "saved_pending_appliance_apply",
                 "trusted_vcenter_id": vcenter.id,
                 "client_fingerprint": certificate.fingerprint_sha256,
+                "trusted_vcenter": trusted_vcenter_to_dict(refreshed_vcenter),
+                "provider": provider_to_dict(refreshed_provider),
+                "certificates": [
+                    certificate_to_dict(item)
+                    for item in refreshed_vcenter.certificates
+                ],
             }
         )
 
@@ -2710,12 +2724,16 @@ def build_routers(
             detail=f"provider_id={provider.id}; name={vcenter.name}; enabled={vcenter.enabled}; public_certificate={bool(certificate)}",
         )
         refreshed = _vsphere_vcenter_row(db, provider.id, vcenter.id)
+        refreshed_provider = next(
+            item for item in provider_rows(db) if item.id == provider.id
+        )
         return grid_saved_response(
             request,
             redirect_url=management_ui_path("/vsphere-key-providers"),
             resource_name="trusted_vcenter",
             resource=trusted_vcenter_to_dict(refreshed),
             extra={
+                "provider": provider_to_dict(refreshed_provider),
                 "certificates": [
                     certificate_to_dict(item) for item in refreshed.certificates
                 ]
