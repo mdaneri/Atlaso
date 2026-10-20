@@ -6056,6 +6056,29 @@ function syncVsphereProviderSelect(select, providers, enabledOnly = false) {
     : String(eligible[0]?.id || "");
 }
 
+function updateVsphereGridCounts(providerTable, vcenterTable) {
+  const countRows = (table) => (table?.getData?.() || []).filter((row) => !row.is_new).length;
+  const providers = document.querySelector('[data-vsphere-count="providers"]');
+  const vcenters = document.querySelector('[data-vsphere-count="vcenters"]');
+  if (providers instanceof HTMLElement) providers.textContent = `${countRows(providerTable)} providers`;
+  if (vcenters instanceof HTMLElement) vcenters.textContent = `${countRows(vcenterTable)} vCenters`;
+}
+
+async function updateVsphereProviderTrustCount(providerTable, vcenterTable, providerId) {
+  const provider = providerTable?.getRow?.(providerId);
+  if (!provider) return;
+  const count = (vcenterTable?.getData?.() || []).filter((row) => !row.is_new
+    && String(row.provider_id) === String(providerId)).length;
+  await provider.update({ trusted_vcenter_count: count });
+}
+
+function reformatVsphereProviderCells(vcenterTable, providerId) {
+  for (const data of vcenterTable?.getData?.("all") || []) {
+    if (data.is_new || String(data.provider_id) !== String(providerId)) continue;
+    vcenterTable.getRow?.(data.id)?.reformat?.();
+  }
+}
+
 async function syncVsphereEnrollmentResult({ payload, resource, vcenterTable, certificateTable, providerTable, upsertOption, certificateTargetSelect }) {
   const previousRow = vcenterTable?.getRow?.(resource.id);
   const previous = previousRow?.getData?.() || null;
@@ -6581,10 +6604,13 @@ function initializeVsphereKeyProviderTables() {
     providers = providers.filter((provider) => String(provider.id) !== String(resource.id));
     providers.push(resource);
     synchronizeProviderSelects();
+    reformatVsphereProviderCells(vcenterElement?.atlasoTabulator, resource.id);
+    updateVsphereGridCounts(providerElement.atlasoTabulator, vcenterElement?.atlasoTabulator);
   };
   const deleteProviderOption = (resource) => {
     providers = providers.filter((provider) => String(provider.id) !== String(resource.id));
     synchronizeProviderSelects();
+    updateVsphereGridCounts(providerElement.atlasoTabulator, vcenterElement?.atlasoTabulator);
   };
   const upsertOption = (select, value, label) => {
     if (!(select instanceof HTMLSelectElement) || !value) return;
@@ -6717,11 +6743,17 @@ function initializeVsphereKeyProviderTables() {
       const provider = form.elements.namedItem("provider_id");
       if (provider instanceof HTMLSelectElement) body.set("provider_id", provider.value);
     },
-    onSaved: ({ resource }) => {
+    onSaved: async ({ resource }) => {
       upsertOption(certificateTargetSelect, `${resource.provider_id}|${resource.id}`, `${resource.provider_name} / ${resource.name}`);
       synchronizeProviderSelects();
+      await updateVsphereProviderTrustCount(providerElement.atlasoTabulator, vcenterElement.atlasoTabulator, resource.provider_id);
+      updateVsphereGridCounts(providerElement.atlasoTabulator, vcenterElement.atlasoTabulator);
     },
-    onDeleted: ({ data }) => removeOption(certificateTargetSelect, `${data.provider_id}|${data.id}`),
+    onDeleted: async ({ data }) => {
+      removeOption(certificateTargetSelect, `${data.provider_id}|${data.id}`);
+      await updateVsphereProviderTrustCount(providerElement.atlasoTabulator, vcenterElement.atlasoTabulator, data.provider_id);
+      updateVsphereGridCounts(providerElement.atlasoTabulator, vcenterElement.atlasoTabulator);
+    },
     deleteConfirmation: (data) => ({ title: `Delete ${data.name}?`, message: "Disable this trusted vCenter and retire every public certificate before deletion.", confirmLabel: "Delete trusted vCenter", tone: "danger" }),
     options: {
       height: "420px",
@@ -6750,6 +6782,8 @@ function initializeVsphereKeyProviderTables() {
       upsertOption,
       certificateTargetSelect,
     });
+    await updateVsphereProviderTrustCount(document.getElementById("vsphere-providers-table")?.atlasoTabulator, table, resource.provider_id);
+    updateVsphereGridCounts(document.getElementById("vsphere-providers-table")?.atlasoTabulator, table);
     synchronizeProviderSelects();
     const refreshed = await refreshNetworkSideStack();
     if (refreshed === false) {

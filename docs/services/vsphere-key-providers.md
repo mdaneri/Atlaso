@@ -42,6 +42,8 @@ In **Trusted vCenters**, choose the grid's **+ Add trusted vCenter here** row. T
 
 Both paths use one wizard. Existing rows retain **Edit** for saved details and **Refresh from vCenter** for discovery.
 Review pending changes and run global **Appliance Apply** before using newly saved trust.
+The provider and trusted-vCenter count badges track the saved grid rows as they are created or removed, and provider
+trust counts and trusted-vCenter provider labels refresh in place after the corresponding successful changes.
 Provider choices reflect saved provider changes immediately: enrollment lists enabled providers, while manual setup
 can attach a trusted vCenter to any saved provider. Review shows the selected provider and entered vCenter name.
 Successful setup refreshes the trust rows and pending Apply state in place.

@@ -119,6 +119,11 @@ class _FakeVcenter:
 
 class _FakeInventoryVcenter:
     def __init__(self, clusters: object) -> None:
+        """Initialize a synthetic authenticated inventory session.
+
+        Args:
+            clusters: Synthetic cluster response returned by the fake vCenter.
+        """
         self.clusters = clusters
         self.headers: dict[str, str] = {}
         self.calls: list[tuple[str, object]] = []
@@ -127,9 +132,19 @@ class _FakeInventoryVcenter:
         return self
 
     def __exit__(self, *_args):
+        """Close the synthetic inventory session.
+
+        Args:
+            *_args: Context-manager exception details ignored by the fake session.
+        """
         pass
 
     def get(self, path: str) -> httpx.Response:
+        """Return service metadata with distinct display and instance identities.
+
+        Args:
+            path: Requested service resource or session operation path.
+        """
         self.calls.append((path, None))
         return httpx.Response(
             200,
@@ -144,6 +159,12 @@ class _FakeInventoryVcenter:
         )
 
     def post(self, path: str, *, json=None) -> httpx.Response:
+        """Emulate authenticated inventory operations and logout.
+
+        Args:
+            path: Requested service resource or session operation path.
+            json: Request body supplied by the discovery service.
+        """
         self.calls.append((path, json))
         if path.endswith("/Login"):
             return httpx.Response(
@@ -158,6 +179,12 @@ class _FakeInventoryVcenter:
 
 
 def _prepare_inventory_fake(monkeypatch, fake: _FakeInventoryVcenter) -> None:
+    """Replace network operations with one synthetic inventory session.
+
+    Args:
+        monkeypatch: Fixture replacing external TLS and HTTP dependencies.
+        fake: Synthetic inventory session providing the test responses.
+    """
     monkeypatch.setattr(
         enrollment, "vcenter_https_leaf", lambda _host, **_kwargs: b"test-https-leaf"
     )
@@ -178,6 +205,11 @@ def _discover_inventory() -> enrollment.DiscoveredInventory:
 
 
 def test_inventory_returns_about_name_and_all_unfiltered_cluster_ids(monkeypatch) -> None:
+    """Retain every cluster and distinguish the About name from identity.
+
+    Args:
+        monkeypatch: Fixture replacing external TLS and HTTP dependencies.
+    """
     clusters = [
         {"clusterId": {"id": "Atlaso-KMIP"}, "managementType": "VC_MANAGED"},
         {"clusterId": {"id": "External-KMIP"}, "managementType": "TRUSTED"},
@@ -199,6 +231,11 @@ def test_inventory_returns_about_name_and_all_unfiltered_cluster_ids(monkeypatch
 
 
 def test_inventory_accepts_empty_cluster_inventory(monkeypatch) -> None:
+    """Accept an explicitly empty successful inventory.
+
+    Args:
+        monkeypatch: Fixture replacing external TLS and HTTP dependencies.
+    """
     fake = _FakeInventoryVcenter([])
     _prepare_inventory_fake(monkeypatch, fake)
 
@@ -216,6 +253,12 @@ def test_inventory_accepts_empty_cluster_inventory(monkeypatch) -> None:
     ],
 )
 def test_inventory_rejects_malformed_or_ambiguous_clusters(monkeypatch, clusters) -> None:
+    """Reject incomplete inventory rather than returning misleading choices.
+
+    Args:
+        monkeypatch: Fixture replacing external TLS and HTTP dependencies.
+        clusters: Synthetic cluster response returned by the fake vCenter.
+    """
     fake = _FakeInventoryVcenter(clusters)
     _prepare_inventory_fake(monkeypatch, fake)
 
@@ -226,9 +269,20 @@ def test_inventory_rejects_malformed_or_ambiguous_clusters(monkeypatch, clusters
 
 
 def test_inventory_rejects_vcenter_api_error_and_logs_out(monkeypatch) -> None:
+    """Keep API errors distinct from empty inventory and release the session.
+
+    Args:
+        monkeypatch: Fixture replacing external TLS and HTTP dependencies.
+    """
     fake = _FakeInventoryVcenter([])
 
     def failing_post(path: str, *, json=None) -> httpx.Response:
+        """Reject only the cluster inventory operation.
+
+        Args:
+            path: Requested service resource or session operation path.
+            json: Request body supplied by the discovery service.
+        """
         if path.endswith("/ListKmsClusters"):
             fake.calls.append((path, json))
             return httpx.Response(403, json={"value": {"message": "denied"}})
@@ -244,6 +298,11 @@ def test_inventory_rejects_vcenter_api_error_and_logs_out(monkeypatch) -> None:
 
 
 def test_inventory_fingerprint_mismatch_precedes_session_or_credentials(monkeypatch) -> None:
+    """Reject changed TLS identity before opening an authenticated session.
+
+    Args:
+        monkeypatch: Fixture replacing external TLS and HTTP dependencies.
+    """
     monkeypatch.setattr(
         enrollment, "vcenter_https_leaf", lambda _host, **_kwargs: b"new-https-leaf"
     )

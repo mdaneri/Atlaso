@@ -23,7 +23,7 @@
 
     <div class="tab-panels">
       <div id="vsphere-providers-panel" class="tab-panel active" role="tabpanel">
-        <div class="section-head"><div><h2>Providers</h2><p class="muted">Each immutable UUID is an isolated operational key namespace.</p></div><span class="status-pill muted">{{ vsphere_key_providers|length }} providers</span></div>
+        <div class="section-head"><div><h2>Providers</h2><p class="muted">Each immutable UUID is an isolated operational key namespace.</p></div><span class="status-pill muted" data-vsphere-count="providers">{{ vsphere_key_providers|length }} providers</span></div>
         <div id="vsphere-provider-error" class="alert error hidden"></div>
         <div id="vsphere-providers-table" class="tabulator-shell" data-providers='{{ vsphere_key_provider_rows|tojson }}' data-csrf="{{ csrf_token }}" data-fallback-id="vsphere-providers-fallback"></div>
         <table id="vsphere-providers-fallback" class="data-table dns-fallback-table">
@@ -33,7 +33,7 @@
       </div>
 
       <div id="vsphere-vcenters-panel" class="tab-panel" role="tabpanel" hidden>
-        <div class="section-head"><div><h2>Trusted vCenters</h2><p class="muted">Add a trusted vCenter by enrolling from vCenter or entering its public certificate.</p></div><span class="status-pill muted">{{ vsphere_trusted_vcenters|length }} vCenters</span></div>
+        <div class="section-head"><div><h2>Trusted vCenters</h2><p class="muted">Add a trusted vCenter by enrolling from vCenter or entering its public certificate.</p></div><span class="status-pill muted" data-vsphere-count="vcenters">{{ vsphere_trusted_vcenters|length }} vCenters</span></div>
         <div id="vsphere-vcenter-error" class="alert error hidden"></div>
         <div id="vsphere-vcenters-table" class="tabulator-shell" data-vcenters='{{ vsphere_trusted_vcenter_rows|tojson }}' data-provider-options='{{ vsphere_provider_choices|tojson }}' data-csrf="{{ csrf_token }}" data-fallback-id="vsphere-vcenters-fallback"></div>
         <table id="vsphere-vcenters-fallback" class="data-table dns-fallback-table">
