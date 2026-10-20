@@ -20723,12 +20723,170 @@ def _appliance_update_python() -> str:
     return str(ATLASO_VENV_PYTHON_PATH if ATLASO_VENV_PYTHON_PATH.exists() else sys.executable)
 
 
+UPDATE_DIAGNOSTIC_MARKER = "ATLASO_UPDATE_DIAGNOSTIC:"
+UPDATE_DIAGNOSTIC_STAGES = {
+    "repository_registration",
+    "repository_probe",
+    "module_discovery",
+    "module_install",
+    "module_import",
+    "ceip_configuration",
+}
+UPDATE_DIAGNOSTIC_REASONS = {
+    "none",
+    "helper_failed",
+    "dns_failed",
+    "connection_refused",
+    "timed_out",
+    "tls_failed",
+    "proxy_auth_required",
+    "http_denied",
+    "http_failed",
+}
+
+
+def _powershell_update_diagnostic_script(script: str, initial_stage: str) -> str:
+    """Wrap a managed-module script with bounded, typed failure reporting.
+
+    Args:
+        script: Existing generated PowerShell script.
+        initial_stage: Fixed stage used before the first meaningful operation.
+    """
+    stage = initial_stage if initial_stage in UPDATE_DIAGNOSTIC_STAGES else "module_discovery"
+    return (
+        f"$atlasoUpdateStage = '{stage}'; try {{ {script}; "
+        "$atlasoDiagnostic = @{stage=$atlasoUpdateStage; reason='none'; http_status=$null}; "
+        "[Console]::Error.WriteLine('ATLASO_UPDATE_DIAGNOSTIC:' + ($atlasoDiagnostic | ConvertTo-Json -Compress)); "
+        "} catch { "
+        "$atlasoDiagnosticReason = 'helper_failed'; $atlasoHttpStatus = $null; $atlasoHttpFailure = $false; "
+        "$atlasoException = $_.Exception; $atlasoDepth = 0; "
+        "while ($null -ne $atlasoException -and $atlasoDepth -lt 8) { $atlasoDepth++; $atlasoCandidateReason = 'helper_failed'; $atlasoCandidateStatus = $null; $atlasoCandidateIsHttp = $false; "
+        "if ($atlasoException -is [System.TimeoutException]) { $atlasoCandidateReason = 'timed_out' }; "
+        "if ($atlasoException -is [System.Security.Authentication.AuthenticationException]) { $atlasoCandidateReason = 'tls_failed' }; "
+        "if ($atlasoException -is [System.Net.Sockets.SocketException]) { "
+        "if ($atlasoException.SocketErrorCode -eq [System.Net.Sockets.SocketError]::HostNotFound -or "
+        "$atlasoException.SocketErrorCode -eq [System.Net.Sockets.SocketError]::NoData -or "
+        "$atlasoException.SocketErrorCode -eq [System.Net.Sockets.SocketError]::TryAgain) { $atlasoCandidateReason = 'dns_failed' }; "
+        "if ($atlasoException.SocketErrorCode -eq [System.Net.Sockets.SocketError]::ConnectionRefused) { $atlasoCandidateReason = 'connection_refused' }; "
+        "if ($atlasoException.SocketErrorCode -eq [System.Net.Sockets.SocketError]::TimedOut) { $atlasoCandidateReason = 'timed_out' } }; "
+        "if ($atlasoException -is [System.Net.WebException]) { "
+        "$atlasoCandidateIsHttp = $true; "
+        "if ($atlasoException.Status -eq [System.Net.WebExceptionStatus]::NameResolutionFailure -or "
+        "$atlasoException.Status -eq [System.Net.WebExceptionStatus]::ProxyNameResolutionFailure) { $atlasoCandidateReason = 'dns_failed' }; "
+        "if ($atlasoException.Status -eq [System.Net.WebExceptionStatus]::Timeout) { $atlasoCandidateReason = 'timed_out' }; "
+        "if ($atlasoException.Status -eq [System.Net.WebExceptionStatus]::TrustFailure -or "
+        "$atlasoException.Status -eq [System.Net.WebExceptionStatus]::SecureChannelFailure) { $atlasoCandidateReason = 'tls_failed' }; "
+        "if ($atlasoException.Response) { try { $atlasoCandidateStatus = [int]$atlasoException.Response.StatusCode } catch { } } }; "
+        "if ($atlasoException -is [System.Net.Http.HttpRequestException]) { "
+        "$atlasoCandidateIsHttp = $true; "
+        "if ($atlasoException.PSObject.Properties['StatusCode'] -and $null -ne $atlasoException.StatusCode) { "
+        "try { $atlasoCandidateStatus = [int]$atlasoException.StatusCode } catch { } }; "
+        "if ($atlasoException.PSObject.Properties['HttpRequestError']) { "
+        "switch ([string]$atlasoException.HttpRequestError) { "
+        "'NameResolutionError' { $atlasoCandidateReason = 'dns_failed' }; "
+        "'SecureConnectionError' { $atlasoCandidateReason = 'tls_failed' } } } }; "
+        "if ($atlasoCandidateIsHttp -and $null -ne $atlasoCandidateStatus -and $atlasoCandidateStatus -ge 100 -and $atlasoCandidateStatus -le 599) { "
+        "if ($atlasoCandidateStatus -ge 400) { "
+        "$atlasoHttpStatus = $atlasoCandidateStatus; $atlasoHttpFailure = $true; "
+        "if ($atlasoCandidateStatus -eq 407) { $atlasoDiagnosticReason = 'proxy_auth_required' } "
+        "elseif ($atlasoCandidateStatus -eq 401 -or $atlasoCandidateStatus -eq 403) { $atlasoDiagnosticReason = 'http_denied' } "
+        "else { $atlasoDiagnosticReason = 'http_failed' } } "
+        "elseif (-not $atlasoHttpFailure -and $atlasoCandidateStatus -lt 400) { $atlasoHttpStatus = $atlasoCandidateStatus } }; "
+        "if (-not $atlasoHttpFailure -and $atlasoCandidateReason -ne 'helper_failed') { $atlasoDiagnosticReason = $atlasoCandidateReason }; "
+        "$atlasoException = $atlasoException.InnerException }; "
+        "$atlasoDiagnostic = @{stage=$atlasoUpdateStage; reason=$atlasoDiagnosticReason; http_status=$atlasoHttpStatus}; "
+        "[Console]::Error.WriteLine('ATLASO_UPDATE_DIAGNOSTIC:' + ($atlasoDiagnostic | ConvertTo-Json -Compress)); exit 1 }"
+    )
+
+
+def _parse_update_diagnostic_marker(
+    stdout: str, stderr: str, *, fallback_stage: str, success: bool
+) -> tuple[str, str, int | None, str, str]:
+    """Remove and validate an updater marker without retaining its raw data.
+
+    Args:
+        stdout: Captured standard output.
+        stderr: Captured standard error.
+        fallback_stage: Fixed stage for generic runner evidence.
+        success: Whether the wrapped command succeeded.
+    """
+    marker_line: str | None = None
+
+    def without_marker(value: str) -> str:
+        """Remove marker lines from one captured output stream.
+
+        Args:
+            value: Captured standard-output or standard-error text.
+        """
+        nonlocal marker_line
+        kept: list[str] = []
+        for line in value.splitlines():
+            if line.startswith(UPDATE_DIAGNOSTIC_MARKER):
+                if marker_line is None:
+                    marker_line = (
+                        line[len(UPDATE_DIAGNOSTIC_MARKER):]
+                        if len(line) <= 512
+                        else "!invalid!"
+                    )
+                else:
+                    marker_line = "!invalid!"
+                continue
+            kept.append(line)
+        return "\n".join(kept)
+
+    clean_stdout = without_marker(stdout)
+    clean_stderr = without_marker(stderr)
+    default_stage = fallback_stage if fallback_stage in UPDATE_DIAGNOSTIC_STAGES else "module_discovery"
+    default_reason = "none" if success else "helper_failed"
+    if marker_line is None:
+        return default_stage, default_reason, None, clean_stdout, clean_stderr
+    try:
+        if len(marker_line) > 512:
+            raise ValueError("oversized marker")
+        marker = json.loads(marker_line)
+        if (
+            not isinstance(marker, dict)
+            or set(marker) != {"stage", "reason", "http_status"}
+            or type(marker.get("stage")) is not str
+            or marker.get("stage") not in UPDATE_DIAGNOSTIC_STAGES
+            or type(marker.get("reason")) is not str
+            or marker.get("reason") not in UPDATE_DIAGNOSTIC_REASONS
+        ):
+            raise ValueError("invalid marker")
+        status = marker.get("http_status")
+        if status is not None and (type(status) is not int or not 100 <= status <= 599):
+            raise ValueError("invalid status")
+        if (
+            (marker["reason"] == "proxy_auth_required" and status != 407)
+            or (marker["reason"] == "http_denied" and status not in {401, 403})
+            or (
+                marker["reason"] == "http_failed"
+                and (status is None or status < 400 or status in {401, 403, 407})
+            )
+            or (
+                status is not None
+                and status >= 400
+                and marker["reason"] not in {"proxy_auth_required", "http_denied", "http_failed"}
+            )
+            or (marker["reason"] == "none" and status is not None and status >= 400)
+        ):
+            raise ValueError("inconsistent status")
+        if success and marker["reason"] != "none":
+            raise ValueError("failed marker on successful command")
+        if not success and marker["reason"] == "none":
+            raise ValueError("success marker on failed command")
+        return marker["stage"], marker["reason"], status, clean_stdout, clean_stderr
+    except (json.JSONDecodeError, RecursionError, TypeError, ValueError):
+        return default_stage, default_reason, None, clean_stdout, clean_stderr
+
+
 def _command_payload(
     command: list[str],
     *,
     success_codes: set[int] | None = None,
     env: dict[str, str] | None = None,
     stdout_limit: int = 4000,
+    update_diagnostic_stage: str | None = None,
 ) -> dict:
     """Perform command payload.
 
@@ -20737,11 +20895,30 @@ def _command_payload(
         success_codes: Success codes consumed by command payload.
         env: Environment variables supplied to the child process.
         stdout_limit: Maximum trailing standard-output characters to retain.
+        update_diagnostic_stage: Fixed stage for the updater diagnostic projection.
     """
+    started = time.monotonic()
     result = _run(command, env=env) if env is not None else _run(command)
     success_codes = success_codes or {0}
-    stdout = result.stdout[-stdout_limit:]
-    stderr = result.stderr[-4000:]
+    raw_stdout = result.stdout
+    raw_stderr = result.stderr
+    diagnostic: dict[str, object] | None = None
+    if update_diagnostic_stage is not None:
+        stage, reason, http_status, raw_stdout, raw_stderr = _parse_update_diagnostic_marker(
+            raw_stdout,
+            raw_stderr,
+            fallback_stage=update_diagnostic_stage,
+            success=result.returncode in success_codes,
+        )
+        elapsed_ms = min(86_400_000, max(0, int((time.monotonic() - started) * 1000)))
+        diagnostic = {
+            "stage": stage,
+            "reason": reason,
+            "http_status": http_status,
+            "elapsed_ms": elapsed_ms,
+        }
+    stdout = raw_stdout[-stdout_limit:]
+    stderr = raw_stderr[-4000:]
     if env:
         sensitive_values = [str(env.get("LF_REPO_USER") or ""), str(env.get("LF_REPO_SECRET") or "")]
         for key in ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL"):
@@ -20751,13 +20928,16 @@ def _command_payload(
         for value in sorted({value for value in sensitive_values if value}, key=len, reverse=True):
             stdout = stdout.replace(value, "[redacted]")
             stderr = stderr.replace(value, "[redacted]")
-    return {
+    command_result = {
         "command": command,
         "returncode": result.returncode,
         "success": result.returncode in success_codes,
         "stdout": stdout,
         "stderr": stderr,
     }
+    if diagnostic is not None:
+        command_result["update_diagnostic"] = diagnostic
+    return command_result
 
 
 def _url_origin(url: str) -> tuple[str, str, int | None]:
@@ -21287,6 +21467,7 @@ def _powershell_repository_sync_script(name: str, url: str, policy: str) -> str:
         f"$name = {_powershell_literal(name)}; $url = {_powershell_literal(url)}; "
         f"$policy = {_powershell_literal(policy)}; "
         "$credentialArgs = if ($env:LF_REPO_SECRET) { $credential = New-Object System.Management.Automation.PSCredential($env:LF_REPO_USER, (ConvertTo-SecureString $env:LF_REPO_SECRET -AsPlainText -Force)); @{Credential=$credential} } else { @{} }; "
+        "$atlasoUpdateStage = 'repository_registration'; "
         "$existing = Get-PSRepository -Name $name -ErrorAction SilentlyContinue; "
         f"if (-not $existing) {{ {registration} }} "
         f"else {{ {reconciliation} }}; "
@@ -21295,6 +21476,7 @@ def _powershell_repository_sync_script(name: str, url: str, policy: str) -> str:
         "$expectedUrl = $url.TrimEnd('/'); "
         "if (-not [string]::Equals($actualUrl, $expectedUrl, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Registered repository location does not match Atlaso desired state' }; "
         "if (-not [string]::Equals([string]$repository.InstallationPolicy, $policy, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Registered repository installation policy does not match Atlaso desired state' }; "
+        "$atlasoUpdateStage = 'repository_probe'; "
         "$probe = Find-Module -Repository $repository.Name @credentialArgs -ErrorAction Stop | Select-Object -First 1; "
         "if (-not $probe) { throw 'PowerShell repository probe returned no modules' }; "
         "$repository | Select-Object Name,SourceLocation,InstallationPolicy,@{Name='ProbeSucceeded';Expression={$true}} | ConvertTo-Json -Compress"
@@ -21592,7 +21774,7 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
             raise ValueError("PowerShell source name is required")
         name_key = name.casefold()
         if pwsh is None:
-            commands.append({"command": ["pwsh"], "returncode": 127, "success": False, "stdout": "", "stderr": "pwsh command not found"})
+            commands.append({"command": ["pwsh"], "returncode": 127, "success": False, "stdout": "", "stderr": "pwsh command not found", "update_diagnostic": {"stage": "repository_registration", "reason": "helper_failed", "http_status": None, "elapsed_ms": 0}})
             record_source_result(source, success=False)
             if name_key in previous_powershell_names:
                 current_powershell_names[name_key] = previous_powershell_names[name_key]
@@ -21600,37 +21782,19 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError(f"PowerShell source {name} must use an HTTP(S) URL")
-        host = str(parsed.hostname or "").strip()
-        try:
-            socket.getaddrinfo(
-                host,
-                parsed.port or (443 if parsed.scheme == "https" else 80),
-                type=socket.SOCK_STREAM,
-            )
-        except socket.gaierror as exc:
-            commands.append(
-                {
-                    "command": ["resolve", host],
-                    "returncode": 1,
-                    "success": False,
-                    "stdout": "",
-                    "stderr": f"PowerShell repository {name} host {host} could not be resolved: {exc}",
-                }
-            )
-            record_source_result(source, success=False)
-            if name_key in previous_powershell_names:
-                current_powershell_names[name_key] = previous_powershell_names[name_key]
-            continue
         trusted = bool((source.get("settings") or {}).get("trusted")) if isinstance(source.get("settings"), dict) else False
         policy = "Trusted" if trusted else "Untrusted"
         credential = _source_credential(source, credentials)
-        script = _powershell_repository_sync_script(name, url, policy)
+        script = _powershell_update_diagnostic_script(
+            _powershell_repository_sync_script(name, url, policy), "repository_registration"
+        )
         env = _privileged_powershell_environment()
         if credential:
             env.update({"LF_REPO_USER": str(credential.get("username") or ""), "LF_REPO_SECRET": str(credential["secret"])})
         command = _command_payload(
             [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)],
             env=env,
+            update_diagnostic_stage="repository_registration",
         )
         commands.append(command)
         source_succeeded = bool(command.get("success"))
@@ -21647,14 +21811,18 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
             name = previous_powershell_names[name_key]
             script = (
                 '$ErrorActionPreference = "Stop"; '
+                "$atlasoUpdateStage = 'repository_registration'; "
                 f"$name = {_powershell_literal(name)}; "
                 "$existing = Get-PSRepository -Name $name -ErrorAction SilentlyContinue; "
                 "if ($existing) { Unregister-PSRepository -Name $name }; "
                 "[pscustomobject]@{Name=$name;Removed=[bool]$existing} | ConvertTo-Json -Compress"
             )
             command = _command_payload(
-                [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)],
+                [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(
+                    _powershell_update_diagnostic_script(script, "repository_registration")
+                )],
                 env=_privileged_powershell_environment(),
+                update_diagnostic_stage="repository_registration",
             )
             commands.append(command)
             if not command.get("success"):
@@ -21922,20 +22090,24 @@ def _check_appliance_update(payload: dict, credentials: dict[str, dict[str, str]
             script = (
                 '$ErrorActionPreference = "Stop"; '
                 "$credentialArgs = if ($env:LF_REPO_SECRET) { $credential = New-Object System.Management.Automation.PSCredential($env:LF_REPO_USER, (ConvertTo-SecureString $env:LF_REPO_SECRET -AsPlainText -Force)); @{Credential=$credential} } else { @{} }; "
+                "$atlasoUpdateStage = 'repository_probe'; "
                 f"$repository = Get-PSRepository -Name {_powershell_literal(repository)} -ErrorAction Stop; "
                 f"if ([string]$repository.SourceLocation -ne {_powershell_literal(expected_url)}) {{ throw 'Registered repository location does not match Atlaso desired state' }}; "
+                "$atlasoUpdateStage = 'module_discovery'; "
                 f"$installed = @(Get-Module -Name {_powershell_literal(name)} -ListAvailable | Sort-Object Version -Descending | ForEach-Object {{ $_.Version.ToString() }}); "
+                "$atlasoUpdateStage = 'repository_probe'; "
                 f"$module = Find-Module -Name {_powershell_literal(name)} -Repository {_powershell_literal(repository)}"
                 + (f" -RequiredVersion {_powershell_literal(target)}" if target else "")
                 + " @credentialArgs"
                 + "; [pscustomobject]@{Name=$module.Name; AvailableVersion=$module.Version.ToString(); Repository=$module.Repository; InstalledVersions=$installed} | ConvertTo-Json -Compress"
             )
+            script = _powershell_update_diagnostic_script(script, "repository_probe")
             credential = _source_credential(source, credentials)
             env = _privileged_powershell_environment()
             if credential:
                 env.update({"LF_REPO_USER": str(credential.get("username") or ""), "LF_REPO_SECRET": str(credential["secret"])})
             command_args = [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)]
-            command = _command_payload(command_args, env=env)
+            command = _command_payload(command_args, env=env, update_diagnostic_stage="repository_probe")
             commands.append(command)
             detail = _json_command_stdout(command)
             installed_value = detail.get("InstalledVersions")
@@ -22048,6 +22220,7 @@ def _apply_powershell_modules(payload: dict, credentials: dict[str, dict[str, st
         if name.casefold() == "vcf.powercli":
             ceip_literal = "$true" if ceip_enabled else "$false"
             ceip_script = (
+                "$atlasoUpdateStage = 'ceip_configuration'; "
                 f"Set-PowerCLIConfiguration -ParticipateInCeip {ceip_literal} -Scope AllUsers -Confirm:$false | Out-Null; "
                 "$configured = Get-PowerCLIConfiguration -Scope AllUsers; "
                 f"if ([bool]$configured.ParticipateInCEIP -ne {ceip_literal}) {{ throw 'PowerCLI CEIP verification failed' }}; "
@@ -22055,20 +22228,26 @@ def _apply_powershell_modules(payload: dict, credentials: dict[str, dict[str, st
         script = (
             '$ErrorActionPreference = "Stop"; '
             "$credentialArgs = if ($env:LF_REPO_SECRET) { $credential = New-Object System.Management.Automation.PSCredential($env:LF_REPO_USER, (ConvertTo-SecureString $env:LF_REPO_SECRET -AsPlainText -Force)); @{Credential=$credential} } else { @{} }; "
+            "$atlasoUpdateStage = 'module_install'; "
             f"Install-Module -Name {_powershell_literal(name)} -Repository {_powershell_literal(repository)}"
             f"{version_argument} @credentialArgs -Scope AllUsers -Force -AllowClobber -AcceptLicense -Confirm:$false; "
+            "$atlasoUpdateStage = 'module_discovery'; "
             f"$module = Get-Module -Name {_powershell_literal(name)} -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1; "
-            "if (-not $module) { throw 'Installed module could not be found' }; Import-Module $module.Path -Force; "
+            "if (-not $module) { throw 'Installed module could not be found' }; "
+            "$atlasoUpdateStage = 'module_import'; Import-Module $module.Path -Force; "
             f"{ceip_script}"
             "$module | Select-Object Name,Version,Path | ConvertTo-Json -Compress"
         )
+        script = _powershell_update_diagnostic_script(script, "module_install")
         source = next((item for item in _enabled_sources(payload, "powershell") if str(item.get("name") or "") == repository), {})
         credential = _source_credential(source, credentials)
         env = _privileged_powershell_environment()
         if credential:
             env.update({"LF_REPO_USER": str(credential.get("username") or ""), "LF_REPO_SECRET": str(credential["secret"])})
         command_args = [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)]
-        commands.append(_command_payload(command_args, env=env))
+        commands.append(
+            _command_payload(command_args, env=env, update_diagnostic_stage="module_install")
+        )
     if any(command.get("success") for command in commands):
         chmod = _command_path("chmod") or "chmod"
         commands.append(

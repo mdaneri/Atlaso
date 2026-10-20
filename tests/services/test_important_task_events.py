@@ -25,6 +25,136 @@ from atlaso.app.services.task_log_history import (
 from atlaso.important_events import COMPONENTS, validate_event
 
 
+@pytest.mark.parametrize("successful_prefix", [0, 32, 64])
+def test_powershell_network_evidence_survives_commit_without_raw_helper_output(db, caplog, successful_prefix):
+    """Retain typed nested updater failure evidence across task history and logs.
+
+    Args:
+        db: Isolated producer transaction.
+        caplog: Captured operational records.
+        successful_prefix: Successful commands preceding the failure, beyond the retention bound.
+    """
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.ui import (
+        adapter_result_to_payload,
+        appliance_update_failure_message,
+        log_appliance_update_failures,
+    )
+    from atlaso.app.worker import _appliance_update_result_error
+
+    diagnostic = {"stage": "module_install", "reason": "proxy_auth_required", "http_status": 407, "elapsed_ms": 1250}
+    success = {"stage": "module_install", "reason": "none", "http_status": None, "elapsed_ms": 1}
+    helper = {"commands": [{"returncode": 0, "update_diagnostic": success}] * successful_prefix + [
+                            {"returncode": 1, "update_diagnostic": diagnostic,
+                             "stderr": "https://user:synthetic-token@example.invalid/?password=synthetic-password"}]}
+    # A large successful prefix must not truncate away the failure projection.
+    helper["padding"] = "x" * 5000
+    command = adapter_result_to_payload(AdapterResult(command=["sudo", "atlaso-helper", "appliance-update", "apply"],
+                                                      dry_run=False, returncode=1, stdout=json.dumps(helper)))
+    assert command["update_diagnostics"][0] == {"returncode": 1, "update_diagnostic": diagnostic}
+    assert len(command["update_diagnostics"]) == min(32, successful_prefix + 1)
+    assert command.get("update_diagnostics_omitted", 0) == max(0, successful_prefix + 1 - 32)
+    result = {"commands": [command]}
+    with caplog.at_level(logging.ERROR):
+        log_appliance_update_failures("job_network_123", result)
+    assert "module_install" in caplog.text and "407" in caplog.text
+    assert "synthetic-token" not in caplog.text and "synthetic-password" not in caplog.text
+    assert "proxy authentication" in appliance_update_failure_message(result)
+    assert _appliance_update_result_error(result) == appliance_update_failure_message(result)
+
+    task, step = _new_task(db)
+    task.type = "appliance-update"
+    step.component_key = "powershell_modules"
+    task.status = step.status = "failed"
+    task.finished_at = step.finished_at = utcnow()
+    step.result = json.dumps(result)
+    db.commit()
+    events = _state(db, task)["important_events"]
+    typed = [event for event in events if "update_diagnostic" in event and event["outcome"] == "failed"]
+    assert len(typed) == 1
+    assert typed[0]["update_diagnostic"] == diagnostic
+    assert typed[0]["severity"] == "ERROR"
+    if successful_prefix:
+        assert any(event["reason"] == "update_diagnostics_truncated" and event["severity"] == "WARNING"
+                   for event in events)
+    assert validate_event(typed[0]) == typed[0]
+    with Session(db.get_bind()) as restarted:
+        retained = json.loads(restarted.get(TaskLogCheckpoint, task.id).state_json)["important_events"]
+        assert retained == events
+    assert "synthetic-token" not in json.dumps(events)
+    assert "synthetic-password" not in json.dumps(events)
+
+
+@pytest.mark.parametrize(("successes", "failures"), [(40, 1), (0, 40), (40, 40)])
+def test_update_diagnostics_retention_is_bounded_and_preserves_failure_order(successes, failures):
+    """Keep late failures first without retaining an unbounded command collection.
+
+    Args:
+        successes: Successful command prefix larger than the retained collection.
+        failures: Later failures, including more than can be retained.
+    """
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.ui import adapter_result_to_payload
+
+    commands = [{"returncode": 0, "update_diagnostic": {
+        "stage": "module_install", "reason": "none", "http_status": None, "elapsed_ms": index}}
+        for index in range(successes)]
+    commands.extend({"returncode": 1, "update_diagnostic": {
+        "stage": "module_install", "reason": "dns_failed", "http_status": None, "elapsed_ms": index}}
+        for index in range(failures))
+    payload = adapter_result_to_payload(AdapterResult(command=["atlaso-helper", "appliance-update", "apply"],
+                                                      dry_run=False, returncode=1, stdout=json.dumps({"commands": commands})))
+    retained = payload["update_diagnostics"]
+    assert len(retained) == 32
+    retained_failures = [item for item in retained if item["returncode"] != 0]
+    assert [item["update_diagnostic"]["elapsed_ms"] for item in retained_failures] == list(range(min(32, failures)))
+    assert all(item["returncode"] for item in retained[:min(32, failures)])
+    assert payload["update_diagnostics_omitted"] == successes + failures - 32
+
+
+@pytest.mark.parametrize("change", [
+    {"stage": "https://user:secret@example.invalid"}, {"reason": "arbitrary-secret"},
+    {"http_status": True}, {"http_status": 403}, {"reason": "dns_failed"},
+    {"elapsed_ms": -1}, {"elapsed_ms": True},
+    {"exception": "private-key-fragment"},
+])
+def test_update_diagnostic_rejects_invalid_or_unreviewed_fields(change):
+    """Reject rather than scrub malformed typed network evidence.
+
+    Args:
+        change: One invalid or unreviewed field.
+    """
+    from atlaso.app.services.important_task_events import execution_projection
+    from atlaso.important_events import validate_update_diagnostic
+
+    diagnostic = {"stage": "module_discovery", "reason": "proxy_auth_required", "http_status": 407, "elapsed_ms": 10}
+    diagnostic.update(change)
+    assert validate_update_diagnostic(diagnostic) is None
+    projected = execution_projection({"commands": [{"returncode": 1, "update_diagnostics": [
+        {"returncode": 1, "update_diagnostic": diagnostic}]}]}, "powershell_modules")
+    assert not any("update_diagnostic" in event for event in projected)
+
+
+@pytest.mark.parametrize("change", [
+    {"component": "network"}, {"stage": "validation"}, {"reason": "tls_failed"},
+    {"outcome": "succeeded"}, {"returncode": 0}, {"returncode": None}, {"outcome": "cancelled"},
+    {"update_diagnostic": {"stage": "module_install", "reason": "proxy_auth_required",
+                           "http_status": 407, "elapsed_ms": 1, "message": "synthetic-secret"}},
+])
+def test_persisted_update_event_rejects_contradictory_context(change):
+    """Do not export typed evidence rebound to an incompatible event.
+
+    Args:
+        change: Contradictory event or unreviewed diagnostic field.
+    """
+    event = {"schema": 1, "at": "2026-10-19T12:00:00Z", "severity": "ERROR",
+             "component": "powershell_modules", "stage": "execution", "outcome": "failed",
+             "reason": "proxy_auth_required", "returncode": 1, "update_diagnostic": {
+                 "stage": "module_install", "reason": "proxy_auth_required", "http_status": 407, "elapsed_ms": 1}}
+    event.update(change)
+    assert validate_event(event) is None
+
+
 @pytest.fixture
 def db(tmp_path):
     """Create persistent isolated storage with the production flush/commit hooks.

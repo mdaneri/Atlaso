@@ -184,7 +184,7 @@ are explicitly inventoried so route/template changes cannot silently escape the 
   `dhcp-lease-reservation-modal`, `dhcp-lease-pxe-modal`, `firewall-rule-dialog`,
   `network-object-source-group-dialog`, and `ntp-source-dialog`.
 - Identity, CA, and vSphere Key Providers: `ca-csr-dialog`, `ca-profile-dialog`, `ca-certificate-dialog`,
-  `ldap-organization-dialog`, `ldap-user-dialog`, `ldap-group-dialog`, `ldap-bind-secret-modal`,
+  `ldap-organization-dialog`, `ldap-bind-rotation-dialog`, `ldap-user-dialog`, `ldap-group-dialog`, `ldap-bind-secret-modal`,
   `ldap-password-modal`, `ldap-group-members-modal`, `ldap-generate-modal`, `vsphere-provider-dialog`,
   `vsphere-vcenter-dialog`, `vsphere-certificate-dialog`, and `vsphere-enrollment-dialog`.
 - Network Boot and storage: `network-boot-host-dialog`, `network-boot-upload-dialog`,

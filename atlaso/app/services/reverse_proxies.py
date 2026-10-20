@@ -451,13 +451,14 @@ def _nginx_http_front_door(claim: ListenerClaim) -> bool:
     )
 
 
-def validate_service_proxy_dependencies(db: Session) -> None:
+def validate_service_proxy_dependencies(db: Session, *, check_ca: bool = True) -> None:
     """Preserve saved proxy hostname ownership and enabled HTTPS CA dependencies.
 
     Callers hold the Network Objects writer lock and roll back on rejection.
 
     Args:
         db: Caller-owned session containing candidate service desired state.
+        check_ca: Enforce CA dependencies for mutation; alias-only inspection skips them.
 
     Raises:
         ValueError: If candidate service state would invalidate a saved proxy.
@@ -472,8 +473,33 @@ def validate_service_proxy_dependencies(db: Session) -> None:
             raise ServiceDnsAliasConflict(f"Service hostname conflicts with saved reverse proxy {proxy.name}. Move or remove the proxy before saving this service hostname.")
         if any(route.upstream_host.strip().rstrip(".").casefold() in names for route in proxy.routes):
             raise ServiceDnsAliasConflict(f"Service hostname conflicts with an upstream of saved reverse proxy {proxy.name}. Change that upstream before saving this service hostname.")
-        if proxy.enabled and proxy.scheme == "https" and (ca is None or not ca.enabled):
+        if check_ca and proxy.enabled and proxy.scheme == "https" and (ca is None or not ca.enabled):
             raise ValueError("Disable enabled HTTPS reverse proxies before disabling their Certificate Authority.")
+
+
+def validate_inventory_proxy_scopes(db: Session) -> None:
+    """Reject inventory observations that broaden an enabled proxy's browser ingress.
+
+    Args:
+        db: Candidate inventory transaction holding the Network Objects writer lock.
+
+    Raises:
+        ValueError: If observed browser ingress differs from exact saved proxy scope.
+    """
+    claims = browser_listener_claims(list(db.scalars(select(models.PhysicalInterface))),
+                                    list(db.scalars(select(models.VlanInterface))),
+                                    db.scalar(select(models.ApplianceSettings)))
+    for proxy in desired_rows(db):
+        if not proxy.enabled:
+            continue
+        for _interface, address, port, scheme in _listener_sockets(proxy):
+            scopes = {claim.interface for claim in claims if claim.scheme == scheme
+                      and _claim_conflicts(claim, address=address, port=port)}
+            bindings = {str(item.get("interface") or "") for item in proxy.listeners
+                        if str(item.get("address") or "") == address}
+            if scopes and scopes != bindings:
+                raise ValueError("Host inventory would change a saved reverse proxy browser listener scope. "
+                                 "Remove the duplicate address or move the proxy before refreshing inventory.")
 
 
 def validate_service_listener_sockets(db: Session) -> None:

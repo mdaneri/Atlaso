@@ -69,6 +69,7 @@ from atlaso.app.services.ldap import (
     stage_ldap_recovery_payload,
     stage_ldap_user_password,
     validate_group_cycles,
+    validate_ldap_password,
     vcf_ldap_settings,
 )
 from atlaso.app.services.ldap import (
@@ -128,6 +129,36 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
         prefix=MANAGEMENT_UI_ROOT,
         dependencies=[Depends(dependencies.require_management_ui_request)],
     )
+
+    def custom_bind_password_from_form(
+        mode: str, password: str, confirmation: str, settings: LdapSettings
+    ) -> str | None:
+        """Validate the optional custom organization bind password without echoing it.
+
+        Args:
+            mode: Selected generated or custom credential mode.
+            password: Transient custom password, never echoed in errors.
+            confirmation: Independently entered custom password confirmation.
+            settings: Saved LDAP policy used to validate the bind account.
+
+        Returns:
+            Validated custom password, or None for automatic generation.
+        """
+        if mode not in {"generated", "custom"}:
+            raise ValueError("Choose generated or custom bind password mode.")
+        if mode == "generated":
+            if password or confirmation:
+                raise ValueError("Clear the custom bind password fields or choose custom mode.")
+            return None
+        if len(password) > 4096 or len(confirmation) > 4096:
+            raise ValueError("Custom LDAP bind password exceeds the maximum length.")
+        if not password.strip():
+            raise ValueError("Enter a custom bind password.")
+        if password != confirmation:
+            raise ValueError("The custom bind passwords do not match.")
+        if validate_ldap_password(password, "vcf-bind", settings):
+            raise ValueError("Custom LDAP bind password does not meet the LDAP password policy.")
+        return password
 
     @router.get("/ldap", response_class=HTMLResponse, response_model=None)
     def ldap_page(
@@ -305,6 +336,9 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
         slug: str = Form(""),
         suffix_dn: str = Form(""),
         enabled: str | None = Form(None),
+        bind_password_mode: str = Form("generated"),
+        bind_password: str = Form(""),
+        confirm_bind_password: str = Form(""),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
@@ -318,6 +352,9 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
             slug: Slug supplied by the caller.
             suffix_dn: Suffix dn supplied by the caller.
             enabled: Whether the requested behavior is enabled.
+            bind_password_mode: Selected generated or custom credential mode.
+            bind_password: Transient custom bind password submitted by the operator.
+            confirm_bind_password: Operator confirmation of the custom bind password.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
@@ -329,6 +366,11 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
             ValueError: If an input value is invalid.
         """
         dependencies.verify_csrf(request, csrf)
+        form_state = {
+            "name": name, "description": description, "slug": slug,
+            "suffix_dn": suffix_dn, "enabled": enabled is not None,
+        }
+        retry_step = "directory"
         try:
             normalized_slug = normalize_ldap_slug(slug or name)
             normalized_suffix = normalize_dn(
@@ -338,6 +380,13 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
                 raise ValueError(
                     "LDAP organization suffix must start with a dc component."
                 )
+            retry_step = "credential"
+            custom_password = custom_bind_password_from_form(
+                bind_password_mode,
+                bind_password,
+                confirm_bind_password,
+                dependencies.get_ldap_settings_row(db),
+            )
         except ValueError as exc:
             return dependencies.render(
                 request,
@@ -346,6 +395,9 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
                     "identity": identity,
                     **dependencies.ldap_context(db),
                     "form_error": str(exc),
+                    "ldap_organization_form_state": form_state,
+                    "ldap_bind_retry_mode": "custom" if bind_password_mode == "custom" else "generated",
+                    "ldap_organization_retry_step": retry_step,
                     "appliance_apply_status": dependencies.appliance_apply_status(
                         db, "ldap"
                     ),
@@ -359,7 +411,29 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
             suffix_dn=normalized_suffix,
             enabled=enabled is not None,
         )
-        raw_secret = ensure_organization_bind_secret(organization)
+        try:
+            raw_secret = ensure_organization_bind_secret(
+                organization,
+                custom_password,
+                dependencies.get_ldap_settings_row(db),
+            )
+        except ValueError as exc:
+            return dependencies.render(
+                request,
+                "ldap.html",
+                {
+                    "identity": identity,
+                    **dependencies.ldap_context(db),
+                    "form_error": str(exc),
+                    "ldap_organization_form_state": form_state,
+                    "ldap_bind_retry_mode": "custom" if bind_password_mode == "custom" else "generated",
+                    "ldap_organization_retry_step": retry_step,
+                    "appliance_apply_status": dependencies.appliance_apply_status(
+                        db, "ldap"
+                    ),
+                },
+                status_code=400,
+            )
         db.add(organization)
         try:
             db.commit()
@@ -372,6 +446,9 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
                     "identity": identity,
                     **dependencies.ldap_context(db),
                     "form_error": "An LDAP organization already uses that slug or suffix.",
+                    "ldap_organization_form_state": form_state,
+                    "ldap_bind_retry_mode": "custom" if bind_password_mode == "custom" else "generated",
+                    "ldap_organization_retry_step": "directory",
                     "appliance_apply_status": dependencies.appliance_apply_status(
                         db, "ldap"
                     ),
@@ -394,7 +471,7 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
                 **dependencies.ldap_context(
                     db, selected_organization_id=organization.id
                 ),
-                "ldap_one_time_bind_secret": raw_secret,
+                "ldap_one_time_bind_secret": raw_secret if custom_password is None else None,
                 "ldap_one_time_bind_dn": organization.bind_dn,
                 "appliance_apply_status": dependencies.appliance_apply_status(
                     db, "ldap"
@@ -449,6 +526,9 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
         request: Request,
         organization_id: int,
         csrf: str = Form(...),
+        bind_password_mode: str = Form("generated"),
+        bind_password: str = Form(""),
+        confirm_bind_password: str = Form(""),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
     ) -> Response:
@@ -457,6 +537,9 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
         Args:
             request: Incoming HTTP request.
             organization_id: Identifier of the organization.
+            bind_password_mode: Selected generated or custom credential mode.
+            bind_password: Transient custom bind password submitted by the operator.
+            confirm_bind_password: Operator confirmation of the custom bind password.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
@@ -471,7 +554,36 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
         organization = db.get(LdapOrganization, organization_id)
         if organization is None:
             raise HTTPException(status_code=404, detail="LDAP organization not found")
-        raw_secret = rotate_organization_bind_secret(organization)
+        try:
+            custom_password = custom_bind_password_from_form(
+                bind_password_mode,
+                bind_password,
+                confirm_bind_password,
+                dependencies.get_ldap_settings_row(db),
+            )
+            raw_secret = rotate_organization_bind_secret(
+                organization,
+                custom_password,
+                dependencies.get_ldap_settings_row(db),
+            )
+        except ValueError as exc:
+            return dependencies.render(
+                request,
+                "ldap.html",
+                {
+                    "identity": identity,
+                    **dependencies.ldap_context(
+                        db, selected_organization_id=organization.id
+                    ),
+                    "form_error": str(exc),
+                    "ldap_bind_rotation_retry": True,
+                    "ldap_bind_retry_mode": "custom" if bind_password_mode == "custom" else "generated",
+                    "appliance_apply_status": dependencies.appliance_apply_status(
+                        db, "ldap"
+                    ),
+                },
+                status_code=400,
+            )
         db.commit()
         record_audit(
             db,
@@ -488,7 +600,8 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
                 **dependencies.ldap_context(
                     db, selected_organization_id=organization.id
                 ),
-                "ldap_one_time_bind_secret": raw_secret,
+                "ldap_custom_bind_rotation_saved": custom_password is not None,
+                "ldap_one_time_bind_secret": raw_secret if custom_password is None else None,
                 "ldap_one_time_bind_dn": organization.bind_dn,
                 "appliance_apply_status": dependencies.appliance_apply_status(
                     db, "ldap"

@@ -2051,7 +2051,7 @@ def _service_dns_reconciliation_allowed(db: Session) -> bool:
 
     acquire_network_objects_write_lock(db)
     try:
-        validate_service_proxy_dependencies(db)
+        validate_service_proxy_dependencies(db, check_ca=False)
     except ServiceDnsAliasConflict:
         APPLY_LOGGER.warning("Service DNS reconciliation deferred: a saved reverse proxy owns a derived service alias.")
         return False
@@ -14802,6 +14802,21 @@ def appliance_update_failure_message(update_result: dict[str, Any]) -> str:
     Args:
         update_result: Update result consumed by appliance update failure message.
     """
+    from atlaso.important_events import (
+        format_update_diagnostic,
+        validate_update_diagnostic,
+    )
+
+    for command in update_result.get("commands", []):
+        if not isinstance(command, dict):
+            continue
+        diagnostics = command.get("update_diagnostics", [])
+        for item in diagnostics[:32] if isinstance(diagnostics, list) else []:
+            if not isinstance(item, dict) or not item.get("returncode"):
+                continue
+            diagnostic = validate_update_diagnostic(item.get("update_diagnostic"))
+            if diagnostic is not None and diagnostic["reason"] != "none":
+                return format_update_diagnostic(diagnostic)
     explicit = str(update_result.get("error") or "").strip()
     if explicit:
         return apply_output_excerpt(explicit, limit=2000)
@@ -14867,7 +14882,11 @@ def adapter_result_to_payload(result: Any) -> dict[str, Any]:
     Args:
         result: Operation result being inspected or returned.
     """
-    from atlaso.important_events import failure_reason, validate_route_conflict
+    from atlaso.important_events import (
+        failure_reason,
+        validate_route_conflict,
+        validate_update_diagnostic,
+    )
 
     stage = next((name for name, verb in (("validation", "validate"), ("rollback", "rollback"),
                  ("recovery", "recover"), ("readiness", "readiness"), ("cleanup", "cleanup"))
@@ -14882,6 +14901,32 @@ def adapter_result_to_payload(result: Any) -> dict[str, Any]:
         "stage": stage,
         "reason_code": "none" if result.returncode == 0 else failure_reason(result.stderr, result.returncode),
     }
+    # Extract typed evidence from the full helper response before display excerpts
+    # truncate it. Never promote nested raw output into the diagnostic projection.
+    if "appliance-update" in result.command[:8]:
+        helper = _last_helper_json(result.stdout)
+        commands = helper.get("commands", [])
+        failures: list[dict[str, Any]] = []
+        successes: list[dict[str, Any]] = []
+        diagnostic_count = 0
+        # Configuration has no 32-module limit. Scan the complete response while
+        # bounding retained evidence, so early successes cannot hide a late failure.
+        for command in commands if isinstance(commands, list) else []:
+            if not isinstance(command, dict):
+                continue
+            diagnostic = validate_update_diagnostic(command.get("update_diagnostic"))
+            code = command.get("returncode")
+            if (diagnostic is not None and type(code) is int and -65536 <= code <= 65536
+                    and (code == 0) == (diagnostic["reason"] == "none")):
+                diagnostic_count += 1
+                retained = failures if code else successes
+                if len(retained) < 32:
+                    retained.append({"update_diagnostic": diagnostic, "returncode": code})
+        diagnostics = (failures + successes)[:32]
+        if diagnostics:
+            payload["update_diagnostics"] = diagnostics
+            if diagnostic_count > len(diagnostics):
+                payload["update_diagnostics_omitted"] = min(2**31 - 1, diagnostic_count - len(diagnostics))
     if stage == "execution" and result.returncode != 0 and payload["reason_code"] == "management_route_conflict":
         for line in reversed((result.stderr or "")[:65536].splitlines()[-32:]):
             try:
@@ -14956,8 +15001,23 @@ def log_appliance_update_failures(job_id: str, update_result: dict[str, Any]) ->
         job_id: Stable identifier of the associated job resource.
         update_result: Update result consumed by log appliance update failures.
     """
+    from atlaso.important_events import (
+        format_update_diagnostic,
+        validate_update_diagnostic,
+    )
+
     for command in update_result.get("commands", []):
         if int(command.get("returncode") or 0) == 0:
+            continue
+        diagnostics = command.get("update_diagnostics", [])
+        safe_failures = [diagnostic for item in diagnostics[:32] if isinstance(item, dict)
+                         and item.get("returncode")
+                         and (diagnostic := validate_update_diagnostic(item.get("update_diagnostic"))) is not None
+                         and diagnostic["reason"] != "none"] if isinstance(diagnostics, list) else []
+        if safe_failures:
+            for diagnostic in safe_failures:
+                APPLIANCE_UPDATE_LOGGER.error("Appliance update task %s failed %s", job_id,
+                                              format_update_diagnostic(diagnostic))
             continue
         APPLIANCE_UPDATE_LOGGER.error(
             "Appliance update task %s failed mode=%s streams=%s command=%s returncode=%s stderr=%s stdout=%s",

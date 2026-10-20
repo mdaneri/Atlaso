@@ -1321,6 +1321,14 @@ def sync_host_physical_interfaces(db: Session) -> tuple[list[PhysicalInterface],
     for interface in reconciled:
         db.add(interface)
     _flush_physical_interface_name_changes(db, name_changes)
+    from atlaso.app.services.reverse_proxies import validate_inventory_proxy_scopes
+
+    try:
+        db.flush()
+        validate_inventory_proxy_scopes(db)
+    except ValueError:
+        db.rollback()
+        raise
     db.commit()
     return db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all(), len(discovered)
 

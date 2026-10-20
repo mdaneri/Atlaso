@@ -2187,15 +2187,16 @@ def test_dynamic_service_alias_refresh_rejects_atomically_under_writer_lock(monk
             calls.append("lock")
             lock(session)
 
-        def observed_validation(session):
+        def observed_validation(session, **kwargs):
             """Require lock acquisition before deriving candidate service aliases.
 
             Args:
                 session: Refresh caller's candidate database transaction.
+                kwargs: Preserve alias-only inspection options.
             """
             assert calls == ["lock"]
             calls.append("validate")
-            validate(session)
+            validate(session, **kwargs)
 
         monkeypatch.setattr(ui, "acquire_network_objects_write_lock", observed_lock)
         monkeypatch.setattr(proxy_service, "validate_service_proxy_dependencies", observed_validation)
@@ -2260,3 +2261,55 @@ def test_apply_preview_reports_dynamic_service_alias_conflict_without_reconcilin
         assert service.listen_address == binding
         assert [(row.id, row.hostname, row.address) for row in db.scalars(select(DnsRecord).order_by(DnsRecord.id))] == records
         assert list(db.scalars(select(AuditEvent.id))) == audits
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+@pytest.mark.parametrize("address", ["192.168.1.10", "2001:db8:1::10"])
+def test_inventory_refresh_rejects_new_browser_scope_before_commit(monkeypatch, terminal, address):
+    """Preserve saved scope when native inventory discovers a duplicate secondary address.
+
+    Args:
+        monkeypatch: Replace native discovery without host mutation.
+        terminal: Exercise independently selected Web Terminal ingress.
+        address: Secondary IPv4 or IPv6 address shared with a saved proxy.
+    """
+    from atlaso.app.services import networking
+
+    engine, db = create_db()
+    try:
+        access = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        access.inventory_source = "host"
+        access.ipv6_enabled = True
+        access.ipv6_cidr = "2001:db8:1::10/64"
+        ingress = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        ingress.inventory_source = "host"
+        ingress.ipv6_enabled = True
+        ingress.ipv6_method = "auto"
+        if terminal:
+            ingress.role = "access"
+            appliance = db.scalar(select(ApplianceSettings))
+            appliance.web_terminal_enabled = True
+            appliance.web_terminal_interfaces_json = json.dumps(["eth0"])
+        db.commit()
+        proxy = save_proxy(db, payload(enabled=True, scheme="https", port=443, redirect_http=False,
+                                       listeners=[{"interface": "eth1", "address": address}]), actor="test")
+        before = runtime_snapshot(db)
+        observations = [networking.HostPhysicalInterface(
+            name="eth0", mac_address="02:00:00:00:00:02", driver=None, speed=None,
+            host_ip_cidr="192.168.2.10/24", host_ip_cidrs=["192.168.2.10/24", address + "/24"] if ":" not in address else ["192.168.2.10/24"],
+            host_ipv6_cidrs=[address + "/64"] if ":" in address else [],
+            host_dynamic_ipv6_cidrs=[address + "/64"] if ":" in address else [],
+            host_mtu=1500, host_admin_state="up", oper_state="up"),
+            networking.HostPhysicalInterface(name="eth1", mac_address="02:00:00:00:00:01", driver=None,
+                speed=None, host_ip_cidr="192.168.1.10/24", host_mtu=1500, host_admin_state="up", oper_state="up")]
+        monkeypatch.setattr(networking, "discover_host_physical_interfaces", lambda **_kwargs: observations)
+        with pytest.raises(ValueError, match="browser listener scope"):
+            networking.sync_host_physical_interfaces(db)
+        db.commit()
+        db.expire_all()
+        assert runtime_snapshot(db) == before
+        assert proxy.enabled
+        assert not ingress.host_ip_cidrs and not ingress.host_ipv6_cidrs
+    finally:
+        db.close()
+        engine.dispose()

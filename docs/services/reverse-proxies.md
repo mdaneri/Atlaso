@@ -229,6 +229,11 @@ and audit records. Automatic listener rebasing checks the same ownership under t
 publishing aliases; a conflict preserves cached listeners and DNS while retaining the new observation for diagnosis.
 Startup defers that refresh with a warning; the Apply preview remains available with validation errors until the proxy
 conflict is repaired.
+Native interface inventory also checks management and Web Terminal browser ingress against each enabled proxy's
+exact saved interface scope before committing observations. A duplicate secondary address that broadens that scope
+rejects and rolls back the inventory transaction. Remove the duplicate address or move the proxy before retrying;
+no proxy is silently rebound. Ordinary service inspection checks alias ownership without requiring an enabled CA,
+while service mutation continues to enforce HTTPS CA dependencies.
 Operator-chosen service names remain unchanged.
 
 <!-- ATLASO-REVERSE-PROXY-ACCEPTANCE-PENDING -->
