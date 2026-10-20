@@ -992,6 +992,21 @@ def _appliance_update_result_error(result: dict[str, Any]) -> str:
     Args:
         result: Operation result being inspected or returned.
     """
+    from atlaso.important_events import (
+        format_update_diagnostic,
+        validate_update_diagnostic,
+    )
+
+    for command in result.get("commands", []):
+        if not isinstance(command, dict):
+            continue
+        diagnostics = command.get("update_diagnostics", [])
+        for item in diagnostics[:32] if isinstance(diagnostics, list) else []:
+            if not isinstance(item, dict) or not item.get("returncode"):
+                continue
+            diagnostic = validate_update_diagnostic(item.get("update_diagnostic"))
+            if diagnostic is not None and diagnostic["reason"] != "none":
+                return format_update_diagnostic(diagnostic)
     explicit = str(result.get("error") or "").strip()
     if explicit:
         return explicit

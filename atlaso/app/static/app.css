@@ -6696,6 +6696,10 @@ textarea {
 .appliance-apply-live-grid {
   min-height: 0;
   height: auto;
+  overflow: hidden;
+}
+
+.appliance-apply-live-grid .tabulator-tableholder {
   max-height: min(560px, 55vh);
   overflow: auto;
 }

@@ -293,7 +293,9 @@ evidence** rail card
 reports whether durable updater evidence is available and opens the full JSON through the shared preview modal, matching
 Validation instead of rendering unbounded output inline.
 
-**Check for updates** is enabled whenever at least one ready stream is selected and no Appliance Update task is active.
+After a successful current check confirms a ready stream is up to date, its selection is unchecked and disabled until a
+later check reports an update, a failed or stale result requires review, or its configuration changes. **Check for
+updates** remains available for current streams and rechecks them even when every ready stream is up to date.
 **Install updates** additionally requires every selected stream's latest attempt to be a successful, non-stale check,
 at least one selected stream to have a confirmed update, and all installation prerequisites to be valid. The exact
 disabled reason is displayed beside the actions, and the server enforces the same gate for manual submissions. If no
@@ -686,6 +688,38 @@ To initialize or advance the default channel, run **Promote appliance release**,
 existing verified version without the `v` prefix. The workflow does not rebuild that release. It completes only after
 the hosted stable pointer and signature resolve and the referenced immutable release passes signature, identity, and
 CPython 3.14 compatibility validation. Use the same workflow with `preview` for pre-stable promotion.
+
+## Diagnose repository access failures
+
+Open the failed task in **Tasks**, identify its PowerShell Modules child and correlate the task ID with **Logs**.
+New PowerShell operations retain the stage (`repository_registration`, `repository_probe`, `module_discovery`,
+`module_install`, `module_import`, or `ceip_configuration`), elapsed milliseconds, recognized failure category and
+HTTP status when available. These events are retained without enabling DEBUG and are included in support bundles
+through the existing typed important-event records.
+Each helper response retains at most 32 typed command diagnostics, keeping failures before successes. When this bound
+omits records, task details include `update_diagnostics_omitted` and retained events include a truncation warning,
+which also appears in support bundles. Configuring more modules does not suppress a later failure behind early successes.
+
+| Evidence | Next verification |
+| --- | --- |
+| `dns_failed` | Check appliance DNS and access to upstream resolvers. |
+| `connection_refused` or `timed_out` | Check repository availability, outbound connectivity and proxy/firewall policy. |
+| `tls_failed` | Check appliance time, the certificate chain and corporate TLS inspection trust. Keep TLS verification enabled. |
+| `proxy_auth_required` / HTTP 407 | Review the corporate proxy authentication configuration. |
+| `http_denied` / HTTP 401 or 403 | Check repository authorization and proxy policy. The status alone does not identify which component denied the request. |
+| `http_failed` | Use the recorded HTTP status to investigate repository or proxy availability. |
+| `helper_failed` | No recognized network cause was retained. Investigate the recorded stage; a package-client failure does not establish a firewall block. |
+
+PowerShellGet may wrap or suppress the underlying network exception. Atlaso reports a generic cause when typed evidence
+is unavailable and does not infer that a firewall caused the failure. Repository discovery and package downloads can
+contact different endpoints; a successful check does not prove that an install or module import will succeed.
+Repository synchronization lets the PowerShell client perform name resolution through its effective network/proxy
+configuration. A separate local DNS lookup does not block repositories reached through a proxy with remote DNS.
+
+For additional application context, set **Settings → Log level** to **DEBUG** and reproduce only the necessary
+operation. The setting applies on the next request or worker pass without restarting Windows or the appliance.
+Restore the previous log level after collecting evidence. Essential task failures remain available at normal verbosity;
+new diagnostics do not export credentials, repository URLs, arbitrary exceptions or unfiltered PowerShell verbose output.
 
 Schedules for checks or installs live under **Operations → Automation**. See [`automation.md`](automation.md).
 

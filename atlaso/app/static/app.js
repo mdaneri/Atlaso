@@ -1393,6 +1393,15 @@ function initializeAtlasoResourceWizard(config) {
   const csrf = element.dataset.csrf || form.elements.namedItem("csrf")?.value || "";
   let table = null;
   let wizard = null;
+  const clearActionError = () => {
+    if (!config.actionErrorSelector) return;
+    const status = document.querySelector(config.actionErrorSelector);
+    if (!(status instanceof HTMLElement)) return;
+    status.textContent = "";
+    status.classList.add("hidden");
+    status.classList.remove("error");
+    status.removeAttribute?.("role");
+  };
   const rows = config.includeNewRow === false ? [...config.rows] : [...config.rows, config.newRow];
   const reportActionError = (error, { statusError = false } = {}) => {
     const message = error instanceof Error ? error.message : String(error || "The resource action failed.");
@@ -1439,6 +1448,7 @@ function initializeAtlasoResourceWizard(config) {
       return;
     }
     try {
+      clearActionError();
       populateAtlasoWizardForm(form, data, {
         recordField: config.recordField || "record_id",
         defaults: config.defaults || {},
@@ -1469,6 +1479,7 @@ function initializeAtlasoResourceWizard(config) {
   };
   const openResource = (data, launcher, options = {}) => {
     if (!data?.is_new && !canEdit(data)) return;
+    clearActionError();
     if (data?.is_new && typeof config.openCreate === "function") return config.openCreate({ data, launcher });
     return wizard?.open({ launcher, context: data?.is_new ? null : data, ...options });
   };
@@ -1477,6 +1488,7 @@ function initializeAtlasoResourceWizard(config) {
     const confirmation = config.deleteConfirmation(data);
     const confirmed = await requestConfirmation(confirmation);
     if (!confirmed) return;
+    clearActionError();
     const body = new FormData();
     body.set("csrf", csrf);
     await atlasoGridWizardRequest(config.deleteUrl(data.id), body, { expectJson: false });
@@ -1584,6 +1596,7 @@ function initializeAtlasoResourceWizard(config) {
       return config.prepareReview?.({ form });
     },
     onSubmit: async () => {
+      clearActionError();
       const body = new FormData(form);
       config.prepareFormData?.({ body, form });
       const recordId = body.get(config.recordField || "record_id");
@@ -6028,7 +6041,50 @@ function openVsphereCertificateWizard(data = {}, launcher = null) {
   vsphereCertificateWizard.open({ launcher, context: data });
 }
 
-function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
+function syncVsphereProviderSelect(select, providers, enabledOnly = false) {
+  if (!(select instanceof HTMLSelectElement)) return;
+  const selectedValue = String(select.value || "");
+  const eligible = providers.filter((provider) => !enabledOnly || provider.enabled);
+  select.replaceChildren(...eligible.map((provider) => {
+    const option = document.createElement("option");
+    option.value = String(provider.id);
+    option.textContent = String(provider.name || "");
+    return option;
+  }));
+  select.value = eligible.some((provider) => String(provider.id) === selectedValue)
+    ? selectedValue
+    : String(eligible[0]?.id || "");
+}
+
+async function syncVsphereEnrollmentResult({ payload, resource, vcenterTable, certificateTable, providerTable, upsertOption, certificateTargetSelect }) {
+  const previousRow = vcenterTable?.getRow?.(resource.id);
+  const previous = previousRow?.getData?.() || null;
+  if (previousRow) await previousRow.update(resource);
+  else if (vcenterTable) await vcenterTable.addRow(resource, true);
+  upsertOption?.(certificateTargetSelect, `${resource.provider_id}|${resource.id}`, `${resource.provider_name} / ${resource.name}`);
+
+  const certificates = Array.isArray(payload.certificates) ? payload.certificates : [];
+  for (const certificate of certificates) {
+    const row = certificateTable?.getRow?.(certificate.id);
+    if (row) await row.update(certificate);
+    else if (certificateTable) await certificateTable.addRow(certificate, true);
+  }
+
+  const providerRow = providerTable?.getRow?.(resource.provider_id);
+  if (!providerRow) return;
+  if (String(payload.provider?.id || "") === String(resource.provider_id)) {
+    await providerRow.update(payload.provider);
+    return;
+  }
+  const current = providerRow.getData();
+  await providerRow.update({
+    trusted_vcenter_count: Math.max(0, Number(current.trusted_vcenter_count || 0) + (previous ? 0 : 1)),
+    certificate_count: Math.max(0, Number(current.certificate_count || 0) + Number(resource.certificate_count || 0) - Number(previous?.certificate_count || 0)),
+    usable_certificate_count: Math.max(0, Number(current.usable_certificate_count || 0) + Number(resource.usable_certificate_count || 0) - Number(previous?.usable_certificate_count || 0)),
+  });
+}
+
+function initializeVsphereEnrollmentWizard(form, dialog, launcher = null, onSaved = null) {
   if (!(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement) || !window.AtlasoUiPatterns) return null;
   const setupMethod = form.querySelector("[data-vsphere-setup-method]");
   const manualFields = ["manual_provider_id", "manual_name", "manual_hostname", "manual_certificate_pem", "manual_description", "manual_enabled"];
@@ -6287,6 +6343,7 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
       { id: "review", title: "Review trusted vCenter", description: "Confirm the details, public trust, and provider assignment." },
     ],
     onOpen: ({ context }) => {
+      contextRevision += 1;
       refreshing = Boolean(context?.id && !context.is_new);
       if (setupMethod) {
         setupMethod.value = "enroll";
@@ -6299,6 +6356,15 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
         form.elements.provider_id.value = context.provider_id || "";
         form.elements.name.value = context.name || "";
         hostname.value = context.hostname || "";
+      } else {
+        form.elements.name.value = "";
+        form.elements.cluster_id.value = "";
+        hostname.value = "";
+        form.elements.manual_name.value = "";
+        form.elements.manual_hostname.value = "";
+        form.elements.manual_description.value = "";
+        form.elements.manual_certificate_pem.value = "";
+        form.elements.manual_enabled.checked = false;
       }
       observedHttpsFingerprint = "";
       if (tlsFingerprint) tlsFingerprint.textContent = "Not inspected yet";
@@ -6354,6 +6420,7 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
       { label: "Approved client SHA-256", field: "expected_client_fingerprint" },
     ]),
     onSubmit: async ({ controller }) => {
+      const submittedRevision = contextRevision;
       if (isManualSetup()) {
         const body = new FormData();
         body.set("csrf", form.elements.csrf.value);
@@ -6361,26 +6428,43 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
           body.set(name, form.elements.namedItem(`manual_${name}`).value);
         }
         if (form.elements.manual_enabled.checked) body.set("enabled", "on");
-        await atlasoGridWizardRequest(managementUiPath("/vsphere-key-providers/trusted-vcenters"), body);
+        try {
+          const payload = await atlasoGridWizardRequest(managementUiPath("/vsphere-key-providers/trusted-vcenters"), body);
+          const resource = payload.trusted_vcenter;
+          if (!resource?.id || !resource.provider_id || !resource.name) {
+            throw new Error("The server did not return the saved trusted vCenter.");
+          }
+          await onSaved?.({ payload, resource, refreshing: false });
+        } catch (error) {
+          if (submittedRevision !== contextRevision) return { ignored: true };
+          throw error;
+        }
+        if (submittedRevision !== contextRevision) return { ignored: true };
         invalidateContext();
         controller.markClean();
-        window.location.reload();
         return { valid: true };
       }
       if (!form.elements.expected_client_fingerprint.value) {
         return { valid: false, message: "Inspect the vCenter client certificate before approval.", step: "target" };
       }
       try {
-        await request("approve");
+        const payload = await request("approve");
+        const resource = payload.trusted_vcenter;
+        if (!resource?.id || !resource.provider_id || !resource.name) {
+          throw new Error("The server did not return the saved trusted vCenter.");
+        }
+        await onSaved?.({ payload, resource, refreshing });
       } catch (error) {
+        if (submittedRevision !== contextRevision) return { ignored: true };
         const recoveryMessage = recoverTlsIdentityError(error);
         if (recoveryMessage) return { valid: false, message: recoveryMessage, step: "server" };
         throw error;
       }
+      if (submittedRevision !== contextRevision) return { ignored: true };
       username.value = "";
       password.value = "";
+      invalidateContext();
       controller.markClean();
-      window.location.reload();
       return { valid: true };
     },
   });
@@ -6392,17 +6476,49 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
 function initializeVsphereKeyProviderTables() {
   const providerElement = document.getElementById("vsphere-providers-table");
   if (!(providerElement instanceof HTMLElement) || !window.AtlasoUiPatterns) return;
+  const vcenterElement = document.getElementById("vsphere-vcenters-table");
+  let providers = JSON.parse(providerElement.dataset.providers || "[]");
   const enrollmentForm = document.querySelector("[data-vsphere-enrollment-form]");
   const enrollmentDialog = document.getElementById("vsphere-enrollment-dialog");
+  let updateEnrollmentResult = async () => {};
   if (enrollmentForm instanceof HTMLFormElement && enrollmentDialog instanceof HTMLDialogElement) {
     vsphereEnrollmentWizard = initializeVsphereEnrollmentWizard(
       enrollmentForm,
       enrollmentDialog,
       document.querySelector("[data-vsphere-enrollment-open]"),
+      (result) => updateEnrollmentResult(result),
     );
   }
   const vcenterProviderSelect = document.querySelector('[data-vsphere-vcenter-form] select[name="provider_id"]');
+  const enrollmentProviderSelect = enrollmentForm?.elements.namedItem("provider_id");
+  const manualProviderSelect = enrollmentForm?.elements.namedItem("manual_provider_id");
   const certificateTargetSelect = document.querySelector('[data-vsphere-certificate-form] select[name="target"]');
+  const synchronizeProviderSelects = () => {
+    syncVsphereProviderSelect(vcenterProviderSelect, providers);
+    syncVsphereProviderSelect(manualProviderSelect, providers);
+    syncVsphereProviderSelect(enrollmentProviderSelect, providers, true);
+    const names = new Map(providers.map((provider) => [String(provider.id), String(provider.name || "")]));
+    if (certificateTargetSelect instanceof HTMLSelectElement) {
+      for (const option of certificateTargetSelect.options) {
+        const [providerId, ...vcenterParts] = String(option.value).split("|");
+        const providerName = names.get(providerId);
+        if (!providerName || !vcenterParts.length) continue;
+        const vcenterId = vcenterParts.join("|");
+        const vcenter = document.getElementById("vsphere-vcenters-table")?.atlasoTabulator?.getRow?.(vcenterId)?.getData?.();
+        const previousName = String(option.textContent || "").split(" / ").slice(1).join(" / ");
+        option.textContent = `${providerName} / ${vcenter?.name || previousName}`;
+      }
+    }
+  };
+  const saveProviderOption = (resource) => {
+    providers = providers.filter((provider) => String(provider.id) !== String(resource.id));
+    providers.push(resource);
+    synchronizeProviderSelects();
+  };
+  const deleteProviderOption = (resource) => {
+    providers = providers.filter((provider) => String(provider.id) !== String(resource.id));
+    synchronizeProviderSelects();
+  };
   const upsertOption = (select, value, label) => {
     if (!(select instanceof HTMLSelectElement) || !value) return;
     let option = Array.from(select.options).find((item) => item.value === String(value));
@@ -6462,8 +6578,8 @@ function initializeVsphereKeyProviderTables() {
       { label: "Enabled", field: "enabled" },
       { label: "Namespace", value: (form) => form.elements.record_id.value ? "Immutable UUID preserved" : "Immutable UUID assigned on creation" },
     ],
-    onSaved: ({ resource }) => upsertOption(vcenterProviderSelect, resource.id, resource.name),
-    onDeleted: ({ data }) => removeOption(vcenterProviderSelect, data.id),
+    onSaved: ({ resource }) => saveProviderOption(resource),
+    onDeleted: ({ data }) => deleteProviderOption(data),
     deleteConfirmation: (data) => ({ title: `Delete ${data.name}?`, message: "Deletion requires this provider to be disabled, detached from every vCenter, and authenticated as containing zero operational keys.", confirmLabel: "Delete provider", tone: "danger" }),
     options: {
       height: "420px",
@@ -6481,11 +6597,9 @@ function initializeVsphereKeyProviderTables() {
     },
   });
 
-  const vcenterElement = document.getElementById("vsphere-vcenters-table");
   if (!(vcenterElement instanceof HTMLElement)) return;
-  const providers = JSON.parse(vcenterElement.dataset.providerOptions || "[]");
-  const providerValues = Object.fromEntries(providers.map((item) => [String(item.id), item.label]));
-  initializeAtlasoResourceWizard({
+  synchronizeProviderSelects();
+  const vcenterWizard = initializeAtlasoResourceWizard({
     elementId: "vsphere-vcenters-table",
     formSelector: "[data-vsphere-vcenter-form]",
     dialogId: "vsphere-vcenter-dialog",
@@ -6536,11 +6650,10 @@ function initializeVsphereKeyProviderTables() {
       const provider = form.elements.namedItem("provider_id");
       if (provider instanceof HTMLSelectElement) body.set("provider_id", provider.value);
     },
-    onSaved: ({ resource }) => upsertOption(
-      certificateTargetSelect,
-      `${resource.provider_id}|${resource.id}`,
-      `${resource.provider_name} / ${resource.name}`,
-    ),
+    onSaved: ({ resource }) => {
+      upsertOption(certificateTargetSelect, `${resource.provider_id}|${resource.id}`, `${resource.provider_name} / ${resource.name}`);
+      synchronizeProviderSelects();
+    },
     onDeleted: ({ data }) => removeOption(certificateTargetSelect, `${data.provider_id}|${data.id}`),
     deleteConfirmation: (data) => ({ title: `Delete ${data.name}?`, message: "Disable this trusted vCenter and retire every public certificate before deletion.", confirmLabel: "Delete trusted vCenter", tone: "danger" }),
     options: {
@@ -6548,7 +6661,7 @@ function initializeVsphereKeyProviderTables() {
       rowHeight: 28,
       columns: [
         { title: "Name", field: "name", minWidth: 180, formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add trusted vCenter here</button>' : escapeHtml(cell.getValue()) },
-        { title: "Provider", field: "provider_id", minWidth: 180, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(providerValues[String(cell.getValue())] || cell.getRow().getData().provider_name || "") },
+        { title: "Provider", field: "provider_id", minWidth: 180, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(providers.find((provider) => String(provider.id) === String(cell.getValue()))?.name || cell.getRow().getData().provider_name || "") },
         { title: "Hostname", field: "hostname", minWidth: 190, formatter: (cell) => escapeHtml(cell.getValue() || "Not recorded") },
         { title: "Certificates", field: "certificate_count", width: 125, hozAlign: "right" },
         { title: "Usable", field: "usable_certificate_count", width: 95, hozAlign: "right" },
@@ -6558,6 +6671,26 @@ function initializeVsphereKeyProviderTables() {
       rowFormatter: (row) => markNewRecordRow(row, "name"),
     },
   });
+
+  updateEnrollmentResult = async ({ payload, resource }) => {
+    const table = vcenterWizard?.table;
+    await syncVsphereEnrollmentResult({
+      payload,
+      resource,
+      vcenterTable: table,
+      certificateTable: document.getElementById("vsphere-certificates-table")?.atlasoTabulator,
+      providerTable: document.getElementById("vsphere-providers-table")?.atlasoTabulator,
+      upsertOption,
+      certificateTargetSelect,
+    });
+    synchronizeProviderSelects();
+    const refreshed = await refreshNetworkSideStack();
+    if (refreshed === false) {
+      showNetworkSideStackRefreshWarning("vsphere-vcenter-error", networkSideStackRefreshFailureMessage());
+      return;
+    }
+    if (refreshed === true) showTransientGridStatus("Trusted vCenter saved");
+  };
 
   const certificateForm = document.querySelector("[data-vsphere-certificate-form]");
   const certificateDialog = document.getElementById("vsphere-certificate-dialog");
@@ -15932,8 +16065,73 @@ function availabilityStream(streamId) {
     : null;
 }
 
+function applianceUpdateStreamIsCurrent(stream) {
+  return Boolean(stream)
+    && stream.stale !== true
+    && stream.check_required !== true
+    && stream.source_sync?.ready !== false
+    && stream.last_attempt?.success === true
+    && stream.last_attempt?.state === "up_to_date"
+    && stream.confirmed?.state === "up_to_date"
+    && stream.confirmed?.update_available === false
+    && stream.confirmed?.change_count === 0
+    && Array.isArray(stream.confirmed?.changes)
+    && stream.confirmed.changes.length === 0;
+}
+
+function updateApplianceUpdateStreamSelection(input, stream, sourceReady, summary) {
+  const current = sourceReady && applianceUpdateStreamIsCurrent(stream);
+  input.disabled = !sourceReady || current;
+  if (!sourceReady) {
+    input.checked = false;
+    const reasonId = `appliance-update-source-reason-${stream.id || input.value}`;
+    input.setAttribute("aria-describedby", reasonId);
+    if (summary instanceof HTMLElement) {
+      summary.id = reasonId;
+      input.setAttribute("aria-describedby", summary.id);
+    }
+  } else if (current) {
+    input.checked = false;
+    if (summary instanceof HTMLElement) {
+      summary.id ||= `appliance-update-stream-summary-${stream.id || input.value}`;
+      input.setAttribute("aria-describedby", summary.id);
+    } else {
+      input.setAttribute("aria-describedby", `appliance-update-stream-summary-${stream.id || input.value}`);
+    }
+  } else {
+    input.removeAttribute("aria-describedby");
+  }
+}
+
+function syncApplianceUpdateCurrentStreamFields() {
+  const form = document.querySelector("[data-appliance-update-submit-form]");
+  if (!(form instanceof HTMLFormElement)) return;
+  const currentIds = new Set(
+    (Array.isArray(atlasoUpdateAvailability.streams) ? atlasoUpdateAvailability.streams : [])
+      .filter(applianceUpdateStreamIsCurrent)
+      .map((stream) => stream.id),
+  );
+  form.querySelectorAll("[data-appliance-update-current-stream]").forEach((input) => {
+    if (!currentIds.has(input.value)) input.remove();
+    else currentIds.delete(input.value);
+  });
+  currentIds.forEach((streamId) => {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "current_check_streams";
+    input.value = streamId;
+    input.dataset.applianceUpdateCurrentStream = "";
+    form.append(input);
+  });
+}
+
 function updateApplianceUpdateResultSummary() {
   const selected = selectedApplianceUpdateStreamIds().map(availabilityStream).filter(Boolean);
+  const availableStreams = Array.isArray(atlasoUpdateAvailability.streams) ? atlasoUpdateAvailability.streams : [];
+  const readyStreams = availableStreams.filter((stream) => stream.source_sync?.ready !== false);
+  const currentReadyStreams = readyStreams.filter(applianceUpdateStreamIsCurrent);
+  const allReadyStreamsCurrent = readyStreams.length > 0 && currentReadyStreams.length === readyStreams.length;
+  const summaryStreams = selected.length ? selected : (allReadyStreamsCurrent ? currentReadyStreams : []);
   const pill = document.querySelector("[data-appliance-update-result-pill]");
   const title = document.querySelector("[data-appliance-update-result-title]");
   const description = document.querySelector("[data-appliance-update-result-description]");
@@ -15942,9 +16140,9 @@ function updateApplianceUpdateResultSummary() {
   let pillClass = "muted";
   let titleText = "Check the selected streams for current update information";
   let descriptionText = "Each stream keeps its latest result independently.";
-  const failed = selected.filter((stream) => stream.last_attempt?.state === "failed");
-  const available = selected.filter((stream) => stream.confirmed?.update_available === true);
-  const confirmed = selected.filter((stream) => stream.confirmed && !stream.stale);
+  const failed = summaryStreams.filter((stream) => stream.last_attempt?.state === "failed");
+  const available = summaryStreams.filter((stream) => stream.confirmed?.update_available === true);
+  const confirmed = summaryStreams.filter((stream) => stream.confirmed && !stream.stale);
   if (failed.length) {
     pillText = "Check failed";
     pillClass = "error";
@@ -15955,11 +16153,11 @@ function updateApplianceUpdateResultSummary() {
     pillClass = "warn";
     titleText = `${available.length} selected update ${available.length === 1 ? "stream has" : "streams have"} changes`;
     descriptionText = "Review each stream’s current, target, and What’s new details before installation.";
-  } else if (selected.length && confirmed.length === selected.length) {
+  } else if (summaryStreams.length && confirmed.length === summaryStreams.length) {
     pillText = "Up to date";
     pillClass = "good";
-    titleText = "The selected streams are current";
-    descriptionText = "No installation is needed for the latest confirmed checks.";
+    titleText = selected.length ? "The selected streams are current" : "The ready streams are up to date";
+    descriptionText = "Check for updates again to refresh availability; no installation is needed for the current results.";
   }
   pill.textContent = pillText;
   pill.className = `status-pill ${pillClass}`;
@@ -16214,15 +16412,7 @@ function renderApplianceUpdateAvailability(payload) {
       input.dataset.applianceUpdateSourceSyncRequired = sourceSync.required ? "true" : "false";
       input.dataset.applianceUpdateSourceSyncReady = sourceReady ? "true" : "false";
       input.dataset.applianceUpdateSourceKind = sourceSync.source_kind || "";
-      input.disabled = !sourceReady;
-      if (!sourceReady) {
-        input.checked = false;
-        const reasonId = `appliance-update-source-reason-${stream.id || input.value}`;
-        input.setAttribute("aria-describedby", reasonId);
-        if (summary instanceof HTMLElement) summary.id = reasonId;
-      } else {
-        input.removeAttribute("aria-describedby");
-      }
+      updateApplianceUpdateStreamSelection(input, stream, sourceReady, summary);
     }
     if (pill instanceof HTMLElement) {
       pill.textContent = !sourceReady
@@ -16260,6 +16450,8 @@ function renderApplianceUpdateAvailability(payload) {
         ? sourceSync.reason || "Synchronize repositories before using this update stream."
         : checkRequired
         ? "Check this stream again to refresh its update information."
+        : applianceUpdateStreamIsCurrent(stream)
+          ? "Up to date. Check for updates again to refresh availability."
         : stream.last_attempt?.state === "failed"
           ? stream.last_attempt?.remediation || "Review the task and check again."
           : confirmed?.summary
@@ -16317,6 +16509,7 @@ function renderApplianceUpdateAvailability(payload) {
       result.append(details);
     }
   });
+  syncApplianceUpdateCurrentStreamFields();
   updateApplianceUpdateResultSummary();
   updateApplianceUpdateActions();
 }
@@ -16397,7 +16590,15 @@ function updateApplianceUpdateActions(tasks = atlasoTasks) {
   const blockedStreams = selectedUnsynchronizedUpdateStreams();
   const checkButton = document.querySelector("[data-appliance-update-check-action]");
   const installButton = document.querySelector("[data-appliance-update-install-action]");
-  if (checkButton instanceof HTMLButtonElement) checkButton.disabled = active || selectedIds.length === 0;
+  const currentReadyStreams = (Array.isArray(atlasoUpdateAvailability.streams) ? atlasoUpdateAvailability.streams : [])
+    .some(applianceUpdateStreamIsCurrent);
+  const allReadyStreamsCurrent = (Array.isArray(atlasoUpdateAvailability.streams) ? atlasoUpdateAvailability.streams : [])
+    .filter((stream) => stream.source_sync?.ready !== false)
+    .every(applianceUpdateStreamIsCurrent);
+  if (checkButton instanceof HTMLButtonElement) {
+    checkButton.disabled = active || selectedIds.length === 0;
+    if (!active && currentReadyStreams && selectedIds.length === 0) checkButton.disabled = false;
+  }
   let installReason = "";
   let hasUpdate = false;
   for (const streamId of selectedIds) {
@@ -16416,9 +16617,13 @@ function updateApplianceUpdateActions(tasks = atlasoTasks) {
   }
   if (!installReason && selectedIds.length && !hasUpdate) installReason = "The selected streams are up to date.";
   if (!installReason && !selectedIds.length) {
-    installReason = blockedStreams.length
-      ? `Select a ready update stream. Repository setup is required for ${blockedStreams.join(" and ")}.`
-      : "Select at least one update stream.";
+    installReason = currentReadyStreams
+      ? allReadyStreamsCurrent
+        ? "The ready streams are up to date. Check for updates again to refresh availability."
+        : "No streams are selected. Select another stream or check the current streams again."
+      : blockedStreams.length
+        ? `Select a ready update stream. Repository setup is required for ${blockedStreams.join(" and ")}.`
+        : "Select at least one update stream.";
   }
   if (active) installReason = "Wait for the active Appliance Update task to finish.";
   if (installButton instanceof HTMLButtonElement) installButton.disabled = Boolean(installReason);

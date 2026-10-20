@@ -271,6 +271,7 @@ from atlaso.app.services.appliance_update import (
     update_settings_to_json,
     update_stream_configuration_fingerprint,
     update_stream_configuration_fingerprints,
+    update_stream_is_current,
     validate_update_settings,
 )
 from atlaso.app.services.automation import (
@@ -477,6 +478,7 @@ from atlaso.app.services.networking import (
     discover_host_physical_interfaces,
     is_canonical_network_role,
     native_automatic_ipv6_cidrs,
+    native_static_ip_cidr,
     normalize_interface_mode,
     normalize_interface_role,
     physical_interface_to_dict,
@@ -484,6 +486,7 @@ from atlaso.app.services.networking import (
     render_network_config,
     trunk_parent_option,
     validate_network_state,
+    verify_native_management_vlans,
     vlan_interface_to_dict,
 )
 from atlaso.app.services.ntp import (
@@ -12751,6 +12754,22 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True, applying_dns: 
             validation_errors=kms["kms_validation_errors"],
             config_path=KMS_STAGED_CONFIG_PATH,
             config_preview=kms["kms_config_preview"],
+            # The deletion guard keys off updated_at even when edits render to the same daemon JSON.
+            snapshot_marker={
+                "providers": [
+                    {
+                        "id": provider.id,
+                        "updated_at": (
+                            provider.updated_at.replace(tzinfo=timezone.utc)
+                            if provider.updated_at.tzinfo is None
+                            else provider.updated_at.astimezone(timezone.utc)
+                        ).isoformat(),
+                    }
+                    for provider in sorted(
+                        kms["vsphere_key_providers"], key=lambda item: item.id
+                    )
+                ]
+            },
             baseline=baselines.get("kms"),
         ),
         make_appliance_apply_unit(
@@ -13279,6 +13298,170 @@ def _appliance_apply_failure_is_resolved(job: Job, successful_applies: list[Job]
     return unresolved_units <= retried_units
 
 
+def _dashboard_applied_network(
+    interfaces: list[PhysicalInterface], baseline: dict[str, Any],
+) -> tuple[list[PhysicalInterface], list[VlanInterface]]:
+    """Build transient applied intent views without changing persisted desired state.
+
+    Args:
+        interfaces: Current physical observations, including pending desired edits.
+        baseline: Last successfully applied Network snapshot and physical aliases.
+    """
+    rows = network_interface_entries(str(baseline.get("config_preview") or ""))
+    raw_aliases = baseline.get("physical_interface_aliases")
+    aliases = raw_aliases if isinstance(raw_aliases, dict) else {}
+    observed = {item.name: item for item in interfaces}
+    physical: list[PhysicalInterface] = []
+    vlans: list[VlanInterface] = []
+    for row in rows:
+        name = str(aliases.get(row["name"], row["name"]))
+        if row["kind"] == "physical":
+            live = observed.get(name)
+            mac = row.get("mac", "").lower()
+            parent_pins = {item["parent_mac"].lower() for item in rows
+                           if item.get("parent") == row["name"] and item.get("parent_mac")}
+            if len(parent_pins) > 1 or (mac and parent_pins and mac not in parent_pins):
+                live = None
+            if not mac and len(parent_pins) == 1:
+                mac = next(iter(parent_pins))
+            if live is not None and mac and str(live.mac_address or "").lower() != mac:
+                live = None
+            physical.append(PhysicalInterface(
+                name=name, mac_address=mac or (live.mac_address if live else ""),
+                role=row.get("role", "unused"), mode=row.get("mode", "unused"),
+                admin_state=row.get("admin_state", "down"),
+                access_management_ui_enabled=row.get("access_management_ui_enabled", "false").lower() == "true",
+                ipv4_method=row.get("ipv4_method", "static"), ip_cidr=row.get("ip_cidr") or None,
+                ipv6_enabled=row.get("ipv6_enabled", "false").lower() == "true",
+                ipv6_cidr=row.get("ipv6_cidr") or None,
+                oper_state=live.oper_state if live else "missing",
+                host_admin_state=live.host_admin_state if live else None,
+                host_ip_cidr=live.host_ip_cidr if live else None,
+                host_ipv6_cidr=live.host_ipv6_cidr if live else None,
+                host_ipv6_cidrs=list(live.host_ipv6_cidrs or []) if live else [],
+            ))
+        elif row["kind"] == "vlan":
+            tag = row.get("vlan_id", "")
+            if not tag.isdecimal() or not 1 <= int(tag) <= 4094:
+                continue
+            vlans.append(VlanInterface(
+                name=row["name"], parent_interface=str(aliases.get(row.get("parent", ""), row.get("parent", ""))),
+                vlan_id=int(tag), role=row.get("role", "unused"),
+                enabled=row.get("enabled", "true").lower() == "true",
+                access_management_ui_enabled=row.get("access_management_ui_enabled", "false").lower() == "true",
+                ip_cidr=row.get("ip_cidr") or None, ipv6_cidr=row.get("ipv6_cidr") or None,
+            ))
+    return physical, vlans
+
+
+def _dashboard_observed_physical_interfaces(interfaces: list[PhysicalInterface]) -> list[PhysicalInterface]:
+    """Overlay bounded native health onto detached views without inventory reconciliation.
+
+    Args:
+        interfaces: Applied physical bindings, or bootstrap desired bindings.
+    """
+    try:
+        observations = {item.name: item for item in discover_host_physical_interfaces(timeout=2.0, require_success=True)}
+    except (OSError, subprocess.TimeoutExpired, RuntimeError, ValueError):
+        observations = None
+    result = []
+    for interface in interfaces:
+        view = PhysicalInterface(**{column.key: getattr(interface, column.key)
+                                    for column in PhysicalInterface.__table__.columns})
+        live = observations.get(interface.name) if observations is not None else None
+        if live is not None and str(live.mac_address).lower() != str(interface.mac_address).lower():
+            live = None
+        view.oper_state = live.oper_state if live else "unknown" if observations is None else "missing"
+        view.host_admin_state = live.host_admin_state if live else None
+        view.host_ip_cidr = (
+            live.host_dhcp_ip_cidr if interface.ipv4_method == "dhcp"
+            else native_static_ip_cidr(live, interface.ip_cidr or "")
+        ) if live else None
+        ipv6 = (
+            tuple(live.host_ipv6_cidrs or ()) or ((live.host_ipv6_cidr,) if live.host_ipv6_cidr else ())
+            if interface.ipv6_cidr else native_automatic_ipv6_cidrs(live)
+        ) if live and interface.ipv6_enabled else ()
+        view.host_ipv6_cidr = next(iter(ipv6), None)
+        view.host_ipv6_cidrs = list(ipv6)
+        result.append(view)
+    return result
+
+
+def _dashboard_management_summary(
+    interfaces: list[PhysicalInterface], vlans: list[VlanInterface],
+    *, applied_network: dict[str, Any] | None = None, observe_native: bool = False,
+) -> tuple[dict[str, Any], bool]:
+    """Project preferred listener identity separately from observed health.
+
+    Args:
+        interfaces: Physical interfaces with desired and observed state.
+        vlans: Desired VLAN listeners, which require native runtime proof.
+        applied_network: Authoritative Network baseline, or None for bootstrap fallback.
+        observe_native: Refresh physical health with bounded read-only native discovery.
+    """
+    if applied_network is not None:
+        interfaces, vlans = _dashboard_applied_network(interfaces, applied_network)
+    if observe_native:
+        interfaces = _dashboard_observed_physical_interfaces(interfaces)
+    context = management_ui_context(interfaces, vlans)
+    name = str(context.get("name") or "")
+    physical = next((item for item in interfaces if item.name == name), None)
+    vlan = next((item for item in vlans if item.name == name), None)
+    if not name:
+        # Retain discovery/diagnostics for a dedicated or addressless Access NIC.
+        physical = next((item for item in interfaces if item.role == "management"), None)
+        if physical is None:
+            physical = next((item for item in sorted(interfaces, key=lambda item: (item.name != "eth0", item.name))
+                             if item.role == "access" and item.mode == "access"
+                             and item.access_management_ui_enabled and item.admin_state == "up"
+                             and item.oper_state != "missing"), None)
+        name = physical.name if physical else ""
+    address = ""
+    observed_addresses = set()
+    if physical is not None:
+        for observed_cidr in (physical.host_ip_cidr, physical.host_ipv6_cidr, *(physical.host_ipv6_cidrs or [])):
+            try:
+                observed_addresses.add(str(ip_interface(observed_cidr or "")))
+            except ValueError:
+                continue
+    address_observed = False
+    cidrs = (
+        (physical.host_ip_cidr if physical.ipv4_method == "dhcp" else physical.ip_cidr,
+         *physical_ipv6_cidrs(physical)) if physical is not None
+        else (vlan.ip_cidr, vlan.ipv6_cidr) if vlan is not None else ()
+    )
+    for cidr in cidrs:
+        try:
+            parsed = ip_interface(cidr or "")
+        except ValueError:
+            continue
+        if not (parsed.ip.is_link_local or parsed.ip.is_unspecified or parsed.ip.is_loopback or parsed.ip.is_multicast):
+            if not address:
+                address = str(parsed)
+            if str(parsed) in observed_addresses:
+                address = str(parsed)
+                address_observed = True
+                break
+    discovered = bool(physical and physical.oper_state != "missing")
+    link = str(physical.oper_state or "unknown") if physical else "missing"
+    healthy = bool(discovered and address_observed and physical.admin_state == "up"
+                   and physical.host_admin_state != "down" and link == "up")
+    if vlan is not None:
+        # VLAN intent and an up parent alone do not prove the tagged listener.
+        parent = next((item for item in interfaces if item.name == vlan.parent_interface), None)
+        eligible_parent = bool(parent and parent.mode == "trunk" and parent.admin_state == "up"
+                               and parent.oper_state != "missing")
+        verified = bool(eligible_parent and address and verify_native_management_vlans([{
+            "kind": "vlan", "name": vlan.name, "parent": vlan.parent_interface,
+            "parent_mac": str(parent.mac_address or ""), "vlan_id": str(vlan.vlan_id),
+            "ip_cidr": str(vlan.ip_cidr or ""), "ipv6_cidr": str(vlan.ipv6_cidr or ""),
+        }], timeout=2.0))
+        discovered = verified
+        healthy = verified
+        link = "up" if verified else "unknown"
+    return {"name": name or "Not discovered", "address": address, "link": link, "healthy": healthy}, discovered
+
+
 def dashboard_snapshot(db: Session) -> dict[str, Any]:
     """Build the private operator dashboard without exposing task or audit details.
 
@@ -13357,18 +13540,12 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
         if str(interface.oper_state or "").lower() == "missing"
         or (str(interface.admin_state or "").lower() == "up" and str(interface.oper_state or "").lower() not in {"up", "unknown"})
     ]
-    management = next((interface for interface in configured_interfaces if str(interface.role or "").lower() == "management"), None)
-    management_discovered = bool(management and str(management.oper_state or "").lower() != "missing")
-    management_address = ""
-    if management is not None:
-        management_address = str(management.host_ip_cidr if management.ipv4_method == "dhcp" else management.ip_cidr or "")
-        management_address = management_address or str(management.ipv6_cidr or "")
-    management_healthy = bool(
-        management_discovered
-        and management_address
-        and str(management.admin_state or "").lower() == "up"
-        and str(management.oper_state or "").lower() == "up"
+    management, management_discovered = _dashboard_management_summary(
+        interfaces, vlans, applied_network=load_appliance_apply_baselines(db, refresh=True).get("network"),
+        observe_native=True,
     )
+    management_address = management["address"]
+    management_healthy = management["healthy"]
 
     settings_unit = next((unit for unit in units if unit["id"] == "appliance_settings"), None)
     all_desired_state_valid = all(unit["valid"] for unit in units)
@@ -13377,7 +13554,7 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
             "id": "management-discovery",
             "label": "Management interface discovered",
             "complete": management_discovered,
-            "summary": management.name if management_discovered and management else "Discover a management interface from the appliance host.",
+            "summary": management["name"] if management_discovered else "Discover a management interface from the appliance host.",
             "url": "/physical-interfaces",
         },
         {
@@ -13548,12 +13725,7 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
             "url": "/services",
         },
         "network": {
-            "management": {
-                "name": management.name if management else "Not discovered",
-                "address": management_address,
-                "link": str(management.oper_state if management else "missing"),
-                "healthy": management_healthy,
-            },
+            "management": management,
             "configured": len(configured_interfaces),
             "physical": len(interfaces),
             "vlans": len([vlan for vlan in vlans if vlan.enabled]),
@@ -13876,23 +14048,45 @@ def appliance_update_context(
         if package.ecosystem == "powershell"
     ]
     readiness = appliance_update_source_readiness(db, settings)
-    selected = [
-        stream
-        for stream in selected_update_streams(
-            selected_stream_ids if selected_stream_ids is not None else UPDATE_STREAMS
-        )
-        if readiness[stream]["ready"]
-    ]
-    manifest_preview = render_update_manifest(selected_streams=selected, settings=settings, actor="preview")
-    photon_repositories = photon_repository_details()
+    availability_state = appliance_update_availability_state(db)
+    availability_projection = update_availability_summary(availability_state, settings)
+    availability_projection_by_stream = {
+        str(row.get("id")): row
+        for row in availability_projection["streams"]
+        if isinstance(row, dict)
+    }
+    availability_result_streams = selected_stream_ids
+    if availability_result_streams is None:
+        default_selected = [
+            stream
+            for stream in UPDATE_STREAMS
+            if readiness[stream]["ready"]
+            and not update_stream_is_current(availability_projection_by_stream[stream])
+        ]
+        availability_result_streams = default_selected or [
+            stream
+            for stream in UPDATE_STREAMS
+            if readiness[stream]["ready"]
+            and update_stream_is_current(availability_projection_by_stream[stream])
+        ]
     availability = appliance_update_availability_summary(
-        db, result_streams=selected_stream_ids
+        db, result_streams=availability_result_streams
     )
     availability_by_stream = {
         str(row.get("id")): row
         for row in availability["streams"]
         if isinstance(row, dict)
     }
+    selected = [
+        stream
+        for stream in selected_update_streams(
+            selected_stream_ids if selected_stream_ids is not None else UPDATE_STREAMS
+        )
+        if readiness[stream]["ready"]
+        and (selected_stream_ids is not None or not update_stream_is_current(availability_by_stream[stream]))
+    ]
+    manifest_preview = render_update_manifest(selected_streams=selected, settings=settings, actor="preview")
+    photon_repositories = photon_repository_details()
     active_update_task = db.execute(
         select(Job).where(
             Job.type == "appliance-update",
@@ -13900,6 +14094,10 @@ def appliance_update_context(
         )
     ).scalars().first()
     _install_allowed, install_reason = manual_install_gate(availability, selected)
+    install_selection_candidate = any(
+        not update_stream_is_current(availability_by_stream[stream])
+        for stream in selected
+    )
     submitted = selected_update_streams(selected_stream_ids or [])
     blocked_submitted = [
         stream for stream in submitted if not readiness[stream]["ready"]
@@ -13912,6 +14110,19 @@ def appliance_update_context(
             "Select a ready update stream. Repository setup is required for "
             f"{blocked_labels}."
         )
+    elif not selected:
+        ready_streams = [stream for stream in UPDATE_STREAMS if readiness[stream]["ready"]]
+        current_ready_streams = [
+            stream
+            for stream in ready_streams
+            if update_stream_is_current(availability_by_stream[stream])
+        ]
+        if current_ready_streams:
+            install_reason = (
+                "The ready streams are up to date. Check for updates again to refresh availability."
+                if len(current_ready_streams) == len(ready_streams)
+                else "No streams are selected. Select another stream or check the current streams again."
+            )
     if active_update_task is not None:
         install_reason = "Wait for the active Appliance Update task to finish."
     return {
@@ -13940,13 +14151,24 @@ def appliance_update_context(
                 "source_kind": readiness[stream]["source_kind"],
                 "source_repositories": readiness[stream]["repositories"],
                 "availability": availability_by_stream.get(stream),
+                "install_selection_disabled": update_stream_is_current(
+                    availability_by_stream.get(stream, {})
+                ),
             }
             for stream in UPDATE_STREAMS
         ],
         "appliance_update_availability": availability,
         "appliance_update_active": active_update_task is not None,
         "selected_update_stream_ids": selected,
-        "appliance_update_check_allowed": bool(selected)
+        "appliance_update_check_allowed": (
+            bool(selected)
+            or any(
+                readiness[stream]["ready"]
+                and update_stream_is_current(availability_by_stream[stream])
+                for stream in UPDATE_STREAMS
+            )
+        ) and active_update_task is None,
+        "appliance_update_install_allowed": install_selection_candidate
         and active_update_task is None,
         "appliance_update_install_reason": install_reason,
         "default_atlaso_manifest_url": DEFAULT_ATLASO_MANIFEST_URL,
@@ -14661,6 +14883,21 @@ def appliance_update_failure_message(update_result: dict[str, Any]) -> str:
     Args:
         update_result: Update result consumed by appliance update failure message.
     """
+    from atlaso.important_events import (
+        format_update_diagnostic,
+        validate_update_diagnostic,
+    )
+
+    for command in update_result.get("commands", []):
+        if not isinstance(command, dict):
+            continue
+        diagnostics = command.get("update_diagnostics", [])
+        for item in diagnostics[:32] if isinstance(diagnostics, list) else []:
+            if not isinstance(item, dict) or not item.get("returncode"):
+                continue
+            diagnostic = validate_update_diagnostic(item.get("update_diagnostic"))
+            if diagnostic is not None and diagnostic["reason"] != "none":
+                return format_update_diagnostic(diagnostic)
     explicit = str(update_result.get("error") or "").strip()
     if explicit:
         return apply_output_excerpt(explicit, limit=2000)
@@ -14726,7 +14963,11 @@ def adapter_result_to_payload(result: Any) -> dict[str, Any]:
     Args:
         result: Operation result being inspected or returned.
     """
-    from atlaso.important_events import failure_reason, validate_route_conflict
+    from atlaso.important_events import (
+        failure_reason,
+        validate_route_conflict,
+        validate_update_diagnostic,
+    )
 
     stage = next((name for name, verb in (("validation", "validate"), ("rollback", "rollback"),
                  ("recovery", "recover"), ("readiness", "readiness"), ("cleanup", "cleanup"))
@@ -14741,6 +14982,32 @@ def adapter_result_to_payload(result: Any) -> dict[str, Any]:
         "stage": stage,
         "reason_code": "none" if result.returncode == 0 else failure_reason(result.stderr, result.returncode),
     }
+    # Extract typed evidence from the full helper response before display excerpts
+    # truncate it. Never promote nested raw output into the diagnostic projection.
+    if "appliance-update" in result.command[:8]:
+        helper = _last_helper_json(result.stdout)
+        commands = helper.get("commands", [])
+        failures: list[dict[str, Any]] = []
+        successes: list[dict[str, Any]] = []
+        diagnostic_count = 0
+        # Configuration has no 32-module limit. Scan the complete response while
+        # bounding retained evidence, so early successes cannot hide a late failure.
+        for command in commands if isinstance(commands, list) else []:
+            if not isinstance(command, dict):
+                continue
+            diagnostic = validate_update_diagnostic(command.get("update_diagnostic"))
+            code = command.get("returncode")
+            if (diagnostic is not None and type(code) is int and -65536 <= code <= 65536
+                    and (code == 0) == (diagnostic["reason"] == "none")):
+                diagnostic_count += 1
+                retained = failures if code else successes
+                if len(retained) < 32:
+                    retained.append({"update_diagnostic": diagnostic, "returncode": code})
+        diagnostics = (failures + successes)[:32]
+        if diagnostics:
+            payload["update_diagnostics"] = diagnostics
+            if diagnostic_count > len(diagnostics):
+                payload["update_diagnostics_omitted"] = min(2**31 - 1, diagnostic_count - len(diagnostics))
     if stage == "execution" and result.returncode != 0 and payload["reason_code"] == "management_route_conflict":
         for line in reversed((result.stderr or "")[:65536].splitlines()[-32:]):
             try:
@@ -14815,8 +15082,23 @@ def log_appliance_update_failures(job_id: str, update_result: dict[str, Any]) ->
         job_id: Stable identifier of the associated job resource.
         update_result: Update result consumed by log appliance update failures.
     """
+    from atlaso.important_events import (
+        format_update_diagnostic,
+        validate_update_diagnostic,
+    )
+
     for command in update_result.get("commands", []):
         if int(command.get("returncode") or 0) == 0:
+            continue
+        diagnostics = command.get("update_diagnostics", [])
+        safe_failures = [diagnostic for item in diagnostics[:32] if isinstance(item, dict)
+                         and item.get("returncode")
+                         and (diagnostic := validate_update_diagnostic(item.get("update_diagnostic"))) is not None
+                         and diagnostic["reason"] != "none"] if isinstance(diagnostics, list) else []
+        if safe_failures:
+            for diagnostic in safe_failures:
+                APPLIANCE_UPDATE_LOGGER.error("Appliance update task %s failed %s", job_id,
+                                              format_update_diagnostic(diagnostic))
             continue
         APPLIANCE_UPDATE_LOGGER.error(
             "Appliance update task %s failed mode=%s streams=%s command=%s returncode=%s stderr=%s stdout=%s",
@@ -17472,6 +17754,7 @@ def submit_appliance_update(
     *,
     request: Request,
     selected_streams: list[str],
+    current_check_streams: list[str] | None = None,
     csrf: str,
     identity: Identity,
     db: Session,
@@ -17482,6 +17765,7 @@ def submit_appliance_update(
     Args:
         request: Incoming HTTP request.
         selected_streams: Update streams selected for the job.
+        current_check_streams: Current streams included only in a read-only check.
         csrf: Validated CSRF token authorizing the request.
         identity: Authenticated identity authorizing the request.
         db: Active database session.
@@ -17490,8 +17774,26 @@ def submit_appliance_update(
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     wants_json = "application/json" in request.headers.get("accept", "")
-    selected = selected_update_streams(selected_streams)
+    selected = selected_update_streams(
+        [*selected_streams, *(current_check_streams or [])]
+        if mode == "check"
+        else selected_streams
+    )
     settings = appliance_update_settings(db)
+    availability = appliance_update_availability_summary(db) if mode == "run" else None
+    if mode == "run" and availability is not None:
+        current_rows = {
+            str(row.get("id")): row
+            for row in availability.get("streams", [])
+            if isinstance(row, dict)
+        }
+        readiness = appliance_update_source_readiness(db, settings)
+        selected = [
+            stream
+            for stream in selected
+            if not readiness[stream]["ready"]
+            or not update_stream_is_current(current_rows.get(stream, {}))
+        ]
     errors = validate_update_settings(settings)
     if not selected:
         errors.append("Select at least one update stream.")
@@ -17510,9 +17812,7 @@ def submit_appliance_update(
                 f"Synchronize Photon repository {repository} before checking or installing Photon OS updates."
             )
     if mode == "run" and selected:
-        install_allowed, install_reason = manual_install_gate(
-            appliance_update_availability_summary(db), selected
-        )
+        install_allowed, install_reason = manual_install_gate(availability or {}, selected)
         if not install_allowed and install_reason:
             errors.append(install_reason)
     if errors:

@@ -1074,6 +1074,7 @@ def build_routers(
     def check_appliance_update(
         request: Request,
         selected_streams: list[str] = Form(default=[]),
+        current_check_streams: list[str] = Form(default=[]),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
@@ -1083,6 +1084,7 @@ def build_routers(
         Args:
             request: Incoming HTTP request.
             selected_streams: Update streams selected for the job.
+            current_check_streams: Up-to-date streams included only in a fresh check.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
@@ -1093,6 +1095,7 @@ def build_routers(
         return submit_appliance_update(
             request=request,
             selected_streams=selected_streams,
+            current_check_streams=current_check_streams,
             csrf=csrf,
             identity=identity,
             db=db,

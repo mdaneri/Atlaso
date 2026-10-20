@@ -18,6 +18,7 @@ from atlaso.important_events import (
     failure_reason,
     validate_event,
     validate_route_conflict,
+    validate_update_diagnostic,
 )
 
 
@@ -88,6 +89,25 @@ def execution_projection(payload: dict[str, Any], component: str) -> list[dict[s
             if (route_conflict := validate_route_conflict(command.get("route_conflict"))) is not None:
                 projected["route_conflict"] = route_conflict
         output.append(projected)
+        diagnostics = command.get("update_diagnostics", [])
+        if component not in {"task", "appliance_update", "powershell_modules"} or not isinstance(diagnostics, list):
+            continue
+        for item in diagnostics[:32]:
+            if not isinstance(item, dict):
+                continue
+            diagnostic = validate_update_diagnostic(item.get("update_diagnostic"))
+            diagnostic_code = item.get("returncode")
+            if (diagnostic is None or type(diagnostic_code) is not int or not -65536 <= diagnostic_code <= 65536
+                    or (diagnostic_code == 0) != (diagnostic["reason"] == "none")):
+                continue
+            output.append({"component": component, "stage": "execution",
+                           "outcome": "succeeded" if diagnostic_code == 0 else "failed",
+                           "reason": diagnostic["reason"], "returncode": diagnostic_code,
+                           "update_diagnostic": diagnostic})
+        omitted = command.get("update_diagnostics_omitted")
+        if type(omitted) is int and 0 < omitted <= 2**31 - 1:
+            output.append({"component": component, "stage": "execution", "outcome": "partial",
+                           "reason": "update_diagnostics_truncated", "returncode": None})
     handoff = payload.get("management_handoff_failure", payload.get("management_handoff"))
     if (component == "task" and isinstance(handoff, dict)
             and canonical_value(handoff.get("reason_code"), REASONS.keys()) == "management_route_conflict"):

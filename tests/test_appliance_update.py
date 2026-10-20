@@ -5,6 +5,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -876,7 +877,6 @@ def seed_available_confirmations(streams: list[str]) -> None:
     from atlaso.app.database import SessionLocal
     from atlaso.app.services.appliance_update import (
         APPLIANCE_UPDATE_AVAILABILITY_KEY,
-        empty_update_availability,
         record_update_availability_attempt,
         update_availability_to_json,
         update_stream_configuration_fingerprints,
@@ -885,7 +885,7 @@ def seed_available_confirmations(streams: list[str]) -> None:
     with SessionLocal() as db:
         settings = ui.appliance_update_settings(db)
         fingerprints = update_stream_configuration_fingerprints(settings)
-        state = empty_update_availability()
+        state = ui.appliance_update_availability_state(db)
         for stream in streams:
             state = record_update_availability_attempt(
                 state,
@@ -907,6 +907,204 @@ def seed_available_confirmations(streams: list[str]) -> None:
             update_availability_to_json(state),
         )
         db.commit()
+
+
+def seed_up_to_date_confirmations(
+    streams: list[str], result_overrides: dict[str, dict] | None = None
+) -> None:
+    """Persist fresh up-to-date confirmations for stream-selection tests.
+
+    Args:
+        streams: Stream identifiers to confirm.
+        result_overrides: Per-stream evidence overrides for contradictory-result cases.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.appliance_update import (
+        APPLIANCE_UPDATE_AVAILABILITY_KEY,
+        record_update_availability_attempt,
+        update_availability_to_json,
+        update_stream_configuration_fingerprints,
+    )
+
+    with SessionLocal() as db:
+        settings = ui.appliance_update_settings(db)
+        fingerprints = update_stream_configuration_fingerprints(settings)
+        state = ui.appliance_update_availability_state(db)
+        for stream in streams:
+            state = record_update_availability_attempt(
+                state,
+                stream=stream,
+                job_id="job-current-check",
+                checked_at=datetime.now(timezone.utc),
+                fingerprint=fingerprints[stream],
+                result={
+                    "state": "up_to_date",
+                    "current": "Current",
+                    "target": "Current",
+                    **(result_overrides or {}).get(stream, {}),
+                },
+            )
+        ui.set_setting_value(
+            db,
+            APPLIANCE_UPDATE_AVAILABILITY_KEY,
+            update_availability_to_json(state),
+        )
+        db.commit()
+
+
+def test_fresh_up_to_date_stream_is_unchecked_and_rechecked_without_javascript(client):
+    """Keep current streams out of install selection while allowing a native check.
+
+    Args:
+        client: HTTP test client for the native update form.
+    """
+    login(client)
+    seed_up_to_date_confirmations(["photon_os", "powershell_modules", "atlaso_release"])
+    page = client.get("/ui/management/appliance-update")
+    assert page.status_code == 200
+    current_streams = re.findall(
+        r'<input type="hidden" name="current_check_streams" value="([^"]+)" '
+        r'data-appliance-update-current-stream>',
+        page.text,
+    )
+    assert current_streams
+    for stream in current_streams:
+        current_checkbox = re.search(
+            rf'<input(?=[^>]*type="checkbox")(?=[^>]*name="selected_streams")'
+            rf'(?=[^>]*value="{stream}")(?=[^>]*disabled)(?![^>]*checked)[^>]*>',
+            page.text,
+        )
+        assert current_checkbox
+    assert 'data-appliance-update-check-action disabled' not in page.text
+    assert 'data-appliance-update-install-action disabled' in page.text
+
+    csrf = csrf_from_page(page.text)
+    check = client.post(
+        "/ui/management/appliance-update/check",
+        headers={"Accept": "application/json"},
+        data={"csrf": csrf, "current_check_streams": current_streams},
+    )
+    assert check.status_code == 202
+    assert check.json()["selected_streams"] == current_streams
+
+
+def test_install_filters_up_to_date_stream_but_keeps_selected_available_stream(client):
+    """Ignore hidden current streams when an older page submits a mixed install.
+
+    Args:
+        client: HTTP test client for a mixed stream submission.
+    """
+    login(client)
+    seed_available_confirmations(["photon_os"])
+    seed_up_to_date_confirmations(["atlaso_release"])
+    page = client.get("/ui/management/appliance-update")
+    assert 'data-appliance-update-install-action disabled' not in page.text
+    assert re.search(
+        r'<input(?=[^>]*type="checkbox")(?=[^>]*name="selected_streams")'
+        r'(?=[^>]*value="photon_os")(?=[^>]*checked)(?![^>]*disabled)[^>]*>',
+        page.text,
+    )
+    response = client.post(
+        "/ui/management/appliance-update/run",
+        headers={"Accept": "application/json"},
+        data={
+            "csrf": csrf_from_page(page.text),
+            "selected_streams": ["photon_os", "atlaso_release"],
+        },
+    )
+    assert response.status_code == 202
+    assert response.json()["selected_streams"] == ["photon_os"]
+
+
+@pytest.mark.parametrize(
+    "contradictory_result",
+    [
+        {"change_count": 1, "changes": []},
+        {"change_count": 0, "changes": [{"name": "Unexpected change"}]},
+    ],
+)
+def test_contradictory_up_to_date_confirmation_remains_selectable_and_is_not_filtered(
+    client, contradictory_result
+):
+    """Do not treat inconsistent up-to-date evidence as a current-stream confirmation.
+
+    Args:
+        client: HTTP test client for the update form.
+        contradictory_result: Noncanonical change count or change rows to retain.
+    """
+    login(client)
+    seed_available_confirmations(["photon_os"])
+    seed_up_to_date_confirmations(
+        ["atlaso_release"], {"atlaso_release": contradictory_result}
+    )
+    page = client.get("/ui/management/appliance-update")
+    assert page.status_code == 200
+    assert re.search(
+        r'<input(?=[^>]*type="checkbox")(?=[^>]*name="selected_streams")'
+        r'(?=[^>]*value="atlaso_release")(?=[^>]*checked)(?![^>]*disabled)[^>]*>',
+        page.text,
+    )
+    assert not re.search(
+        r'<input type="hidden" name="current_check_streams" value="atlaso_release"',
+        page.text,
+    )
+
+    response = client.post(
+        "/ui/management/appliance-update/run",
+        headers={"Accept": "application/json"},
+        data={
+            "csrf": csrf_from_page(page.text),
+            "selected_streams": ["photon_os", "atlaso_release"],
+        },
+    )
+    assert response.status_code == 202
+    assert response.json()["selected_streams"] == ["photon_os", "atlaso_release"]
+
+
+def test_install_rejects_only_current_stream_submission(client):
+    """A hidden current stream can trigger a check but cannot be installed.
+
+    Args:
+        client: HTTP test client for the installation guard.
+    """
+    login(client)
+    seed_up_to_date_confirmations(["atlaso_release"])
+    page = client.get("/ui/management/appliance-update")
+    response = client.post(
+        "/ui/management/appliance-update/run",
+        headers={"Accept": "application/json"},
+        data={
+            "csrf": csrf_from_page(page.text),
+            "selected_streams": ["atlaso_release"],
+        },
+    )
+    assert response.status_code == 422
+    assert "Select at least one update stream." in response.json()["errors"]
+
+
+def test_run_ignores_current_check_field_if_stream_changes_after_page_load(client):
+    """Never turn a check-only hidden field into an install selection.
+
+    Args:
+        client: HTTP test client for a form whose availability changes.
+    """
+    login(client)
+    seed_up_to_date_confirmations(["atlaso_release"])
+    page = client.get("/ui/management/appliance-update")
+    csrf = csrf_from_page(page.text)
+
+    seed_available_confirmations(["atlaso_release"])
+    response = client.post(
+        "/ui/management/appliance-update/run",
+        headers={"Accept": "application/json"},
+        data={
+            "csrf": csrf,
+            "current_check_streams": ["atlaso_release"],
+        },
+    )
+    assert response.status_code == 422
+    assert "Select at least one update stream." in response.json()["errors"]
 
 
 def test_availability_preserves_confirmed_update_across_failed_recheck_and_stales_on_change():
@@ -4597,24 +4795,28 @@ def test_helper_rejects_unsafe_photon_repository_runtime_root(
         helper._photon_repository_runtime_root()
 
 
-def test_helper_reports_unresolvable_powershell_repository_host(monkeypatch, tmp_path):
-    """Verify that helper reports unresolvable powershell repository host.
+def test_helper_reports_dns_failure_from_the_powershell_client(monkeypatch, tmp_path):
+    """Report actual client DNS failure without imposing a separate local preflight.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    import socket
+    from types import SimpleNamespace
 
     helper = load_helper_module()
     state_path = tmp_path / "update-sources.json"
     monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", tmp_path / "managed-photon.repo")
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", tmp_path / "powershell-home")
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
     monkeypatch.setattr(
         helper.socket,
         "getaddrinfo",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(socket.gaierror(-2, "Name or service not known")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Local DNS must not gate a proxy-aware client")),
     )
+    monkeypatch.setattr(helper, "_run", lambda command, **_kwargs: SimpleNamespace(
+        returncode=1, stdout="", stderr='ATLASO_UPDATE_DIAGNOSTIC:{"stage":"repository_probe","reason":"dns_failed","http_status":null}\n'))
 
     result = helper._sync_appliance_update_sources(
         {
@@ -4631,8 +4833,8 @@ def test_helper_reports_unresolvable_powershell_repository_host(monkeypatch, tmp
     )
 
     assert result["status"] == "failed"
-    assert result["commands"][0]["command"] == ["resolve", "www.powershellgallery.com"]
-    assert result["error"].startswith("PowerShell repository PSGallery host www.powershellgallery.com could not be resolved:")
+    assert result["commands"][0]["command"][0] == "/usr/bin/pwsh"
+    assert result["commands"][0]["update_diagnostic"]["reason"] == "dns_failed"
 
 
 def test_helper_psgallery_sync_uses_default_registration_and_is_idempotent(monkeypatch, tmp_path):
@@ -4652,13 +4854,14 @@ def test_helper_psgallery_sync_uses_default_registration_and_is_idempotent(monke
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
     monkeypatch.setattr(helper.socket, "getaddrinfo", lambda *_args, **_kwargs: [(None, None, None, None, None)])
 
-    def successful_sync(command, *, success_codes=None, env=None):
+    def successful_sync(command, *, success_codes=None, env=None, update_diagnostic_stage=None):
         """Capture one successful PowerShell synchronization command.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
         """
         scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
         return {
@@ -4772,13 +4975,14 @@ def test_helper_custom_repository_keeps_explicit_registration_and_credentials(mo
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
     monkeypatch.setattr(helper.socket, "getaddrinfo", lambda *_args, **_kwargs: [(None, None, None, None, None)])
 
-    def successful_sync(command, *, success_codes=None, env=None):
+    def successful_sync(command, *, success_codes=None, env=None, update_diagnostic_stage=None):
         """Capture custom repository command and environment.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
         """
         captured["script"] = base64.b64decode(command[-1]).decode("utf-16-le")
         captured["env"] = env
@@ -4925,13 +5129,14 @@ def test_helper_retries_failed_powershell_repository_removal(monkeypatch, tmp_pa
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
     attempts = 0
 
-    def unregister_repository(command, *, success_codes=None, env=None):
+    def unregister_repository(command, *, success_codes=None, env=None, update_diagnostic_stage=None):
         """Fail the first unregister attempt and allow its retry.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
         """
         nonlocal attempts
         attempts += 1
@@ -4976,13 +5181,14 @@ def test_helper_source_sync_probes_powershell_repository_endpoint(monkeypatch, t
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
     monkeypatch.setattr(helper.socket, "getaddrinfo", lambda *_args, **_kwargs: [(None, None, None, None, None)])
 
-    def fail_invalid_endpoint(command, *, success_codes=None, env=None):
+    def fail_invalid_endpoint(command, *, success_codes=None, env=None, update_diagnostic_stage=None):
         """Handle fail invalid endpoint.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
         """
         scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
         return {
@@ -5091,13 +5297,14 @@ def test_helper_photon_check_parses_and_truncates_candidate_rows(monkeypatch):
         },
     )
 
-    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000):
+    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000, update_diagnostic_stage=None):
         """Return stable tdnf and rpm evidence for the check.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
             stdout_limit: Maximum retained standard output.
         """
         if command[1:] == ["check-update"]:
@@ -5166,13 +5373,14 @@ def test_helper_powershell_check_reports_truthful_version_actions(monkeypatch, t
         "Current.Tools": ("2.0.0", ["1.0.0", "2.0.0"]),
     }
 
-    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000):
+    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000, update_diagnostic_stage=None):
         """Return PowerShell module version evidence.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
             stdout_limit: Maximum retained standard output.
         """
         script = base64.b64decode(command[-1]).decode("utf-16-le")
@@ -5232,13 +5440,14 @@ def test_helper_powershell_check_ignores_unreferenced_unsynchronized_repository(
     monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
 
-    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000):
+    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000, update_diagnostic_stage=None):
         """Return one current managed-module result.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
             stdout_limit: Maximum retained standard output.
         """
         return {
@@ -5391,13 +5600,14 @@ def test_helper_uses_each_modules_bound_powershell_repository(monkeypatch, tmp_p
     monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
 
-    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000):
+    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000, update_diagnostic_stage=None):
         """Return fake command.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
             stdout_limit: Maximum retained standard output.
         """
         scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
@@ -5453,13 +5663,14 @@ def test_helper_normalizes_system_powershell_module_permissions_after_install(mo
     module_root = powershell_root / "Modules"
     commands = []
 
-    def fake_command(command, *, success_codes=None, env=None):
+    def fake_command(command, *, success_codes=None, env=None, update_diagnostic_stage=None):
         """Return fake command.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
         """
         commands.append(command)
         return {"command": command, "returncode": 0, "success": True, "stdout": "", "stderr": ""}
@@ -5502,13 +5713,14 @@ def test_helper_reasserts_global_ceip_after_powercli_install(monkeypatch, tmp_pa
     scripts = []
     monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", tmp_path / "powershell-home")
 
-    def fake_command(command, *, success_codes=None, env=None):
+    def fake_command(command, *, success_codes=None, env=None, update_diagnostic_stage=None):
         """Return fake command.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
         """
         if command[0].endswith("pwsh"):
             scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
@@ -5548,13 +5760,14 @@ def test_helper_reports_powershell_permission_normalization_failure(monkeypatch,
     powershell_root = tmp_path / "powershell"
     module_root = powershell_root / "Modules"
 
-    def fake_command(command, *, success_codes=None, env=None):
+    def fake_command(command, *, success_codes=None, env=None, update_diagnostic_stage=None):
         """Return fake command.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
         """
         failed = command[:3] == ["/usr/bin/chmod", "-R", "a+rX,go-w"]
         return {
