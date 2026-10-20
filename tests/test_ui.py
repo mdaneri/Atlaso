@@ -1039,7 +1039,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}373`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}374`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
@@ -1055,7 +1055,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'accept.includes("text/html")' in service_worker.text
     assert '!hasDownloadLikePath(url)' in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=vsphere-health-959-1" in service_worker.text
+    assert "/static/app.css?v=apply-dialog-scroll-986-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
@@ -1085,7 +1085,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     )
     assert offline_stylesheet is not None
     assert offline_stylesheet.group(1) == (
-        "/static/app.css?v=vsphere-health-959-1"
+        "/static/app.css?v=apply-dialog-scroll-986-1"
     )
     assert f'"{offline_stylesheet.group(1)}"' in service_worker.text
 
@@ -1123,7 +1123,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
         assert shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11"
         ) < shell.index(app_asset)
-    assert "/static/app.css?v=vsphere-health-959-1" in public_base
+    assert "/static/app.css?v=apply-dialog-scroll-986-1" in public_base
 
     wizard_templates = [
         templates / "automation.html",
@@ -1787,7 +1787,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=vsphere-health-959-1" in page.text
+    assert "/static/app.css?v=apply-dialog-scroll-986-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11" in page.text
     assert "/static/app.js?v=ldap-bind-992-4" in page.text
     app_css = client.get("/static/app.css")

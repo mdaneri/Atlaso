@@ -1,4 +1,22 @@
-# Network Boot browser regression fixture
+# Browser regression fixtures
+
+## Appliance Apply task scrolling
+
+`appliance-apply-scroll.cjs` renders the production Apply dialog markup, CSS, shared Tabulator foundation, and task
+rendering functions with synthetic task data. It does not submit an Apply or connect to an appliance. With Playwright
+available to Node and Microsoft Edge installed, set `ATLASO_BROWSER_OUTPUT`, `TEMP`, and `TMP` to the same originally
+receipted task-owned output directory beneath the configured worktree root, then run:
+
+```powershell
+node tests/browser/appliance-apply-scroll.cjs
+```
+
+The checks cover long and short lists, tree expansion, final-row reachability, horizontal overflow, footer accessibility,
+focus, task updates, and running/completed/failed detail views. Desktop, short, narrow, and a 200% zoom-equivalent CSS
+viewport are captured. The fixture forces space-consuming scrollbar styling to exercise hosts that normally use overlay
+scrollbars. These captures are layout evidence, not deployed-appliance acceptance or native browser-zoom evidence.
+
+## Network Boot host reference
 
 Run from a task worktree with the repository Python test dependencies, Playwright
 available to Node, and Microsoft Edge installed. Choose an unused fixture root
