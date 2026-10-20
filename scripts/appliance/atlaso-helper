@@ -9475,6 +9475,64 @@ def _http_block_end_offset(text: str) -> int:
     return -1
 
 
+def _without_stock_nginx_welcome_server(text: str) -> str:
+    """Retire only Photon's exact stock HTTP welcome server.
+
+    Args:
+        text: Existing main configuration, including operator-owned content.
+
+    The vendor wildcard socket conflicts with scoped reuseport sockets on a cold
+    start. Recognize the complete stock directive sequence rather than deleting
+    arbitrary wildcard servers. Keep quoted strings and comments opaque so their
+    braces cannot change block ownership. Ambiguous syntax is left for nginx -t.
+    """
+    pattern = re.compile(
+        r'''\#[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\\.|[{};]|[^\s{};\#"'\\]+'''
+    )
+    tokens: list[tuple[str, int, int]] = []
+    position = 0
+    for match in pattern.finditer(text):
+        if text[position:match.start()].strip():
+            return text
+        position = match.end()
+        if match.group().startswith("#"):
+            # Inside an unquoted nginx word, # is data rather than a comment.
+            # Leave such uncommon custom syntax untouched instead of guessing.
+            if match.start() and text[match.start() - 1] not in " \t\r\n;{}":
+                return text
+        else:
+            tokens.append((match.group(), match.start(), match.end()))
+    if text[position:].strip():
+        return text
+    stock = (
+        "server { listen 80 ; server_name localhost ; "
+        "location / { root html ; index index.html index.htm ; } "
+        "error_page 500 502 503 504 /50x.html ; "
+        "location = /50x.html { root html ; } }"
+    ).split()
+    stack: list[str] = []
+    http_blocks = 0
+    removals: list[tuple[int, int]] = []
+    for index, (token, start, _end) in enumerate(tokens):
+        if token == "server" and stack == ["http"]:
+            candidate = tokens[index:index + len(stock)]
+            if [value for value, _, _ in candidate] == stock:
+                removals.append((start, candidate[-1][2]))
+        if token == "{":
+            if not stack and index and tokens[index - 1][0] == "http":
+                http_blocks += 1
+            stack.append(tokens[index - 1][0] if index else "")
+        elif token == "}":
+            if not stack:
+                return text
+            stack.pop()
+    if stack or http_blocks != 1:
+        return text
+    for start, end in reversed(removals):
+        text = text[:start] + text[end:]
+    return text
+
+
 def _ensure_nginx_main_config_includes_atlaso() -> None:
     """Ensure nginx main config includes atlaso.
 
@@ -9482,15 +9540,17 @@ def _ensure_nginx_main_config_includes_atlaso() -> None:
     if not NGINX_MAIN_CONFIG_PATH.exists():
         return
     text = NGINX_MAIN_CONFIG_PATH.read_text(encoding="utf-8")
+    next_text = _without_stock_nginx_welcome_server(text)
     include_line = f"    include {NGINX_CONF_INCLUDE_PATH};"
-    if str(NGINX_CONF_INCLUDE_PATH) in text:
+    if str(NGINX_CONF_INCLUDE_PATH) not in next_text:
+        end_offset = _http_block_end_offset(next_text)
+        if end_offset < 0:
+            return
+        prefix = next_text[:end_offset].rstrip()
+        suffix = next_text[end_offset:]
+        next_text = f"{prefix}\n\n    # Managed by Atlaso. Local changes may be overwritten.\n{include_line}\n{suffix}"
+    if next_text == text:
         return
-    end_offset = _http_block_end_offset(text)
-    if end_offset < 0:
-        return
-    prefix = text[:end_offset].rstrip()
-    suffix = text[end_offset:]
-    next_text = f"{prefix}\n\n    # Managed by Atlaso. Local changes may be overwritten.\n{include_line}\n{suffix}"
     tmp_target = NGINX_MAIN_CONFIG_PATH.with_suffix(".conf.tmp")
     tmp_target.write_text(next_text, encoding="utf-8")
     os.chmod(tmp_target, 0o644)
@@ -13944,6 +14004,10 @@ def _install_route_domain_intent(
     os.chmod(ROUTE_DOMAIN_SERVICE_PATH, 0o644)
     _fsync_file(ROUTE_DOMAIN_SERVICE_PATH)
     _fsync_directory(ROUTE_DOMAIN_SERVICE_PATH.parent)
+    # Migrate exact held sources under the reconciliation lock before the
+    # watcher's ExecStartPre seeds the newly published domain. Otherwise an
+    # intentional table-100 to table-200 handoff appears to be foreign ownership.
+    _reconcile_route_domains()
     # enable --now starts a new unit but leaves an already-running watcher on
     # its old imported Python code after an appliance upgrade.
     for command in (["systemctl", "daemon-reload"],
@@ -13951,7 +14015,6 @@ def _install_route_domain_intent(
                     ["systemctl", "restart", ROUTE_DOMAIN_SERVICE_PATH.name]):
         if _run(command).returncode:
             raise ValueError("routing-domain service activation failed")
-    _reconcile_route_domains()
 
 
 def _snapshot_route_domain_service() -> dict[str, bool]:
@@ -16657,7 +16720,9 @@ def _applied_wan_network_state(*, include_handoff_held_sources: bool = False) ->
     for family in (4, 6):
         for route in snapshot["routes"][str(family)]:
             destination = route.get("dst", "default")
-            if destination == "default" or route.get("gateway") or route.get("type", "unicast") != "unicast":
+            # Canonical numeric iproute2 output spells RTN_UNICAST as "1".
+            if (destination == "default" or route.get("gateway")
+                    or str(route.get("type", "unicast")) not in {"unicast", "1"}):
                 continue
             network = str(ip_network(destination, strict=False))
             key = (route.get("dev", ""), network)
@@ -23719,6 +23784,93 @@ def _recover_interrupted_release_transaction() -> dict:
     }
 
 
+def _backup_stock_nginx_listener(original: bytes, cleaned: bytes) -> None:
+    """Persist protected, content-addressed original configuration before repair.
+
+    Args:
+        original: Exact main configuration bytes retained for recovery evidence.
+        cleaned: Configuration with only the recognized vendor server removed.
+    """
+    directory = ATLASO_UPDATE_BACKUP_DIR / "nginx-stock-listeners"
+    if directory.is_symlink():
+        raise ValueError("nginx migration backup directory is unsafe")
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    metadata = directory.stat()
+    if os.name == "posix" and (
+        (os.geteuid() == 0 and metadata.st_uid != 0) or metadata.st_mode & 0o077
+    ):
+        raise ValueError("nginx migration backups must be root-owned and private")
+    digest = hashlib.sha256(original).hexdigest()
+    evidence = json.dumps({
+        "schema": 1, "target": str(NGINX_MAIN_CONFIG_PATH), "original_sha256": digest,
+        "cleaned_sha256": hashlib.sha256(cleaned).hexdigest(),
+        "repair": "retire-exact-vendor-welcome-listener",
+    }, sort_keys=True).encode("utf-8")
+    for path, data in [(directory / f"{digest}.conf", original), (directory / f"{digest}.json", evidence)]:
+        if path.exists() or path.is_symlink():
+            metadata = path.lstat()
+            if (
+                not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                or (os.name == "posix" and (
+                    (os.geteuid() == 0 and metadata.st_uid != 0) or metadata.st_mode & 0o077
+                ))
+                or path.read_bytes() != data
+            ):
+                raise ValueError("nginx migration backup conflicts with original evidence")
+        else:
+            _write_appliance_update_runtime_file(path, data, mode=0o600)
+    _fsync_directory(directory.parent)
+    _fsync_directory(ATLASO_UPDATE_BACKUP_DIR.parent)
+
+
+def _prepare_stock_nginx_listener_startup() -> dict:
+    """Migrate an appliance before nginx opens its cold-start sockets.
+
+    The installed helper runs through both service pre-start guards even when an
+    older updater installed this release. Do not depend on that older parent's
+    in-memory implementation to perform the migration. Retain original bytes in
+    protected recovery evidence, including when provisional release maintenance
+    requires nginx to cold-start before worker recovery can complete.
+    """
+    try:
+        if not NGINX_MAIN_CONFIG_PATH.is_file():
+            return _release_check("nginx_stock_listener", True, "No nginx main configuration is present.")
+        lock_path = NGINX_MAIN_CONFIG_PATH.with_name(".atlaso-main-config.lock")
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(lock_path, flags, 0o600)
+        with os.fdopen(descriptor, "rb+") as lock:
+            if fcntl is not None:
+                deadline = time.monotonic() + 45
+                while True:
+                    try:
+                        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("nginx startup configuration is still locked") from None
+                        time.sleep(0.05)
+            original = NGINX_MAIN_CONFIG_PATH.read_bytes()
+            text = original.decode("utf-8")
+            cleaned = _without_stock_nginx_welcome_server(text)
+            if cleaned == text:
+                return _release_check("nginx_stock_listener", True, "No stock nginx welcome listener remains.")
+            _backup_stock_nginx_listener(original, cleaned.encode("utf-8"))
+            mode = stat.S_IMODE(NGINX_MAIN_CONFIG_PATH.stat().st_mode)
+            try:
+                _write_appliance_update_runtime_file(NGINX_MAIN_CONFIG_PATH, cleaned.encode("utf-8"), mode=mode)
+                if _nginx_test_command().returncode != 0:
+                    raise ValueError("nginx validation rejected the stock listener migration")
+            except Exception:
+                _write_appliance_update_runtime_file(NGINX_MAIN_CONFIG_PATH, original, mode=mode)
+                raise
+        return _release_check("nginx_stock_listener", True, "Retired the stock nginx welcome listener before startup.")
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        return _release_check(
+            "nginx_stock_listener", False,
+            f"Nginx stock listener preparation failed: {type(exc).__name__}.",
+        )
+
+
 def _guard_interrupted_release_startup() -> dict:
     """Hold the management front door before services start for stale release work."""
     status_guard = _guard_appliance_update_status_startup()
@@ -23727,7 +23879,7 @@ def _guard_interrupted_release_startup() -> dict:
     try:
         parsed = json.loads(ATLASO_UPDATE_FINALIZER_PATH.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return _release_check("release_startup_guard", True, "No release recovery is pending.")
+        return _prepare_stock_nginx_listener_startup()
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         ATLASO_UPDATE_MAINTENANCE_PATH.parent.mkdir(parents=True, exist_ok=True)
         ATLASO_UPDATE_MAINTENANCE_PATH.touch(mode=0o644, exist_ok=True)
@@ -23761,7 +23913,7 @@ def _guard_interrupted_release_startup() -> dict:
         )
     )
     if not pending:
-        return _release_check("release_startup_guard", True, "No provisional release recovery is pending.")
+        return _prepare_stock_nginx_listener_startup()
     ATLASO_UPDATE_MAINTENANCE_PATH.parent.mkdir(parents=True, exist_ok=True)
     ATLASO_UPDATE_MAINTENANCE_PATH.touch(mode=0o644, exist_ok=True)
     if not NGINX_MANAGEMENT_SITE_PATH.is_file():
@@ -23791,11 +23943,7 @@ def _guard_interrupted_release_startup() -> dict:
                 False,
                 "The guarded management nginx configuration is invalid; maintenance remains held.",
             )
-    return _release_check(
-        "release_startup_guard",
-        True,
-        "Provisional release recovery is guarded by maintenance before service startup.",
-    )
+    return _prepare_stock_nginx_listener_startup()
 
 
 def _refresh_release_data_disk_identity(*, validate: bool) -> list[dict]:
@@ -24346,7 +24494,7 @@ def _nginx_block_end(text: str, opening: int) -> int:
 
 def _write_appliance_update_runtime_file(
     destination: Path,
-    content: str,
+    content: str | bytes,
     *,
     mode: int = 0o644,
 ) -> None:
@@ -24354,7 +24502,7 @@ def _write_appliance_update_runtime_file(
 
     Args:
         destination: Exact root-controlled destination.
-        content: UTF-8 text to persist.
+        content: UTF-8 text or exact configuration bytes to persist.
         mode: Final POSIX permission bits.
     """
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -24378,8 +24526,8 @@ def _write_appliance_update_runtime_file(
         flags |= os.O_NOFOLLOW
     descriptor = os.open(temporary, flags, mode)
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(content)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content.encode("utf-8") if isinstance(content, str) else content)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, destination)
@@ -33637,8 +33785,9 @@ def _verify_management_handoff_migrated_defaults(state: dict, payload: dict | No
             ]
             ready = False
             for route in applied["default_routes"]:
+                # The isolated observation uses ip -N, including numeric types.
                 if (route["family"] != family or route.get("dev") != name
-                        or route.get("type", "unicast") != "unicast"
+                        or str(route.get("type", "unicast")) not in {"unicast", "1"}
                         or set(route.get("flags", [])) & {"dead", "linkdown"}):
                     continue
                 try:
