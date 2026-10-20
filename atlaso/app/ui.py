@@ -271,6 +271,7 @@ from atlaso.app.services.appliance_update import (
     update_settings_to_json,
     update_stream_configuration_fingerprint,
     update_stream_configuration_fingerprints,
+    update_stream_is_current,
     validate_update_settings,
 )
 from atlaso.app.services.automation import (
@@ -14047,23 +14048,45 @@ def appliance_update_context(
         if package.ecosystem == "powershell"
     ]
     readiness = appliance_update_source_readiness(db, settings)
-    selected = [
-        stream
-        for stream in selected_update_streams(
-            selected_stream_ids if selected_stream_ids is not None else UPDATE_STREAMS
-        )
-        if readiness[stream]["ready"]
-    ]
-    manifest_preview = render_update_manifest(selected_streams=selected, settings=settings, actor="preview")
-    photon_repositories = photon_repository_details()
+    availability_state = appliance_update_availability_state(db)
+    availability_projection = update_availability_summary(availability_state, settings)
+    availability_projection_by_stream = {
+        str(row.get("id")): row
+        for row in availability_projection["streams"]
+        if isinstance(row, dict)
+    }
+    availability_result_streams = selected_stream_ids
+    if availability_result_streams is None:
+        default_selected = [
+            stream
+            for stream in UPDATE_STREAMS
+            if readiness[stream]["ready"]
+            and not update_stream_is_current(availability_projection_by_stream[stream])
+        ]
+        availability_result_streams = default_selected or [
+            stream
+            for stream in UPDATE_STREAMS
+            if readiness[stream]["ready"]
+            and update_stream_is_current(availability_projection_by_stream[stream])
+        ]
     availability = appliance_update_availability_summary(
-        db, result_streams=selected_stream_ids
+        db, result_streams=availability_result_streams
     )
     availability_by_stream = {
         str(row.get("id")): row
         for row in availability["streams"]
         if isinstance(row, dict)
     }
+    selected = [
+        stream
+        for stream in selected_update_streams(
+            selected_stream_ids if selected_stream_ids is not None else UPDATE_STREAMS
+        )
+        if readiness[stream]["ready"]
+        and (selected_stream_ids is not None or not update_stream_is_current(availability_by_stream[stream]))
+    ]
+    manifest_preview = render_update_manifest(selected_streams=selected, settings=settings, actor="preview")
+    photon_repositories = photon_repository_details()
     active_update_task = db.execute(
         select(Job).where(
             Job.type == "appliance-update",
@@ -14071,6 +14094,10 @@ def appliance_update_context(
         )
     ).scalars().first()
     _install_allowed, install_reason = manual_install_gate(availability, selected)
+    install_selection_candidate = any(
+        not update_stream_is_current(availability_by_stream[stream])
+        for stream in selected
+    )
     submitted = selected_update_streams(selected_stream_ids or [])
     blocked_submitted = [
         stream for stream in submitted if not readiness[stream]["ready"]
@@ -14083,6 +14110,19 @@ def appliance_update_context(
             "Select a ready update stream. Repository setup is required for "
             f"{blocked_labels}."
         )
+    elif not selected:
+        ready_streams = [stream for stream in UPDATE_STREAMS if readiness[stream]["ready"]]
+        current_ready_streams = [
+            stream
+            for stream in ready_streams
+            if update_stream_is_current(availability_by_stream[stream])
+        ]
+        if current_ready_streams:
+            install_reason = (
+                "The ready streams are up to date. Check for updates again to refresh availability."
+                if len(current_ready_streams) == len(ready_streams)
+                else "No streams are selected. Select another stream or check the current streams again."
+            )
     if active_update_task is not None:
         install_reason = "Wait for the active Appliance Update task to finish."
     return {
@@ -14111,13 +14151,24 @@ def appliance_update_context(
                 "source_kind": readiness[stream]["source_kind"],
                 "source_repositories": readiness[stream]["repositories"],
                 "availability": availability_by_stream.get(stream),
+                "install_selection_disabled": update_stream_is_current(
+                    availability_by_stream.get(stream, {})
+                ),
             }
             for stream in UPDATE_STREAMS
         ],
         "appliance_update_availability": availability,
         "appliance_update_active": active_update_task is not None,
         "selected_update_stream_ids": selected,
-        "appliance_update_check_allowed": bool(selected)
+        "appliance_update_check_allowed": (
+            bool(selected)
+            or any(
+                readiness[stream]["ready"]
+                and update_stream_is_current(availability_by_stream[stream])
+                for stream in UPDATE_STREAMS
+            )
+        ) and active_update_task is None,
+        "appliance_update_install_allowed": install_selection_candidate
         and active_update_task is None,
         "appliance_update_install_reason": install_reason,
         "default_atlaso_manifest_url": DEFAULT_ATLASO_MANIFEST_URL,
@@ -17643,6 +17694,7 @@ def submit_appliance_update(
     *,
     request: Request,
     selected_streams: list[str],
+    current_check_streams: list[str] | None = None,
     csrf: str,
     identity: Identity,
     db: Session,
@@ -17653,6 +17705,7 @@ def submit_appliance_update(
     Args:
         request: Incoming HTTP request.
         selected_streams: Update streams selected for the job.
+        current_check_streams: Current streams included only in a read-only check.
         csrf: Validated CSRF token authorizing the request.
         identity: Authenticated identity authorizing the request.
         db: Active database session.
@@ -17661,8 +17714,26 @@ def submit_appliance_update(
     verify_csrf(request, csrf)
     require_admin_identity(identity)
     wants_json = "application/json" in request.headers.get("accept", "")
-    selected = selected_update_streams(selected_streams)
+    selected = selected_update_streams(
+        [*selected_streams, *(current_check_streams or [])]
+        if mode == "check"
+        else selected_streams
+    )
     settings = appliance_update_settings(db)
+    availability = appliance_update_availability_summary(db) if mode == "run" else None
+    if mode == "run" and availability is not None:
+        current_rows = {
+            str(row.get("id")): row
+            for row in availability.get("streams", [])
+            if isinstance(row, dict)
+        }
+        readiness = appliance_update_source_readiness(db, settings)
+        selected = [
+            stream
+            for stream in selected
+            if not readiness[stream]["ready"]
+            or not update_stream_is_current(current_rows.get(stream, {}))
+        ]
     errors = validate_update_settings(settings)
     if not selected:
         errors.append("Select at least one update stream.")
@@ -17681,9 +17752,7 @@ def submit_appliance_update(
                 f"Synchronize Photon repository {repository} before checking or installing Photon OS updates."
             )
     if mode == "run" and selected:
-        install_allowed, install_reason = manual_install_gate(
-            appliance_update_availability_summary(db), selected
-        )
+        install_allowed, install_reason = manual_install_gate(availability or {}, selected)
         if not install_allowed and install_reason:
             errors.append(install_reason)
     if errors:
