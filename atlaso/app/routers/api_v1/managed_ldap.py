@@ -436,6 +436,7 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
         status_code=201,
         tags=["LDAP"],
         operation_id="createLdapOrganization",
+        responses={400: {"model": ProblemDetails, "description": "The custom bind password is blank or does not satisfy the saved LDAP password policy, or the organization naming context is invalid."}},
         summary="Create a managed LDAP organization",
         description="Requires the `write:ldap` API scope. Creates LDAP organization desired state. Omit bind_password to generate the default bind credential, which is returned once, or supply a custom password validated against the saved LDAP policy. Custom values are encrypted at rest and not returned. Organization list and read responses never expose the bind credential. LDAP runtime changes remain subject to global Appliance Apply.",
     )

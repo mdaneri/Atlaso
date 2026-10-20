@@ -74,6 +74,9 @@ def test_custom_bind_password_forms_validate_without_echoing_or_partial_rotation
     assert rotated.status_code == 200
     assert replacement not in rotated.text
     assert "data-ldap-bind-secret-auto-open" not in rotated.text
+    assert 'class="alert success" role="status"' in rotated.text
+    assert "Custom bind credential saved for Custom UI." in rotated.text
+    assert "Apply the pending LDAP changes through global Appliance Apply." in rotated.text
     with SessionLocal() as db:
         assert organization_bind_secret(db.get(LdapOrganization, organization_id)) == replacement
         details = [event.detail or "" for event in db.execute(select(AuditEvent)).scalars()]

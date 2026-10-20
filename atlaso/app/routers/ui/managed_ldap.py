@@ -568,6 +568,7 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
                 **dependencies.ldap_context(
                     db, selected_organization_id=organization.id
                 ),
+                "ldap_custom_bind_rotation_saved": custom_password is not None,
                 "ldap_one_time_bind_secret": raw_secret if custom_password is None else None,
                 "ldap_one_time_bind_dn": organization.bind_dn,
                 "appliance_apply_status": dependencies.appliance_apply_status(

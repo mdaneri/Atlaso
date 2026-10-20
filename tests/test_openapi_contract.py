@@ -478,6 +478,9 @@ def test_ldap_bind_operations_document_scope_apply_and_policy_errors(client):
         operation = paths[path][method]
         assert "write:ldap" in operation["description"]
         assert "global Appliance Apply" in operation["description"]
+    creation = paths["/api/v1/ldap/organizations"]["post"]
+    assert creation["responses"]["400"]["content"]["application/json"]["schema"]["$ref"].endswith("/ProblemDetails")
+    assert "password policy" in creation["responses"]["400"]["description"]
     rotation = paths["/api/v1/ldap/organizations/{organization_id}/bind-credential/rotate"]["post"]
     response = rotation["responses"]["400"]
     assert response["content"]["application/json"]["schema"]["$ref"].endswith("/ProblemDetails")

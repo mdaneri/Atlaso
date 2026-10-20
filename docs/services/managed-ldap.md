@@ -80,7 +80,8 @@ credential text unselected until the operator deliberately copies or saves it.
 
 To use a password already stored in your secret manager, select **Custom password** in the organization wizard's bind
 credential step, enter it twice, and review the organization. Password entry fields appear only for **Custom password**;
-switching to automatic generation hides and clears them. Custom bind passwords must satisfy the current Managed
+switching to automatic generation hides and clears them. A successful custom rotation shows a confirmation status
+with the organization name and the global Apply reminder. Custom bind passwords must satisfy the current Managed
 LDAP password policy for the `vcf-bind` account. Review shows the password mode without showing the value. Cancelling
 or completing the wizard clears the password fields. After a rejected submission, the wizard reopens with its error,
 retains non-secret organization fields and the chosen mode, and asks you to enter the password again. Use the

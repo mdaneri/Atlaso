@@ -14618,6 +14618,16 @@
             },
             "description": "Create Ldap Organization. The response body matches the documented success schema."
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The custom bind password is blank or does not satisfy the saved LDAP password policy, or the organization naming context is invalid."
+          },
           "422": {
             "content": {
               "application/json": {

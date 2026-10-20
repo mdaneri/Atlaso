@@ -87,6 +87,7 @@
     </div>
 
     {% if form_error %}<div class="alert error">{{ form_error }}</div>{% endif %}
+    {% if ldap_custom_bind_rotation_saved %}<div class="alert success" role="status">Custom bind credential saved for {{ ldap_selected_organization.name }}. Apply the pending LDAP changes through global Appliance Apply.</div>{% endif %}
     <div class="alert warning">
       This is single-node lab identity infrastructure. Keep local break-glass administrators in every VCF organization.
     </div>
