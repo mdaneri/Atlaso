@@ -106,16 +106,39 @@ class DeploymentLockTests(unittest.TestCase):
                     for action in ("apply", "sync-sources", "status-publish", "status-finish", "restart-service"):
                         self.assertEqual(self.helper._handle_appliance_update(action, []), 75)
                     mutate.assert_not_called()
-                # Deployment's own service restarts must not deadlock with
-                # no-op startup guards. Recovery evidence removes this exemption.
-                for action in ("guard-release", "recover-release"):
-                    with self.helper._appliance_update_deployment_guard(action):
-                        pass
-                    self.helper.ATLASO_UPDATE_FINALIZER_PATH.write_text("retained", encoding="utf-8")
-                    with self.assertRaises(BlockingIOError):
-                        with self.helper._appliance_update_deployment_guard(action):
-                            self.fail("recovery entered while deployment owned the lock")
-                    self.helper.ATLASO_UPDATE_FINALIZER_PATH.unlink()
+                # Derive every updater pre-start action from the canonical units,
+                # including the bootstrap hooks installed by wheel deployment.
+                actions = set()
+                for unit in (ROOT / "image/common/systemd").iterdir():
+                    if not unit.is_file():
+                        continue
+                    for line in unit.read_text(encoding="utf-8").splitlines():
+                        prefix = "ExecStartPre=+/opt/atlaso/bin/atlaso-helper appliance-update "
+                        if line.startswith(prefix):
+                            actions.add(line.removeprefix(prefix).split()[0])
+                self.assertIn("bootstrap-data-disk-safety", actions)
+                self.assertIn("bootstrap-port-forwarding", actions)
+                self.assertIn("recover-release", actions)
+                self.assertIn("guard-release", actions)
+                evidence = (
+                    self.helper.ATLASO_UPDATE_FINALIZER_PATH,
+                    self.helper.ATLASO_UPDATE_STATUS_PATH,
+                    self.helper.ATLASO_UPDATE_MAINTENANCE_PATH,
+                    self.helper.ATLASO_UPDATE_STATUS_MARKER_PATH,
+                    self.helper.ATLASO_UPDATE_RESTART_GATE_PATH,
+                )
+                for action in sorted(actions):
+                    with patch.object(self.helper, "_handle_appliance_update_locked", return_value=0) as startup:
+                        self.assertEqual(self.helper._handle_appliance_update(action, []), 0)
+                        startup.assert_called_once_with(action, [])
+                    # Every durable and volatile evidence source removes the
+                    # exemption before any startup handler can mutate the host.
+                    for retained in evidence:
+                        retained.write_text("retained", encoding="utf-8")
+                        with patch.object(self.helper, "_handle_appliance_update_locked") as startup:
+                            self.assertEqual(self.helper._handle_appliance_update(action, []), 75)
+                            startup.assert_not_called()
+                        retained.unlink()
             finally:
                 deploy.communicate("release\n", timeout=10)
             self.assertEqual(deploy.returncode, 0)

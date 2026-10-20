@@ -34800,7 +34800,10 @@ def _appliance_update_deployment_guard(action: str):
     # Ordinary service startup must work while deployment holds the exclusive lock.
     # Without any durable/volatile update evidence these hooks cannot recover an
     # update transaction. The exclusive deployer checks the same paths under lock.
-    ordinary_startup = action in {"guard-release", "recover-release"} and not any(
+    ordinary_startup = action in {
+        "guard-release", "recover-release",
+        "bootstrap-data-disk-safety", "bootstrap-port-forwarding",
+    } and not any(
         path.exists() or path.is_symlink() for path in recovery_evidence
     )
     if os.name != "posix" or action in observational or ordinary_startup:
