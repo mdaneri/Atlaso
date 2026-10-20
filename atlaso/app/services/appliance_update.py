@@ -412,7 +412,11 @@ def update_stream_is_current(row: dict[str, Any]) -> bool:
         and attempt.get("success") is True
         and attempt.get("state") == "up_to_date"
         and isinstance(confirmed, dict)
+        and confirmed.get("state") == "up_to_date"
         and confirmed.get("update_available") is False
+        and confirmed.get("change_count") == 0
+        and isinstance(confirmed.get("changes"), list)
+        and not confirmed["changes"]
     )
 
 

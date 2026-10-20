@@ -361,7 +361,7 @@ test("current streams are disabled for installs and become selectable after a fr
     check_required: false,
     source_sync: { ready: true },
     last_attempt: { success: true, state: "up_to_date" },
-    confirmed: { update_available: false },
+    confirmed: { state: "up_to_date", update_available: false, change_count: 0, changes: [] },
   };
   assert.equal(context.isCurrent(current), true);
   context.updateSelection(input, current, true, summary);
@@ -369,11 +369,27 @@ test("current streams are disabled for installs and become selectable after a fr
   assert.equal(input.checked, false);
   assert.equal(input.getAttribute("aria-describedby"), summary.id);
 
+  for (const contradictory of [
+    { change_count: 1, changes: [] },
+    { change_count: 0, changes: [{ name: "Unexpected change" }] },
+  ]) {
+    const malformed = {
+      ...current,
+      confirmed: { ...current.confirmed, state: "up_to_date", ...contradictory },
+    };
+    input.checked = true;
+    assert.equal(context.isCurrent(malformed), false);
+    context.updateSelection(input, malformed, true, summary);
+    assert.equal(input.disabled, false);
+    assert.equal(input.checked, true);
+  }
+
   const available = {
     ...current,
     last_attempt: { success: true, state: "available" },
     confirmed: { update_available: true },
   };
+  input.checked = false;
   context.updateSelection(input, available, true, summary);
   assert.equal(input.disabled, false);
   assert.equal(input.checked, false);
@@ -395,7 +411,7 @@ test("live availability adds and removes current stream form fields without dupl
     check_required: false,
     source_sync: { ready: true },
     last_attempt: { success: true, state: "up_to_date" },
-    confirmed: { update_available: false },
+    confirmed: { state: "up_to_date", update_available: false, change_count: 0, changes: [] },
   };
   class Form extends HTMLFormElement {
     querySelectorAll(selector) {
@@ -440,6 +456,18 @@ test("live availability adds and removes current stream form fields without dupl
   context.setStreams([current]);
   context.sync();
   assert.deepEqual(form.inputs.map((input) => [input.name, input.value]), [["current_check_streams", "atlaso_release"]]);
+
+  for (const contradictory of [
+    { change_count: 1, changes: [] },
+    { change_count: 0, changes: [{ name: "Unexpected change" }] },
+  ]) {
+    context.setStreams([{
+      ...current,
+      confirmed: { ...current.confirmed, state: "up_to_date", ...contradictory },
+    }]);
+    context.sync();
+    assert.equal(form.inputs.length, 0);
+  }
 });
 
 test("validated polling creates, updates, and removes the positive indicator", async () => {

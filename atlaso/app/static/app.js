@@ -16072,7 +16072,11 @@ function applianceUpdateStreamIsCurrent(stream) {
     && stream.source_sync?.ready !== false
     && stream.last_attempt?.success === true
     && stream.last_attempt?.state === "up_to_date"
-    && stream.confirmed?.update_available === false;
+    && stream.confirmed?.state === "up_to_date"
+    && stream.confirmed?.update_available === false
+    && stream.confirmed?.change_count === 0
+    && Array.isArray(stream.confirmed?.changes)
+    && stream.confirmed.changes.length === 0;
 }
 
 function updateApplianceUpdateStreamSelection(input, stream, sourceReady, summary) {

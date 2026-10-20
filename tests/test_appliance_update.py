@@ -909,7 +909,9 @@ def seed_available_confirmations(streams: list[str]) -> None:
         db.commit()
 
 
-def seed_up_to_date_confirmations(streams: list[str]) -> None:
+def seed_up_to_date_confirmations(
+    streams: list[str], result_overrides: dict[str, dict] | None = None
+) -> None:
     """Persist fresh up-to-date confirmations for stream-selection tests."""
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
@@ -931,7 +933,12 @@ def seed_up_to_date_confirmations(streams: list[str]) -> None:
                 job_id="job-current-check",
                 checked_at=datetime.now(timezone.utc),
                 fingerprint=fingerprints[stream],
-                result={"state": "up_to_date", "current": "Current", "target": "Current"},
+                result={
+                    "state": "up_to_date",
+                    "current": "Current",
+                    "target": "Current",
+                    **(result_overrides or {}).get(stream, {}),
+                },
             )
         ui.set_setting_value(
             db,
@@ -995,6 +1002,46 @@ def test_install_filters_up_to_date_stream_but_keeps_selected_available_stream(c
     )
     assert response.status_code == 202
     assert response.json()["selected_streams"] == ["photon_os"]
+
+
+@pytest.mark.parametrize(
+    "contradictory_result",
+    [
+        {"change_count": 1, "changes": []},
+        {"change_count": 0, "changes": [{"name": "Unexpected change"}]},
+    ],
+)
+def test_contradictory_up_to_date_confirmation_remains_selectable_and_is_not_filtered(
+    client, contradictory_result
+):
+    """Do not treat inconsistent up-to-date evidence as a current-stream confirmation."""
+    login(client)
+    seed_available_confirmations(["photon_os"])
+    seed_up_to_date_confirmations(
+        ["atlaso_release"], {"atlaso_release": contradictory_result}
+    )
+    page = client.get("/ui/management/appliance-update")
+    assert page.status_code == 200
+    assert re.search(
+        r'<input(?=[^>]*type="checkbox")(?=[^>]*name="selected_streams")'
+        r'(?=[^>]*value="atlaso_release")(?=[^>]*checked)(?![^>]*disabled)[^>]*>',
+        page.text,
+    )
+    assert not re.search(
+        r'<input type="hidden" name="current_check_streams" value="atlaso_release"',
+        page.text,
+    )
+
+    response = client.post(
+        "/ui/management/appliance-update/run",
+        headers={"Accept": "application/json"},
+        data={
+            "csrf": csrf_from_page(page.text),
+            "selected_streams": ["photon_os", "atlaso_release"],
+        },
+    )
+    assert response.status_code == 202
+    assert response.json()["selected_streams"] == ["photon_os", "atlaso_release"]
 
 
 def test_install_rejects_only_current_stream_submission(client):
