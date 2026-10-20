@@ -22,24 +22,32 @@ function harness() {
     confirm_bind_password: new Control(),
   };
   const events = {};
+  const fields = [0, 1].map(() => {
+    const field = { hidden: false };
+    field.classList = { toggle: (_name, hidden) => { field.hiddenClass = hidden; } };
+    return field;
+  });
   const form = {
+    querySelectorAll: () => fields,
     dataset: {},
     elements: { namedItem: (name) => controls[name] },
     addEventListener: (name, callback) => { events[name] = callback; },
   };
   context.initializeLdapBindCredentialFields(form);
-  return { context, controls, events, form };
+  return { context, controls, events, form, fields };
 }
 
 test("custom bind credentials require confirmation and never enter review text", () => {
-  const { context, controls, form } = harness();
+  const { context, controls, form, fields } = harness();
   const mode = controls.bind_password_mode;
   const password = controls.bind_password;
   const confirmation = controls.confirm_bind_password;
   assert.equal(password.disabled, true);
+  assert.ok(fields.every((field) => field.hidden && field.hiddenClass));
   mode.value = "custom";
   mode.events.change();
   assert.equal(password.disabled, false);
+  assert.ok(fields.every((field) => !field.hidden && !field.hiddenClass));
   assert.equal(password.required, true);
   assert.equal(context.validateLdapBindPasswordStep(form, { id: "credential" }).valid, false);
   password.value = "Synthetic-Only-Example42!";
@@ -54,7 +62,7 @@ test("custom bind credentials require confirmation and never enter review text",
 });
 
 test("switching to generation or resetting a wizard removes custom values", () => {
-  const { context, controls, form } = harness();
+  const { context, controls, form, fields } = harness();
   for (const reset of [
     () => { controls.bind_password_mode.value = "generated"; controls.bind_password_mode.events.change(); },
     () => context.resetLdapBindPasswordFields(form),
@@ -66,6 +74,7 @@ test("switching to generation or resetting a wizard removes custom values", () =
     assert.equal(controls.bind_password.value, "");
     assert.equal(controls.confirm_bind_password.value, "");
     assert.equal(controls.bind_password.disabled, true);
+    assert.ok(fields.every((field) => field.hidden && field.hiddenClass));
     assert.equal(controls.confirm_bind_password.required, false);
     assert.equal(context.ldapBindPasswordReviewValue(form), "Generated and shown once");
   }
@@ -73,7 +82,7 @@ test("switching to generation or resetting a wizard removes custom values", () =
 
 
 test("a rejected bind wizard restores only non-secret values and announces its error", async () => {
-  const { context, controls, form } = harness();
+  const { context, controls, form, fields } = harness();
   controls.name = new Control();
   controls.description = new Control();
   controls.slug = new Control();

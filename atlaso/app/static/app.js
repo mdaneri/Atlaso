@@ -6950,6 +6950,10 @@ function syncLdapBindPasswordFields(form) {
   const controls = ldapBindPasswordControls(form);
   if (!controls) return;
   const custom = controls.mode.value === "custom";
+  form.querySelectorAll("[data-ldap-bind-password-field]").forEach((field) => {
+    field.hidden = !custom;
+    field.classList.toggle("hidden", !custom);
+  });
   controls.password.disabled = !custom;
   controls.confirmation.disabled = !custom;
   controls.password.required = custom;

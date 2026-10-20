@@ -62,6 +62,7 @@ from atlaso.app.schemas import (
     LdapVcfConfigureRequest,
     LdapVcfInspectionResponse,
     LdapVcfInspectRequest,
+    ProblemDetails,
 )
 from atlaso.app.security import Identity, require_scope
 from atlaso.app.services.dnsmasq import split_addresses, split_interfaces
@@ -436,7 +437,7 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
         tags=["LDAP"],
         operation_id="createLdapOrganization",
         summary="Create a managed LDAP organization",
-        description="Creates LDAP organization desired state. Omit bind_password to generate the default bind credential, which is returned once, or supply a custom password validated against the saved LDAP policy. Custom values are encrypted at rest and not returned. Organization list and read responses never expose the bind credential. LDAP runtime changes remain subject to global Appliance Apply.",
+        description="Requires the `write:ldap` API scope. Creates LDAP organization desired state. Omit bind_password to generate the default bind credential, which is returned once, or supply a custom password validated against the saved LDAP policy. Custom values are encrypted at rest and not returned. Organization list and read responses never expose the bind credential. LDAP runtime changes remain subject to global Appliance Apply.",
     )
     def create_ldap_organization(
         payload: LdapOrganizationCreate,
@@ -513,7 +514,7 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
         tags=["LDAP"],
         operation_id="updateLdapOrganization",
         summary="Update managed LDAP organization metadata",
-        description="Updates organization metadata and enabled state without changing or rotating the bind credential. Use the separate credential rotation operation to replace the bind password.",
+        description="Requires the `write:ldap` API scope. Updates organization metadata and enabled state without changing or rotating the bind credential. Use the separate credential rotation operation to replace the bind password. Saved changes remain subject to global Appliance Apply.",
     )
     def update_ldap_organization(
         organization_id: Annotated[
@@ -628,7 +629,8 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
         tags=["LDAP"],
         operation_id="rotateLdapBindCredential",
         summary="Rotate a managed LDAP bind credential",
-        description="Rotates the bind credential. Omit the request body or bind_password to generate the default credential, which is returned once; a supplied custom value is validated against the LDAP password policy, encrypted at rest, and not returned. Reads and lists never return the secret. Saved changes remain subject to global Appliance Apply.",
+        responses={400: {"model": ProblemDetails, "description": "The custom bind password is blank or does not satisfy the saved LDAP password policy."}},
+        description="Requires the `write:ldap` API scope. Rotates the bind credential. Omit the request body or bind_password to generate the default credential, which is returned once; a supplied custom value is validated against the LDAP password policy, encrypted at rest, and not returned. Reads and lists never return the secret. Saved changes remain subject to global Appliance Apply.",
     )
     def rotate_ldap_bind_credential(
         organization_id: Annotated[

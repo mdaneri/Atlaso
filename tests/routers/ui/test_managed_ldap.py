@@ -167,6 +167,7 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert 'type="password" name="bind_password"' in organization_wizard
     assert 'name="confirm_bind_password"' in organization_wizard
     assert "data-ldap-bind-password disabled" in organization_wizard
+    assert organization_wizard.count('class="hidden" hidden data-ldap-bind-password-field') == 2
     assert "data-ldap-bind-password-confirm disabled" in organization_wizard
     assert "password values are never included" in organization_wizard
     assert 'name="description"' in created.text
@@ -201,6 +202,7 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert 'name="bind_password_mode"' in rotation_wizard
     assert 'name="bind_password"' in rotation_wizard
     assert 'name="confirm_bind_password"' in rotation_wizard
+    assert rotation_wizard.count('class="hidden" hidden data-ldap-bind-password-field') == 2
     assert "password values are never included" in rotation_wizard
     assert (
         'class="button tiny danger" type="submit">Delete organization</button>'
