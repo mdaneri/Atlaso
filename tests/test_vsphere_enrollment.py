@@ -48,6 +48,12 @@ class _FakeVcenter:
         """
         self.certificate = certificate
         self.endpoint = endpoint
+        self.clusters = [
+            {
+                "clusterId": {"id": "Atlaso-KMIP"},
+                "servers": [{"address": endpoint, "port": 5696}],
+            }
+        ]
         self.headers: dict[str, str] = {}
         self.calls: list[str] = []
 
@@ -97,12 +103,7 @@ class _FakeVcenter:
             assert self.headers["vmware-api-session-id"] == "opaque-session"
             return httpx.Response(
                 200,
-                json=[
-                    {
-                        "clusterId": {"id": "Atlaso-KMIP"},
-                        "servers": [{"address": self.endpoint, "port": 5696}],
-                    }
-                ],
+                json=self.clusters,
             )
         if path.endswith("/RetrieveClientCert"):
             assert json == {
@@ -192,6 +193,97 @@ def test_discovery_rejects_wrong_atlaso_endpoint_before_client_certificate(
             atlaso_port=5696,
         )
     assert not any(path.endswith("/RetrieveClientCert") for path in fake.calls)
+    assert fake.calls[-1].endswith("/Logout")
+
+
+@pytest.mark.parametrize(
+    "servers,detail",
+    [
+        ([], "No server members were returned"),
+        (None, "Server inventory is missing or invalid"),
+        ({"address": "kms.atlaso.example.test"}, "Server inventory is missing or invalid"),
+        ([None], "member 1: address [missing or invalid]"),
+        ([{"address": "192.168.1.254", "port": 5696}], "address 192.168.1.254, port 5696"),
+        ([{"address": "alias.example.test", "port": 5696}], "address alias.example.test"),
+        ([{"address": "kms.atlaso.example.test", "port": 5696},
+          {"address": "foreign.example.test", "port": 5696}], "1 of 2 members differ: member 2"),
+        ([{"address": "kms.atlaso.example.test", "port": 5697}], "port 5697"),
+        ([{"address": "kms.atlaso.example.test", "port": "5696"}], "invalid integer"),
+        ([{"address": "kms.atlaso.example.test", "port": True}], "invalid integer"),
+        ([{"address": "kms.atlaso.example.test", "port": None}], "invalid integer"),
+        ([{"address": "kms.atlaso.example.test", "port": 65536}], "invalid integer"),
+        ([{"address": "https://user:private-marker@other.test", "port": "private-marker",
+           "name": "private-marker", "userName": "private-marker"}], "address [missing or invalid]"),
+        ([{"address": "<script>private-marker</script>", "port": 5696}], "address [missing or invalid]"),
+        ([{"address": "fe80::1%private-marker", "port": 5696}], "address [missing or invalid]"),
+        ([{"address": "a" * 254, "port": 5696}], "address [missing or invalid]"),
+    ],
+)
+def test_endpoint_diagnostics_reject_before_certificate_and_keep_logout(monkeypatch, servers, detail) -> None:
+    """Return actionable bounded errors without exposing untrusted remote fields.
+
+    Args:
+        monkeypatch: Fixture replacing the pinned vCenter session.
+        servers: Selected cluster inventory exercising one rejection reason.
+        detail: Expected sanitized diagnostic fragment.
+    """
+    fake = _FakeVcenter(_client_certificate())
+    fake.clusters[0]["servers"] = servers
+    monkeypatch.setattr(enrollment, "vcenter_https_leaf", lambda *_args, **_kwargs: b"test-leaf")
+    monkeypatch.setattr(enrollment, "_pinned_context", lambda _leaf: object())
+    monkeypatch.setattr(enrollment.httpx, "Client", lambda **_kwargs: fake)
+    with pytest.raises(enrollment.EnrollmentError) as error:
+        enrollment.discover_vcenter_client(
+            host="vcsa.example.test", cluster_id="Atlaso-KMIP", username="admin", password="test-secret",
+            confirmed_https_fingerprint=enrollment.certificate_fingerprint(b"test-leaf"),
+            atlaso_host="kms.atlaso.example.test", atlaso_port=5696,
+        )
+    message = str(error.value)
+    assert "Expected configured Atlaso endpoint: kms.atlaso.example.test, port 5696" in message
+    assert detail in message
+    assert "then retry" in message
+    assert "private-marker" not in message
+    assert not any(path.endswith("/RetrieveClientCert") for path in fake.calls)
+    assert fake.calls[-1].endswith("/Logout")
+
+
+def test_endpoint_diagnostics_inspect_all_members_and_bound_output() -> None:
+    """A matching first member must not conceal later foreign members."""
+    matching = {"address": "KMS.ATLASO.EXAMPLE.TEST.", "port": 5696}
+    enrollment._check_cluster_endpoint([matching, matching], "kms.atlaso.example.test", 5696)
+    servers = [matching] + [{"address": f"other{index}.example.test", "port": 5696} for index in range(10)]
+    with pytest.raises(enrollment.EnrollmentError) as error:
+        enrollment._check_cluster_endpoint(servers, "kms.atlaso.example.test", 5696)
+    message = str(error.value)
+    assert "10 of 11 members differ" in message
+    assert "member 2: address other0.example.test" in message
+    assert "member 4: address other2.example.test" in message
+    assert "other3.example.test" not in message
+    assert "Only the first 3 mismatches" in message
+    assert len(message) < 1300
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+def test_discovery_keeps_missing_and_ambiguous_cluster_rejections(monkeypatch, ambiguous) -> None:
+    """Never inspect a client certificate when the cluster identity is uncertain.
+
+    Args:
+        monkeypatch: Fixture replacing the pinned vCenter session.
+        ambiguous: Whether to supply duplicate clusters instead of no cluster.
+    """
+    fake = _FakeVcenter(_client_certificate())
+    fake.clusters = fake.clusters * 2 if ambiguous else []
+    monkeypatch.setattr(enrollment, "vcenter_https_leaf", lambda *_args, **_kwargs: b"test-leaf")
+    monkeypatch.setattr(enrollment, "_pinned_context", lambda _leaf: object())
+    monkeypatch.setattr(enrollment.httpx, "Client", lambda **_kwargs: fake)
+    with pytest.raises(enrollment.EnrollmentError, match="missing or ambiguous"):
+        enrollment.discover_vcenter_client(
+            host="vcsa.example.test", cluster_id="Atlaso-KMIP", username="admin", password="test-secret",
+            confirmed_https_fingerprint=enrollment.certificate_fingerprint(b"test-leaf"),
+            atlaso_host="kms.atlaso.example.test", atlaso_port=5696,
+        )
+    assert not any(path.endswith("/RetrieveClientCert") for path in fake.calls)
+    assert fake.calls[-1].endswith("/Logout")
 
 
 def test_discovery_rejects_changed_https_identity_before_authentication(

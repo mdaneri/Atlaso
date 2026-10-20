@@ -852,6 +852,57 @@ def test_enrollment_saved_endpoint_binding_and_choices(client, monkeypatch) -> N
     assert "endpoint captured" in response.text
 
 
+def test_enrollment_endpoint_rejection_preserves_http_error_and_trust_state(client, monkeypatch) -> None:
+    """Expose sanitized endpoint guidance through inspect and approval without saving trust.
+
+    Args:
+        client: Isolated authenticated HTTP test client.
+        monkeypatch: Fixture replacing network and credential operations.
+    """
+    from atlaso.app.routers.ui import certificate_trust as transport
+    from atlaso.app.services.vsphere_enrollment import _check_cluster_endpoint
+
+    csrf = _login(client)
+    leaf = b"endpoint-regression-leaf"
+    monkeypatch.setattr(transport, "vcenter_https_leaf", lambda *_args, **_kwargs: leaf)
+
+    def reject(**kwargs):
+        """Run the real endpoint guard using the listener settings passed by the route.
+
+        Args:
+            **kwargs: Request-local discovery arguments.
+        """
+        _check_cluster_endpoint(
+            [{"address": "192.168.1.254", "port": 5697}], kwargs["atlaso_host"], kwargs["atlaso_port"]
+        )
+
+    monkeypatch.setattr(transport, "discover_vcenter_client", reject)
+    with SessionLocal() as db:
+        provider = VsphereKeyProvider(id=str(uuid4()), name="Endpoint regression", enabled=True)
+        db.add(provider)
+        db.commit()
+        provider_id = provider.id
+        before = [row.id for row in db.query(VsphereTrustedVcenter).all()]
+        certificates = [row.id for row in db.query(VsphereTrustedVcenterCertificate).all()]
+    data = {
+        "csrf": csrf, "credential_source": "manual", "hostname": "vcsa.example.test",
+        "username": "request-only-user", "password": "request-only-secret",
+        "cluster_id": "Default", "confirmed_https_fingerprint": certificate_fingerprint(leaf),
+        "provider_id": provider_id, "name": "Lab vCenter", "expected_client_fingerprint": "00" * 32,
+    }
+    for route in ("inspect", "approve"):
+        response = client.post(f"/vsphere-key-providers/enrollment/{route}", data=data)
+        assert response.status_code == 422
+        message = response.json()["detail"]
+        assert "Expected configured Atlaso endpoint:" in message
+        assert "member 1: address 192.168.1.254, port 5697" in message
+        assert "then retry" in message
+        assert "request-only" not in message
+    with SessionLocal() as db:
+        assert [row.id for row in db.query(VsphereTrustedVcenter).all()] == before
+        assert [row.id for row in db.query(VsphereTrustedVcenterCertificate).all()] == certificates
+
+
 def test_vcenter_enrollment_manual_credentials_are_request_local(client, monkeypatch) -> None:
     """Enroll with manual credentials without reading or storing a Vault secret.
 

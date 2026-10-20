@@ -168,6 +168,56 @@ def _pinned_context(leaf: bytes) -> ssl.SSLContext:
     return context
 
 
+def _check_cluster_endpoint(servers: object, host: str, port: int) -> None:
+    """Require every member to match, reporting only bounded endpoint metadata.
+
+    Args:
+        servers: Untrusted server inventory from the selected vCenter cluster.
+        host: Normalized configured Atlaso KMIP hostname.
+        port: Configured Atlaso KMIP port, not an observed runtime assertion.
+    """
+    expected = f"Expected configured Atlaso endpoint: {host}, port {port}. "
+    repair = (
+        "Compare every member in vCenter with the hostname and port in Atlaso's "
+        "vSphere Key Providers listener settings, or select the intended cluster, "
+        "then retry. DNS aliases and IP addresses are not substituted for that hostname. "
+        "Do not remove servers or replace an in-use provider to bypass this check."
+    )
+    prefix = "The vCenter KMIP cluster does not point only to this Atlaso endpoint. "
+    if not isinstance(servers, list) or not servers:
+        reason = "No server members were returned." if servers == [] else "Server inventory is missing or invalid."
+        raise EnrollmentError(prefix + expected + reason + " " + repair)
+    mismatches = []
+    mismatch_count = 0
+    for index, server in enumerate(servers, start=1):
+        address = server.get("address") if isinstance(server, dict) else None
+        observed_port = server.get("port") if isinstance(server, dict) else None
+        # Never echo arbitrary remote strings, URLs, member names or other fields.
+        safe_address = "[missing or invalid]"
+        if isinstance(address, str) and len(address) <= 253 and "%" not in address:
+            try:
+                safe_address = normalize_vcenter_hostname(address) or safe_address
+            except ValueError:
+                pass
+        valid_port = type(observed_port) is int and 1 <= observed_port <= 65535
+        if (
+            isinstance(address, str)
+            and address.strip().casefold().rstrip(".") == host
+            and valid_port
+            and observed_port == port
+        ):
+            continue
+        mismatch_count += 1
+        if len(mismatches) < 3:
+            port_label = str(observed_port) if valid_port else "[missing or invalid integer]"
+            mismatches.append(f"member {index}: address {safe_address}, port {port_label}")
+    if mismatch_count:
+        summary = f"{mismatch_count} of {len(servers)} members differ: " + "; ".join(mismatches) + ". "
+        if mismatch_count > len(mismatches):
+            summary += "Only the first 3 mismatches are shown. "
+        raise EnrollmentError(prefix + expected + summary + repair)
+
+
 def discover_vcenter_client(
     *,
     host: str,
@@ -256,21 +306,7 @@ def discover_vcenter_client(
                     raise EnrollmentError(
                         "The named KMIP cluster is missing or ambiguous in vCenter."
                     )
-                servers = matches[0].get("servers")
-                if (
-                    not isinstance(servers, list)
-                    or not servers
-                    or any(
-                        not isinstance(server, dict)
-                        or str(server.get("address", "")).strip().casefold().rstrip(".")
-                        != atlaso_host
-                        or server.get("port") != atlaso_port
-                        for server in servers
-                    )
-                ):
-                    raise EnrollmentError(
-                        "The vCenter KMIP cluster does not point only to this Atlaso endpoint."
-                    )
+                _check_cluster_endpoint(matches[0].get("servers"), atlaso_host, atlaso_port)
                 certificate = _json(
                     client.post(
                         f"{base}/CryptoManagerKmip/{manager_id}/RetrieveClientCert",

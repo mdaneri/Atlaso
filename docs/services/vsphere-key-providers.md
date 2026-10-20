@@ -83,6 +83,29 @@ clears certificate confirmation and requires another probe before authentication
 vCenter cluster to point only to the configured Atlaso hostname and
 port. Client authorization remains an exact fingerprint-to-provider-UUID mapping.
 
+### Resolve a Target endpoint mismatch
+
+If **Target** reports **The vCenter KMIP cluster does not point only to this Atlaso endpoint**, discovery stops before
+retrieving the client certificate. The message names the expected **configured** Atlaso hostname and port, the total
+number of differing members, and up to three mismatches by their position in the returned cluster inventory.
+Missing, empty, or malformed server inventory is rejected separately. Invalid address or port values are withheld;
+the message does not echo remote member names, credentials, or raw API payloads.
+
+1. Compare the expected endpoint with the hostname and port in the Atlaso listener settings rail. These are saved
+   desired-state values; the message does not prove that the listener is applied, reachable, or trusted. If settings
+   changed, review and complete global **Appliance Apply** before checking vCenter connectivity.
+2. In vCenter, inspect **every** KMS member of the selected standard provider/cluster, including additional members
+   outside the visible row. Each address must use the configured Atlaso hostname and each port must match. Case and a
+   trailing DNS dot are ignored; IP addresses and other DNS aliases are not accepted in place of that hostname, even
+   if they resolve to the same address. Atlaso does not use DNS resolution as proof of endpoint ownership.
+3. Select the intended cluster or correct its configuration through your site's approved procedure. Preserve active
+   providers, keys, certificates, and workloads; do not delete a member, replace a provider, or reset trust merely to
+   clear this message. If the provider is in use or ownership is uncertain, stop and consult its administrator.
+4. Retry **Next** from **Target**. A recoverable rejection retains the wizard inputs. Atlaso re-reads the cluster and
+   checks every member again. Passing this check permits certificate inspection only; certificate approval and global
+   **Appliance Apply** are still required. A vCenter certificate or connection warning is a separate trust/health
+   condition and does not establish whether this endpoint check should pass.
+
 Certificate fingerprints are normalized SHA-256 values and are unique appliance-wide. The same fingerprint cannot be
 assigned to another trusted vCenter or provider. Atlaso stores canonical public PEM and parsed public metadata only; it
 does not generate, accept, export, or reveal a vCenter client private key.
