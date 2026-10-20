@@ -7250,7 +7250,8 @@ function attachLdapGridState(tableElement, table, resourceName, organizationId) 
 function redrawLdapDirectoryTables(root = document) {
   if (!(root instanceof Document || root instanceof HTMLElement)) return;
   window.requestAnimationFrame(() => {
-    root.querySelectorAll("#ldap-users-table, #ldap-groups-table").forEach((tableElement) => {
+    const directoryRoot = root instanceof HTMLElement ? root.closest(".ldap-main-panel") || root : root;
+    directoryRoot.querySelectorAll("#ldap-users-table, #ldap-groups-table").forEach((tableElement) => {
       const table = atlasoLdapDirectoryTables.get(tableElement);
       const footerHeight = document.querySelector(".management-info-footnote")?.getBoundingClientRect().height || 0;
       resizeDnsRecordsTableElement(tableElement, window.innerHeight - footerHeight);

@@ -62,7 +62,10 @@ test("LDAP grids resize to the viewport and clear desktop sizing when hidden or 
   assert.equal(groups.style.height, "");
   users.hidden = true;
   groups.hidden = false;
-  state.redrawLdapDirectoryTables();
+  const activePanel = new Element(0);
+  activePanel.closest = () => document;
+  activePanel.querySelectorAll = () => [groups];
+  state.redrawLdapDirectoryTables(activePanel);
   assert.equal(users.style.height, "");
   assert.equal(groups.style.height, "746px");
   window.innerWidth = 900;
