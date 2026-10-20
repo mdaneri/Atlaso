@@ -403,7 +403,11 @@ def update_availability_summary(
 
 
 def update_stream_is_current(row: dict[str, Any]) -> bool:
-    """Return whether a stream has a fresh successful up-to-date check."""
+    """Return whether a stream has a fresh successful up-to-date check.
+
+    Args:
+        row: Projected stream availability and freshness evidence.
+    """
     attempt = row.get("last_attempt")
     confirmed = row.get("confirmed")
     return bool(

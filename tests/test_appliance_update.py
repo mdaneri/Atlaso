@@ -912,7 +912,12 @@ def seed_available_confirmations(streams: list[str]) -> None:
 def seed_up_to_date_confirmations(
     streams: list[str], result_overrides: dict[str, dict] | None = None
 ) -> None:
-    """Persist fresh up-to-date confirmations for stream-selection tests."""
+    """Persist fresh up-to-date confirmations for stream-selection tests.
+
+    Args:
+        streams: Stream identifiers to confirm.
+        result_overrides: Per-stream evidence overrides for contradictory-result cases.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.services.appliance_update import (
@@ -949,7 +954,11 @@ def seed_up_to_date_confirmations(
 
 
 def test_fresh_up_to_date_stream_is_unchecked_and_rechecked_without_javascript(client):
-    """Keep current streams out of install selection while allowing a native check."""
+    """Keep current streams out of install selection while allowing a native check.
+
+    Args:
+        client: HTTP test client for the native update form.
+    """
     login(client)
     seed_up_to_date_confirmations(["photon_os", "powershell_modules", "atlaso_release"])
     page = client.get("/ui/management/appliance-update")
@@ -981,7 +990,11 @@ def test_fresh_up_to_date_stream_is_unchecked_and_rechecked_without_javascript(c
 
 
 def test_install_filters_up_to_date_stream_but_keeps_selected_available_stream(client):
-    """Ignore hidden current streams when an older page submits a mixed install."""
+    """Ignore hidden current streams when an older page submits a mixed install.
+
+    Args:
+        client: HTTP test client for a mixed stream submission.
+    """
     login(client)
     seed_available_confirmations(["photon_os"])
     seed_up_to_date_confirmations(["atlaso_release"])
@@ -1014,7 +1027,12 @@ def test_install_filters_up_to_date_stream_but_keeps_selected_available_stream(c
 def test_contradictory_up_to_date_confirmation_remains_selectable_and_is_not_filtered(
     client, contradictory_result
 ):
-    """Do not treat inconsistent up-to-date evidence as a current-stream confirmation."""
+    """Do not treat inconsistent up-to-date evidence as a current-stream confirmation.
+
+    Args:
+        client: HTTP test client for the update form.
+        contradictory_result: Noncanonical change count or change rows to retain.
+    """
     login(client)
     seed_available_confirmations(["photon_os"])
     seed_up_to_date_confirmations(
@@ -1045,7 +1063,11 @@ def test_contradictory_up_to_date_confirmation_remains_selectable_and_is_not_fil
 
 
 def test_install_rejects_only_current_stream_submission(client):
-    """A hidden current stream can trigger a check but cannot be installed."""
+    """A hidden current stream can trigger a check but cannot be installed.
+
+    Args:
+        client: HTTP test client for the installation guard.
+    """
     login(client)
     seed_up_to_date_confirmations(["atlaso_release"])
     page = client.get("/ui/management/appliance-update")
@@ -1062,7 +1084,11 @@ def test_install_rejects_only_current_stream_submission(client):
 
 
 def test_run_ignores_current_check_field_if_stream_changes_after_page_load(client):
-    """Never turn a check-only hidden field into an install selection."""
+    """Never turn a check-only hidden field into an install selection.
+
+    Args:
+        client: HTTP test client for a form whose availability changes.
+    """
     login(client)
     seed_up_to_date_confirmations(["atlaso_release"])
     page = client.get("/ui/management/appliance-update")
