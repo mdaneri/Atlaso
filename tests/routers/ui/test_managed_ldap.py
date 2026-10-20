@@ -237,7 +237,7 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
         in ldap_page_state_js
     )
     assert (
-        '["ldap-user-dialog", "ldap-group-dialog", "ldap-group-members-modal"]'
+        '["ldap-user-dialog", "ldap-group-dialog", "ldap-group-members-modal", "ldap-bind-rotation-dialog"]'
         in ldap_page_state_js
     )
     assert "window.history[historyMethod]" in ldap_page_state_js

@@ -6978,7 +6978,7 @@ function initializeLdapPageState() {
       }
       currentPanel.replaceWith(document.importNode(nextCurrentPanel, true));
 
-      ["ldap-user-dialog", "ldap-group-dialog", "ldap-group-members-modal"].forEach((dialogId) => {
+      ["ldap-user-dialog", "ldap-group-dialog", "ldap-group-members-modal", "ldap-bind-rotation-dialog"].forEach((dialogId) => {
         const currentDialog = document.getElementById(dialogId);
         const nextDialog = nextDocument.getElementById(dialogId);
         if (currentDialog instanceof HTMLDialogElement && nextDialog instanceof HTMLDialogElement) {
@@ -6999,6 +6999,7 @@ function initializeLdapPageState() {
       }
       initializeTabs();
       initializeLdapDirectoryTables();
+      initializeLdapBindRotationWizard();
       initializeLdapPasswordModal();
       initializeConfirmationModals();
     },

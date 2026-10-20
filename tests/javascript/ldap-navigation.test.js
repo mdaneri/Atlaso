@@ -146,3 +146,70 @@ test("queryless LDAP history supersedes a pending organization selection", async
   assert.equal(state.rendered[0].selection.organizationId, "organization-a");
   assert.equal(state.rendered[0].selection.options.history, false);
 });
+
+test("organization swaps replace the rotation target and bind the imported launcher", () => {
+  const nodes = new Map();
+  let onData;
+  const openedActions = [];
+  class Element {
+    constructor(id) { this.id = id; this.dataset = {}; this.events = {}; }
+    replaceWith(next) { nodes.set(this.id, next); }
+    addEventListener(name, callback) { this.events[name] = callback; }
+    setAttribute() {}
+    removeAttribute() {}
+  }
+  class Dialog extends Element {}
+  class Form extends Element {}
+  class Anchor extends Element {}
+  function organization(id) {
+    const panel = new Element("ldap-organization-current");
+    panel.launcher = new Element("rotation-launcher");
+    const dialog = new Dialog("ldap-bind-rotation-dialog");
+    dialog.form = new Form("rotation-form");
+    dialog.form.action = `/ui/management/ldap/organizations/${id}/bind-credential/rotate`;
+    return { panel, dialog };
+  }
+  const link = new Anchor("organization-link");
+  link.dataset.ldapOrganizationId = "1";
+  link.href = "https://atlaso.invalid/ui/management/ldap?organization_id=1";
+  link.classList = { toggle() {} };
+  const tabs = new Element("tabs");
+  tabs.querySelector = () => link;
+  tabs.querySelectorAll = () => [link];
+  const initial = organization("1");
+  nodes.set(initial.panel.id, initial.panel);
+  nodes.set(initial.dialog.id, initial.dialog);
+  const document = {
+    querySelector: (selector) => selector === "[data-ldap-organization-tabs]" ? tabs : nodes.get("ldap-bind-rotation-dialog").form,
+    querySelectorAll: () => [nodes.get("ldap-organization-current").launcher],
+    getElementById: (id) => nodes.get(id),
+    importNode: (node) => node,
+  };
+  const browser = {
+    location: { href: link.href, pathname: "/ui/management/ldap" },
+    localStorage: { getItem: () => null, setItem() {} },
+    history: { pushState() {}, replaceState() {} },
+    addEventListener() {},
+    AtlasoUiPatterns: { createWizard: ({ form }) => ({ open: () => openedActions.push(form.action) }) },
+  };
+  const sandbox = vm.createContext({
+    document, window: browser, URL,
+    HTMLElement: Element, HTMLDialogElement: Dialog, HTMLFormElement: Form, HTMLAnchorElement: Anchor,
+    LDAP_ORGANIZATION_SELECTION_KEY: "selection",
+    initializeLdapSettingsStatus() {}, initializeTabs() {}, initializeLdapDirectoryTables() {},
+    initializeLdapPasswordModal() {}, initializeConfirmationModals() {},
+    initializeLdapBindCredentialFields() {},
+    managementUiPath: (path) => `/ui/management${path}`,
+    createLdapOrganizationLoadCoordinator: (config) => { onData = config.onData; return {}; },
+  });
+  vm.runInContext(functionSource("initializeLdapBindRotationWizard") + "\n" + functionSource("initializeLdapPageState"), sandbox);
+  sandbox.initializeLdapPageState();
+  for (const id of ["2", "3"]) {
+    const next = organization(id);
+    const nextDocument = { getElementById: (key) => key === next.panel.id ? next.panel : key === next.dialog.id ? next.dialog : null };
+    onData(nextDocument, { link, options: { history: false }, organizationId: id });
+    assert.equal(nodes.get("ldap-bind-rotation-dialog"), next.dialog);
+    next.panel.launcher.events.click();
+    assert.equal(openedActions.at(-1), `/ui/management/ldap/organizations/${id}/bind-credential/rotate`);
+  }
+});
