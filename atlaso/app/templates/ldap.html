@@ -26,7 +26,7 @@
               {% for interface_name in ldap_selected_interfaces %}
                 <span class="tag-token" data-value="{{ interface_name }}">
                   <span>{{ interface_name }}</span>
-                  <button type="button" data-tag-remove aria-label="Remove {{ interface_name }}">Ã—</button>
+                  <button type="button" data-tag-remove aria-label="Remove {{ interface_name }}">×</button>
                   <input type="hidden" name="listen_interfaces" value="{{ interface_name }}">
                 </span>
               {% endfor %}
@@ -140,7 +140,7 @@
                 <tbody>
                   {% for user in ldap_users %}
                     <tr>
-                      <td>{{ user.uid }}</td><td>{{ user.display_name }}</td><td>{{ user.email or "â€”" }}</td>
+                      <td>{{ user.uid }}</td><td>{{ user.display_name }}</td><td>{{ user.email or "—" }}</td>
                       <td><span class="status-pill {{ 'warn' if user.password_status == 'pending_apply' else 'good' if user.password_status == 'applied' else 'muted' }}">{{ user.password_status|replace("_", " ") }}</span></td>
                       <td><span class="status-pill {{ 'good' if user.enabled else 'muted' }}">{{ "enabled" if user.enabled else "disabled" }}</span></td>
                       <td class="button-row">
