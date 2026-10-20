@@ -117,7 +117,11 @@ def test_ldap_api_manages_isolated_organizations_users_groups_and_vcf_mapping(cl
 
 
 def test_ldap_api_custom_bind_password_is_write_only_and_rotation_is_additive(client):
-    """Custom bind secrets validate, encrypt, redact, and preserve old rotation calls."""
+    """Custom bind secrets validate, encrypt, redact, and preserve old rotation calls.
+
+    Args:
+        client: HTTP test client used to exercise the managed LDAP API.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal

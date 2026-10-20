@@ -256,7 +256,15 @@ def rotate_organization_bind_secret(
 def _organization_bind_password(
     password: str | None, settings: LdapSettings | None
 ) -> str:
-    """Return a generated or validated operator-supplied LDAP bind password."""
+    """Return a generated or validated operator-supplied LDAP bind password.
+
+    Args:
+        password: Optional custom bind password; None selects automatic generation.
+        settings: Saved LDAP policy required when validating a custom password.
+
+    Returns:
+        Generated or validated bind password for immediate encrypted storage.
+    """
     if password is None:
         return token_urlsafe(32)
     if not password.strip():

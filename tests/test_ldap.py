@@ -28,7 +28,11 @@ from atlaso.app.services.ldap import (
 
 
 def test_custom_ldap_bind_password_uses_policy_and_rejects_before_mutation(monkeypatch):
-    """Validate custom bind secrets before encrypted state changes and redact errors."""
+    """Validate custom bind secrets before encrypted state changes and redact errors.
+
+    Args:
+        monkeypatch: Fixture replacing encryption for isolated credential-policy assertions.
+    """
     from atlaso.app.services import ldap as ldap_service
 
     settings = LdapSettings()

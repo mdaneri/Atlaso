@@ -133,7 +133,17 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
     def custom_bind_password_from_form(
         mode: str, password: str, confirmation: str, settings: LdapSettings
     ) -> str | None:
-        """Validate the optional custom organization bind password without echoing it."""
+        """Validate the optional custom organization bind password without echoing it.
+
+        Args:
+            mode: Selected generated or custom credential mode.
+            password: Transient custom password, never echoed in errors.
+            confirmation: Independently entered custom password confirmation.
+            settings: Saved LDAP policy used to validate the bind account.
+
+        Returns:
+            Validated custom password, or None for automatic generation.
+        """
         if mode not in {"generated", "custom"}:
             raise ValueError("Choose generated or custom bind password mode.")
         if mode == "generated":
@@ -326,6 +336,9 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
             slug: Slug supplied by the caller.
             suffix_dn: Suffix dn supplied by the caller.
             enabled: Whether the requested behavior is enabled.
+            bind_password_mode: Selected generated or custom credential mode.
+            bind_password: Transient custom bind password submitted by the operator.
+            confirm_bind_password: Operator confirmation of the custom bind password.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
@@ -508,6 +521,9 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
         Args:
             request: Incoming HTTP request.
             organization_id: Identifier of the organization.
+            bind_password_mode: Selected generated or custom credential mode.
+            bind_password: Transient custom bind password submitted by the operator.
+            confirm_bind_password: Operator confirmation of the custom bind password.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
