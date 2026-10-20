@@ -268,6 +268,19 @@ inventory; a caller must not omit an unregistered VM storage location to obtain 
 
 ### Wheel-only deployment authentication
 
+Wheel deployment admits only a canonical unsigned bootstrap environment or a legacy direct development virtualenv.
+Before package installation or service, helper, trust-store, or database changes, it refuses signed release destinations,
+unrecognized or inconsistent release links, invalid bootstrap metadata, and retained Appliance Update maintenance,
+status, restart-gate, or finalizer evidence. This applies to both upgrades and downgrades and to same-version wheels:
+matching version text does not prove matching signed bytes. Both SSH authentication paths use this admission.
+
+Use signed Appliance Update to change a signed release. For wheel testing, create a separate disposable bootstrap VM
+through the [receipt-bound creation workflow](#normal-test-vm-creation-ownership). A refusal preserves the original
+release links, receipt, package environment, database, and recovery state. It does not reset an already damaged signed
+environment or clear a maintenance hold. Retain the exact verified release assets and failed task evidence for supported
+recovery; do not rewrite receipts or finalizers, remove maintenance markers, or retry a wheel deployment to bypass them.
+A successful internal OpenAPI probe alone does not establish front-door recovery or a healthy rollback.
+
 For a wheel-only deployment to the canonical test VM, use `scripts/windows/vmware/deploy-wheel.ps1` with the secure
 Windows 1Password handoff documented in the [full technical reference](full-technical-reference.md). Verify the unique
 `Atlaso` Environment and concealed `DEFAULT_ADMIN_PASSWORD` variable by name, then pass its opaque Environment ID

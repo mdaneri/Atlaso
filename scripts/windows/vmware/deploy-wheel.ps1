@@ -1375,6 +1375,68 @@ if [ ! -x "$python" ]; then
     exit 2
 fi
 
+# Refuse before RPM, pip, service, helper, database, or trust-store mutation.
+# Same-version wheels can also differ from the retained signed bundle.
+for update_guard in /run/atlaso-update-maintenance /run/atlaso-appliance-update-status /run/atlaso-release-restart-gate /var/lib/atlaso/apply/appliance-update/finalizer-status.json; do
+    if [ -e "$update_guard" ] || [ -L "$update_guard" ]; then
+        echo "Wheel deployment refused: reconcile retained Appliance Update state through its supported recovery workflow; preserve maintenance and finalizer evidence." >&2
+        exit 2
+    fi
+done
+venv="$("$python" -I -B -S - <<'ATLASO_DEPLOY_ADMISSION'
+import json
+import re
+import sys
+from pathlib import Path
+
+home = Path("/opt/atlaso")
+try:
+    if home.resolve(strict=True) != home:
+        raise ValueError("installation root is redirected")
+    compatibility = home / ".venv"
+    environment = compatibility.resolve(strict=True)
+    current = home / "current"
+    if environment == compatibility and not compatibility.is_symlink():
+        if current.exists() or current.is_symlink():
+            raise ValueError("legacy environment has an ambiguous current release")
+        receipt_roots = (home,)
+    else:
+        release = environment.parent
+        receipt_roots = (home, release)
+        if any((root / ".release-manifest.json").exists() or
+               (root / ".release-manifest.json").is_symlink() for root in receipt_roots):
+            raise ValueError("signed release environments cannot be patched")
+        if (environment.name != ".venv" or release.parent != home / "releases" or
+                re.fullmatch(r"bootstrap-[0-9]+\.[0-9]+\.[0-9]+", release.name) is None or
+                not current.is_symlink() or current.resolve(strict=True) != release or
+                not compatibility.is_symlink()):
+            raise ValueError("destination is not a canonical bootstrap environment")
+        metadata = json.loads((release / "bundle-metadata.json").read_text(encoding="utf-8"))
+        if (not isinstance(metadata, dict) or metadata.get("bootstrap") is not True or
+                metadata.get("schema_version") != 1 or
+                metadata.get("version") != release.name.removeprefix("bootstrap-")):
+            raise ValueError("bootstrap metadata does not match its destination")
+    if any((root / ".release-manifest.json").exists() or
+           (root / ".release-manifest.json").is_symlink() for root in receipt_roots):
+        raise ValueError("signed release environments cannot be patched")
+    if not environment.is_dir():
+        raise ValueError("environment is not a directory")
+    print(environment)
+except (OSError, ValueError, RuntimeError):
+    print("Wheel deployment refused: destination must be an unsigned development/bootstrap environment. "
+          "Use signed Appliance Update for signed releases; preserve retained recovery evidence. "
+          "Create a separately owned disposable bootstrap VM for wheel testing.", file=sys.stderr)
+    raise SystemExit(2)
+ATLASO_DEPLOY_ADMISSION
+)"
+# Keep package writes on the admitted physical path if current later switches.
+python="$venv/bin/python"
+site_packages="$("$python" -I -B -c 'import sysconfig; from pathlib import Path; print(Path(sysconfig.get_path("purelib")).resolve(strict=True))')"
+if [ "$site_packages" != "$venv/lib/python3.14/site-packages" ]; then
+    echo "Atlaso site-packages resolved outside the active environment." >&2
+    exit 2
+fi
+
 preflight_powershell_layouts() {
     pwsh_path="$(command -v pwsh || true)"
     if [ -z "$pwsh_path" ]; then
@@ -1501,11 +1563,6 @@ for runtime_dependency_path in $runtime_dependency_paths; do
 done
 IFS="$old_ifs"
 "$python" -m pip install --force-reinstall --no-compile --no-deps "$wheel"
-site_packages="$("$python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
-if [ "$site_packages" != "$venv/lib/python3.14/site-packages" ]; then
-    echo "Atlaso site-packages resolved outside the active environment." >&2
-    exit 2
-fi
 find "$site_packages" -type f -name '*.pyc' -delete
 find "$site_packages" -depth -type d -name __pycache__ -empty -delete
 atlaso_was_active=false
