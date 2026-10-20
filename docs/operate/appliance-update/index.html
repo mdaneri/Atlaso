@@ -1381,6 +1381,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#diagnose-repository-access-failures" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Diagnose repository access failures
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#additional-verified-states" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4059,6 +4070,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#diagnose-repository-access-failures" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Diagnose repository access failures
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#additional-verified-states" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4813,6 +4835,62 @@ publication, channel, and live verification stages.</p>
 existing verified version without the <code>v</code> prefix. The workflow does not rebuild that release. It completes only after
 the hosted stable pointer and signature resolve and the referenced immutable release passes signature, identity, and
 CPython 3.14 compatibility validation. Use the same workflow with <code>preview</code> for pre-stable promotion.</p>
+<h2 id="diagnose-repository-access-failures">Diagnose repository access failures<a class="headerlink" href="#diagnose-repository-access-failures" title="Permanent link">&para;</a></h2>
+<p>Open the failed task in <strong>Tasks</strong>, identify its PowerShell Modules child and correlate the task ID with <strong>Logs</strong>.
+New PowerShell operations retain the stage (<code>repository_registration</code>, <code>repository_probe</code>, <code>module_discovery</code>,
+<code>module_install</code>, <code>module_import</code>, or <code>ceip_configuration</code>), elapsed milliseconds, recognized failure category and
+HTTP status when available. These events are retained without enabling DEBUG and are included in support bundles
+through the existing typed important-event records.
+Each helper response retains at most 32 typed command diagnostics, keeping failures before successes. When this bound
+omits records, task details include <code>update_diagnostics_omitted</code> and retained events include a truncation warning,
+which also appears in support bundles. Configuring more modules does not suppress a later failure behind early successes.</p>
+<table>
+<thead>
+<tr>
+<th>Evidence</th>
+<th>Next verification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dns_failed</code></td>
+<td>Check appliance DNS and access to upstream resolvers.</td>
+</tr>
+<tr>
+<td><code>connection_refused</code> or <code>timed_out</code></td>
+<td>Check repository availability, outbound connectivity and proxy/firewall policy.</td>
+</tr>
+<tr>
+<td><code>tls_failed</code></td>
+<td>Check appliance time, the certificate chain and corporate TLS inspection trust. Keep TLS verification enabled.</td>
+</tr>
+<tr>
+<td><code>proxy_auth_required</code> / HTTP 407</td>
+<td>Review the corporate proxy authentication configuration.</td>
+</tr>
+<tr>
+<td><code>http_denied</code> / HTTP 401 or 403</td>
+<td>Check repository authorization and proxy policy. The status alone does not identify which component denied the request.</td>
+</tr>
+<tr>
+<td><code>http_failed</code></td>
+<td>Use the recorded HTTP status to investigate repository or proxy availability.</td>
+</tr>
+<tr>
+<td><code>helper_failed</code></td>
+<td>No recognized network cause was retained. Investigate the recorded stage; a package-client failure does not establish a firewall block.</td>
+</tr>
+</tbody>
+</table>
+<p>PowerShellGet may wrap or suppress the underlying network exception. Atlaso reports a generic cause when typed evidence
+is unavailable and does not infer that a firewall caused the failure. Repository discovery and package downloads can
+contact different endpoints; a successful check does not prove that an install or module import will succeed.
+Repository synchronization lets the PowerShell client perform name resolution through its effective network/proxy
+configuration. A separate local DNS lookup does not block repositories reached through a proxy with remote DNS.</p>
+<p>For additional application context, set <strong>Settings → Log level</strong> to <strong>DEBUG</strong> and reproduce only the necessary
+operation. The setting applies on the next request or worker pass without restarting Windows or the appliance.
+Restore the previous log level after collecting evidence. Essential task failures remain available at normal verbosity;
+new diagnostics do not export credentials, repository URLs, arbitrary exceptions or unfiltered PowerShell verbose output.</p>
 <p>Schedules for checks or installs live under <strong>Operations → Automation</strong>. See <a href="../automation/"><code>automation.md</code></a>.</p>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
