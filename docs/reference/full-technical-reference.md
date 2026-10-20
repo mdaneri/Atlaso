@@ -1748,6 +1748,11 @@ be preferred for automation. `-SkipCertificateCheck` may be added for lab testin
 
 ## Tests
 
+The factory Apply startup regression uses deterministic observations from
+`atlaso.app.services.networking.discover_host_physical_interfaces`, retaining the real startup inventory refresh and
+baseline initializer and checking their ordering. Dry-run system adapters alone do not isolate this direct host
+observation, which invokes Linux networking utilities unavailable on Windows development hosts.
+
 Run the focused pytest files or node selectors for the changed behavior. Then run the applicable broader non-suite
 checks:
 
