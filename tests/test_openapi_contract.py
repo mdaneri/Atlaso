@@ -461,3 +461,27 @@ def test_nat_creation_requires_ingress_without_breaking_legacy_schemas(client):
     assert "inbound_interfaces" not in update["required"]
     assert update["properties"]["inbound_interfaces"].get("minItems", 0) == 0
     assert components["NatRuleResponse"]["properties"]["inbound_interfaces"].get("minItems", 0) == 0
+
+
+def test_ldap_bind_operations_document_scope_apply_and_policy_errors(client):
+    """Keep custom bind credential authorization and lifecycle discoverable.
+
+    Args:
+        client: HTTP test client used to read the generated API contract.
+    """
+    paths = client.get("/openapi.json").json()["paths"]
+    for path, method in (
+        ("/api/v1/ldap/organizations", "post"),
+        ("/api/v1/ldap/organizations/{organization_id}", "put"),
+        ("/api/v1/ldap/organizations/{organization_id}/bind-credential/rotate", "post"),
+    ):
+        operation = paths[path][method]
+        assert "write:ldap" in operation["description"]
+        assert "global Appliance Apply" in operation["description"]
+    creation = paths["/api/v1/ldap/organizations"]["post"]
+    assert creation["responses"]["400"]["content"]["application/json"]["schema"]["$ref"].endswith("/ProblemDetails")
+    assert "password policy" in creation["responses"]["400"]["description"]
+    rotation = paths["/api/v1/ldap/organizations/{organization_id}/bind-credential/rotate"]["post"]
+    response = rotation["responses"]["400"]
+    assert response["content"]["application/json"]["schema"]["$ref"].endswith("/ProblemDetails")
+    assert "password policy" in response["description"]
