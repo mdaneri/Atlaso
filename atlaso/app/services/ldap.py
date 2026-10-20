@@ -210,11 +210,17 @@ def escape_dn_value(value: str) -> str:
     return escaped
 
 
-def ensure_organization_bind_secret(organization: LdapOrganization) -> str:
+def ensure_organization_bind_secret(
+    organization: LdapOrganization,
+    password: str | None = None,
+    settings: LdapSettings | None = None,
+) -> str:
     """Ensure organization bind secret.
 
     Args:
         organization: Organization consumed by ensure organization bind secret.
+        password: Optional custom bind password validated before encryption.
+        settings: Saved LDAP password policy used for custom credential validation.
 
 
     Returns:
@@ -223,22 +229,45 @@ def ensure_organization_bind_secret(organization: LdapOrganization) -> str:
     if not organization.bind_dn:
         organization.bind_dn = f"uid=vcf-bind,{service_accounts_base_dn(organization)}"
     if not organization.bind_password_encrypted:
-        secret = token_urlsafe(32)
+        secret = _organization_bind_password(password, settings)
         organization.bind_password_encrypted = encrypt_secret(secret)
         return secret
     return ""
 
 
-def rotate_organization_bind_secret(organization: LdapOrganization) -> str:
+def rotate_organization_bind_secret(
+    organization: LdapOrganization,
+    password: str | None = None,
+    settings: LdapSettings | None = None,
+) -> str:
     """Return rotate organization bind secret.
 
     Args:
         organization: Organization consumed by rotate organization bind secret.
+        password: Optional custom bind password validated before encryption.
+        settings: Saved LDAP password policy used for custom credential validation.
     """
-    secret = token_urlsafe(32)
+    secret = _organization_bind_password(password, settings)
     organization.bind_password_encrypted = encrypt_secret(secret)
     organization.updated_at = utcnow()
     return secret
+
+
+def _organization_bind_password(
+    password: str | None, settings: LdapSettings | None
+) -> str:
+    """Return a generated or validated operator-supplied LDAP bind password."""
+    if password is None:
+        return token_urlsafe(32)
+    if not password.strip():
+        raise ValueError("Custom LDAP bind password cannot be blank.")
+    if len(password) > 4096:
+        raise ValueError("Custom LDAP bind password exceeds the maximum length.")
+    if settings is None:
+        raise ValueError("LDAP password policy is unavailable.")
+    if validate_ldap_password(password, "vcf-bind", settings):
+        raise ValueError("Custom LDAP bind password does not meet the LDAP password policy.")
+    return password
 
 
 def organization_bind_secret(organization: LdapOrganization) -> str:

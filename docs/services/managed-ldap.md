@@ -35,7 +35,9 @@ This verified appliance view provides visual orientation before you begin.
 - Firewall apply owns rules for each enabled LDAP/LDAPS port on selected addressed access or route interfaces and
   enabled VLANs. Management interfaces are not eligible LDAP listener targets.
 - Each organization receives a separate suffix and database. Its generated VCF bind identity can read only that suffix.
-- VCF bind secrets are encrypted with `ATLASO_SECRETS_KEY`. A generated or rotated secret is displayed once.
+- VCF bind secrets are encrypted with `ATLASO_SECRETS_KEY`. Choose an automatically generated password (the default)
+  or a custom password when creating an organization or rotating its bind credential. Credential responses remain
+  one-time for generated passwords; custom passwords are not returned, and normal organization reads never reveal them.
 - User passwords are held only in process memory until global LDAP apply. Password plaintext and hashes are never stored
   in the application database, previews, tasks, or audit details.
 
@@ -75,6 +77,19 @@ queryless Managed LDAP URL restores the server-default organization through the 
 
 The one-time VCF bind credential opens with its **Bind password** help collapsed and focus on **Done**, leaving the
 credential text unselected until the operator deliberately copies or saves it.
+
+To use a password already stored in your secret manager, select **Custom password** in the organization wizard's bind
+credential step, enter it twice, and review the organization. Custom bind passwords must satisfy the current Managed
+LDAP password policy for the `vcf-bind` account. Review shows the password mode without showing the value. Cancelling
+or completing the wizard clears the password fields. Use the organization's bind-credential rotation workflow to
+replace a saved password; editing organization metadata does not rotate it. Update every external directory consumer
+with the replacement credential and submit the reviewed global LDAP Apply before testing the new bind.
+
+API clients may supply the optional write-only `bind_password` when creating an organization or rotating its bind
+credential. Omit it to retain automatic generation; an explicitly empty or policy-invalid password is rejected without
+changing the credential. Generated passwords retain their existing one-time credential responses; custom-password
+responses omit the raw value. Keep request and response bodies out of client logs and store credentials as concealed
+values in your secret manager.
 
 **Generate test directory** asks for user and group counts, invents complete synthetic identities and memberships, and
 shows generated passwords once; those passwords follow the same in-memory-only staging boundary as manually entered

@@ -6770,29 +6770,121 @@ function initializeLdapOrganizationWizard() {
   ) {
     return;
   }
+  initializeLdapBindCredentialFields(form);
   const wizard = window.AtlasoUiPatterns.createWizard({
     form,
     dialog,
     steps: [
       { id: "identity", title: "Name the organization", description: "Choose its operator-visible name and desired state." },
       { id: "directory", title: "Choose the naming context", description: "Accept derived values or set a stable slug and isolated LDAP suffix." },
+      { id: "credential", title: "Choose the bind credential", description: "Generate a password or enter and confirm a custom value." },
       { id: "enablement", title: "Choose organization state", description: "Control whether the isolated database enters rendered LDAP desired state." },
       { id: "review", title: "Review organization creation", description: "Confirm the new database and one-time VCF bind credential." },
     ],
     discardTitle: "Discard LDAP organization?",
     discardMessage: "The organization values entered in this wizard will be lost.",
+    validateStep: ({ form, step }) => validateLdapBindPasswordStep(form, step),
     prepareReview: () => renderAtlasoWizardReview(form, [
       { label: "Organization", field: "name" },
       { label: "Description", field: "description" },
       { label: "Slug", value: () => form.elements.slug.value.trim() || "Derived from name" },
       { label: "Suffix DN", value: () => form.elements.suffix_dn.value.trim() || "Derived from slug" },
+      { label: "Bind credential", value: () => ldapBindPasswordReviewValue(form) },
       { label: "Desired state", field: "enabled" },
-      { label: "Bind credential", value: () => "Generated and shown once" },
     ]),
+    onOpen: () => resetLdapBindPasswordFields(form),
+    onClose: () => resetLdapBindPasswordFields(form),
   });
   launchers.forEach((button) => {
     button.addEventListener("click", () => wizard.open({ launcher: button }));
   });
+}
+
+function ldapBindPasswordControls(form) {
+  const mode = form.elements.namedItem("bind_password_mode");
+  const password = form.elements.namedItem("bind_password");
+  const confirmation = form.elements.namedItem("confirm_bind_password");
+  if (
+    !(mode instanceof HTMLSelectElement)
+    || !(password instanceof HTMLInputElement)
+    || !(confirmation instanceof HTMLInputElement)
+  ) return null;
+  return { mode, password, confirmation };
+}
+
+function syncLdapBindPasswordFields(form) {
+  const controls = ldapBindPasswordControls(form);
+  if (!controls) return;
+  const custom = controls.mode.value === "custom";
+  controls.password.disabled = !custom;
+  controls.confirmation.disabled = !custom;
+  controls.password.required = custom;
+  controls.confirmation.required = custom;
+  if (!custom) {
+    controls.password.value = "";
+    controls.confirmation.value = "";
+  }
+}
+
+function resetLdapBindPasswordFields(form) {
+  const controls = ldapBindPasswordControls(form);
+  if (!controls) return;
+  controls.mode.value = "generated";
+  controls.password.value = "";
+  controls.confirmation.value = "";
+  syncLdapBindPasswordFields(form);
+}
+
+function ldapBindPasswordReviewValue(form) {
+  const controls = ldapBindPasswordControls(form);
+  return controls?.mode.value === "custom" ? "Custom password" : "Generated and shown once";
+}
+
+function validateLdapBindPasswordStep(form, step) {
+  if (step.id !== "credential") return { valid: true };
+  const controls = ldapBindPasswordControls(form);
+  if (!controls || controls.mode.value !== "custom") return { valid: true };
+  if (!controls.password.value || !controls.confirmation.value) {
+    return { valid: false, field: "bind_password", message: "Enter and confirm the custom bind password." };
+  }
+  if (controls.password.value !== controls.confirmation.value) {
+    return { valid: false, field: "confirm_bind_password", message: "Password confirmation does not match." };
+  }
+  return { valid: true };
+}
+
+function initializeLdapBindCredentialFields(form) {
+  const controls = ldapBindPasswordControls(form);
+  if (!controls || form.dataset.ldapBindPasswordInitialized === "1") return;
+  form.dataset.ldapBindPasswordInitialized = "1";
+  controls.mode.addEventListener("change", () => syncLdapBindPasswordFields(form));
+  form.addEventListener("formdata", () => resetLdapBindPasswordFields(form));
+  syncLdapBindPasswordFields(form);
+}
+
+function initializeLdapBindRotationWizard() {
+  const form = document.querySelector("[data-ldap-bind-rotation-form]");
+  const dialog = document.getElementById("ldap-bind-rotation-dialog");
+  const launchers = [...document.querySelectorAll("[data-ldap-bind-rotation-open]")];
+  if (!(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement) || !launchers.length || !window.AtlasoUiPatterns) return;
+  initializeLdapBindCredentialFields(form);
+  const wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "credential", title: "Choose the bind credential", description: "Generate a password or enter and confirm a custom value." },
+      { id: "review", title: "Review credential rotation", description: "Confirm the selected credential mode." },
+    ],
+    discardTitle: "Discard bind credential rotation?",
+    discardMessage: "The password entered in this wizard will be cleared.",
+    validateStep: ({ form: wizardForm, step }) => validateLdapBindPasswordStep(wizardForm, step),
+    prepareReview: () => renderAtlasoWizardReview(form, [
+      { label: "Bind credential", value: () => ldapBindPasswordReviewValue(form) },
+    ]),
+    onOpen: () => resetLdapBindPasswordFields(form),
+    onClose: () => resetLdapBindPasswordFields(form),
+  });
+  launchers.forEach((button) => button.addEventListener("click", () => wizard.open({ launcher: button })));
 }
 
 function initializeLdapSettingsStatus(root = document) {
@@ -25893,6 +25985,7 @@ document.addEventListener("DOMContentLoaded", initializeCaCsrWizard);
 document.addEventListener("DOMContentLoaded", initializeVsphereKeyProviderTables);
 document.addEventListener("DOMContentLoaded", () => initializeKmsSettings());
 document.addEventListener("DOMContentLoaded", initializeLdapOrganizationWizard);
+document.addEventListener("DOMContentLoaded", initializeLdapBindRotationWizard);
 document.addEventListener("DOMContentLoaded", initializeLdapPageState);
 document.addEventListener("DOMContentLoaded", initializeLdapDirectoryTables);
 document.addEventListener("DOMContentLoaded", initializeLdapPasswordModal);

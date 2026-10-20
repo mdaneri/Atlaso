@@ -8,6 +8,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    SecretStr,
     StrictBool,
     StrictInt,
     ValidationInfo,
@@ -814,12 +815,43 @@ class LdapOrganizationCreate(BaseModel):
         slug: Requested slug value for this ldap organization resource.
         suffix_dn: Requested suffix dn value for this ldap organization resource.
         enabled: Whether the resource is enabled in saved Atlaso state.
+        bind_password: Optional custom bind password accepted only on creation and never returned.
     """
 
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')] = Field(min_length=1, max_length=128)
     slug: Annotated[str, Field(description='Requested slug value for this ldap organization resource.')] = Field(default="", max_length=80)
     suffix_dn: Annotated[str, Field(description='Requested suffix dn value for this ldap organization resource.')] = Field(default="", max_length=500)
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = True
+    bind_password: Annotated[
+        SecretStr | None,
+        Field(
+            description="Optional custom LDAP bind password. Omit or set null to generate the default credential, which is returned once. Supplied values are write-only, validated against the LDAP password policy, encrypted at rest, and not returned.",
+            json_schema_extra={"writeOnly": True},
+            max_length=4096,
+        ),
+    ] = None
+
+
+class LdapOrganizationUpdate(BaseModel):
+    """Fields accepted when updating LDAP organization metadata."""
+
+    name: Annotated[str, Field(description='Stable operator-facing name of this resource.')] = Field(min_length=1, max_length=128)
+    slug: Annotated[str, Field(description='Requested slug value for this ldap organization resource.')] = Field(default="", max_length=80)
+    suffix_dn: Annotated[str, Field(description='Requested suffix dn value for this ldap organization resource.')] = Field(default="", max_length=500)
+    enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = True
+
+
+class LdapBindCredentialRotateRequest(BaseModel):
+    """Optional custom secret accepted while rotating an LDAP bind credential."""
+
+    bind_password: Annotated[
+        SecretStr | None,
+        Field(
+            description="Optional custom LDAP bind password. Omit the request body or set this value to null to generate the default credential, which is returned once. A supplied value is write-only, policy-validated, encrypted at rest, and not returned.",
+            json_schema_extra={"writeOnly": True},
+            max_length=4096,
+        ),
+    ] = None
 
 
 class LdapOrganizationResponse(BaseModel):
@@ -849,8 +881,8 @@ class LdapOrganizationResponse(BaseModel):
             resource.
         created_at: UTC timestamp when the resource was created.
         updated_at: UTC timestamp when the resource was last updated.
-        raw_bind_password: One-time LDAP bind password returned only by the credential-rotation
-            response.
+        raw_bind_password: Generated LDAP bind password shown once after creation or rotation; null
+            when an operator supplied the custom secret.
     """
 
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
@@ -874,7 +906,7 @@ class LdapOrganizationResponse(BaseModel):
     vcf_last_verified_at: Annotated[str, Field(description='UTC timestamp for VCF last verified at on this ldap organization resource.')]
     created_at: Annotated[str, Field(description='UTC timestamp when the resource was created.')]
     updated_at: Annotated[str, Field(description='UTC timestamp when the resource was last updated.')]
-    raw_bind_password: Annotated[str | None, Field(description='One-time LDAP bind password returned only by the credential-rotation response.')] = None
+    raw_bind_password: Annotated[str | None, Field(description='Generated LDAP bind password shown once after creation or rotation; null when the caller supplied the custom secret.')] = None
 
 
 class LdapUserCreate(BaseModel):
@@ -1010,12 +1042,12 @@ class LdapBindCredentialResponse(BaseModel):
 
     Attributes:
         organization: Returned organization value for this ldap bind credential resource.
-        raw_bind_password: One-time LDAP bind password returned only by the credential-rotation
-            response.
+        raw_bind_password: Generated LDAP bind password shown once after rotation, or null when a
+            custom password was supplied.
     """
 
     organization: Annotated[LdapOrganizationResponse, Field(description='Returned organization value for this ldap bind credential resource.')]
-    raw_bind_password: Annotated[str, Field(description='One-time LDAP bind password returned only by the credential-rotation response.')]
+    raw_bind_password: Annotated[str | None, Field(description='Generated LDAP bind password shown once after rotation; null when the caller supplied the custom secret.')]
 
 
 class LdapVcfInspectRequest(BaseModel):

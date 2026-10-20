@@ -3,6 +3,71 @@
 from tests.routers.ui.helpers import login
 
 
+def test_custom_bind_password_forms_validate_without_echoing_or_partial_rotation(client):
+    """Keep custom credential creation and rotation confirmed, encrypted and redacted.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, LdapOrganization
+    from atlaso.app.services.ldap import organization_bind_secret
+
+    login(client)
+    page = client.get("/ldap")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    password = "SyntheticOnly-Custom42!"
+    fields = {
+        "name": "Custom UI",
+        "slug": "custom-ui",
+        "enabled": "on",
+        "bind_password_mode": "custom",
+        "bind_password": password,
+        "confirm_bind_password": "different",
+        "csrf": csrf,
+    }
+    rejected = client.post("/ldap/organizations", data=fields)
+    assert rejected.status_code == 400
+    assert password not in rejected.text
+    with SessionLocal() as db:
+        assert db.execute(select(LdapOrganization)).scalars().all() == []
+    fields["confirm_bind_password"] = password
+    created = client.post("/ldap/organizations", data=fields)
+    assert created.status_code == 201
+    assert password not in created.text
+    assert "data-ldap-bind-secret-auto-open" not in created.text
+    with SessionLocal() as db:
+        organization = db.execute(select(LdapOrganization)).scalar_one()
+        organization_id = organization.id
+        original_ciphertext = organization.bind_password_encrypted
+        assert password not in original_ciphertext
+        assert organization_bind_secret(organization) == password
+
+    rotation_url = f"/ldap/organizations/{organization_id}/bind-credential/rotate"
+    fields = {
+        "bind_password_mode": "custom",
+        "bind_password": "weak",
+        "confirm_bind_password": "weak",
+        "csrf": csrf,
+    }
+    rejected = client.post(rotation_url, data=fields)
+    assert rejected.status_code == 400
+    with SessionLocal() as db:
+        assert db.get(LdapOrganization, organization_id).bind_password_encrypted == original_ciphertext
+    replacement = "SyntheticOnly-Replacement84!"
+    fields.update(bind_password=replacement, confirm_bind_password=replacement)
+    rotated = client.post(rotation_url, data=fields)
+    assert rotated.status_code == 200
+    assert replacement not in rotated.text
+    assert "data-ldap-bind-secret-auto-open" not in rotated.text
+    with SessionLocal() as db:
+        assert organization_bind_secret(db.get(LdapOrganization, organization_id)) == replacement
+        details = [event.detail or "" for event in db.execute(select(AuditEvent)).scalars()]
+        assert all(password not in detail and replacement not in detail for detail in details)
+
+
 def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     """Verify that managed ldap page creates org user group and shows secret once.
 
@@ -80,6 +145,18 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert 'id="ldap-organization-dialog"' in created.text
     assert "data-ldap-organization-form" in created.text
     assert 'data-atlaso-wizard-step="enablement"' in created.text
+    organization_wizard = created.text.split('id="ldap-organization-dialog"', 1)[1].split(
+        "</dialog>", 1
+    )[0]
+    assert 'data-atlaso-wizard-step="credential"' in organization_wizard
+    assert 'name="bind_password_mode"' in organization_wizard
+    assert '<option value="generated" selected>Generate a password</option>' in organization_wizard
+    assert '<option value="custom">Custom password</option>' in organization_wizard
+    assert 'type="password" name="bind_password"' in organization_wizard
+    assert 'name="confirm_bind_password"' in organization_wizard
+    assert "data-ldap-bind-password disabled" in organization_wizard
+    assert "data-ldap-bind-password-confirm disabled" in organization_wizard
+    assert "password values are never included" in organization_wizard
     assert 'name="description"' in created.text
     assert 'id="ldap-user-dialog"' in created.text
     assert "data-ldap-user-form" in created.text
@@ -100,9 +177,19 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     )[0]
     assert 'class="zone-actions"' in organization_header
     assert (
-        'class="button tiny secondary" type="submit">Rotate bind credential</button>'
+        'class="button tiny secondary" type="button" data-ldap-bind-rotation-open>Rotate bind credential</button>'
         in organization_header
     )
+    rotation_wizard = created.text.split('id="ldap-bind-rotation-dialog"', 1)[1].split(
+        "</dialog>", 1
+    )[0]
+    assert 'action="/ui/management/ldap/organizations/' in rotation_wizard
+    assert 'data-atlaso-wizard-step="credential"' in rotation_wizard
+    assert 'data-atlaso-wizard-step="review"' in rotation_wizard
+    assert 'name="bind_password_mode"' in rotation_wizard
+    assert 'name="bind_password"' in rotation_wizard
+    assert 'name="confirm_bind_password"' in rotation_wizard
+    assert "password values are never included" in rotation_wizard
     assert (
         'class="button tiny danger" type="submit">Delete organization</button>'
         in organization_header
@@ -134,6 +221,9 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     )[1].split("function initializeLdapPageState()", 1)[0]
     assert "window.AtlasoUiPatterns.createWizard({" in ldap_organization_wizard_js
     assert "data-ldap-organization-open" in ldap_organization_wizard_js
+    assert "validateLdapBindPasswordStep(form, step)" in ldap_organization_wizard_js
+    assert 'label: "Bind credential", value: () => ldapBindPasswordReviewValue(form)' in ldap_organization_wizard_js
+    assert "onClose: () => resetLdapBindPasswordFields(form)" in ldap_organization_wizard_js
     assert (
         '{ id: "enablement", title: "Choose organization state"'
         in ldap_organization_wizard_js
@@ -157,6 +247,29 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert "newOrganizationPanel" not in ldap_page_state_js
     assert "initializeLdapDirectoryTables()" in ldap_page_state_js
     assert "initializeTabs()" in ldap_page_state_js
+    bind_password_js = app_js.split("function syncLdapBindPasswordFields(form)", 1)[1].split(
+        "function initializeLdapSettingsStatus(", 1
+    )[0]
+    assert "controls.password.disabled = !custom" in bind_password_js
+    assert "controls.confirmation.disabled = !custom" in bind_password_js
+    assert "controls.password.required = custom" in bind_password_js
+    assert "controls.confirmation.required = custom" in bind_password_js
+    assert 'form.addEventListener("formdata", () => resetLdapBindPasswordFields(form))' in bind_password_js
+    assert 'controls.mode.value = "generated"' in bind_password_js
+    assert 'controls.password.value = ""' in bind_password_js
+    assert 'controls.confirmation.value = ""' in bind_password_js
+    bind_password_review_js = app_js.split("function ldapBindPasswordReviewValue(form)", 1)[1].split(
+        "function validateLdapBindPasswordStep(", 1
+    )[0]
+    assert (
+        'controls?.mode.value === "custom" ? "Custom password" : "Generated and shown once"'
+        in bind_password_review_js
+    )
+    assert "controls.password.value" not in bind_password_review_js
+    assert "controls.confirmation.value" not in bind_password_review_js
+    assert "Enter and confirm the custom bind password." in bind_password_js
+    assert "Password confirmation does not match." in bind_password_js
+    assert "initializeLdapBindRotationWizard" in app_js
     assert "function attachLdapGridState(" in app_js
     assert "function redrawLdapDirectoryTables(" in app_js
     disabled_helper = client.get(

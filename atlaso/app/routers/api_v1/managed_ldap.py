@@ -9,7 +9,16 @@ from ipaddress import ip_interface
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Response,
+    UploadFile,
+)
 from fastapi import Path as ApiPath
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -36,11 +45,13 @@ from atlaso.app.models import (
 from atlaso.app.openapi import DocumentedAPIRoute
 from atlaso.app.schemas import (
     LdapBindCredentialResponse,
+    LdapBindCredentialRotateRequest,
     LdapGroupCreate,
     LdapGroupResponse,
     LdapHealthResponse,
     LdapOrganizationCreate,
     LdapOrganizationResponse,
+    LdapOrganizationUpdate,
     LdapPasswordResetRequest,
     LdapRecoveryExportRequest,
     LdapRecoveryImportResponse,
@@ -424,6 +435,8 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
         status_code=201,
         tags=["LDAP"],
         operation_id="createLdapOrganization",
+        summary="Create a managed LDAP organization",
+        description="Creates LDAP organization desired state. Omit bind_password to generate the default bind credential, which is returned once, or supply a custom password validated against the saved LDAP policy. Custom values are encrypted at rest and not returned. Organization list and read responses never expose the bind credential. LDAP runtime changes remain subject to global Appliance Apply.",
     )
     def create_ldap_organization(
         payload: LdapOrganizationCreate,
@@ -458,7 +471,16 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
             suffix_dn=suffix,
             enabled=payload.enabled,
         )
-        raw_secret = ensure_organization_bind_secret(organization)
+        try:
+            raw_secret = ensure_organization_bind_secret(
+                organization,
+                payload.bind_password.get_secret_value()
+                if payload.bind_password is not None
+                else None,
+                _ldap_settings_row(db),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         db.add(organization)
         try:
             db.commit()
@@ -477,7 +499,12 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
             resource_id=str(organization.id),
         )
         return LdapOrganizationResponse(
-            **ldap_organization_to_dict(organization, reveal_bind_secret=raw_secret)
+            **ldap_organization_to_dict(
+                organization,
+                reveal_bind_secret=raw_secret
+                if payload.bind_password is None
+                else "",
+            )
         )
 
     @router.put(
@@ -485,6 +512,8 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
         response_model=LdapOrganizationResponse,
         tags=["LDAP"],
         operation_id="updateLdapOrganization",
+        summary="Update managed LDAP organization metadata",
+        description="Updates organization metadata and enabled state without changing or rotating the bind credential. Use the separate credential rotation operation to replace the bind password.",
     )
     def update_ldap_organization(
         organization_id: Annotated[
@@ -493,7 +522,7 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
                 description="Unique identifier of the organization record addressed by this operation."
             ),
         ],
-        payload: LdapOrganizationCreate,
+        payload: LdapOrganizationUpdate,
         identity: Annotated[Identity, Depends(require_scope("write:ldap"))],
         db: Session = Depends(get_db),
     ) -> LdapOrganizationResponse:
@@ -598,6 +627,8 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
         response_model=LdapBindCredentialResponse,
         tags=["LDAP"],
         operation_id="rotateLdapBindCredential",
+        summary="Rotate a managed LDAP bind credential",
+        description="Rotates the bind credential. Omit the request body or bind_password to generate the default credential, which is returned once; a supplied custom value is validated against the LDAP password policy, encrypted at rest, and not returned. Reads and lists never return the secret. Saved changes remain subject to global Appliance Apply.",
     )
     def rotate_ldap_bind_credential(
         organization_id: Annotated[
@@ -607,6 +638,12 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
             ),
         ],
         identity: Annotated[Identity, Depends(require_scope("write:ldap"))],
+        payload: Annotated[
+            LdapBindCredentialRotateRequest | None,
+            Body(
+                description="Optional write-only custom bind password; omit to generate one.",
+            ),
+        ] = None,
         db: Session = Depends(get_db),
     ) -> LdapBindCredentialResponse:
         """Rotate Ldap Bind Credential.
@@ -617,13 +654,23 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
 
         Args:
             organization_id: Stable identifier of the associated organization resource.
+            payload: Optional write-only custom password; omission selects generated rotation.
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
         organization = db.get(LdapOrganization, organization_id)
         if organization is None:
             raise HTTPException(status_code=404, detail="LDAP organization not found")
-        raw_secret = rotate_organization_bind_secret(organization)
+        try:
+            raw_secret = rotate_organization_bind_secret(
+                organization,
+                payload.bind_password.get_secret_value()
+                if payload is not None and payload.bind_password is not None
+                else None,
+                _ldap_settings_row(db),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         db.commit()
         record_audit(
             db,
@@ -634,7 +681,8 @@ def build_router(dependencies: ManagedLdapApiDependencies) -> ManagedLdapApiRout
         )
         response = LdapOrganizationResponse(**ldap_organization_to_dict(organization))
         return LdapBindCredentialResponse(
-            organization=response, raw_bind_password=raw_secret
+            organization=response,
+            raw_bind_password=raw_secret if payload is None or payload.bind_password is None else None,
         )
 
     @router.get(
