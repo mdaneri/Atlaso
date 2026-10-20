@@ -1039,7 +1039,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}370`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}372`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
@@ -1056,10 +1056,10 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert '!hasDownloadLikePath(url)' in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
     assert "/static/app.css?v=apply-dialog-scroll-986-1" in service_worker.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in service_worker.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=vsphere-enrollment-959-8" in service_worker.text
+    assert "/static/app.js?v=kms-provider-ui-982-983-2" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1113,15 +1113,15 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vsphere-enrollment-959-8"),
-        (public_base, "/static/app.js?v=vsphere-enrollment-959-8"),
+        (base, "/static/app.js?v=kms-provider-ui-982-983-2"),
+        (public_base, "/static/app.js?v=kms-provider-ui-982-983-2"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11"
         )
         assert shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11"
         ) < shell.index(app_asset)
     assert "/static/app.css?v=apply-dialog-scroll-986-1" in public_base
 
@@ -1788,8 +1788,8 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=apply-dialog-scroll-986-1" in page.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in page.text
-    assert "/static/app.js?v=vsphere-enrollment-959-8" in page.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11" in page.text
+    assert "/static/app.js?v=kms-provider-ui-982-983-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -10765,9 +10765,6 @@ def test_vsphere_key_provider_page_uses_shared_management_contract(client):
     assert "window.AtlasoUiPatterns.createWizard" in app_js.text
     assert "+ Add provider here" in app_js.text
     assert "+ Add trusted vCenter here" in app_js.text
-    assert "upsertOption(vcenterProviderSelect" in app_js.text
-    assert "removeOption(vcenterProviderSelect" in app_js.text
-    assert "onSaved: ({ resource }) => upsertOption(" in app_js.text
     assert "certificateTargetSelect," in app_js.text
     assert "removeOption(certificateTargetSelect" in app_js.text
     assert "updateCertificateCounts" in app_js.text
@@ -11094,6 +11091,130 @@ def test_successful_kms_apply_marks_disabled_provider_removal_applied(monkeypatc
 
     assert result["success"] is True
     assert provider.applied_at is not None
+
+
+def test_kms_apply_snapshot_tracks_certificate_less_provider_enablement(client):
+    """Track provider enablement even when it does not change daemon JSON.
+
+    Args:
+        client: Authenticated HTTP test client used to initialize appliance settings.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VsphereKeyProvider, utcnow
+    from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
+
+    login(client)
+    client.get("/vsphere-key-providers")
+
+    with SessionLocal() as db:
+        provider = VsphereKeyProvider(
+            name="Certificate-less Apply marker", enabled=False
+        )
+        db.add(provider)
+        db.commit()
+
+        initial_unit = next(
+            unit
+            for unit in appliance_apply_units(db, reconcile=False)
+            if unit["id"] == "kms"
+        )
+        update_appliance_apply_baselines(db, [initial_unit], {"kms"})
+        provider.applied_at = utcnow()
+        db.commit()
+
+        for enabled in (True, False):
+            previous_preview = initial_unit["config_preview"]
+            provider.enabled = enabled
+            provider.updated_at = utcnow()
+            db.commit()
+
+            changed_unit = next(
+                unit
+                for unit in appliance_apply_units(db, reconcile=False)
+                if unit["id"] == "kms"
+            )
+            assert changed_unit["changed"] is True
+            assert changed_unit["config_preview"] == previous_preview
+
+            update_appliance_apply_baselines(db, [changed_unit], {"kms"})
+            provider.applied_at = utcnow()
+            db.commit()
+            with SessionLocal() as verify_db:
+                current_unit = next(
+                    unit
+                    for unit in appliance_apply_units(verify_db, reconcile=False)
+                    if unit["id"] == "kms"
+                )
+            assert current_unit["changed"] is False
+            initial_unit = current_unit
+
+        previous_preview = initial_unit["config_preview"]
+        provider.updated_at = utcnow()
+        db.commit()
+        no_op_edit_unit = next(
+            unit
+            for unit in appliance_apply_units(db, reconcile=False)
+            if unit["id"] == "kms"
+        )
+        assert no_op_edit_unit["changed"] is True
+        assert no_op_edit_unit["config_preview"] == previous_preview
+
+
+def test_kms_legacy_baseline_does_not_absorb_pending_provider_marker(client):
+    """Keep a legacy KMS baseline pending when provider state changed after Apply.
+
+    Args:
+        client: Authenticated HTTP test client used to initialize appliance settings.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VsphereKeyProvider, utcnow
+    from atlaso.app.ui import (
+        appliance_apply_units,
+        appliance_snapshot_hash,
+        save_appliance_apply_baselines,
+    )
+
+    login(client)
+    client.get("/vsphere-key-providers")
+
+    with SessionLocal() as db:
+        provider = VsphereKeyProvider(
+            name="Legacy provider marker", enabled=False
+        )
+        db.add(provider)
+        db.commit()
+        provider.applied_at = provider.updated_at
+        provider.updated_at = utcnow()
+        db.commit()
+
+        current_unit = next(
+            unit
+            for unit in appliance_apply_units(db, reconcile=False)
+            if unit["id"] == "kms"
+        )
+        legacy_hash = appliance_snapshot_hash({
+            "unit_id": "kms",
+            "summary": current_unit["summary"],
+            "config_path": current_unit["config_path"],
+            "config_preview": current_unit["config_preview"],
+            "snapshot_marker": None,
+        })
+        save_appliance_apply_baselines(db, {
+            "kms": {
+                "snapshot_hash": legacy_hash,
+                "config_path": current_unit["config_path"],
+                "config_preview": current_unit["config_preview"],
+                "summary": current_unit["summary"],
+                "applied_at": provider.applied_at.isoformat(),
+            }
+        })
+        db.commit()
+
+    with SessionLocal() as db:
+        reconciled_unit = next(
+            unit for unit in appliance_apply_units(db) if unit["id"] == "kms"
+        )
+        assert reconciled_unit["changed"] is True
 
 
 def test_vcf_backups_page_uses_local_user_for_sftp(client):

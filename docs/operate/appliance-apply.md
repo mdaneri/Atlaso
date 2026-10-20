@@ -103,12 +103,9 @@ Firewall, Appliance Settings, and Public Services changes; clear Network to defe
 
 1. Confirm that the selection contains only the units intended for this run.
 2. Choose **Submit appliance changes**.
-3. Keep the task dialog open while the master task and its component rows progress.
+3. Keep the task dialog open. Scroll the component grid to see more rows or columns; count and actions stay below.
 4. Open a component row to inspect its bounded, redacted result.
 5. Wait for completion; the dialog, sidebar badge, pending count, and global write lock update without a page reload.
-
-The component grid uses one vertical scrolling region. Scroll within the grid to reach later components; its
-completion count and task actions stay below it. On narrow screens, scroll the grid horizontally to inspect other columns.
 
 If another session starts an Apply after the current one, the monitor finishes the current task's refresh first.
 
