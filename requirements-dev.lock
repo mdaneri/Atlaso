@@ -4,7 +4,7 @@
 #
 #    pip-compile --allow-unsafe --build-deps-for=editable --extra=dev --generate-hashes --index-url=https://pypi.org/simple --no-emit-index-url --output-file=requirements-dev.lock --strip-extras --uploaded-prior-to=P7D pyproject.toml
 #
-# atlaso-declarations-sha256: 98ce4cd2bcade901f79c3080d8ca3e921d30022b1c0ae6d7b1a912d287ab8aaf
+# atlaso-declarations-sha256: a552880c4dabad6f1f5d1d3a6fad4b8a92de75933a76566227b594a65705d027
 annotated-doc==0.0.5 \
     --hash=sha256:117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101 \
     --hash=sha256:c7e58ce09192557605d8bbd92836d7e1d520ac9580096042c0bfd197efacf1bb
@@ -838,9 +838,9 @@ pre-commit==4.6.2 \
     --hash=sha256:8f5d7bfb021ecdbcd9d49d89847082dd24172ccde534390081a679ad046e2441 \
     --hash=sha256:e2dde9a75d3bce11bd3831c26d134df00a2803c1d818be6a0383c3dcda25dc4e
     # via atlaso (pyproject.toml)
-pycdlib==1.21.0 \
-    --hash=sha256:1a82cd735542921d0dd7bc40381e7b7b9cbc70bd4c03e4f67a0531d59d2f518e \
-    --hash=sha256:a5758ad00f0e1bbd60dc5a579a50259bff2e267e8e925d485351bf2bc683a329
+pycdlib==1.22.0 \
+    --hash=sha256:00456c146e2834eac96ddf738b6b2cbe81564d9efe2022ae6a155fc6649870c6 \
+    --hash=sha256:bfa0b3631345a14b2741fe088398b6b8dc2838442ea607fd07d027dcc67b9e94
     # via atlaso (pyproject.toml)
 pycparser==3.0 \
     --hash=sha256:600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29 \
@@ -986,9 +986,9 @@ pyjwt==2.13.0 \
     --hash=sha256:41571c89ca91598c79e8ef18a2d07367d4810fbbd6f637794879baf1b7703423 \
     --hash=sha256:66adcc2aff09b3f1bbd95fc1e1577df8ac8723c978552fd43304c8a290ac5728
     # via atlaso (pyproject.toml)
-pymdown-extensions==12.1 \
-    --hash=sha256:4a254b771acfcddc6c110a7f4590d818f1f849e2d5aacf69b4b07c8dd2a9700d \
-    --hash=sha256:fdb8f47f5d7fd069d10ef2a7d8908e613d7865ff0419d544a0ffd3984e884f11
+pymdown-extensions==12.2 \
+    --hash=sha256:02da896c362b548d85123e7a377a40024ea6ea938b4e45ca064e408afd994b64 \
+    --hash=sha256:caea66e916b4cfe987b5dabb0a78558e3506988f6353812b0b0288be8f976c16
     # via atlaso (pyproject.toml)
 pynacl==1.6.2 \
     --hash=sha256:018494d6d696ae03c7e656e5e74cdfd8ea1326962cc401bcf018f1ed8436811c \
