@@ -223,7 +223,9 @@ If those IDs make the configuration exceed the size limit, the whole restore rol
 Archives with an enabled HTTPS proxy require an enabled CA; restore rejects this inconsistent relationship before
 replacing saved state. Disabled HTTPS intent and enabled HTTP proxies remain portable without an enabled CA.
 Preflight also reserves service names that factory-default identity migration will create under the restored appliance
-domain, including ESXi PXE, before replacing any saved rows. Operator-chosen service names remain unchanged.
+domain, including ESXi PXE, before replacing any saved rows. The database-bound preflight also reserves service aliases
+from the target appliance’s observed automatic addresses on the restored interfaces. Rejection preserves saved state
+and audit records. Operator-chosen service names remain unchanged.
 
 <!-- ATLASO-REVERSE-PROXY-ACCEPTANCE-PENDING -->
 ## Native appliance acceptance pending

@@ -1068,3 +1068,59 @@ def test_restore_checks_target_observed_browser_socket_scopes(client, kind, fami
         assert db.get(ReverseProxy, saved.id).port == 9444
         assert source.host_ip_cidrs == ["192.168.55.10/24", "192.168.55.20/24"]
         assert source.host_ipv6_cidrs == ["2001:db8:55::10/64", "2001:db8:55::20/64"]
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+@pytest.mark.parametrize("renamed", [False, True])
+@pytest.mark.parametrize("target", ["served", "upstream"])
+def test_restore_reserves_target_automatic_service_alias_atomically(client, target, renamed, conflict):
+    """Reject target-derived service aliases before replacing archive state.
+
+    Args:
+        client: Initialized appliance fixture.
+        target: Proxy hostname or upstream claiming the target automatic IPv6 alias.
+        renamed: Match local observations through the archived interface MAC after a rename.
+        conflict: Claim the observed alias or an unrelated external hostname.
+    """
+    from atlaso.app.models import LdapOrganization
+
+    with SessionLocal() as db:
+        observed = PhysicalInterface(name="eth9", mac_address="02:00:00:00:00:99", role="access",
+                                     mode="access", admin_state="up", oper_state="up",
+                                     ipv4_method="static", ip_cidr="192.0.2.8/24")
+        db.add(observed)
+        db.add(LdapOrganization(name="Fixture", slug="fixture", suffix_dn="dc=fixture,dc=test"))
+        observed.ipv6_enabled = True
+        observed.ipv6_cidr = None
+        observed.host_ipv6_cidr = "2001:db8:55::10/64"
+        listener = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        save_proxy(db, payload(enabled=True, scheme="http", port=8084, redirect_http=False, listeners=[{"interface": "eth2", "address": listener.ip_cidr.split("/")[0]}]), actor="test")
+        db.commit()
+        before = deepcopy(export_settings_archive(db, actor="test")["data"])
+        audits = list(db.scalars(select(AuditEvent.id)))
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        archived_interface = next(row for row in archive["data"]["physical_interfaces"] if row["name"] == "eth9")
+        archived_interface.update(host_ipv6_cidr="2001:db8:44::7/64")
+        if renamed:
+            archived_interface["name"] = "eth8"
+        service_interface = archived_interface["name"]
+        archive["data"]["appliance_settings"][0]["service_dns_target_naming"] = "ip"
+        archive["data"]["ldap_settings"][0].update(
+            enabled=True, ldap_enabled=True, ldaps_enabled=False, hostname="owned.example.test", listen_interface=service_interface,
+            listen_address=observed.ip_cidr.split("/")[0] + "\n2001:db8:44::7",
+        )
+        alias = "owned-2001-db8-55-0-0-0-0-10.example.test" if conflict else "external.example.test"
+        if target == "served":
+            archive["data"]["reverse_proxies"][0]["hostname"] = alias
+        else:
+            archive["data"]["reverse_proxy_routes"][0]["upstream_host"] = alias
+        if not conflict:
+            counts = restore_settings_archive(db, archive)
+            assert counts["reverse_proxies"] == counts["reverse_proxy_routes"] == 1
+            return
+        with pytest.raises(ValueError, match="Atlaso.*service"):
+            restore_settings_archive(db, archive)
+        db.expire_all()
+        assert export_settings_archive(db, actor="test")["data"] == before
+        assert list(db.scalars(select(AuditEvent.id))) == audits
+        assert db.get(PhysicalInterface, observed.id).host_ipv6_cidr == "2001:db8:55::10/64"

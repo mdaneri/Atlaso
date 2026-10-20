@@ -6,8 +6,12 @@ from typing import Any
 from atlaso.app import models
 from atlaso.app.reverse_proxy_schemas import ReverseProxyCreate, ReverseProxyRouteInput
 from atlaso.app.services.appliance_settings import normalize_service_dns_target_naming
-from atlaso.app.services.dnsmasq import authoritative_server_name
+from atlaso.app.services.dnsmasq import authoritative_server_name, split_interfaces
 from atlaso.app.services.esxi_pxe import ESXI_PXE_HOSTNAME_KEY, _normalize_hostname
+from atlaso.app.services.networking import (
+    normalize_interface_mode,
+    normalize_interface_role,
+)
 from atlaso.app.services.port_forwarding import ListenerClaim
 from atlaso.app.services.reverse_proxies import (
     browser_listener_claims,
@@ -84,6 +88,52 @@ def listener_claims(proxies: list[models.ReverseProxy]) -> list[ListenerClaim]:
     return [ListenerClaim(listener["interface"], listener["address"], "tcp", port, port)
             for proxy in proxies if proxy.enabled for listener in proxy.listeners
             for port in [proxy.port, *([proxy.redirect_port] if proxy.redirect_http else [])]]
+
+
+def target_service_alias_names(data: dict[str, Any], interfaces: list[models.PhysicalInterface]) -> set[str]:
+    """Reserve service aliases derived from candidate bindings and local observations.
+
+    Args:
+        data: Validated archive desired state, never mutated by this projection.
+        interfaces: Candidate physical interfaces with locally matched target observations.
+    """
+    archived = {row["name"]: row for row in data["physical_interfaces"]}
+    addresses: dict[str, list[str]] = {}
+    for interface in interfaces:
+        row = archived[interface.name]
+        if (interface.oper_state == "missing" or interface.admin_state != "up"
+                or normalize_interface_mode(interface.mode) == "trunk"
+                or normalize_interface_role(interface.role) in {"management", "unused"}):
+            continue
+        ipv4 = interface.host_ip_cidr if interface.ipv4_method == "dhcp" else row.get("ip_cidr")
+        ipv6 = (row.get("ipv6_cidr") or interface.host_ipv6_cidr) if row.get("ipv6_enabled") else None
+        addresses[interface.name] = []
+        for cidr in (ipv4, ipv6):
+            try:
+                addresses[interface.name].append(str(ip_interface(cidr or "").ip))
+            except ValueError:
+                continue
+    appliance = (data.get("appliance_settings") or [{}])[0]
+    fqdn = str(appliance.get("fqdn") or "core.atlaso.internal")
+    naming = normalize_service_dns_target_naming(appliance.get("service_dns_target_naming"))
+    names: set[str] = set()
+    for identity in FACTORY_SERVICE_IDENTITIES:
+        for service in data.get(identity.model.__tablename__, []):
+            hostname = str(service.get(identity.hostname_attribute) or "")
+            projected = projected_factory_service_hostname(identity.label, hostname, fqdn)
+            for interface_name in split_interfaces(service.get("listen_interface")):
+                for candidate in {hostname, projected} - {""}:
+                    names.update(service_alias_names(
+                        candidate, interface_name, "\n".join(addresses.get(interface_name, [])), naming,
+                        shared_target_token="service" if identity.model is models.NtpSettings else None,
+                    ))
+    for storage in data.get("esx_storage_settings", []):
+        hostname = projected_factory_service_hostname("nfs", str(storage.get("hostname") or ""), fqdn)
+        for share in data.get("esx_nfs_shares", []):
+            interface_name = str(share.get("interface_name") or "")
+            names.update(storage_alias_names(hostname, interface_name, addresses.get(interface_name, []),
+                                            str(share.get("address_families") or ""), naming))
+    return names
 
 
 def validate_candidates(proxies: list[models.ReverseProxy], data: dict[str, Any],

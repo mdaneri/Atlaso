@@ -4218,7 +4218,10 @@ def _validate_archive_database_relationships(db: Session, data: dict[str, list[d
             browser_listener_claims,
             validate_proxy,
         )
-        from atlaso.app.services.reverse_proxy_archive import candidates
+        from atlaso.app.services.reverse_proxy_archive import (
+            candidates,
+            target_service_alias_names,
+        )
 
         physical = list(db.scalars(select(PhysicalInterface)))
         vlans = list(db.scalars(select(VlanInterface)))
@@ -4271,15 +4274,17 @@ def _validate_archive_database_relationships(db: Session, data: dict[str, list[d
                 raise ValueError("Settings archive reverse-proxy upstream cannot be an observed target appliance address.")
 
         proxies = candidates(data)
+        service_names = target_service_alias_names(data, projected)
         for proxy in proxies:
             if not proxy.enabled:
                 continue
             # Portable binding, CA, DNS and service validation already completed.
-            # This second pass adds the nonportable target browser socket claims.
-            errors = validate_proxy(proxy, {"claims": claims}, proxies, exclude_id=proxy.id,
+            # This second pass adds local target browser claims and automatic service aliases.
+            errors = validate_proxy(proxy, {"claims": claims, "service_hostnames": service_names},
+                                    proxies, exclude_id=proxy.id,
                                     require_binding=False, require_managed_ca=False)
             if errors:
-                raise ValueError(f"Settings archive reverse proxy {proxy.name} conflicts with target browser scopes: {errors[0]}")
+                raise ValueError(f"Settings archive reverse proxy {proxy.name} conflicts with target browser scopes or service aliases: {errors[0]}")
 
     users = {row.username: bool(row.enabled) for row in db.execute(select(User)).scalars().all()}
     usernames = set(users)
