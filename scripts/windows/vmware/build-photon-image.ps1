@@ -957,6 +957,79 @@ function Complete-AtlasoPhotonSameBootProcessRecovery {
 
 <#
 .SYNOPSIS
+Preserve recovered job termination in the exact original builder handoff.
+.PARAMETER Marker
+Original schema-3 marker after authoritative same-boot process recovery.
+.PARAMETER RepositoryRoot
+Exact admitted task repository, independent of the allocation metadata.
+#>
+function Save-AtlasoPhotonRecoveredBuilderTerminationProof {
+    param(
+        [Parameter(Mandatory = $true)][object]$Marker,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot
+    )
+
+    if ([string]$Marker.ProcessOwnershipPhase -cne 'assigned') { return }
+    $credentialParent = Split-Path -Parent ([IO.Path]::GetFullPath([string]$Marker.RootPath))
+    if ((Split-Path -Leaf $credentialParent) -cne 'credentials') {
+        # Pre-migration markers do not identify a checkout-local allocation root.
+        # Their reservations retain the existing legacy recovery requirements.
+        return
+    }
+    $stateRoot = Split-Path -Parent $credentialParent
+    $pendingRoot = Join-Path $stateRoot 'vmware-builder-addresses\pending-releases'
+    Assert-AtlasoStrictDescendantPath -ParentPath $RepositoryRoot -ChildPath $pendingRoot `
+        -FailureMessage 'Recovered builder handoff directory escaped the exact task repository'
+    if (-not (Test-Path -LiteralPath $pendingRoot -PathType Container)) {
+        Assert-AtlasoBuilderRecoveryAllocationAbsent -Marker $Marker -RepositoryRoot $RepositoryRoot
+        return
+    }
+    $pins = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($pendingRoot, $true)
+    try {
+        $candidates = @(Get-ChildItem -LiteralPath $pendingRoot -Force | Select-Object -First 129)
+        if ($candidates.Count -gt 128) { throw 'Recovered builder handoff inventory exceeds its bounded limit.' }
+        $selected = @()
+        foreach ($candidate in $candidates) {
+            if ($candidate.Name -cnotmatch '^builder-address-reservation-[0-9a-f]{32}\.json$') { continue }
+            $pin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($candidate.FullName, $true)
+            try {
+                if ($candidate.Length -gt 16384) { throw 'Reservation handoff exceeds its size limit.' }
+                $allocation = Get-Content -LiteralPath $candidate.FullName -Raw | ConvertFrom-Json
+            }
+            finally { $pin.Dispose() }
+            if ([int]$allocation.OwnerPid -ne [int]$Marker.ChildProcessId) { continue }
+            if ([long]$allocation.OwnerStartTimeUtcTicks -ne
+                    [DateTime]::FromFileTimeUtc([long]$Marker.ChildProcessStartFileTimeUtc).Ticks -or
+                [string]$allocation.HostBootIdentity -cne [string]$Marker.BootIdentity -or
+                -not [IO.Path]::GetFullPath([string]$allocation.RepositoryRoot).Equals(
+                    [IO.Path]::GetFullPath($RepositoryRoot), [StringComparison]::OrdinalIgnoreCase
+                )) {
+                throw 'Retained builder handoff conflicts with the original recovered child, boot or repository.'
+            }
+            $selected += [pscustomobject]@{
+                Path = $candidate.FullName
+                Fingerprint = Get-AtlasoBuilderReservationFingerprint -Reservation $allocation
+            }
+        }
+        if ($selected.Count -eq 0) {
+            # Schema 3 cannot distinguish failure before allocation from a lost
+            # handoff. Ask the owning ledger rather than infer allocation absence.
+            Assert-AtlasoBuilderRecoveryAllocationAbsent -Marker $Marker -RepositoryRoot $RepositoryRoot
+            return
+        }
+        if ($selected.Count -gt 1) { throw 'Multiple retained allocations claim the original recovered builder child.' }
+        if ($selected.Count -eq 1) {
+            Save-AtlasoBuilderTerminationProof -HandoffPath $selected[0].Path `
+                -ExpectedOwnerPid ([int]$Marker.ChildProcessId) `
+                -ExpectedOwnerStartTimeUtcTicks ([DateTime]::FromFileTimeUtc([long]$Marker.ChildProcessStartFileTimeUtc).Ticks) `
+                -ExpectedReservationSha256 $selected[0].Fingerprint -RecoveryMarker $Marker
+        }
+    }
+    finally { $pins.Dispose() }
+}
+
+<#
+.SYNOPSIS
 Remove a proven-inactive Photon root and durably retire its marker.
 
 .PARAMETER MarkerPath
@@ -1262,7 +1335,7 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
             }
             return
         }
-        if ($marker.Phase -ceq 'active') {
+        if ($marker.Phase -ceq 'active' -or $schemaThreeMarker) {
             $bootIdentityState = Get-AtlasoWindowsBootIdentityState -BootIdentity $marker.BootIdentity
             if ($bootIdentityState -ceq 'invalid') {
                 throw 'The retained Photon cleanup marker has an invalid boot identity.'
@@ -1272,6 +1345,10 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
                     throw 'A Windows restart is required before this legacy Photon cleanup marker can be recovered safely.'
                 }
                 Complete-AtlasoPhotonSameBootProcessRecovery -Marker $marker
+                # Publish before root deletion or either terminal marker phase.
+                # A failed publication leaves the original job ownership retryable.
+                Save-AtlasoPhotonRecoveredBuilderTerminationProof `
+                    -Marker $marker -RepositoryRoot $resolvedRepositoryRoot
             }
         }
         if ($legacyActiveMarker -and -not (Test-Path -LiteralPath $resolvedRoot -PathType Container)) {
@@ -1314,7 +1391,7 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
     }
     catch {
         throw [System.InvalidOperationException]::new(
-            'A prior Photon image build has unresolved sensitive cleanup. Same-boot recovery could not prove exact process ownership and termination; restart Windows, then rerun this wrapper.',
+            'A prior Photon image build has unresolved sensitive cleanup. Recovery or termination-proof publication did not complete. Resolve the inner diagnostic before retrying the same cleanup command.',
             $_.Exception
         )
     }
