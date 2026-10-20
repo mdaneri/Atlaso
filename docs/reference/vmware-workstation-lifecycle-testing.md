@@ -1099,7 +1099,14 @@ inspection and execution, recovery fails; marker absence alone never proves sens
 Execution repeats Git registration and backlink admission after confirmation, immediately before recovery, and uses
 the existing
 same-boot named-job/controller/child proof or verified host-restart recovery before retiring sensitive staging. It
-returns before PowerCLI refresh, package downloads, credential retrieval, reservation initialization, output claims,
+retains proven same-boot termination in the unique matching pending builder-address handoff before deleting the
+sensitive root or retiring the marker. That receipt includes the original schema-3 process ownership and binds every
+allocation field to the existing shared ledger under its allocator lock. Missing or conflicting allocation evidence
+or failed proof publication preserves the marker for the same cleanup command to retry; no allocator state is created.
+Recovery also repeats this step for a terminal marker left by an interrupted retirement. Preview does not publish proof.
+When no matching handoff remains, the existing ledger must independently prove no allocation remains for that child
+or checkout before the marker can retire. Missing ledger state and ambiguous retained allocations preserve the marker.
+It returns before PowerCLI refresh, package downloads, credential retrieval, reservation initialization, output claims,
 source protection, or Packer. Build and credential arguments are rejected in this mode. Ordinary image builds reject
 `-WhatIf` and `-Confirm`, which are supported only with `-CleanupOnly`. VMware VMs, builder output,
 output-claim markers, and address reservations require their separate owning cleanup procedures. Record their independent
@@ -1532,8 +1539,8 @@ the completed VM artifacts and exact recovery handoff. After
 closing that stopped tab and completing checked VM cleanup, use the standalone reservation command; a new build
 and a Windows restart are unnecessary when the saved proof is valid.
 
-Use the exact handoff path reported by the build, under the task's
-`.atlaso-local/photon-image-build-state/vmware-builder-addresses/pending-releases` directory:
+Use the exact handoff path reported by the build, under its admitted `BuildStateRoot` in
+`vmware-builder-addresses/pending-releases`. The default build state is `.atlaso-local/photon-image-build-state`:
 
 ```powershell
 $handoff = 'E:\task\.atlaso-local\photon-image-build-state\vmware-builder-addresses\pending-releases\builder-address-reservation-0123456789abcdef0123456789abcdef.json'
@@ -1572,6 +1579,15 @@ Older handoffs have no retained process-termination receipt. The tool reports th
 proof from VM-file absence or a dead PID. Such records still require independently available termination evidence
 or a changed host boot, followed by the same provider and address checks. Do not edit ledger JSON or insert receipts
 manually. The recovery command never restarts Windows automatically.
+
+When the original schema-3 staging marker still exists, run the
+[identity-bound cleanup-only procedure](#supported-removal-entry-points) first.
+Its authoritative named-job recovery can preserve proof for the exact original allocation on the same boot. Then
+complete checked VM cleanup and inspect the reported handoff with `manage-builder-reservation.ps1` before requesting
+its `-Cleanup` operation. Close the recovery controller session before reservation recovery when using an interactive
+PowerShell session. Provider activity and current address use still block release independently of that receipt.
+Markers already removed, legacy ownership, PID reuse, and conflicting identities cannot be reconstructed from current
+filesystem state; preserve those allocations for their existing supported recovery path.
 
 A changed host boot supplies process-termination evidence independently of the saved receipt. Recovery therefore
 does not depend on an old receipt's timestamp after a restart; clock corrections cannot strand that allocation.
