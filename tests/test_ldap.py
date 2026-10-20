@@ -15,14 +15,58 @@ from atlaso.app.services.ldap import (
     clear_pending_ldap_password,
     decrypt_recovery_payload,
     encrypt_recovery_payload,
+    ensure_organization_bind_secret,
     ldap_apply_payload,
     manual_vcf_bundle,
+    rotate_organization_bind_secret,
     validate_group_cycles,
     validate_ldap_password,
     validate_ldap_recovery_payload,
     validate_ldap_state,
     vcf_ldap_settings,
 )
+
+
+def test_custom_ldap_bind_password_uses_policy_and_rejects_before_mutation(monkeypatch):
+    """Validate custom bind secrets before encrypted state changes and redact errors.
+
+    Args:
+        monkeypatch: Fixture replacing encryption for isolated credential-policy assertions.
+    """
+    from atlaso.app.services import ldap as ldap_service
+
+    settings = LdapSettings()
+    organization = LdapOrganization(
+        id=1, name="Org", slug="org", suffix_dn="dc=org,dc=example"
+    )
+    old_ciphertext = "existing-encrypted-value"
+    organization.bind_password_encrypted = old_ciphertext
+    monkeypatch.setattr(
+        ldap_service, "encrypt_secret", lambda value: f"encrypted:{value}"
+    )
+
+    rejected_password = "NotPolicyCompliant"
+    try:
+        rotate_organization_bind_secret(organization, rejected_password, settings)
+    except ValueError as exc:
+        assert rejected_password not in str(exc)
+    else:
+        raise AssertionError("Weak custom LDAP bind password was accepted.")
+    assert organization.bind_password_encrypted == old_ciphertext
+
+    valid_password = "ValidCustom1!Secret"
+    returned = rotate_organization_bind_secret(organization, valid_password, settings)
+    assert returned == valid_password
+    assert organization.bind_password_encrypted == f"encrypted:{valid_password}"
+
+    new_organization = LdapOrganization(
+        id=2, name="Org 2", slug="org-2", suffix_dn="dc=org-2,dc=example"
+    )
+    returned = ensure_organization_bind_secret(
+        new_organization, valid_password, settings
+    )
+    assert returned == valid_password
+    assert new_organization.bind_password_encrypted == f"encrypted:{valid_password}"
 
 
 def test_ldap_password_policy_and_renderer_never_expose_unstaged_hashes():

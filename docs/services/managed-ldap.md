@@ -35,7 +35,9 @@ This verified appliance view provides visual orientation before you begin.
 - Firewall apply owns rules for each enabled LDAP/LDAPS port on selected addressed access or route interfaces and
   enabled VLANs. Management interfaces are not eligible LDAP listener targets.
 - Each organization receives a separate suffix and database. Its generated VCF bind identity can read only that suffix.
-- VCF bind secrets are encrypted with `ATLASO_SECRETS_KEY`. A generated or rotated secret is displayed once.
+- VCF bind secrets are encrypted with `ATLASO_SECRETS_KEY`. Choose an automatically generated password (the default)
+  or a custom password when creating an organization or rotating its bind credential. Credential responses remain
+  one-time for generated passwords; custom passwords are not returned, and normal organization reads never reveal them.
 - User passwords are held only in process memory until global LDAP apply. Password plaintext and hashes are never stored
   in the application database, previews, tasks, or audit details.
 
@@ -62,10 +64,13 @@ users, and request an unlock; enforcement occurs only through global LDAP apply.
 
 The Directory UI treats organizations like DNS zones: each organization is a tab and `+ Organization` opens a guided
 wizard for its name, operator description, isolated naming context, and enablement. Users and groups use
-wizard-backed Tabulator grids with bottom add rows. Opening a saved row returns to the same reviewed flow, while the
-Enabled column remains a direct edit for quick desired-state changes. Row menus retain password reset, unlock,
+wizard-backed Tabulator grids with bottom add rows. The grids fill the remaining desktop viewport and resize with the
+panel or selected tab. Narrow layouts retain compact grid heights and keep horizontal scrolling inside each grid.
+Opening a saved row returns to the same reviewed flow, while the Enabled column remains a direct edit for quick
+desired-state changes. Row menus retain password reset, unlock,
 membership, and deletion actions. Group membership presents the selected organization's current users and eligible
-nested groups, and new groups default to Enabled before review. User creation can stage a password or postpone it;
+nested groups. New users and groups default to Enabled before review; turn off Enabled to save a disabled entry.
+Editing preserves the entry's saved state. User creation can stage a password or postpone it;
 non-grid user and group creation returns to the selected organization using its saved identity. Enabling an account
 without an applied or staged password causes LDAP apply validation to stop before host mutation.
 
@@ -75,6 +80,26 @@ queryless Managed LDAP URL restores the server-default organization through the 
 
 The one-time VCF bind credential opens with its **Bind password** help collapsed and focus on **Done**, leaving the
 credential text unselected until the operator deliberately copies or saves it.
+
+If browser JavaScript is unavailable, **Rotate bind credential** retains the server-submitted generated-password flow.
+Custom password selection requires the guided browser wizard.
+
+To use a password already stored in your secret manager, select **Custom password** in the organization wizard's bind
+credential step, enter it twice, and review the organization. Password entry fields appear only for **Custom password**;
+switching to automatic generation hides and clears them. A successful custom rotation shows a confirmation status
+with the organization name and the global Apply reminder. Custom bind passwords must satisfy the current Managed
+LDAP password policy for the `vcf-bind` account. Review shows the password mode without showing the value. Cancelling
+or completing the wizard clears the password fields. After a rejected submission, the wizard reopens with its error,
+retains non-secret organization fields and the chosen mode, and asks you to enter the password again. Use the
+organization's bind-credential rotation workflow to
+replace a saved password; editing organization metadata does not rotate it. Update every external directory consumer
+with the replacement credential and submit the reviewed global LDAP Apply before testing the new bind.
+
+API clients may supply the optional write-only `bind_password` when creating an organization or rotating its bind
+credential. Omit it to retain automatic generation; an explicitly empty or policy-invalid password is rejected without
+changing the credential. Generated passwords retain their existing one-time credential responses; custom-password
+responses omit the raw value. Keep request and response bodies out of client logs and store credentials as concealed
+values in your secret manager.
 
 **Generate test directory** asks for user and group counts, invents complete synthetic identities and memberships, and
 shows generated passwords once; those passwords follow the same in-memory-only staging boundary as manually entered
