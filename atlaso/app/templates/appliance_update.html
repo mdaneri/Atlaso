@@ -169,7 +169,7 @@
             <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
             <span>Check for updates</span>
           </button>
-          <button class="button primary appliance-update-action" type="submit" formaction="{{ management_ui_root }}/appliance-update/run" title="Install updates from the selected streams" aria-describedby="appliance-update-action-status" data-appliance-update-action data-appliance-update-install-action {{ 'disabled' if not appliance_update_check_allowed else '' }}>
+          <button class="button primary appliance-update-action" type="submit" formaction="{{ management_ui_root }}/appliance-update/run" title="Install updates from the selected streams" aria-describedby="appliance-update-action-status" data-appliance-update-action data-appliance-update-install-action {{ 'disabled' if not appliance_update_install_allowed else '' }}>
             <svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
             <span>Install updates</span>
           </button>
@@ -186,6 +186,7 @@
         {% for stream in update_streams %}
           {% set stream_checked = stream.id in selected_update_stream_ids and stream.source_sync_ready %}
           {% set stream_availability = stream.availability %}
+          {% if stream.install_selection_disabled and stream.source_sync_ready %}<input type="hidden" name="current_check_streams" value="{{ stream.id }}" data-appliance-update-current-stream>{% endif %}
           <div
             class="apply-unit-card update-stream-card {{ 'repository-setup-required' if not stream.source_sync_ready else '' }}"
             data-appliance-update-stream-card="{{ stream.id }}"
@@ -197,9 +198,9 @@
                 type="checkbox"
                 name="selected_streams"
                 value="{{ stream.id }}"
-                {{ "checked" if stream_checked else "" }}
-                {{ "disabled" if not stream.source_sync_ready else "" }}
-                {% if not stream.source_sync_ready %}aria-describedby="appliance-update-source-reason-{{ stream.id }}"{% endif %}
+                {{ "checked" if stream_checked and not stream.install_selection_disabled else "" }}
+                {{ "disabled" if not stream.source_sync_ready or stream.install_selection_disabled else "" }}
+                {% if not stream.source_sync_ready %}aria-describedby="appliance-update-source-reason-{{ stream.id }}"{% elif stream.install_selection_disabled %}aria-describedby="appliance-update-stream-summary-{{ stream.id }}"{% endif %}
                 data-appliance-update-source-sync-required="{{ 'true' if stream.source_sync_required else 'false' }}"
                 data-appliance-update-source-sync-ready="{{ 'true' if stream.source_sync_ready else 'false' }}"
                 data-appliance-update-source-kind="{{ stream.source_kind }}"
@@ -241,7 +242,7 @@
               {% elif stream_availability.confirmed %}
                 <span class="status-pill {{ 'warn' if stream_availability.confirmed.update_available else 'good' }}" data-appliance-update-stream-pill>{{ 'Update available' if stream_availability.confirmed.update_available else 'Up to date' }}</span>
                 <strong data-appliance-update-stream-state>{{ stream_availability.confirmed.current or 'Current state' }} → {{ stream_availability.confirmed.target or 'Current target' }}</strong>
-                <small data-appliance-update-stream-summary>{{ stream_availability.confirmed.summary or 'The latest successful check completed.' }}</small>
+                <small id="appliance-update-stream-summary-{{ stream.id }}" data-appliance-update-stream-summary>{% if stream.install_selection_disabled %}Up to date. Check for updates again to refresh availability.{% else %}{{ stream_availability.confirmed.summary or 'The latest successful check completed.' }}{% endif %}</small>
                 {% if stream_availability.confirmed.release_notes_url %}<a class="text-link" href="{{ stream_availability.confirmed.release_notes_url }}" target="_blank" rel="noopener noreferrer" data-appliance-update-release-notes>Release notes</a>{% endif %}
                 {% if stream_availability.confirmed.changes %}
                   <details class="update-stream-changes" data-appliance-update-stream-changes>

@@ -116,6 +116,7 @@ function availabilityIndicatorScenario() {
     fetch: () => Promise.resolve(fetchResponse),
     HTMLAnchorElement,
     HTMLElement,
+    HTMLFormElement,
     HTMLTemplateElement,
     CSS: { escape: (value) => String(value) },
     URL,
@@ -126,6 +127,9 @@ function availabilityIndicatorScenario() {
      let atlasoUpdateAvailabilityRequestSequence = 0;
      function updateApplianceUpdateResultSummary() {}
      function updateApplianceUpdateActions() {}
+     ${functionSource("applianceUpdateStreamIsCurrent")}
+     ${functionSource("updateApplianceUpdateStreamSelection")}
+     ${functionSource("syncApplianceUpdateCurrentStreamFields")}
      ${functionSource("createApplianceUpdateAvailabilityIndicator")}
      ${functionSource("validApplianceUpdateAvailabilityPayload")}
      ${functionSource("renderApplianceUpdateAvailability")}
@@ -219,6 +223,7 @@ function scenario({ streams, inputs }) {
      function taskStatusActive(status) { return status === "pending" || status === "running"; }
      function setApplianceUpdateSourceSyncDisabled() {}
      function updateApplianceUpdateResultSummary() {}
+     ${functionSource("applianceUpdateStreamIsCurrent")}
      ${functionSource("selectedUnsynchronizedUpdateStreams")}
      ${functionSource("selectedApplianceUpdateStreamIds")}
      ${functionSource("availabilityStream")}
@@ -334,6 +339,107 @@ test("availability rendering creates, updates, and removes exactly one positive 
 
   scenario.context.render({ available: false, affected_stream_count: 0, streams: [] });
   assert.equal(scenario.indicator, null);
+});
+
+test("current streams are disabled for installs and become selectable after a fresh update is found", () => {
+  const context = vm.createContext({ HTMLElement });
+  vm.runInContext(
+    `${functionSource("applianceUpdateStreamIsCurrent")}
+     ${functionSource("updateApplianceUpdateStreamSelection")}
+     globalThis.isCurrent = applianceUpdateStreamIsCurrent;
+     globalThis.updateSelection = updateApplianceUpdateStreamSelection;`,
+    context,
+  );
+  const input = new HTMLInputElement();
+  input.value = "atlaso_release";
+  input.checked = true;
+  const summary = new HTMLElement();
+  summary.id = "appliance-update-stream-summary-atlaso_release";
+  const current = {
+    id: "atlaso_release",
+    stale: false,
+    check_required: false,
+    source_sync: { ready: true },
+    last_attempt: { success: true, state: "up_to_date" },
+    confirmed: { update_available: false },
+  };
+  assert.equal(context.isCurrent(current), true);
+  context.updateSelection(input, current, true, summary);
+  assert.equal(input.disabled, true);
+  assert.equal(input.checked, false);
+  assert.equal(input.getAttribute("aria-describedby"), summary.id);
+
+  const available = {
+    ...current,
+    last_attempt: { success: true, state: "available" },
+    confirmed: { update_available: true },
+  };
+  context.updateSelection(input, available, true, summary);
+  assert.equal(input.disabled, false);
+  assert.equal(input.checked, false);
+  assert.equal(input.getAttribute("aria-describedby"), null);
+
+  const failed = { ...current, last_attempt: { success: false, state: "failed" } };
+  context.updateSelection(input, failed, true, summary);
+  assert.equal(input.disabled, false);
+
+  const stale = { ...current, stale: true };
+  context.updateSelection(input, stale, true, summary);
+  assert.equal(input.disabled, false);
+});
+
+test("live availability adds and removes current stream form fields without duplicates", () => {
+  const current = {
+    id: "atlaso_release",
+    stale: false,
+    check_required: false,
+    source_sync: { ready: true },
+    last_attempt: { success: true, state: "up_to_date" },
+    confirmed: { update_available: false },
+  };
+  class Form extends HTMLFormElement {
+    querySelectorAll(selector) {
+      return selector === "[data-appliance-update-current-stream]"
+        ? this.inputs.filter((input) => input.dataset.applianceUpdateCurrentStream !== undefined)
+        : this.inputs;
+    }
+
+    append(input) { this.inputs.push(input); }
+  }
+  class HiddenInput extends HTMLInputElement {
+    remove() {
+      form.inputs = form.inputs.filter((input) => input !== this);
+    }
+  }
+  const form = new Form([]);
+  const context = vm.createContext({
+    document: {
+      querySelector: (selector) => selector === "[data-appliance-update-submit-form]" ? form : null,
+      createElement: () => new HiddenInput(),
+    },
+    HTMLFormElement: Form,
+    Set,
+  });
+  vm.runInContext(
+    `let atlasoUpdateAvailability = { streams: ${JSON.stringify([current])} };
+     ${functionSource("applianceUpdateStreamIsCurrent")}
+     ${functionSource("syncApplianceUpdateCurrentStreamFields")}
+     globalThis.sync = syncApplianceUpdateCurrentStreamFields;
+     globalThis.setStreams = (streams) => { atlasoUpdateAvailability = { streams }; };`,
+    context,
+  );
+
+  context.sync();
+  context.sync();
+  assert.deepEqual(form.inputs.map((input) => [input.name, input.value]), [["current_check_streams", "atlaso_release"]]);
+
+  context.setStreams([{ ...current, last_attempt: { success: true, state: "available" }, confirmed: { update_available: true } }]);
+  context.sync();
+  assert.equal(form.inputs.length, 0);
+
+  context.setStreams([current]);
+  context.sync();
+  assert.deepEqual(form.inputs.map((input) => [input.name, input.value]), [["current_check_streams", "atlaso_release"]]);
 });
 
 test("validated polling creates, updates, and removes the positive indicator", async () => {

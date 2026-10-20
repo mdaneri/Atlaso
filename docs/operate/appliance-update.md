@@ -293,7 +293,9 @@ evidence** rail card
 reports whether durable updater evidence is available and opens the full JSON through the shared preview modal, matching
 Validation instead of rendering unbounded output inline.
 
-**Check for updates** is enabled whenever at least one ready stream is selected and no Appliance Update task is active.
+After a successful current check confirms a ready stream is up to date, its selection is unchecked and disabled until a
+later check reports an update, a failed or stale result requires review, or its configuration changes. **Check for
+updates** remains available for current streams and rechecks them even when every ready stream is up to date.
 **Install updates** additionally requires every selected stream's latest attempt to be a successful, non-stale check,
 at least one selected stream to have a confirmed update, and all installation prerequisites to be valid. The exact
 disabled reason is displayed beside the actions, and the server enforces the same gate for manual submissions. If no

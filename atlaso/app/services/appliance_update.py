@@ -402,6 +402,20 @@ def update_availability_summary(
     }
 
 
+def update_stream_is_current(row: dict[str, Any]) -> bool:
+    """Return whether a stream has a fresh successful up-to-date check."""
+    attempt = row.get("last_attempt")
+    confirmed = row.get("confirmed")
+    return bool(
+        not row.get("stale")
+        and isinstance(attempt, dict)
+        and attempt.get("success") is True
+        and attempt.get("state") == "up_to_date"
+        and isinstance(confirmed, dict)
+        and confirmed.get("update_available") is False
+    )
+
+
 def manual_install_gate(
     summary: dict[str, Any], selected_streams: list[str] | tuple[str, ...]
 ) -> tuple[bool, str]:
