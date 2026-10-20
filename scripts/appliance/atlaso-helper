@@ -20200,6 +20200,11 @@ def _parse_update_diagnostic_marker(
     marker_line: str | None = None
 
     def without_marker(value: str) -> str:
+        """Remove marker lines from one captured output stream.
+
+        Args:
+            value: Captured standard-output or standard-error text.
+        """
         nonlocal marker_line
         kept: list[str] = []
         for line in value.splitlines():

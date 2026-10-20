@@ -23,14 +23,30 @@ def helper():
 
 
 def decode_command_script(helper, command: list[str]) -> str:
-    """Decode the generated UTF-16LE PowerShell command for stage assertions."""
+    """Decode the generated UTF-16LE PowerShell command for stage assertions.
+
+    Args:
+        helper: Loaded appliance helper module.
+        command: Command arguments containing an encoded PowerShell script.
+    """
     encoded = command[-1]
     return base64.b64decode(encoded).decode("utf-16-le")
 
 
 def test_diagnostic_marker_is_strictly_projected_and_malformed_data_is_generic(helper, monkeypatch):
-    """Never copy marker-injected exception or URL text into typed diagnostics."""
+    """Never copy marker-injected exception or URL text into typed diagnostics.
+
+    Args:
+        helper: Loaded appliance helper module.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
     def run(command, *, env=None):
+        """Return malformed marker data as if from the command runner.
+
+        Args:
+            command: Command arguments passed to the runner.
+            env: Optional environment supplied to the runner.
+        """
         return subprocess.CompletedProcess(
             command,
             1,
@@ -65,7 +81,13 @@ def test_diagnostic_marker_is_strictly_projected_and_malformed_data_is_generic(h
     ],
 )
 def test_valid_marker_accepts_only_fixed_reason_and_bounded_status(helper, reason, status):
-    """Project only the fixed diagnostic schema and bounded HTTP status."""
+    """Project only the fixed diagnostic schema and bounded HTTP status.
+
+    Args:
+        helper: Loaded appliance helper module.
+        reason: Expected fixed diagnostic reason.
+        status: Expected HTTP status, or ``None`` when absent.
+    """
     marker = json.dumps(
         {"stage": "repository_probe", "reason": reason, "http_status": status},
         separators=(",", ":"),
@@ -92,7 +114,13 @@ def test_valid_marker_accepts_only_fixed_reason_and_bounded_status(helper, reaso
     ],
 )
 def test_inconsistent_http_marker_falls_back_to_generic_failure(helper, reason, status):
-    """Reject reason/status combinations the typed event schema cannot represent."""
+    """Reject reason/status combinations the typed event schema cannot represent.
+
+    Args:
+        helper: Loaded appliance helper module.
+        reason: Diagnostic reason paired with a deliberately inconsistent status.
+        status: HTTP status that conflicts with the reason.
+    """
     marker = json.dumps(
         {"stage": "repository_probe", "reason": reason, "http_status": status},
         separators=(",", ":"),
@@ -111,7 +139,11 @@ def test_inconsistent_http_marker_falls_back_to_generic_failure(helper, reason, 
 
 
 def test_repository_sync_marks_registration_and_probe_stages(helper):
-    """Put explicit stage transitions before repository mutation and probing."""
+    """Put explicit stage transitions before repository mutation and probing.
+
+    Args:
+        helper: Loaded appliance helper module.
+    """
     script = helper._powershell_update_diagnostic_script(
         helper._powershell_repository_sync_script(
             "TestRepo", "https://packages.example.invalid/feed", "Untrusted"
@@ -129,10 +161,21 @@ def test_repository_sync_marks_registration_and_probe_stages(helper):
 
 
 def test_check_and_install_scripts_mark_each_meaningful_stage(helper, monkeypatch):
-    """Keep module discovery, installation, import, and CEIP stages distinct."""
+    """Keep module discovery, installation, import, and CEIP stages distinct.
+
+    Args:
+        helper: Loaded appliance helper module.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
     captured: list[str] = []
 
     def capture(command, **_kwargs):
+        """Capture generated commands and return a successful stub result.
+
+        Args:
+            command: Command arguments passed to the helper runner.
+            **_kwargs: Additional runner keyword arguments.
+        """
         if "-EncodedCommand" in command:
             captured.append(decode_command_script(helper, command))
         return {
@@ -206,7 +249,17 @@ def test_check_and_install_scripts_mark_each_meaningful_stage(helper, monkeypatc
 def test_sync_uses_powershell_result_without_python_dns_preflight(
     helper, monkeypatch, tmp_path, returncode, reason, expected_status, sync_status
 ):
-    """Trust the PowerShell client result and never preflight with Python DNS."""
+    """Trust the PowerShell client result and never preflight with Python DNS.
+
+    Args:
+        helper: Loaded appliance helper module.
+        monkeypatch: Pytest monkeypatch fixture.
+        tmp_path: Isolated directory for source-state files.
+        returncode: Stubbed PowerShell client exit code.
+        reason: Typed diagnostic reason returned by the client.
+        expected_status: Expected HTTP status, or ``None`` when absent.
+        sync_status: Expected synchronization outcome.
+    """
     source_state = tmp_path / "source-state.json"
     monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", source_state)
     monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", tmp_path / "managed-photon.repo")
@@ -214,6 +267,12 @@ def test_sync_uses_powershell_result_without_python_dns_preflight(
     monkeypatch.setattr(helper, "_privileged_powershell_environment", lambda: {"PATH": str(tmp_path)})
 
     def fail_lookup(*_args, **_kwargs):
+        """Fail if the sync path attempts Python-side DNS resolution.
+
+        Args:
+            *_args: Positional resolver arguments.
+            **_kwargs: Keyword resolver arguments.
+        """
         raise AssertionError("Python DNS preflight must not run")
 
     monkeypatch.setattr(helper.socket, "getaddrinfo", fail_lookup)
@@ -223,6 +282,12 @@ def test_sync_uses_powershell_result_without_python_dns_preflight(
     )
 
     def run(command, *, env=None):
+        """Return the configured PowerShell client result.
+
+        Args:
+            command: Command arguments passed to the runner.
+            env: Optional environment supplied to the runner.
+        """
         return subprocess.CompletedProcess(
             command,
             returncode,
@@ -300,7 +365,14 @@ def test_sync_uses_powershell_result_without_python_dns_preflight(
     ],
 )
 def test_local_pwsh_exception_emits_only_typed_diagnostic(helper, exception_expression, reason, status):
-    """Run local failing scripts with inner exceptions, secret bait, and no network."""
+    """Run local failing scripts with inner exceptions, secret bait, and no network.
+
+    Args:
+        helper: Loaded appliance helper module.
+        exception_expression: PowerShell expression that throws the test exception.
+        reason: Expected fixed diagnostic reason.
+        status: Expected HTTP status, or ``None`` when absent.
+    """
     pwsh = shutil.which("pwsh")
     assert pwsh is not None
     wrapped = helper._powershell_update_diagnostic_script(
@@ -321,7 +393,11 @@ def test_local_pwsh_exception_emits_only_typed_diagnostic(helper, exception_expr
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is not installed")
 def test_local_pwsh_success_preserves_existing_json_stdout(helper):
-    """Keep a successful module result parseable while consuming the safe marker."""
+    """Keep a successful module result parseable while consuming the safe marker.
+
+    Args:
+        helper: Loaded appliance helper module.
+    """
     pwsh = shutil.which("pwsh")
     assert pwsh is not None
     wrapped = helper._powershell_update_diagnostic_script(
