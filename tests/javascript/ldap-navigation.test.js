@@ -32,6 +32,72 @@ function functionSource(name) {
 }
 
 const context = vm.createContext({});
+test("LDAP grids resize to the viewport and clear desktop sizing when hidden or narrow", () => {
+  class Element {
+    constructor(top) {
+      this.top = top;
+      this.width = 900;
+      this.hidden = false;
+      this.isConnected = true;
+      this.style = { height: "" };
+    }
+    closest() { return this.hidden ? {} : null; }
+    getBoundingClientRect() { return { top: this.top, width: this.width }; }
+    get offsetParent() { return this.hidden ? null : {}; }
+    querySelector() { return {}; }
+  }
+  class Document {}
+  const users = new Element(200);
+  const groups = new Element(200);
+  groups.hidden = true;
+  const document = new Document();
+  document.querySelectorAll = () => [users, groups];
+  document.querySelector = () => ({ getBoundingClientRect: () => ({ height: 30 }) });
+  const tables = new WeakMap([[users, { redraw() {} }], [groups, { redraw() {} }]]);
+  const window = { innerWidth: 1440, innerHeight: 1000, requestAnimationFrame: (callback) => callback() };
+  const state = vm.createContext({ HTMLElement: Element, Document, document, window, atlasoLdapDirectoryTables: tables });
+  vm.runInContext(["dnsRecordsGridHeight", "resizeDnsRecordsTableElement", "redrawLdapDirectoryTables"].map(functionSource).join("\n"), state);
+  state.redrawLdapDirectoryTables();
+  assert.equal(users.style.height, "746px");
+  assert.equal(groups.style.height, "");
+  users.hidden = true;
+  groups.hidden = false;
+  const activePanel = new Element(0);
+  activePanel.closest = () => document;
+  activePanel.querySelectorAll = () => [groups];
+  state.redrawLdapDirectoryTables(activePanel);
+  assert.equal(users.style.height, "");
+  assert.equal(groups.style.height, "746px");
+  window.innerWidth = 900;
+  state.redrawLdapDirectoryTables();
+  assert.equal(groups.style.height, "");
+  window.innerWidth = 1440;
+  groups.width = 0;
+  state.redrawLdapDirectoryTables();
+  assert.equal(groups.style.height, "");
+});
+
+test("LDAP creation enables users and groups while editing preserves disabled state", () => {
+  const state = vm.createContext({ CSS: { escape: (value) => value } });
+  vm.runInContext(
+    `${functionSource("newLdapUserRow")}\n${functionSource("newLdapGroupRow")}\n${functionSource("populateAtlasoWizardForm")}`,
+    state,
+  );
+  for (const factory of [state.newLdapUserRow, state.newLdapGroupRow]) {
+    const control = { name: "enabled", type: "checkbox", checked: false };
+    const elements = [control];
+    elements.namedItem = () => null;
+    const form = { elements, querySelectorAll: () => [control] };
+    const defaults = factory("2");
+    state.populateAtlasoWizardForm(form, {}, { defaults });
+    assert.equal(control.checked, true);
+    state.populateAtlasoWizardForm(form, { id: 4, enabled: false }, { defaults });
+    assert.equal(control.checked, false);
+    state.populateAtlasoWizardForm(form, {}, { defaults });
+    assert.equal(control.checked, true);
+  }
+});
+
 vm.runInContext(
   `${functionSource("createLdapOrganizationLoadCoordinator")}\n` +
     `${functionSource("shouldSuppressLdapOrganizationHistory")}\n` +
@@ -145,4 +211,73 @@ test("queryless LDAP history supersedes a pending organization selection", async
   assert.equal(await querylessHistory, true);
   assert.equal(state.rendered[0].selection.organizationId, "organization-a");
   assert.equal(state.rendered[0].selection.options.history, false);
+});
+
+test("organization swaps replace the rotation target and bind the imported launcher", () => {
+  const nodes = new Map();
+  let onData;
+  const openedActions = [];
+  class Element {
+    constructor(id) { this.id = id; this.dataset = {}; this.events = {}; }
+    replaceWith(next) { nodes.set(this.id, next); }
+    addEventListener(name, callback) { this.events[name] = callback; }
+    setAttribute() {}
+    removeAttribute() {}
+  }
+  class Dialog extends Element {}
+  class Form extends Element {}
+  class Anchor extends Element {}
+  function organization(id) {
+    const panel = new Element("ldap-organization-current");
+    panel.launcher = new Element("rotation-launcher");
+    const dialog = new Dialog("ldap-bind-rotation-dialog");
+    dialog.form = new Form("rotation-form");
+    dialog.form.action = `/ui/management/ldap/organizations/${id}/bind-credential/rotate`;
+    return { panel, dialog };
+  }
+  const link = new Anchor("organization-link");
+  link.dataset.ldapOrganizationId = "1";
+  link.href = "https://atlaso.invalid/ui/management/ldap?organization_id=1";
+  link.classList = { toggle() {} };
+  const tabs = new Element("tabs");
+  tabs.querySelector = () => link;
+  tabs.querySelectorAll = () => [link];
+  const initial = organization("1");
+  nodes.set(initial.panel.id, initial.panel);
+  nodes.set(initial.dialog.id, initial.dialog);
+  const document = {
+    querySelector: (selector) => selector === "[data-ldap-organization-tabs]" ? tabs : nodes.get("ldap-bind-rotation-dialog").form,
+    querySelectorAll: () => [nodes.get("ldap-organization-current").launcher],
+    getElementById: (id) => nodes.get(id),
+    importNode: (node) => node,
+  };
+  const browser = {
+    location: { href: link.href, pathname: "/ui/management/ldap" },
+    localStorage: { getItem: () => null, setItem() {} },
+    history: { pushState() {}, replaceState() {} },
+    addEventListener() {},
+    AtlasoUiPatterns: { createWizard: ({ form }) => ({ open: () => openedActions.push(form.action) }) },
+  };
+  const sandbox = vm.createContext({
+    document, window: browser, URL,
+    HTMLElement: Element, HTMLDialogElement: Dialog, HTMLFormElement: Form, HTMLAnchorElement: Anchor,
+    LDAP_ORGANIZATION_SELECTION_KEY: "selection",
+    initializeLdapSettingsStatus() {}, initializeTabs() {}, initializeLdapDirectoryTables() {},
+    initializeLdapPasswordModal() {}, initializeConfirmationModals() {},
+    initializeLdapBindCredentialFields() {}, restoreLdapBindWizardError() {},
+    managementUiPath: (path) => `/ui/management${path}`,
+    createLdapOrganizationLoadCoordinator: (config) => { onData = config.onData; return {}; },
+  });
+  vm.runInContext(functionSource("initializeLdapBindRotationWizard") + "\n" + functionSource("initializeLdapPageState"), sandbox);
+  sandbox.initializeLdapPageState();
+  for (const id of ["2", "3"]) {
+    const next = organization(id);
+    const nextDocument = { getElementById: (key) => key === next.panel.id ? next.panel : key === next.dialog.id ? next.dialog : null };
+    onData(nextDocument, { link, options: { history: false }, organizationId: id });
+    assert.equal(nodes.get("ldap-bind-rotation-dialog"), next.dialog);
+    let submissionPrevented = false;
+    next.panel.launcher.events.click({ preventDefault() { submissionPrevented = true; } });
+    assert.equal(submissionPrevented, true);
+    assert.equal(openedActions.at(-1), `/ui/management/ldap/organizations/${id}/bind-credential/rotate`);
+  }
 });
