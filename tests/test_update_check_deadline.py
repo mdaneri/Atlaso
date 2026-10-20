@@ -192,7 +192,8 @@ def test_unverified_check_retains_parent_child_and_blocks_queue(client, monkeypa
     monkeypatch.setattr(helper, "_process_start_identity", lambda pid: "")
     monkeypatch.setattr(helper, "_run", lambda command, **kwargs: subprocess.CompletedProcess(command, 3, "inactive\n", ""))
     monkeypatch.setattr(worker, "_release_finalizer", lambda: {})
-    monkeypatch.setattr(worker, "_quiesce_appliance_update_action", lambda job, stream: helper._handle_appliance_update("quiesce-action", [job, stream]) == 0)
+    # Exercise quiescence failure after admission; native tests cover the /run lock.
+    monkeypatch.setattr(worker, "_quiesce_appliance_update_action", lambda job, stream: helper._handle_appliance_update_locked("quiesce-action", [job, stream]) == 0)
     remove = helper.shutil.rmtree
 
     def deny_cleanup(path):

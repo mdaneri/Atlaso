@@ -1375,9 +1375,35 @@ if [ ! -x "$python" ]; then
     exit 2
 fi
 
+# Lock-capable installed helpers share this inode for the whole update action.
+# Older helpers must refuse deployment rather than silently ignore the lock.
+if ! /opt/atlaso/bin/atlaso-helper appliance-update wheel-deploy-lock-v1 --real >/dev/null; then
+    echo "Wheel deployment refused: the installed helper lacks deployment locking; create a fresh bootstrap VM from a lock-capable image." >&2
+    exit 2
+fi
+deployment_lock=/run/atlaso-appliance-mutation.lock
+if [ -L "$deployment_lock" ] || { [ -e "$deployment_lock" ] && [ ! -f "$deployment_lock" ]; }; then
+    echo "Wheel deployment refused: deployment lock is unsafe." >&2
+    exit 2
+fi
+(umask 077; : >>"$deployment_lock")
+exec 9<>"$deployment_lock"
+if [ "$(stat -Lc '%u:%g:%a:%h' /proc/self/fd/9)" != '0:0:600:1' ] || \
+    [ "$(stat -Lc '%d:%i' /proc/self/fd/9)" != "$(stat -c '%d:%i' "$deployment_lock")" ] || \
+    ! flock --exclusive --nonblock 9; then
+    echo "Wheel deployment refused: deployment lock is unsafe or Appliance Update is active." >&2
+    exit 2
+fi
+# Keep fd 9 open through all deployment work and verify capability again under
+# lock: an update may have replaced the installed helper before acquisition.
+if ! /opt/atlaso/bin/atlaso-helper appliance-update wheel-deploy-lock-v1 --real >/dev/null; then
+    echo "Wheel deployment refused: the installed helper no longer supports deployment locking." >&2
+    exit 2
+fi
+
 # Refuse before RPM, pip, service, helper, database, or trust-store mutation.
 # Same-version wheels can also differ from the retained signed bundle.
-for update_guard in /run/atlaso-update-maintenance /run/atlaso-appliance-update-status /run/atlaso-release-restart-gate /var/lib/atlaso/apply/appliance-update/finalizer-status.json; do
+for update_guard in /run/atlaso-update-maintenance /run/atlaso-appliance-update-status /run/atlaso-release-restart-gate /var/lib/atlaso/apply/appliance-update/finalizer-status.json /var/lib/atlaso-privileged/appliance-update-status/status.json; do
     if [ -e "$update_guard" ] || [ -L "$update_guard" ]; then
         echo "Wheel deployment refused: reconcile retained Appliance Update state through its supported recovery workflow; preserve maintenance and finalizer evidence." >&2
         exit 2
@@ -1409,7 +1435,8 @@ try:
         if (environment.name != ".venv" or release.parent != home / "releases" or
                 re.fullmatch(r"bootstrap-[0-9]+\.[0-9]+\.[0-9]+", release.name) is None or
                 not current.is_symlink() or current.resolve(strict=True) != release or
-                not compatibility.is_symlink()):
+                not compatibility.is_symlink() or
+                compatibility.readlink() not in (Path("current/.venv"), home / "current/.venv")):
             raise ValueError("destination is not a canonical bootstrap environment")
         metadata = json.loads((release / "bundle-metadata.json").read_text(encoding="utf-8"))
         if (not isinstance(metadata, dict) or metadata.get("bootstrap") is not True or

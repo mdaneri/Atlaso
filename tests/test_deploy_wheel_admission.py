@@ -31,7 +31,7 @@ def _layout(home: Path, name: str = "bootstrap-0.9.426") -> Path:
         "version": name.removeprefix("bootstrap-"),
     }), encoding="utf-8")
     (home / "current").symlink_to(release, target_is_directory=True)
-    (home / ".venv").symlink_to(home / "current" / ".venv", target_is_directory=True)
+    (home / ".venv").symlink_to(Path("current") / ".venv", target_is_directory=True)
     return release
 
 
@@ -44,7 +44,7 @@ def _admit(home: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-I", "-B", "-S", "-c",
          ADMISSION.replace('Path("/opt/atlaso")', f"Path({str(home)!r})")],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, check=False, timeout=30,
     )
 
 
@@ -90,7 +90,7 @@ def test_signed_release_is_refused_even_without_valid_receipt(tmp_path, receipt)
     assert (home / "current").resolve() == release
 
 
-@pytest.mark.parametrize("fault", ["receipt", "dangling-receipt", "metadata", "version", "current", "external"])
+@pytest.mark.parametrize("fault", ["receipt", "dangling-receipt", "metadata", "version", "current", "external", "direct-link"])
 def test_ambiguous_bootstrap_is_refused(tmp_path, fault):
     """Reject signed receipts, malformed metadata and inconsistent link destinations.
 
@@ -113,6 +113,9 @@ def test_ambiguous_bootstrap_is_refused(tmp_path, fault):
     elif fault == "current":
         (home / ".venv").unlink()
         (home / ".venv").mkdir()
+    elif fault == "direct-link":
+        (home / ".venv").unlink()
+        (home / ".venv").symlink_to(release / ".venv", target_is_directory=True)
     else:
         (home / ".venv").unlink()
         outside = tmp_path / "external"
@@ -123,10 +126,10 @@ def test_ambiguous_bootstrap_is_refused(tmp_path, fault):
     assert "Wheel deployment refused" in result.stderr
 
 
-@pytest.mark.parametrize("guard", ["signed", "maintenance", "status", "restart", "finalizer"])
+@pytest.mark.parametrize("guard", ["signed", "maintenance", "status", "restart", "finalizer", "durable-status"])
 @pytest.mark.parametrize("wheel_version", ["0.9.425", "0.9.426", "0.9.427"])
 def test_remote_shell_refuses_before_any_mutation(tmp_path, guard, wheel_version):
-    """Run the real shell with mutation tripwires and a relocated installation.
+    """Run the admission stage with mutation tripwires and a relocated installation.
 
     Args:
         tmp_path: Receipted test resource root.
@@ -147,10 +150,16 @@ def test_remote_shell_refuses_before_any_mutation(tmp_path, guard, wheel_version
         "status": "/run/atlaso-appliance-update-status",
         "restart": "/run/atlaso-release-restart-gate",
         "finalizer": "/var/lib/atlaso/apply/appliance-update/finalizer-status.json",
+        "durable-status": "/var/lib/atlaso-privileged/appliance-update-status/status.json",
     }
     if guard != "signed":
         (markers / guard).write_text("retained", encoding="utf-8")
     script = SOURCE.split("$deployScript = @'\n", 1)[1].split("\n'@", 1)[0]
+    # Native POSIX locking is exercised separately against the actual kernel in
+    # test_deploy_wheel_locking.py. Git Bash lacks flock and /proc/self/fd.
+    lock_start = script.index("# Lock-capable installed helpers")
+    lock_end = script.index("# Refuse before RPM")
+    script = script[:lock_start] + script[lock_end:]
     script = script.replace("/opt/atlaso", home.as_posix())
     script = script.replace('python="$venv/bin/python"', f'python="{Path(sys.executable).as_posix()}"', 1)
     for key, path in paths.items():
@@ -164,7 +173,7 @@ def test_remote_shell_refuses_before_any_mutation(tmp_path, guard, wheel_version
     result = subprocess.run(
         [shell, "-s", "--", f"atlaso-{wheel_version}-py3-none-any.whl", "60", "2",
          "", "", "", "", "", "web", "worker", "web-dropin", "nginx-dropin", "dependencies", "keys"],
-        input=script, capture_output=True, text=True, check=False,
+        input=script, capture_output=True, text=True, check=False, timeout=30,
         env={**os.environ, "MSYS_NO_PATHCONV": "1"},
     )
     assert result.returncode == 2, result.stderr

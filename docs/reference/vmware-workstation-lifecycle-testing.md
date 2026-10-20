@@ -274,6 +274,15 @@ unrecognized or inconsistent release links, invalid bootstrap metadata, and reta
 status, restart-gate, or finalizer evidence. This applies to both upgrades and downgrades and to same-version wheels:
 matching version text does not prove matching signed bytes. Both SSH authentication paths use this admission.
 
+The installed helper must support `appliance-update wheel-deploy-lock-v1 --real` before deployment can proceed.
+Older helpers fail closed: create a fresh disposable bootstrap VM from an image containing the lock-capable helper;
+do not manually replace its helper to bypass admission. Deployment holds an exclusive lock on
+`/run/atlaso-appliance-mutation.lock` through installation and service verification. Appliance Update helpers take shared
+locks on the same inode before mutation, including status publication; an active operation refuses conflicting work.
+Shared update locks permit the updater's own recovery and worker handoff helpers to run together. Ordinary startup
+guards with no update evidence remain available to deployment's service restarts. Never delete or replace the lock file
+to clear a conflict: wait for the owning operation to finish and retry admission.
+
 Use signed Appliance Update to change a signed release. For wheel testing, create a separate disposable bootstrap VM
 through the [receipt-bound creation workflow](#normal-test-vm-creation-ownership). A refusal preserves the original
 release links, receipt, package environment, database, and recovery state. It does not reset an already damaged signed
