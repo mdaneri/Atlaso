@@ -6,6 +6,8 @@ import hashlib
 import re
 import socket
 import ssl
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
@@ -20,7 +22,7 @@ from atlaso.app.services.vsphere_key_providers import (
 
 VSPHERE_API_RELEASE = "9.1.0.0"
 _OBJECT_ID = re.compile(r"[A-Za-z0-9_.-]{1,100}\Z")
-_CLUSTER_ID = re.compile(r"[A-Za-z0-9_.:-]{1,160}\Z")
+_CLUSTER_ID = re.compile(r"[^\x00-\x1f\x7f]{1,160}\Z")
 
 
 class EnrollmentError(ValueError):
@@ -37,6 +39,14 @@ class DiscoveredClient:
     not_valid_after: str
     cluster_id: str
     vcenter_host: str
+
+
+@dataclass(frozen=True)
+class DiscoveredInventory:
+    """Display-only About name and the complete returned KMS cluster IDs."""
+
+    name: str
+    cluster_ids: tuple[str, ...]
 
 
 def vcenter_https_endpoint(uri: str) -> tuple[str, int]:
@@ -168,6 +178,110 @@ def _pinned_context(leaf: bytes) -> ssl.SSLContext:
     return context
 
 
+@contextmanager
+def _vcenter_session(
+    *, host: str, port: int, username: str, password: str,
+    confirmed_https_fingerprint: str,
+) -> Iterator[tuple[httpx.Client, str, dict]]:
+    """Open a bounded authenticated session only after checking the TLS pin.
+
+    Args:
+        host: Normalized vCenter endpoint.
+        port: HTTPS endpoint port.
+        username: Request-local account name.
+        password: Request-local password.
+        confirmed_https_fingerprint: Independently confirmed public TLS fingerprint.
+    """
+    leaf = vcenter_https_leaf(host, port=port)
+    if certificate_fingerprint(leaf) != normalize_https_fingerprint(confirmed_https_fingerprint):
+        raise EnrollmentError("The vCenter HTTPS fingerprint differs from the confirmed value.")
+    if not username or not password:
+        raise EnrollmentError("Enter a vCenter username and password.")
+    base = f"/sdk/vim25/{VSPHERE_API_RELEASE}"
+    api_host = f"[{host}]" if ":" in host else host
+    try:
+        with httpx.Client(
+            base_url=f"https://{api_host}:{port}", verify=_pinned_context(leaf),
+            follow_redirects=False, trust_env=False, timeout=10.0,
+        ) as client:
+            content = _json(client.get(f"{base}/ServiceInstance/ServiceInstance/content"))
+            if not isinstance(content, dict):
+                raise EnrollmentError("vCenter returned invalid service metadata.")
+            session_id = _reference(content, "sessionManager", "SessionManager")
+            _reference(content, "cryptoManager", "CryptoManagerKmip")
+            login = client.post(
+                f"{base}/SessionManager/{session_id}/Login",
+                json={"userName": username, "password": password},
+            )
+            if login.status_code != 200:
+                raise EnrollmentError("vCenter rejected the supplied credential.")
+            token = login.headers.get("vmware-api-session-id", "")
+            if not token or len(token) > 1024:
+                raise EnrollmentError("vCenter returned no valid API session.")
+            client.headers["vmware-api-session-id"] = token
+            try:
+                yield client, base, content
+            finally:
+                try:
+                    client.post(f"{base}/SessionManager/{session_id}/Logout")
+                except httpx.HTTPError:
+                    pass
+    except httpx.HTTPError as exc:
+        raise EnrollmentError("The authenticated vCenter KMIP discovery request failed.") from exc
+
+
+def discover_vcenter_inventory(
+    *, host: str, username: str, password: str,
+    confirmed_https_fingerprint: str, port: int = 443,
+) -> DiscoveredInventory:
+    """Read About metadata and all KMS cluster IDs without changing vCenter.
+
+    AboutInfo.name is the product display name, never an instance UUID or a
+    provider namespace. No management-type or status filters omit clusters.
+
+    Args:
+        host: vCenter hostname or address.
+        username: Request-local account name.
+        password: Password held only for the pinned session.
+        confirmed_https_fingerprint: Independently confirmed public TLS fingerprint.
+        port: Saved vCenter HTTPS port.
+    """
+    host = normalize_vcenter_hostname(host)
+    if not host:
+        raise EnrollmentError("Enter a vCenter hostname or address.")
+    with _vcenter_session(
+        host=host, port=port, username=username, password=password,
+        confirmed_https_fingerprint=confirmed_https_fingerprint,
+    ) as (client, base, content):
+        manager_id = _reference(content, "cryptoManager", "CryptoManagerKmip")
+        # Read About again after login so all returned inventory uses this session.
+        about_content = _json(client.get(f"{base}/ServiceInstance/ServiceInstance/content"))
+        about = about_content.get("about") if isinstance(about_content, dict) else None
+        name = about.get("name") if isinstance(about, dict) else None
+        if not isinstance(name, str) or not name.strip() or len(name) > 120:
+            raise EnrollmentError("vCenter returned no usable About product name.")
+        clusters = _json(client.post(
+            f"{base}/CryptoManagerKmip/{manager_id}/ListKmsClusters",
+            json={"includeKmsServers": False},
+        ))
+        if not isinstance(clusters, list):
+            raise EnrollmentError("vCenter returned invalid KMIP cluster data.")
+        ids = []
+        for item in clusters:
+            cluster = item.get("clusterId") if isinstance(item, dict) else None
+            cluster_id = cluster.get("id") if isinstance(cluster, dict) else None
+            if (
+                not isinstance(cluster_id, str)
+                or not cluster_id.strip()
+                or cluster_id != cluster_id.strip()
+                or not _CLUSTER_ID.fullmatch(cluster_id)
+                or cluster_id in ids
+            ):
+                raise EnrollmentError("vCenter returned invalid or ambiguous KMIP cluster IDs.")
+            ids.append(cluster_id)
+        return DiscoveredInventory(name=name.strip(), cluster_ids=tuple(ids))
+
+
 def discover_vcenter_client(
     *,
     host: str,
@@ -201,93 +315,53 @@ def discover_vcenter_client(
         raise EnrollmentError(
             "Enter a valid vCenter, Atlaso endpoint, and KMIP cluster ID."
         )
-    leaf = vcenter_https_leaf(host, port=port)
-    observed = certificate_fingerprint(leaf)
-    if observed != normalize_https_fingerprint(confirmed_https_fingerprint):
-        raise EnrollmentError(
-            "The vCenter HTTPS fingerprint differs from the confirmed value."
+    with _vcenter_session(
+        host=host, port=port, username=username, password=password,
+        confirmed_https_fingerprint=confirmed_https_fingerprint,
+    ) as (client, base, content):
+        manager_id = _reference(content, "cryptoManager", "CryptoManagerKmip")
+        clusters = _json(
+            client.post(
+                f"{base}/CryptoManagerKmip/{manager_id}/ListKmsClusters",
+                json={"includeKmsServers": True},
+            )
         )
-    if not username or not password:
-        raise EnrollmentError("Enter a vCenter username and password.")
-    base = f"/sdk/vim25/{VSPHERE_API_RELEASE}"
-    api_host = f"[{host}]" if ":" in host else host
-    try:
-        with httpx.Client(
-            base_url=f"https://{api_host}:{port}",
-            verify=_pinned_context(leaf),
-            follow_redirects=False,
-            trust_env=False,
-            timeout=10.0,
-        ) as client:
-            content = _json(
-                client.get(f"{base}/ServiceInstance/ServiceInstance/content")
+        if not isinstance(clusters, list):
+            raise EnrollmentError("vCenter returned invalid KMIP cluster data.")
+        matches = [
+            item
+            for item in clusters
+            if isinstance(item, dict)
+            and isinstance(item.get("clusterId"), dict)
+            and item["clusterId"].get("id") == cluster_id
+        ]
+        if len(matches) != 1:
+            raise EnrollmentError(
+                "The named KMIP cluster is missing or ambiguous in vCenter."
             )
-            if not isinstance(content, dict):
-                raise EnrollmentError("vCenter returned invalid service metadata.")
-            session_id = _reference(content, "sessionManager", "SessionManager")
-            manager_id = _reference(content, "cryptoManager", "CryptoManagerKmip")
-            login = client.post(
-                f"{base}/SessionManager/{session_id}/Login",
-                json={"userName": username, "password": password},
+        servers = matches[0].get("servers")
+        if (
+            not isinstance(servers, list)
+            or not servers
+            or any(
+                not isinstance(server, dict)
+                or str(server.get("address", "")).strip().casefold().rstrip(".")
+                != atlaso_host
+                or server.get("port") != atlaso_port
+                for server in servers
             )
-            if login.status_code != 200:
-                raise EnrollmentError("vCenter rejected the supplied credential.")
-            token = login.headers.get("vmware-api-session-id", "")
-            if not token or len(token) > 1024:
-                raise EnrollmentError("vCenter returned no valid API session.")
-            client.headers["vmware-api-session-id"] = token
-            try:
-                clusters = _json(
-                    client.post(
-                        f"{base}/CryptoManagerKmip/{manager_id}/ListKmsClusters",
-                        json={"includeKmsServers": True},
-                    )
-                )
-                if not isinstance(clusters, list):
-                    raise EnrollmentError("vCenter returned invalid KMIP cluster data.")
-                matches = [
-                    item
-                    for item in clusters
-                    if isinstance(item, dict)
-                    and isinstance(item.get("clusterId"), dict)
-                    and item["clusterId"].get("id") == cluster_id
-                ]
-                if len(matches) != 1:
-                    raise EnrollmentError(
-                        "The named KMIP cluster is missing or ambiguous in vCenter."
-                    )
-                servers = matches[0].get("servers")
-                if (
-                    not isinstance(servers, list)
-                    or not servers
-                    or any(
-                        not isinstance(server, dict)
-                        or str(server.get("address", "")).strip().casefold().rstrip(".")
-                        != atlaso_host
-                        or server.get("port") != atlaso_port
-                        for server in servers
-                    )
-                ):
-                    raise EnrollmentError(
-                        "The vCenter KMIP cluster does not point only to this Atlaso endpoint."
-                    )
-                certificate = _json(
-                    client.post(
-                        f"{base}/CryptoManagerKmip/{manager_id}/RetrieveClientCert",
-                        json={
-                            "cluster": {"_typeName": "KeyProviderId", "id": cluster_id}
-                        },
-                    )
-                )
-            finally:
-                try:
-                    client.post(f"{base}/SessionManager/{session_id}/Logout")
-                except httpx.HTTPError:
-                    pass
-    except httpx.HTTPError as exc:
-        raise EnrollmentError(
-            "The authenticated vCenter KMIP discovery request failed."
-        ) from exc
+        ):
+            raise EnrollmentError(
+                "The vCenter KMIP cluster does not point only to this Atlaso endpoint."
+            )
+        certificate = _json(
+            client.post(
+                f"{base}/CryptoManagerKmip/{manager_id}/RetrieveClientCert",
+                json={
+                    "cluster": {"_typeName": "KeyProviderId", "id": cluster_id}
+                },
+            )
+        )
     if not isinstance(certificate, str):
         raise EnrollmentError("vCenter returned no public KMIP client certificate.")
     try:

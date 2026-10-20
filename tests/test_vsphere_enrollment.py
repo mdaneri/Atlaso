@@ -38,16 +38,19 @@ def _client_certificate() -> str:
 
 class _FakeVcenter:
     def __init__(
-        self, certificate: str, *, endpoint: str = "kms.atlaso.example.test"
+        self, certificate: str, *, endpoint: str = "kms.atlaso.example.test",
+        cluster_id: str = "Atlaso-KMIP",
     ) -> None:
         """Initialize public identity and cluster responses for the fake vCenter.
 
         Args:
             certificate: Public certificate returned by the fake vCenter.
             endpoint: KMIP hostname registered in the fake cluster.
+            cluster_id: Exact cluster name returned by the fake inventory.
         """
         self.certificate = certificate
         self.endpoint = endpoint
+        self.cluster_id = cluster_id
         self.headers: dict[str, str] = {}
         self.calls: list[str] = []
 
@@ -99,14 +102,14 @@ class _FakeVcenter:
                 200,
                 json=[
                     {
-                        "clusterId": {"id": "Atlaso-KMIP"},
+                        "clusterId": {"id": self.cluster_id},
                         "servers": [{"address": self.endpoint, "port": 5696}],
                     }
                 ],
             )
         if path.endswith("/RetrieveClientCert"):
             assert json == {
-                "cluster": {"_typeName": "KeyProviderId", "id": "Atlaso-KMIP"}
+                "cluster": {"_typeName": "KeyProviderId", "id": self.cluster_id}
             }
             return httpx.Response(200, json=self.certificate)
         if path.endswith("/Logout"):
@@ -114,16 +117,163 @@ class _FakeVcenter:
         raise AssertionError(path)
 
 
+class _FakeInventoryVcenter:
+    def __init__(self, clusters: object) -> None:
+        self.clusters = clusters
+        self.headers: dict[str, str] = {}
+        self.calls: list[tuple[str, object]] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        pass
+
+    def get(self, path: str) -> httpx.Response:
+        self.calls.append((path, None))
+        return httpx.Response(
+            200,
+            json={
+                "sessionManager": {"type": "SessionManager", "value": "SessionManager"},
+                "cryptoManager": {"type": "CryptoManagerKmip", "value": "CryptoManager"},
+                "about": {
+                    "name": "vCenter Display Name",
+                    "instanceUuid": "stable-instance-uuid",
+                },
+            },
+        )
+
+    def post(self, path: str, *, json=None) -> httpx.Response:
+        self.calls.append((path, json))
+        if path.endswith("/Login"):
+            return httpx.Response(
+                200, json={}, headers={"vmware-api-session-id": "opaque-session"}
+            )
+        if path.endswith("/ListKmsClusters"):
+            assert self.headers["vmware-api-session-id"] == "opaque-session"
+            return httpx.Response(200, json=self.clusters)
+        if path.endswith("/Logout"):
+            return httpx.Response(204)
+        raise AssertionError(path)
+
+
+def _prepare_inventory_fake(monkeypatch, fake: _FakeInventoryVcenter) -> None:
+    monkeypatch.setattr(
+        enrollment, "vcenter_https_leaf", lambda _host, **_kwargs: b"test-https-leaf"
+    )
+    monkeypatch.setattr(enrollment, "_pinned_context", lambda _leaf: object())
+    monkeypatch.setattr(enrollment.httpx, "Client", lambda **_kwargs: fake)
+
+
+def _discover_inventory() -> enrollment.DiscoveredInventory:
+    return enrollment.discover_vcenter_inventory(
+        host="vcsa.example.test",
+        port=8443,
+        username="admin",
+        password="test-secret",
+        confirmed_https_fingerprint=enrollment.certificate_fingerprint(
+            b"test-https-leaf"
+        ),
+    )
+
+
+def test_inventory_returns_about_name_and_all_unfiltered_cluster_ids(monkeypatch) -> None:
+    clusters = [
+        {"clusterId": {"id": "Atlaso-KMIP"}, "managementType": "VC_MANAGED"},
+        {"clusterId": {"id": "External-KMIP"}, "managementType": "TRUSTED"},
+        {"clusterId": {"id": "Inactive-KMIP"}, "status": "INACTIVE"},
+        {"clusterId": {"id": "Cluster with spaces"}},
+    ]
+    fake = _FakeInventoryVcenter(clusters)
+    _prepare_inventory_fake(monkeypatch, fake)
+
+    result = _discover_inventory()
+
+    assert result == enrollment.DiscoveredInventory(
+        name="vCenter Display Name",
+        cluster_ids=("Atlaso-KMIP", "External-KMIP", "Inactive-KMIP", "Cluster with spaces"),
+    )
+    list_call = next(call for call in fake.calls if call[0].endswith("/ListKmsClusters"))
+    assert list_call[1] == {"includeKmsServers": False}
+    assert any(path.endswith("/Logout") for path, _ in fake.calls)
+
+
+def test_inventory_accepts_empty_cluster_inventory(monkeypatch) -> None:
+    fake = _FakeInventoryVcenter([])
+    _prepare_inventory_fake(monkeypatch, fake)
+
+    assert _discover_inventory().cluster_ids == ()
+
+
+@pytest.mark.parametrize(
+    "clusters",
+    [
+        {"clusterId": {"id": "not-a-list"}},
+        [{"clusterId": {"id": "valid"}}, {"clusterId": None}],
+        [{"clusterId": {"id": "bad\nid"}}],
+        [{"clusterId": {"id": " "}}],
+        [{"clusterId": {"id": "duplicate"}}, {"clusterId": {"id": "duplicate"}}],
+    ],
+)
+def test_inventory_rejects_malformed_or_ambiguous_clusters(monkeypatch, clusters) -> None:
+    fake = _FakeInventoryVcenter(clusters)
+    _prepare_inventory_fake(monkeypatch, fake)
+
+    with pytest.raises(enrollment.EnrollmentError, match="KMIP cluster"):
+        _discover_inventory()
+
+    assert any(path.endswith("/Logout") for path, _ in fake.calls)
+
+
+def test_inventory_rejects_vcenter_api_error_and_logs_out(monkeypatch) -> None:
+    fake = _FakeInventoryVcenter([])
+
+    def failing_post(path: str, *, json=None) -> httpx.Response:
+        if path.endswith("/ListKmsClusters"):
+            fake.calls.append((path, json))
+            return httpx.Response(403, json={"value": {"message": "denied"}})
+        return _FakeInventoryVcenter.post(fake, path, json=json)
+
+    fake.post = failing_post
+    _prepare_inventory_fake(monkeypatch, fake)
+
+    with pytest.raises(enrollment.EnrollmentError, match="discovery request failed"):
+        _discover_inventory()
+
+    assert any(path.endswith("/Logout") for path, _ in fake.calls)
+
+
+def test_inventory_fingerprint_mismatch_precedes_session_or_credentials(monkeypatch) -> None:
+    monkeypatch.setattr(
+        enrollment, "vcenter_https_leaf", lambda _host, **_kwargs: b"new-https-leaf"
+    )
+    monkeypatch.setattr(
+        enrollment,
+        "httpx",
+        type("NoHttpClient", (), {"Client": staticmethod(lambda **_kwargs: pytest.fail("authenticated"))}),
+    )
+
+    with pytest.raises(enrollment.EnrollmentError, match="fingerprint differs"):
+        enrollment.discover_vcenter_inventory(
+            host="vcsa.example.test",
+            username="admin",
+            password="test-secret",
+            confirmed_https_fingerprint=enrollment.certificate_fingerprint(b"old-https-leaf"),
+        )
+
+
+@pytest.mark.parametrize("cluster_id", ["Atlaso-KMIP", "Cluster with spaces"])
 def test_discovery_reads_only_registered_atlaso_cluster_and_logs_out(
-    monkeypatch,
+    monkeypatch, cluster_id,
 ) -> None:
     """Verify discovery checks the registered Atlaso endpoint and logs out.
 
     Args:
         monkeypatch: Fixture replacing vCenter network calls.
+        cluster_id: Exact discovered cluster identifier, including spaces.
     """
     pem = _client_certificate()
-    fake = _FakeVcenter(pem)
+    fake = _FakeVcenter(pem, cluster_id=cluster_id)
     monkeypatch.setattr(
         enrollment, "vcenter_https_leaf", lambda _host, **_kwargs: b"test-https-leaf"
     )
@@ -144,7 +294,7 @@ def test_discovery_reads_only_registered_atlaso_cluster_and_logs_out(
     result = enrollment.discover_vcenter_client(
         host="vcsa.example.test",
         port=8443,
-        cluster_id="Atlaso-KMIP",
+        cluster_id=cluster_id,
         username="admin",
         password="test-secret",
         confirmed_https_fingerprint=enrollment.certificate_fingerprint(
