@@ -64,8 +64,10 @@ users, and request an unlock; enforcement occurs only through global LDAP apply.
 
 The Directory UI treats organizations like DNS zones: each organization is a tab and `+ Organization` opens a guided
 wizard for its name, operator description, isolated naming context, and enablement. Users and groups use
-wizard-backed Tabulator grids with bottom add rows. Opening a saved row returns to the same reviewed flow, while the
-Enabled column remains a direct edit for quick desired-state changes. Row menus retain password reset, unlock,
+wizard-backed Tabulator grids with bottom add rows. The grids fill the remaining desktop viewport and resize with the
+panel or selected tab. Narrow layouts retain compact grid heights and keep horizontal scrolling inside each grid.
+Opening a saved row returns to the same reviewed flow, while the Enabled column remains a direct edit for quick
+desired-state changes. Row menus retain password reset, unlock,
 membership, and deletion actions. Group membership presents the selected organization's current users and eligible
 nested groups. New users and groups default to Enabled before review; turn off Enabled to save a disabled entry.
 Editing preserves the entry's saved state. User creation can stage a password or postpone it;

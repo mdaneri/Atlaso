@@ -32,6 +32,48 @@ function functionSource(name) {
 }
 
 const context = vm.createContext({});
+test("LDAP grids resize to the viewport and clear desktop sizing when hidden or narrow", () => {
+  class Element {
+    constructor(top) {
+      this.top = top;
+      this.width = 900;
+      this.hidden = false;
+      this.isConnected = true;
+      this.style = { height: "" };
+    }
+    closest() { return this.hidden ? {} : null; }
+    getBoundingClientRect() { return { top: this.top, width: this.width }; }
+    get offsetParent() { return this.hidden ? null : {}; }
+    querySelector() { return {}; }
+  }
+  class Document {}
+  const users = new Element(200);
+  const groups = new Element(200);
+  groups.hidden = true;
+  const document = new Document();
+  document.querySelectorAll = () => [users, groups];
+  document.querySelector = () => ({ getBoundingClientRect: () => ({ height: 30 }) });
+  const tables = new WeakMap([[users, { redraw() {} }], [groups, { redraw() {} }]]);
+  const window = { innerWidth: 1440, innerHeight: 1000, requestAnimationFrame: (callback) => callback() };
+  const state = vm.createContext({ HTMLElement: Element, Document, document, window, atlasoLdapDirectoryTables: tables });
+  vm.runInContext(["dnsRecordsGridHeight", "resizeDnsRecordsTableElement", "redrawLdapDirectoryTables"].map(functionSource).join("\n"), state);
+  state.redrawLdapDirectoryTables();
+  assert.equal(users.style.height, "746px");
+  assert.equal(groups.style.height, "");
+  users.hidden = true;
+  groups.hidden = false;
+  state.redrawLdapDirectoryTables();
+  assert.equal(users.style.height, "");
+  assert.equal(groups.style.height, "746px");
+  window.innerWidth = 900;
+  state.redrawLdapDirectoryTables();
+  assert.equal(groups.style.height, "");
+  window.innerWidth = 1440;
+  groups.width = 0;
+  state.redrawLdapDirectoryTables();
+  assert.equal(groups.style.height, "");
+});
+
 test("LDAP creation enables users and groups while editing preserves disabled state", () => {
   const state = vm.createContext({ CSS: { escape: (value) => value } });
   vm.runInContext(

@@ -7224,6 +7224,8 @@ function initializeLdapPageState() {
 
 function attachLdapGridState(tableElement, table, resourceName, organizationId) {
   atlasoLdapDirectoryTables.set(tableElement, table);
+  table.on("tableBuilt", () => redrawLdapDirectoryTables());
+  redrawLdapDirectoryTables();
   const storageKey = `atlaso:ldap:grid:${organizationId}:${resourceName}`;
   window.requestAnimationFrame(() => {
     const holder = tableElement.querySelector(".tabulator-tableholder");
@@ -7250,6 +7252,8 @@ function redrawLdapDirectoryTables(root = document) {
   window.requestAnimationFrame(() => {
     root.querySelectorAll("#ldap-users-table, #ldap-groups-table").forEach((tableElement) => {
       const table = atlasoLdapDirectoryTables.get(tableElement);
+      const footerHeight = document.querySelector(".management-info-footnote")?.getBoundingClientRect().height || 0;
+      resizeDnsRecordsTableElement(tableElement, window.innerHeight - footerHeight);
       if (!tableElement.isConnected || tableElement.offsetParent === null) return;
       if (!tableElement.querySelector(".tabulator-tableholder")) return;
       if (table && typeof table.redraw === "function") table.redraw(true);
@@ -7427,6 +7431,17 @@ function ldapGroupMembershipFormatter(cell) {
 
 function initializeLdapDirectoryTables() {
   hideLdapMembershipTooltip();
+  const panel = document.querySelector(".ldap-main-panel");
+  if (panel instanceof HTMLElement && panel.dataset.ldapSizingInitialized !== "true") {
+    panel.dataset.ldapSizingInitialized = "true";
+    let resizeFrame = 0;
+    const scheduleResize = () => {
+      window.cancelAnimationFrame(resizeFrame);
+      resizeFrame = window.requestAnimationFrame(() => redrawLdapDirectoryTables());
+    };
+    window.addEventListener("resize", scheduleResize);
+    if (typeof ResizeObserver !== "undefined") new ResizeObserver(scheduleResize).observe(panel);
+  }
   const usersElement = document.getElementById("ldap-users-table");
   if (usersElement instanceof HTMLElement && typeof Tabulator !== "undefined") {
     const csrf = usersElement.dataset.csrf || "";
@@ -7504,7 +7519,7 @@ function initializeLdapDirectoryTables() {
         }),
         options: {
           layout: "fitColumns",
-          height: "420px",
+          height: "100%",
           rowHeight: 28,
           placeholder: "No directory users",
           reactiveData: false,
@@ -7608,7 +7623,7 @@ function initializeLdapDirectoryTables() {
         }),
         options: {
           layout: "fitColumns",
-          height: "420px",
+          height: "100%",
           rowHeight: 28,
           responsiveLayout: "collapse",
           placeholder: "No directory groups",

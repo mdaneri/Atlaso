@@ -2693,6 +2693,24 @@ textarea {
   margin-top: 12px;
 }
 
+.split-workspace > .ldap-main-panel {
+  align-self: start;
+  min-height: 0;
+  overflow-x: hidden;
+}
+
+#ldap-users-table,
+#ldap-groups-table {
+  height: clamp(280px, 42vh, 420px);
+  width: 100%;
+  max-width: 100%;
+}
+
+#ldap-users-table .tabulator-tableholder,
+#ldap-groups-table .tabulator-tableholder {
+  overflow-x: auto;
+}
+
 .secret-value-field {
   position: relative;
   display: block;
