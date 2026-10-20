@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+PWSH_PATH = shutil.which("pwsh")
+
 
 @pytest.fixture
 def helper():
@@ -322,7 +324,7 @@ def test_sync_uses_powershell_result_without_python_dns_preflight(
     assert 0 <= diagnostic["elapsed_ms"] <= 86_400_000
 
 
-@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is not installed")
+@pytest.mark.skipif(PWSH_PATH is None, reason="PowerShell is not installed")
 @pytest.mark.parametrize(
     ("exception_expression", "reason", "status"),
     [
@@ -373,7 +375,7 @@ def test_local_pwsh_exception_emits_only_typed_diagnostic(helper, exception_expr
         reason: Expected fixed diagnostic reason.
         status: Expected HTTP status, or ``None`` when absent.
     """
-    pwsh = shutil.which("pwsh")
+    pwsh = PWSH_PATH
     assert pwsh is not None
     wrapped = helper._powershell_update_diagnostic_script(
         f"$atlasoUpdateStage = 'repository_probe'; throw {exception_expression}",
@@ -391,14 +393,14 @@ def test_local_pwsh_exception_emits_only_typed_diagnostic(helper, exception_expr
     assert "ATLASO_UPDATE_DIAGNOSTIC" not in result["stdout"] + result["stderr"]
 
 
-@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is not installed")
+@pytest.mark.skipif(PWSH_PATH is None, reason="PowerShell is not installed")
 def test_local_pwsh_success_preserves_existing_json_stdout(helper):
     """Keep a successful module result parseable while consuming the safe marker.
 
     Args:
         helper: Loaded appliance helper module.
     """
-    pwsh = shutil.which("pwsh")
+    pwsh = PWSH_PATH
     assert pwsh is not None
     wrapped = helper._powershell_update_diagnostic_script(
         "[pscustomobject]@{Name='Example.Module';Version='1.2.3'} | ConvertTo-Json -Compress",
