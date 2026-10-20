@@ -7053,7 +7053,10 @@ function initializeLdapBindRotationWizard() {
     onOpen: ({ context }) => prepareLdapBindWizardOpen(form, context),
     onClose: () => resetLdapBindPasswordFields(form),
   });
-  launchers.forEach((button) => button.addEventListener("click", () => wizard.open({ launcher: button })));
+  launchers.forEach((button) => button.addEventListener("click", (event) => {
+    event?.preventDefault();
+    wizard.open({ launcher: button });
+  }));
   restoreLdapBindWizardError(form, wizard, launchers[0]);
 }
 

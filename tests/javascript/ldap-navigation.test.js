@@ -275,7 +275,9 @@ test("organization swaps replace the rotation target and bind the imported launc
     const nextDocument = { getElementById: (key) => key === next.panel.id ? next.panel : key === next.dialog.id ? next.dialog : null };
     onData(nextDocument, { link, options: { history: false }, organizationId: id });
     assert.equal(nodes.get("ldap-bind-rotation-dialog"), next.dialog);
-    next.panel.launcher.events.click();
+    let submissionPrevented = false;
+    next.panel.launcher.events.click({ preventDefault() { submissionPrevented = true; } });
+    assert.equal(submissionPrevented, true);
     assert.equal(openedActions.at(-1), `/ui/management/ldap/organizations/${id}/bind-credential/rotate`);
   }
 });

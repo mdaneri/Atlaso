@@ -81,6 +81,9 @@ queryless Managed LDAP URL restores the server-default organization through the 
 The one-time VCF bind credential opens with its **Bind password** help collapsed and focus on **Done**, leaving the
 credential text unselected until the operator deliberately copies or saves it.
 
+If browser JavaScript is unavailable, **Rotate bind credential** retains the server-submitted generated-password flow.
+Custom password selection requires the guided browser wizard.
+
 To use a password already stored in your secret manager, select **Custom password** in the organization wizard's bind
 credential step, enter it twice, and review the organization. Password entry fields appear only for **Custom password**;
 switching to automatic generation hides and clears them. A successful custom rotation shows a confirmation status

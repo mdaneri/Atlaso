@@ -96,7 +96,7 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert 'class="split-workspace service-settings-workspace"' in page.text
     assert 'aria-label="Managed LDAP views"' not in page.text
     assert "LDAP Settings" in page.text
-    main_panel_index = page.text.index('<div class="panel wide-panel">')
+    main_panel_index = page.text.index('<div class="panel wide-panel ldap-main-panel">')
     settings_rail_index = page.text.index(
         '<aside class="side-stack service-settings-column">'
     )
@@ -149,6 +149,13 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     assert 'data-download-filename="vcf-bind-credential-org-a.txt"' in created.text
     assert "ldap-users-table" in created.text
     assert "ldap-groups-table" in created.text
+    rotation_fallback = created.text.split("data-ldap-bind-rotation-open", 1)[0].rsplit(
+        "<form", 1
+    )[1]
+    assert 'method="post"' in rotation_fallback
+    assert "/bind-credential/rotate" in rotation_fallback
+    assert 'name="csrf"' in rotation_fallback
+    assert 'type="submit"' in rotation_fallback
     assert "Primary VCF lab organization" in created.text
     assert "data-ldap-organization-tabs" in created.text
     assert ">+ Organization</button>" in created.text
@@ -193,7 +200,7 @@ def test_managed_ldap_page_creates_org_user_group_and_shows_secret_once(client):
     )[0]
     assert 'class="zone-actions"' in organization_header
     assert (
-        'class="button tiny secondary" type="button" data-ldap-bind-rotation-open>Rotate bind credential</button>'
+        'class="button tiny secondary" type="submit" data-ldap-bind-rotation-open>Rotate bind credential</button>'
         in organization_header
     )
     rotation_wizard = created.text.split('id="ldap-bind-rotation-dialog"', 1)[1].split(
