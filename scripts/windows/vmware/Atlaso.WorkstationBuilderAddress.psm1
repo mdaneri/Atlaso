@@ -961,39 +961,178 @@ function Save-AtlasoBuilderTerminationProof {
     Child PID published by the bounded runner before it resumed that child.
     .PARAMETER ExpectedOwnerStartTimeUtcTicks
     Corresponding child process start identity from the runner publication.
+    .PARAMETER ExpectedReservationSha256
+    Optional allocation fingerprint admitted before cleanup-only recovery publication.
+    .PARAMETER RecoveryMarker
+    Original schema-3 marker after independently proven same-boot job recovery.
+    .PARAMETER StateRoot
+    Existing allocator state for recovered proof verification; defaults to the shared ledger.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$HandoffPath,
         [Parameter(Mandatory = $true)][int]$ExpectedOwnerPid,
-        [Parameter(Mandatory = $true)][long]$ExpectedOwnerStartTimeUtcTicks
+        [Parameter(Mandatory = $true)][long]$ExpectedOwnerStartTimeUtcTicks,
+        [string]$ExpectedReservationSha256 = '',
+        [object]$RecoveryMarker = $null,
+        [string]$StateRoot = ''
     )
-    $path = [IO.Path]::GetFullPath($HandoffPath)
-    $pins = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath((Split-Path -Parent $path), $true)
-    try {
-        $pin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true)
+    $resolvedStateRoot = if ([string]::IsNullOrWhiteSpace($StateRoot)) {
+        Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Atlaso\vmware-builder-addresses'
+    } else { [IO.Path]::GetFullPath($StateRoot) }
+    $publish = {
+        $path = [IO.Path]::GetFullPath($HandoffPath)
+        $pins = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath((Split-Path -Parent $path), $true)
         try {
-            if ((Get-Item -LiteralPath $path).Length -gt 16384) { throw 'Reservation handoff exceeds its size limit.' }
-            $reservation = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            $pin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true)
+            try {
+                if ((Get-Item -LiteralPath $path).Length -gt 16384) { throw 'Reservation handoff exceeds its size limit.' }
+                $reservation = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            }
+            finally { $pin.Dispose() }
+            if ([int]$reservation.OwnerPid -ne $ExpectedOwnerPid -or
+                [long]$reservation.OwnerStartTimeUtcTicks -ne $ExpectedOwnerStartTimeUtcTicks -or
+                [string]$reservation.HostBootIdentity -cne (Get-AtlasoBuilderHostBootIdentity) -or
+                (Test-AtlasoProcessIdentityActive -ProcessId $ExpectedOwnerPid -StartTimeUtcTicks $ExpectedOwnerStartTimeUtcTicks)) {
+                throw 'Termination proof does not match the exact completed builder child.'
+            }
+            $fingerprint = Get-AtlasoBuilderReservationFingerprint -Reservation $reservation
+            if (-not [string]::IsNullOrWhiteSpace($ExpectedReservationSha256) -and
+                $fingerprint -cne $ExpectedReservationSha256) {
+                throw 'The recovered builder allocation changed before termination proof publication.'
+            }
+            if ($null -ne $RecoveryMarker) {
+                Assert-AtlasoBuilderRecoveryMarkerBinding -Marker $RecoveryMarker -Reservation $reservation
+                if ('TerminationProof' -in $reservation.PSObject.Properties.Name) {
+                    $priorProof = $reservation.TerminationProof
+                    if ([int]$priorProof.Schema -notin @(1, 2) -or
+                        [string]$priorProof.ReservationSha256 -cne $fingerprint) {
+                        throw 'The retained termination receipt conflicts with the original allocation.'
+                    }
+                    if ([int]$priorProof.Schema -eq 2) {
+                        # Retirement changes Phase, but never the original root or
+                        # controller/job/child ownership that authorized this proof.
+                        foreach ($field in @('Schema', 'RootPath', 'RootIdentity', 'BootIdentity',
+                                'OwnerProcessId', 'OwnerProcessStartFileTimeUtc', 'ProcessJobName',
+                                'ChildProcessId', 'ChildProcessStartFileTimeUtc', 'ProcessOwnershipPhase')) {
+                            if ([string]$priorProof.RecoveryMarker.$field -cne [string]$RecoveryMarker.$field) {
+                                throw 'The retained termination receipt conflicts with the original process marker.'
+                            }
+                        }
+                    }
+                }
+                $ledgerPath = Join-Path $resolvedStateRoot 'reservations.json'
+                if (-not (Test-Path -LiteralPath $ledgerPath -PathType Leaf)) {
+                    throw 'The original allocation ledger is missing; recovered proof publication was blocked.'
+                }
+                $matching = @(Read-AtlasoBuilderReservationLedger -Path $ledgerPath | Where-Object {
+                    [string]$_.Id -ceq [string]$reservation.Id
+                })
+                if ($matching.Count -ne 1 -or
+                    (Get-AtlasoBuilderReservationFingerprint -Reservation $matching[0]) -cne $fingerprint) {
+                    throw 'The retained handoff does not match the exact original ledger allocation.'
+                }
+            }
+            $controller = Get-Process -Id $PID -ErrorAction Stop
+            $proof = [pscustomobject]@{
+                Schema = 1
+                ReservationSha256 = $fingerprint
+                ControllerPid = $PID
+                ControllerStartTimeUtcTicks = $controller.StartTime.ToUniversalTime().Ticks
+                CompletedUtc = [DateTime]::UtcNow.ToString('o')
+            }
+            if ($null -ne $RecoveryMarker) {
+                $proof.Schema = 2
+                $proof | Add-Member -NotePropertyName RecoveryMarker -NotePropertyValue $RecoveryMarker
+            }
+            $reservation | Add-Member -NotePropertyName TerminationProof -NotePropertyValue $proof -Force
+            Write-AtlasoBuilderDurableJsonFile -Path $path -Payload $reservation -Replace
         }
-        finally { $pin.Dispose() }
-        if ([int]$reservation.OwnerPid -ne $ExpectedOwnerPid -or
-            [long]$reservation.OwnerStartTimeUtcTicks -ne $ExpectedOwnerStartTimeUtcTicks -or
-            [string]$reservation.HostBootIdentity -cne (Get-AtlasoBuilderHostBootIdentity) -or
-            (Test-AtlasoProcessIdentityActive -ProcessId $ExpectedOwnerPid -StartTimeUtcTicks $ExpectedOwnerStartTimeUtcTicks)) {
-            throw 'Termination proof does not match the exact completed builder child.'
+        finally { $pins.Dispose() }
+    }
+    if ($null -ne $RecoveryMarker) {
+        # Never initialize allocator state during cleanup-only recovery. Serialize
+        # the original ledger comparison and proof publication with its owning tool.
+        $statePins = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($resolvedStateRoot, $true)
+        try {
+            Invoke-WithAtlasoBuilderReservationLock -StateRoot $resolvedStateRoot -ReadOnly -Action $publish
         }
-        $controller = Get-Process -Id $PID -ErrorAction Stop
-        $proof = [pscustomobject]@{
-            Schema = 1
-            ReservationSha256 = Get-AtlasoBuilderReservationFingerprint -Reservation $reservation
-            ControllerPid = $PID
-            ControllerStartTimeUtcTicks = $controller.StartTime.ToUniversalTime().Ticks
-            CompletedUtc = [DateTime]::UtcNow.ToString('o')
+        finally { $statePins.Dispose() }
+    }
+    else { & $publish }
+}
+
+function Assert-AtlasoBuilderRecoveryAllocationAbsent {
+    <#
+    .SYNOPSIS
+    Prove no original child allocation remains when its handoff is absent.
+    .PARAMETER Marker
+    Original schema-3 process ownership after authoritative same-boot recovery.
+    .PARAMETER RepositoryRoot
+    Independently admitted original task repository.
+    .PARAMETER StateRoot
+    Existing shared allocator state; no missing state is initialized.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][object]$Marker,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [string]$StateRoot = ''
+    )
+    $state = if ([string]::IsNullOrWhiteSpace($StateRoot)) {
+        Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Atlaso\vmware-builder-addresses'
+    } else { [IO.Path]::GetFullPath($StateRoot) }
+    $pins = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($state, $true)
+    try {
+        Invoke-WithAtlasoBuilderReservationLock -StateRoot $state -ReadOnly -Action {
+            $ledger = Join-Path $state 'reservations.json'
+            if (-not (Test-Path -LiteralPath $ledger -PathType Leaf)) {
+                throw 'The allocation ledger is missing; absence of the original allocation is unproven.'
+            }
+            foreach ($entry in @(Read-AtlasoBuilderReservationLedger -Path $ledger)) {
+                $null = Get-AtlasoBuilderReservationFingerprint -Reservation $entry
+                # Schema 3 has no allocation ID. A remaining checkout allocation
+                # cannot be dismissed as unrelated when its original handoff is lost.
+                if ([int]$entry.OwnerPid -eq [int]$Marker.ChildProcessId -or
+                    [IO.Path]::GetFullPath([string]$entry.RepositoryRoot).Equals(
+                        [IO.Path]::GetFullPath($RepositoryRoot), [StringComparison]::OrdinalIgnoreCase)) {
+                    throw 'An allocation for the original child or repository remains without a uniquely bound handoff; the process marker was preserved.'
+                }
+            }
         }
-        $reservation | Add-Member -NotePropertyName TerminationProof -NotePropertyValue $proof -Force
-        Write-AtlasoBuilderDurableJsonFile -Path $path -Payload $reservation -Replace
     }
     finally { $pins.Dispose() }
+}
+
+function Assert-AtlasoBuilderRecoveryMarkerBinding {
+    <#
+    .SYNOPSIS
+    Bind original Photon job ownership to the exact recovered allocation.
+    .PARAMETER Marker
+    Original schema-3 marker retained with the termination receipt.
+    .PARAMETER Reservation
+    Allocation whose child and boot identities must match the marker.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][object]$Marker,
+        [Parameter(Mandatory = $true)][object]$Reservation
+    )
+    if ([int]$Marker.Schema -ne 3 -or
+        [string]$Marker.ProcessOwnershipPhase -cne 'assigned' -or
+        [string]$Marker.ProcessJobName -cnotmatch '^Local\\Atlaso-Photon-[0-9a-f]{32}$' -or
+        [int]$Marker.OwnerProcessId -le 0 -or [long]$Marker.OwnerProcessStartFileTimeUtc -le 0 -or
+        [string]::IsNullOrWhiteSpace([string]$Marker.RootIdentity) -or
+        [int]$Marker.ChildProcessId -ne [int]$Reservation.OwnerPid -or
+        [DateTime]::FromFileTimeUtc([long]$Marker.ChildProcessStartFileTimeUtc).Ticks -ne
+            [long]$Reservation.OwnerStartTimeUtcTicks -or
+        [string]$Marker.BootIdentity -cne [string]$Reservation.HostBootIdentity) {
+        throw 'The original Photon process marker does not bind the exact builder allocation.'
+    }
+    $root = [IO.Path]::GetFullPath([string]$Marker.RootPath)
+    Assert-AtlasoStrictDescendantPath -ParentPath ([string]$Reservation.RepositoryRoot) -ChildPath $root `
+        -FailureMessage 'Recovered Photon root escaped the original allocation repository'
+    if ((Split-Path -Leaf (Split-Path -Parent $root)) -cne 'credentials' -or
+        (Split-Path -Leaf $root) -cnotmatch '^atlaso-photon-build-credentials-[0-9a-f]{32}$') {
+        throw 'The recovered Photon root does not identify canonical build state.'
+    }
 }
 
 function Test-AtlasoBuilderTerminationProof {
@@ -1006,11 +1145,19 @@ function Test-AtlasoBuilderTerminationProof {
     param([Parameter(Mandatory = $true)][object]$Reservation)
     if ('TerminationProof' -notin $Reservation.PSObject.Properties.Name) { return $false }
     $proof = $Reservation.TerminationProof
-    if ([int]$proof.Schema -ne 1 -or
+    if ([int]$proof.Schema -notin @(1, 2) -or
         [string]$proof.ReservationSha256 -cne (Get-AtlasoBuilderReservationFingerprint -Reservation $Reservation) -or
         [long]$proof.ControllerStartTimeUtcTicks -le 0 -or [int]$proof.ControllerPid -le 0 -or
         ([DateTimeOffset]$proof.CompletedUtc).UtcDateTime -gt [DateTime]::UtcNow) {
         throw 'The retained builder termination receipt does not match its allocation.'
+    }
+    if ([int]$proof.Schema -eq 2) {
+        Assert-AtlasoBuilderRecoveryMarkerBinding -Marker $proof.RecoveryMarker -Reservation $Reservation
+        $original = $proof.RecoveryMarker
+        if (Test-AtlasoProcessIdentityActive -ProcessId ([int]$original.OwnerProcessId) `
+                -StartTimeUtcTicks ([DateTime]::FromFileTimeUtc([long]$original.OwnerProcessStartFileTimeUtc).Ticks)) {
+            throw 'The original recovered build controller is still active.'
+        }
     }
     if (Test-AtlasoProcessIdentityActive -ProcessId ([int]$proof.ControllerPid) -StartTimeUtcTicks ([long]$proof.ControllerStartTimeUtcTicks)) {
         throw 'The original build controller is still active; reservation recovery must wait for it to finish.'
@@ -1213,6 +1360,8 @@ function Invoke-AtlasoBuilderReservationRecovery {
 
 Export-ModuleMember -Function @(
     'Save-AtlasoBuilderTerminationProof',
+    'Get-AtlasoBuilderReservationFingerprint',
+    'Assert-AtlasoBuilderRecoveryAllocationAbsent',
     'Invoke-AtlasoBuilderReservationRecovery',
     'Assert-AtlasoBuilderHandoffRootIdentity',
     'Initialize-AtlasoBuilderHandoffRoot',

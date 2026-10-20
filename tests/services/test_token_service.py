@@ -14,14 +14,33 @@ from atlaso.app.security import hash_token
 
 @pytest.mark.parametrize("failure", ["audit_facade", "audit_flush", "commit"])
 def test_issuance_failure_rolls_back_token_and_audit(client, monkeypatch, failure):
-    """Keep both rows absent after failure, even if the caller later commits."""
+    """Keep both rows absent after failure, even if the caller later commits.
+
+    Args:
+        client: Test client that initializes the isolated application database.
+        monkeypatch: Fixture used to inject persistence failures.
+        failure: Persistence boundary selected for failure injection.
+    """
     with SessionLocal() as db:
         user = db.query(User).filter_by(username="admin").one()
 
         def fail(*_args, **_kwargs):
+            """Reject the selected persistence operation.
+
+            Args:
+                *_args: Ignored positional persistence arguments.
+                **_kwargs: Ignored keyword persistence arguments.
+            """
             raise RuntimeError("synthetic issuance persistence failure")
 
         def fail_audit_flush(session, _context, _instances):
+            """Fail when the audit row reaches the shared transaction flush.
+
+            Args:
+                session: Session whose pending audit rows are inspected.
+                _context: Unused SQLAlchemy flush context.
+                _instances: Unused SQLAlchemy flush instance selection.
+            """
             if any(isinstance(row, AuditEvent) for row in session.new):
                 fail()
 
@@ -45,13 +64,19 @@ def test_issuance_failure_rolls_back_token_and_audit(client, monkeypatch, failur
 
 
 def test_success_commits_token_and_creation_audit_together(client, monkeypatch):
-    """Return a usable secret only after one commit makes both records durable."""
+    """Return a usable secret only after one commit makes both records durable.
+
+    Args:
+        client: Test client that initializes the isolated application database.
+        monkeypatch: Fixture used to observe the shared commit boundary.
+    """
     with SessionLocal() as db:
         user = db.query(User).filter_by(username="admin").one()
         commits = []
         commit = db.commit
 
         def track_commit():
+            """Count calls while retaining the real session commit."""
             commits.append(True)
             commit()
 
