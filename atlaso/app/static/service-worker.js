@@ -1,10 +1,10 @@
 const ATLASO_CACHE_PREFIX = "atlaso-management-pwa-v";
-const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}369`;
+const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}370`;
 const ATLASO_ASSETS = [
   "/manifest.webmanifest",
   "/favicon.ico",
   "/static/offline.html",
-  "/static/app.css?v=vsphere-health-959-1",
+  "/static/app.css?v=apply-dialog-scroll-986-1",
   "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10",
   "/static/ui-routes.js?v=issue-287-1",
   "/static/appliance-apply-polling.js?v=issue-420-6",
