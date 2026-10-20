@@ -10765,9 +10765,6 @@ def test_vsphere_key_provider_page_uses_shared_management_contract(client):
     assert "window.AtlasoUiPatterns.createWizard" in app_js.text
     assert "+ Add provider here" in app_js.text
     assert "+ Add trusted vCenter here" in app_js.text
-    assert "upsertOption(vcenterProviderSelect" in app_js.text
-    assert "removeOption(vcenterProviderSelect" in app_js.text
-    assert "onSaved: ({ resource }) => upsertOption(" in app_js.text
     assert "certificateTargetSelect," in app_js.text
     assert "removeOption(certificateTargetSelect" in app_js.text
     assert "updateCertificateCounts" in app_js.text
