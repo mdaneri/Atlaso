@@ -67,6 +67,7 @@ class FakeElement {
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
   setAttribute(name, value) { this.attributes[name] = value; }
+  removeAttribute(name) { delete this.attributes[name]; }
 
   addEventListener(name, callback) {
     const callbacks = this.listeners.get(name) || [];
@@ -82,7 +83,9 @@ class FakeElement {
 }
 
 class FakeInput extends FakeElement {}
-class FakeSelect extends FakeElement {}
+class FakeSelect extends FakeElement {
+  get options() { return this.children; }
+}
 class FakeDialog extends FakeElement {}
 
 class FakeForm extends FakeElement {
@@ -150,7 +153,24 @@ class FakeFormData {
   has(name) { return this.values.has(name); }
 }
 
-function makeRuntime(respond) {
+class FakeRow {
+  constructor(data) { this.data = { ...data }; }
+  getData() { return this.data; }
+  async update(data) { Object.assign(this.data, data); }
+  async delete() { this.deleted = true; }
+}
+
+class FakeTable {
+  constructor(rows = []) { this.rows = new Map(rows.map((row) => [String(row.id), new FakeRow(row)])); }
+  getRow(id) { return this.rows.get(String(id)); }
+  async addRow(data) {
+    const row = new FakeRow(data);
+    this.rows.set(String(data.id), row);
+    return row;
+  }
+}
+
+function makeRuntime(respond, onSaved = null) {
   const form = new FakeForm();
   const dialog = new FakeDialog();
   const errors = [];
@@ -179,17 +199,18 @@ function makeRuntime(respond) {
           };
         },
       },
-      location: { reload() {} },
+      location: { reload() { reloads.push(true); } },
     },
     atlasoGridWizardRequest: async (url, body) => respond(url, body),
     managementUiPath: (path) => path,
     openVsphereEnrollmentWizard() {},
     renderAtlasoWizardReview: (_form, items) => { form.reviewItems = items; },
   });
+  const reloads = [];
   vm.runInContext(`${functionSource("initializeVsphereEnrollmentWizard")}; globalThis.initialize = initializeVsphereEnrollmentWizard;`, context);
-  const wizard = context.initialize(form, dialog);
+  const wizard = context.initialize(form, dialog, null, onSaved);
   options.onOpen({ context: {} });
-  return { form, wizard, options, errors, skipped, shown, page, resets };
+  return { form, wizard, options, errors, skipped, shown, page, resets, reloads };
 }
 
 test("manual enrollment probes without credentials and pins the exact observed fingerprint by checkbox", async () => {
@@ -472,7 +493,17 @@ test("client inspection with no fingerprint stays on Target instead of opening a
 
 test("manual setup skips discovery and submits only the existing manual trust fields", async () => {
   const requests = [];
-  const { form, options, wizard, skipped } = makeRuntime(async (url, body) => { requests.push({ url, body }); return {}; });
+  const saved = [];
+  const { form, options, wizard, skipped, reloads } = makeRuntime(async (url, body) => {
+    requests.push({ url, body });
+    return {
+      trusted_vcenter: {
+        id: "trusted-1", provider_id: "provider-1", provider_name: "Lab provider", name: "Manual vCenter",
+        hostname: "vcsa.lab.example", enabled: true, certificate_count: 1, usable_certificate_count: 1,
+      },
+      certificates: [{ id: "certificate-1", provider_id: "provider-1", trusted_vcenter_id: "trusted-1", status: "valid" }],
+    };
+  }, (result) => saved.push(result));
   form.elements.enrollment_method.value = "manual";
   await form.elements.enrollment_method.dispatch("change");
   assert.deepEqual(skipped.at(-1), ["credential", "server", "tls", "login", "target"]);
@@ -498,6 +529,200 @@ test("manual setup skips discovery and submits only the existing manual trust fi
     csrf: "csrf-token", provider_id: "provider-1", name: "Manual vCenter", hostname: "vcsa.lab.example",
     certificate_pem: "public-certificate", description: "Lab trust", enabled: "on",
   });
+  assert.equal(saved[0].resource.id, "trusted-1");
+  assert.equal(saved[0].payload.certificates[0].id, "certificate-1");
+  assert.deepEqual(reloads, []);
+});
+
+test("enrollment saves the authoritative server row in place without reloading", async () => {
+  const saved = [];
+  const resource = {
+    id: "trusted-2", provider_id: "provider-1", provider_name: "Lab provider", name: "Enrolled vCenter",
+    hostname: "vcsa.lab.example", enabled: true, certificate_count: 1, usable_certificate_count: 1,
+  };
+  const { form, options, wizard, reloads } = makeRuntime(async (url, body) => {
+    assert.equal(url, "/vsphere-key-providers/enrollment/approve");
+    assert.equal(body.get("confirmed_https_fingerprint"), "AA:BB:CC");
+    assert.equal(body.get("expected_client_fingerprint"), "11:22");
+    return { trusted_vcenter: resource, certificates: [{ id: "certificate-2", status: "valid" }] };
+  }, (result) => saved.push(result));
+  form.elements.provider_id.value = "provider-1";
+  form.elements.name.value = "Enrolled vCenter";
+  form.elements.hostname.value = "vcsa.lab.example";
+  form.elements.cluster_id.value = "cluster-1";
+  form.elements.confirmed_https_fingerprint.value = "AA:BB:CC";
+  form.elements.expected_client_fingerprint.value = "11:22";
+
+  assert.equal((await options.onSubmit({ controller: wizard })).valid, true);
+  assert.equal(saved[0].resource, resource);
+  assert.equal(saved[0].payload.certificates[0].id, "certificate-2");
+  assert.deepEqual(reloads, []);
+});
+
+test("a completed enrollment updates the grid without overwriting a later wizard session", async () => {
+  let resolveApproval;
+  const saved = [];
+  const { form, options, wizard } = makeRuntime(() => new Promise((resolve) => { resolveApproval = resolve; }), (result) => saved.push(result));
+  form.elements.provider_id.value = "provider-1";
+  form.elements.name.value = "First vCenter";
+  form.elements.hostname.value = "first.lab.example";
+  form.elements.cluster_id.value = "cluster-1";
+  form.elements.confirmed_https_fingerprint.value = "AA:BB:CC";
+  form.elements.expected_client_fingerprint.value = "11:22";
+
+  const pending = options.onSubmit({ controller: wizard });
+  options.onOpen({ context: { id: "new-row", is_new: true } });
+  form.elements.name.value = "Second vCenter in progress";
+  resolveApproval({
+    trusted_vcenter: {
+      id: "trusted-3", provider_id: "provider-1", provider_name: "Lab provider", name: "First vCenter",
+      hostname: "first.lab.example", enabled: true, certificate_count: 1, usable_certificate_count: 1,
+    },
+    certificates: [],
+  });
+
+  assert.equal((await pending).ignored, true);
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].resource.name, "First vCenter");
+  assert.equal(form.elements.name.value, "Second vCenter in progress");
+});
+
+test("a completed manual setup cannot close a later wizard session", async () => {
+  let resolveSave;
+  const saved = [];
+  const { form, options, wizard } = makeRuntime(() => new Promise((resolve) => { resolveSave = resolve; }), (result) => saved.push(result));
+  form.elements.enrollment_method.value = "manual";
+  form.elements.manual_provider_id.value = "provider-1";
+  form.elements.manual_name.value = "First manual vCenter";
+  const pending = options.onSubmit({ controller: wizard });
+  options.onOpen({ context: { id: "new-row", is_new: true } });
+  form.elements.manual_name.value = "Second manual vCenter in progress";
+  resolveSave({ trusted_vcenter: { id: "trusted-manual", provider_id: "provider-1", name: "First manual vCenter" } });
+  assert.equal((await pending).ignored, true);
+  assert.equal(saved.length, 1);
+  assert.equal(form.elements.manual_name.value, "Second manual vCenter in progress");
+});
+
+test("a stale TLS approval failure cannot clear a later wizard session", async () => {
+  let rejectApproval;
+  const { form, options, wizard } = makeRuntime(() => new Promise((_resolve, reject) => { rejectApproval = reject; }));
+  form.elements.provider_id.value = "provider-1";
+  form.elements.name.value = "First vCenter";
+  form.elements.hostname.value = "first.lab.example";
+  form.elements.cluster_id.value = "cluster-1";
+  form.elements.username.value = "first-user";
+  form.elements.password.value = "first-password";
+  form.elements.confirmed_https_fingerprint.value = "AA:BB:CC";
+  form.elements.expected_client_fingerprint.value = "11:22";
+
+  const pending = options.onSubmit({ controller: wizard });
+  options.onOpen({ context: { id: "new-row", is_new: true } });
+  form.elements.name.value = "Second vCenter in progress";
+  form.elements.hostname.value = "second.lab.example";
+  form.elements.username.value = "second-user";
+  form.elements.password.value = "second-password";
+  form.elements.confirmed_https_fingerprint.value = "DD:EE:FF";
+  rejectApproval(new Error("The vCenter HTTPS fingerprint differs from the confirmed value."));
+
+  assert.equal((await pending).ignored, true);
+  assert.equal(form.elements.name.value, "Second vCenter in progress");
+  assert.equal(form.elements.hostname.value, "second.lab.example");
+  assert.equal(form.elements.username.value, "second-user");
+  assert.equal(form.elements.password.value, "second-password");
+  assert.equal(form.elements.confirmed_https_fingerprint.value, "DD:EE:FF");
+});
+
+test("a stale manual setup failure cannot add errors to a later wizard session", async () => {
+  let rejectSave;
+  const { form, options, wizard } = makeRuntime(() => new Promise((_resolve, reject) => { rejectSave = reject; }));
+  form.elements.enrollment_method.value = "manual";
+  const pending = options.onSubmit({ controller: wizard });
+  options.onOpen({ context: { id: "new-row", is_new: true } });
+  form.elements.manual_name.value = "New manual setup";
+  rejectSave(new Error("The earlier request failed."));
+  assert.equal((await pending).ignored, true);
+  assert.equal(form.elements.manual_name.value, "New manual setup");
+});
+
+test("the enrollment callback inserts authoritative vCenter, certificate, and provider rows", async () => {
+  const targetSelect = new FakeSelect();
+  const vcenterTable = new FakeTable();
+  const certificateTable = new FakeTable();
+  const providerTable = new FakeTable([{
+    id: "provider-1", name: "Stale provider name", trusted_vcenter_count: 0, certificate_count: 0, usable_certificate_count: 0,
+  }]);
+  const context = vm.createContext({
+    HTMLSelectElement: FakeSelect,
+    document: { createElement: () => new FakeElement() },
+  });
+  vm.runInContext(`async ${functionSource("syncVsphereEnrollmentResult")}; globalThis.sync = syncVsphereEnrollmentResult;`, context);
+  const resource = {
+    id: "trusted-4", provider_id: "provider-1", provider_name: "Lab provider", name: "vCenter one",
+    hostname: "vcsa.lab.example", enabled: true, certificate_count: 1, usable_certificate_count: 1,
+  };
+  const certificate = { id: "certificate-4", provider_id: "provider-1", trusted_vcenter_id: "trusted-4", status: "valid" };
+  const upsertOption = (select, value, label) => {
+    if (!select) return;
+    let option = select.options.find((item) => item.value === value);
+    if (!option) {
+      option = new FakeElement();
+      option.value = value;
+      select.append(option);
+    }
+    option.textContent = label;
+  };
+
+  await context.sync({
+    payload: {
+      trusted_vcenter: resource,
+      provider: { id: "provider-1", name: "Authoritative provider name", trusted_vcenter_count: 1, certificate_count: 1, usable_certificate_count: 1 },
+      certificates: [certificate],
+    },
+    resource,
+    vcenterTable,
+    certificateTable,
+    providerTable,
+    upsertOption,
+    certificateTargetSelect: targetSelect,
+  });
+
+  assert.equal(vcenterTable.getRow(resource.id).getData().name, "vCenter one");
+  assert.equal(certificateTable.getRow(certificate.id).getData().status, "valid");
+  assert.equal(providerTable.getRow("provider-1").getData().name, "Authoritative provider name");
+  assert.deepEqual(
+    [providerTable.getRow("provider-1").getData().trusted_vcenter_count,
+      providerTable.getRow("provider-1").getData().certificate_count,
+      providerTable.getRow("provider-1").getData().usable_certificate_count],
+    [1, 1, 1],
+  );
+  assert.equal(targetSelect.options[0].textContent, "Lab provider / vCenter one");
+});
+
+test("provider option refresh keeps only enabled providers for enrollment and preserves valid selections", () => {
+  const select = new FakeSelect();
+  select.value = "provider-2";
+  const context = vm.createContext({
+    HTMLSelectElement: FakeSelect,
+    document: { createElement: () => new FakeElement() },
+  });
+  vm.runInContext(`${functionSource("syncVsphereProviderSelect")}; globalThis.sync = syncVsphereProviderSelect;`, context);
+  const providers = [
+    { id: "provider-1", name: "First", enabled: true },
+    { id: "provider-2", name: "Second renamed", enabled: true },
+    { id: "provider-3", name: "Disabled", enabled: false },
+  ];
+
+  context.sync(select, providers, true);
+  assert.deepEqual(select.options.map((option) => [option.value, option.textContent]), [
+    ["provider-1", "First"], ["provider-2", "Second renamed"],
+  ]);
+  assert.equal(select.value, "provider-2");
+
+  select.value = "provider-3";
+  context.sync(select, providers, true);
+  assert.equal(select.value, "provider-1");
+  context.sync(select, providers, false);
+  assert.deepEqual(select.options.map((option) => option.value), ["provider-1", "provider-2", "provider-3"]);
 });
 
 test("switching setup methods invalidates pending discovery and clears credentials and inspected trust", async () => {
@@ -563,12 +788,15 @@ test("the grid add control opens method selection while Edit retains the existin
   const launcher = new FakeElement();
   const added = [];
   const edited = [];
+  const errorStatus = new FakeElement();
+  errorStatus.textContent = "Provider still has dependencies.";
+  errorStatus.classList.add("error");
   const context = vm.createContext({
     HTMLElement: FakeElement, HTMLFormElement: FakeForm, HTMLDialogElement: FakeDialog,
     HTMLInputElement: FakeInput, HTMLButtonElement: FakeElement,
     document: {
       getElementById: (id) => id === "grid" ? element : dialog,
-      querySelector: (selector) => selector === "form" ? form : null,
+      querySelector: (selector) => selector === "form" ? form : selector === "#action-error" ? errorStatus : null,
     },
     window: { AtlasoUiPatterns: {
       createGrid: () => ({ table: {} }),
@@ -579,7 +807,7 @@ test("the grid add control opens method selection while Edit retains the existin
   const newRow = { is_new: true };
   context.initialize({
     elementId: "grid", dialogId: "dialog", formSelector: "form", rows: [], newRow,
-    options: { columns: [] }, openCreate: (options) => added.push(options),
+    options: { columns: [] }, actionErrorSelector: "#action-error", openCreate: (options) => added.push(options),
   });
   await element.dispatch("click", { target: { closest: () => launcher } });
   assert.equal(added.length, 1);
@@ -590,7 +818,60 @@ test("the grid add control opens method selection while Edit retains the existin
   element.atlasoWizardOpen(existing, launcher);
   assert.equal(edited.length, 1);
   assert.equal(edited[0].context, existing);
+  assert.equal(errorStatus.textContent, "");
+  assert.equal(errorStatus.classList.contains("hidden"), true);
+  assert.equal(errorStatus.classList.contains("error"), false);
   assert.equal(added.length, 1);
+});
+
+test("a successful provider deletion retry clears the prior recoverable error", async () => {
+  const element = new FakeElement();
+  element.dataset = { fallbackId: "fallback", csrf: "csrf-token" };
+  const form = new FakeForm();
+  const dialog = new FakeDialog();
+  const errorStatus = new FakeElement();
+  const row = new FakeRow({ id: "provider-1", name: "Lab provider", enabled: false });
+  let gridOptions;
+  let attempts = 0;
+  const context = vm.createContext({
+    HTMLElement: FakeElement, HTMLFormElement: FakeForm, HTMLDialogElement: FakeDialog,
+    HTMLInputElement: FakeInput, HTMLButtonElement: FakeElement, HTMLSelectElement: FakeSelect,
+    FormData: FakeFormData,
+    Error,
+    document: {
+      getElementById: (id) => id === "grid" ? element : id === "dialog" ? dialog : null,
+      querySelector: (selector) => selector === "form" ? form : selector === "#provider-error" ? errorStatus : null,
+      createElement: () => new FakeElement(),
+    },
+    window: { AtlasoUiPatterns: {
+      createGrid: (options) => { gridOptions = options; return { table: { getRow: () => row } }; },
+      createWizard: () => ({ open() {} }),
+    } },
+    requestConfirmation: async () => true,
+    atlasoGridWizardRequest: async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("Apply the disabled and detached provider state before deletion.");
+      return {};
+    },
+    showTransientGridStatus() {},
+  });
+  vm.runInContext(`${functionSource("initializeAtlasoResourceWizard")}; globalThis.initialize = initializeAtlasoResourceWizard;`, context);
+  context.initialize({
+    elementId: "grid", dialogId: "dialog", formSelector: "form", rows: [{ id: "provider-1" }],
+    includeNewRow: false, resourceName: "provider", options: { columns: [] },
+    actionErrorSelector: "#provider-error", deleteResource: true, deleteUrl: (id) => `/providers/${id}/delete`,
+    deleteConfirmation: () => ({ title: "Delete provider?", message: "Confirm", confirmLabel: "Delete", tone: "danger" }),
+  });
+
+  await gridOptions.rowActions[1].action(null, row);
+  assert.equal(errorStatus.textContent, "Apply the disabled and detached provider state before deletion.");
+  assert.equal(errorStatus.classList.contains("hidden"), false);
+  assert.equal(row.deleted, undefined);
+
+  await gridOptions.rowActions[1].action(null, row);
+  assert.equal(errorStatus.textContent, "");
+  assert.equal(errorStatus.classList.contains("hidden"), true);
+  assert.equal(row.deleted, true);
 });
 
 test("the enrollment launcher starts existing refreshes on Credential and new setup on Method", () => {

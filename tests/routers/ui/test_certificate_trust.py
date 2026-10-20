@@ -580,6 +580,15 @@ def test_vcenter_enrollment_approval_binds_only_inspected_client_to_provider(
     approved = client.post("/vsphere-key-providers/enrollment/approve", data=data)
     assert approved.status_code == 200, approved.text
     assert approved.json()["status"] == "saved_pending_appliance_apply"
+    assert approved.json()["trusted_vcenter"]["name"] == "New vCenter"
+    assert approved.json()["trusted_vcenter"]["hostname"] == "vcsa.example.test"
+    assert approved.json()["provider"]["id"] == provider_id
+    assert approved.json()["provider"]["name"].startswith("Enrollment ")
+    assert len(approved.json()["certificates"]) == 1
+    assert (
+        approved.json()["certificates"][0]["fingerprint_sha256"]
+        == parsed["fingerprint_sha256"]
+    )
     with SessionLocal() as db:
         trusted = (
             db.query(VsphereTrustedVcenter).filter_by(provider_id=provider_id).one()
@@ -674,6 +683,42 @@ def test_vcenter_enrollment_approval_binds_only_inspected_client_to_provider(
             parsed["fingerprint_sha256"],
             replacement["fingerprint_sha256"],
         }
+
+
+def test_manual_vcenter_create_returns_current_provider_and_certificate_rows(client):
+    """Return refreshed named rows after creating a vCenter without a certificate.
+
+    Args:
+        client: Authenticated HTTP test client used to exercise the UI transport.
+    """
+    provider_id = str(uuid4())
+    with SessionLocal() as db:
+        provider = VsphereKeyProvider(
+            id=provider_id, name="Manual provider response", enabled=True
+        )
+        db.add(provider)
+        db.commit()
+
+    csrf = _login(client)
+    response = client.post(
+        "/vsphere-key-providers/trusted-vcenters",
+        data={
+            "provider_id": provider_id,
+            "name": "Manual vCenter response",
+            "hostname": "vcsa-manual.example.test",
+            "description": "Manual setup",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["trusted_vcenter"]["name"] == "Manual vCenter response"
+    assert payload["trusted_vcenter"]["hostname"] == "vcsa-manual.example.test"
+    assert payload["provider"]["id"] == provider_id
+    assert payload["provider"]["name"] == "Manual provider response"
+    assert payload["certificates"] == []
 
 
 def test_enrollment_saved_endpoint_binding_and_choices(client, monkeypatch) -> None:

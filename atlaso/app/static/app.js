@@ -1393,6 +1393,15 @@ function initializeAtlasoResourceWizard(config) {
   const csrf = element.dataset.csrf || form.elements.namedItem("csrf")?.value || "";
   let table = null;
   let wizard = null;
+  const clearActionError = () => {
+    if (!config.actionErrorSelector) return;
+    const status = document.querySelector(config.actionErrorSelector);
+    if (!(status instanceof HTMLElement)) return;
+    status.textContent = "";
+    status.classList.add("hidden");
+    status.classList.remove("error");
+    status.removeAttribute?.("role");
+  };
   const rows = config.includeNewRow === false ? [...config.rows] : [...config.rows, config.newRow];
   const reportActionError = (error, { statusError = false } = {}) => {
     const message = error instanceof Error ? error.message : String(error || "The resource action failed.");
@@ -1439,6 +1448,7 @@ function initializeAtlasoResourceWizard(config) {
       return;
     }
     try {
+      clearActionError();
       populateAtlasoWizardForm(form, data, {
         recordField: config.recordField || "record_id",
         defaults: config.defaults || {},
@@ -1469,6 +1479,7 @@ function initializeAtlasoResourceWizard(config) {
   };
   const openResource = (data, launcher, options = {}) => {
     if (!data?.is_new && !canEdit(data)) return;
+    clearActionError();
     if (data?.is_new && typeof config.openCreate === "function") return config.openCreate({ data, launcher });
     return wizard?.open({ launcher, context: data?.is_new ? null : data, ...options });
   };
@@ -1477,6 +1488,7 @@ function initializeAtlasoResourceWizard(config) {
     const confirmation = config.deleteConfirmation(data);
     const confirmed = await requestConfirmation(confirmation);
     if (!confirmed) return;
+    clearActionError();
     const body = new FormData();
     body.set("csrf", csrf);
     await atlasoGridWizardRequest(config.deleteUrl(data.id), body, { expectJson: false });
@@ -1584,6 +1596,7 @@ function initializeAtlasoResourceWizard(config) {
       return config.prepareReview?.({ form });
     },
     onSubmit: async () => {
+      clearActionError();
       const body = new FormData(form);
       config.prepareFormData?.({ body, form });
       const recordId = body.get(config.recordField || "record_id");
@@ -6028,7 +6041,50 @@ function openVsphereCertificateWizard(data = {}, launcher = null) {
   vsphereCertificateWizard.open({ launcher, context: data });
 }
 
-function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
+function syncVsphereProviderSelect(select, providers, enabledOnly = false) {
+  if (!(select instanceof HTMLSelectElement)) return;
+  const selectedValue = String(select.value || "");
+  const eligible = providers.filter((provider) => !enabledOnly || provider.enabled);
+  select.replaceChildren(...eligible.map((provider) => {
+    const option = document.createElement("option");
+    option.value = String(provider.id);
+    option.textContent = String(provider.name || "");
+    return option;
+  }));
+  select.value = eligible.some((provider) => String(provider.id) === selectedValue)
+    ? selectedValue
+    : String(eligible[0]?.id || "");
+}
+
+async function syncVsphereEnrollmentResult({ payload, resource, vcenterTable, certificateTable, providerTable, upsertOption, certificateTargetSelect }) {
+  const previousRow = vcenterTable?.getRow?.(resource.id);
+  const previous = previousRow?.getData?.() || null;
+  if (previousRow) await previousRow.update(resource);
+  else if (vcenterTable) await vcenterTable.addRow(resource, true);
+  upsertOption?.(certificateTargetSelect, `${resource.provider_id}|${resource.id}`, `${resource.provider_name} / ${resource.name}`);
+
+  const certificates = Array.isArray(payload.certificates) ? payload.certificates : [];
+  for (const certificate of certificates) {
+    const row = certificateTable?.getRow?.(certificate.id);
+    if (row) await row.update(certificate);
+    else if (certificateTable) await certificateTable.addRow(certificate, true);
+  }
+
+  const providerRow = providerTable?.getRow?.(resource.provider_id);
+  if (!providerRow) return;
+  if (String(payload.provider?.id || "") === String(resource.provider_id)) {
+    await providerRow.update(payload.provider);
+    return;
+  }
+  const current = providerRow.getData();
+  await providerRow.update({
+    trusted_vcenter_count: Math.max(0, Number(current.trusted_vcenter_count || 0) + (previous ? 0 : 1)),
+    certificate_count: Math.max(0, Number(current.certificate_count || 0) + Number(resource.certificate_count || 0) - Number(previous?.certificate_count || 0)),
+    usable_certificate_count: Math.max(0, Number(current.usable_certificate_count || 0) + Number(resource.usable_certificate_count || 0) - Number(previous?.usable_certificate_count || 0)),
+  });
+}
+
+function initializeVsphereEnrollmentWizard(form, dialog, launcher = null, onSaved = null) {
   if (!(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement) || !window.AtlasoUiPatterns) return null;
   const setupMethod = form.querySelector("[data-vsphere-setup-method]");
   const manualFields = ["manual_provider_id", "manual_name", "manual_hostname", "manual_certificate_pem", "manual_description", "manual_enabled"];
@@ -6287,6 +6343,7 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
       { id: "review", title: "Review trusted vCenter", description: "Confirm the details, public trust, and provider assignment." },
     ],
     onOpen: ({ context }) => {
+      contextRevision += 1;
       refreshing = Boolean(context?.id && !context.is_new);
       if (setupMethod) {
         setupMethod.value = "enroll";
@@ -6299,6 +6356,15 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
         form.elements.provider_id.value = context.provider_id || "";
         form.elements.name.value = context.name || "";
         hostname.value = context.hostname || "";
+      } else {
+        form.elements.name.value = "";
+        form.elements.cluster_id.value = "";
+        hostname.value = "";
+        form.elements.manual_name.value = "";
+        form.elements.manual_hostname.value = "";
+        form.elements.manual_description.value = "";
+        form.elements.manual_certificate_pem.value = "";
+        form.elements.manual_enabled.checked = false;
       }
       observedHttpsFingerprint = "";
       if (tlsFingerprint) tlsFingerprint.textContent = "Not inspected yet";
@@ -6354,6 +6420,7 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
       { label: "Approved client SHA-256", field: "expected_client_fingerprint" },
     ]),
     onSubmit: async ({ controller }) => {
+      const submittedRevision = contextRevision;
       if (isManualSetup()) {
         const body = new FormData();
         body.set("csrf", form.elements.csrf.value);
@@ -6361,26 +6428,43 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
           body.set(name, form.elements.namedItem(`manual_${name}`).value);
         }
         if (form.elements.manual_enabled.checked) body.set("enabled", "on");
-        await atlasoGridWizardRequest(managementUiPath("/vsphere-key-providers/trusted-vcenters"), body);
+        try {
+          const payload = await atlasoGridWizardRequest(managementUiPath("/vsphere-key-providers/trusted-vcenters"), body);
+          const resource = payload.trusted_vcenter;
+          if (!resource?.id || !resource.provider_id || !resource.name) {
+            throw new Error("The server did not return the saved trusted vCenter.");
+          }
+          await onSaved?.({ payload, resource, refreshing: false });
+        } catch (error) {
+          if (submittedRevision !== contextRevision) return { ignored: true };
+          throw error;
+        }
+        if (submittedRevision !== contextRevision) return { ignored: true };
         invalidateContext();
         controller.markClean();
-        window.location.reload();
         return { valid: true };
       }
       if (!form.elements.expected_client_fingerprint.value) {
         return { valid: false, message: "Inspect the vCenter client certificate before approval.", step: "target" };
       }
       try {
-        await request("approve");
+        const payload = await request("approve");
+        const resource = payload.trusted_vcenter;
+        if (!resource?.id || !resource.provider_id || !resource.name) {
+          throw new Error("The server did not return the saved trusted vCenter.");
+        }
+        await onSaved?.({ payload, resource, refreshing });
       } catch (error) {
+        if (submittedRevision !== contextRevision) return { ignored: true };
         const recoveryMessage = recoverTlsIdentityError(error);
         if (recoveryMessage) return { valid: false, message: recoveryMessage, step: "server" };
         throw error;
       }
+      if (submittedRevision !== contextRevision) return { ignored: true };
       username.value = "";
       password.value = "";
+      invalidateContext();
       controller.markClean();
-      window.location.reload();
       return { valid: true };
     },
   });
@@ -6392,17 +6476,49 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null) {
 function initializeVsphereKeyProviderTables() {
   const providerElement = document.getElementById("vsphere-providers-table");
   if (!(providerElement instanceof HTMLElement) || !window.AtlasoUiPatterns) return;
+  const vcenterElement = document.getElementById("vsphere-vcenters-table");
+  let providers = JSON.parse(providerElement.dataset.providers || "[]");
   const enrollmentForm = document.querySelector("[data-vsphere-enrollment-form]");
   const enrollmentDialog = document.getElementById("vsphere-enrollment-dialog");
+  let updateEnrollmentResult = async () => {};
   if (enrollmentForm instanceof HTMLFormElement && enrollmentDialog instanceof HTMLDialogElement) {
     vsphereEnrollmentWizard = initializeVsphereEnrollmentWizard(
       enrollmentForm,
       enrollmentDialog,
       document.querySelector("[data-vsphere-enrollment-open]"),
+      (result) => updateEnrollmentResult(result),
     );
   }
   const vcenterProviderSelect = document.querySelector('[data-vsphere-vcenter-form] select[name="provider_id"]');
+  const enrollmentProviderSelect = enrollmentForm?.elements.namedItem("provider_id");
+  const manualProviderSelect = enrollmentForm?.elements.namedItem("manual_provider_id");
   const certificateTargetSelect = document.querySelector('[data-vsphere-certificate-form] select[name="target"]');
+  const synchronizeProviderSelects = () => {
+    syncVsphereProviderSelect(vcenterProviderSelect, providers);
+    syncVsphereProviderSelect(manualProviderSelect, providers);
+    syncVsphereProviderSelect(enrollmentProviderSelect, providers, true);
+    const names = new Map(providers.map((provider) => [String(provider.id), String(provider.name || "")]));
+    if (certificateTargetSelect instanceof HTMLSelectElement) {
+      for (const option of certificateTargetSelect.options) {
+        const [providerId, ...vcenterParts] = String(option.value).split("|");
+        const providerName = names.get(providerId);
+        if (!providerName || !vcenterParts.length) continue;
+        const vcenterId = vcenterParts.join("|");
+        const vcenter = document.getElementById("vsphere-vcenters-table")?.atlasoTabulator?.getRow?.(vcenterId)?.getData?.();
+        const previousName = String(option.textContent || "").split(" / ").slice(1).join(" / ");
+        option.textContent = `${providerName} / ${vcenter?.name || previousName}`;
+      }
+    }
+  };
+  const saveProviderOption = (resource) => {
+    providers = providers.filter((provider) => String(provider.id) !== String(resource.id));
+    providers.push(resource);
+    synchronizeProviderSelects();
+  };
+  const deleteProviderOption = (resource) => {
+    providers = providers.filter((provider) => String(provider.id) !== String(resource.id));
+    synchronizeProviderSelects();
+  };
   const upsertOption = (select, value, label) => {
     if (!(select instanceof HTMLSelectElement) || !value) return;
     let option = Array.from(select.options).find((item) => item.value === String(value));
@@ -6462,8 +6578,8 @@ function initializeVsphereKeyProviderTables() {
       { label: "Enabled", field: "enabled" },
       { label: "Namespace", value: (form) => form.elements.record_id.value ? "Immutable UUID preserved" : "Immutable UUID assigned on creation" },
     ],
-    onSaved: ({ resource }) => upsertOption(vcenterProviderSelect, resource.id, resource.name),
-    onDeleted: ({ data }) => removeOption(vcenterProviderSelect, data.id),
+    onSaved: ({ resource }) => saveProviderOption(resource),
+    onDeleted: ({ data }) => deleteProviderOption(data),
     deleteConfirmation: (data) => ({ title: `Delete ${data.name}?`, message: "Deletion requires this provider to be disabled, detached from every vCenter, and authenticated as containing zero operational keys.", confirmLabel: "Delete provider", tone: "danger" }),
     options: {
       height: "420px",
@@ -6481,11 +6597,9 @@ function initializeVsphereKeyProviderTables() {
     },
   });
 
-  const vcenterElement = document.getElementById("vsphere-vcenters-table");
   if (!(vcenterElement instanceof HTMLElement)) return;
-  const providers = JSON.parse(vcenterElement.dataset.providerOptions || "[]");
-  const providerValues = Object.fromEntries(providers.map((item) => [String(item.id), item.label]));
-  initializeAtlasoResourceWizard({
+  synchronizeProviderSelects();
+  const vcenterWizard = initializeAtlasoResourceWizard({
     elementId: "vsphere-vcenters-table",
     formSelector: "[data-vsphere-vcenter-form]",
     dialogId: "vsphere-vcenter-dialog",
@@ -6536,11 +6650,10 @@ function initializeVsphereKeyProviderTables() {
       const provider = form.elements.namedItem("provider_id");
       if (provider instanceof HTMLSelectElement) body.set("provider_id", provider.value);
     },
-    onSaved: ({ resource }) => upsertOption(
-      certificateTargetSelect,
-      `${resource.provider_id}|${resource.id}`,
-      `${resource.provider_name} / ${resource.name}`,
-    ),
+    onSaved: ({ resource }) => {
+      upsertOption(certificateTargetSelect, `${resource.provider_id}|${resource.id}`, `${resource.provider_name} / ${resource.name}`);
+      synchronizeProviderSelects();
+    },
     onDeleted: ({ data }) => removeOption(certificateTargetSelect, `${data.provider_id}|${data.id}`),
     deleteConfirmation: (data) => ({ title: `Delete ${data.name}?`, message: "Disable this trusted vCenter and retire every public certificate before deletion.", confirmLabel: "Delete trusted vCenter", tone: "danger" }),
     options: {
@@ -6548,7 +6661,7 @@ function initializeVsphereKeyProviderTables() {
       rowHeight: 28,
       columns: [
         { title: "Name", field: "name", minWidth: 180, formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button" data-atlaso-wizard-add>+ Add trusted vCenter here</button>' : escapeHtml(cell.getValue()) },
-        { title: "Provider", field: "provider_id", minWidth: 180, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(providerValues[String(cell.getValue())] || cell.getRow().getData().provider_name || "") },
+        { title: "Provider", field: "provider_id", minWidth: 180, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(providers.find((provider) => String(provider.id) === String(cell.getValue()))?.name || cell.getRow().getData().provider_name || "") },
         { title: "Hostname", field: "hostname", minWidth: 190, formatter: (cell) => escapeHtml(cell.getValue() || "Not recorded") },
         { title: "Certificates", field: "certificate_count", width: 125, hozAlign: "right" },
         { title: "Usable", field: "usable_certificate_count", width: 95, hozAlign: "right" },
@@ -6558,6 +6671,26 @@ function initializeVsphereKeyProviderTables() {
       rowFormatter: (row) => markNewRecordRow(row, "name"),
     },
   });
+
+  updateEnrollmentResult = async ({ payload, resource }) => {
+    const table = vcenterWizard?.table;
+    await syncVsphereEnrollmentResult({
+      payload,
+      resource,
+      vcenterTable: table,
+      certificateTable: document.getElementById("vsphere-certificates-table")?.atlasoTabulator,
+      providerTable: document.getElementById("vsphere-providers-table")?.atlasoTabulator,
+      upsertOption,
+      certificateTargetSelect,
+    });
+    synchronizeProviderSelects();
+    const refreshed = await refreshNetworkSideStack();
+    if (refreshed === false) {
+      showNetworkSideStackRefreshWarning("vsphere-vcenter-error", networkSideStackRefreshFailureMessage());
+      return;
+    }
+    if (refreshed === true) showTransientGridStatus("Trusted vCenter saved");
+  };
 
   const certificateForm = document.querySelector("[data-vsphere-certificate-form]");
   const certificateDialog = document.getElementById("vsphere-certificate-dialog");
