@@ -4207,16 +4207,23 @@
         "type": "object"
       },
       "LdapBindCredentialResponse": {
-        "description": "Fields returned by the Atlaso ldap bind credential API.\n\nAttributes:\n    organization: Returned organization value for this ldap bind credential resource.\n    raw_bind_password: One-time LDAP bind password returned only by the credential-rotation\n        response.",
+        "description": "Fields returned by the Atlaso ldap bind credential API.\n\nAttributes:\n    organization: Returned organization value for this ldap bind credential resource.\n    raw_bind_password: Generated LDAP bind password shown once after rotation, or null when a\n        custom password was supplied.",
         "properties": {
           "organization": {
             "$ref": "#/components/schemas/LdapOrganizationResponse",
             "description": "Returned organization value for this ldap bind credential resource."
           },
           "raw_bind_password": {
-            "description": "One-time LDAP bind password returned only by the credential-rotation response.",
-            "title": "Raw Bind Password",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Generated LDAP bind password shown once after rotation; null when the caller supplied the custom secret.",
+            "title": "Raw Bind Password"
           }
         },
         "required": [
@@ -4224,6 +4231,29 @@
           "raw_bind_password"
         ],
         "title": "LdapBindCredentialResponse",
+        "type": "object"
+      },
+      "LdapBindCredentialRotateRequest": {
+        "description": "Optional custom secret accepted while rotating an LDAP bind credential.",
+        "properties": {
+          "bind_password": {
+            "anyOf": [
+              {
+                "format": "password",
+                "maxLength": 4096,
+                "type": "string",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional custom LDAP bind password. Omit the request body or set this value to null to generate the default credential, which is returned once. A supplied value is write-only, policy-validated, encrypted at rest, and not returned.",
+            "title": "Bind Password",
+            "writeOnly": true
+          }
+        },
+        "title": "LdapBindCredentialRotateRequest",
         "type": "object"
       },
       "LdapGroupCreate": {
@@ -4458,8 +4488,24 @@
         "type": "object"
       },
       "LdapOrganizationCreate": {
-        "description": "Fields accepted when creating a ldap organization resource.\n\nAttributes:\n    name: Stable operator-facing name of this resource.\n    slug: Requested slug value for this ldap organization resource.\n    suffix_dn: Requested suffix dn value for this ldap organization resource.\n    enabled: Whether the resource is enabled in saved Atlaso state.",
+        "description": "Fields accepted when creating a ldap organization resource.\n\nAttributes:\n    name: Stable operator-facing name of this resource.\n    slug: Requested slug value for this ldap organization resource.\n    suffix_dn: Requested suffix dn value for this ldap organization resource.\n    enabled: Whether the resource is enabled in saved Atlaso state.\n    bind_password: Optional custom bind password accepted only on creation and never returned.",
         "properties": {
+          "bind_password": {
+            "anyOf": [
+              {
+                "format": "password",
+                "maxLength": 4096,
+                "type": "string",
+                "writeOnly": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional custom LDAP bind password. Omit or set null to generate the default credential, which is returned once. Supplied values are write-only, validated against the LDAP password policy, encrypted at rest, and not returned.",
+            "title": "Bind Password",
+            "writeOnly": true
+          },
           "enabled": {
             "default": true,
             "description": "Whether the resource is enabled in saved Atlaso state.",
@@ -4495,7 +4541,7 @@
         "type": "object"
       },
       "LdapOrganizationResponse": {
-        "description": "Fields returned by the Atlaso ldap organization API.\n\nAttributes:\n    id: Unique database identifier assigned to this resource.\n    name: Stable operator-facing name of this resource.\n    slug: Returned slug value for this ldap organization resource.\n    suffix_dn: Returned suffix dn value for this ldap organization resource.\n    users_base_dn: Returned users base dn value for this ldap organization resource.\n    groups_base_dn: Returned groups base dn value for this ldap organization resource.\n    service_accounts_base_dn: Returned service accounts base dn value for this ldap organization\n        resource.\n    bind_dn: Returned bind dn value for this ldap organization resource.\n    bind_secret_present: Whether bind secret is securely staged without exposing its value.\n    enabled: Whether the resource is enabled in saved Atlaso state.\n    user_count: Number of user records represented by this ldap organization response.\n    group_count: Number of group records represented by this ldap organization response.\n    vcf_target_url: Validated VCF target url used for this ldap organization integration.\n    vcf_org_id: Stable identifier of the related VCF org resource.\n    vcf_org_name: Returned VCF org name value for this ldap organization resource.\n    vcf_tls_fingerprint: Returned VCF tls fingerprint value for this ldap organization resource.\n    vcf_last_status: Returned VCF last status value for this ldap organization resource.\n    vcf_last_message: Returned VCF last message value for this ldap organization resource.\n    vcf_last_verified_at: UTC timestamp for VCF last verified at on this ldap organization\n        resource.\n    created_at: UTC timestamp when the resource was created.\n    updated_at: UTC timestamp when the resource was last updated.\n    raw_bind_password: One-time LDAP bind password returned only by the credential-rotation\n        response.",
+        "description": "Fields returned by the Atlaso ldap organization API.\n\nAttributes:\n    id: Unique database identifier assigned to this resource.\n    name: Stable operator-facing name of this resource.\n    slug: Returned slug value for this ldap organization resource.\n    suffix_dn: Returned suffix dn value for this ldap organization resource.\n    users_base_dn: Returned users base dn value for this ldap organization resource.\n    groups_base_dn: Returned groups base dn value for this ldap organization resource.\n    service_accounts_base_dn: Returned service accounts base dn value for this ldap organization\n        resource.\n    bind_dn: Returned bind dn value for this ldap organization resource.\n    bind_secret_present: Whether bind secret is securely staged without exposing its value.\n    enabled: Whether the resource is enabled in saved Atlaso state.\n    user_count: Number of user records represented by this ldap organization response.\n    group_count: Number of group records represented by this ldap organization response.\n    vcf_target_url: Validated VCF target url used for this ldap organization integration.\n    vcf_org_id: Stable identifier of the related VCF org resource.\n    vcf_org_name: Returned VCF org name value for this ldap organization resource.\n    vcf_tls_fingerprint: Returned VCF tls fingerprint value for this ldap organization resource.\n    vcf_last_status: Returned VCF last status value for this ldap organization resource.\n    vcf_last_message: Returned VCF last message value for this ldap organization resource.\n    vcf_last_verified_at: UTC timestamp for VCF last verified at on this ldap organization\n        resource.\n    created_at: UTC timestamp when the resource was created.\n    updated_at: UTC timestamp when the resource was last updated.\n    raw_bind_password: Generated LDAP bind password shown once after creation or rotation; null\n        when an operator supplied the custom secret.",
         "properties": {
           "bind_dn": {
             "description": "Returned bind dn value for this ldap organization resource.",
@@ -4546,7 +4592,7 @@
                 "type": "null"
               }
             ],
-            "description": "One-time LDAP bind password returned only by the credential-rotation response.",
+            "description": "Generated LDAP bind password shown once after creation or rotation; null when the caller supplied the custom secret.",
             "title": "Raw Bind Password"
           },
           "service_accounts_base_dn": {
@@ -4639,6 +4685,43 @@
           "updated_at"
         ],
         "title": "LdapOrganizationResponse",
+        "type": "object"
+      },
+      "LdapOrganizationUpdate": {
+        "description": "Fields accepted when updating LDAP organization metadata.",
+        "properties": {
+          "enabled": {
+            "default": true,
+            "description": "Whether the resource is enabled in saved Atlaso state.",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Stable operator-facing name of this resource.",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "default": "",
+            "description": "Requested slug value for this ldap organization resource.",
+            "maxLength": 80,
+            "title": "Slug",
+            "type": "string"
+          },
+          "suffix_dn": {
+            "default": "",
+            "description": "Requested suffix dn value for this ldap organization resource.",
+            "maxLength": 500,
+            "title": "Suffix Dn",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "LdapOrganizationUpdate",
         "type": "object"
       },
       "LdapPasswordPolicy": {
@@ -14512,7 +14595,7 @@
         ]
       },
       "post": {
-        "description": "Create Ldap Organization.\n\nRequires the `write:ldap` API scope. The operation changes saved Atlaso application state; any\nappliance host enforcement remains subject to the documented apply or task boundary for the\nresource.",
+        "description": "Requires the `write:ldap` API scope. Creates LDAP organization desired state. Omit bind_password to generate the default bind credential, which is returned once, or supply a custom password validated against the saved LDAP policy. Custom values are encrypted at rest and not returned. Organization list and read responses never expose the bind credential. LDAP runtime changes remain subject to global Appliance Apply.",
         "operationId": "createLdapOrganization",
         "requestBody": {
           "content": {
@@ -14535,6 +14618,16 @@
             },
             "description": "Create Ldap Organization. The response body matches the documented success schema."
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The custom bind password is blank or does not satisfy the saved LDAP password policy, or the organization naming context is invalid."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -14551,7 +14644,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Create Ldap Organization",
+        "summary": "Create a managed LDAP organization",
         "tags": [
           "LDAP"
         ]
@@ -14600,7 +14693,7 @@
         ]
       },
       "put": {
-        "description": "Update Ldap Organization.\n\nRequires the `write:ldap` API scope. The operation updates saved Atlaso state and does not\nbypass the documented global Appliance Apply or service lifecycle boundary.",
+        "description": "Requires the `write:ldap` API scope. Updates organization metadata and enabled state without changing or rotating the bind credential. Use the separate credential rotation operation to replace the bind password. Saved changes remain subject to global Appliance Apply.",
         "operationId": "updateLdapOrganization",
         "parameters": [
           {
@@ -14619,7 +14712,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/LdapOrganizationCreate"
+                "$ref": "#/components/schemas/LdapOrganizationUpdate"
               }
             }
           },
@@ -14652,7 +14745,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Update Ldap Organization",
+        "summary": "Update managed LDAP organization metadata",
         "tags": [
           "LDAP"
         ]
@@ -14660,7 +14753,7 @@
     },
     "/api/v1/ldap/organizations/{organization_id}/bind-credential/rotate": {
       "post": {
-        "description": "Rotate Ldap Bind Credential.\n\nRequires the `write:ldap` API scope. The operation changes saved Atlaso application state; any\nappliance host enforcement remains subject to the documented apply or task boundary for the\nresource.",
+        "description": "Requires the `write:ldap` API scope. Rotates the bind credential. Omit the request body or bind_password to generate the default credential, which is returned once; a supplied custom value is validated against the LDAP password policy, encrypted at rest, and not returned. Reads and lists never return the secret. Saved changes remain subject to global Appliance Apply.",
         "operationId": "rotateLdapBindCredential",
         "parameters": [
           {
@@ -14675,6 +14768,24 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/LdapBindCredentialRotateRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Optional write-only custom bind password; omit to generate one.",
+                "title": "Payload"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -14685,6 +14796,16 @@
               }
             },
             "description": "Rotate Ldap Bind Credential. The response body matches the documented success schema."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The custom bind password is blank or does not satisfy the saved LDAP password policy."
           },
           "422": {
             "content": {
@@ -14702,7 +14823,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Rotate Ldap Bind Credential",
+        "summary": "Rotate a managed LDAP bind credential",
         "tags": [
           "LDAP"
         ]
