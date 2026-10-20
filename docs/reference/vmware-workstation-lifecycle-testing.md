@@ -277,8 +277,13 @@ matching version text does not prove matching signed bytes. Both SSH authenticat
 The installed helper must support `appliance-update wheel-deploy-lock-v1 --real` before deployment can proceed.
 Older helpers fail closed: create a fresh disposable bootstrap VM from an image containing the lock-capable helper;
 do not manually replace its helper to bypass admission. Deployment holds an exclusive lock on
-`/run/atlaso-appliance-mutation.lock` through installation and service verification. Appliance Update helpers take shared
+`/run/atlaso-appliance-mutation.lock` through asset installation and web readiness, releasing it before starting or
+restoring the worker so queued updates and interrupted-helper reconciliation can resume. Appliance Update helpers take shared
 locks on the same inode before mutation, including status publication; an active operation refuses conflicting work.
+An update refused solely because deployment owns this lock remains queued for the normal worker retry interval.
+The helper records explicit no-mutation admission evidence with its distinct conflict status; check, source-sync and
+installation tasks retry using the same task and child identities. Completed children remain unchanged. This does not
+relax the existing cleanup-required handling when prior helper ownership or credential cleanup cannot be proven.
 Shared update locks permit the updater's own recovery and worker handoff helpers to run together. Ordinary startup
 guards with no update evidence remain available to deployment's service restarts. Never delete or replace the lock file
 to clear a conflict: wait for the owning operation to finish and retry admission.

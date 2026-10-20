@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import io
+import json
 import os
 import select
 import shlex
@@ -11,6 +13,7 @@ import stat
 import subprocess
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -68,11 +71,12 @@ class DeploymentLockTests(unittest.TestCase):
         # CI runs without root and WSL's Windows mount need not preserve chmod.
         # Root ownership/mode are modeled; type/link checks, inode comparisons
         # and flock use the real filesystem and independent shell process.
-        self.shell = (
+        self.lock_shell = (
             "set -eu\nstat() { if [ \"$2\" = '%u:%g:%a:%h' ]; then "
             "printf '0:0:600:1\\n'; else command stat \"$@\"; fi; }\n"
-            + lock + "\nprintf 'acquired\\n'\nread -r release\n"
+            + lock
         )
+        self.shell = self.lock_shell + "\nprintf 'acquired\\n'\nread -r release\n"
 
     def test_update_blocks_wheel_and_releases_on_failure(self):
         """Refuse wheel mutation until every nested update owner has exited."""
@@ -104,7 +108,10 @@ class DeploymentLockTests(unittest.TestCase):
                 self.assertEqual(deploy.stdout.readline().strip(), "acquired")
                 with patch.object(self.helper, "_handle_appliance_update_locked") as mutate:
                     for action in ("apply", "sync-sources", "status-publish", "status-finish", "restart-service"):
-                        self.assertEqual(self.helper._handle_appliance_update(action, []), 75)
+                        output = io.StringIO()
+                        with redirect_stdout(output):
+                            self.assertEqual(self.helper._handle_appliance_update(action, []), 73)
+                        self.assertEqual(json.loads(output.getvalue()), {"status": "deployment-busy", "mutation_started": False})
                     mutate.assert_not_called()
                 # Derive every updater pre-start action from the canonical units,
                 # including the bootstrap hooks installed by wheel deployment.
@@ -136,7 +143,8 @@ class DeploymentLockTests(unittest.TestCase):
                     for retained in evidence:
                         retained.write_text("retained", encoding="utf-8")
                         with patch.object(self.helper, "_handle_appliance_update_locked") as startup:
-                            self.assertEqual(self.helper._handle_appliance_update(action, []), 75)
+                            with redirect_stdout(io.StringIO()):
+                                self.assertEqual(self.helper._handle_appliance_update(action, []), 73)
                             startup.assert_not_called()
                         retained.unlink()
             finally:
@@ -193,6 +201,41 @@ class DeploymentLockTests(unittest.TestCase):
             with self.helper._appliance_update_deployment_guard("apply"):
                 self.fail("multiply linked lock admitted")
         self.assertEqual(target.read_text(encoding="utf-8"), "unchanged")
+
+    def test_io_failure_after_admission_is_not_a_retryable_conflict(self):
+        """A handler I/O failure cannot claim that no update work was admitted."""
+        output = io.StringIO()
+        with patch.object(self.helper, "_handle_appliance_update_locked", side_effect=BlockingIOError):
+            with redirect_stdout(output):
+                self.assertEqual(self.helper._handle_appliance_update("apply", []), 75)
+        self.assertNotIn("deployment-busy", output.getvalue())
+
+    def test_normal_and_failure_handoffs_release_before_worker_start(self):
+        """Run shipped handoff/trap code with an independent worker lock attempt."""
+        source = (ROOT / "scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
+        body = source.split("$deployScript = @'\n", 1)[1].split("\n'@", 1)[0]
+        readiness = body.split("# Verify web readiness before reopening update admission to the worker.\n", 1)[1]
+        recovery = "restore_services_on_exit() {" + body.split("restore_services_on_exit() {", 1)[1].split(
+            "\ntrap restore_services_on_exit EXIT", 1
+        )[0]
+        lock = shlex.quote(str(self.helper.ATLASO_DEPLOYMENT_LOCK_PATH))
+        worker = (
+            'systemctl() { if [ "$*" = "restart atlaso-worker.service" ]; then '
+            f"flock --shared --nonblock {lock} -c 'echo worker-admitted'; else return 0; fi; }}\n"
+            "curl() { return 0; }\ntimeout_seconds=1\npoll_seconds=1\n"
+        )
+        for name, code, expected in (
+            ("normal", readiness, 0),
+            ("failure", recovery + "\natlaso_was_active=true\nworker_was_active=true\n"
+             "app_history_cutover_in_progress=false\nset +e\nfalse\nrestore_services_on_exit\n", 1),
+        ):
+            with self.subTest(handoff=name):
+                result = subprocess.run(
+                    ["sh", "-c", self.lock_shell + worker + code], input="", text=True,
+                    capture_output=True, timeout=10, check=False,
+                )
+                self.assertEqual(result.returncode, expected, result.stderr)
+                self.assertIn("worker-admitted", result.stdout)
 
 
 if __name__ == "__main__":

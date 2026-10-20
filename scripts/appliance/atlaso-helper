@@ -34764,6 +34764,10 @@ def _handle_management_front_door(action: str, args: list[str]) -> int:
     return _recover_management_front_door()
 
 
+class _DeploymentAdmissionBusy(Exception):
+    """No update mutation was admitted because wheel deployment owns the lock."""
+
+
 def _handle_appliance_update(action: str, args: list[str]) -> int:
     """Serialize update mutation against exclusive development wheel deployment.
 
@@ -34779,6 +34783,9 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
     try:
         with _appliance_update_deployment_guard(action):
             return _handle_appliance_update_locked(action, args)
+    except _DeploymentAdmissionBusy:
+        print(json.dumps({"status": "deployment-busy", "mutation_started": False}, sort_keys=True))
+        return 73
     except (OSError, ValueError) as exc:
         print(f"Appliance Update deployment serialization refused: {type(exc).__name__}.", file=sys.stderr)
         return 75
@@ -34824,7 +34831,12 @@ def _appliance_update_deployment_guard(action: str):
             raise ValueError("deployment lock identity is unsafe")
         # A failed nonblocking acquisition changes no update state. Never unlink
         # this lock: the same inode must arbitrate every independent helper.
-        fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            # This signal originates only before entering the action handler;
+            # an I/O failure after admission must retain its ordinary failure.
+            raise _DeploymentAdmissionBusy from exc
         try:
             yield
         finally:

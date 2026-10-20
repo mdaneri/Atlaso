@@ -1394,7 +1394,7 @@ if [ "$(stat -Lc '%u:%g:%a:%h' /proc/self/fd/9)" != '0:0:600:1' ] || \
     echo "Wheel deployment refused: deployment lock is unsafe or Appliance Update is active." >&2
     exit 2
 fi
-# Keep fd 9 open through all deployment work and verify capability again under
+# Keep fd 9 open through asset mutation and web readiness; verify capability again under
 # lock: an update may have replaced the installed helper before acquisition.
 if ! /opt/atlaso/bin/atlaso-helper appliance-update wheel-deploy-lock-v1 --real >/dev/null; then
     echo "Wheel deployment refused: the installed helper no longer supports deployment locking." >&2
@@ -1616,6 +1616,9 @@ restore_services_on_exit() {
     else
         systemctl stop atlaso.service
     fi
+    # A restored worker may reconcile or claim queued updates immediately.
+    # Finish protected web restoration, then release admission before handoff.
+    exec 9>&-
     if [ "$worker_was_active" = "true" ]; then
         systemctl restart atlaso-worker.service
     else
@@ -1839,8 +1842,7 @@ fi
 systemctl restart atlaso
 systemctl is-active atlaso
 systemctl enable atlaso-worker.service
-systemctl restart atlaso-worker.service
-systemctl is-active atlaso-worker.service
+# Verify web readiness before reopening update admission to the worker.
 deadline=$(( $(date +%s) + timeout_seconds ))
 while ! curl -fsS http://127.0.0.1:8000/openapi.json >/dev/null; do
     if [ "$(date +%s)" -ge "$deadline" ]; then
@@ -1850,6 +1852,9 @@ while ! curl -fsS http://127.0.0.1:8000/openapi.json >/dev/null; do
     fi
     sleep "$poll_seconds"
 done
+exec 9>&-
+systemctl restart atlaso-worker.service
+systemctl is-active atlaso-worker.service
 trap - EXIT
 echo "Atlaso service restarted and loopback OpenAPI is reachable."
 '@
