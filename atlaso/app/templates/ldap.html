@@ -77,7 +77,7 @@
 {% endmacro %}
 {% block content %}
 <section class="split-workspace service-settings-workspace">
-  <div class="panel wide-panel">
+  <div class="panel wide-panel ldap-main-panel">
     <div class="panel-head">
       <div>
         <h2>Managed LDAP for VCF Automation</h2>
@@ -87,6 +87,7 @@
     </div>
 
     {% if form_error %}<div class="alert error">{{ form_error }}</div>{% endif %}
+    {% if ldap_custom_bind_rotation_saved %}<div class="alert success" role="status">Custom bind credential saved for {{ ldap_selected_organization.name }}. Apply the pending LDAP changes through global Appliance Apply.</div>{% endif %}
     <div class="alert warning">
       This is single-node lab identity infrastructure. Keep local break-glass administrators in every VCF organization.
     </div>
@@ -113,8 +114,8 @@
               <span class="muted">organization directory and VCF bind identity</span>
             </div>
             <div class="zone-actions">
-              <form action="{{ management_ui_root }}/ldap/organizations/{{ ldap_selected_organization.id }}/bind-credential/rotate" method="post" data-confirm-modal data-confirm-title="Rotate VCF bind credential?" data-confirm-message="The new password is shown once. VCF continues using the old password until LDAP is applied and the VCF organization settings are updated." data-confirm-label="Rotate credential">
-                <input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button tiny secondary" type="submit">Rotate bind credential</button>
+              <form action="{{ management_ui_root }}/ldap/organizations/{{ ldap_selected_organization.id }}/bind-credential/rotate" method="post" data-confirm-modal data-confirm-title="Rotate VCF bind credential?" data-confirm-message="The generated password is shown once. Apply LDAP and update the VCF organization before using it." data-confirm-label="Rotate credential">
+                <input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button tiny secondary" type="submit" data-ldap-bind-rotation-open>Rotate bind credential</button>
               </form>
               <form action="{{ management_ui_root }}/ldap/organizations/{{ ldap_selected_organization.id }}/delete" method="post" data-confirm-modal data-confirm-title="Delete {{ ldap_selected_organization.name }}?" data-confirm-message="This removes the organization, users, groups, and bind identity from desired state. The LDAP database is removed from service on the next global apply." data-confirm-label="Delete organization">
                 <input type="hidden" name="csrf" value="{{ csrf_token }}"><button class="button tiny danger" type="submit">Delete organization</button>
@@ -211,6 +212,7 @@
 {% set ldap_organization_steps = [
   {"id": "identity", "label": "Organization", "summary": "Name and description"},
   {"id": "directory", "label": "Directory", "summary": "Slug and isolated suffix"},
+  {"id": "credential", "label": "Bind credential", "summary": "Choose generated or custom password"},
   {"id": "enablement", "label": "Enablement", "summary": "Desired lifecycle state"},
   {"id": "review", "label": "Review", "summary": "Confirm bind identity creation"}
 ] %}
@@ -223,6 +225,7 @@
   "Name the VCF organization and choose its isolated LDAP naming context.",
   "Create organization"
 ) %}
+  {% if ldap_organization_form_state %}<span hidden data-ldap-bind-wizard-retry data-retry-mode="{{ ldap_bind_retry_mode }}" data-retry-step="{{ ldap_organization_retry_step }}" data-retry-error="{{ form_error }}" data-retry-values='{{ ldap_organization_form_state|tojson }}'></span>{% endif %}
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <section data-atlaso-wizard-step="identity">
     <div class="form-stack">
@@ -237,14 +240,63 @@
     </div>
     <div class="alert warning">Atlaso creates a separate LDAP database plus a one-time read-only VCF bind credential for this suffix.</div>
   </section>
+  <section class="hidden" data-atlaso-wizard-step="credential">
+    <div class="form-stack">
+      <label><span class="field-label"><span>Bind password</span><button class="help-icon" type="button" data-help="Use an Atlaso-generated password or provide a custom value for the read-only VCF bind identity. A custom value is not displayed in the review or response.">i</button></span>
+        <select name="bind_password_mode" data-ldap-bind-password-mode>
+          <option value="generated" selected>Generate a password</option>
+          <option value="custom">Custom password</option>
+        </select>
+      </label>
+      <label class="hidden" hidden data-ldap-bind-password-field><span class="field-label"><span>Custom password</span></span><input type="password" name="bind_password" autocomplete="new-password" data-ldap-bind-password disabled></label>
+      <label class="hidden" hidden data-ldap-bind-password-field><span class="field-label"><span>Confirm custom password</span></span><input type="password" name="confirm_bind_password" autocomplete="new-password" data-ldap-bind-password-confirm disabled></label>
+    </div>
+    <p class="muted">Generated passwords are shown once after creation. A custom password is held only for this request and never displayed by Atlaso.</p>
+  </section>
   <section class="hidden" data-atlaso-wizard-step="enablement">
     <label class="switch-field"><span class="field-label"><span>Organization enabled</span><button class="help-icon" type="button" data-help="Includes this organization database in the next global LDAP apply. Disabled organizations remain in Atlaso desired-state storage.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label>
   </section>
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>
-    <div class="alert warning">The bind password is shown once after creation. LDAP host mutation remains part of global Appliance Apply.</div>
+    <div class="alert warning">The selected bind credential mode is shown here; password values are never included. LDAP host mutation remains part of global Appliance Apply.</div>
   </section>
 {% endcall %}
+
+{% if ldap_selected_organization %}
+{% set ldap_bind_rotation_steps = [
+  {"id": "credential", "label": "Credential", "summary": "Choose generated or custom password"},
+  {"id": "review", "label": "Review", "summary": "Confirm bind credential rotation"}
+] %}
+{% call resource_wizard(
+  "ldap-bind-rotation-dialog",
+  "ldap-bind-rotation-form",
+  management_ui_path("/ldap/organizations/") ~ ldap_selected_organization.id ~ "/bind-credential/rotate",
+  ldap_bind_rotation_steps,
+  "Rotate VCF bind credential",
+  "Choose a generated or custom password for the read-only bind identity.",
+  "Rotate bind credential"
+) %}
+  {% if ldap_bind_rotation_retry %}<span hidden data-ldap-bind-wizard-retry data-retry-mode="{{ ldap_bind_retry_mode }}" data-retry-step="credential" data-retry-error="{{ form_error }}" data-retry-values='{}'></span>{% endif %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+  <section data-atlaso-wizard-step="credential">
+    <div class="form-stack">
+      <label><span class="field-label"><span>Bind password</span><button class="help-icon" type="button" data-help="Use an Atlaso-generated password or provide a custom value for the read-only VCF bind identity. A custom value is not displayed in the review or response.">i</button></span>
+        <select name="bind_password_mode" data-ldap-bind-password-mode>
+          <option value="generated" selected>Generate a password</option>
+          <option value="custom">Custom password</option>
+        </select>
+      </label>
+      <label class="hidden" hidden data-ldap-bind-password-field><span class="field-label"><span>Custom password</span></span><input type="password" name="bind_password" autocomplete="new-password" data-ldap-bind-password disabled></label>
+      <label class="hidden" hidden data-ldap-bind-password-field><span class="field-label"><span>Confirm custom password</span></span><input type="password" name="confirm_bind_password" autocomplete="new-password" data-ldap-bind-password-confirm disabled></label>
+    </div>
+    <p class="muted">Generated passwords are shown once after rotation. A custom password is held only for this request and never displayed by Atlaso.</p>
+  </section>
+  <section class="hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list" data-atlaso-resource-review></div>
+    <div class="alert warning">The selected credential mode is shown here; password values are never included. VCF continues using the previous password until LDAP is applied and the VCF organization settings are updated.</div>
+  </section>
+{% endcall %}
+{% endif %}
 
 {% if ldap_selected_organization %}
 {% set ldap_user_steps = [
@@ -288,7 +340,7 @@
     <div class="alert warning">Leave both fields blank to postpone password setup. An enabled user without an applied or staged password will block LDAP apply validation.</div>
   </section>
   <section class="hidden" data-atlaso-wizard-step="enablement">
-    <label class="switch-field"><span class="field-label"><span>User enabled</span><button class="help-icon" type="button" data-help="Includes this account in the next global LDAP apply. The record remains in Atlaso when disabled.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+    <label class="switch-field"><span class="field-label"><span>User enabled</span><button class="help-icon" type="button" data-help="Includes this account in the next global LDAP apply. The record remains in Atlaso when disabled.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label>
   </section>
   <section class="hidden" data-atlaso-wizard-step="review">
     <div class="settings-list" data-atlaso-resource-review></div>
