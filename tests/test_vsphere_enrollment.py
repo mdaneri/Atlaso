@@ -202,21 +202,22 @@ def test_discovery_rejects_wrong_atlaso_endpoint_before_client_certificate(
         ([], "No server members were returned"),
         (None, "Server inventory is missing or invalid"),
         ({"address": "kms.atlaso.example.test"}, "Server inventory is missing or invalid"),
-        ([None], "member 1: address [missing or invalid]"),
-        ([{"address": "192.168.1.254", "port": 5696}], "address 192.168.1.254, port 5696"),
-        ([{"address": "alias.example.test", "port": 5696}], "address alias.example.test"),
+        ([None], "member 1: address missing or not a string"),
+        ([{"address": "192.168.1.254", "port": 5696}], "address differs"),
+        ([{"address": "alias.example.test", "port": 5696}], "address differs"),
         ([{"address": "kms.atlaso.example.test", "port": 5696},
           {"address": "foreign.example.test", "port": 5696}], "1 of 2 members differ: member 2"),
-        ([{"address": "kms.atlaso.example.test", "port": 5697}], "port 5697"),
+        ([{"address": "kms.atlaso.example.test", "port": 5697}], "port differs"),
         ([{"address": "kms.atlaso.example.test", "port": "5696"}], "invalid integer"),
         ([{"address": "kms.atlaso.example.test", "port": True}], "invalid integer"),
         ([{"address": "kms.atlaso.example.test", "port": None}], "invalid integer"),
         ([{"address": "kms.atlaso.example.test", "port": 65536}], "invalid integer"),
         ([{"address": "https://user:private-marker@other.test", "port": "private-marker",
-           "name": "private-marker", "userName": "private-marker"}], "address [missing or invalid]"),
-        ([{"address": "<script>private-marker</script>", "port": 5696}], "address [missing or invalid]"),
-        ([{"address": "fe80::1%private-marker", "port": 5696}], "address [missing or invalid]"),
-        ([{"address": "a" * 254, "port": 5696}], "address [missing or invalid]"),
+           "name": "private-marker", "userName": "private-marker"}], "address differs"),
+        ([{"address": "<script>private-marker</script>", "port": 5696}], "address differs"),
+        ([{"address": "fe80::1%private-marker", "port": 5696}], "address differs"),
+        ([{"address": "a" * 254, "port": 5696}], "address differs"),
+        ([{"address": "private-marker.example.test", "port": 61337}], "address differs, port differs"),
     ],
 )
 def test_endpoint_diagnostics_reject_before_certificate_and_keep_logout(monkeypatch, servers, detail) -> None:
@@ -243,6 +244,7 @@ def test_endpoint_diagnostics_reject_before_certificate_and_keep_logout(monkeypa
     assert detail in message
     assert "then retry" in message
     assert "private-marker" not in message
+    assert "61337" not in message
     assert not any(path.endswith("/RetrieveClientCert") for path in fake.calls)
     assert fake.calls[-1].endswith("/Logout")
 
@@ -256,9 +258,9 @@ def test_endpoint_diagnostics_inspect_all_members_and_bound_output() -> None:
         enrollment._check_cluster_endpoint(servers, "kms.atlaso.example.test", 5696)
     message = str(error.value)
     assert "10 of 11 members differ" in message
-    assert "member 2: address other0.example.test" in message
-    assert "member 4: address other2.example.test" in message
-    assert "other3.example.test" not in message
+    assert "member 2: address differs" in message
+    assert "member 4: address differs" in message
+    assert "other" not in message
     assert "Only the first 3 mismatches" in message
     assert len(message) < 1300
 

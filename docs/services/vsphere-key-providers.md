@@ -87,9 +87,10 @@ port. Client authorization remains an exact fingerprint-to-provider-UUID mapping
 
 If **Target** reports **The vCenter KMIP cluster does not point only to this Atlaso endpoint**, discovery stops before
 retrieving the client certificate. The message names the expected **configured** Atlaso hostname and port, the total
-number of differing members, and up to three mismatches by their position in the returned cluster inventory.
-Missing, empty, or malformed server inventory is rejected separately. Invalid address or port values are withheld;
-the message does not echo remote member names, credentials, or raw API payloads.
+number of differing members, and up to three mismatches by their position in the returned cluster inventory, naming
+which fields differ.
+Missing, empty, or malformed server inventory is rejected separately. All remote address and port values are withheld,
+even when they look valid; the message does not echo remote member names, credentials, or raw API payloads.
 
 1. Compare the expected endpoint with the hostname and port in the Atlaso listener settings rail. These are saved
    desired-state values; the message does not prove that the listener is applied, reachable, or trusted. If settings

@@ -169,7 +169,7 @@ def _pinned_context(leaf: bytes) -> ssl.SSLContext:
 
 
 def _check_cluster_endpoint(servers: object, host: str, port: int) -> None:
-    """Require every member to match, reporting only bounded endpoint metadata.
+    """Require every member to match without reflecting remote response values.
 
     Args:
         servers: Untrusted server inventory from the selected vCenter cluster.
@@ -192,25 +192,21 @@ def _check_cluster_endpoint(servers: object, host: str, port: int) -> None:
     for index, server in enumerate(servers, start=1):
         address = server.get("address") if isinstance(server, dict) else None
         observed_port = server.get("port") if isinstance(server, dict) else None
-        # Never echo arbitrary remote strings, URLs, member names or other fields.
-        safe_address = "[missing or invalid]"
-        if isinstance(address, str) and len(address) <= 253 and "%" not in address:
-            try:
-                safe_address = normalize_vcenter_hostname(address) or safe_address
-            except ValueError:
-                pass
+        address_matches = isinstance(address, str) and address.strip().casefold().rstrip(".") == host
         valid_port = type(observed_port) is int and 1 <= observed_port <= 65535
-        if (
-            isinstance(address, str)
-            and address.strip().casefold().rstrip(".") == host
-            and valid_port
-            and observed_port == port
-        ):
+        port_matches = valid_port and observed_port == port
+        if address_matches and port_matches:
             continue
         mismatch_count += 1
         if len(mismatches) < 3:
-            port_label = str(observed_port) if valid_port else "[missing or invalid integer]"
-            mismatches.append(f"member {index}: address {safe_address}, port {port_label}")
+            # Even a DNS-shaped string or valid integer may contain a reflected
+            # credential. Report comparison results only, never remote values.
+            fields = []
+            if not address_matches:
+                fields.append("address differs" if isinstance(address, str) else "address missing or not a string")
+            if not port_matches:
+                fields.append("port differs" if valid_port else "port missing or invalid integer")
+            mismatches.append(f"member {index}: " + ", ".join(fields))
     if mismatch_count:
         summary = f"{mismatch_count} of {len(servers)} members differ: " + "; ".join(mismatches) + ". "
         if mismatch_count > len(mismatches):

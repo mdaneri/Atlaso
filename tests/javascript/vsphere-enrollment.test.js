@@ -300,7 +300,7 @@ test("Vault enrollment locks the saved URI host, skips Login, and never posts ma
 
 test("an endpoint rejection retains Target inputs and permits a fresh inspection retry", async () => {
   let attempts = 0;
-  const detail = "The vCenter KMIP cluster does not point only to this Atlaso endpoint. Expected configured Atlaso endpoint: kms.example.test, port 5696. 1 of 2 members differ: member 2: address 192.168.1.254, port 5696. Compare every member, then retry.";
+  const detail = "The vCenter KMIP cluster does not point only to this Atlaso endpoint. Expected configured Atlaso endpoint: kms.example.test, port 5696. 1 of 2 members differ: member 2: address differs. Compare every member, then retry.";
   const runtime = makeRuntime(async (url) => {
     assert.ok(url.endsWith("/inspect"));
     if (++attempts === 1) throw new Error(detail);

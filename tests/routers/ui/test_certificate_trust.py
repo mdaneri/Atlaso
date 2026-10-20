@@ -873,31 +873,44 @@ def test_enrollment_endpoint_rejection_preserves_http_error_and_trust_state(clie
             **kwargs: Request-local discovery arguments.
         """
         _check_cluster_endpoint(
-            [{"address": "192.168.1.254", "port": 5697}], kwargs["atlaso_host"], kwargs["atlaso_port"]
+            [{"address": kwargs["password"], "port": 61337}], kwargs["atlaso_host"], kwargs["atlaso_port"]
         )
 
     monkeypatch.setattr(transport, "discover_vcenter_client", reject)
     with SessionLocal() as db:
         provider = VsphereKeyProvider(id=str(uuid4()), name="Endpoint regression", enabled=True)
         db.add(provider)
+        vault = Vault(name="Endpoint regression", created_by="admin")
+        db.add(vault)
+        db.flush()
+        entry = VaultEntry(
+            vault_id=vault.id, key="endpoint-regression", secret_type="vcf_password",
+            uris_json='["https://vcsa.example.test"]', username="saved-user",
+            encrypted_value=encrypt_secret("request-only-secret.example.test"), created_by="admin",
+        )
+        db.add(entry)
         db.commit()
         provider_id = provider.id
+        vault_id, entry_id = vault.id, entry.id
         before = [row.id for row in db.query(VsphereTrustedVcenter).all()]
         certificates = [row.id for row in db.query(VsphereTrustedVcenterCertificate).all()]
     data = {
         "csrf": csrf, "credential_source": "manual", "hostname": "vcsa.example.test",
-        "username": "request-only-user", "password": "request-only-secret",
+        "username": "request-only-user", "password": "request-only-secret.example.test",
         "cluster_id": "Default", "confirmed_https_fingerprint": certificate_fingerprint(leaf),
         "provider_id": provider_id, "name": "Lab vCenter", "expected_client_fingerprint": "00" * 32,
     }
-    for route in ("inspect", "approve"):
-        response = client.post(f"/vsphere-key-providers/enrollment/{route}", data=data)
-        assert response.status_code == 422
-        message = response.json()["detail"]
-        assert "Expected configured Atlaso endpoint:" in message
-        assert "member 1: address 192.168.1.254, port 5697" in message
-        assert "then retry" in message
-        assert "request-only" not in message
+    for credential in ({}, {"credential_source": "vault", "vault_id": vault_id, "entry_id": entry_id,
+                            "uri_index": 0, "username": "", "password": ""}):
+        for route in ("inspect", "approve"):
+            response = client.post(f"/vsphere-key-providers/enrollment/{route}", data={**data, **credential})
+            assert response.status_code == 422
+            message = response.json()["detail"]
+            assert "Expected configured Atlaso endpoint:" in message
+            assert "member 1: address differs, port differs" in message
+            assert "61337" not in message
+            assert "then retry" in message
+            assert "request-only" not in message
     with SessionLocal() as db:
         assert [row.id for row in db.query(VsphereTrustedVcenter).all()] == before
         assert [row.id for row in db.query(VsphereTrustedVcenterCertificate).all()] == certificates
