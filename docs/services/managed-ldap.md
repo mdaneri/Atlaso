@@ -67,7 +67,8 @@ wizard for its name, operator description, isolated naming context, and enableme
 wizard-backed Tabulator grids with bottom add rows. Opening a saved row returns to the same reviewed flow, while the
 Enabled column remains a direct edit for quick desired-state changes. Row menus retain password reset, unlock,
 membership, and deletion actions. Group membership presents the selected organization's current users and eligible
-nested groups, and new groups default to Enabled before review. User creation can stage a password or postpone it;
+nested groups. New users and groups default to Enabled before review; turn off Enabled to save a disabled entry.
+Editing preserves the entry's saved state. User creation can stage a password or postpone it;
 non-grid user and group creation returns to the selected organization using its saved identity. Enabling an account
 without an applied or staged password causes LDAP apply validation to stop before host mutation.
 

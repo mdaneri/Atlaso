@@ -32,6 +32,27 @@ function functionSource(name) {
 }
 
 const context = vm.createContext({});
+test("LDAP creation enables users and groups while editing preserves disabled state", () => {
+  const state = vm.createContext({ CSS: { escape: (value) => value } });
+  vm.runInContext(
+    `${functionSource("newLdapUserRow")}\n${functionSource("newLdapGroupRow")}\n${functionSource("populateAtlasoWizardForm")}`,
+    state,
+  );
+  for (const factory of [state.newLdapUserRow, state.newLdapGroupRow]) {
+    const control = { name: "enabled", type: "checkbox", checked: false };
+    const elements = [control];
+    elements.namedItem = () => null;
+    const form = { elements, querySelectorAll: () => [control] };
+    const defaults = factory("2");
+    state.populateAtlasoWizardForm(form, {}, { defaults });
+    assert.equal(control.checked, true);
+    state.populateAtlasoWizardForm(form, { id: 4, enabled: false }, { defaults });
+    assert.equal(control.checked, false);
+    state.populateAtlasoWizardForm(form, {}, { defaults });
+    assert.equal(control.checked, true);
+  }
+});
+
 vm.runInContext(
   `${functionSource("createLdapOrganizationLoadCoordinator")}\n` +
     `${functionSource("shouldSuppressLdapOrganizationHistory")}\n` +

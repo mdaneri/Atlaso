@@ -6869,7 +6869,7 @@ function initializeKmsSettings(root = document) {
 }
 
 function newLdapUserRow(organizationId) {
-  return { id: "__new_ldap_user__", organization_id: organizationId, uid: "", given_name: "", surname: "", display_name: "", email: "", telephone: "", enabled: false, password_status: "", is_new: true };
+  return { id: "__new_ldap_user__", organization_id: organizationId, uid: "", given_name: "", surname: "", display_name: "", email: "", telephone: "", enabled: true, password_status: "", is_new: true };
 }
 
 function newLdapGroupRow(organizationId) {
