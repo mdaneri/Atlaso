@@ -222,6 +222,7 @@
   "Name the VCF organization and choose its isolated LDAP naming context.",
   "Create organization"
 ) %}
+  {% if ldap_organization_form_state %}<span hidden data-ldap-bind-wizard-retry data-retry-mode="{{ ldap_bind_retry_mode }}" data-retry-step="{{ ldap_organization_retry_step }}" data-retry-error="{{ form_error }}" data-retry-values='{{ ldap_organization_form_state|tojson }}'></span>{% endif %}
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <section data-atlaso-wizard-step="identity">
     <div class="form-stack">
@@ -272,6 +273,7 @@
   "Choose a generated or custom password for the read-only bind identity.",
   "Rotate bind credential"
 ) %}
+  {% if ldap_bind_rotation_retry %}<span hidden data-ldap-bind-wizard-retry data-retry-mode="{{ ldap_bind_retry_mode }}" data-retry-step="credential" data-retry-error="{{ form_error }}" data-retry-values='{}'></span>{% endif %}
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <section data-atlaso-wizard-step="credential">
     <div class="form-stack">

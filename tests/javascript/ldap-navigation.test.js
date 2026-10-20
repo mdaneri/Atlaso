@@ -198,7 +198,7 @@ test("organization swaps replace the rotation target and bind the imported launc
     LDAP_ORGANIZATION_SELECTION_KEY: "selection",
     initializeLdapSettingsStatus() {}, initializeTabs() {}, initializeLdapDirectoryTables() {},
     initializeLdapPasswordModal() {}, initializeConfirmationModals() {},
-    initializeLdapBindCredentialFields() {},
+    initializeLdapBindCredentialFields() {}, restoreLdapBindWizardError() {},
     managementUiPath: (path) => `/ui/management${path}`,
     createLdapOrganizationLoadCoordinator: (config) => { onData = config.onData; return {}; },
   });

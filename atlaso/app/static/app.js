@@ -6792,12 +6792,13 @@ function initializeLdapOrganizationWizard() {
       { label: "Bind credential", value: () => ldapBindPasswordReviewValue(form) },
       { label: "Desired state", field: "enabled" },
     ]),
-    onOpen: () => resetLdapBindPasswordFields(form),
+    onOpen: ({ context }) => prepareLdapBindWizardOpen(form, context),
     onClose: () => resetLdapBindPasswordFields(form),
   });
   launchers.forEach((button) => {
     button.addEventListener("click", () => wizard.open({ launcher: button }));
   });
+  restoreLdapBindWizardError(form, wizard, launchers[0]);
 }
 
 function ldapBindPasswordControls(form) {
@@ -6853,6 +6854,37 @@ function validateLdapBindPasswordStep(form, step) {
   return { valid: true };
 }
 
+function prepareLdapBindWizardOpen(form, context) {
+  resetLdapBindPasswordFields(form);
+  const values = context?.retryValues || {};
+  for (const name of ["name", "description", "slug", "suffix_dn", "enabled"]) {
+    if (!Object.hasOwn(values, name)) continue;
+    const control = form.elements.namedItem(name);
+    if (control instanceof HTMLInputElement && control.type === "checkbox") control.checked = Boolean(values[name]);
+    else if (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement) control.value = String(values[name] ?? "");
+  }
+  const controls = ldapBindPasswordControls(form);
+  if (controls && context?.retryBindMode === "custom") {
+    controls.mode.value = "custom";
+    syncLdapBindPasswordFields(form);
+  }
+}
+
+function restoreLdapBindWizardError(form, wizard, launcher) {
+  const retry = form.querySelector("[data-ldap-bind-wizard-retry]");
+  if (!(retry instanceof HTMLElement)) return;
+  const mode = retry.dataset.retryMode;
+  const step = retry.dataset.retryStep || "credential";
+  const message = retry.dataset.retryError || "The bind credential could not be saved.";
+  const values = JSON.parse(retry.dataset.retryValues || "{}");
+  retry.remove();
+  wizard.open({ launcher, reset: false, step, highestStep: step, context: { retryBindMode: mode, retryValues: values } })
+    .then(() => {
+      form.dispatchEvent(new Event("input", { bubbles: true }));
+      window.requestAnimationFrame(() => wizard.setError(message, step === "credential" && mode === "custom" ? "bind_password" : null));
+    });
+}
+
 function initializeLdapBindCredentialFields(form) {
   const controls = ldapBindPasswordControls(form);
   if (!controls || form.dataset.ldapBindPasswordInitialized === "1") return;
@@ -6881,10 +6913,11 @@ function initializeLdapBindRotationWizard() {
     prepareReview: () => renderAtlasoWizardReview(form, [
       { label: "Bind credential", value: () => ldapBindPasswordReviewValue(form) },
     ]),
-    onOpen: () => resetLdapBindPasswordFields(form),
+    onOpen: ({ context }) => prepareLdapBindWizardOpen(form, context),
     onClose: () => resetLdapBindPasswordFields(form),
   });
   launchers.forEach((button) => button.addEventListener("click", () => wizard.open({ launcher: button })));
+  restoreLdapBindWizardError(form, wizard, launchers[0]);
 }
 
 function initializeLdapSettingsStatus(root = document) {

@@ -337,6 +337,11 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
             ValueError: If an input value is invalid.
         """
         dependencies.verify_csrf(request, csrf)
+        form_state = {
+            "name": name, "description": description, "slug": slug,
+            "suffix_dn": suffix_dn, "enabled": enabled is not None,
+        }
+        retry_step = "directory"
         try:
             normalized_slug = normalize_ldap_slug(slug or name)
             normalized_suffix = normalize_dn(
@@ -346,6 +351,7 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
                 raise ValueError(
                     "LDAP organization suffix must start with a dc component."
                 )
+            retry_step = "credential"
             custom_password = custom_bind_password_from_form(
                 bind_password_mode,
                 bind_password,
@@ -360,6 +366,9 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
                     "identity": identity,
                     **dependencies.ldap_context(db),
                     "form_error": str(exc),
+                    "ldap_organization_form_state": form_state,
+                    "ldap_bind_retry_mode": "custom" if bind_password_mode == "custom" else "generated",
+                    "ldap_organization_retry_step": retry_step,
                     "appliance_apply_status": dependencies.appliance_apply_status(
                         db, "ldap"
                     ),
@@ -387,6 +396,9 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
                     "identity": identity,
                     **dependencies.ldap_context(db),
                     "form_error": str(exc),
+                    "ldap_organization_form_state": form_state,
+                    "ldap_bind_retry_mode": "custom" if bind_password_mode == "custom" else "generated",
+                    "ldap_organization_retry_step": retry_step,
                     "appliance_apply_status": dependencies.appliance_apply_status(
                         db, "ldap"
                     ),
@@ -405,6 +417,9 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
                     "identity": identity,
                     **dependencies.ldap_context(db),
                     "form_error": "An LDAP organization already uses that slug or suffix.",
+                    "ldap_organization_form_state": form_state,
+                    "ldap_bind_retry_mode": "custom" if bind_password_mode == "custom" else "generated",
+                    "ldap_organization_retry_step": "directory",
                     "appliance_apply_status": dependencies.appliance_apply_status(
                         db, "ldap"
                     ),
@@ -529,6 +544,8 @@ def build_router(dependencies: ManagedLdapUiDependencies) -> ManagedLdapUiRouter
                         db, selected_organization_id=organization.id
                     ),
                     "form_error": str(exc),
+                    "ldap_bind_rotation_retry": True,
+                    "ldap_bind_retry_mode": "custom" if bind_password_mode == "custom" else "generated",
                     "appliance_apply_status": dependencies.appliance_apply_status(
                         db, "ldap"
                     ),

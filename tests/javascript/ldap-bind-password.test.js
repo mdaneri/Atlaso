@@ -14,7 +14,7 @@ class Control {
 }
 
 function harness() {
-  const context = vm.createContext({ HTMLSelectElement: Control, HTMLInputElement: Control });
+  const context = vm.createContext({ HTMLSelectElement: Control, HTMLInputElement: Control, HTMLTextAreaElement: Control, HTMLElement: Control, Event: class {}, window: { requestAnimationFrame: (callback) => callback() } });
   vm.runInContext(source.slice(start, end), context);
   const controls = {
     bind_password_mode: new Control("generated"),
@@ -69,4 +69,49 @@ test("switching to generation or resetting a wizard removes custom values", () =
     assert.equal(controls.confirm_bind_password.required, false);
     assert.equal(context.ldapBindPasswordReviewValue(form), "Generated and shown once");
   }
+});
+
+
+test("a rejected bind wizard restores only non-secret values and announces its error", async () => {
+  const { context, controls, form } = harness();
+  controls.name = new Control();
+  controls.description = new Control();
+  controls.slug = new Control();
+  controls.suffix_dn = new Control();
+  controls.enabled = new Control();
+  controls.enabled.type = "checkbox";
+  controls.bind_password.value = "must be cleared";
+  const retry = new Control();
+  retry.dataset = {
+    retryMode: "custom", retryStep: "credential", retryError: "Password policy rejected this value.",
+    retryValues: JSON.stringify({ name: "Keep organization", description: "Keep description", slug: "keep-slug", suffix_dn: "dc=keep", enabled: false, bind_password: "never restore" }),
+  };
+  let removed = false;
+  let dirty = false;
+  let opened;
+  let error;
+  retry.remove = () => { removed = true; };
+  form.querySelector = () => retry;
+  form.dispatchEvent = () => { dirty = true; };
+  const wizard = {
+    open: async (options) => { opened = options; context.prepareLdapBindWizardOpen(form, options.context); },
+    setError: (message, field) => { error = { message, field }; },
+  };
+  context.restoreLdapBindWizardError(form, wizard, "launcher");
+  await Promise.resolve();
+  assert.equal(removed, true);
+  assert.equal(opened.step, "credential");
+  assert.equal(opened.reset, false);
+  assert.equal(controls.name.value, "Keep organization");
+  assert.equal(controls.description.value, "Keep description");
+  assert.equal(controls.slug.value, "keep-slug");
+  assert.equal(controls.suffix_dn.value, "dc=keep");
+  assert.equal(controls.enabled.checked, false);
+  assert.equal(controls.bind_password_mode.value, "custom");
+  assert.equal(controls.bind_password.value, "");
+  assert.equal(controls.confirm_bind_password.value, "");
+  assert.equal(controls.bind_password.required, true);
+  assert.equal(error.field, "bind_password");
+  assert.equal(error.message, retry.dataset.retryError);
+  assert.equal(dirty, true);
 });

@@ -81,7 +81,9 @@ credential text unselected until the operator deliberately copies or saves it.
 To use a password already stored in your secret manager, select **Custom password** in the organization wizard's bind
 credential step, enter it twice, and review the organization. Custom bind passwords must satisfy the current Managed
 LDAP password policy for the `vcf-bind` account. Review shows the password mode without showing the value. Cancelling
-or completing the wizard clears the password fields. Use the organization's bind-credential rotation workflow to
+or completing the wizard clears the password fields. After a rejected submission, the wizard reopens with its error,
+retains non-secret organization fields and the chosen mode, and asks you to enter the password again. Use the
+organization's bind-credential rotation workflow to
 replace a saved password; editing organization metadata does not rotate it. Update every external directory consumer
 with the replacement credential and submit the reviewed global LDAP Apply before testing the new bind.
 

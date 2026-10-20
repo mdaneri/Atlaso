@@ -31,6 +31,15 @@ def test_custom_bind_password_forms_validate_without_echoing_or_partial_rotation
     rejected = client.post("/ldap/organizations", data=fields)
     assert rejected.status_code == 400
     assert password not in rejected.text
+    import json
+    import re
+
+    retry_values = re.search(r"data-retry-values='([^']+)'", rejected.text)
+    assert retry_values is not None
+    state = json.loads(retry_values.group(1))
+    assert state == {"name": "Custom UI", "description": "", "slug": "custom-ui", "suffix_dn": "", "enabled": True}
+    assert 'data-retry-mode="custom"' in rejected.text
+    assert 'data-retry-step="credential"' in rejected.text
     with SessionLocal() as db:
         assert db.execute(select(LdapOrganization)).scalars().all() == []
     fields["confirm_bind_password"] = password
@@ -54,6 +63,9 @@ def test_custom_bind_password_forms_validate_without_echoing_or_partial_rotation
     }
     rejected = client.post(rotation_url, data=fields)
     assert rejected.status_code == 400
+    assert 'data-retry-mode="custom"' in rejected.text
+    assert 'data-retry-step="credential"' in rejected.text
+    assert "data-ldap-bind-wizard-retry" in rejected.text
     with SessionLocal() as db:
         assert db.get(LdapOrganization, organization_id).bind_password_encrypted == original_ciphertext
     replacement = "SyntheticOnly-Replacement84!"
