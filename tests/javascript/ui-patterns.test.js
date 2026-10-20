@@ -564,3 +564,27 @@ test("createWizard keeps recoverable submit errors open and can complete without
   assert.equal(fixture.dialog.open, true);
   assert.equal(controller.isDirty, false);
 });
+
+test("createWizard ignores a stale submission without closing or cleaning the newer session", async () => {
+  installBrowserGlobals();
+  const fixture = wizardFixture(["review"]);
+  let complete;
+  const controller = createWizard({
+    form: fixture.form,
+    dialog: fixture.dialog,
+    steps: [{ id: "review", title: "Review" }],
+    onSubmit: () => new Promise((resolve) => { complete = resolve; }),
+  });
+  await controller.open();
+  const pending = fixture.form.emit("submit");
+  // Let the async validation enter the request before replacing its session.
+  while (!complete) await Promise.resolve();
+  controller.close("cancel");
+  await controller.open();
+  await fixture.form.emit("input");
+  complete({ ignored: true });
+  await pending;
+  assert.equal(fixture.dialog.open, true);
+  assert.equal(controller.isDirty, true);
+  assert.equal(fixture.error.textContent, "");
+});

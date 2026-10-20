@@ -42,6 +42,9 @@ In **Trusted vCenters**, choose the grid's **+ Add trusted vCenter here** row. T
 
 Both paths use one wizard. Existing rows retain **Edit** for saved details and **Refresh from vCenter** for discovery.
 Review pending changes and run global **Appliance Apply** before using newly saved trust.
+Provider choices reflect saved provider changes immediately: enrollment lists enabled providers, while manual setup
+can attach a trusted vCenter to any saved provider. Review shows the selected provider and entered vCenter name.
+Successful setup refreshes the trust rows and pending Apply state in place.
 
 ## Enroll from vCenter
 
@@ -167,6 +170,10 @@ A provider can be deleted only when all of these conditions hold:
 
 Atlaso fails closed when empty-store evidence is unavailable. A trusted vCenter can be deleted only after it is disabled
 and every certificate record is retired.
+
+Disabling a provider creates pending `kms` Apply work even when it has no approved certificates. Apply that change
+before retrying deletion. A rejected deletion keeps the provider intact; correct the reported condition and retry
+from the same page. Starting another edit or retry clears the previous action feedback.
 
 ## Apply and trust-bundle boundary
 
