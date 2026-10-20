@@ -1,5 +1,14 @@
 # Browser regression fixtures
 
+## vSphere grid refresh
+
+`vsphere-grid-refresh.cjs` runs the production vSphere initializer, resource save/delete callbacks and vendored
+Tabulator with synthetic mutation responses. It verifies visible provider labels, collection badges, provider trust
+counts, rejected deletion, and preservation of sort, filters, selection, scroll and the synthetic Add row at desktop
+and narrow viewports. Wizard navigation, backend admission and native appliance acceptance are outside this fixture.
+With Playwright and Microsoft Edge available, set `ATLASO_BROWSER_OUTPUT`, `TEMP` and `TMP` to an originally receipted
+task-owned output directory, then run `node tests/browser/vsphere-grid-refresh.cjs`.
+
 ## Appliance Apply task scrolling
 
 `appliance-apply-scroll.cjs` renders the production Apply dialog markup, CSS, shared Tabulator foundation, and task
