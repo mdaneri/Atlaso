@@ -713,6 +713,8 @@ which also appears in support bundles. Configuring more modules does not suppres
 PowerShellGet may wrap or suppress the underlying network exception. Atlaso reports a generic cause when typed evidence
 is unavailable and does not infer that a firewall caused the failure. Repository discovery and package downloads can
 contact different endpoints; a successful check does not prove that an install or module import will succeed.
+Repository synchronization lets the PowerShell client perform name resolution through its effective network/proxy
+configuration. A separate local DNS lookup does not block repositories reached through a proxy with remote DNS.
 
 For additional application context, set **Settings → Log level** to **DEBUG** and reproduce only the necessary
 operation. The setting applies on the next request or worker pass without restarting Windows or the appliance.

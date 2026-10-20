@@ -21164,34 +21164,6 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError(f"PowerShell source {name} must use an HTTP(S) URL")
-        host = str(parsed.hostname or "").strip()
-        dns_started = time.monotonic()
-        try:
-            socket.getaddrinfo(
-                host,
-                parsed.port or (443 if parsed.scheme == "https" else 80),
-                type=socket.SOCK_STREAM,
-            )
-        except socket.gaierror as exc:
-            commands.append(
-                {
-                    "command": ["resolve", host],
-                    "returncode": 1,
-                    "success": False,
-                    "stdout": "",
-                    "stderr": f"PowerShell repository {name} host {host} could not be resolved: {exc}",
-                    "update_diagnostic": {
-                        "stage": "repository_probe",
-                        "reason": "dns_failed",
-                        "http_status": None,
-                        "elapsed_ms": min(86_400_000, max(0, int((time.monotonic() - dns_started) * 1000))),
-                    },
-                }
-            )
-            record_source_result(source, success=False)
-            if name_key in previous_powershell_names:
-                current_powershell_names[name_key] = previous_powershell_names[name_key]
-            continue
         trusted = bool((source.get("settings") or {}).get("trusted")) if isinstance(source.get("settings"), dict) else False
         policy = "Trusted" if trusted else "Untrusted"
         credential = _source_credential(source, credentials)

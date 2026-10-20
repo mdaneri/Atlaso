@@ -4795,24 +4795,28 @@ def test_helper_rejects_unsafe_photon_repository_runtime_root(
         helper._photon_repository_runtime_root()
 
 
-def test_helper_reports_unresolvable_powershell_repository_host(monkeypatch, tmp_path):
-    """Verify that helper reports unresolvable powershell repository host.
+def test_helper_reports_dns_failure_from_the_powershell_client(monkeypatch, tmp_path):
+    """Report actual client DNS failure without imposing a separate local preflight.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    import socket
+    from types import SimpleNamespace
 
     helper = load_helper_module()
     state_path = tmp_path / "update-sources.json"
     monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", state_path)
+    monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", tmp_path / "managed-photon.repo")
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", tmp_path / "powershell-home")
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
     monkeypatch.setattr(
         helper.socket,
         "getaddrinfo",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(socket.gaierror(-2, "Name or service not known")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Local DNS must not gate a proxy-aware client")),
     )
+    monkeypatch.setattr(helper, "_run", lambda command, **_kwargs: SimpleNamespace(
+        returncode=1, stdout="", stderr='ATLASO_UPDATE_DIAGNOSTIC:{"stage":"repository_probe","reason":"dns_failed","http_status":null}\n'))
 
     result = helper._sync_appliance_update_sources(
         {
@@ -4829,8 +4833,8 @@ def test_helper_reports_unresolvable_powershell_repository_host(monkeypatch, tmp
     )
 
     assert result["status"] == "failed"
-    assert result["commands"][0]["command"] == ["resolve", "www.powershellgallery.com"]
-    assert result["error"].startswith("PowerShell repository PSGallery host www.powershellgallery.com could not be resolved:")
+    assert result["commands"][0]["command"][0] == "/usr/bin/pwsh"
+    assert result["commands"][0]["update_diagnostic"]["reason"] == "dns_failed"
 
 
 def test_helper_psgallery_sync_uses_default_registration_and_is_idempotent(monkeypatch, tmp_path):

@@ -5,7 +5,6 @@ import importlib.machinery
 import importlib.util
 import json
 import shutil
-import socket
 import subprocess
 from pathlib import Path
 
@@ -196,17 +195,42 @@ def test_check_and_install_scripts_mark_each_meaningful_stage(helper, monkeypatc
     assert positions == sorted(positions)
 
 
-def test_sync_dns_preflight_attaches_typed_failure_without_raw_exception(helper, monkeypatch, tmp_path):
-    """Represent the explicit DNS preflight without copying resolver details into the typed field."""
+@pytest.mark.parametrize(
+    ("returncode", "reason", "expected_status", "sync_status"),
+    [
+        (0, "none", None, "succeeded"),
+        (1, "dns_failed", None, "failed"),
+        (1, "helper_failed", None, "failed"),
+    ],
+)
+def test_sync_uses_powershell_result_without_python_dns_preflight(
+    helper, monkeypatch, tmp_path, returncode, reason, expected_status, sync_status
+):
+    """Trust the PowerShell client result and never preflight with Python DNS."""
     source_state = tmp_path / "source-state.json"
     monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", source_state)
     monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", tmp_path / "managed-photon.repo")
     monkeypatch.setattr(helper, "_command_path", lambda name: "pwsh" if name == "pwsh" else None)
+    monkeypatch.setattr(helper, "_privileged_powershell_environment", lambda: {"PATH": str(tmp_path)})
 
     def fail_lookup(*_args, **_kwargs):
-        raise socket.gaierror("SECRET_DNS_DETAIL https://user:secret@example.invalid")
+        raise AssertionError("Python DNS preflight must not run")
 
     monkeypatch.setattr(helper.socket, "getaddrinfo", fail_lookup)
+    marker = json.dumps(
+        {"stage": "repository_probe", "reason": reason, "http_status": expected_status},
+        separators=(",", ":"),
+    )
+
+    def run(command, *, env=None):
+        return subprocess.CompletedProcess(
+            command,
+            returncode,
+            "",
+            helper.UPDATE_DIAGNOSTIC_MARKER + marker + "\n",
+        )
+
+    monkeypatch.setattr(helper, "_run", run)
     result = helper._sync_appliance_update_sources(
         {
             "source_definitions": [
@@ -222,11 +246,15 @@ def test_sync_dns_preflight_attaches_typed_failure_without_raw_exception(helper,
         }
     )
     command = result["commands"][0]
-    assert command["update_diagnostic"]["stage"] == "repository_probe"
-    assert command["update_diagnostic"]["reason"] == "dns_failed"
-    assert command["update_diagnostic"]["http_status"] is None
-    assert command["update_diagnostic"]["elapsed_ms"] >= 0
-    assert "SECRET_DNS_DETAIL" not in json.dumps(command["update_diagnostic"])
+    assert result["status"] == sync_status
+    assert result["source_results"] == [
+        {"id": "repo1", "kind": "powershell", "name": "TestRepo", "success": returncode == 0}
+    ]
+    diagnostic = command["update_diagnostic"]
+    assert diagnostic["stage"] == "repository_probe"
+    assert diagnostic["reason"] == reason
+    assert diagnostic["http_status"] is None
+    assert 0 <= diagnostic["elapsed_ms"] <= 86_400_000
 
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is not installed")
