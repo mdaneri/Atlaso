@@ -6903,7 +6903,7 @@ function initializeKmsSettings(root = document) {
 }
 
 function newLdapUserRow(organizationId) {
-  return { id: "__new_ldap_user__", organization_id: organizationId, uid: "", given_name: "", surname: "", display_name: "", email: "", telephone: "", enabled: false, password_status: "", is_new: true };
+  return { id: "__new_ldap_user__", organization_id: organizationId, uid: "", given_name: "", surname: "", display_name: "", email: "", telephone: "", enabled: true, password_status: "", is_new: true };
 }
 
 function newLdapGroupRow(organizationId) {
@@ -6937,29 +6937,161 @@ function initializeLdapOrganizationWizard() {
   ) {
     return;
   }
+  initializeLdapBindCredentialFields(form);
   const wizard = window.AtlasoUiPatterns.createWizard({
     form,
     dialog,
     steps: [
       { id: "identity", title: "Name the organization", description: "Choose its operator-visible name and desired state." },
       { id: "directory", title: "Choose the naming context", description: "Accept derived values or set a stable slug and isolated LDAP suffix." },
+      { id: "credential", title: "Choose the bind credential", description: "Generate a password or enter and confirm a custom value." },
       { id: "enablement", title: "Choose organization state", description: "Control whether the isolated database enters rendered LDAP desired state." },
       { id: "review", title: "Review organization creation", description: "Confirm the new database and one-time VCF bind credential." },
     ],
     discardTitle: "Discard LDAP organization?",
     discardMessage: "The organization values entered in this wizard will be lost.",
+    validateStep: ({ form, step }) => validateLdapBindPasswordStep(form, step),
     prepareReview: () => renderAtlasoWizardReview(form, [
       { label: "Organization", field: "name" },
       { label: "Description", field: "description" },
       { label: "Slug", value: () => form.elements.slug.value.trim() || "Derived from name" },
       { label: "Suffix DN", value: () => form.elements.suffix_dn.value.trim() || "Derived from slug" },
+      { label: "Bind credential", value: () => ldapBindPasswordReviewValue(form) },
       { label: "Desired state", field: "enabled" },
-      { label: "Bind credential", value: () => "Generated and shown once" },
     ]),
+    onOpen: ({ context }) => prepareLdapBindWizardOpen(form, context),
+    onClose: () => resetLdapBindPasswordFields(form),
   });
   launchers.forEach((button) => {
     button.addEventListener("click", () => wizard.open({ launcher: button }));
   });
+  restoreLdapBindWizardError(form, wizard, launchers[0]);
+}
+
+function ldapBindPasswordControls(form) {
+  const mode = form.elements.namedItem("bind_password_mode");
+  const password = form.elements.namedItem("bind_password");
+  const confirmation = form.elements.namedItem("confirm_bind_password");
+  if (
+    !(mode instanceof HTMLSelectElement)
+    || !(password instanceof HTMLInputElement)
+    || !(confirmation instanceof HTMLInputElement)
+  ) return null;
+  return { mode, password, confirmation };
+}
+
+function syncLdapBindPasswordFields(form) {
+  const controls = ldapBindPasswordControls(form);
+  if (!controls) return;
+  const custom = controls.mode.value === "custom";
+  form.querySelectorAll("[data-ldap-bind-password-field]").forEach((field) => {
+    field.hidden = !custom;
+    field.classList.toggle("hidden", !custom);
+  });
+  controls.password.disabled = !custom;
+  controls.confirmation.disabled = !custom;
+  controls.password.required = custom;
+  controls.confirmation.required = custom;
+  if (!custom) {
+    controls.password.value = "";
+    controls.confirmation.value = "";
+  }
+}
+
+function resetLdapBindPasswordFields(form) {
+  const controls = ldapBindPasswordControls(form);
+  if (!controls) return;
+  controls.mode.value = "generated";
+  controls.password.value = "";
+  controls.confirmation.value = "";
+  syncLdapBindPasswordFields(form);
+}
+
+function ldapBindPasswordReviewValue(form) {
+  const controls = ldapBindPasswordControls(form);
+  return controls?.mode.value === "custom" ? "Custom password" : "Generated and shown once";
+}
+
+function validateLdapBindPasswordStep(form, step) {
+  if (step.id !== "credential") return { valid: true };
+  const controls = ldapBindPasswordControls(form);
+  if (!controls || controls.mode.value !== "custom") return { valid: true };
+  if (!controls.password.value || !controls.confirmation.value) {
+    return { valid: false, field: "bind_password", message: "Enter and confirm the custom bind password." };
+  }
+  if (controls.password.value !== controls.confirmation.value) {
+    return { valid: false, field: "confirm_bind_password", message: "Password confirmation does not match." };
+  }
+  return { valid: true };
+}
+
+function prepareLdapBindWizardOpen(form, context) {
+  resetLdapBindPasswordFields(form);
+  const values = context?.retryValues || {};
+  for (const name of ["name", "description", "slug", "suffix_dn", "enabled"]) {
+    if (!Object.hasOwn(values, name)) continue;
+    const control = form.elements.namedItem(name);
+    if (control instanceof HTMLInputElement && control.type === "checkbox") control.checked = Boolean(values[name]);
+    else if (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement) control.value = String(values[name] ?? "");
+  }
+  const controls = ldapBindPasswordControls(form);
+  if (controls && context?.retryBindMode === "custom") {
+    controls.mode.value = "custom";
+    syncLdapBindPasswordFields(form);
+  }
+}
+
+function restoreLdapBindWizardError(form, wizard, launcher) {
+  const retry = form.querySelector("[data-ldap-bind-wizard-retry]");
+  if (!(retry instanceof HTMLElement)) return;
+  const mode = retry.dataset.retryMode;
+  const step = retry.dataset.retryStep || "credential";
+  const message = retry.dataset.retryError || "The bind credential could not be saved.";
+  const values = JSON.parse(retry.dataset.retryValues || "{}");
+  retry.remove();
+  wizard.open({ launcher, reset: false, step, highestStep: step, context: { retryBindMode: mode, retryValues: values } })
+    .then(() => {
+      form.dispatchEvent(new Event("input", { bubbles: true }));
+      window.requestAnimationFrame(() => wizard.setError(message, step === "credential" && mode === "custom" ? "bind_password" : null));
+    });
+}
+
+function initializeLdapBindCredentialFields(form) {
+  const controls = ldapBindPasswordControls(form);
+  if (!controls || form.dataset.ldapBindPasswordInitialized === "1") return;
+  form.dataset.ldapBindPasswordInitialized = "1";
+  controls.mode.addEventListener("change", () => syncLdapBindPasswordFields(form));
+  form.addEventListener("formdata", () => resetLdapBindPasswordFields(form));
+  syncLdapBindPasswordFields(form);
+}
+
+function initializeLdapBindRotationWizard() {
+  const form = document.querySelector("[data-ldap-bind-rotation-form]");
+  const dialog = document.getElementById("ldap-bind-rotation-dialog");
+  const launchers = [...document.querySelectorAll("[data-ldap-bind-rotation-open]")];
+  if (!(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement) || !launchers.length || !window.AtlasoUiPatterns) return;
+  initializeLdapBindCredentialFields(form);
+  const wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "credential", title: "Choose the bind credential", description: "Generate a password or enter and confirm a custom value." },
+      { id: "review", title: "Review credential rotation", description: "Confirm the selected credential mode." },
+    ],
+    discardTitle: "Discard bind credential rotation?",
+    discardMessage: "The password entered in this wizard will be cleared.",
+    validateStep: ({ form: wizardForm, step }) => validateLdapBindPasswordStep(wizardForm, step),
+    prepareReview: () => renderAtlasoWizardReview(form, [
+      { label: "Bind credential", value: () => ldapBindPasswordReviewValue(form) },
+    ]),
+    onOpen: ({ context }) => prepareLdapBindWizardOpen(form, context),
+    onClose: () => resetLdapBindPasswordFields(form),
+  });
+  launchers.forEach((button) => button.addEventListener("click", (event) => {
+    event?.preventDefault();
+    wizard.open({ launcher: button });
+  }));
+  restoreLdapBindWizardError(form, wizard, launchers[0]);
 }
 
 function initializeLdapSettingsStatus(root = document) {
@@ -7053,7 +7185,7 @@ function initializeLdapPageState() {
       }
       currentPanel.replaceWith(document.importNode(nextCurrentPanel, true));
 
-      ["ldap-user-dialog", "ldap-group-dialog", "ldap-group-members-modal"].forEach((dialogId) => {
+      ["ldap-user-dialog", "ldap-group-dialog", "ldap-group-members-modal", "ldap-bind-rotation-dialog"].forEach((dialogId) => {
         const currentDialog = document.getElementById(dialogId);
         const nextDialog = nextDocument.getElementById(dialogId);
         if (currentDialog instanceof HTMLDialogElement && nextDialog instanceof HTMLDialogElement) {
@@ -7074,6 +7206,7 @@ function initializeLdapPageState() {
       }
       initializeTabs();
       initializeLdapDirectoryTables();
+      initializeLdapBindRotationWizard();
       initializeLdapPasswordModal();
       initializeConfirmationModals();
     },
@@ -7128,6 +7261,8 @@ function initializeLdapPageState() {
 
 function attachLdapGridState(tableElement, table, resourceName, organizationId) {
   atlasoLdapDirectoryTables.set(tableElement, table);
+  table.on("tableBuilt", () => redrawLdapDirectoryTables());
+  redrawLdapDirectoryTables();
   const storageKey = `atlaso:ldap:grid:${organizationId}:${resourceName}`;
   window.requestAnimationFrame(() => {
     const holder = tableElement.querySelector(".tabulator-tableholder");
@@ -7152,8 +7287,11 @@ function attachLdapGridState(tableElement, table, resourceName, organizationId) 
 function redrawLdapDirectoryTables(root = document) {
   if (!(root instanceof Document || root instanceof HTMLElement)) return;
   window.requestAnimationFrame(() => {
-    root.querySelectorAll("#ldap-users-table, #ldap-groups-table").forEach((tableElement) => {
+    const directoryRoot = root instanceof HTMLElement ? root.closest(".ldap-main-panel") || root : root;
+    directoryRoot.querySelectorAll("#ldap-users-table, #ldap-groups-table").forEach((tableElement) => {
       const table = atlasoLdapDirectoryTables.get(tableElement);
+      const footerHeight = document.querySelector(".management-info-footnote")?.getBoundingClientRect().height || 0;
+      resizeDnsRecordsTableElement(tableElement, window.innerHeight - footerHeight);
       if (!tableElement.isConnected || tableElement.offsetParent === null) return;
       if (!tableElement.querySelector(".tabulator-tableholder")) return;
       if (table && typeof table.redraw === "function") table.redraw(true);
@@ -7331,6 +7469,17 @@ function ldapGroupMembershipFormatter(cell) {
 
 function initializeLdapDirectoryTables() {
   hideLdapMembershipTooltip();
+  const panel = document.querySelector(".ldap-main-panel");
+  if (panel instanceof HTMLElement && panel.dataset.ldapSizingInitialized !== "true") {
+    panel.dataset.ldapSizingInitialized = "true";
+    let resizeFrame = 0;
+    const scheduleResize = () => {
+      window.cancelAnimationFrame(resizeFrame);
+      resizeFrame = window.requestAnimationFrame(() => redrawLdapDirectoryTables());
+    };
+    window.addEventListener("resize", scheduleResize);
+    if (typeof ResizeObserver !== "undefined") new ResizeObserver(scheduleResize).observe(panel);
+  }
   const usersElement = document.getElementById("ldap-users-table");
   if (usersElement instanceof HTMLElement && typeof Tabulator !== "undefined") {
     const csrf = usersElement.dataset.csrf || "";
@@ -7408,7 +7557,7 @@ function initializeLdapDirectoryTables() {
         }),
         options: {
           layout: "fitColumns",
-          height: "420px",
+          height: "100%",
           rowHeight: 28,
           placeholder: "No directory users",
           reactiveData: false,
@@ -7512,7 +7661,7 @@ function initializeLdapDirectoryTables() {
         }),
         options: {
           layout: "fitColumns",
-          height: "420px",
+          height: "100%",
           rowHeight: 28,
           responsiveLayout: "collapse",
           placeholder: "No directory groups",
@@ -26132,6 +26281,7 @@ document.addEventListener("DOMContentLoaded", initializeCaCsrWizard);
 document.addEventListener("DOMContentLoaded", initializeVsphereKeyProviderTables);
 document.addEventListener("DOMContentLoaded", () => initializeKmsSettings());
 document.addEventListener("DOMContentLoaded", initializeLdapOrganizationWizard);
+document.addEventListener("DOMContentLoaded", initializeLdapBindRotationWizard);
 document.addEventListener("DOMContentLoaded", initializeLdapPageState);
 document.addEventListener("DOMContentLoaded", initializeLdapDirectoryTables);
 document.addEventListener("DOMContentLoaded", initializeLdapPasswordModal);
