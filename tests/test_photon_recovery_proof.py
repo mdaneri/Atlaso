@@ -22,6 +22,13 @@ def _pwsh() -> str:
 
 
 def _run(path: Path, script: str, *arguments: str) -> subprocess.CompletedProcess[str]:
+    """Run a bounded PowerShell fixture from its owned script path.
+
+    Args:
+        path: Fixture script path beneath the pytest-owned root.
+        script: PowerShell source to write and execute.
+        *arguments: Positional arguments passed to the fixture script.
+    """
     path.write_text(script, encoding="utf-8")
     return subprocess.run(
         [_pwsh(), "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(path), *arguments],
@@ -638,7 +645,11 @@ def test_cleanup_recovery_publishes_only_unique_exact_allocation_proof(
 def test_prepared_marker_does_not_manufacture_an_unbound_receipt(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
-    """A prepared schema-3 marker cannot prove termination of an assigned child."""
+    """A prepared schema-3 marker cannot prove termination of an assigned child.
+
+    Args:
+        tmp_path_factory: Pytest-owned, short-path fixture root factory.
+    """
     tmp_path = tmp_path_factory.mktemp("legacy")
     repository = tmp_path / "repo"
     repository.mkdir()
