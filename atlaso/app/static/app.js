@@ -16065,8 +16065,73 @@ function availabilityStream(streamId) {
     : null;
 }
 
+function applianceUpdateStreamIsCurrent(stream) {
+  return Boolean(stream)
+    && stream.stale !== true
+    && stream.check_required !== true
+    && stream.source_sync?.ready !== false
+    && stream.last_attempt?.success === true
+    && stream.last_attempt?.state === "up_to_date"
+    && stream.confirmed?.state === "up_to_date"
+    && stream.confirmed?.update_available === false
+    && stream.confirmed?.change_count === 0
+    && Array.isArray(stream.confirmed?.changes)
+    && stream.confirmed.changes.length === 0;
+}
+
+function updateApplianceUpdateStreamSelection(input, stream, sourceReady, summary) {
+  const current = sourceReady && applianceUpdateStreamIsCurrent(stream);
+  input.disabled = !sourceReady || current;
+  if (!sourceReady) {
+    input.checked = false;
+    const reasonId = `appliance-update-source-reason-${stream.id || input.value}`;
+    input.setAttribute("aria-describedby", reasonId);
+    if (summary instanceof HTMLElement) {
+      summary.id = reasonId;
+      input.setAttribute("aria-describedby", summary.id);
+    }
+  } else if (current) {
+    input.checked = false;
+    if (summary instanceof HTMLElement) {
+      summary.id ||= `appliance-update-stream-summary-${stream.id || input.value}`;
+      input.setAttribute("aria-describedby", summary.id);
+    } else {
+      input.setAttribute("aria-describedby", `appliance-update-stream-summary-${stream.id || input.value}`);
+    }
+  } else {
+    input.removeAttribute("aria-describedby");
+  }
+}
+
+function syncApplianceUpdateCurrentStreamFields() {
+  const form = document.querySelector("[data-appliance-update-submit-form]");
+  if (!(form instanceof HTMLFormElement)) return;
+  const currentIds = new Set(
+    (Array.isArray(atlasoUpdateAvailability.streams) ? atlasoUpdateAvailability.streams : [])
+      .filter(applianceUpdateStreamIsCurrent)
+      .map((stream) => stream.id),
+  );
+  form.querySelectorAll("[data-appliance-update-current-stream]").forEach((input) => {
+    if (!currentIds.has(input.value)) input.remove();
+    else currentIds.delete(input.value);
+  });
+  currentIds.forEach((streamId) => {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "current_check_streams";
+    input.value = streamId;
+    input.dataset.applianceUpdateCurrentStream = "";
+    form.append(input);
+  });
+}
+
 function updateApplianceUpdateResultSummary() {
   const selected = selectedApplianceUpdateStreamIds().map(availabilityStream).filter(Boolean);
+  const availableStreams = Array.isArray(atlasoUpdateAvailability.streams) ? atlasoUpdateAvailability.streams : [];
+  const readyStreams = availableStreams.filter((stream) => stream.source_sync?.ready !== false);
+  const currentReadyStreams = readyStreams.filter(applianceUpdateStreamIsCurrent);
+  const allReadyStreamsCurrent = readyStreams.length > 0 && currentReadyStreams.length === readyStreams.length;
+  const summaryStreams = selected.length ? selected : (allReadyStreamsCurrent ? currentReadyStreams : []);
   const pill = document.querySelector("[data-appliance-update-result-pill]");
   const title = document.querySelector("[data-appliance-update-result-title]");
   const description = document.querySelector("[data-appliance-update-result-description]");
@@ -16075,9 +16140,9 @@ function updateApplianceUpdateResultSummary() {
   let pillClass = "muted";
   let titleText = "Check the selected streams for current update information";
   let descriptionText = "Each stream keeps its latest result independently.";
-  const failed = selected.filter((stream) => stream.last_attempt?.state === "failed");
-  const available = selected.filter((stream) => stream.confirmed?.update_available === true);
-  const confirmed = selected.filter((stream) => stream.confirmed && !stream.stale);
+  const failed = summaryStreams.filter((stream) => stream.last_attempt?.state === "failed");
+  const available = summaryStreams.filter((stream) => stream.confirmed?.update_available === true);
+  const confirmed = summaryStreams.filter((stream) => stream.confirmed && !stream.stale);
   if (failed.length) {
     pillText = "Check failed";
     pillClass = "error";
@@ -16088,11 +16153,11 @@ function updateApplianceUpdateResultSummary() {
     pillClass = "warn";
     titleText = `${available.length} selected update ${available.length === 1 ? "stream has" : "streams have"} changes`;
     descriptionText = "Review each stream’s current, target, and What’s new details before installation.";
-  } else if (selected.length && confirmed.length === selected.length) {
+  } else if (summaryStreams.length && confirmed.length === summaryStreams.length) {
     pillText = "Up to date";
     pillClass = "good";
-    titleText = "The selected streams are current";
-    descriptionText = "No installation is needed for the latest confirmed checks.";
+    titleText = selected.length ? "The selected streams are current" : "The ready streams are up to date";
+    descriptionText = "Check for updates again to refresh availability; no installation is needed for the current results.";
   }
   pill.textContent = pillText;
   pill.className = `status-pill ${pillClass}`;
@@ -16347,15 +16412,7 @@ function renderApplianceUpdateAvailability(payload) {
       input.dataset.applianceUpdateSourceSyncRequired = sourceSync.required ? "true" : "false";
       input.dataset.applianceUpdateSourceSyncReady = sourceReady ? "true" : "false";
       input.dataset.applianceUpdateSourceKind = sourceSync.source_kind || "";
-      input.disabled = !sourceReady;
-      if (!sourceReady) {
-        input.checked = false;
-        const reasonId = `appliance-update-source-reason-${stream.id || input.value}`;
-        input.setAttribute("aria-describedby", reasonId);
-        if (summary instanceof HTMLElement) summary.id = reasonId;
-      } else {
-        input.removeAttribute("aria-describedby");
-      }
+      updateApplianceUpdateStreamSelection(input, stream, sourceReady, summary);
     }
     if (pill instanceof HTMLElement) {
       pill.textContent = !sourceReady
@@ -16393,6 +16450,8 @@ function renderApplianceUpdateAvailability(payload) {
         ? sourceSync.reason || "Synchronize repositories before using this update stream."
         : checkRequired
         ? "Check this stream again to refresh its update information."
+        : applianceUpdateStreamIsCurrent(stream)
+          ? "Up to date. Check for updates again to refresh availability."
         : stream.last_attempt?.state === "failed"
           ? stream.last_attempt?.remediation || "Review the task and check again."
           : confirmed?.summary
@@ -16450,6 +16509,7 @@ function renderApplianceUpdateAvailability(payload) {
       result.append(details);
     }
   });
+  syncApplianceUpdateCurrentStreamFields();
   updateApplianceUpdateResultSummary();
   updateApplianceUpdateActions();
 }
@@ -16530,7 +16590,15 @@ function updateApplianceUpdateActions(tasks = atlasoTasks) {
   const blockedStreams = selectedUnsynchronizedUpdateStreams();
   const checkButton = document.querySelector("[data-appliance-update-check-action]");
   const installButton = document.querySelector("[data-appliance-update-install-action]");
-  if (checkButton instanceof HTMLButtonElement) checkButton.disabled = active || selectedIds.length === 0;
+  const currentReadyStreams = (Array.isArray(atlasoUpdateAvailability.streams) ? atlasoUpdateAvailability.streams : [])
+    .some(applianceUpdateStreamIsCurrent);
+  const allReadyStreamsCurrent = (Array.isArray(atlasoUpdateAvailability.streams) ? atlasoUpdateAvailability.streams : [])
+    .filter((stream) => stream.source_sync?.ready !== false)
+    .every(applianceUpdateStreamIsCurrent);
+  if (checkButton instanceof HTMLButtonElement) {
+    checkButton.disabled = active || selectedIds.length === 0;
+    if (!active && currentReadyStreams && selectedIds.length === 0) checkButton.disabled = false;
+  }
   let installReason = "";
   let hasUpdate = false;
   for (const streamId of selectedIds) {
@@ -16549,9 +16617,13 @@ function updateApplianceUpdateActions(tasks = atlasoTasks) {
   }
   if (!installReason && selectedIds.length && !hasUpdate) installReason = "The selected streams are up to date.";
   if (!installReason && !selectedIds.length) {
-    installReason = blockedStreams.length
-      ? `Select a ready update stream. Repository setup is required for ${blockedStreams.join(" and ")}.`
-      : "Select at least one update stream.";
+    installReason = currentReadyStreams
+      ? allReadyStreamsCurrent
+        ? "The ready streams are up to date. Check for updates again to refresh availability."
+        : "No streams are selected. Select another stream or check the current streams again."
+      : blockedStreams.length
+        ? `Select a ready update stream. Repository setup is required for ${blockedStreams.join(" and ")}.`
+        : "Select at least one update stream.";
   }
   if (active) installReason = "Wait for the active Appliance Update task to finish.";
   if (installButton instanceof HTMLButtonElement) installButton.disabled = Boolean(installReason);
