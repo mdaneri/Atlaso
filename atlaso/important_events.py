@@ -36,6 +36,11 @@ REASONS = {
     "evidence_unavailable": "The producer did not retain a typed cause. Missing evidence does not establish health.",
     "permission_denied": "The stage reported a permission denial. Check the installed helper and service permissions.",
     "connection_refused": "The stage could not connect to its target. Check the target service and listener readiness.",
+    "dns_failed": "Repository name resolution failed. Check the appliance DNS configuration and upstream DNS access.",
+    "tls_failed": "Repository TLS verification failed. Check certificate trust, appliance time and any TLS inspection policy; retain certificate verification.",
+    "proxy_auth_required": "The repository request requires proxy authentication (HTTP 407). Review the corporate proxy configuration.",
+    "http_denied": "The repository request was denied (HTTP 401 or 403). Check repository access and proxy policy; this does not by itself prove a firewall block.",
+    "http_failed": "The repository returned an HTTP error. Review the recorded status and repository or proxy availability.",
     "status_surface_unproven": "The update-only status surface could not be proven continuously. Inspect browser listener and status recovery evidence before retrying.",
     "status_identity_unavailable": "Appliance Update has no compatible durable status identity. Inspect the installed helper and status recovery evidence before retrying.",
     "managed_script_unavailable": "The queued managed script revision or selected vault is missing, disabled, or changed. Review the script revision and vault before resubmitting.",
@@ -45,6 +50,53 @@ REASONS = {
     "unknown_failure": "The stage failed without a recognized safe cause. Inspect correlated Tasks and diagnostics.",
 }
 EVENT_LIMIT = 64
+UPDATE_DIAGNOSTIC_STAGES = frozenset({
+    "repository_registration", "repository_probe", "module_discovery", "module_install",
+    "module_import", "ceip_configuration",
+})
+UPDATE_DIAGNOSTIC_REASONS = frozenset({
+    "none", "helper_failed", "dns_failed", "connection_refused", "timed_out", "tls_failed",
+    "proxy_auth_required", "http_denied", "http_failed",
+})
+
+
+def validate_update_diagnostic(value: Any) -> dict[str, Any] | None:
+    """Accept only bounded PowerShell updater evidence, never free-form source text.
+
+    Args:
+        value: Untrusted helper, persisted task or collector evidence.
+    """
+    if not isinstance(value, dict) or set(value) != {"stage", "reason", "http_status", "elapsed_ms"}:
+        return None
+    stage = canonical_value(value.get("stage"), UPDATE_DIAGNOSTIC_STAGES)
+    reason = canonical_value(value.get("reason"), UPDATE_DIAGNOSTIC_REASONS)
+    status = value.get("http_status")
+    elapsed = value.get("elapsed_ms")
+    if (stage is None or reason is None
+            or status is not None and (type(status) is not int or not 100 <= status <= 599)
+            or type(elapsed) is not int or not 0 <= elapsed <= 86400000):
+        return None
+    if ((reason == "proxy_auth_required" and status != 407)
+            or (reason == "http_denied" and status not in {401, 403})
+            or (reason == "http_failed" and (status is None or status < 400 or status in {401, 403, 407}))
+            or (status is not None and status >= 400
+                and reason not in {"proxy_auth_required", "http_denied", "http_failed"})
+            or (reason == "none" and status is not None and status >= 400)):
+        return None
+    return {"stage": stage, "reason": reason, "http_status": status, "elapsed_ms": elapsed}
+
+
+def format_update_diagnostic(value: dict[str, Any]) -> str:
+    """Render a validated stage with its fixed explanation.
+
+    Args:
+        value: Reviewed typed PowerShell evidence.
+    """
+    safe = validate_update_diagnostic(value)
+    if safe is None:
+        raise ValueError("Invalid update diagnostic.")
+    return (f"PowerShell stage={safe['stage']} reason={safe['reason']} "
+            f"http_status={safe['http_status']} elapsed_ms={safe['elapsed_ms']}: {REASONS[safe['reason']]}")
 
 
 def canonical_value(value: Any, vocabulary: Iterable[str]) -> str | None:
@@ -98,6 +150,18 @@ def validate_event(value: Any) -> dict[str, Any] | None:
                 or (validated := validate_route_conflict(route_conflict)) is None):
             return None
         result["route_conflict"] = validated
+    diagnostic = value.get("update_diagnostic")
+    if diagnostic is not None:
+        if (canonical["component"] not in {"task", "appliance_update", "powershell_modules"}
+                or canonical["stage"] != "execution"
+                or (validated_diagnostic := validate_update_diagnostic(diagnostic)) is None
+                or validated_diagnostic["reason"] != canonical["reason"]
+                or canonical["outcome"] not in {"succeeded", "failed"}
+                or type(code) is not int
+                or (code == 0) != (canonical["reason"] == "none")
+                or (canonical["outcome"] == "succeeded") != (canonical["reason"] == "none")):
+            return None
+        result["update_diagnostic"] = validated_diagnostic
     return result
 
 
@@ -220,6 +284,9 @@ def format_event(event: dict[str, Any]) -> str:
                 f"outcome={safe['outcome']} reason={safe['reason']} returncode={safe['returncode']}: "
                 f"{REASONS[safe['reason']]}")
     conflict = safe.get("route_conflict")
+    if diagnostic := safe.get("update_diagnostic"):
+        rendered += (f" update_stage={diagnostic['stage']} http_status={diagnostic['http_status']}"
+                     f" elapsed_ms={diagnostic['elapsed_ms']}")
     if conflict:
         expected, observed = conflict["expected"], conflict["observed"]
         rendered += (f" condition={conflict['condition']} interface={conflict['interface']}"

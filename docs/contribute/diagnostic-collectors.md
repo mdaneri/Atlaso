@@ -30,6 +30,11 @@ Task important events are projected from `task_log_checkpoints.state_json` only.
 timezone-aware timestamps, severity, reviewed component IDs for Apply units, update streams, VCF workflow stages and
 task-level events, plus stage, outcome, reason code and bounded return code.
 Unknown keys and invalid events are discarded; only the fixed explanation for a validated reason code is added.
+PowerShell update execution events may additionally contain `update_diagnostic`: a reviewed stage
+(`repository_registration`, `repository_probe`, `module_discovery`, `module_install`, `module_import`, or
+`ceip_configuration`), fixed reason, optional numeric HTTP status and bounded elapsed milliseconds. The collector
+revalidates the exact field set, reason/status consistency and execution outcome. Repository URLs, exception text,
+command lines and environment values are excluded from this extension.
 The bundle includes at most 64 events per task and reports the producer's omitted count plus invalid or over-limit
 events. A checkpoint without the typed field, an absent checkpoint table, or malformed checkpoint JSON is marked
 `evidence_unavailable`; an empty typed event list means the checkpoint is available and contains no retained events.

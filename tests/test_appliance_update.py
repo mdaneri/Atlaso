@@ -4850,13 +4850,14 @@ def test_helper_psgallery_sync_uses_default_registration_and_is_idempotent(monke
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
     monkeypatch.setattr(helper.socket, "getaddrinfo", lambda *_args, **_kwargs: [(None, None, None, None, None)])
 
-    def successful_sync(command, *, success_codes=None, env=None):
+    def successful_sync(command, *, success_codes=None, env=None, update_diagnostic_stage=None):
         """Capture one successful PowerShell synchronization command.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
         """
         scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
         return {
@@ -4970,13 +4971,14 @@ def test_helper_custom_repository_keeps_explicit_registration_and_credentials(mo
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
     monkeypatch.setattr(helper.socket, "getaddrinfo", lambda *_args, **_kwargs: [(None, None, None, None, None)])
 
-    def successful_sync(command, *, success_codes=None, env=None):
+    def successful_sync(command, *, success_codes=None, env=None, update_diagnostic_stage=None):
         """Capture custom repository command and environment.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
         """
         captured["script"] = base64.b64decode(command[-1]).decode("utf-16-le")
         captured["env"] = env
@@ -5123,13 +5125,14 @@ def test_helper_retries_failed_powershell_repository_removal(monkeypatch, tmp_pa
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
     attempts = 0
 
-    def unregister_repository(command, *, success_codes=None, env=None):
+    def unregister_repository(command, *, success_codes=None, env=None, update_diagnostic_stage=None):
         """Fail the first unregister attempt and allow its retry.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
         """
         nonlocal attempts
         attempts += 1
@@ -5174,13 +5177,14 @@ def test_helper_source_sync_probes_powershell_repository_endpoint(monkeypatch, t
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
     monkeypatch.setattr(helper.socket, "getaddrinfo", lambda *_args, **_kwargs: [(None, None, None, None, None)])
 
-    def fail_invalid_endpoint(command, *, success_codes=None, env=None):
+    def fail_invalid_endpoint(command, *, success_codes=None, env=None, update_diagnostic_stage=None):
         """Handle fail invalid endpoint.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
         """
         scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
         return {
@@ -5289,13 +5293,14 @@ def test_helper_photon_check_parses_and_truncates_candidate_rows(monkeypatch):
         },
     )
 
-    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000):
+    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000, update_diagnostic_stage=None):
         """Return stable tdnf and rpm evidence for the check.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
             stdout_limit: Maximum retained standard output.
         """
         if command[1:] == ["check-update"]:
@@ -5364,13 +5369,14 @@ def test_helper_powershell_check_reports_truthful_version_actions(monkeypatch, t
         "Current.Tools": ("2.0.0", ["1.0.0", "2.0.0"]),
     }
 
-    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000):
+    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000, update_diagnostic_stage=None):
         """Return PowerShell module version evidence.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
             stdout_limit: Maximum retained standard output.
         """
         script = base64.b64decode(command[-1]).decode("utf-16-le")
@@ -5430,13 +5436,14 @@ def test_helper_powershell_check_ignores_unreferenced_unsynchronized_repository(
     monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
 
-    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000):
+    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000, update_diagnostic_stage=None):
         """Return one current managed-module result.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
             stdout_limit: Maximum retained standard output.
         """
         return {
@@ -5589,13 +5596,14 @@ def test_helper_uses_each_modules_bound_powershell_repository(monkeypatch, tmp_p
     monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
     monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
 
-    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000):
+    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000, update_diagnostic_stage=None):
         """Return fake command.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
             stdout_limit: Maximum retained standard output.
         """
         scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
@@ -5651,13 +5659,14 @@ def test_helper_normalizes_system_powershell_module_permissions_after_install(mo
     module_root = powershell_root / "Modules"
     commands = []
 
-    def fake_command(command, *, success_codes=None, env=None):
+    def fake_command(command, *, success_codes=None, env=None, update_diagnostic_stage=None):
         """Return fake command.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
         """
         commands.append(command)
         return {"command": command, "returncode": 0, "success": True, "stdout": "", "stderr": ""}
@@ -5700,13 +5709,14 @@ def test_helper_reasserts_global_ceip_after_powercli_install(monkeypatch, tmp_pa
     scripts = []
     monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", tmp_path / "powershell-home")
 
-    def fake_command(command, *, success_codes=None, env=None):
+    def fake_command(command, *, success_codes=None, env=None, update_diagnostic_stage=None):
         """Return fake command.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
         """
         if command[0].endswith("pwsh"):
             scripts.append(base64.b64decode(command[-1]).decode("utf-16-le"))
@@ -5746,13 +5756,14 @@ def test_helper_reports_powershell_permission_normalization_failure(monkeypatch,
     powershell_root = tmp_path / "powershell"
     module_root = powershell_root / "Modules"
 
-    def fake_command(command, *, success_codes=None, env=None):
+    def fake_command(command, *, success_codes=None, env=None, update_diagnostic_stage=None):
         """Return fake command.
 
         Args:
             command: Command and arguments to execute.
             success_codes: Success codes supplied to the test scenario.
             env: Environment variables supplied to the child process.
+            update_diagnostic_stage: Fixed updater stage supplied to the runner.
         """
         failed = command[:3] == ["/usr/bin/chmod", "-R", "a+rX,go-w"]
         return {
