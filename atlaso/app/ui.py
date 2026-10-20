@@ -14987,17 +14987,27 @@ def adapter_result_to_payload(result: Any) -> dict[str, Any]:
     if "appliance-update" in result.command[:8]:
         helper = _last_helper_json(result.stdout)
         commands = helper.get("commands", [])
-        diagnostics = []
-        for command in commands[:32] if isinstance(commands, list) else []:
+        failures: list[dict[str, Any]] = []
+        successes: list[dict[str, Any]] = []
+        diagnostic_count = 0
+        # Configuration has no 32-module limit. Scan the complete response while
+        # bounding retained evidence, so early successes cannot hide a late failure.
+        for command in commands if isinstance(commands, list) else []:
             if not isinstance(command, dict):
                 continue
             diagnostic = validate_update_diagnostic(command.get("update_diagnostic"))
             code = command.get("returncode")
             if (diagnostic is not None and type(code) is int and -65536 <= code <= 65536
                     and (code == 0) == (diagnostic["reason"] == "none")):
-                diagnostics.append({"update_diagnostic": diagnostic, "returncode": code})
+                diagnostic_count += 1
+                retained = failures if code else successes
+                if len(retained) < 32:
+                    retained.append({"update_diagnostic": diagnostic, "returncode": code})
+        diagnostics = (failures + successes)[:32]
         if diagnostics:
             payload["update_diagnostics"] = diagnostics
+            if diagnostic_count > len(diagnostics):
+                payload["update_diagnostics_omitted"] = min(2**31 - 1, diagnostic_count - len(diagnostics))
     if stage == "execution" and result.returncode != 0 and payload["reason_code"] == "management_route_conflict":
         for line in reversed((result.stderr or "")[:65536].splitlines()[-32:]):
             try:

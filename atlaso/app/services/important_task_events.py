@@ -104,6 +104,10 @@ def execution_projection(payload: dict[str, Any], component: str) -> list[dict[s
                            "outcome": "succeeded" if diagnostic_code == 0 else "failed",
                            "reason": diagnostic["reason"], "returncode": diagnostic_code,
                            "update_diagnostic": diagnostic})
+        omitted = command.get("update_diagnostics_omitted")
+        if type(omitted) is int and 0 < omitted <= 2**31 - 1:
+            output.append({"component": component, "stage": "execution", "outcome": "partial",
+                           "reason": "update_diagnostics_truncated", "returncode": None})
     handoff = payload.get("management_handoff_failure", payload.get("management_handoff"))
     if (component == "task" and isinstance(handoff, dict)
             and canonical_value(handoff.get("reason_code"), REASONS.keys()) == "management_route_conflict"):

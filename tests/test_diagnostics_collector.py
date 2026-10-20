@@ -525,6 +525,11 @@ def test_checkpoint_projects_bounded_typed_events_and_omission_count(tmp_path, u
         event.update(component="powershell_modules", reason="tls_failed", update_diagnostic={
             "stage": "module_discovery", "reason": "tls_failed", "http_status": None, "elapsed_ms": 200,
         })
+    events = [event]
+    if update:
+        events.append({"schema": 1, "at": "2026-10-06T20:20:54Z", "severity": "WARNING",
+                       "component": "powershell_modules", "stage": "execution", "outcome": "partial",
+                       "reason": "update_diagnostics_truncated", "returncode": None})
     with sqlite3.connect(path) as db:
         db.executescript(
             "CREATE TABLE jobs(id TEXT,type TEXT,status TEXT,created_at TEXT,started_at TEXT,finished_at TEXT,result TEXT,error TEXT);"
@@ -536,7 +541,7 @@ def test_checkpoint_projects_bounded_typed_events_and_omission_count(tmp_path, u
         ))
         db.execute("INSERT INTO task_log_checkpoints VALUES(?,?,0)", (
             "job_123456abcdef", json.dumps({
-                "important_events": [event], "important_events_omitted": 3,
+                "important_events": events, "important_events_omitted": 3,
                 "unrelated_safe_result": "A" * 300_000,
             }),
         ))
@@ -550,6 +555,7 @@ def test_checkpoint_projects_bounded_typed_events_and_omission_count(tmp_path, u
     assert task["important_events"][0]["reason"] == ("tls_failed" if update else "helper_failed")
     if update:
         assert task["important_events"][0]["update_diagnostic"] == event["update_diagnostic"]
+        assert task["important_events"][1]["reason"] == "update_diagnostics_truncated"
     assert task["important_events"][0]["returncode"] == 7
     assert task["important_events"][0]["explanation"]
     assert "TOPSECRET" not in encoded and "private.example" not in encoded and "message" not in encoded

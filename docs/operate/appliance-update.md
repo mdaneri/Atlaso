@@ -696,6 +696,9 @@ New PowerShell operations retain the stage (`repository_registration`, `reposito
 `module_install`, `module_import`, or `ceip_configuration`), elapsed milliseconds, recognized failure category and
 HTTP status when available. These events are retained without enabling DEBUG and are included in support bundles
 through the existing typed important-event records.
+Each helper response retains at most 32 typed command diagnostics, keeping failures before successes. When this bound
+omits records, task details include `update_diagnostics_omitted` and retained events include a truncation warning,
+which also appears in support bundles. Configuring more modules does not suppress a later failure behind early successes.
 
 | Evidence | Next verification |
 | --- | --- |

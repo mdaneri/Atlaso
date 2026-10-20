@@ -41,6 +41,7 @@ REASONS = {
     "proxy_auth_required": "The repository request requires proxy authentication (HTTP 407). Review the corporate proxy configuration.",
     "http_denied": "The repository request was denied (HTTP 401 or 403). Check repository access and proxy policy; this does not by itself prove a firewall block.",
     "http_failed": "The repository returned an HTTP error. Review the recorded status and repository or proxy availability.",
+    "update_diagnostics_truncated": "Some updater command diagnostics were omitted by retention limits. Failures were prioritized over successful commands; review the task's omission count.",
     "status_surface_unproven": "The update-only status surface could not be proven continuously. Inspect browser listener and status recovery evidence before retrying.",
     "status_identity_unavailable": "Appliance Update has no compatible durable status identity. Inspect the installed helper and status recovery evidence before retrying.",
     "managed_script_unavailable": "The queued managed script revision or selected vault is missing, disabled, or changed. Review the script revision and vault before resubmitting.",
