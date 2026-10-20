@@ -4206,7 +4206,10 @@ behavior.</p>
   client certificate, then choose enablement on its own final step before Review. Private keys are never accepted.</li>
 </ul>
 <p>Both paths use one wizard. Existing rows retain <strong>Edit</strong> for saved details and <strong>Refresh from vCenter</strong> for discovery.
-Review pending changes and run global <strong>Appliance Apply</strong> before using newly saved trust.</p>
+Review pending changes and run global <strong>Appliance Apply</strong> before using newly saved trust.
+Provider choices reflect saved provider changes immediately: enrollment lists enabled providers, while manual setup
+can attach a trusted vCenter to any saved provider. Review shows the selected provider and entered vCenter name.
+Successful setup refreshes the trust rows and pending Apply state in place.</p>
 <h2 id="enroll-from-vcenter">Enroll from vCenter<a class="headerlink" href="#enroll-from-vcenter" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Enable Atlaso's Certificate Authority, configure the KMS hostname and listener, and add an enabled provider namespace.
@@ -4316,6 +4319,9 @@ key identifiers, and KMIP Destroy remains outside the bounded protocol contract.
 </ul>
 <p>Atlaso fails closed when empty-store evidence is unavailable. A trusted vCenter can be deleted only after it is disabled
 and every certificate record is retired.</p>
+<p>Disabling a provider creates pending <code>kms</code> Apply work even when it has no approved certificates. Apply that change
+before retrying deletion. A rejected deletion keeps the provider intact; correct the reported condition and retry
+from the same page. Starting another edit or retry clears the previous action feedback.</p>
 <h2 id="apply-and-trust-bundle-boundary">Apply and trust-bundle boundary<a class="headerlink" href="#apply-and-trust-bundle-boundary" title="Permanent link">&para;</a></h2>
 <p>Saving page or API changes updates database desired state only. Global Appliance Apply renders the enabled providers
 with exact enabled fingerprints, configures the daemon on every derived selected listener address, stages
