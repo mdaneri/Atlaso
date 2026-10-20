@@ -2,7 +2,7 @@
 
 import json
 
-from atlaso.app.models import LdapOrganization, LdapUser
+from atlaso.app.models import AuditEvent, LdapOrganization, LdapUser
 from atlaso.app.services.ldap import mark_ldap_apply_complete
 
 
@@ -114,6 +114,119 @@ def test_ldap_api_manages_isolated_organizations_users_groups_and_vcf_mapping(cl
     assert health.json()["ldaps_enabled"] is True
     assert health.json()["ldap_enabled"] is False
     assert health.json()["organization_count"] == 2
+
+
+def test_ldap_api_custom_bind_password_is_write_only_and_rotation_is_additive(client):
+    """Custom bind secrets validate, encrypt, redact, and preserve old rotation calls.
+
+    Args:
+        client: HTTP test client used to exercise the managed LDAP API.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.ldap import organization_bind_secret
+
+    token = api_token(client, ["read:ldap", "write:ldap"])
+    headers = {"Authorization": f"Bearer {token}"}
+    custom_password = "ValidCustom1!Secret"
+    created = client.post(
+        "/api/v1/ldap/organizations",
+        headers=headers,
+        json={"name": "Custom Bind", "bind_password": custom_password},
+    )
+    assert created.status_code == 201, created.text
+    organization_id = created.json()["id"]
+    assert created.json()["raw_bind_password"] is None
+    assert custom_password not in created.text
+
+    overlong_password = "OverlengthSecret" * 300
+    overlong = client.post(
+        "/api/v1/ldap/organizations",
+        headers=headers,
+        json={"name": "Overlong Bind", "bind_password": overlong_password},
+    )
+    assert overlong.status_code == 422
+    assert overlong_password not in overlong.text
+    wrong_type = client.post(
+        "/api/v1/ldap/organizations",
+        headers=headers,
+        json={"name": "Typed Bind", "bind_password": {"secret": "hidden"}},
+    )
+    assert wrong_type.status_code == 422
+    assert "hidden" not in wrong_type.text
+
+    listed = client.get("/api/v1/ldap/organizations", headers=headers)
+    assert listed.status_code == 200
+    assert custom_password not in listed.text
+
+    with SessionLocal() as db:
+        organization = db.get(LdapOrganization, organization_id)
+        assert organization is not None
+        original_ciphertext = organization.bind_password_encrypted
+        assert original_ciphertext != custom_password
+        assert organization_bind_secret(organization) == custom_password
+
+    rejected_password = "NotPolicyCompliant"
+    rejected = client.post(
+        f"/api/v1/ldap/organizations/{organization_id}/bind-credential/rotate",
+        headers=headers,
+        json={"bind_password": rejected_password},
+    )
+    assert rejected.status_code == 400
+    assert rejected_password not in rejected.text
+    with SessionLocal() as db:
+        organization = db.get(LdapOrganization, organization_id)
+        assert organization is not None
+        assert organization.bind_password_encrypted == original_ciphertext
+
+    blank = client.post(
+        f"/api/v1/ldap/organizations/{organization_id}/bind-credential/rotate",
+        headers=headers,
+        json={"bind_password": "   "},
+    )
+    assert blank.status_code == 400
+
+    updated = client.put(
+        f"/api/v1/ldap/organizations/{organization_id}",
+        headers=headers,
+        json={"name": "Custom Bind Renamed", "bind_password": "IgnoredUpdateSecret1!"},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["raw_bind_password"] is None
+    with SessionLocal() as db:
+        organization = db.get(LdapOrganization, organization_id)
+        assert organization is not None
+        assert organization.bind_password_encrypted == original_ciphertext
+        audit_events = db.execute(
+            select(AuditEvent).where(
+                AuditEvent.resource_type == "ldap_organization",
+                AuditEvent.resource_id == str(organization_id),
+            )
+        ).scalars().all()
+        assert all(custom_password not in (event.detail or "") for event in audit_events)
+
+    rotated = client.post(
+        f"/api/v1/ldap/organizations/{organization_id}/bind-credential/rotate",
+        headers=headers,
+        json={"bind_password": custom_password},
+    )
+    assert rotated.status_code == 200, rotated.text
+    assert rotated.json()["raw_bind_password"] is None
+    assert custom_password not in rotated.text
+    with SessionLocal() as db:
+        organization = db.get(LdapOrganization, organization_id)
+        assert organization is not None
+        assert organization.bind_password_encrypted != original_ciphertext
+        assert organization_bind_secret(organization) == custom_password
+
+    generated = client.post(
+        f"/api/v1/ldap/organizations/{organization_id}/bind-credential/rotate",
+        headers=headers,
+    )
+    assert generated.status_code == 200, generated.text
+    assert generated.json()["raw_bind_password"]
+    assert generated.json()["raw_bind_password"] != custom_password
 
 
 def test_ldap_api_rejects_cross_organization_membership_and_nested_cycle(client):
