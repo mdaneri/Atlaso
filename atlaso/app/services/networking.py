@@ -1321,10 +1321,16 @@ def sync_host_physical_interfaces(db: Session) -> tuple[list[PhysicalInterface],
     for interface in reconciled:
         db.add(interface)
     _flush_physical_interface_name_changes(db, name_changes)
-    from atlaso.app.services.reverse_proxies import validate_inventory_proxy_scopes
+    from atlaso.app.services.reverse_proxies import (
+        validate_interface_proxy_bindings,
+        validate_inventory_proxy_scopes,
+    )
 
     try:
         db.flush()
+        # Retain explicit listener tuples for operator review, but reject upstream
+        # loops against the complete candidate inventory before committing it.
+        validate_interface_proxy_bindings(db, set())
         validate_inventory_proxy_scopes(db)
     except ValueError:
         db.rollback()

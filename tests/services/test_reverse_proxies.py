@@ -2434,3 +2434,69 @@ def test_automatic_service_socket_refresh_preserves_binding_on_conflict(monkeypa
     finally:
         db.close()
         engine.dispose()
+
+
+@pytest.mark.parametrize("observation", ["dhcp", "secondary", "slaac"])
+@pytest.mark.parametrize(("enabled", "collides"), [(True, True), (False, True), (True, False)])
+def test_native_inventory_rejects_new_local_proxy_upstream_atomically(monkeypatch, observation, enabled, collides):
+    """Reject upstream loops before committing any native inventory side effects.
+
+    Args:
+        monkeypatch: Replace native discovery with deterministic complete observations.
+        observation: Primary DHCP, secondary IPv4 or automatic IPv6 address.
+        enabled: Whether the saved proxy actively reserves its upstream.
+        collides: Assign the upstream address instead of an unrelated safe address.
+    """
+    from atlaso.app.models import DnsRecord
+    from atlaso.app.services import networking
+
+    engine, db = create_db()
+    try:
+        ingress = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        ingress.desired_state_source = "console"
+        ingress.ipv4_method = "dhcp" if observation == "dhcp" else "static"
+        ingress.ip_cidr = None if observation == "dhcp" else "192.168.2.10/24"
+        ingress.host_ip_cidr = "192.168.2.10/24"
+        ingress.ipv6_enabled = observation == "slaac"
+        db.commit()
+        upstream = "2001:db8:90::10" if observation == "slaac" else "198.51.100.90"
+        candidate = upstream if collides else ("2001:db8:90::20" if observation == "slaac" else "198.51.100.91")
+        values = payload(enabled=enabled, scheme="http", port=8084, redirect_http=False)
+        values["routes"][0]["upstream_host"] = upstream
+        proxy = save_proxy(db, values, actor="test")
+        before = runtime_snapshot(db)
+        settings = [(row.key, row.value) for row in db.scalars(select(Setting).order_by(Setting.key))]
+        dns = [(row.id, row.hostname, row.address) for row in db.scalars(select(DnsRecord).order_by(DnsRecord.id))]
+        audits = list(db.scalars(select(AuditEvent.id)))
+        observations = [networking.HostPhysicalInterface(
+            name="eth0", mac_address=ingress.mac_address, driver=None, speed=None,
+            host_ip_cidr=(candidate if observation == "dhcp" else "192.168.2.10") + "/24",
+            host_dhcp_ip_cidr=candidate + "/24" if observation == "dhcp" else None,
+            host_ip_cidrs=["192.168.2.10/24", candidate + "/24"] if observation == "secondary" else [],
+            host_ipv6_cidrs=[candidate + "/64"] if observation == "slaac" else [],
+            host_dynamic_ipv6_cidrs=[candidate + "/64"] if observation == "slaac" else [],
+            host_mtu=1500, host_admin_state="up", oper_state="up"),
+            networking.HostPhysicalInterface(name="eth1", mac_address="02:00:00:00:00:01", driver=None,
+                speed=None, host_ip_cidr="192.168.1.10/24", host_mtu=1500, host_admin_state="up", oper_state="up")]
+        monkeypatch.setattr(networking, "discover_host_physical_interfaces", lambda **_kwargs: observations)
+        if enabled and collides:
+            with pytest.raises(ValueError, match="still uses upstream address"):
+                networking.sync_host_physical_interfaces(db)
+            assert not db.in_transaction()
+            db.commit()
+            db.expire_all()
+            assert runtime_snapshot(db) == before
+            assert ingress.host_ip_cidr == "192.168.2.10/24"
+            assert not ingress.host_ip_cidrs and not ingress.host_ipv6_cidrs
+            assert [(row.key, row.value) for row in db.scalars(select(Setting).order_by(Setting.key))] == settings
+            assert [(row.id, row.hostname, row.address) for row in db.scalars(select(DnsRecord).order_by(DnsRecord.id))] == dns
+            assert list(db.scalars(select(AuditEvent.id))) == audits
+        else:
+            networking.sync_host_physical_interfaces(db)
+            db.expire_all()
+            observed = [ingress.host_ip_cidr, *(ingress.host_ip_cidrs or []), *(ingress.host_ipv6_cidrs or [])]
+            assert any(str(cidr).split("/")[0] == candidate for cidr in observed)
+            assert proxy.enabled is enabled
+    finally:
+        db.close()
+        engine.dispose()
