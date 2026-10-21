@@ -13323,7 +13323,13 @@ def test_kms_helper_status_returns_only_authenticated_redacted_counts(monkeypatc
 
 
 def test_kms_listener_status_returns_only_active_public_binding(monkeypatch, tmp_path, capsys):
-    """Read protected deployed metadata without credentials, keys, or host mutation."""
+    """Read protected deployed metadata without credentials, keys, or host mutation.
+
+    Args:
+        monkeypatch: Fixture replacing fixed paths and native service observation.
+        tmp_path: Isolated directory containing the synthetic deployed configuration.
+        capsys: Fixture capturing the public metadata and redacted diagnostics.
+    """
     helper = load_helper_module()
     config = tmp_path / "server.json"
     config.write_text(json.dumps({
@@ -13335,6 +13341,12 @@ def test_kms_listener_status_returns_only_active_public_binding(monkeypatch, tmp
     commands = []
 
     def active(command, **kwargs):
+        """Permit only the bounded native service-active observation.
+
+        Args:
+            command: Native command whose identity must match the KMIP service check.
+            **kwargs: Execution options whose timeout must remain bounded.
+        """
         assert command == ["systemctl", "is-active", "--quiet", "atlaso-kmip.service"]
         assert kwargs == {"timeout": 5}
         commands.append(command)
@@ -13361,7 +13373,14 @@ def test_kms_listener_status_returns_only_active_public_binding(monkeypatch, tmp
     json.dumps({"enabled": True, "listen": {"addresses": ["192.168.1.254"], "port": "5696"}}),
 ])
 def test_kms_listener_status_rejects_unavailable_binding_without_raw_output(monkeypatch, tmp_path, capsys, document):
-    """Invalid deployed evidence never crosses the public listener metadata boundary."""
+    """Invalid deployed evidence never crosses the public listener metadata boundary.
+
+    Args:
+        monkeypatch: Fixture replacing the fixed deployed configuration path.
+        tmp_path: Isolated directory containing malformed or disabled configuration.
+        capsys: Fixture capturing redacted output for comparison.
+        document: Invalid or disabled deployed listener JSON used by this case.
+    """
     helper = load_helper_module()
     config = tmp_path / "server.json"
     config.write_text(document, encoding="utf8")
@@ -13373,7 +13392,13 @@ def test_kms_listener_status_rejects_unavailable_binding_without_raw_output(monk
 
 
 def test_kms_listener_status_rejects_inactive_service(monkeypatch, tmp_path, capsys):
-    """Saved configuration does not assert an active native listener."""
+    """Saved configuration does not assert an active native listener.
+
+    Args:
+        monkeypatch: Fixture replacing the config path and service-active observation.
+        tmp_path: Isolated directory containing valid synthetic listener configuration.
+        capsys: Fixture verifying unavailable evidence never exposes native stderr.
+    """
     helper = load_helper_module()
     config = tmp_path / "server.json"
     config.write_text(json.dumps({"enabled": True, "listen": {"addresses": ["192.168.1.254"], "port": 5696}}))

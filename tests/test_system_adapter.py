@@ -6,10 +6,20 @@ from atlaso.app.adapters.system import SystemAdapter
 
 
 def test_kmip_listener_observation_uses_bounded_readonly_helper(monkeypatch):
-    """The web process reads protected public listener metadata through the helper."""
+    """The web process reads protected public listener metadata through the helper.
+
+    Args:
+        monkeypatch: Fixture replacing subprocess execution with a recorded response.
+    """
     calls = []
 
     def run(command, **kwargs):
+        """Capture the exact helper command and bounded subprocess options.
+
+        Args:
+            command: Allowlisted helper invocation emitted by the adapter.
+            **kwargs: Subprocess options, including the read-only observation timeout.
+        """
         calls.append((command, kwargs))
         return subprocess.CompletedProcess(command, 0, '{"enabled":true}', "")
 

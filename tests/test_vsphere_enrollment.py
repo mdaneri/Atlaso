@@ -555,7 +555,12 @@ def test_endpoint_diagnostic_does_not_vary_with_remote_inventory() -> None:
 
 @pytest.mark.parametrize("address", ["192.168.1.254", "2001:0db8:0:0:0:0:0:254"])
 def test_matching_label_with_admitted_listener_ip_reads_public_client(monkeypatch, address) -> None:
-    """The actual name/address split succeeds only with independent IP admission."""
+    """The actual name/address split succeeds only with independent IP admission.
+
+    Args:
+        monkeypatch: Fixture replacing the vCenter TLS and HTTP connection.
+        address: Registered IPv4 or noncanonical IPv6 transport address.
+    """
     from ipaddress import ip_address
 
     fake = _FakeVcenter(_client_certificate())
@@ -582,7 +587,11 @@ def test_matching_label_with_admitted_listener_ip_reads_public_client(monkeypatc
     [{"address": "192.168.1.254", "port": 5696}, {"address": "192.168.1.254", "port": True}],
 ])
 def test_ip_admission_never_weakens_all_member_address_and_exact_port_checks(servers) -> None:
-    """A matching server name and one admitted member cannot admit foreign members."""
+    """A matching server name and one admitted member cannot admit foreign members.
+
+    Args:
+        servers: Remote member inventory containing a foreign address or invalid port.
+    """
     with pytest.raises(enrollment.EnrollmentError, match="does not point only"):
         enrollment._check_cluster_endpoint(
             servers, "kms.atlaso.example.test", 5696, listener_addresses=frozenset({"192.168.1.254"}),

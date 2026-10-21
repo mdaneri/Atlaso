@@ -1063,7 +1063,12 @@ def test_vcenter_enrollment_manual_credentials_are_request_local(client, monkeyp
 
 
 def test_enrollment_rechecks_listener_ip_admission_before_saving_trust(client, monkeypatch) -> None:
-    """Losing local listener proof after inspection prevents approval without saving trust."""
+    """Losing local listener proof after inspection prevents approval without saving trust.
+
+    Args:
+        client: Isolated authenticated application test client.
+        monkeypatch: Fixture replacing remote discovery and local admission evidence.
+    """
     from atlaso.app.routers.ui import certificate_trust as transport
     from atlaso.app.services.vsphere_enrollment import _check_cluster_endpoint
 
@@ -1081,10 +1086,21 @@ def test_enrollment_rechecks_listener_ip_admission_before_saving_trust(client, m
     admission_reads = []
 
     def admission(_db, *, port):
+        """Return the current synthetic local admission set for each request.
+
+        Args:
+            _db: Request database session, unused by this synthetic projection.
+            port: Configured KMIP port captured to prove repeated admission.
+        """
         admission_reads.append(port)
         return frozenset(admitted)
 
     def discover(**kwargs):
+        """Check synthetic remote members using the request's local admission evidence.
+
+        Args:
+            **kwargs: Connection and independently admitted listener parameters.
+        """
         _check_cluster_endpoint(
             [{"name": kwargs["atlaso_host"], "address": "192.168.1.254", "port": 5696}],
             kwargs["atlaso_host"], kwargs["atlaso_port"], listener_addresses=kwargs["listener_addresses"],
