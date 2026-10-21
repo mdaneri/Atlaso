@@ -1322,6 +1322,7 @@ def sync_host_physical_interfaces(db: Session) -> tuple[list[PhysicalInterface],
         db.add(interface)
     _flush_physical_interface_name_changes(db, name_changes)
     from atlaso.app.services.reverse_proxies import (
+        InventoryProxyConflict,
         validate_interface_proxy_bindings,
         validate_inventory_proxy_scopes,
     )
@@ -1332,9 +1333,9 @@ def sync_host_physical_interfaces(db: Session) -> tuple[list[PhysicalInterface],
         # loops against the complete candidate inventory before committing it.
         validate_interface_proxy_bindings(db, set())
         validate_inventory_proxy_scopes(db)
-    except ValueError:
+    except ValueError as exc:
         db.rollback()
-        raise
+        raise InventoryProxyConflict(str(exc)) from exc
     db.commit()
     return db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all(), len(discovered)
 

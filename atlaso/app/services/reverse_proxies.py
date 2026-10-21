@@ -19,6 +19,10 @@ from atlaso.app.services.traffic_publishing import nat_targets
 from atlaso.app.ui_routes import PROTOCOL_EXACT_PATHS, PROTOCOL_PATH_PREFIXES
 
 
+class InventoryProxyConflict(ValueError):
+    """Native inventory was rolled back because it conflicts with a saved proxy."""
+
+
 class ServiceDnsAliasConflict(ValueError):
     """A candidate service alias would take a saved proxy hostname or upstream."""
 

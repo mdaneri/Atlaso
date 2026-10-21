@@ -2263,16 +2263,19 @@ def test_apply_preview_reports_dynamic_service_alias_conflict_without_reconcilin
         assert list(db.scalars(select(AuditEvent.id))) == audits
 
 
+@pytest.mark.parametrize("startup", [False, True])
 @pytest.mark.parametrize("terminal", [False, True])
 @pytest.mark.parametrize("address", ["192.168.1.10", "2001:db8:1::10"])
-def test_inventory_refresh_rejects_new_browser_scope_before_commit(monkeypatch, terminal, address):
+def test_inventory_refresh_rejects_new_browser_scope_before_commit(monkeypatch, terminal, address, startup):
     """Preserve saved scope when native inventory discovers a duplicate secondary address.
 
     Args:
         monkeypatch: Replace native discovery without host mutation.
         terminal: Exercise independently selected Web Terminal ingress.
         address: Secondary IPv4 or IPv6 address shared with a saved proxy.
+        startup: Defer the rejected observation at appliance startup.
     """
+    from atlaso.app import main
     from atlaso.app.services import networking
 
     engine, db = create_db()
@@ -2303,8 +2306,11 @@ def test_inventory_refresh_rejects_new_browser_scope_before_commit(monkeypatch, 
             networking.HostPhysicalInterface(name="eth1", mac_address="02:00:00:00:00:01", driver=None,
                 speed=None, host_ip_cidr="192.168.1.10/24", host_mtu=1500, host_admin_state="up", oper_state="up")]
         monkeypatch.setattr(networking, "discover_host_physical_interfaces", lambda **_kwargs: observations)
-        with pytest.raises(ValueError, match="browser listener scope"):
-            networking.sync_host_physical_interfaces(db)
+        if startup:
+            main.refresh_startup_host_inventory(db, environment="appliance")
+        else:
+            with pytest.raises(ValueError, match="browser listener scope"):
+                networking.sync_host_physical_interfaces(db)
         db.commit()
         db.expire_all()
         assert runtime_snapshot(db) == before
@@ -2436,9 +2442,10 @@ def test_automatic_service_socket_refresh_preserves_binding_on_conflict(monkeypa
         engine.dispose()
 
 
+@pytest.mark.parametrize("startup", [False, True])
 @pytest.mark.parametrize("observation", ["dhcp", "secondary", "slaac"])
 @pytest.mark.parametrize(("enabled", "collides"), [(True, True), (False, True), (True, False)])
-def test_native_inventory_rejects_new_local_proxy_upstream_atomically(monkeypatch, observation, enabled, collides):
+def test_native_inventory_rejects_new_local_proxy_upstream_atomically(monkeypatch, observation, enabled, collides, startup):
     """Reject upstream loops before committing any native inventory side effects.
 
     Args:
@@ -2446,7 +2453,9 @@ def test_native_inventory_rejects_new_local_proxy_upstream_atomically(monkeypatc
         observation: Primary DHCP, secondary IPv4 or automatic IPv6 address.
         enabled: Whether the saved proxy actively reserves its upstream.
         collides: Assign the upstream address instead of an unrelated safe address.
+        startup: Defer the rejected observation at appliance startup.
     """
+    from atlaso.app import main
     from atlaso.app.models import DnsRecord
     from atlaso.app.services import networking
 
@@ -2480,8 +2489,11 @@ def test_native_inventory_rejects_new_local_proxy_upstream_atomically(monkeypatc
                 speed=None, host_ip_cidr="192.168.1.10/24", host_mtu=1500, host_admin_state="up", oper_state="up")]
         monkeypatch.setattr(networking, "discover_host_physical_interfaces", lambda **_kwargs: observations)
         if enabled and collides:
-            with pytest.raises(ValueError, match="still uses upstream address"):
-                networking.sync_host_physical_interfaces(db)
+            if startup:
+                main.refresh_startup_host_inventory(db, environment="appliance")
+            else:
+                with pytest.raises(ValueError, match="still uses upstream address"):
+                    networking.sync_host_physical_interfaces(db)
             assert not db.in_transaction()
             db.commit()
             db.expire_all()
@@ -2492,11 +2504,43 @@ def test_native_inventory_rejects_new_local_proxy_upstream_atomically(monkeypatc
             assert [(row.id, row.hostname, row.address) for row in db.scalars(select(DnsRecord).order_by(DnsRecord.id))] == dns
             assert list(db.scalars(select(AuditEvent.id))) == audits
         else:
-            networking.sync_host_physical_interfaces(db)
+            if startup:
+                main.refresh_startup_host_inventory(db, environment="appliance")
+            else:
+                networking.sync_host_physical_interfaces(db)
             db.expire_all()
             observed = [ingress.host_ip_cidr, *(ingress.host_ip_cidrs or []), *(ingress.host_ipv6_cidrs or [])]
             assert any(str(cidr).split("/")[0] == candidate for cidr in observed)
             assert proxy.enabled is enabled
     finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("error", [ValueError("unrelated discovery validation"), OSError("discovery unavailable")])
+def test_startup_inventory_does_not_hide_unrelated_discovery_failures(monkeypatch, error):
+    """Only the typed proxy conflict may be deferred by the startup boundary.
+
+    Args:
+        monkeypatch: Replace native discovery without host interaction.
+        error: Unrelated failure that must still reach the startup caller.
+    """
+    from atlaso.app import main
+
+    engine, db = create_db()
+    try:
+        def fail(_db):
+            """Raise the unchanged discovery failure.
+
+            Args:
+                _db: Caller-owned startup transaction.
+            """
+            raise error
+
+        monkeypatch.setattr(main, "sync_host_physical_interfaces", fail)
+        with pytest.raises(type(error), match=str(error)):
+            main.refresh_startup_host_inventory(db, environment="appliance")
+    finally:
+        db.rollback()
         db.close()
         engine.dispose()

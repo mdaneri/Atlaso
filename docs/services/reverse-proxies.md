@@ -236,7 +236,8 @@ publishing aliases; a conflict preserves cached listeners and DNS while retainin
 Startup defers that refresh with a warning; the Apply preview remains available with validation errors until the proxy
 conflict is repaired.
 Native interface inventory rejects observations that turn an enabled proxy upstream into a local appliance address;
-rejection retains the prior inventory, settings and audit rows. It also checks management and Web Terminal browser
+rejection retains the prior inventory, settings and audit rows. Startup logs and defers this proxy conflict so the
+management UI remains available for repair. It also checks management and Web Terminal browser
 ingress against each enabled proxy's
 exact saved interface scope before committing observations. A duplicate secondary address that broadens that scope
 rejects and rolls back the inventory transaction. Remove the duplicate address or move the proxy before retrying;
