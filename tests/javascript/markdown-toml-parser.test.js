@@ -34,10 +34,13 @@ test("Markdown TOML parser preserves valid configuration and comments", () => {
   checkParser(String.raw`
     import assert from "node:assert/strict";
     import parse from "markdownlint-cli2/parsers/toml";
-    assert.deepEqual(parse('default = true\nMD013 = { line_length = 120 }\n'), {
+    const settings = parse('default = true\nMD013 = { line_length = 120 }\n');
+    assert.equal(Object.getPrototypeOf(settings), null);
+    assert.equal(Object.getPrototypeOf(settings.MD013), null);
+    assert.deepEqual(JSON.parse(JSON.stringify(settings)), {
       default: true, MD013: { line_length: 120 }
     });
-    assert.deepEqual(parse('a=[1 # comment\n, 2]\nb={c=3} # final comment'), {
+    assert.deepEqual(JSON.parse(JSON.stringify(parse('a=[1 # comment\n, 2]\nb={c=3} # final comment'))), {
       a: [1, 2], b: {c: 3}
     });
   `);

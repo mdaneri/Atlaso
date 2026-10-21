@@ -101,12 +101,12 @@ run the workflow. Maintainers can request the same rebuild from an authenticated
 
 ## Required checks
 
-`markdownlint-cli2` 0.23.3 resolves `smol-toml` 1.8.0 without a scoped npm override, retaining the fix for
-[GHSA-7w5x-hrqm-74c2](https://github.com/advisories/GHSA-7w5x-hrqm-74c2), an infinite loop on malformed TOML.
-Atlaso's checked-in linter configuration uses JSONC; this dependency update does not establish an appliance runtime
-exploit or exposure to untrusted TOML through supported tooling. When upgrading the linter, regenerate
-`package-lock.json` with npm and verify the clean installed tree and timeout-protected parser compatibility tests
-before delivery.
+`markdownlint-cli2` 0.24.0 supplies patched Markdown, TOML, and YAML parsers without the former YAML downgrade.
+The scoped `micromark-extension-math` override selects KaTeX 0.18.2; regression tests cover rendering compatibility
+and inherited trust rejection; Atlaso uses no internal KaTeX APIs or CSS.
+TOML tests verify null-prototype mappings and bounded parsing. Development dependencies do not establish
+appliance runtime exposure. Regenerate `package-lock.json` with npm; verify clean installation, timeout-protected
+parser tests, and Markdown lint before delivery.
 
 Run these commands before opening a pull request:
 
