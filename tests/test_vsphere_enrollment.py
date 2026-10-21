@@ -126,6 +126,10 @@ class _FakeInventoryVcenter:
             clusters: Synthetic cluster response returned by the fake vCenter.
         """
         self.clusters = clusters
+        self.instance_options = [{
+            "key": "VirtualCenter.InstanceName",
+            "value": {"_typeName": "string", "_value": "Configured Lab vCenter"},
+        }]
         self.headers: dict[str, str] = {}
         self.calls: list[tuple[str, object]] = []
 
@@ -152,8 +156,9 @@ class _FakeInventoryVcenter:
             json={
                 "sessionManager": {"type": "SessionManager", "value": "SessionManager"},
                 "cryptoManager": {"type": "CryptoManagerKmip", "value": "CryptoManager"},
+                "setting": {"type": "OptionManager", "value": "VpxSettings"},
                 "about": {
-                    "name": "vCenter Display Name",
+                    "name": "VMware vCenter Server",
                     "instanceUuid": "stable-instance-uuid",
                 },
             },
@@ -171,6 +176,11 @@ class _FakeInventoryVcenter:
             return httpx.Response(
                 200, json={}, headers={"vmware-api-session-id": "opaque-session"}
             )
+        if path.endswith("/QueryOptions"):
+            assert self.headers["vmware-api-session-id"] == "opaque-session"
+            assert path.endswith("/OptionManager/VpxSettings/QueryOptions")
+            assert json == {"name": "VirtualCenter.InstanceName"}
+            return httpx.Response(200, json=self.instance_options)
         if path.endswith("/ListKmsClusters"):
             assert self.headers["vmware-api-session-id"] == "opaque-session"
             return httpx.Response(200, json=self.clusters)
@@ -205,8 +215,8 @@ def _discover_inventory() -> enrollment.DiscoveredInventory:
     )
 
 
-def test_inventory_returns_about_name_and_all_unfiltered_cluster_ids(monkeypatch) -> None:
-    """Retain every cluster and distinguish the About name from identity.
+def test_inventory_returns_configured_instance_name_and_all_unfiltered_cluster_ids(monkeypatch) -> None:
+    """Retain every cluster and use the configured name instead of product/host/UUID.
 
     Args:
         monkeypatch: Fixture replacing external TLS and HTTP dependencies.
@@ -223,7 +233,7 @@ def test_inventory_returns_about_name_and_all_unfiltered_cluster_ids(monkeypatch
     result = _discover_inventory()
 
     assert result == enrollment.DiscoveredInventory(
-        name="vCenter Display Name",
+        name="Configured Lab vCenter",
         cluster_ids=("Atlaso-KMIP", "External-KMIP", "Inactive-KMIP", "Cluster with spaces"),
     )
     list_call = next(call for call in fake.calls if call[0].endswith("/ListKmsClusters"))
@@ -241,6 +251,71 @@ def test_inventory_accepts_empty_cluster_inventory(monkeypatch) -> None:
     _prepare_inventory_fake(monkeypatch, fake)
 
     assert _discover_inventory().cluster_ids == ()
+
+
+@pytest.mark.parametrize("options", [
+    None, {}, [], [{"key": "other", "value": {"_typeName": "string", "_value": "wrong"}}],
+    [{"key": "VirtualCenter.InstanceName", "value": "untyped"}],
+    [{"key": "VirtualCenter.InstanceName", "value": {"_typeName": "int", "_value": 1}}],
+    *[[{"key": "VirtualCenter.InstanceName", "value": {"_typeName": "string", "_value": value}}]
+      for value in [None, "", "  ", "x" * 121, "bad\nname", "bad\x7fname"]],
+    [{"key": "VirtualCenter.InstanceName"}] * 2,
+])
+def test_unavailable_instance_name_keeps_clusters_without_identity_substitution(monkeypatch, options) -> None:
+    """Never substitute product, endpoint or UUID for an unavailable instance name.
+
+    Args:
+        monkeypatch: Fixture replacing external TLS and HTTP dependencies.
+        options: Malformed or unavailable configured-name response.
+    """
+    fake = _FakeInventoryVcenter([{"clusterId": {"id": "Keep this cluster"}}])
+    fake.instance_options = options
+    _prepare_inventory_fake(monkeypatch, fake)
+    assert _discover_inventory() == enrollment.DiscoveredInventory("", ("Keep this cluster",))
+    assert fake.calls[-1][0].endswith("/Logout")
+
+
+@pytest.mark.parametrize("failure", ["denied", "transport", "missing_reference"])
+def test_instance_name_read_failure_preserves_cluster_discovery(monkeypatch, failure) -> None:
+    """Allow honest manual naming when the settings read is unavailable.
+
+    Args:
+        monkeypatch: Fixture replacing external TLS and HTTP dependencies.
+        failure: Settings failure category to exercise.
+    """
+    fake = _FakeInventoryVcenter([{"clusterId": {"id": "Keep"}}])
+    original_post, original_get = fake.post, fake.get
+
+    def post(path, *, json=None):
+        """Fail only the optional settings query.
+
+        Args:
+            path: Requested VI JSON resource.
+            json: Request body for the operation.
+        """
+        if path.endswith("/QueryOptions"):
+            if failure == "transport":
+                raise httpx.ReadTimeout("private remote error")
+            return httpx.Response(403, json={"message": "private remote error"})
+        return original_post(path, json=json)
+
+    def get(path):
+        """Optionally omit the settings manager reference.
+
+        Args:
+            path: Requested service metadata resource.
+        """
+        response = original_get(path)
+        if failure == "missing_reference":
+            content = response.json()
+            del content["setting"]
+            return httpx.Response(200, json=content)
+        return response
+
+    fake.post, fake.get = post, get
+    _prepare_inventory_fake(monkeypatch, fake)
+    assert _discover_inventory() == enrollment.DiscoveredInventory("", ("Keep",))
+    assert fake.calls[-1][0].endswith("/Logout")
 
 
 @pytest.mark.parametrize(
