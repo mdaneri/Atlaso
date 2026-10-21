@@ -111,6 +111,7 @@ COMMANDS: dict[str, set[str]] = {
     "esx-storage": {"inventory", "validate", "apply", "status", "logs"},
     "public-services": {"validate", "preflight", "apply", "reverse-proxy-status"},
     "appliance-update": {
+        "wheel-deploy-lock-v1",
         "check",
         "apply",
         "sync-sources",
@@ -242,6 +243,7 @@ NO_PATH_ACTIONS = {
     ("appliance-update", "restart-complete"),
     ("appliance-update", "restart-inspect"),
     ("appliance-update", "quiesce-action"),
+    ("appliance-update", "wheel-deploy-lock-v1"),
 }
 NON_PATH_ARGUMENT_ACTIONS = {
     ("dnsmasq", "verify-pool"),
@@ -310,6 +312,7 @@ ATLASO_FACTORY_RESET_PYTHON = ATLASO_VENV_LINK / "bin/python"
 SYSTEMD_NETWORK_INTERFACE_DIR = Path("/sys/class/net")
 SYSTEMD_NETWORK_LEASE_DIR = Path("/run/systemd/netif/leases")
 ATLASO_UPDATE_FINALIZER_PATH = ATLASO_STATE_DIR / "apply/appliance-update/finalizer-status.json"
+ATLASO_DEPLOYMENT_LOCK_PATH = Path("/run/atlaso-appliance-mutation.lock")
 ATLASO_UPDATE_MAINTENANCE_PATH = Path("/run/atlaso-update-maintenance")
 ATLASO_UPDATE_STATUS_MARKER_PATH = Path("/run/atlaso-appliance-update-status")
 ATLASO_UPDATE_STATUS_DIR = ATLASO_PRIVILEGED_STATE_DIR / "appliance-update-status"
@@ -881,6 +884,22 @@ def _privileged_powershell_environment() -> dict[str, str]:
 
 
 def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> int:
+    """Admit update mutation before systemd environment or unit preparation.
+
+    Args:
+        group: Validated helper group.
+        action: Validated helper action.
+        args: Parsed command-line options.
+    """
+    def operation() -> int:
+        """Run systemd preflight and wait for its child under admission."""
+        return _run_real_action_with_systemd_admitted(group, action, args)
+    if group == "appliance-update":
+        return _with_appliance_update_deployment_guard(action, operation)
+    return operation()
+
+
+def _run_real_action_with_systemd_admitted(group: str, action: str, args: list[str]) -> int:
     """Run real action with systemd.
 
     Args:
@@ -35408,7 +35427,98 @@ def _handle_management_front_door(action: str, args: list[str]) -> int:
     return _recover_management_front_door()
 
 
+class _DeploymentAdmissionBusy(Exception):
+    """No update mutation was admitted because wheel deployment owns the lock."""
+
+
 def _handle_appliance_update(action: str, args: list[str]) -> int:
+    """Serialize update mutation against exclusive development wheel deployment.
+
+    Args:
+        action: Validated Appliance Update action.
+        args: Parsed action arguments.
+    """
+    if action == "wheel-deploy-lock-v1":
+        if args:
+            return 2
+        print("wheel-deploy-lock-v1")
+        return 0
+    return _with_appliance_update_deployment_guard(
+        action, lambda: _handle_appliance_update_locked(action, args),
+    )
+
+
+def _with_appliance_update_deployment_guard(action: str, operation: Callable[[], int]) -> int:
+    """Hold deployment admission through the complete parent or child operation.
+
+    Args:
+        action: Validated update action.
+        operation: Dispatch or systemd execution, including its cleanup.
+    """
+    try:
+        with _appliance_update_deployment_guard(action):
+            return operation()
+    except _DeploymentAdmissionBusy:
+        print(json.dumps({"status": "deployment-busy", "mutation_started": False}, sort_keys=True))
+        return 73
+    except (OSError, ValueError) as exc:
+        print(f"Appliance Update deployment serialization refused: {type(exc).__name__}.", file=sys.stderr)
+        return 75
+
+
+@contextmanager
+def _appliance_update_deployment_guard(action: str):
+    """Hold a shared lock compatible with nested updater recovery helpers.
+
+    Args:
+        action: Action deciding whether startup recovery has evidence to consume.
+    """
+    observational = {"status-inspect", "restart-inspect"}
+    recovery_evidence = (
+        ATLASO_UPDATE_FINALIZER_PATH, ATLASO_UPDATE_STATUS_PATH,
+        ATLASO_UPDATE_MAINTENANCE_PATH, ATLASO_UPDATE_STATUS_MARKER_PATH,
+        ATLASO_UPDATE_RESTART_GATE_PATH,
+    )
+    # Ordinary service startup must work while deployment holds the exclusive lock.
+    # Without any durable/volatile update evidence these hooks cannot recover an
+    # update transaction. The exclusive deployer checks the same paths under lock.
+    ordinary_startup = action in {
+        "guard-release", "recover-release",
+        "bootstrap-data-disk-safety", "bootstrap-port-forwarding",
+    } and not any(
+        path.exists() or path.is_symlink() for path in recovery_evidence
+    )
+    if os.name != "posix" or action in observational or ordinary_startup:
+        yield
+        return
+    if fcntl is None:
+        raise ValueError("POSIX deployment locking is unavailable")
+    descriptor = os.open(
+        ATLASO_DEPLOYMENT_LOCK_PATH,
+        os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+        0o600,
+    )
+    with os.fdopen(descriptor, "a+b") as handle:
+        metadata = os.fstat(handle.fileno())
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or
+                metadata.st_gid != 0 or stat.S_IMODE(metadata.st_mode) != 0o600 or
+                metadata.st_nlink != 1):
+            raise ValueError("deployment lock identity is unsafe")
+        # A failed nonblocking acquisition changes no update state. Never unlink
+        # this lock: the same inode must arbitrate every independent helper.
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            # This signal originates only before entering the action handler;
+            # an I/O failure after admission must retain its ordinary failure.
+            raise _DeploymentAdmissionBusy from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _handle_appliance_update_locked(action: str, args: list[str]) -> int:
     """Handle appliance update.
 
     Args:

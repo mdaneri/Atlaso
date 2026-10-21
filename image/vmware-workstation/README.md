@@ -585,6 +585,9 @@ for candidate-only, retry, and production acceptance commands.
 ## Local Wheel Deploy
 
 Use only a disposable deployed VM for this workflow. It is never an export preparation step for a completed template.
+The destination must be an unsigned development/bootstrap environment. Signed release environments and retained
+Appliance Update recovery state are refused before installation, including for same-version wheels. See the
+[wheel deployment admission and recovery boundary](../../docs/reference/vmware-workstation-lifecycle-testing.md#wheel-only-deployment-authentication).
 
 After a code change that does not require rebuilding the Photon image, deploy a fresh Atlaso wheel to a running VMware
 test appliance with:

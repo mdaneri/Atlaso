@@ -1375,6 +1375,95 @@ if [ ! -x "$python" ]; then
     exit 2
 fi
 
+# Lock-capable installed helpers share this inode for the whole update action.
+# Older helpers must refuse deployment rather than silently ignore the lock.
+if ! /opt/atlaso/bin/atlaso-helper appliance-update wheel-deploy-lock-v1 --real >/dev/null; then
+    echo "Wheel deployment refused: the installed helper lacks deployment locking; create a fresh bootstrap VM from a lock-capable image." >&2
+    exit 2
+fi
+deployment_lock=/run/atlaso-appliance-mutation.lock
+if [ -L "$deployment_lock" ] || { [ -e "$deployment_lock" ] && [ ! -f "$deployment_lock" ]; }; then
+    echo "Wheel deployment refused: deployment lock is unsafe." >&2
+    exit 2
+fi
+(umask 077; : >>"$deployment_lock")
+exec 9<>"$deployment_lock"
+if [ "$(stat -Lc '%u:%g:%a:%h' /proc/self/fd/9)" != '0:0:600:1' ] || \
+    [ "$(stat -Lc '%d:%i' /proc/self/fd/9)" != "$(stat -c '%d:%i' "$deployment_lock")" ] || \
+    ! flock --exclusive --nonblock 9; then
+    echo "Wheel deployment refused: deployment lock is unsafe or Appliance Update is active." >&2
+    exit 2
+fi
+# Keep fd 9 open through asset mutation and web readiness; verify capability again under
+# lock: an update may have replaced the installed helper before acquisition.
+if ! /opt/atlaso/bin/atlaso-helper appliance-update wheel-deploy-lock-v1 --real >/dev/null; then
+    echo "Wheel deployment refused: the installed helper no longer supports deployment locking." >&2
+    exit 2
+fi
+
+# Refuse before RPM, pip, service, helper, database, or trust-store mutation.
+# Same-version wheels can also differ from the retained signed bundle.
+for update_guard in /run/atlaso-update-maintenance /run/atlaso-appliance-update-status /run/atlaso-release-restart-gate /var/lib/atlaso/apply/appliance-update/finalizer-status.json /var/lib/atlaso-privileged/appliance-update-status/status.json; do
+    if [ -e "$update_guard" ] || [ -L "$update_guard" ]; then
+        echo "Wheel deployment refused: reconcile retained Appliance Update state through its supported recovery workflow; preserve maintenance and finalizer evidence." >&2
+        exit 2
+    fi
+done
+venv="$("$python" -I -B -S - <<'ATLASO_DEPLOY_ADMISSION'
+import json
+import re
+import sys
+from pathlib import Path
+
+home = Path("/opt/atlaso")
+try:
+    if home.resolve(strict=True) != home:
+        raise ValueError("installation root is redirected")
+    compatibility = home / ".venv"
+    environment = compatibility.resolve(strict=True)
+    current = home / "current"
+    if environment == compatibility and not compatibility.is_symlink():
+        if current.exists() or current.is_symlink():
+            raise ValueError("legacy environment has an ambiguous current release")
+        receipt_roots = (home,)
+    else:
+        release = environment.parent
+        receipt_roots = (home, release)
+        if any((root / ".release-manifest.json").exists() or
+               (root / ".release-manifest.json").is_symlink() for root in receipt_roots):
+            raise ValueError("signed release environments cannot be patched")
+        if (environment.name != ".venv" or release.parent != home / "releases" or
+                re.fullmatch(r"bootstrap-[0-9]+\.[0-9]+\.[0-9]+", release.name) is None or
+                not current.is_symlink() or current.resolve(strict=True) != release or
+                not compatibility.is_symlink() or
+                compatibility.readlink() not in (Path("current/.venv"), home / "current/.venv")):
+            raise ValueError("destination is not a canonical bootstrap environment")
+        metadata = json.loads((release / "bundle-metadata.json").read_text(encoding="utf-8"))
+        if (not isinstance(metadata, dict) or metadata.get("bootstrap") is not True or
+                metadata.get("schema_version") != 1 or
+                metadata.get("version") != release.name.removeprefix("bootstrap-")):
+            raise ValueError("bootstrap metadata does not match its destination")
+    if any((root / ".release-manifest.json").exists() or
+           (root / ".release-manifest.json").is_symlink() for root in receipt_roots):
+        raise ValueError("signed release environments cannot be patched")
+    if not environment.is_dir():
+        raise ValueError("environment is not a directory")
+    print(environment)
+except (OSError, ValueError, RuntimeError):
+    print("Wheel deployment refused: destination must be an unsigned development/bootstrap environment. "
+          "Use signed Appliance Update for signed releases; preserve retained recovery evidence. "
+          "Create a separately owned disposable bootstrap VM for wheel testing.", file=sys.stderr)
+    raise SystemExit(2)
+ATLASO_DEPLOY_ADMISSION
+)"
+# Keep package writes on the admitted physical path if current later switches.
+python="$venv/bin/python"
+site_packages="$("$python" -I -B -c 'import sysconfig; from pathlib import Path; print(Path(sysconfig.get_path("purelib")).resolve(strict=True))')"
+if [ "$site_packages" != "$venv/lib/python3.14/site-packages" ]; then
+    echo "Atlaso site-packages resolved outside the active environment." >&2
+    exit 2
+fi
+
 preflight_powershell_layouts() {
     pwsh_path="$(command -v pwsh || true)"
     if [ -z "$pwsh_path" ]; then
@@ -1501,11 +1590,6 @@ for runtime_dependency_path in $runtime_dependency_paths; do
 done
 IFS="$old_ifs"
 "$python" -m pip install --force-reinstall --no-compile --no-deps "$wheel"
-site_packages="$("$python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
-if [ "$site_packages" != "$venv/lib/python3.14/site-packages" ]; then
-    echo "Atlaso site-packages resolved outside the active environment." >&2
-    exit 2
-fi
 find "$site_packages" -type f -name '*.pyc' -delete
 find "$site_packages" -depth -type d -name __pycache__ -empty -delete
 atlaso_was_active=false
@@ -1532,6 +1616,9 @@ restore_services_on_exit() {
     else
         systemctl stop atlaso.service
     fi
+    # A restored worker may reconcile or claim queued updates immediately.
+    # Finish protected web restoration, then release admission before handoff.
+    exec 9>&-
     if [ "$worker_was_active" = "true" ]; then
         systemctl restart atlaso-worker.service
     else
@@ -1755,8 +1842,7 @@ fi
 systemctl restart atlaso
 systemctl is-active atlaso
 systemctl enable atlaso-worker.service
-systemctl restart atlaso-worker.service
-systemctl is-active atlaso-worker.service
+# Verify web readiness before reopening update admission to the worker.
 deadline=$(( $(date +%s) + timeout_seconds ))
 while ! curl -fsS http://127.0.0.1:8000/openapi.json >/dev/null; do
     if [ "$(date +%s)" -ge "$deadline" ]; then
@@ -1766,6 +1852,9 @@ while ! curl -fsS http://127.0.0.1:8000/openapi.json >/dev/null; do
     fi
     sleep "$poll_seconds"
 done
+exec 9>&-
+systemctl restart atlaso-worker.service
+systemctl is-active atlaso-worker.service
 trap - EXIT
 echo "Atlaso service restarted and loopback OpenAPI is reachable."
 '@

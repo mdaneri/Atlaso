@@ -5267,7 +5267,8 @@ def test_helper_promotes_source_sync_failure_to_stderr(monkeypatch, tmp_path, ca
         lambda _payload, _credentials: {"status": "failed", "commands": [], "error": message},
     )
 
-    assert helper._handle_appliance_update("sync-sources", [str(config_path)]) == 1
+    # Native deployment-lock tests cover admission; isolate command error handling.
+    assert helper._handle_appliance_update_locked("sync-sources", [str(config_path)]) == 1
     captured = capsys.readouterr()
     assert message in captured.err
 
@@ -5979,7 +5980,7 @@ def test_helper_rejects_unsigned_v1_release_manifest(monkeypatch, tmp_path, caps
 
     monkeypatch.setattr(helper, "_fetch_http_bytes", fake_fetch)
 
-    assert helper._handle_appliance_update("apply", [str(config_path)]) == 1
+    assert helper._handle_appliance_update_locked("apply", [str(config_path)]) == 1
     captured = capsys.readouterr()
     assert "signature" in captured.err
 
@@ -6006,7 +6007,7 @@ def test_helper_rejects_credentialed_update_urls(tmp_path, capsys):
     )
     helper.APPLIANCE_UPDATE_APPLY_DIR = apply_dir
 
-    assert helper._handle_appliance_update("check", [str(config_path)]) == 2
+    assert helper._handle_appliance_update_locked("check", [str(config_path)]) == 2
     captured = capsys.readouterr()
     assert "must not include embedded credentials" in captured.err
 
