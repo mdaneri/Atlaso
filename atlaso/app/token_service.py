@@ -61,7 +61,10 @@ def create_token_for_user(
     settings: Settings,
     actor: str,
 ) -> ApiTokenCreated:
-    """Create token for user.
+    """Commit a token with its creation audit before returning the one-time secret.
+
+    Audit persistence owns the shared commit; any pre-commit failure rolls back
+    the pending credential so a later caller commit cannot save it unaudited.
 
     Args:
         db: Active database session.
@@ -126,15 +129,20 @@ def create_token_for_user(
         token_hash=hash_token(raw_token),
         signing_key_id="local-hs256",
     )
-    db.add(token)
-    db.commit()
+    try:
+        db.add(token)
+        # Allocate the identity without making the credential durable before its audit.
+        db.flush()
+        record_audit(
+            db,
+            actor=actor,
+            action="create_api_token",
+            resource_type="api_token",
+            resource_id=str(token.id),
+            detail=f"Created API token {token.name}",
+        )
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(token)
-    record_audit(
-        db,
-        actor=actor,
-        action="create_api_token",
-        resource_type="api_token",
-        resource_id=str(token.id),
-        detail=f"Created API token {token.name}",
-    )
     return ApiTokenCreated(token=token_to_response(token), raw_token=raw_token)
