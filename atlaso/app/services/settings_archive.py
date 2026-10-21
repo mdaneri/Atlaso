@@ -4243,6 +4243,9 @@ def _validate_archive_database_relationships(db: Session, data: dict[str, list[d
             # renames; name matching also protects foreign archive selections.
             observed = matches[0] if len(matches) == 1 else by_name.get(interface.name)
             if observed is not None:
+                # Availability is target observation too: stale archived "missing"
+                # state must not hide aliases from a locally present MAC match.
+                interface.oper_state = observed.oper_state
                 interface.host_ip_cidr = observed.host_ip_cidr
                 interface.host_ip_cidrs = list(observed.host_ip_cidrs or [])
                 interface.host_ipv6_cidr = observed.host_ipv6_cidr

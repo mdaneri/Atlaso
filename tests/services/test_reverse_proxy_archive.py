@@ -1073,7 +1073,8 @@ def test_restore_checks_target_observed_browser_socket_scopes(client, kind, fami
 @pytest.mark.parametrize("conflict", [False, True])
 @pytest.mark.parametrize("renamed", [False, True])
 @pytest.mark.parametrize("target", ["served", "upstream"])
-def test_restore_reserves_target_automatic_service_alias_atomically(client, target, renamed, conflict):
+@pytest.mark.parametrize("archived_oper_state", ["up", "missing"])
+def test_restore_reserves_target_automatic_service_alias_atomically(client, target, renamed, conflict, archived_oper_state):
     """Reject target-derived service aliases before replacing archive state.
 
     Args:
@@ -1081,6 +1082,7 @@ def test_restore_reserves_target_automatic_service_alias_atomically(client, targ
         target: Proxy hostname or upstream claiming the target automatic IPv6 alias.
         renamed: Match local observations through the archived interface MAC after a rename.
         conflict: Claim the observed alias or an unrelated external hostname.
+        archived_oper_state: Source observation must not hide a present target interface.
     """
     from atlaso.app.models import LdapOrganization
 
@@ -1100,13 +1102,14 @@ def test_restore_reserves_target_automatic_service_alias_atomically(client, targ
         audits = list(db.scalars(select(AuditEvent.id)))
         archive = deepcopy(export_settings_archive(db, actor="test"))
         archived_interface = next(row for row in archive["data"]["physical_interfaces"] if row["name"] == "eth9")
-        archived_interface.update(host_ipv6_cidr="2001:db8:44::7/64")
+        archived_interface.update(host_ipv6_cidr="2001:db8:44::7/64", oper_state=archived_oper_state)
         if renamed:
             archived_interface["name"] = "eth8"
         service_interface = archived_interface["name"]
         archive["data"]["appliance_settings"][0]["service_dns_target_naming"] = "ip"
         archive["data"]["ldap_settings"][0].update(
-            enabled=True, ldap_enabled=True, ldaps_enabled=False, hostname="owned.example.test", listen_interface=service_interface,
+            enabled=archived_oper_state != "missing", ldap_enabled=True, ldaps_enabled=False,
+            hostname="owned.example.test", listen_interface=service_interface,
             listen_address=observed.ip_cidr.split("/")[0] + "\n2001:db8:44::7",
         )
         alias = "owned-2001-db8-55-0-0-0-0-10.example.test" if conflict else "external.example.test"
