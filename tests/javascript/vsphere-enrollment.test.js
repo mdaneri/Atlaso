@@ -121,7 +121,13 @@ class FakeForm extends FakeElement {
     this.client = new FakeElement();
     this.error = new FakeElement();
     this.review = new FakeElement();
+    this.inventoryStatus = new FakeElement();
+    this.inventoryRetry = new FakeElement();
+    this.clusterOptions = new FakeElement();
     this.selectorMap = new Map([
+      ["[data-vsphere-inventory-status]", this.inventoryStatus],
+      ["[data-vsphere-inventory-retry]", this.inventoryRetry],
+      ["[data-vsphere-cluster-options]", this.clusterOptions],
       ["[data-vsphere-setup-method]", this.elements.enrollment_method],
       ["[data-vsphere-credential-mode]", this.elements.credential_mode],
       ["[data-vsphere-vault-entry]", this.endpoint],
@@ -185,6 +191,7 @@ function makeRuntime(respond, onSaved = null) {
     HTMLInputElement: FakeInput,
     HTMLSelectElement: FakeSelect,
     FormData: FakeFormData,
+    document: { createElement: () => new FakeElement() },
     window: {
       addEventListener: (name, callback) => page.addEventListener(name, callback),
       AtlasoUiPatterns: {
@@ -212,6 +219,106 @@ function makeRuntime(respond, onSaved = null) {
   options.onOpen({ context: {} });
   return { form, wizard, options, errors, skipped, shown, page, resets, reloads };
 }
+
+test("login discovers the About display name and complete editable cluster choices", async () => {
+  const requests = [];
+  const { form, options, wizard } = makeRuntime(async (url, body) => {
+    requests.push({ url, body });
+    return { name: "VMware vCenter Server", cluster_ids: ["cluster-a", "cluster-b", "inactive-cluster"] };
+  });
+  form.elements.username.value = "request-user";
+  form.elements.password.value = "request-password";
+  assert.equal(await options.onNext({ controller: wizard, step: { id: "login" } }), true);
+  assert.equal(requests[0].url, "/vsphere-key-providers/enrollment/inventory");
+  assert.equal(form.elements.name.value, "VMware vCenter Server");
+  assert.deepEqual(form.clusterOptions.children.map((option) => option.value), ["cluster-a", "cluster-b", "inactive-cluster"]);
+  form.elements.cluster_id.value = "custom-new-id";
+  await form.elements.cluster_id.dispatch("input");
+  form.elements.name.value = "My custom label";
+  await form.elements.name.dispatch("input");
+  await form.inventoryRetry.dispatch("click");
+  assert.equal(form.elements.cluster_id.value, "custom-new-id");
+  assert.equal(form.elements.name.value, "My custom label");
+  assert.match(form.inventoryStatus.textContent, /Discovered 3/);
+});
+
+test("inventory distinguishes failure from empty success and retries without losing custom values", async () => {
+  let fail = true;
+  const { form, options, wizard } = makeRuntime(async () => {
+    if (fail) throw new Error("vCenter rejected the supplied credential.");
+    return { name: "vCenter Server", cluster_ids: [] };
+  });
+  form.elements.cluster_id.value = "custom";
+  assert.equal(await options.onNext({ controller: wizard, step: { id: "login" } }), true);
+  assert.match(form.inventoryStatus.textContent, /rejected.*Retry discovery/);
+  assert.doesNotMatch(form.inventoryStatus.textContent, /returned no KMIP clusters/);
+  assert.equal(form.inventoryRetry.disabled, false);
+  fail = false;
+  await form.inventoryRetry.dispatch("click");
+  assert.equal(form.elements.name.value, "vCenter Server");
+  assert.match(form.inventoryStatus.textContent, /returned no KMIP clusters/);
+  assert.equal(form.elements.cluster_id.value, "custom");
+});
+
+test("endpoint and credential changes discard discovered selections and reject delayed inventory", async () => {
+  let resolve;
+  let delayed = false;
+  const { form, options, wizard } = makeRuntime(async () => delayed
+    ? new Promise((done) => { resolve = done; })
+    : { name: "vCenter Server", cluster_ids: ["old-cluster"] });
+  await options.onNext({ controller: wizard, step: { id: "login" } });
+  form.elements.cluster_id.value = "old-cluster";
+  delayed = true;
+  const pending = form.inventoryRetry.dispatch("click");
+  assert.match(form.inventoryStatus.textContent, /Loading/);
+  form.elements.hostname.value = "another.example.test";
+  await form.elements.hostname.dispatch("input");
+  assert.equal(form.elements.name.value, "");
+  assert.equal(form.elements.cluster_id.value, "");
+  resolve({ name: "stale name", cluster_ids: ["stale-cluster"] });
+  await pending;
+  assert.equal(form.elements.name.value, "");
+  assert.deepEqual(form.clusterOptions.children, []);
+  assert.doesNotMatch(form.inventoryStatus.textContent, /Discovered/);
+  delayed = false;
+  form.elements.cluster_id.value = "custom-new";
+  await options.onNext({ controller: wizard, step: { id: "login" } });
+  await form.elements.password.dispatch("input");
+  assert.equal(form.elements.cluster_id.value, "custom-new");
+  assert.deepEqual(form.clusterOptions.children, []);
+});
+
+test("refresh preserves the saved name and Vault discovery occurs after TLS confirmation", async () => {
+  const calls = [];
+  const { form, options, wizard } = makeRuntime(async (url, body) => {
+    calls.push({ url, body });
+    return { name: "Product name", cluster_ids: ["existing"] };
+  });
+  options.onOpen({ context: { id: "saved-id", name: "Saved identity", hostname: "vc.example.test", provider_id: "p" } });
+  form.elements.credential_mode.value = "vault";
+  form.endpoint.value = "3|8|1";
+  await form.elements.credential_mode.dispatch("change");
+  form.elements.confirmed_https_fingerprint.value = "AA:BB";
+  assert.equal(await options.onNext({ controller: wizard, step: { id: "tls" } }), true);
+  assert.equal(form.elements.name.value, "Saved identity");
+  assert.equal(calls[0].body.has("password"), false);
+  assert.equal(calls[0].body.get("vault_id"), "3");
+});
+
+test("editing custom input while inventory is pending preserves input and still fills options", async () => {
+  let resolve;
+  const { form, options, wizard } = makeRuntime(() => new Promise((done) => { resolve = done; }));
+  const pending = options.onNext({ controller: wizard, step: { id: "login" } });
+  form.elements.cluster_id.value = "custom";
+  await form.elements.cluster_id.dispatch("input");
+  form.elements.name.value = "custom display";
+  await form.elements.name.dispatch("input");
+  resolve({ name: "Product", cluster_ids: ["discovered"] });
+  assert.equal(await pending, true);
+  assert.equal(form.elements.cluster_id.value, "custom");
+  assert.equal(form.elements.name.value, "custom display");
+  assert.equal(form.clusterOptions.children[0].value, "discovered");
+});
 
 test("manual enrollment probes without credentials and pins the exact observed fingerprint by checkbox", async () => {
   const requests = [];
@@ -862,6 +969,7 @@ test("a successful provider deletion retry clears the prior recoverable error", 
     HTMLElement: FakeElement, HTMLFormElement: FakeForm, HTMLDialogElement: FakeDialog,
     HTMLInputElement: FakeInput, HTMLButtonElement: FakeElement, HTMLSelectElement: FakeSelect,
     FormData: FakeFormData,
+    document: { createElement: () => new FakeElement() },
     Error,
     document: {
       getElementById: (id) => id === "grid" ? element : id === "dialog" ? dialog : null,

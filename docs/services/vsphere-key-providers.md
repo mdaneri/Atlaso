@@ -69,7 +69,10 @@ Successful setup refreshes the trust rows and pending Apply state in place.
    vCenter API path. Continue to inspect the public HTTPS certificate without authenticating. Compare its SHA-256
    fingerprint through an independent trusted source and select the confirmation checkbox; no fingerprint retyping
    is required. In manual mode, enter the username and password on the Login step; Vault mode skips that step.
-   Select the provider and enter the exact KMS cluster ID, then review the discovered public KMIP client certificate
+   Atlaso fills the vCenter name from the authenticated About product name and loads all returned KMIP cluster IDs.
+   Select the provider and choose a cluster from the editable dropdown, or type a custom ID. You can edit the display
+   name. A custom ID must already be registered in vCenter before certificate inspection can succeed; this wizard does
+   not create clusters. Then review the discovered public KMIP client certificate
    and provider assignment before approval. Atlaso re-reads both identities on approval and rejects a changed one.
 5. Review **Pending Appliance Changes** and run global **Appliance Apply** for `kms`. Until that apply completes,
    vCenter's client certificate is not usable for KMIP key operations. Recheck the connection in vCenter.
@@ -82,6 +85,21 @@ by stable vault and entry IDs; its password is never placed in the page. Changin
 clears certificate confirmation and requires another probe before authentication. Discovery requires the selected
 vCenter cluster to point only to the configured Atlaso hostname and
 port. Client authorization remains an exact fingerprint-to-provider-UUID mapping.
+
+The name comes from `ServiceContent.about.name`, the product display name documented by
+[Broadcom AboutInfo](https://developer.broadcom.com/xapis/virtual-infrastructure-json-api/latest/data-structures/AboutInfo/).
+It is separate from the endpoint hostname, instance UUID, Atlaso provider UUID, and cluster ID. Refreshing a saved
+trusted vCenter preserves its name. Cluster choices use the same pinned authenticated connection and
+[Broadcom ListKmsClusters](https://developer.broadcom.com/xapis/virtual-infrastructure-json-api/latest/sdk/vim25/release/CryptoManagerKmip/moId/ListKmsClusters/post/)
+without management-type or status filters. Choosing an entry does not verify its Atlaso endpoint: certificate inspection
+still checks that the selected cluster points only to this Atlaso hostname and port.
+
+The Target step reports loading, an explicitly empty inventory, or an actionable failure. **Refresh vCenter choices**
+retries discovery without replacing a custom name or cluster ID. Changing the server, credential source, saved URI,
+login credentials, or TLS confirmation discards discovered choices and any selected value from that inventory;
+explicit custom values remain editable. Delayed responses from the previous connection are ignored. On discovery
+failure, retry or enter the name and cluster ID explicitly. **Configure manually** remains available without a vCenter
+connection or inventory. Discovery never creates or deletes a cluster, changes keys, approves trust, or runs Apply.
 
 ### Resolve a Target endpoint mismatch
 
