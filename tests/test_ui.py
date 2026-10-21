@@ -16295,8 +16295,57 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
     from starlette.testclient import TestClient
 
     import atlaso.app.database as database
+    from atlaso.app import main
     from atlaso.app.config import get_settings
     from atlaso.app.models import AuditEvent, Job, JobStatus, Setting, User
+    from atlaso.app.services import networking
+
+    discoveries = []
+
+    def discover_host_physical_interfaces(**kwargs):
+        """Return the seeded management interface as a deterministic host observation.
+
+        Args:
+            **kwargs: Discovery options passed by startup inventory refresh.
+        """
+
+        assert kwargs == {"timeout": 5.0, "require_success": True}
+        discoveries.append("host inventory refreshed")
+        return [
+            networking.HostPhysicalInterface(
+                name="eth0",
+                mac_address="00:15:5d:aa:bb:cc",
+                driver="hv_netvsc",
+                speed="10000 Mbps",
+                host_ip_cidr="192.168.49.22/24",
+                host_mtu=1500,
+                host_admin_state="up",
+                oper_state="up",
+            )
+        ]
+
+    initialize_factory_baseline = main.initialize_factory_appliance_apply_baseline
+
+    def initialize_factory_baseline_after_inventory(db):
+        """Keep the production baseline initializer behind startup inventory refresh.
+
+        Args:
+            db: Database session used to initialize the factory baseline.
+        """
+
+        assert discoveries == ["host inventory refreshed"]
+        return initialize_factory_baseline(db)
+
+    monkeypatch.setattr(
+        networking,
+        "discover_host_physical_interfaces",
+        discover_host_physical_interfaces,
+    )
+    monkeypatch.setattr(
+        main,
+        "initialize_factory_appliance_apply_baseline",
+        initialize_factory_baseline_after_inventory,
+    )
 
     db_path = tmp_path / "atlaso-appliance-baseline.db"
     monkeypatch.setenv("ATLASO_DATABASE_URL", f"sqlite:///{db_path}")
