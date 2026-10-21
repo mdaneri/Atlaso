@@ -4279,10 +4279,9 @@ def _validate_archive_database_relationships(db: Session, data: dict[str, list[d
         proxies = candidates(data)
         service_names = target_service_alias_names(data, projected)
         for proxy in proxies:
-            if not proxy.enabled:
-                continue
             # Portable binding, CA, DNS and service validation already completed.
-            # This second pass adds local target browser claims and automatic service aliases.
+            # Target aliases reserve all saved intent; validate_proxy limits socket
+            # claims to enabled proxies, preserving inactive handoff intent.
             errors = validate_proxy(proxy, {"claims": claims, "service_hostnames": service_names},
                                     proxies, exclude_id=proxy.id,
                                     require_binding=False, require_managed_ca=False)

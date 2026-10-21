@@ -230,7 +230,9 @@ Preflight also reserves service names that factory-default identity migration wi
 domain, including ESXi PXE, before replacing any saved rows. The database-bound preflight also reserves service aliases
 from the target appliance’s observed automatic addresses on the restored interfaces. This local projection uses
 matched target availability, including unique-MAC matches across renames, so stale archived missing-state observations
-cannot hide an active target alias. Rejection preserves saved state and audit records. Automatic listener rebasing
+cannot hide an active target alias. These name reservations include disabled proxy hostnames and upstreams;
+socket-scope checks still apply only to enabled proxies. Rejection preserves saved state and audit records.
+Automatic listener rebasing
 checks hostname and socket ownership under the Network Objects writer lock before
 publishing aliases; a conflict preserves cached listeners and DNS while retaining the new observation for diagnosis.
 Startup defers that refresh with a warning; the Apply preview remains available with validation errors until the proxy

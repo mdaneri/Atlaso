@@ -1074,7 +1074,8 @@ def test_restore_checks_target_observed_browser_socket_scopes(client, kind, fami
 @pytest.mark.parametrize("renamed", [False, True])
 @pytest.mark.parametrize("target", ["served", "upstream"])
 @pytest.mark.parametrize("archived_oper_state", ["up", "missing"])
-def test_restore_reserves_target_automatic_service_alias_atomically(client, target, renamed, conflict, archived_oper_state):
+@pytest.mark.parametrize("proxy_enabled", [False, True])
+def test_restore_reserves_target_automatic_service_alias_atomically(client, target, renamed, conflict, archived_oper_state, proxy_enabled):
     """Reject target-derived service aliases before replacing archive state.
 
     Args:
@@ -1083,6 +1084,7 @@ def test_restore_reserves_target_automatic_service_alias_atomically(client, targ
         renamed: Match local observations through the archived interface MAC after a rename.
         conflict: Claim the observed alias or an unrelated external hostname.
         archived_oper_state: Source observation must not hide a present target interface.
+        proxy_enabled: Disabled intent must also preserve target service name ownership.
     """
     from atlaso.app.models import LdapOrganization
 
@@ -1103,6 +1105,7 @@ def test_restore_reserves_target_automatic_service_alias_atomically(client, targ
         archive = deepcopy(export_settings_archive(db, actor="test"))
         archived_interface = next(row for row in archive["data"]["physical_interfaces"] if row["name"] == "eth9")
         archived_interface.update(host_ipv6_cidr="2001:db8:44::7/64", oper_state=archived_oper_state)
+        archive["data"]["reverse_proxies"][0]["enabled"] = proxy_enabled
         if renamed:
             archived_interface["name"] = "eth8"
         service_interface = archived_interface["name"]
