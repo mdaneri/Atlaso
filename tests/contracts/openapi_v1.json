@@ -4541,7 +4541,7 @@
         "type": "object"
       },
       "LdapOrganizationResponse": {
-        "description": "Fields returned by the Atlaso ldap organization API.\n\nAttributes:\n    id: Unique database identifier assigned to this resource.\n    name: Stable operator-facing name of this resource.\n    slug: Returned slug value for this ldap organization resource.\n    suffix_dn: Returned suffix dn value for this ldap organization resource.\n    users_base_dn: Returned users base dn value for this ldap organization resource.\n    groups_base_dn: Returned groups base dn value for this ldap organization resource.\n    service_accounts_base_dn: Returned service accounts base dn value for this ldap organization\n        resource.\n    bind_dn: Returned bind dn value for this ldap organization resource.\n    bind_secret_present: Whether bind secret is securely staged without exposing its value.\n    enabled: Whether the resource is enabled in saved Atlaso state.\n    user_count: Number of user records represented by this ldap organization response.\n    group_count: Number of group records represented by this ldap organization response.\n    vcf_target_url: Validated VCF target url used for this ldap organization integration.\n    vcf_org_id: Stable identifier of the related VCF org resource.\n    vcf_org_name: Returned VCF org name value for this ldap organization resource.\n    vcf_tls_fingerprint: Returned VCF tls fingerprint value for this ldap organization resource.\n    vcf_last_status: Returned VCF last status value for this ldap organization resource.\n    vcf_last_message: Returned VCF last message value for this ldap organization resource.\n    vcf_last_verified_at: UTC timestamp for VCF last verified at on this ldap organization\n        resource.\n    created_at: UTC timestamp when the resource was created.\n    updated_at: UTC timestamp when the resource was last updated.\n    raw_bind_password: Generated LDAP bind password shown once after creation or rotation; null\n        when an operator supplied the custom secret.",
+        "description": "Fields returned by the Atlaso ldap organization API.\n\nAttributes:\n    id: Unique database identifier assigned to this resource.\n    name: Stable operator-facing name of this resource.\n    slug: Returned slug value for this ldap organization resource.\n    suffix_dn: Returned suffix dn value for this ldap organization resource.\n    users_base_dn: Returned users base dn value for this ldap organization resource.\n    groups_base_dn: Returned groups base dn value for this ldap organization resource.\n    vcenter_groups_base_dn: Separate groupOfUniqueNames search base for vCenter OpenLDAP.\n    service_accounts_base_dn: Returned service accounts base dn value for this ldap organization\n        resource.\n    bind_dn: Returned bind dn value for this ldap organization resource.\n    bind_secret_present: Whether bind secret is securely staged without exposing its value.\n    enabled: Whether the resource is enabled in saved Atlaso state.\n    user_count: Number of user records represented by this ldap organization response.\n    group_count: Number of group records represented by this ldap organization response.\n    vcf_target_url: Validated VCF target url used for this ldap organization integration.\n    vcf_org_id: Stable identifier of the related VCF org resource.\n    vcf_org_name: Returned VCF org name value for this ldap organization resource.\n    vcf_tls_fingerprint: Returned VCF tls fingerprint value for this ldap organization resource.\n    vcf_last_status: Returned VCF last status value for this ldap organization resource.\n    vcf_last_message: Returned VCF last message value for this ldap organization resource.\n    vcf_last_verified_at: UTC timestamp for VCF last verified at on this ldap organization\n        resource.\n    created_at: UTC timestamp when the resource was created.\n    updated_at: UTC timestamp when the resource was last updated.\n    raw_bind_password: Generated LDAP bind password shown once after creation or rotation; null\n        when an operator supplied the custom secret.",
         "properties": {
           "bind_dn": {
             "description": "Returned bind dn value for this ldap organization resource.",
@@ -4625,6 +4625,11 @@
             "title": "Users Base Dn",
             "type": "string"
           },
+          "vcenter_groups_base_dn": {
+            "description": "Isolated groupOfUniqueNames/uniqueMember projection search base for vCenter OpenLDAP, published only by global LDAP Apply.",
+            "title": "Vcenter Groups Base Dn",
+            "type": "string"
+          },
           "vcf_last_message": {
             "description": "Returned VCF last message value for this ldap organization resource.",
             "title": "Vcf Last Message",
@@ -4668,6 +4673,7 @@
           "suffix_dn",
           "users_base_dn",
           "groups_base_dn",
+          "vcenter_groups_base_dn",
           "service_accounts_base_dn",
           "bind_dn",
           "bind_secret_present",

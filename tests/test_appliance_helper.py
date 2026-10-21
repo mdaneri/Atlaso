@@ -7024,6 +7024,13 @@ def test_ldap_vcenter_projection_preserves_vcf_groups_and_reconciles_only_owned_
     deleted = []
 
     def upsert(dn, attributes, **_kwargs):
+        """Capture an LDAP upsert without changing the directory.
+
+        Args:
+            dn: Distinguished name of the entry being reconciled.
+            attributes: Desired LDAP attributes captured for assertions.
+            **_kwargs: Additional reconciliation options unused by this capture.
+        """
         entries[dn] = attributes
         return 0
 

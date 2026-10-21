@@ -45,10 +45,11 @@ The default organization layout is:
 
 ```text
 dc=<organization>,dc=ldap,dc=atlaso,dc=internal
-â”œâ”€â”€ ou=users
-â”œâ”€â”€ ou=groups
-â”œâ”€â”€ ou=service-accounts
-â””â”€â”€ ou=system
+├── ou=users
+├── ou=groups
+├── ou=vcenter-groups
+├── ou=service-accounts
+└── ou=system
 ```
 
 ## Directory behavior
