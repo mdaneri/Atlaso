@@ -43,7 +43,7 @@ class DiscoveredClient:
 
 @dataclass(frozen=True)
 class DiscoveredInventory:
-    """Display-only About name and the complete returned KMS cluster IDs."""
+    """Configured instance name (empty if unavailable) and all KMS cluster IDs."""
 
     name: str
     cluster_ids: tuple[str, ...]
@@ -230,14 +230,50 @@ def _vcenter_session(
         raise EnrollmentError("The authenticated vCenter KMIP discovery request failed.") from exc
 
 
+def _instance_name(client: httpx.Client, base: str, content: dict) -> str:
+    """Read only the configured instance name, never a product or host fallback.
+
+    Args:
+        client: The pinned authenticated vCenter session.
+        base: Versioned VI JSON API path.
+        content: Service metadata containing the settings manager reference.
+    """
+    try:
+        setting_id = _reference(content, "setting", "OptionManager")
+        options = _json(client.post(
+            f"{base}/OptionManager/{setting_id}/QueryOptions",
+            json={"name": "VirtualCenter.InstanceName"},
+        ))
+    except (EnrollmentError, httpx.HTTPError):
+        return ""
+    if not isinstance(options, list) or len(options) != 1:
+        return ""
+    option = options[0]
+    if not isinstance(option, dict) or option.get("key") != "VirtualCenter.InstanceName":
+        return ""
+    value = option.get("value")
+    # VI JSON serializes OptionValue's xsd:anyType as a typed scalar wrapper.
+    if not isinstance(value, dict) or value.get("_typeName") != "string":
+        return ""
+    name = value.get("_value")
+    if (
+        not isinstance(name, str) or not name.strip() or len(name) > 120
+        or any(ord(character) < 32 or ord(character) == 127 for character in name)
+    ):
+        return ""
+    return name.strip()
+
+
 def discover_vcenter_inventory(
     *, host: str, username: str, password: str,
     confirmed_https_fingerprint: str, port: int = 443,
 ) -> DiscoveredInventory:
-    """Read About metadata and all KMS cluster IDs without changing vCenter.
+    """Read the configured instance name and all KMS clusters without mutation.
 
-    AboutInfo.name is the product display name, never an instance UUID or a
-    provider namespace. No management-type or status filters omit clusters.
+    VirtualCenter.InstanceName is read through ServiceContent.setting. Missing
+    names remain empty for operator entry. Neither AboutInfo's product label,
+    instance UUID nor the connection hostname substitutes for this setting.
+    No management-type or status filters omit clusters.
 
     Args:
         host: vCenter hostname or address.
@@ -254,12 +290,7 @@ def discover_vcenter_inventory(
         confirmed_https_fingerprint=confirmed_https_fingerprint,
     ) as (client, base, content):
         manager_id = _reference(content, "cryptoManager", "CryptoManagerKmip")
-        # Read About again after login so all returned inventory uses this session.
-        about_content = _json(client.get(f"{base}/ServiceInstance/ServiceInstance/content"))
-        about = about_content.get("about") if isinstance(about_content, dict) else None
-        name = about.get("name") if isinstance(about, dict) else None
-        if not isinstance(name, str) or not name.strip() or len(name) > 120:
-            raise EnrollmentError("vCenter returned no usable About product name.")
+        name = _instance_name(client, base, content)
         clusters = _json(client.post(
             f"{base}/CryptoManagerKmip/{manager_id}/ListKmsClusters",
             json={"includeKmsServers": False},
