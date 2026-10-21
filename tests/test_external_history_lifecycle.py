@@ -484,7 +484,12 @@ def test_failure_diagnostic_locates_trusted_source_without_path(monkeypatch):
         monkeypatch: Make the subprocess fail without launching a service command.
     """
     def failed(*args, **kwargs):
-        """Model an unavailable executable with a private path in its exception."""
+        """Model an unavailable executable with a private path in its exception.
+
+        Args:
+            *args: Ignored synthetic subprocess positional arguments.
+            **kwargs: Ignored synthetic subprocess keyword arguments.
+        """
         raise FileNotFoundError(2, "synthetic-secret", "/private/synthetic-secret")
 
     monkeypatch.setattr(lifecycle.subprocess, "run", failed)
