@@ -15,6 +15,10 @@ _HELPER_OBSERVATIONS: dict[tuple[str, str], tuple[int, str]] = {}
 _HELPER_LOG_LOCK = threading.Lock()
 
 
+class ApplianceUpdateDeploymentBusy(RuntimeError):
+    """The helper proved no mutation was admitted; retry the same queued update."""
+
+
 def _log_helper_outcome(group: str, action: str, result: "AdapterResult") -> None:
     """Record safe execution outcomes and observation transitions without raw output.
 
@@ -1508,5 +1512,12 @@ class SystemAdapter:
             stderr=completed.stderr,
             returncode=completed.returncode,
         )
+        if group == "appliance-update" and result.returncode == 73:
+            try:
+                admission = json.loads(result.stdout.strip().splitlines()[-1])
+            except (IndexError, ValueError):
+                admission = None
+            if admission == {"status": "deployment-busy", "mutation_started": False}:
+                raise ApplianceUpdateDeploymentBusy("Wheel deployment is active; retry update admission.")
         _log_helper_outcome(group, action, result)
         return result
