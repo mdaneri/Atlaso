@@ -12835,12 +12835,14 @@ def test_kms_helper_rejects_coerced_json_types(
     assert any(expected in error for error in helper._kms_config_errors(config_path))
 
 
+@pytest.mark.parametrize("completion_failure", ["none", "returncode", "timeout"])
 @pytest.mark.parametrize("legacy_active", [False, True])
-def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, legacy_active):
+def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, legacy_active, completion_failure):
     """Verify that kms helper apply installs atlaso kmip service.
 
     Args:
         legacy_active: Whether the legacy listener is active before replacement.
+        completion_failure: Failure injected at the possibly committed completion boundary.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
@@ -12967,6 +12969,26 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
         credential_inputs.clear()
         monkeypatch.setattr(helper, "_run", fake_run)
 
+    if completion_failure != "none":
+        def fail_completion(request):
+            """Simulate a child that may have committed before reporting failure.
+
+            Args:
+                request: Isolated recovery helper operation.
+            """
+            if request["action"] == "complete":
+                if completion_failure == "timeout":
+                    raise subprocess.TimeoutExpired("synthetic completion", 120)
+                return subprocess.CompletedProcess([], 2, "", "")
+            return subprocess.CompletedProcess([], 0, "{}", "")
+
+        monkeypatch.setattr(helper, "_kms_recovery_child", fail_completion)
+        assert helper._handle_kms_locked("apply", [str(config_path)]) == 1
+        assert helper.KMS_CONFIG_PATH.read_bytes() == config_path.read_bytes()
+        assert commands[-1] == ["systemctl", "disable", "--now", "atlaso-kmip.service"]
+        assert ["systemctl", "restart", "atlaso-kms.service"] not in commands
+        assert not (managed_root / "kmip" / ".cutover-rollback").exists()
+        return
     assert helper._handle_kms_locked("apply", [str(config_path)]) == 0
 
     assert (managed_root / "kmip" / "server.json").is_file()
@@ -13070,8 +13092,18 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
                     raise OSError("snapshot cleanup unavailable")
             return original_rmtree(path, *args, **kwargs)
 
+        def preserve_pending_during_cleanup(request):
+            """Refuse completion before a failed snapshot retirement is handled.
+
+            Args:
+                request: Recovery helper action invoked by the cutover.
+            """
+            assert request["action"] != "complete", "cleanup failure must retain the pending gate"
+            return subprocess.CompletedProcess([], 0, "{}", "")
+
         with monkeypatch.context() as cleanup_patch:
             cleanup_patch.setattr(helper.shutil, "rmtree", fail_snapshot_cleanup)
+            cleanup_patch.setattr(helper, "_kms_recovery_child", preserve_pending_during_cleanup)
             assert helper._handle_kms_locked("apply", [str(config_path)]) == 1
         assert cleanup_attempts == 2
         assert (managed_root / "kmip" / "server.json").read_bytes() == previous_config

@@ -88,6 +88,11 @@ rename, edit, or reconstruct store files to clear a gate. Do not expose their co
 
 An ordinary Apply failure uses the existing KMS cutover rollback procedure. An incomplete import remains offline;
 do not force-start it or replace its pending marker. Keep the original appliance available throughout recovery.
+Completion retires and flushes the service checkpoint before removing the pending gate. A failed retirement
+keeps the gate for a subsequent reviewed Apply retry.
+If the completion child fails or times out after it may have committed, Apply preserves the reviewed installed
+runtime and disables its listener instead of restoring an older configuration without a pending gate. Retry reviewed
+Apply to reconcile completion; a reported listener-shutdown failure requires immediate service reconciliation.
 
 Complete **Factory reset** deliberately removes both active KMIP state and all retained recovery custody, including
 pending markers, checkpoints, private candidates, and previous directories. It does not preserve an appliance-local

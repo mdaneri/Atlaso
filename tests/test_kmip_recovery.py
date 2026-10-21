@@ -300,3 +300,75 @@ def test_unjournaled_cleanup_refuses_replaced_candidate(tmp_path):
     finally:
         os.close(candidate_fd)
         os.close(anchor_fd)
+
+
+@pytest.mark.parametrize("failure", ["service-before", "service-after", "pending-after"])
+def test_completion_failure_retains_pending_gate_and_resumes(tmp_path, monkeypatch, failure):
+    """Checkpoint retirement failures preserve startup protection and retry.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+        monkeypatch: Pytest fixture replacing native descriptor operations on Windows.
+        failure: Completion rename boundary at which to inject an error.
+    """
+    from atlaso.app.kmip import recovery_runtime as runtime
+
+    anchor = tmp_path / "anchor"
+    state = tmp_path / "state"
+    anchor.mkdir()
+    state.mkdir()
+    config = tmp_path / "server.json"
+    config.write_text(json.dumps({"enabled": True, "providers": []}), encoding="utf-8")
+    journal = {"archive": "synthetic", "identity": [state.stat().st_dev, state.stat().st_ino],
+               "trust": {"providers": [], "vcenters": [], "certificates": []}}
+    (anchor / "pending.json").write_text(json.dumps(journal), encoding="utf-8")
+    (anchor / "service.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(runtime, "ANCHOR", anchor)
+    monkeypatch.setattr(runtime, "STATE", state)
+    handle = tmp_path / "handle"
+    handle.write_bytes(b"")
+    monkeypatch.setattr(runtime, "_secure_anchor", lambda _path: os.open(handle, os.O_RDONLY))
+    monkeypatch.setattr(runtime.os, "fsync", lambda _fd: None)
+    runtime.authorize(config)
+    fail_once = True
+
+    def rename(source, destination, source_fd, destination_fd):
+        """Simulate a native rename and one failure before or after publication.
+
+        Args:
+            source: Entry being moved within the protected anchor.
+            destination: Unoccupied destination entry.
+            source_fd: Pinned source parent, unused by this portable simulation.
+            destination_fd: Pinned destination parent, unused by this portable simulation.
+        """
+        nonlocal fail_once
+        if source in {"service.json", "pending.json"} or source.startswith("completed-"):
+            assert (anchor / "pending.json").exists() or source.startswith("completed-")
+        if source == "pending.json":
+            assert not (anchor / "service.json").exists()
+        inject = fail_once and source == ("pending.json" if failure == "pending-after" else "service.json")
+        if inject and failure == "service-before":
+            fail_once = False
+            raise OSError("synthetic checkpoint rename failure")
+        assert not (anchor / destination).exists()
+        (anchor / source).rename(anchor / destination)
+        if inject:
+            fail_once = False
+            raise OSError("synthetic post-rename flush failure")
+
+    monkeypatch.setattr(runtime, "_rename_absent", rename)
+    with pytest.raises(OSError):
+        runtime.authorize(config, complete=True)
+    assert runtime.pending()
+    # Apply rollback changes the runtime bytes; the retained journal must deny it.
+    original = config.read_bytes()
+    config.write_bytes(b"{}")
+    with pytest.raises(RecoveryError):
+        runtime.assert_startup_allowed(config)
+    config.write_bytes(original)
+    runtime.authorize(config, complete=True)
+    assert not runtime.pending()
+    assert not (anchor / "service.json").exists()
+    assert json.loads((anchor / "completed-synthetic.json").read_bytes()) == journal
+    states = {"atlaso-kmip.service": [False, False], "atlaso-kms.service": [False, False]}
+    assert runtime.service_checkpoint({"binding": "different", "operation": "export", "states": states}) == {"states": states}

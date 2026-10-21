@@ -6967,6 +6967,7 @@ def _handle_kms_locked(action: str, args: list[str]) -> int:
                 return 1
         print("KMS snapshot preparation failed; runtime cutover was not started.", file=sys.stderr)
         return 1
+    completion_attempted = False
     try:
         shutil.copyfile(staged_trust_path, runtime_trust_path)
         os.chmod(runtime_trust_path, 0o640)
@@ -7001,13 +7002,27 @@ def _handle_kms_locked(action: str, args: list[str]) -> int:
                 raise RuntimeError("KMS listener did not remain active after cutover.")
             if sample < 5:
                 time.sleep(1)
+        # Retire rollback snapshots while pending custody still gates startup.
+        # Completion must be the final fallible rollback-sensitive operation.
+        shutil.rmtree(rollback_dir)
+        completion_attempted = True
         completion = _kms_recovery_child({"action": "complete"})
         if completion.returncode != 0:
             raise RuntimeError("KMS recovery completion was not durable.")
-        # A failed retirement of recovery files must restore the prior runtime
-        # before reporting failure and leaving its applied baseline unchanged.
-        shutil.rmtree(rollback_dir)
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
+        if completion_attempted:
+            # A killed/timed-out child may already have durably completed. Never
+            # restore an old configuration after that ambiguous commit boundary.
+            # Keep the reviewed imported runtime and leave its listener offline.
+            try:
+                offline = _run(["systemctl", "disable", "--now", "atlaso-kmip.service"], timeout=30)
+                if offline.returncode != 0:
+                    raise RuntimeError("KMS listener could not be disabled.")
+            except (OSError, RuntimeError, subprocess.TimeoutExpired):
+                print("KMS recovery completion is uncertain; listener shutdown requires immediate reconciliation.", file=sys.stderr)
+                return 1
+            print("KMS recovery completion is uncertain; listener disabled. Preserve installed runtime and retry reviewed Apply.", file=sys.stderr)
+            return 1
         try:
             stopped = _run(["systemctl", "stop", "atlaso-kmip.service"], timeout=30)
             if stopped.returncode not in ({0} if was_active else {0, 5}):

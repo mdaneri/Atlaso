@@ -178,9 +178,20 @@ def authorize(config_path: Path, *, complete: bool = False) -> None:
                     "identity": [active.st_dev, active.st_ino]}
         if complete:
             assert_startup_allowed(config_path)
-            _rename_absent("pending.json", "completed-" + journal["archive"] + ".json", fd, fd)
+            # Keep the startup gate through every checkpoint-retirement failure.
+            # A retry after a moved-but-unflushed checkpoint must flush its absence
+            # before it can retire the pending journal.
             if (ANCHOR / "service.json").exists():
                 _rename_absent("service.json", "service-completed-" + uuid.uuid4().hex + ".json", fd, fd)
+            os.fsync(fd)
+            completed = "completed-" + journal["archive"] + ".json"
+            try:
+                _rename_absent("pending.json", completed, fd, fd)
+            except OSError:
+                # A reported post-rename flush error must leave rollback gated.
+                if not pending() and os.path.lexists(ANCHOR / completed):
+                    _rename_absent(completed, "pending.json", fd, fd)
+                raise
         else:
             temporary = ANCHOR / ("approval-" + uuid.uuid4().hex)
             _exclusive_file(temporary, json.dumps(approved, sort_keys=True).encode())
