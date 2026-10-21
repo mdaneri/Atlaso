@@ -671,47 +671,48 @@ def validate_proxy(
     if len({port for port, _scheme in candidate_sockets}) != len(candidate_sockets):
         errors.append("The HTTPS and HTTP redirect listeners must use different TCP ports.")
     claims: list[ListenerClaim] = context.get("claims", [])
-    for listener in candidate.listeners:
-        interface = str(listener.get("interface") or "")
-        address = str(listener.get("address") or "")
-        for port, socket_scheme in candidate_sockets:
-            for claim in claims:
-                if _claim_conflicts(claim, address=address, port=port):
-                    if _nginx_http_front_door(claim) and socket_scheme == claim.scheme:
-                        scopes = {item.interface for item in claims if item.interface != "*"
-                                  and _nginx_http_front_door(item) and item.scheme == socket_scheme
-                                  and _claim_conflicts(item, address=address, port=port)}
-                        if not scopes or scopes == {key[0] for key in seen_listeners if key[1] == address}:
-                            continue
-                    errors.append("The listener collides with an exclusive Atlaso service socket.")
-                    break
-            for forward in context.get("port_forwards", []):
-                if (
-                    forward.enabled
-                    and forward.protocol == "tcp"
-                    and forward.ingress_interface == interface
-                    and forward.listener_address == address
-                    and forward.external_port_start <= port <= forward.external_port_end
-                ):
-                    errors.append("The listener collides with an enabled exclusive port-forward socket.")
-                    break
-            for peer in existing:
-                if peer.id == exclude_id:
-                    continue
-                if not peer.enabled:
-                    continue
-                for _peer_interface, peer_address, peer_port, peer_scheme in _listener_sockets(peer):
-                    if peer_address == address and peer_port == port:
-                        if peer_scheme != socket_scheme:
-                            errors.append("HTTP and HTTPS virtual hosts cannot share the same listener socket.")
-                        elif {key[0] for key in seen_listeners if key[1] == address} != {
-                            str(binding.get("interface") or "") for binding in peer.listeners
-                            if str(binding.get("address") or "") == address
-                        }:
-                            errors.append("Virtual hosts sharing a listener socket must select identical interface scopes.")
-                        elif hostname and peer.hostname.strip().rstrip(".").casefold() == hostname:
-                            errors.append("The same hostname cannot claim an nginx socket more than once.")
-                        # Distinct hostnames may share a socket with the same ingress scope.
+    if candidate.enabled:
+        for listener in candidate.listeners:
+            interface = str(listener.get("interface") or "")
+            address = str(listener.get("address") or "")
+            for port, socket_scheme in candidate_sockets:
+                for claim in claims:
+                    if _claim_conflicts(claim, address=address, port=port):
+                        if _nginx_http_front_door(claim) and socket_scheme == claim.scheme:
+                            scopes = {item.interface for item in claims if item.interface != "*"
+                                      and _nginx_http_front_door(item) and item.scheme == socket_scheme
+                                      and _claim_conflicts(item, address=address, port=port)}
+                            if not scopes or scopes == {key[0] for key in seen_listeners if key[1] == address}:
+                                continue
+                        errors.append("The listener collides with an exclusive Atlaso service socket.")
+                        break
+                for forward in context.get("port_forwards", []):
+                    if (
+                        forward.enabled
+                        and forward.protocol == "tcp"
+                        and forward.ingress_interface == interface
+                        and forward.listener_address == address
+                        and forward.external_port_start <= port <= forward.external_port_end
+                    ):
+                        errors.append("The listener collides with an enabled exclusive port-forward socket.")
+                        break
+                for peer in existing:
+                    if peer.id == exclude_id:
+                        continue
+                    if not peer.enabled:
+                        continue
+                    for _peer_interface, peer_address, peer_port, peer_scheme in _listener_sockets(peer):
+                        if peer_address == address and peer_port == port:
+                            if peer_scheme != socket_scheme:
+                                errors.append("HTTP and HTTPS virtual hosts cannot share the same listener socket.")
+                            elif {key[0] for key in seen_listeners if key[1] == address} != {
+                                str(binding.get("interface") or "") for binding in peer.listeners
+                                if str(binding.get("address") or "") == address
+                            }:
+                                errors.append("Virtual hosts sharing a listener socket must select identical interface scopes.")
+                            elif hostname and peer.hostname.strip().rstrip(".").casefold() == hostname:
+                                errors.append("The same hostname cannot claim an nginx socket more than once.")
+                            # Distinct hostnames may share a socket with the same ingress scope.
 
     upstream_addresses = context.get("addresses", set())
     route_ids: set[int] = set()

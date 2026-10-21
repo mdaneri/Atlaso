@@ -687,7 +687,7 @@ def test_named_nginx_front_doors_share_sockets_but_exclusive_claims_block():
         context = validation_context(db)
         context["claims"] = [ListenerClaim("eth1", "192.168.1.10", "tcp", 9443, 9443)]
         blocked = ReverseProxyCreate.model_validate(
-            payload(name="Custom", hostname="custom.example.test", port=9443, redirect_http=False)
+            payload(name="Custom", hostname="custom.example.test", port=9443, redirect_http=False, enabled=True)
         )
         assert any("exclusive Atlaso" in error for error in validate_candidate(db, blocked, context=context))
 
@@ -736,7 +736,7 @@ def test_enabled_port_forward_claims_are_exclusive_for_shared_listener():
             )
         )
         db.commit()
-        errors = validate_candidate(db, ReverseProxyCreate.model_validate(payload()))
+        errors = validate_candidate(db, ReverseProxyCreate.model_validate(payload(enabled=True)))
         assert any("exclusive port-forward" in error for error in errors)
     finally:
         db.close()
@@ -2310,6 +2310,56 @@ def test_inventory_refresh_rejects_new_browser_scope_before_commit(monkeypatch, 
         assert runtime_snapshot(db) == before
         assert proxy.enabled
         assert not ingress.host_ip_cidrs and not ingress.host_ipv6_cidrs
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("owner", ["service", "port_forward", "peer"])
+@pytest.mark.parametrize("redirect", [False, True])
+def test_disabled_proxy_stages_occupied_socket_and_rechecks_enable(owner, redirect):
+    """Save inactive handoff intent but reject activation until the owner releases it.
+
+    Args:
+        owner: Existing active socket owner.
+        redirect: Occupy the HTTP redirect rather than the primary listener.
+    """
+    from atlaso.app.models import KmsSettings
+
+    engine, db = create_db()
+    try:
+        if owner == "service":
+            occupied = KmsSettings(enabled=True, port=5696, listen_interface="eth1",
+                                   listen_address="192.168.1.10")
+            db.add(occupied)
+        elif owner == "port_forward":
+            occupied = PortForward(name="Existing", enabled=True, ip_family=4, ingress_interface="eth1",
+                                   listener_address="192.168.1.10", protocol="tcp",
+                                   external_port_start=5696, external_port_end=5696,
+                                   target_address="10.10.20.40", target_port_start=5696, target_port_end=5696)
+            db.add(occupied)
+        else:
+            occupied = save_proxy(db, payload(name="Existing", hostname="existing.example.test",
+                                             enabled=True, port=5696, scheme="https" if redirect else "http",
+                                             redirect_http=False), actor="test")
+        db.commit()
+        values = payload(enabled=False, port=9443 if redirect else 5696,
+                         redirect_http=redirect, redirect_port=5696)
+        saved = save_proxy(db, values, actor="test")
+        values["description"] = "Staged replacement"
+        saved = save_proxy(db, values, proxy_id=saved.id, actor="test")
+        assert not saved.enabled
+        assert saved.description == "Staged replacement"
+        audits = list(db.scalars(select(AuditEvent.id)))
+        with pytest.raises(ValueError, match="exclusive|cannot share"):
+            set_enabled(db, saved.id, enabled=True, actor="test")
+        db.commit()
+        db.refresh(saved)
+        assert not saved.enabled
+        assert list(db.scalars(select(AuditEvent.id))) == audits
+        occupied.enabled = False
+        db.commit()
+        assert set_enabled(db, saved.id, enabled=True, actor="test").enabled
     finally:
         db.close()
         engine.dispose()
