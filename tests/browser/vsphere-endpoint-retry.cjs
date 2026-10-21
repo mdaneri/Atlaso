@@ -34,7 +34,9 @@ except EnrollmentError as exc:
 ` });
 assert.equal(fixture.status, 0, fixture.stderr);
 const { html, detail } = JSON.parse(fixture.stdout);
-assert(detail.includes("member 2: address differs"));
+assert(detail.includes("Expected configured Atlaso endpoint: kms.example.test, port 5696"));
+assert(!detail.includes("member 2"));
+assert(!detail.includes("address differs"));
 assert(!detail.includes("192.168.1.254"), "Remote values must not reach the browser diagnostic");
 
 (async () => {

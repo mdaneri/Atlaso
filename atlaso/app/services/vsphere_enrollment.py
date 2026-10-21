@@ -183,35 +183,24 @@ def _check_cluster_endpoint(servers: object, host: str, port: int) -> None:
         "then retry. DNS aliases and IP addresses are not substituted for that hostname. "
         "Do not remove servers or replace an in-use provider to bypass this check."
     )
-    prefix = "The vCenter KMIP cluster does not point only to this Atlaso endpoint. "
-    if not isinstance(servers, list) or not servers:
-        reason = "No server members were returned." if servers == [] else "Server inventory is missing or invalid."
-        raise EnrollmentError(prefix + expected + reason + " " + repair)
-    mismatches = []
-    mismatch_count = 0
-    for index, server in enumerate(servers, start=1):
-        address = server.get("address") if isinstance(server, dict) else None
-        observed_port = server.get("port") if isinstance(server, dict) else None
-        address_matches = isinstance(address, str) and address.strip().casefold().rstrip(".") == host
-        valid_port = type(observed_port) is int and 1 <= observed_port <= 65535
-        port_matches = valid_port and observed_port == port
-        if address_matches and port_matches:
-            continue
-        mismatch_count += 1
-        if len(mismatches) < 3:
-            # Even a DNS-shaped string or valid integer may contain a reflected
-            # credential. Report comparison results only, never remote values.
-            fields = []
-            if not address_matches:
-                fields.append("address differs" if isinstance(address, str) else "address missing or not a string")
-            if not port_matches:
-                fields.append("port differs" if valid_port else "port missing or invalid integer")
-            mismatches.append(f"member {index}: " + ", ".join(fields))
-    if mismatch_count:
-        summary = f"{mismatch_count} of {len(servers)} members differ: " + "; ".join(mismatches) + ". "
-        if mismatch_count > len(mismatches):
-            summary += "Only the first 3 mismatches are shown. "
-        raise EnrollmentError(prefix + expected + summary + repair)
+    # The remote endpoint has already received credentials. Keep every rejection
+    # identical: even counts, positions and field comparisons can carry its data.
+    if (
+        not isinstance(servers, list)
+        or not servers
+        or any(
+            not isinstance(server, dict)
+            or not isinstance(server.get("address"), str)
+            or server["address"].strip().casefold().rstrip(".") != host
+            or type(server.get("port")) is not int
+            or server["port"] != port
+            for server in servers
+        )
+    ):
+        raise EnrollmentError(
+            "The vCenter KMIP cluster does not point only to this Atlaso endpoint. "
+            + expected + repair
+        )
 
 
 def discover_vcenter_client(

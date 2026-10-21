@@ -197,36 +197,32 @@ def test_discovery_rejects_wrong_atlaso_endpoint_before_client_certificate(
 
 
 @pytest.mark.parametrize(
-    "servers,detail",
+    "servers",
     [
-        ([], "No server members were returned"),
-        (None, "Server inventory is missing or invalid"),
-        ({"address": "kms.atlaso.example.test"}, "Server inventory is missing or invalid"),
-        ([None], "member 1: address missing or not a string"),
-        ([{"address": "192.168.1.254", "port": 5696}], "address differs"),
-        ([{"address": "alias.example.test", "port": 5696}], "address differs"),
-        ([{"address": "kms.atlaso.example.test", "port": 5696},
-          {"address": "foreign.example.test", "port": 5696}], "1 of 2 members differ: member 2"),
-        ([{"address": "kms.atlaso.example.test", "port": 5697}], "port differs"),
-        ([{"address": "kms.atlaso.example.test", "port": "5696"}], "invalid integer"),
-        ([{"address": "kms.atlaso.example.test", "port": True}], "invalid integer"),
-        ([{"address": "kms.atlaso.example.test", "port": None}], "invalid integer"),
-        ([{"address": "kms.atlaso.example.test", "port": 65536}], "invalid integer"),
-        ([{"address": "https://user:private-marker@other.test", "port": "private-marker",
-           "name": "private-marker", "userName": "private-marker"}], "address differs"),
-        ([{"address": "<script>private-marker</script>", "port": 5696}], "address differs"),
-        ([{"address": "fe80::1%private-marker", "port": 5696}], "address differs"),
-        ([{"address": "a" * 254, "port": 5696}], "address differs"),
-        ([{"address": "private-marker.example.test", "port": 61337}], "address differs, port differs"),
+        [], None, {"address": "kms.atlaso.example.test"}, [None],
+        [{"address": "192.168.1.254", "port": 5696}],
+        [{"address": "alias.example.test", "port": 5696}],
+        [{"address": "kms.atlaso.example.test", "port": 5696},
+         {"address": "foreign.example.test", "port": 5696}],
+        [{"address": "kms.atlaso.example.test", "port": 5697}],
+        [{"address": "kms.atlaso.example.test", "port": "5696"}],
+        [{"address": "kms.atlaso.example.test", "port": True}],
+        [{"address": "kms.atlaso.example.test", "port": None}],
+        [{"address": "kms.atlaso.example.test", "port": 65536}],
+        [{"address": "https://user:private-marker@other.test", "port": "private-marker",
+          "name": "private-marker", "userName": "private-marker"}],
+        [{"address": "<script>private-marker</script>", "port": 5696}],
+        [{"address": "fe80::1%private-marker", "port": 5696}],
+        [{"address": "a" * 254, "port": 5696}],
+        [{"address": "private-marker.example.test", "port": 61337}],
     ],
 )
-def test_endpoint_diagnostics_reject_before_certificate_and_keep_logout(monkeypatch, servers, detail) -> None:
+def test_endpoint_diagnostics_reject_before_certificate_and_keep_logout(monkeypatch, servers) -> None:
     """Return actionable bounded errors without exposing untrusted remote fields.
 
     Args:
         monkeypatch: Fixture replacing the pinned vCenter session.
         servers: Selected cluster inventory exercising one rejection reason.
-        detail: Expected sanitized diagnostic fragment.
     """
     fake = _FakeVcenter(_client_certificate())
     fake.clusters[0]["servers"] = servers
@@ -241,7 +237,9 @@ def test_endpoint_diagnostics_reject_before_certificate_and_keep_logout(monkeypa
         )
     message = str(error.value)
     assert "Expected configured Atlaso endpoint: kms.atlaso.example.test, port 5696" in message
-    assert detail in message
+    with pytest.raises(enrollment.EnrollmentError) as empty_inventory:
+        enrollment._check_cluster_endpoint([], "kms.atlaso.example.test", 5696)
+    assert message == str(empty_inventory.value)
     assert "then retry" in message
     assert "private-marker" not in message
     assert "61337" not in message
@@ -249,20 +247,26 @@ def test_endpoint_diagnostics_reject_before_certificate_and_keep_logout(monkeypa
     assert fake.calls[-1].endswith("/Logout")
 
 
-def test_endpoint_diagnostics_inspect_all_members_and_bound_output() -> None:
-    """A matching first member must not conceal later foreign members."""
+def test_endpoint_diagnostic_does_not_vary_with_remote_inventory() -> None:
+    """Withhold remote counts, positions, field choices and malformed-data details."""
     matching = {"address": "KMS.ATLASO.EXAMPLE.TEST.", "port": 5696}
+    foreign = {"address": "private-marker.example.test", "port": 61337}
     enrollment._check_cluster_endpoint([matching, matching], "kms.atlaso.example.test", 5696)
-    servers = [matching] + [{"address": f"other{index}.example.test", "port": 5696} for index in range(10)]
-    with pytest.raises(enrollment.EnrollmentError) as error:
-        enrollment._check_cluster_endpoint(servers, "kms.atlaso.example.test", 5696)
-    message = str(error.value)
-    assert "10 of 11 members differ" in message
-    assert "member 2: address differs" in message
-    assert "member 4: address differs" in message
-    assert "other" not in message
-    assert "Only the first 3 mismatches" in message
-    assert len(message) < 1300
+    messages = []
+    for servers in [None, [], {}, [None], [foreign], [matching] * 1234 + [foreign],
+                    [foreign] * 1234, [foreign, matching],
+                    [{"address": "kms.atlaso.example.test", "port": 61337}],
+                    [{"address": "private-marker.example.test", "port": 5696}]]:
+        with pytest.raises(enrollment.EnrollmentError) as error:
+            enrollment._check_cluster_endpoint(servers, "kms.atlaso.example.test", 5696)
+        messages.append(str(error.value))
+    assert len(set(messages)) == 1
+    assert "private-marker" not in messages[0]
+    assert "61337" not in messages[0]
+    assert "1234" not in messages[0]
+    assert "member 1" not in messages[0]
+    assert "address differs" not in messages[0]
+    assert "port differs" not in messages[0]
 
 
 @pytest.mark.parametrize("ambiguous", [False, True])

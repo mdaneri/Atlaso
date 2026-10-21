@@ -907,7 +907,9 @@ def test_enrollment_endpoint_rejection_preserves_http_error_and_trust_state(clie
             assert response.status_code == 422
             message = response.json()["detail"]
             assert "Expected configured Atlaso endpoint:" in message
-            assert "member 1: address differs, port differs" in message
+            assert "member 1" not in message
+            assert "address differs" not in message
+            assert "port differs" not in message
             assert "61337" not in message
             assert "then retry" in message
             assert "request-only" not in message
