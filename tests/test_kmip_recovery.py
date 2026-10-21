@@ -424,3 +424,47 @@ def test_candidate_directory_is_durable_before_journal(tmp_path, monkeypatch):
         runtime.import_archive(archive, PASSPHRASE, "synthetic-target", uid=os.getuid(), gid=os.getgid())
     assert not list(anchor.iterdir())
     assert not list(state.iterdir())
+
+
+@pytest.mark.parametrize("same_provider", [True, False])
+def test_vcenter_names_match_provider_scoped_database_uniqueness(tmp_path, monkeypatch, same_provider):
+    """Reject ambiguous trust before privileged custody without globalizing names.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+        monkeypatch: Pytest fixture proving invalid trust cannot reach publication.
+        same_provider: Whether the duplicated name belongs to one provider namespace.
+    """
+    from atlaso.app.kmip import recovery_runtime as runtime
+
+    snapshot, metadata, plaintext = snapshot_fixture(tmp_path)
+    provider = snapshot["trust"]["providers"][0]["id"]
+    other = provider
+    if not same_provider:
+        other = str(uuid4())
+        snapshot["trust"]["providers"].append({"id": other, "name": "other", "description": "", "enabled": True})
+    snapshot["trust"]["vcenters"] = [
+        {"id": str(uuid4()), "provider_id": owner, "name": "same-name", "hostname": "vcsa.example.test", "description": "", "enabled": True}
+        for owner in (provider, other)
+    ]
+    archive = encrypt(snapshot, PASSPHRASE)
+    anchor = tmp_path / "uncreated-anchor"
+    state = tmp_path / "uncreated-state"
+    monkeypatch.setattr(runtime, "ANCHOR", anchor)
+    monkeypatch.setattr(runtime, "STATE", state)
+    monkeypatch.setattr(runtime, "_secure_anchor", lambda _path: pytest.fail("invalid trust reached privileged publication"))
+    if same_provider:
+        for _ in range(2):
+            with pytest.raises(RecoveryError):
+                runtime.import_archive(archive, PASSPHRASE, "synthetic-target", uid=0, gid=0)
+        assert not anchor.exists() and not state.exists()
+    else:
+        candidate = tmp_path / "candidate"
+        candidate.mkdir()
+        build_candidate(decrypt(archive, PASSPHRASE), candidate, secrets_key="synthetic-target")
+        restored = WrappedKeyStore(candidate / "store.db", candidate / "kek.json", secrets_key="synthetic-target", read_only=True)
+        try:
+            assert restored.get_key(metadata.provider_id, metadata.key_id) == (metadata, plaintext)
+            assert json.loads((candidate / "public-trust.json").read_bytes()) == snapshot["trust"]
+        finally:
+            restored.close()

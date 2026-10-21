@@ -46,6 +46,8 @@ An export succeeds only after the helper restores the prior KMS service state. A
 health before retrying. Retain older verified bundles until the replacement has been independently tested.
 The management helper allows up to 30 minutes for the bounded operation and service restoration on a slow appliance.
 Wait for its result and service-health readback before retrying.
+A rejected archive releases its service checkpoint only after the prior service posture is verified and no pending
+recovery journal exists, so a corrected archive can be submitted. Uncertain restoration retains the checkpoint.
 
 ## Restore onto an empty target
 
@@ -57,7 +59,7 @@ Wait for its result and service-health readback before retrying.
 3. Open **Maintenance > KMIP recovery**. Select the `.atkmip` bundle, enter its passphrase, and confirm
    **Import KMIP recovery offline**.
 4. Atlaso authenticates and validates the complete candidate before publication. Nonempty native or legacy stores,
-   wrong passphrases, corruption, unsupported schemas, duplicate identifiers, incomplete trust, and inconsistent KEK
+   wrong passphrases, corruption, unsupported schemas, duplicate identifiers or provider-scoped vCenter names, incomplete trust, and inconsistent KEK
    custody fail closed. Existing keys are never migrated or regenerated.
 5. Imported provider/vCenter records are disabled and have no applied baseline. The listener remains offline.
    On **vSphere Key Providers**, review the restored provider UUIDs and exact public-client fingerprints against

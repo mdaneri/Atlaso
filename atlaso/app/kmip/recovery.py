@@ -116,6 +116,7 @@ def validate_trust(trust: Any) -> None:
     ids: dict[str, set[str]] = {}
     fingerprints: set[str] = set()
     names: set[str] = set()
+    vcenter_names: set[tuple[str, str]] = set()
     try:
         for kind, fields in expected.items():
             rows = trust[kind]
@@ -141,6 +142,10 @@ def validate_trust(trust: Any) -> None:
                 elif kind == "vcenters":
                     if row["provider_id"] not in ids["providers"] or not isinstance(row["hostname"], str) or len(row["hostname"]) > 253:
                         raise RecoveryError("Recovery vCenter relationship is invalid.")
+                    scoped_name = (row["provider_id"], row["name"])
+                    if scoped_name in vcenter_names:
+                        raise RecoveryError("Recovery vCenter names are duplicated within a provider.")
+                    vcenter_names.add(scoped_name)
                 else:
                     if row["trusted_vcenter_id"] not in ids["vcenters"]:
                         raise RecoveryError("Recovery certificate relationship is invalid.")

@@ -6682,6 +6682,7 @@ def _handle_kms_recovery(action: str, args: list[str]) -> int:
     states: dict[str, tuple[bool, bool]] = {}
     completed_import = False
     operation_failed = False
+    restoration_failed = False
     changed_services = False
     result = None
     try:
@@ -6724,27 +6725,31 @@ def _handle_kms_recovery(action: str, args: list[str]) -> int:
         if changed_services and not completed_import:
             for unit, (was_active, was_enabled) in states.items():
                 # A durable pending marker forbids serving an unreviewed import.
-                pending = Path("/var/lib/atlaso-kmip-recovery/pending.json").exists()
+                pending = os.path.lexists("/var/lib/atlaso-kmip-recovery/pending.json")
                 desired_active = was_active and not (pending and unit == "atlaso-kmip.service")
                 for command in (["systemctl", "enable" if was_enabled else "disable", unit],
                                 ["systemctl", "restart" if desired_active else "stop", unit]):
                     try:
                         restored = _run(command, timeout=30)
                         if restored.returncode not in {0, 5}:
-                            operation_failed = True
+                            operation_failed = restoration_failed = True
                     except (OSError, subprocess.TimeoutExpired):
-                        operation_failed = True
+                        operation_failed = restoration_failed = True
                 try:
                     # A successful restart command is not sustained service health.
                     for sample in range(6 if desired_active else 1):
                         if _kms_service_snapshot(unit) != (desired_active, was_enabled):
-                            operation_failed = True
+                            operation_failed = restoration_failed = True
                             break
                         if desired_active and sample < 5:
                             time.sleep(1)
                 except (OSError, ValueError, subprocess.TimeoutExpired):
-                    operation_failed = True
-    if not completed_import and not operation_failed and states:
+                    operation_failed = restoration_failed = True
+    # A rejected archive must not pin its binding forever after a proven
+    # restoration. Pending custody or uncertain service health still retains it.
+    restored_rejection = (changed_services and not restoration_failed
+                          and not os.path.lexists("/var/lib/atlaso-kmip-recovery/pending.json"))
+    if not completed_import and states and (not operation_failed or restored_rejection):
         try:
             finished = _kms_recovery_child({"action": "service-finish"})
             if finished.returncode != 0:

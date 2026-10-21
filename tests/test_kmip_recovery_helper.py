@@ -410,3 +410,74 @@ def test_recovery_identity_commands_accept_bounded_timeout(monkeypatch, command_
     helper._ensure_kms_service_identity(command_timeout=command_timeout)
     assert len(calls) == 2
     assert all(options == ({} if command_timeout is None else {"timeout": 30}) for _command, options in calls)
+
+
+@pytest.mark.parametrize("pending_present", [False, True])
+def test_rejected_archive_releases_restored_checkpoint_for_corrected_input(monkeypatch, capsys, pending_present):
+    """A rejected archive cannot strand its binding after verified restoration.
+
+    Args:
+        monkeypatch: Pytest fixture isolating service operations and checkpoint custody.
+        capsys: Pytest fixture capturing safe helper responses.
+        pending_present: Whether publication has already created pending custody.
+    """
+    helper = load_helper_module()
+    initial = {"atlaso-kmip.service": (True, True), "atlaso-kms.service": (False, False)}
+    states = dict(initial)
+    checkpoint = None
+    finishes = []
+
+    def run(command, **_kwargs):
+        """Apply the simulated systemd posture change without host mutation.
+
+        Args:
+            command: Bounded writer service operation.
+            **_kwargs: Explicit helper subprocess timeout.
+        """
+        operation, unit = command[1], command[-1]
+        active, enabled = states[unit]
+        states[unit] = (False if "--now" in command else operation == "restart" if operation in {"restart", "stop"} else active,
+                        operation == "enable" if operation in {"enable", "disable"} else enabled)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def child(request):
+        """Model exclusive checkpoint binding and a rejected followed by valid archive.
+
+        Args:
+            request: Fixed recovery action and request-bound payload.
+        """
+        nonlocal checkpoint
+        if request["action"] == "service-capture":
+            if checkpoint is not None and checkpoint != request["binding"]:
+                return subprocess.CompletedProcess([], 2, "", "")
+            checkpoint = request["binding"]
+            return subprocess.CompletedProcess([], 0, json.dumps({"states": initial}), "")
+        if request["action"] == "service-finish":
+            assert states == initial
+            finishes.append(checkpoint)
+            checkpoint = None
+            return subprocess.CompletedProcess([], 0, "{}", "")
+        return subprocess.CompletedProcess([], 2 if request["archive"] == "invalid" else 0, "{}", "")
+
+    lexists = helper.os.path.lexists
+    monkeypatch.setattr(helper.os.path, "lexists", lambda path: pending_present if str(path) == "/var/lib/atlaso-kmip-recovery/pending.json" else lexists(path))
+    monkeypatch.setattr(helper, "_run", run)
+    monkeypatch.setattr(helper, "_kms_service_snapshot", lambda unit: states[unit])
+    monkeypatch.setattr(helper, "_kms_legacy_check", lambda **_kwargs: None)
+    monkeypatch.setattr(helper, "_kms_secrets_key", lambda: "synthetic")
+    monkeypatch.setattr(helper, "_ensure_kms_service_identity", lambda **_kwargs: (SimpleNamespace(pw_uid=1000), SimpleNamespace(gr_gid=1000)))
+    monkeypatch.setattr(helper, "_kms_recovery_child", child)
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(helper.sys, "stdin", io.StringIO(json.dumps({"passphrase": "synthetic", "archive": "invalid"})))
+    assert helper._handle_kms_recovery("recovery-import", []) == 2
+    if pending_present:
+        assert checkpoint is not None and not finishes
+        assert not states["atlaso-kmip.service"][0]
+        capsys.readouterr()
+        return
+    assert states == initial and checkpoint is None and len(finishes) == 1
+    monkeypatch.setattr(helper.sys, "stdin", io.StringIO(json.dumps({"passphrase": "synthetic", "archive": "corrected"})))
+    assert helper._handle_kms_recovery("recovery-import", []) == 0
+    assert checkpoint is not None
+    assert not any(active or enabled for active, enabled in states.values())
+    capsys.readouterr()
