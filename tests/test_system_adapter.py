@@ -5,6 +5,25 @@ import subprocess
 from atlaso.app.adapters.system import SystemAdapter
 
 
+def test_kmip_listener_observation_uses_bounded_readonly_helper(monkeypatch):
+    """The web process reads protected public listener metadata through the helper."""
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, '{"enabled":true}', "")
+
+    monkeypatch.setattr("atlaso.app.adapters.system.subprocess.run", run)
+    result = SystemAdapter(dry_run=False).kms_listener_status()
+    assert result.returncode == 0
+    assert calls[0][0][-3:] == ["kms", "listener-status", "--real"]
+    assert calls[0][1]["timeout"] == 10
+    assert "input" not in calls[0][1]
+    calls.clear()
+    assert SystemAdapter(dry_run=True).kms_listener_status().stdout == "{}"
+    assert calls == []
+
+
 def test_appliance_update_inspection_is_safely_absent_in_development():
     """Avoid privileged helper execution for development-only status checks."""
     status = SystemAdapter(dry_run=True).inspect_appliance_update_status()

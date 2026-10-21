@@ -575,6 +575,13 @@ class SystemAdapter:
             dry_run_message=json.dumps({"status": "not-reported", "providers": {}}),
         )
 
+    def kms_listener_status(self) -> AdapterResult:
+        """Read only the active deployed KMIP listener, without accessing secrets."""
+        return self._helper_result(
+            "kms", "listener-status", timeout_seconds=10,
+            dry_run_message="{}",
+        )
+
     def apply_ldap_config(self, config_path: str) -> AdapterResult:
         """Update ldap config.
 

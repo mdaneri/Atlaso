@@ -553,6 +553,42 @@ def test_endpoint_diagnostic_does_not_vary_with_remote_inventory() -> None:
     assert "port differs" not in messages[0]
 
 
+@pytest.mark.parametrize("address", ["192.168.1.254", "2001:0db8:0:0:0:0:0:254"])
+def test_matching_label_with_admitted_listener_ip_reads_public_client(monkeypatch, address) -> None:
+    """The actual name/address split succeeds only with independent IP admission."""
+    from ipaddress import ip_address
+
+    fake = _FakeVcenter(_client_certificate())
+    fake.clusters[0]["servers"] = [{
+        "name": "kms.atlaso.example.test", "address": address, "port": 5696,
+    }]
+    monkeypatch.setattr(enrollment, "vcenter_https_leaf", lambda *_args, **_kwargs: b"test-leaf")
+    monkeypatch.setattr(enrollment, "_pinned_context", lambda _leaf: object())
+    monkeypatch.setattr(enrollment.httpx, "Client", lambda **_kwargs: fake)
+    result = enrollment.discover_vcenter_client(
+        host="vcsa.example.test", cluster_id="Atlaso-KMIP", username="admin", password="test-secret",
+        confirmed_https_fingerprint=enrollment.certificate_fingerprint(b"test-leaf"),
+        atlaso_host="kms.atlaso.example.test", atlaso_port=5696,
+        listener_addresses=frozenset({str(ip_address(address))}),
+    )
+    assert result.cluster_id == "Atlaso-KMIP"
+    assert any(path.endswith("/RetrieveClientCert") for path in fake.calls)
+
+
+@pytest.mark.parametrize("servers", [
+    [{"name": "kms.atlaso.example.test", "address": "192.168.1.253", "port": 5696}],
+    [{"name": "kms.atlaso.example.test", "address": "192.168.1.254", "port": 5697}],
+    [{"address": "192.168.1.254", "port": 5696}, {"address": "192.168.1.253", "port": 5696}],
+    [{"address": "192.168.1.254", "port": 5696}, {"address": "192.168.1.254", "port": True}],
+])
+def test_ip_admission_never_weakens_all_member_address_and_exact_port_checks(servers) -> None:
+    """A matching server name and one admitted member cannot admit foreign members."""
+    with pytest.raises(enrollment.EnrollmentError, match="does not point only"):
+        enrollment._check_cluster_endpoint(
+            servers, "kms.atlaso.example.test", 5696, listener_addresses=frozenset({"192.168.1.254"}),
+        )
+
+
 @pytest.mark.parametrize("ambiguous", [False, True])
 def test_discovery_keeps_missing_and_ambiguous_cluster_rejections(monkeypatch, ambiguous) -> None:
     """Never inspect a client certificate when the cluster identity is uncertain.

@@ -9,6 +9,7 @@ import ssl
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from ipaddress import ip_address
 from urllib.parse import urlsplit
 
 import httpx
@@ -313,19 +314,25 @@ def discover_vcenter_inventory(
         return DiscoveredInventory(name=name.strip(), cluster_ids=tuple(ids))
 
 
-def _check_cluster_endpoint(servers: object, host: str, port: int) -> None:
+def _check_cluster_endpoint(
+    servers: object, host: str, port: int, *, listener_addresses: frozenset[str] = frozenset(),
+) -> None:
     """Require every member to match without reflecting remote response values.
 
     Args:
         servers: Untrusted server inventory from the selected vCenter cluster.
         host: Normalized configured Atlaso KMIP hostname.
         port: Configured Atlaso KMIP port, not an observed runtime assertion.
+        listener_addresses: Independently admitted applied and observed listener IPs.
     """
     expected = f"Expected configured Atlaso endpoint: {host}, port {port}. "
     repair = (
         "Compare every member in vCenter with the hostname and port in Atlaso's "
         "vSphere Key Providers listener settings, or select the intended cluster, "
-        "then retry. DNS aliases and IP addresses are not substituted for that hostname. "
+        "then retry. IP addresses require successful KMIP Apply, recorded listener ownership, "
+        "and fresh native observation on that applied interface. Missing or stale evidence "
+        "does not admit an IP; use the configured hostname or verify and apply the listener settings. "
+        "A matching KMS server name or DNS resolution does not prove the address. "
         "Do not remove servers or replace an in-use provider to bypass this check."
     )
     # The remote endpoint has already received credentials. Keep every rejection
@@ -336,7 +343,7 @@ def _check_cluster_endpoint(servers: object, host: str, port: int) -> None:
         or any(
             not isinstance(server, dict)
             or not isinstance(server.get("address"), str)
-            or server["address"].strip().casefold().rstrip(".") != host
+            or not _matches_cluster_address(server["address"], host, listener_addresses)
             or type(server.get("port")) is not int
             or server["port"] != port
             for server in servers
@@ -348,6 +355,20 @@ def _check_cluster_endpoint(servers: object, host: str, port: int) -> None:
         )
 
 
+def _matches_cluster_address(address: str, host: str, listener_addresses: frozenset[str]) -> bool:
+    """Compare the transport address; the remote server name is only a label.
+
+    Args:
+        address: Untrusted remote KMIP transport address.
+        host: Normalized configured Atlaso hostname.
+        listener_addresses: Independently proven listener IPs in canonical form.
+    """
+    try:
+        return str(ip_address(address.strip())) in listener_addresses
+    except ValueError:
+        return address.strip().casefold().rstrip(".") == host
+
+
 def discover_vcenter_client(
     *,
     host: str,
@@ -357,6 +378,7 @@ def discover_vcenter_client(
     confirmed_https_fingerprint: str,
     atlaso_host: str,
     atlaso_port: int,
+    listener_addresses: frozenset[str] = frozenset(),
     port: int = 443,
 ) -> DiscoveredClient:
     """Read one registered cluster's client cert over a pinned vCenter session.
@@ -372,6 +394,7 @@ def discover_vcenter_client(
         confirmed_https_fingerprint: Out-of-band confirmed HTTPS certificate fingerprint.
         atlaso_host: Expected Atlaso KMIP endpoint hostname.
         atlaso_port: Expected Atlaso KMIP listener port.
+        listener_addresses: Applied listener IPs with independently verified current ownership.
         port: Saved vCenter HTTPS endpoint port.
     """
     host = normalize_vcenter_hostname(host)
@@ -405,7 +428,10 @@ def discover_vcenter_client(
             raise EnrollmentError(
                 "The named KMIP cluster is missing or ambiguous in vCenter."
             )
-        _check_cluster_endpoint(matches[0].get("servers"), atlaso_host, atlaso_port)
+        _check_cluster_endpoint(
+            matches[0].get("servers"), atlaso_host, atlaso_port,
+            listener_addresses=listener_addresses,
+        )
         certificate = _json(
             client.post(
                 f"{base}/CryptoManagerKmip/{manager_id}/RetrieveClientCert",

@@ -28,9 +28,13 @@ html=env.from_string('{% from "partials/resource_wizard.html" import resource_wi
     management_ui_root='/ui/management', csrf_token='synthetic-csrf', vsphere_vault_credential_choices=[],
     vsphere_key_providers=[{'id':'provider-1','name':'Default','enabled':True}])
 try:
-    _check_cluster_endpoint([{'address':'kms.example.test','port':5696},{'address':'192.168.1.254','port':5696}], 'kms.example.test', 5696)
+    _check_cluster_endpoint([{'name':'kms.example.test','address':'192.168.1.254','port':5696}], 'kms.example.test', 5696)
 except EnrollmentError as exc:
-    print(json.dumps({'html':html,'detail':str(exc)}))
+    detail=str(exc)
+# Synthetic admission fixture; fresh production ownership is covered separately.
+_check_cluster_endpoint([{'name':'kms.example.test','address':'192.168.1.254','port':5696}],
+                        'kms.example.test', 5696, listener_addresses=frozenset({'192.168.1.254'}))
+print(json.dumps({'html':html,'detail':detail}))
 ` });
 assert.equal(fixture.status, 0, fixture.stderr);
 const { html, detail } = JSON.parse(fixture.stdout);
@@ -98,7 +102,7 @@ assert(!detail.includes("192.168.1.254"), "Remote values must not reach the brow
       const bounds = await page.locator('[data-atlaso-wizard-error]').boundingBox();
       assert(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width, "Diagnostic must fit the viewport");
       await page.screenshot({ path: path.join(output, `endpoint-${label}.png`) });
-      await next.click(); // Fresh read after operator repair, simulated by second response
+      await next.click(); // Fresh read after independent listener admission, simulated by second response
       await page.waitForFunction(() => document.querySelector('[name="expected_client_fingerprint"]').value === '11:22');
       assert(await page.locator('[data-atlaso-wizard-step="review"]').isVisible());
       assert.equal(attempts, 2);
