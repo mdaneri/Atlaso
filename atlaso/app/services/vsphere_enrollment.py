@@ -168,6 +168,41 @@ def _pinned_context(leaf: bytes) -> ssl.SSLContext:
     return context
 
 
+def _check_cluster_endpoint(servers: object, host: str, port: int) -> None:
+    """Require every member to match without reflecting remote response values.
+
+    Args:
+        servers: Untrusted server inventory from the selected vCenter cluster.
+        host: Normalized configured Atlaso KMIP hostname.
+        port: Configured Atlaso KMIP port, not an observed runtime assertion.
+    """
+    expected = f"Expected configured Atlaso endpoint: {host}, port {port}. "
+    repair = (
+        "Compare every member in vCenter with the hostname and port in Atlaso's "
+        "vSphere Key Providers listener settings, or select the intended cluster, "
+        "then retry. DNS aliases and IP addresses are not substituted for that hostname. "
+        "Do not remove servers or replace an in-use provider to bypass this check."
+    )
+    # The remote endpoint has already received credentials. Keep every rejection
+    # identical: even counts, positions and field comparisons can carry its data.
+    if (
+        not isinstance(servers, list)
+        or not servers
+        or any(
+            not isinstance(server, dict)
+            or not isinstance(server.get("address"), str)
+            or server["address"].strip().casefold().rstrip(".") != host
+            or type(server.get("port")) is not int
+            or server["port"] != port
+            for server in servers
+        )
+    ):
+        raise EnrollmentError(
+            "The vCenter KMIP cluster does not point only to this Atlaso endpoint. "
+            + expected + repair
+        )
+
+
 def discover_vcenter_client(
     *,
     host: str,
@@ -256,21 +291,7 @@ def discover_vcenter_client(
                     raise EnrollmentError(
                         "The named KMIP cluster is missing or ambiguous in vCenter."
                     )
-                servers = matches[0].get("servers")
-                if (
-                    not isinstance(servers, list)
-                    or not servers
-                    or any(
-                        not isinstance(server, dict)
-                        or str(server.get("address", "")).strip().casefold().rstrip(".")
-                        != atlaso_host
-                        or server.get("port") != atlaso_port
-                        for server in servers
-                    )
-                ):
-                    raise EnrollmentError(
-                        "The vCenter KMIP cluster does not point only to this Atlaso endpoint."
-                    )
+                _check_cluster_endpoint(matches[0].get("servers"), atlaso_host, atlaso_port)
                 certificate = _json(
                     client.post(
                         f"{base}/CryptoManagerKmip/{manager_id}/RetrieveClientCert",
