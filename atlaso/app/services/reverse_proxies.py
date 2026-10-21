@@ -23,6 +23,10 @@ class ServiceDnsAliasConflict(ValueError):
     """A candidate service alias would take a saved proxy hostname or upstream."""
 
 
+class ServiceListenerConflict(ValueError):
+    """A candidate service listener would take an enabled proxy socket."""
+
+
 MAX_REVERSE_PROXIES = 256
 MAX_PROXY_ROUTES = 64
 MAX_TOTAL_PROXY_ROUTES = 256
@@ -533,7 +537,7 @@ def validate_service_listener_sockets(db: Session) -> None:
                                     if str(item.get("address") or "") == address}
                         if not scopes or scopes == bindings:
                             continue
-                    raise ValueError(
+                    raise ServiceListenerConflict(
                         f"Service listener conflicts with enabled reverse proxy {proxy.name} on {interface} {address}:{port}. "
                         "Disable or move the proxy before saving this service listener."
                     )

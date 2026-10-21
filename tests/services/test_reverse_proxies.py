@@ -2363,3 +2363,74 @@ def test_disabled_proxy_stages_occupied_socket_and_rechecks_enable(owner, redire
     finally:
         db.close()
         engine.dispose()
+
+
+@pytest.mark.parametrize("ipv6", [False, True])
+@pytest.mark.parametrize("startup", [False, True])
+@pytest.mark.parametrize(("proxy_enabled", "collides"), [(True, True), (False, True), (True, False)])
+def test_automatic_service_socket_refresh_preserves_binding_on_conflict(monkeypatch, ipv6, startup, proxy_enabled, collides):
+    """Reject observed socket collisions atomically while allowing safe refreshes.
+
+    Args:
+        monkeypatch: Replace only host discovery for the startup caller.
+        ipv6: Exercise SLAAC instead of DHCP observations.
+        startup: Use the startup caller that defers ownership conflicts.
+        proxy_enabled: Whether the existing proxy owns its socket.
+        collides: Whether the new observation uses the proxy address.
+    """
+    from atlaso.app import main, ui
+    from atlaso.app.models import DnsRecord, KmsSettings
+
+    engine, db = create_db()
+    try:
+        proxy_address = "2001:db8::10" if ipv6 else "192.168.1.10"
+        old = "2001:db8::20" if ipv6 else "192.168.1.20"
+        candidate = proxy_address if collides else ("2001:db8::30" if ipv6 else "192.168.1.30")
+        first = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        first.ipv6_enabled, first.ipv6_cidr = ipv6, proxy_address + "/64" if ipv6 else None
+        second = PhysicalInterface(
+            name="eth2", mac_address="02:00:00:00:00:03", admin_state="up", oper_state="up",
+            role="access", mode="access", check_duplicate_ip_addresses=False,
+            ipv4_method="static" if ipv6 else "dhcp", ip_cidr="192.168.1.20/24" if ipv6 else None,
+            host_ip_cidr=None if ipv6 else old + "/24",
+            ipv6_enabled=ipv6, host_ipv6_cidr=old + "/64" if ipv6 else None,
+        )
+        service = KmsSettings(enabled=True, hostname="owned.example.test", port=5696,
+                              listen_interface="eth2", listen_address=old)
+        db.add_all([second, service])
+        db.commit()
+        ui.refresh_interface_service_dns_aliases(db)
+        db.commit()
+        save_proxy(db, payload(enabled=proxy_enabled, scheme="http", port=5696, redirect_http=False,
+                               listeners=[{"interface": "eth1", "address": proxy_address}]), actor="test")
+        if ipv6:
+            second.host_ipv6_cidr = candidate + "/64"
+        else:
+            second.host_ip_cidr = candidate + "/24"
+        db.commit()
+        binding = service.listen_address
+        records = [(row.id, row.hostname, row.address) for row in db.scalars(select(DnsRecord).order_by(DnsRecord.id))]
+        settings = [(row.key, row.value) for row in db.scalars(select(Setting).order_by(Setting.key))]
+        audits = list(db.scalars(select(AuditEvent.id)))
+        if startup:
+            monkeypatch.setattr(main, "sync_host_physical_interfaces", lambda session: None)
+            main.refresh_startup_host_inventory(db, environment="appliance")
+        elif proxy_enabled and collides:
+            with pytest.raises(ValueError, match="Service listener conflicts"):
+                ui.refresh_interface_service_dns_aliases(db)
+        else:
+            ui.refresh_interface_service_dns_aliases(db)
+        db.commit()
+        db.expire_all()
+        assert (second.host_ipv6_cidr if ipv6 else second.host_ip_cidr) == candidate + ("/64" if ipv6 else "/24")
+        if proxy_enabled and collides:
+            assert service.listen_address == binding
+            assert [(row.id, row.hostname, row.address) for row in db.scalars(select(DnsRecord).order_by(DnsRecord.id))] == records
+            assert [(row.key, row.value) for row in db.scalars(select(Setting).order_by(Setting.key))] == settings
+            assert list(db.scalars(select(AuditEvent.id))) == audits
+        else:
+            assert candidate in service.listen_address.splitlines()
+            validate_service_listener_sockets(db)
+    finally:
+        db.close()
+        engine.dispose()

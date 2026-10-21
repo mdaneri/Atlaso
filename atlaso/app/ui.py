@@ -7112,7 +7112,7 @@ def refresh_interface_service_dns_aliases(db: Session, actor: str | None = None)
         actor: Optional audit actor. Atomic interface mutations pass ``None`` so nested audit commits
             cannot split the transaction.
     """
-    from atlaso.app.services.reverse_proxies import validate_service_proxy_dependencies
+    from atlaso.app.services.reverse_proxies import validate_service_listener_sockets
 
     acquire_network_objects_write_lock(db)
     # Rejection restores cached listeners and legacy DNS ownership even if the
@@ -7143,7 +7143,7 @@ def refresh_interface_service_dns_aliases(db: Session, actor: str | None = None)
             set_setting_value(db, ESXI_PXE_LISTEN_ADDRESS_KEY, addresses)
             esxi_boot["listen_address"] = addresses
         db.flush()
-        validate_service_proxy_dependencies(db)
+        validate_service_listener_sockets(db)
 
     changed: list[str] = []
 
