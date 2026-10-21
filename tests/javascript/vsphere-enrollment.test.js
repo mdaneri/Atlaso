@@ -405,6 +405,31 @@ test("Vault enrollment locks the saved URI host, skips Login, and never posts ma
   assert.equal(form.elements.password.value, "");
 });
 
+test("an endpoint rejection retains Target inputs and permits a fresh inspection retry", async () => {
+  let attempts = 0;
+  const detail = "The vCenter KMIP cluster does not point only to this Atlaso endpoint. Expected configured Atlaso endpoint: kms.example.test, port 5696. Compare every member, then retry.";
+  const runtime = makeRuntime(async (url) => {
+    assert.ok(url.endsWith("/inspect"));
+    if (++attempts === 1) throw new Error(detail);
+    return { client_fingerprint: "11:22", subject: "vCenter", expires_at: "2030-01-01", cluster_id: "Default" };
+  });
+  const { form, options, wizard, errors, shown } = runtime;
+  const values = {
+    hostname: "vcsa.example.test", username: "admin", password: "request-only-password",
+    confirmed_https_fingerprint: "AA:BB:CC", provider_id: "provider-1", name: "Lab vCenter", cluster_id: "Default",
+  };
+  Object.entries(values).forEach(([name, value]) => { form.elements[name].value = value; });
+  assert.equal(await options.onNext({ controller: wizard, step: { id: "target" } }), false);
+  assert.equal(errors.at(-1), detail);
+  assert.equal(shown.length, 0);
+  assert.equal(form.elements.expected_client_fingerprint.value, "");
+  Object.entries(values).forEach(([name, value]) => assert.equal(form.elements[name].value, value));
+  assert.equal(await options.onNext({ controller: wizard, step: { id: "target" } }), "review");
+  assert.equal(attempts, 2);
+  assert.equal(errors.at(-1), "");
+  assert.equal(form.elements.expected_client_fingerprint.value, "11:22");
+});
+
 test("a stale TLS probe response cannot confirm a server whose address changed while it was pending", async () => {
   let resolveProbe;
   const runtime = makeRuntime(() => new Promise((resolve) => { resolveProbe = resolve; }));
