@@ -68,6 +68,8 @@ Conflicting API and UI saves return 409 without changing the share, DNS records 
 Disable HTTPS proxies before disabling their CA. Conflicting service or CA changes are rejected without saving them.
 
 Interface edits also reject changes that remove an enabled proxy's exact interface and address binding.
+Managed proxy DNS records retain that selected interface as their applied source, even when another interface shares
+the address. The proxy record does not force DNS selection when only an unselected interface is edited.
 VLAN create, edit and enable operations also recheck service and management socket scopes before saving, including
 Management UI exposure introduced on a duplicate address. Rejected changes preserve the prior VLAN and proxy state.
 Physical-interface and VLAN writers also reject assigning an enabled proxy's literal upstream address to the appliance,

@@ -15,6 +15,7 @@ from atlaso.app.models import (
     NtpSettings,
     OidcProviderSettings,
     PhysicalInterface,
+    ReverseProxy,
     Setting,
     VcfOfflineDepotSettings,
     VcfPrivateRegistrySettings,
@@ -237,6 +238,13 @@ def owned_service_dns_records(db: Session, config: str) -> list[dict[str, str]]:
 
     descriptions.update(str(row.description) for row in db.scalars(select(DnsRecord))
                         if (row.description or "").startswith(DNS_OWNER_PREFIX))
+    proxy_sources: dict[tuple[str, str, str], set[str]] = {}
+    for proxy in db.scalars(select(ReverseProxy).where(
+        ReverseProxy.enabled.is_(True), ReverseProxy.managed_dns.is_(True),
+    )):
+        for listener in proxy.listeners:
+            key = (DNS_OWNER_PREFIX + str(proxy.id), proxy.hostname, listener["address"])
+            proxy_sources.setdefault(key, set()).add(listener["interface"])
     directives = {line.removeprefix("# atlaso-authoritative-config: ") for line in config.splitlines()}
     service_interfaces = {}
     for model, description in (
@@ -280,6 +288,10 @@ def owned_service_dns_records(db: Session, config: str) -> list[dict[str, str]]:
             continue
         generated_ptr = row.record_type in {"A", "AAAA"} and ip_address(row.address).reverse_pointer not in explicit_ptrs
         source = service_interfaces.get(row.description or "", address_sources.get(row.address, ""))
+        if (row.description or "").startswith(DNS_OWNER_PREFIX):
+            # Equal addresses on other NICs do not establish proxy ownership.
+            matches = proxy_sources.get((row.description or "", row.hostname, row.address), set())
+            source = next(iter(matches)) if len(matches) == 1 else ""
         if row.description == APPLIANCE_DNS_RECORD_DESCRIPTION:
             matches = management_sources.get(row.address, set())
             source = next(iter(matches)) if len(matches) == 1 else ""

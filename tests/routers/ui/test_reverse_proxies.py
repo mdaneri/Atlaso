@@ -9,6 +9,65 @@ from atlaso.app.security import roles_to_json
 from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 
 
+@pytest.mark.parametrize("family", [4, 6])
+@pytest.mark.parametrize("selected", ["eth1", "eth2"])
+def test_proxy_dns_provenance_ignores_unselected_duplicate_address(client, family, selected):
+    """Keep Network-only edits independent of another NIC's proxy DNS ownership.
+
+    Args:
+        client: Fixture initializing the isolated appliance database.
+        family: Address family shared by the two access interfaces.
+        selected: Exact saved proxy listener, independent of inventory ordering.
+    """
+    from atlaso.app import ui
+    from atlaso.app.models import DnsSettings, PhysicalInterface
+    from atlaso.app.services.reverse_proxies import save_proxy
+    from atlaso.app.services.reverse_proxy_publication import DNS_OWNER_PREFIX
+    from tests.routers.api_v1.test_reverse_proxies import _payload
+
+    address = "192.0.2.10" if family == 4 else "2001:db8::10"
+    with SessionLocal() as db:
+        for name in ("eth1", "eth2"):
+            interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == name))
+            if interface is None:
+                interface = PhysicalInterface(name=name)
+                db.add(interface)
+            interface.role = interface.mode = "access"
+            interface.admin_state = interface.oper_state = "up"
+            interface.ipv4_method = "static"
+            interface.ip_cidr = "192.0.2.10/24"
+            interface.ipv6_enabled = True
+            interface.ipv6_cidr = "2001:db8::10/64"
+            interface.check_duplicate_ip_addresses = False
+        dns = db.scalar(select(DnsSettings))
+        dns.enabled = dns.authoritative = True
+        dns.domain = "example.test"
+        dns.disabled_domains = ""
+        db.commit()
+        proxy = save_proxy(db, _payload(enabled=True, managed_dns=True, scheme="http", port=9443,
+            redirect_http=False, listeners=[{"interface": selected, "address": address}]), actor="test")
+        previous_units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, previous_units, {unit["id"] for unit in previous_units})
+        baseline = ui.load_appliance_apply_baselines(db)["dnsmasq"]
+        records = [row for row in baseline["service_dns_records"]
+                   if row["description"] == DNS_OWNER_PREFIX + str(proxy.id)]
+        assert len(records) == 1
+        assert records[0]["source_interface"] == selected
+        other = db.scalar(select(PhysicalInterface).where(
+            PhysicalInterface.name == ("eth2" if selected == "eth1" else "eth1")))
+        if family == 4:
+            other.ip_cidr = "192.0.2.20/24"
+        else:
+            other.ipv6_cidr = "2001:db8::20/64"
+        db.flush()
+        units = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        assert units["network"]["changed"]
+        generated = ui.network_generated_dns_unit(db, units)
+        assert generated is None or not any(
+            "binding changed independently" in error for error in generated["validation_errors"])
+        assert ui.load_appliance_apply_baselines(db)["dnsmasq"] == baseline
+
+
 def test_service_ui_enable_rejects_existing_proxy_socket(client):
     """Reject the reverse-order KMIP collision without persisting service edits.
 
