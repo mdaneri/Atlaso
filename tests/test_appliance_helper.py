@@ -13,6 +13,7 @@ import re
 import stat
 import subprocess
 import tarfile
+from contextlib import nullcontext
 from ipaddress import ip_network
 from pathlib import Path
 from types import SimpleNamespace
@@ -1062,6 +1063,9 @@ def test_restart_completion_task_identity_is_not_path_normalized(monkeypatch):
     """
     helper = load_helper_module()
     calls = []
+    # Dispatch preserves the task identity independently of privileged admission;
+    # native locking regressions exercise the deployment guard separately.
+    monkeypatch.setattr(helper, "_appliance_update_deployment_guard", lambda _action: nullcontext())
     monkeypatch.setattr(
         helper,
         "_complete_atlaso_service_restart",
