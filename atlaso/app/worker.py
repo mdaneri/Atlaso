@@ -21,7 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from atlaso import __version__
-from atlaso.app.adapters.system import SystemAdapter
+from atlaso.app.adapters.system import ApplianceUpdateDeploymentBusy, SystemAdapter
 from atlaso.app.config import get_settings
 from atlaso.app.database import (
     SessionLocal,
@@ -1049,7 +1049,11 @@ def _quiesce_appliance_update_action(job_id: str, stream: str) -> bool:
         job_id: Exact Appliance Update parent identifier.
         stream: Interrupted child stream whose helper must be quiescent.
     """
-    result = SystemAdapter().quiesce_appliance_update_action(job_id, stream)
+    try:
+        result = SystemAdapter().quiesce_appliance_update_action(job_id, stream)
+    except ApplianceUpdateDeploymentBusy:
+        # A refused quiescence request proves nothing about the prior owner.
+        return False
     if result.returncode == 0:
         return True
     LOGGER.error(
@@ -1531,7 +1535,64 @@ def _cancel_update_check_if_requested(job_id: str) -> bool:
         return stopped
 
 
-def _run_appliance_update(job_id: str) -> None:
+def _run_appliance_update(job_id: str) -> bool:
+    """Retry unadmitted deployment conflicts without failing the durable update.
+
+    Args:
+        job_id: Exact durable parent whose helper admission may be deferred.
+
+    Returns:
+        Whether the ordinary worker polling interval should precede admission retry.
+    """
+    try:
+        _run_appliance_update_admitted(job_id)
+        return False
+    except ApplianceUpdateDeploymentBusy:
+        with SessionLocal() as db:
+            job = db.get(Job, job_id)
+            if (job is None or job.status != JobStatus.RUNNING.value or
+                    job.cancel_outcome == "cleanup-required"):
+                return False
+            try:
+                previous_result = json.loads(job.result or "{}")
+            except json.JSONDecodeError:
+                previous_result = {}
+            if not isinstance(previous_result, dict):
+                previous_result = {}
+            if previous_result.get("ownership_unresolved") is True:
+                return False
+            completed_apply = False
+            for step in job.steps:
+                try:
+                    step_result = json.loads(step.result or "{}")
+                except json.JSONDecodeError:
+                    step_result = {}
+                if isinstance(step_result, dict):
+                    if step_result.get("ownership_unresolved") is True:
+                        return False
+                    if step.status in {JobStatus.SUCCEEDED.value, JobStatus.FAILED.value, JobStatus.SKIPPED.value}:
+                        completed_apply = completed_apply or step_result.get("apply_started") is True
+            for step in job.steps:
+                if step.status == JobStatus.RUNNING.value:
+                    step.status = JobStatus.PENDING.value
+                    step.started_at = None
+                    step.finished_at = None
+                    step.progress_percent = 0
+                    step.error = None
+                    step.result = json.dumps({"state": "waiting-deployment", "apply_started": False})
+            # Terminal child results remain untouched and are reused on retry.
+            job.status = JobStatus.PENDING.value
+            job.started_at = None
+            job.finished_at = None
+            job.error = None
+            job.result = json.dumps({**previous_result, "status": JobStatus.PENDING.value,
+                                     "state": "waiting-deployment", "retryable": True,
+                                     "apply_started": completed_apply})
+            db.commit()
+            return True
+
+
+def _run_appliance_update_admitted(job_id: str) -> None:
     """Run appliance update.
 
     Args:
@@ -1641,6 +1702,8 @@ def _run_appliance_update(job_id: str) -> None:
                 job_id=job_id,
                 credentials=credentials,
             )
+        except ApplianceUpdateDeploymentBusy:
+            raise
         except Exception as exc:  # noqa: BLE001 - workers must persist a terminal job state.
             LOGGER.exception("Appliance update source synchronization %s failed before helper completion", job_id)
             update_result = appliance_update_exception_result(
@@ -1748,6 +1811,8 @@ def _run_appliance_update(job_id: str) -> None:
                             credentials=credentials,
                             before_apply=partial(_mark_appliance_update_apply_started, job_id, stream),
                         )
+                    except ApplianceUpdateDeploymentBusy:
+                        raise
                     except Exception as exc:  # noqa: BLE001 - each child step must reach a terminal state.
                         LOGGER.exception("Appliance update stream %s for job %s failed before helper completion", stream, job_id)
                         stream_result = appliance_update_exception_result(
@@ -2139,7 +2204,11 @@ def run_worker_once() -> str | None:
             diagnostics.expire(cleanup_db)
     except (OSError, diagnostics.EvidenceError):
         LOGGER.warning("Diagnostic expiry cleanup needs storage attention; retained artifacts remain protected.")
-    if not _reconcile_appliance_update_status_surface():
+    try:
+        if not _reconcile_appliance_update_status_surface():
+            return None
+    except ApplianceUpdateDeploymentBusy:
+        # Terminal status restoration retries without changing its task result.
         return None
     with SessionLocal() as db:
         task_cancellation.reconcile_requests(db)
@@ -2165,7 +2234,10 @@ def run_worker_once() -> str | None:
         elif job_type == "diagnostic-bundle":
             diagnostics.run(job_id)
         elif job_type == "appliance-update":
-            _run_appliance_update(job_id)
+            if _run_appliance_update(job_id):
+                # Admission made no mutation; use the normal idle poll interval
+                # instead of immediately reclaiming the same deferred task.
+                return None
         elif job_type == "vcf-depot-download":
             from atlaso.app.ui import run_vcf_depot_download_job
 
