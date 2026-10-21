@@ -1928,6 +1928,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Enroll from vCenter">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#resolve-a-target-endpoint-mismatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Resolve a Target endpoint mismatch
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3957,6 +3974,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Enroll from vCenter">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#resolve-a-target-endpoint-mismatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Resolve a Target endpoint mismatch
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4246,6 +4280,28 @@ by stable vault and entry IDs; its password is never placed in the page. Changin
 clears certificate confirmation and requires another probe before authentication. Discovery requires the selected
 vCenter cluster to point only to the configured Atlaso hostname and
 port. Client authorization remains an exact fingerprint-to-provider-UUID mapping.</p>
+<h3 id="resolve-a-target-endpoint-mismatch">Resolve a Target endpoint mismatch<a class="headerlink" href="#resolve-a-target-endpoint-mismatch" title="Permanent link">&para;</a></h3>
+<p>If <strong>Target</strong> reports <strong>The vCenter KMIP cluster does not point only to this Atlaso endpoint</strong>, discovery stops before
+retrieving the client certificate. The message names the expected <strong>configured</strong> Atlaso hostname and port and gives
+repair guidance. It is identical for all endpoint-check failures, including missing, empty, malformed, or mixed
+server inventory. It never echoes remote addresses, ports, names, counts, positions, or field-comparison patterns.
+Inspect the complete cluster directly in vCenter to find the differing configuration.</p>
+<ol>
+<li>Compare the expected endpoint with the hostname and port in the Atlaso listener settings rail. These are saved
+   desired-state values; the message does not prove that the listener is applied, reachable, or trusted. If settings
+   changed, review and complete global <strong>Appliance Apply</strong> before checking vCenter connectivity.</li>
+<li>In vCenter, inspect <strong>every</strong> KMS member of the selected standard provider/cluster, including additional members
+   outside the visible row. Each address must use the configured Atlaso hostname and each port must match. Case and a
+   trailing DNS dot are ignored; IP addresses and other DNS aliases are not accepted in place of that hostname, even
+   if they resolve to the same address. Atlaso does not use DNS resolution as proof of endpoint ownership.</li>
+<li>Select the intended cluster or correct its configuration through your site's approved procedure. Preserve active
+   providers, keys, certificates, and workloads; do not delete a member, replace a provider, or reset trust merely to
+   clear this message. If the provider is in use or ownership is uncertain, stop and consult its administrator.</li>
+<li>Retry <strong>Next</strong> from <strong>Target</strong>. A recoverable rejection retains the wizard inputs. Atlaso re-reads the cluster and
+   checks every member again. Passing this check permits certificate inspection only; certificate approval and global
+   <strong>Appliance Apply</strong> are still required. A vCenter certificate or connection warning is a separate trust/health
+   condition and does not establish whether this endpoint check should pass.</li>
+</ol>
 <p>Certificate fingerprints are normalized SHA-256 values and are unique appliance-wide. The same fingerprint cannot be
 assigned to another trusted vCenter or provider. Atlaso stores canonical public PEM and parsed public metadata only; it
 does not generate, accept, export, or reveal a vCenter client private key.</p>
