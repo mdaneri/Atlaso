@@ -213,6 +213,24 @@ def _empty_target(directory: Path, secrets_key: str) -> None:
         store.close()
 
 
+def _discard_unjournaled_candidate(name: str, candidate_fd: int, anchor_fd: int) -> None:
+    """Remove only the pinned, unpublished flat candidate and flush its parent."""
+    identity = os.fstat(candidate_fd)
+    entry = os.stat(name, dir_fd=anchor_fd, follow_symlinks=False)
+    if (entry.st_dev, entry.st_ino) != (identity.st_dev, identity.st_ino):
+        raise RecoveryError("Recovery candidate identity changed; preserve it for reconciliation.")
+    for filename in os.listdir(candidate_fd):
+        # unlink never follows a substituted symlink. Unexpected directories fail
+        # closed rather than granting recursive deletion beyond candidate files.
+        os.unlink(filename, dir_fd=candidate_fd)
+    os.fsync(candidate_fd)
+    entry = os.stat(name, dir_fd=anchor_fd, follow_symlinks=False)
+    if (entry.st_dev, entry.st_ino) != (identity.st_dev, identity.st_ino):
+        raise RecoveryError("Recovery candidate identity changed; preserve it for reconciliation.")
+    os.rmdir(name, dir_fd=anchor_fd)
+    os.fsync(anchor_fd)
+
+
 def import_archive(archive: bytes, passphrase: str, secrets_key: str, *, uid: int, gid: int) -> dict[str, Any]:
     """Validate, journal, and publish an offline candidate, retaining old state.
 
@@ -245,12 +263,23 @@ def import_archive(archive: bytes, passphrase: str, secrets_key: str, *, uid: in
         else:
             candidate, old = "candidate-" + uuid.uuid4().hex, "previous-" + uuid.uuid4().hex
             os.mkdir(candidate, 0o700, dir_fd=anchor_fd)
-            build_candidate(snapshot, ANCHOR / candidate, secrets_key=secrets_key)
-            info = (ANCHOR / candidate).stat()
-            identity = (info.st_dev, info.st_ino)
-            journal = {"schema": 1, "archive": digest, "candidate": candidate, "old": old,
-                       "identity": identity, "trust": snapshot["trust"]}
-            _journal(ANCHOR, journal)
+            preparing_fd = os.open(candidate, os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW, dir_fd=anchor_fd)
+            try:
+                info = os.fstat(preparing_fd)
+                identity = (info.st_dev, info.st_ino)
+                try:
+                    build_candidate(snapshot, ANCHOR / candidate, secrets_key=secrets_key)
+                    journal = {"schema": 1, "archive": digest, "candidate": candidate, "old": old,
+                               "identity": identity, "trust": snapshot["trust"]}
+                    _journal(ANCHOR, journal)
+                except BaseException:
+                    # A journal published before a failed fsync still owns the
+                    # candidate for retry. Without it, remove this exact candidate.
+                    if not os.path.lexists(journal_path):
+                        _discard_unjournaled_candidate(candidate, preparing_fd, anchor_fd)
+                    raise
+            finally:
+                os.close(preparing_fd)
         # If publication completed before the previous process stopped, returning
         # the same trust graph is idempotent; the pending marker still blocks I/O.
         try:

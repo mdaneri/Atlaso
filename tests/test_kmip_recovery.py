@@ -177,3 +177,69 @@ def test_recovery_admission_contention_never_reaches_helper(monkeypatch, operati
             service.export_archive(None, PASSPHRASE)
         else:
             service.import_archive(None, b"synthetic", PASSPHRASE)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Native recovery directory-fd contract")
+@pytest.mark.parametrize("failure", ["duplicate-key", "journal-before-publish", "journal-after-publish"])
+def test_failed_preparation_cleans_only_unjournaled_candidate(tmp_path, monkeypatch, failure):
+    """Repeated rejected imports cannot accumulate partial key-bearing stores."""
+    from atlaso.app.kmip import recovery_runtime as runtime
+
+    snapshot, _, _ = snapshot_fixture(tmp_path)
+    if failure == "duplicate-key":
+        snapshot["keys"].append(snapshot["keys"][0])
+    archive = encrypt(snapshot, PASSPHRASE)
+    anchor = tmp_path / "anchor"
+    anchor.mkdir(mode=0o700)
+    state = tmp_path / "state"
+    state.mkdir()
+    sentinel = anchor / "previous-preserved"
+    sentinel.mkdir()
+    (sentinel / "preserved").write_bytes(b"unchanged")
+    monkeypatch.setattr(runtime, "ANCHOR", anchor)
+    monkeypatch.setattr(runtime, "STATE", state)
+    # Production root ownership is exercised separately on the Photon appliance.
+    monkeypatch.setattr(runtime, "_secure_anchor", lambda path: os.open(path, os.O_RDONLY | runtime.O_DIRECTORY))
+    original_journal = runtime._journal
+
+    def fail_journal(path, document):
+        if failure == "journal-after-publish":
+            original_journal(path, document)
+        raise OSError("synthetic journal failure")
+
+    if failure != "duplicate-key":
+        monkeypatch.setattr(runtime, "_journal", fail_journal)
+    for _ in range(3 if failure != "journal-after-publish" else 1):
+        with pytest.raises((RecoveryError, OSError)):
+            runtime.import_archive(archive, PASSPHRASE, "synthetic-target", uid=os.getuid(), gid=os.getgid())
+        assert not list(state.iterdir())
+        assert (sentinel / "preserved").read_bytes() == b"unchanged"
+        candidates = list(anchor.glob("candidate-*"))
+        if failure == "journal-after-publish":
+            assert len(candidates) == 1
+            assert json.loads((anchor / "pending.json").read_bytes())["candidate"] == candidates[0].name
+        else:
+            assert not candidates
+            assert not (anchor / "pending.json").exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Native recovery directory-fd contract")
+def test_unjournaled_cleanup_refuses_replaced_candidate(tmp_path):
+    """An identity mismatch must preserve the replacement and original stores."""
+    from atlaso.app.kmip import recovery_runtime as runtime
+
+    anchor_fd = os.open(tmp_path, os.O_RDONLY | runtime.O_DIRECTORY)
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    candidate_fd = os.open(candidate, os.O_RDONLY | runtime.O_DIRECTORY)
+    try:
+        candidate.rename(tmp_path / "original")
+        candidate.mkdir()
+        (candidate / "preserved").write_bytes(b"unchanged")
+        with pytest.raises(RecoveryError, match="identity changed"):
+            runtime._discard_unjournaled_candidate("candidate", candidate_fd, anchor_fd)
+        assert (candidate / "preserved").read_bytes() == b"unchanged"
+        assert (tmp_path / "original").is_dir()
+    finally:
+        os.close(candidate_fd)
+        os.close(anchor_fd)

@@ -77,6 +77,8 @@ application secret.
 The root-owned `/var/lib/atlaso-kmip-recovery` anchor retains a durable pending journal, private candidate, and the
 previous empty directory. Active publication uses an atomic rename that refuses to replace a concurrent entry.
 A late write causes rejection and restoration of the prior directory; it never overwrites the late key.
+A validation failure before the pending journal is published removes only the newly prepared candidate.
+A published journal retains its candidate for retry, including when the journal flush reports an error.
 
 Retry an interrupted import with the **same bundle and passphrase**. If operational publication completed but the
 application database transaction did not, that retry persists the public trust while retaining offline key custody.
