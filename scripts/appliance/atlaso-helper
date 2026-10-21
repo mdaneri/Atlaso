@@ -100,7 +100,7 @@ COMMANDS: dict[str, set[str]] = {
     "firewall": {"validate", "apply", "replay"},
     "dnsmasq": {"validate", "apply", "reload", "leases", "logs", "verify-pool"},
     "ca": {"validate", "apply"},
-    "kms": {"validate", "apply", "status"},
+    "kms": {"validate", "apply", "status", "recovery-export", "recovery-import"},
     "ldap": {"validate", "apply", "status", "export", "logs", "authenticate"},
     "ntpd": {"validate", "apply", "status", "logs", "capabilities", "reconcile", "guard"},
     "nginx": {"logs", "access-logs", "error-logs"},
@@ -211,6 +211,8 @@ NO_PATH_ACTIONS = {
     ("ldap", "status"),
     ("ldap", "logs"),
     ("kms", "status"),
+    ("kms", "recovery-export"),
+    ("kms", "recovery-import"),
     ("nginx", "logs"),
     ("nginx", "access-logs"),
     ("nginx", "error-logs"),
@@ -6573,7 +6575,163 @@ def _install_kms_service(config_path: Path) -> None:
     os.chmod(KMS_SERVICE_PATH, 0o644)
 
 
+
+def _kms_legacy_check(*, stopped: bool = False) -> None:
+    """Require read-only legacy emptiness, optionally with proven writer quiescence."""
+    if stopped:
+        active, _enabled = _kms_service_snapshot("atlaso-kms.service")
+        if active:
+            raise ValueError("Stop the legacy KMS listener through its supported service procedure before release admission.")
+    result = _run([str(ATLASO_VENV_PYTHON_PATH), "-I", "-m", "atlaso.app.kmip.legacy"], timeout=30)
+    if result.returncode != 0:
+        raise ValueError("Legacy PyKMIP data or unavailable emptiness evidence blocks replacement; preserve the store.")
+
+
+def _kms_service_snapshot(unit: str) -> tuple[bool, bool]:
+    """Capture exact supported prior activation and enablement without guessing."""
+    probe = _run(["systemctl", "show", unit, "--property=LoadState,ActiveState,UnitFileState"], timeout=30)
+    properties = dict(line.split("=", 1) for line in probe.stdout.splitlines() if "=" in line)
+    if probe.returncode != 0:
+        raise ValueError("KMS prior service state is unavailable.")
+    if properties.get("LoadState") == "not-found":
+        return False, False
+    if (properties.get("LoadState") != "loaded"
+            or properties.get("ActiveState") not in {"active", "inactive", "failed"}
+            or properties.get("UnitFileState") not in {"enabled", "disabled"}):
+        raise ValueError("KMS prior service state is ambiguous.")
+    return properties["ActiveState"] == "active", properties["UnitFileState"] == "enabled"
+
+
+_KMS_RECOVERY_LOCK_FD: ContextVar[int | None] = ContextVar("kms_recovery_lock_fd", default=None)
+
+
+def _kms_recovery_child(request: dict) -> subprocess.CompletedProcess[str]:
+    """Run a fixed isolated entrypoint with sensitive input confined to stdin."""
+    lock_fd = _KMS_RECOVERY_LOCK_FD.get()
+    options = {"pass_fds": (lock_fd,)} if lock_fd is not None else {}
+    return subprocess.run(
+        [str(ATLASO_VENV_PYTHON_PATH), "-I", "-m", "atlaso.app.kmip.recovery_runtime"],
+        input=json.dumps(request), check=False, capture_output=True, text=True, timeout=120, **options,
+    )
+
+
+@contextmanager
+def _kms_operation_lock():
+    """Serialize recovery, status, and Apply on one persistent root-owned inode."""
+    if fcntl is None:
+        raise ValueError("KMS mutation locking is unavailable.")
+    fd = os.open("/run/lock/atlaso-kmip-operation.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1 or info.st_mode & 0o077:
+            raise ValueError("KMS lock ownership is unsafe.")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        token = _KMS_RECOVERY_LOCK_FD.set(fd)
+        try:
+            yield
+        finally:
+            _KMS_RECOVERY_LOCK_FD.reset(token)
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
 def _handle_kms(action: str, args: list[str]) -> int:
+    """Serialize all store-consuming helper actions, including offline recovery."""
+    try:
+        with _kms_operation_lock():
+            if action in {"recovery-export", "recovery-import"}:
+                return _handle_kms_recovery(action, args)
+            return _handle_kms_locked(action, args)
+    except (OSError, ValueError):
+        print("KMS operation refused; preserve state and retry after reconciliation.", file=sys.stderr)
+        return 2
+
+
+def _handle_kms_recovery(action: str, args: list[str]) -> int:
+    """Quiesce writers and restore prior service posture after any safe failure."""
+    if args:
+        return 2
+    states: dict[str, tuple[bool, bool]] = {}
+    completed_import = False
+    operation_failed = False
+    changed_services = False
+    result = None
+    try:
+        request = json.loads(sys.stdin.read(64 * 1024 * 1024 + 1))
+        expected = {"passphrase", "trust"} if action == "recovery-export" else {"passphrase", "archive"}
+        if not isinstance(request, dict) or set(request) != expected:
+            raise ValueError("Recovery request is invalid.")
+        _kms_legacy_check()
+        states = {unit: _kms_service_snapshot(unit) for unit in ("atlaso-kmip.service", "atlaso-kms.service")}
+        checkpoint = _kms_recovery_child({"action": "service-capture", "states": states, "operation": action,
+                                          "binding": hashlib.sha256(json.dumps(request.get("trust", request.get("archive")), sort_keys=True).encode()).hexdigest()})
+        if checkpoint.returncode != 0:
+            raise ValueError("KMS recovery service posture could not be recorded.")
+        saved_states = json.loads(checkpoint.stdout)["states"]
+        states = {unit: tuple(value) for unit, value in saved_states.items()}
+        changed_services = True
+        for unit in states:
+            command = ["systemctl", "disable", "--now", unit] if action == "recovery-import" else ["systemctl", "stop", unit]
+            stopped = _run(command, timeout=30)
+            if stopped.returncode not in {0, 5} or _kms_service_snapshot(unit)[0]:
+                raise ValueError("KMS writer quiescence could not be verified.")
+        _kms_legacy_check(stopped=True)
+        request["action"] = "export" if action == "recovery-export" else "import"
+        request["secrets_key"] = _kms_secrets_key()
+        if action == "recovery-import":
+            account, group = _ensure_kms_service_identity()
+            request.update(uid=account.pw_uid, gid=group.gr_gid)
+        result = _kms_recovery_child(request)
+        if result.returncode != 0:
+            raise ValueError("KMS recovery validation or publication failed.")
+        if action == "recovery-import":
+            for unit in states:
+                disabled = _run(["systemctl", "disable", unit], timeout=30)
+                if disabled.returncode not in {0, 1, 5} or _kms_service_snapshot(unit) != (False, False):
+                    raise ValueError("KMS recovery service enablement could not be secured.")
+            completed_import = True
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
+        operation_failed = True
+    finally:
+        if changed_services and not completed_import:
+            for unit, (was_active, was_enabled) in states.items():
+                # A durable pending marker forbids serving an unreviewed import.
+                pending = Path("/var/lib/atlaso-kmip-recovery/pending.json").exists()
+                desired_active = was_active and not (pending and unit == "atlaso-kmip.service")
+                for command in (["systemctl", "enable" if was_enabled else "disable", unit],
+                                ["systemctl", "restart" if desired_active else "stop", unit]):
+                    try:
+                        restored = _run(command, timeout=30)
+                        if restored.returncode not in {0, 5}:
+                            operation_failed = True
+                    except (OSError, subprocess.TimeoutExpired):
+                        operation_failed = True
+                try:
+                    # A successful restart command is not sustained service health.
+                    for sample in range(6 if desired_active else 1):
+                        if _kms_service_snapshot(unit) != (desired_active, was_enabled):
+                            operation_failed = True
+                            break
+                        if desired_active and sample < 5:
+                            time.sleep(1)
+                except (OSError, ValueError, subprocess.TimeoutExpired):
+                    operation_failed = True
+    if not completed_import and not operation_failed and states:
+        try:
+            finished = _kms_recovery_child({"action": "service-finish"})
+            if finished.returncode != 0:
+                operation_failed = True
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            operation_failed = True
+    if operation_failed or result is None:
+        print("KMS recovery failed; preserve retained state and reconcile pending recovery before retry.", file=sys.stderr)
+        return 2
+    print(result.stdout, end="")
+    return 0
+
+
+def _handle_kms_locked(action: str, args: list[str]) -> int:
     """Handle KMS.
 
     Args:
@@ -6666,6 +6824,8 @@ def _handle_kms(action: str, args: list[str]) -> int:
     if action == "apply" and rollback_dir.exists():
         print("KMS recovery snapshot exists; reconcile it before another apply.", file=sys.stderr)
         return 2
+    if action == "apply":
+        _kms_legacy_check()
     try:
         enabled = _kms_config_enabled(config_path)
         if action == "apply" and enabled:
@@ -6713,6 +6873,9 @@ def _handle_kms(action: str, args: list[str]) -> int:
     KMS_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     if not enabled:
+        if _kms_service_snapshot("atlaso-kms.service")[0]:
+            raise ValueError("Stop the legacy KMS listener before disabling its replacement.")
+        _kms_legacy_check(stopped=True)
         KMS_CREDENTIAL_PATH.unlink(missing_ok=True)
         for service in ("atlaso-kmip.service", "atlaso-kms.service"):
             disable = _run(["systemctl", "disable", "--now", service])
@@ -6795,6 +6958,10 @@ def _handle_kms(action: str, args: list[str]) -> int:
         retire_legacy = _run(["systemctl", "disable", "--now", "atlaso-kms.service"], timeout=30)
         if retire_legacy.returncode not in {0, 1}:
             raise RuntimeError("KMS legacy service retirement failed.")
+        _kms_legacy_check(stopped=True)
+        approval = _kms_recovery_child({"action": "authorize"})
+        if approval.returncode != 0:
+            raise RuntimeError("KMS pending trust review did not authorize this Apply.")
         for command in (["systemctl", "daemon-reload"],
                         [str(ATLASO_VENV_PYTHON_PATH), "-I", "-m",
                          "atlaso.app.services.external_history_lifecycle", "kms-cutover"],
@@ -6811,6 +6978,9 @@ def _handle_kms(action: str, args: list[str]) -> int:
                 raise RuntimeError("KMS listener did not remain active after cutover.")
             if sample < 5:
                 time.sleep(1)
+        completion = _kms_recovery_child({"action": "complete"})
+        if completion.returncode != 0:
+            raise RuntimeError("KMS recovery completion was not durable.")
         # A failed retirement of recovery files must restore the prior runtime
         # before reporting failure and leaving its applied baseline unchanged.
         shutil.rmtree(rollback_dir)
@@ -25695,6 +25865,9 @@ def _apply_atlaso_release(
         commands.extend(install_commands)
         if not all(command["success"] for command in install_commands):
             raise ValueError("Offline Atlaso release environment validation failed")
+        legacy_proof = _run([str(extracted / ".venv/bin/python"), "-I", "-m", "atlaso.app.kmip.legacy"], timeout=30)
+        if legacy_proof.returncode != 0 or _kms_service_snapshot("atlaso-kms.service")[0]:
+            raise ValueError("Legacy KMS data or an active legacy writer blocks release admission.")
         bundle_path.unlink()
         content = staging / "content"
         if release_root.exists():
@@ -35202,6 +35375,8 @@ def main(argv: list[str]) -> int:
     if (group, action) == ("dnsmasq", "verify-pool") and real_apply:
         return _verify_dhcp_pool(normalized_args)
     if (group, action) == ("kms", "status"):
+        return _handle_kms(action, normalized_args)
+    if real_apply and group == "kms" and action in {"recovery-export", "recovery-import"}:
         return _handle_kms(action, normalized_args)
     if (group, action) == ("diagnostics", "source"):
         return _handle_diagnostic_source(normalized_args)

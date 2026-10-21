@@ -233,6 +233,9 @@ connection only when the peer's exact fingerprint maps to one provider UUID.
 
 ## API access
 
+For separate passphrase-encrypted operational backups, empty-target import, pending public-trust review, interruption
+handling, and unchanged legacy-store protection, follow [KMIP disaster recovery](../operate/kmip-recovery.md).
+
 Reads require `read:kms`; mutations require `write:kms`. The versioned resources are rooted at
 `/api/v1/vsphere-key-providers` and include listener settings, providers, trusted vCenters, certificates, readiness,
 health, lifecycle counts, and the public server chain. See the generated OpenAPI document at `/openapi.json` for request,

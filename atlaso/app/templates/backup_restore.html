@@ -15,6 +15,7 @@
 
   <div class="tool-tabs tab-buttons" role="tablist" aria-label="Maintenance" data-tab-storage-key="atlaso:maintenance:tab">
     <button id="maintenance-ldap-tab" class="tab-button active" type="button" role="tab" aria-selected="true" aria-controls="maintenance-ldap" data-tab-target="maintenance-ldap">LDAP</button>
+    <button id="maintenance-kmip-tab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="maintenance-kmip" data-tab-target="maintenance-kmip">KMIP recovery</button>
     <button id="maintenance-backup-tab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="maintenance-backup" data-tab-target="maintenance-backup">Backup</button>
     <button id="maintenance-reset-tab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="maintenance-reset" data-tab-target="maintenance-reset">Reset</button>
     <button id="maintenance-diagnostics-tab" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="maintenance-diagnostics" data-tab-target="maintenance-diagnostics">Diagnostics</button>
@@ -57,6 +58,27 @@
   </div>
 
 </div>
+    <div id="maintenance-kmip" class="tab-panel" role="tabpanel" aria-labelledby="maintenance-kmip-tab" hidden>
+      <div class="panel" id="kmip-disaster-recovery">
+        <div class="panel-head"><div><h2>KMIP disaster recovery</h2><p class="muted">A separate authenticated recovery bundle for wrapped keys, exact provider identities, encrypted KEK, and public trust.</p></div></div>
+        <div class="alert warning">Recovery briefly stops KMS writers. Import requires an empty target and leaves keys offline. Review and enable the restored public trust on vSphere Key Providers, then submit global Appliance Apply. Keep the original appliance and recovery passphrase safe.</div>
+        <div class="content-grid two-column">
+          <form class="form-stack" action="{{ management_ui_root }}/backup-restore/kmip/export" method="post">
+            <input type="hidden" name="csrf" value="{{ csrf_token }}">
+            <h3>Export recovery bundle</h3>
+            <label><span class="field-label"><span>Recovery passphrase</span><button class="help-icon" type="button" data-help="Encrypts the complete recovery bundle. Keep it separately in your secret manager. Atlaso does not retain it.">i</button></span><input type="password" name="passphrase" minlength="12" maxlength="1024" autocomplete="new-password" required></label>
+            <button class="button primary" type="submit" data-confirm-modal data-confirm-title="Pause KMS for recovery export?" data-confirm-message="Export briefly stops KMS writers and restores their prior service state before returning the encrypted bundle.">Download encrypted KMIP recovery</button>
+          </form>
+          <form class="form-stack" action="{{ management_ui_root }}/backup-restore/kmip/import" method="post" enctype="multipart/form-data">
+            <input type="hidden" name="csrf" value="{{ csrf_token }}">
+            <h3>Import onto an empty target</h3>
+            <label><span class="field-label"><span>KMIP recovery bundle</span><button class="help-icon" type="button" data-help="Select a passphrase-encrypted .atkmip file, at most 32 MiB. Existing operational keys or unrelated provider records block import.">i</button></span><input type="file" name="archive" accept=".atkmip,application/octet-stream" required></label>
+            <label><span class="field-label"><span>Recovery passphrase</span><button class="help-icon" type="button" data-help="Authenticates the entire bundle before publication. Wrong passwords, corrupted data, incompatible schemas and incomplete key or trust records are rejected.">i</button></span><input type="password" name="passphrase" minlength="12" maxlength="1024" autocomplete="current-password" required></label>
+            <button class="button secondary" type="submit" data-confirm-modal data-confirm-title="Import KMIP recovery?" data-confirm-message="Import stops KMS writers and publishes recovered keys only onto an empty target. Keys remain offline until you review restored trust and complete global Appliance Apply.">Import KMIP recovery offline</button>
+          </form>
+        </div>
+      </div>
+    </div>
     <div id="maintenance-backup" class="tab-panel" role="tabpanel" aria-labelledby="maintenance-backup-tab" hidden>  <div class="content-grid two-column">
     <div class="panel">
       <div class="panel-head">

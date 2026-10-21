@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.440"
+version = "0.9.441"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -91,6 +91,10 @@ show_error_codes = true
 warn_unused_configs = true
 follow_imports = "silent"
 files = [
+  "atlaso/app/kmip/recovery.py",
+  "atlaso/app/kmip/recovery_runtime.py",
+  "atlaso/app/kmip/legacy.py",
+  "atlaso/app/services/kmip_recovery.py",
   "atlaso/app/services/appliance_apply_admission.py",
   "atlaso/important_events.py",
   "atlaso/app/services/important_task_events.py",
