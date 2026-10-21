@@ -9,7 +9,8 @@ const cacheVersion = Number(workerSource.match(/ATLASO_CACHE_PREFIX}(\d+)`;/)?.[
 assert.ok(cachePrefix, "service worker must declare an Atlaso cache prefix");
 assert.ok(Number.isInteger(cacheVersion), "service worker must declare a numeric cache version");
 const currentCache = `${cachePrefix}${cacheVersion}`;
-const previousCache = `${cachePrefix}${cacheVersion - 1}`;
+// Generation 380 is the installed baseline before the enrollment inventory asset change.
+const previousCache = `${cachePrefix}380`;
 const unrelatedCache = "operator-unrelated-cache";
 const requiredFailureAsset = "/manifest.webmanifest";
 

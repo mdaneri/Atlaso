@@ -6123,6 +6123,12 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null, onSave
   const tlsConfirm = form.querySelector("[data-vsphere-tls-confirm]");
   const tlsFingerprint = form.querySelector("[data-vsphere-tls-fingerprint]");
   const clientSummary = form.querySelector("[data-vsphere-enrollment-client]");
+  const clusterOptions = form.querySelector("[data-vsphere-cluster-options]");
+  const inventoryStatus = form.querySelector("[data-vsphere-inventory-status]");
+  const inventoryRetry = form.querySelector("[data-vsphere-inventory-retry]");
+  let inventorySequence = 0;
+  let discoveredClusterIds = [];
+  let autoName = "";
   let observedHttpsFingerprint = "";
   let contextRevision = 0;
   let wizard = null;
@@ -6140,6 +6146,16 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null, onSave
     form.elements.expected_client_fingerprint.value = "";
     if (clientSummary) clientSummary.textContent = "Client certificate has not been inspected.";
   };
+  const clearInventory = () => {
+    inventorySequence += 1;
+    if (discoveredClusterIds.includes(form.elements.cluster_id.value)) form.elements.cluster_id.value = "";
+    if (!refreshing && autoName && form.elements.name.value === autoName) form.elements.name.value = "";
+    autoName = "";
+    discoveredClusterIds = [];
+    clusterOptions?.replaceChildren();
+    if (inventoryStatus) inventoryStatus.textContent = "Connect to vCenter to discover its About product name and KMIP clusters.";
+    if (inventoryRetry) inventoryRetry.disabled = false;
+  };
   const clearServerTrust = () => {
     observedHttpsFingerprint = "";
     form.elements.confirmed_https_fingerprint.value = "";
@@ -6147,6 +6163,7 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null, onSave
     tlsConfirmation?.classList.add("hidden");
     if (tlsFingerprint) tlsFingerprint.textContent = "Not inspected yet";
     clearClient();
+    clearInventory();
   };
   const invalidateContext = () => {
     contextRevision += 1;
@@ -6267,6 +6284,48 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null, onSave
     managementUiPath(`/vsphere-key-providers/enrollment/${operation}`),
     buildRequestForm(operation),
   );
+  const runInventory = async (controller) => {
+    const sequence = ++inventorySequence;
+    if (inventoryRetry) inventoryRetry.disabled = true;
+    if (inventoryStatus) inventoryStatus.textContent = "Loading vCenter About information and KMIP clusters…";
+    clusterOptions?.replaceChildren();
+    controller.setError("");
+    try {
+      const result = await request("inventory");
+      if (sequence !== inventorySequence) return false;
+      if (typeof result.name !== "string" || !result.name.trim() || !Array.isArray(result.cluster_ids)
+          || result.cluster_ids.some((id) => typeof id !== "string" || !id)) {
+        throw new Error("vCenter returned invalid name or cluster inventory. Retry discovery or configure manually.");
+      }
+      if (!refreshing && (!form.elements.name.value || form.elements.name.value === autoName)) {
+        form.elements.name.value = result.name;
+        autoName = result.name;
+      }
+      discoveredClusterIds = [...result.cluster_ids];
+      clusterOptions?.replaceChildren(...discoveredClusterIds.map((id) => {
+        const option = document.createElement("option");
+        option.value = id;
+        return option;
+      }));
+      if (inventoryStatus) inventoryStatus.textContent = discoveredClusterIds.length
+        ? `Discovered ${discoveredClusterIds.length} KMIP clusters. Select one or type a custom ID. The About name is a product display label.`
+        : "vCenter returned no KMIP clusters. You can enter a custom ID, but register it in vCenter before certificate inspection.";
+      return true;
+    } catch (error) {
+      if (sequence !== inventorySequence) return false;
+      const recoveryMessage = recoverTlsIdentityError(error);
+      if (recoveryMessage) {
+        controller.showStep("server", { unlock: true });
+        controller.setError(recoveryMessage);
+        return false;
+      }
+      if (inventoryStatus) inventoryStatus.textContent = `${error.message || "Could not discover vCenter choices."} Retry discovery, enter the name and cluster ID explicitly, or choose Configure manually.`;
+      // Discovery failure never masquerades as a successfully empty inventory.
+      return true;
+    } finally {
+      if (sequence === inventorySequence && inventoryRetry) inventoryRetry.disabled = false;
+    }
+  };
   const runProbe = async (controller) => {
     const revision = contextRevision;
     controller.setError("");
@@ -6337,18 +6396,22 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null, onSave
   hostname?.addEventListener("input", invalidateContext);
   hostname?.addEventListener("change", invalidateContext);
   form.elements.provider_id?.addEventListener("change", invalidateClient);
+  form.elements.name?.addEventListener("input", invalidateClient);
   form.elements.cluster_id?.addEventListener("input", invalidateClient);
   form.elements.cluster_id?.addEventListener("change", invalidateClient);
   [username, password].forEach((input) => {
-    input?.addEventListener("input", invalidateClient);
-    input?.addEventListener("change", invalidateClient);
+    const changed = () => { invalidateClient(); clearInventory(); };
+    input?.addEventListener("input", changed);
+    input?.addEventListener("change", changed);
   });
   tlsConfirm?.addEventListener("change", () => {
     form.elements.confirmed_https_fingerprint.value = tlsConfirm.checked ? observedHttpsFingerprint : "";
     clearClient();
+    clearInventory();
     contextRevision += 1;
   });
   window.addEventListener("pagehide", invalidateContext);
+  inventoryRetry?.addEventListener("click", () => runInventory(wizard));
 
   wizard = window.AtlasoUiPatterns.createWizard({
     form,
@@ -6367,6 +6430,7 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null, onSave
     ],
     onOpen: ({ context }) => {
       contextRevision += 1;
+      clearInventory();
       refreshing = Boolean(context?.id && !context.is_new);
       if (setupMethod) {
         setupMethod.value = "enroll";
@@ -6418,6 +6482,9 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null, onSave
       if (step.id === "tls" && !form.elements.confirmed_https_fingerprint.value) {
         controller.setError("Confirm the displayed vCenter certificate before continuing.", tlsConfirm);
         return false;
+      }
+      if ((step.id === "tls" && isVaultMode()) || step.id === "login") {
+        if (!(await runInventory(controller))) return false;
       }
       if (step.id === "target") {
         if (!(await runInspect(controller))) return false;

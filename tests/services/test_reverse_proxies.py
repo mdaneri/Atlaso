@@ -2192,7 +2192,7 @@ def test_dynamic_service_alias_refresh_rejects_atomically_under_writer_lock(monk
 
             Args:
                 session: Refresh caller's candidate database transaction.
-                kwargs: Preserve alias-only inspection options.
+                **kwargs: Preserve alias-only inspection options.
             """
             assert calls == ["lock"]
             calls.append("validate")

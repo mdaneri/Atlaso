@@ -70,6 +70,7 @@ from atlaso.app.services.vsphere_enrollment import (
     EnrollmentError,
     certificate_fingerprint,
     discover_vcenter_client,
+    discover_vcenter_inventory,
     normalize_https_fingerprint,
     vcenter_https_endpoint,
     vcenter_https_leaf,
@@ -1896,6 +1897,7 @@ def build_routers(
         credential_source: str = "vault",
         username: str = "",
         password: str = "",
+        inventory: bool = False,
     ):
         """Use one request-local credential after HTTPS confirmation.
 
@@ -1911,6 +1913,7 @@ def build_routers(
             credential_source: Manual request-local login or saved Vault selection.
             username: Manual account name, unused for saved credentials.
             password: Manual request-local password, never persisted.
+            inventory: Read metadata and cluster choices instead of a certificate.
         """
         entry, host, port = _enrollment_target(
             db, host, vault_id, entry_id, uri_index, credential_source
@@ -1928,26 +1931,30 @@ def build_routers(
         else:
             username = entry.username
             password = decrypt_secret(entry.encrypted_value)
-        settings = get_kms_settings_row(db)
-        discovered = discover_vcenter_client(
+        connection = dict(
             host=host,
             port=port,
-            cluster_id=cluster_id,
             username=username,
             password=password,
             confirmed_https_fingerprint=observed,
-            atlaso_host=settings.hostname,
-            atlaso_port=settings.port,
         )
+        if inventory:
+            discovered = discover_vcenter_inventory(**connection)
+        else:
+            settings = get_kms_settings_row(db)
+            discovered = discover_vcenter_client(
+                **connection, cluster_id=cluster_id,
+                atlaso_host=settings.hostname, atlaso_port=settings.port,
+            )
         record_audit(
             db,
             actor=identity.username,
-            action="discover_vsphere_client_certificate",
+            action="discover_vsphere_inventory" if inventory else "discover_vsphere_client_certificate",
             resource_type="vault_entry" if entry is not None else "vsphere_vcenter_enrollment",
             resource_id=str(entry.id) if entry is not None else host,
             detail=(
                 (f"vault_id={vault_id}; " if entry is not None else "credential_source=manual; ")
-                + f"cluster_id={cluster_id}; public_certificate=true"
+                + ("metadata_only=true" if inventory else f"cluster_id={cluster_id}; public_certificate=true")
             ),
         )
         return discovered
@@ -1988,6 +1995,54 @@ def build_routers(
         except (ValueError, EnrollmentError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return JSONResponse({"https_fingerprint": fingerprint})
+
+    @kms_router.post("/vsphere-key-providers/enrollment/inventory", response_model=None)
+    def inventory_vsphere_enrollment(
+        request: Request,
+        hostname: str = Form(...),
+        vault_id: int = Form(0),
+        entry_id: int = Form(0),
+        uri_index: int = Form(0),
+        credential_source: str = Form("vault"),
+        username: str = Form(""),
+        password: str = Form(""),
+        confirmed_https_fingerprint: str = Form(...),
+        csrf: str = Form(...),
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> JSONResponse:
+        """Read display metadata and complete cluster choices after TLS confirmation.
+
+        Args:
+            request: Incoming browser request.
+            hostname: vCenter endpoint hostname.
+            vault_id: Selected saved vault.
+            entry_id: Selected saved credential.
+            uri_index: Selected HTTPS URI position.
+            credential_source: Manual or saved Vault credential source.
+            username: Request-local manual account name.
+            password: Request-local password, never persisted.
+            confirmed_https_fingerprint: Confirmed public TLS fingerprint.
+            csrf: Browser CSRF token.
+            identity: Authenticated administrator.
+            db: Active database session.
+        """
+        verify_csrf(request, csrf)
+        if not identity.has_role("admin"):
+            raise HTTPException(status_code=403, detail="Administrator role required.")
+        try:
+            discovered = _discover_client(
+                db, identity, host=hostname, cluster_id="", vault_id=vault_id,
+                entry_id=entry_id, uri_index=uri_index,
+                credential_source=credential_source, username=username, password=password,
+                confirmed_https_fingerprint=confirmed_https_fingerprint, inventory=True,
+            )
+        except (ValueError, EnrollmentError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return JSONResponse(
+            {"name": discovered.name, "cluster_ids": list(discovered.cluster_ids)},
+            headers={"Cache-Control": "no-store"},
+        )
 
     @kms_router.post("/vsphere-key-providers/enrollment/inspect", response_model=None)
     def inspect_vsphere_enrollment(

@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -23,6 +24,7 @@ from atlaso.app.models import (
 from atlaso.app.secrets import encrypt_secret
 from atlaso.app.services.vsphere_enrollment import (
     DiscoveredClient,
+    DiscoveredInventory,
     certificate_fingerprint,
 )
 from atlaso.app.services.vsphere_key_providers import (
@@ -1317,3 +1319,68 @@ def test_vcenter_enrollment_manual_routes_keep_admin_and_csrf_guards(
             assert forbidden.status_code == 403
     finally:
         client.app.dependency_overrides.pop(transport.require_session_identity, None)
+
+
+def test_inventory_requires_tls_before_credentials_and_changes_no_trust(client, monkeypatch):
+    """Inventory keeps TLS gating, credential locality, and saved trust unchanged.
+
+    Args:
+        client: Isolated HTTP test client.
+        monkeypatch: Fixture replacing external credential and network calls.
+    """
+    from atlaso.app.routers.ui import certificate_trust as transport
+
+    csrf = _login(client)
+    calls = []
+    leaf = b"inventory-public-leaf"
+    monkeypatch.setattr(transport, "vcenter_https_leaf", lambda *_args, **_kwargs: leaf)
+
+    def discover(**kwargs):
+        """Capture only synthetic request-local test credentials.
+
+        Args:
+            **kwargs: Pinned inventory connection arguments.
+        """
+        calls.append(kwargs)
+        return DiscoveredInventory(name="VMware vCenter Server", cluster_ids=("a", "b"))
+
+    monkeypatch.setattr(transport, "discover_vcenter_inventory", discover)
+    monkeypatch.setattr(transport, "decrypt_secret", lambda _: pytest.fail("Unexpected Vault access"))
+    with SessionLocal() as db:
+        before = (db.query(VsphereKeyProvider).count(), db.query(VsphereTrustedVcenter).count(), db.query(VsphereTrustedVcenterCertificate).count())
+    data = dict(csrf=csrf, hostname="vc.example.test", credential_source="manual", username="temporary-user", password="temporary-password")
+    bad = client.post("/vsphere-key-providers/enrollment/inventory", data={**data, "confirmed_https_fingerprint": "00" * 32})
+    assert bad.status_code == 422
+    assert not calls
+    response = client.post("/vsphere-key-providers/enrollment/inventory", data={**data, "confirmed_https_fingerprint": certificate_fingerprint(leaf)})
+    assert response.status_code == 200, response.text
+    assert response.json() == {"name": "VMware vCenter Server", "cluster_ids": ["a", "b"]}
+    assert response.headers["cache-control"] == "no-store"
+    assert calls[0]["port"] == 443
+    assert calls[0]["username"] == "temporary-user"
+    assert "temporary-password" not in response.text
+    with SessionLocal() as db:
+        assert before == (db.query(VsphereKeyProvider).count(), db.query(VsphereTrustedVcenter).count(), db.query(VsphereTrustedVcenterCertificate).count())
+
+
+def test_inventory_keeps_admin_and_csrf_guards(client, monkeypatch):
+    """Reject unauthorised discovery before external calls.
+
+    Args:
+        client: Isolated HTTP test client.
+        monkeypatch: Fixture rejecting unexpected network calls.
+    """
+    from atlaso.app.routers.ui import certificate_trust as transport
+
+    csrf = _login(client)
+    monkeypatch.setattr(transport, "vcenter_https_leaf", lambda *_args, **_kwargs: pytest.fail("Unexpected probe"))
+    response = client.post("/vsphere-key-providers/enrollment/inventory", data={"csrf": "invalid", "hostname": "vc.example.test", "confirmed_https_fingerprint": "00" * 32})
+    assert response.status_code == 403
+    from atlaso.app.security import Identity, require_session_identity
+
+    client.app.dependency_overrides[require_session_identity] = lambda: Identity(username="reader", role="viewer", scopes=set())
+    try:
+        response = client.post("/vsphere-key-providers/enrollment/inventory", data={"csrf": csrf, "hostname": "vc.example.test", "confirmed_https_fingerprint": "00" * 32})
+        assert response.status_code == 403
+    finally:
+        client.app.dependency_overrides.pop(require_session_identity, None)
