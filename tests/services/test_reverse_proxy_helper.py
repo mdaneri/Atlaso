@@ -609,7 +609,7 @@ def test_nginx_generation_observer_rejects_unavailable_service_identity(monkeypa
     ([(100, {(101, 1)}), (100, {(102, 2)})], True),
     ([(100, {(101, 1)}), (100, {(101, 2)})], True),
     ([(100, {(101, 1)})], False),
-    ([(100, {(101, 1), (102, 2)})], False),
+    ([(100, {(101, 1), (102, 2)})], True),
 ])
 def test_nginx_reload_generation_requires_new_master_children(monkeypatch, observations, accepted):
     """Bound reload confirmation and reject the unchanged old generation.

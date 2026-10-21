@@ -623,3 +623,40 @@ def test_nginx_bridge_timeout_is_recorded_while_recovery_continues(
     assert ["systemctl", "start", "atlaso.service"] in commands
     assert ["systemctl", "restart", "nginx.service"] not in commands
     assert ["systemctl", "reload-or-restart", "nginx.service"] not in commands
+
+
+@pytest.mark.parametrize("verify_activation", [False, True])
+@pytest.mark.parametrize("replacement", [False, True])
+def test_reload_nginx_preserves_draining_workers_when_replacement_accepts(monkeypatch, verify_activation, replacement):
+    """A new worker confirms reload even while previous workers drain connections.
+
+    Args:
+        monkeypatch: Substitute bounded process observations and command execution.
+        verify_activation: Protected activation or ordinary reload fallback contract.
+        replacement: Observe a new worker or only a subset of the old workers.
+    """
+    helper = load_helper_module()
+    previous = (431, {(432, 19), (433, 20)})
+    current = (431, {(432, 19), (434, 21)} if replacement else {(432, 19)})
+    calls = []
+    observations = 0
+
+    def generation():
+        """Return the admitted old identity once, then the observed mixed set."""
+        nonlocal observations
+        observations += 1
+        return previous if observations == 1 else current
+
+    ticks = iter(range(20))
+    monkeypatch.setattr(helper, "_nginx_active_workers", generation)
+    monkeypatch.setattr(helper, "_nginx_worker_generation", generation)
+    monkeypatch.setattr(helper.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(helper, "_run", lambda command, **_kwargs: calls.append(command) or subprocess.CompletedProcess(command, 0, "", ""))
+    assert helper._reload_nginx(verify_activation=verify_activation) == (1 if verify_activation and not replacement else 0)
+    expected = [["systemctl", "reload", "nginx"]]
+    if not verify_activation:
+        expected.append(["systemctl", "enable", "--now", "nginx"])
+        if not replacement:
+            expected.append(["systemctl", "restart", "nginx"])
+    assert calls == expected

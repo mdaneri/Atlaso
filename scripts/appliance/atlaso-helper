@@ -9617,7 +9617,7 @@ def _wait_nginx_reload_generation(previous: tuple[int, set[tuple[int, int]]]) ->
         current = _nginx_worker_generation()
         if current is None or current[0] != previous[0]:
             raise ValueError("nginx master changed during reload confirmation")
-        if current[1] and current[1].isdisjoint(previous[1]):
+        if current[1] - previous[1]:
             return True
         time.sleep(0.1)
     return False
@@ -9665,7 +9665,7 @@ def _reload_nginx(*, verify_activation: bool = False) -> int:
                 observed_master, current = _nginx_active_workers()
                 if observed_master != master:
                     raise ValueError("nginx master changed during graceful reload")
-                if current and current.isdisjoint(previous):
+                if current - previous:
                     return 0
                 time.sleep(0.1)
             raise ValueError("nginx did not activate a new accepting worker generation")

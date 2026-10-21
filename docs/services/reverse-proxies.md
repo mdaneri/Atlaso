@@ -245,6 +245,9 @@ no proxy is silently rebound. Ordinary service inspection checks alias ownership
 while service mutation continues to enforce HTTPS CA dependencies.
 Operator-chosen service names remain unchanged.
 
+Graceful nginx reload confirms a replacement accepting worker under the same master without waiting for older workers
+to finish draining long-lived requests or WebSockets. An unchanged worker set does not prove activation.
+
 <!-- ATLASO-REVERSE-PROXY-ACCEPTANCE-PENDING -->
 ## Native appliance acceptance pending
 
