@@ -141,7 +141,13 @@ def build_router(
     def export_kmip_recovery(payload: KmipRecoveryExportRequest,
                              identity: Annotated[Identity, Depends(require_scope("write:kms"))],
                              db: Session = Depends(get_db)) -> Response:
-        """Download only an encrypted archive after verified service restoration."""
+        """Download only an encrypted archive after verified service restoration.
+
+        Args:
+            payload: Request-bound helper input serialized through standard input.
+            identity: Identity supplied to this operation.
+            db: Desired-state database session holding writer admission.
+        """
         try:
             archive = kmip_recovery.export_archive(db, payload.passphrase.get_secret_value())
         except ValueError as exc:
@@ -160,7 +166,13 @@ def build_router(
     def import_kmip_recovery(payload: KmipRecoveryImportRequest,
                              identity: Annotated[Identity, Depends(require_scope("write:kms"))],
                              db: Session = Depends(get_db)) -> KmipRecoveryImportResponse:
-        """Persist restored public trust atomically; retain offline state on failure."""
+        """Persist restored public trust atomically; retain offline state on failure.
+
+        Args:
+            payload: Request-bound helper input serialized through standard input.
+            identity: Identity supplied to this operation.
+            db: Desired-state database session holding writer admission.
+        """
         try:
             kmip_recovery.import_archive(db, base64.b64decode(payload.archive, validate=True), payload.passphrase.get_secret_value())
             record_audit(db, actor=identity.username, action="import_kmip_recovery", resource_type="kms", detail="Offline recovery pending trust review")

@@ -180,7 +180,15 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
     @router.post("/backup-restore/kmip/export", response_model=None)
     def export_kmip_recovery(request: Request, csrf: str = Form(...), passphrase: str = Form(...),
                              identity: Identity = Depends(require_session_identity), db: Session = Depends(get_db)) -> Response:
-        """Export an encrypted bundle through the approved maintenance form."""
+        """Export an encrypted bundle through the approved maintenance form.
+
+        Args:
+            request: Validated helper request containing operation and service posture.
+            csrf: Csrf supplied to this operation.
+            passphrase: Request-bound recovery passphrase, never retained or logged.
+            identity: Identity supplied to this operation.
+            db: Desired-state database session holding writer admission.
+        """
         require_admin_identity(identity)
         verify_csrf(request, csrf)
         try:
@@ -194,7 +202,16 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
     @router.post("/backup-restore/kmip/import", response_model=None)
     def import_kmip_recovery(request: Request, archive: UploadFile = File(...), csrf: str = Form(...), passphrase: str = Form(...),
                                    identity: Identity = Depends(require_session_identity), db: Session = Depends(get_db)) -> Response:
-        """Import onto an empty target, preserving offline keys until global Apply."""
+        """Import onto an empty target, preserving offline keys until global Apply.
+
+        Args:
+            request: Validated helper request containing operation and service posture.
+            archive: Bounded encrypted recovery bundle supplied by the caller.
+            csrf: Csrf supplied to this operation.
+            passphrase: Request-bound recovery passphrase, never retained or logged.
+            identity: Identity supplied to this operation.
+            db: Desired-state database session holding writer admission.
+        """
         require_admin_identity(identity)
         verify_csrf(request, csrf)
         try:

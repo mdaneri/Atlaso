@@ -6578,7 +6578,11 @@ def _install_kms_service(config_path: Path) -> None:
 
 
 def _kms_legacy_check(*, stopped: bool = False) -> None:
-    """Require read-only legacy emptiness, optionally with proven writer quiescence."""
+    """Require read-only legacy emptiness, optionally with proven writer quiescence.
+
+    Args:
+        stopped: Stopped supplied to this operation.
+    """
     if stopped:
         active, _enabled = _kms_service_snapshot("atlaso-kms.service")
         if active:
@@ -6589,7 +6593,11 @@ def _kms_legacy_check(*, stopped: bool = False) -> None:
 
 
 def _kms_service_snapshot(unit: str) -> tuple[bool, bool]:
-    """Capture exact supported prior activation and enablement without guessing."""
+    """Capture exact supported prior activation and enablement without guessing.
+
+    Args:
+        unit: Unit supplied to this operation.
+    """
     probe = _run(["systemctl", "show", unit, "--property=LoadState,ActiveState,UnitFileState"], timeout=30)
     properties = dict(line.split("=", 1) for line in probe.stdout.splitlines() if "=" in line)
     if probe.returncode != 0:
@@ -6607,7 +6615,11 @@ _KMS_RECOVERY_LOCK_FD: ContextVar[int | None] = ContextVar("kms_recovery_lock_fd
 
 
 def _kms_recovery_child(request: dict) -> subprocess.CompletedProcess[str]:
-    """Run a fixed isolated entrypoint with sensitive input confined to stdin."""
+    """Run a fixed isolated entrypoint with sensitive input confined to stdin.
+
+    Args:
+        request: Validated helper request containing operation and service posture.
+    """
     lock_fd = _KMS_RECOVERY_LOCK_FD.get()
     options = {"pass_fds": (lock_fd,)} if lock_fd is not None else {}
     return subprocess.run(
@@ -6638,7 +6650,12 @@ def _kms_operation_lock():
 
 
 def _handle_kms(action: str, args: list[str]) -> int:
-    """Serialize all store-consuming helper actions, including offline recovery."""
+    """Serialize all store-consuming helper actions, including offline recovery.
+
+    Args:
+        action: Fixed supported privileged helper action.
+        args: Args supplied to this operation.
+    """
     try:
         with _kms_operation_lock():
             if action in {"recovery-export", "recovery-import"}:
@@ -6650,7 +6667,12 @@ def _handle_kms(action: str, args: list[str]) -> int:
 
 
 def _handle_kms_recovery(action: str, args: list[str]) -> int:
-    """Quiesce writers and restore prior service posture after any safe failure."""
+    """Quiesce writers and restore prior service posture after any safe failure.
+
+    Args:
+        action: Fixed supported privileged helper action.
+        args: Args supplied to this operation.
+    """
     if args:
         return 2
     states: dict[str, tuple[bool, bool]] = {}

@@ -28,7 +28,11 @@ from atlaso.app.services.vsphere_key_providers import parse_public_certificate
 
 
 def public_trust(db: Session) -> dict[str, Any]:
-    """Capture exact provider IDs and public certificate bytes from desired state."""
+    """Capture exact provider IDs and public certificate bytes from desired state.
+
+    Args:
+        db: Desired-state database session holding writer admission.
+    """
     return {
         "providers": [{field: getattr(row, field) for field in ("id", "name", "description", "enabled")}
                       for row in db.scalars(select(VsphereKeyProvider).order_by(VsphereKeyProvider.id))],
@@ -40,7 +44,12 @@ def public_trust(db: Session) -> dict[str, Any]:
 
 
 def _request(action: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Call the fixed helper with request-bound stdin and sanitized failure text."""
+    """Call the fixed helper with request-bound stdin and sanitized failure text.
+
+    Args:
+        action: Fixed supported privileged helper action.
+        payload: Request-bound helper input serialized through standard input.
+    """
     result = SystemAdapter()._helper_result(
         "kms", action, input_text=json.dumps(payload), timeout_seconds=180,
         dry_run_message="Recovery requires a live appliance.", dry_run_returncode=2,
@@ -57,7 +66,11 @@ def _request(action: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _admit(db: Session) -> None:
-    """Hold complete desired-state writer admission through export/import commit."""
+    """Hold complete desired-state writer admission through export/import commit.
+
+    Args:
+        db: Desired-state database session holding writer admission.
+    """
     try:
         lock_appliance_apply_snapshot_tables(db)
         db.expire_all()
@@ -66,7 +79,12 @@ def _admit(db: Session) -> None:
 
 
 def export_archive(db: Session, passphrase: str) -> bytes:
-    """Export a quiesced, passphrase-encrypted authenticated recovery bundle."""
+    """Export a quiesced, passphrase-encrypted authenticated recovery bundle.
+
+    Args:
+        db: Desired-state database session holding writer admission.
+        passphrase: Request-bound recovery passphrase, never retained or logged.
+    """
     _admit(db)
     result = _request("recovery-export", {"passphrase": passphrase, "trust": public_trust(db)})
     try:
@@ -83,6 +101,11 @@ def import_archive(db: Session, archive: bytes, passphrase: str) -> None:
 
     A failed database commit leaves the helper's durable pending journal and
     offline keys intact. Uploading the same archive retries that commit.
+
+    Args:
+        db: Desired-state database session holding writer admission.
+        archive: Bounded encrypted recovery bundle supplied by the caller.
+        passphrase: Request-bound recovery passphrase, never retained or logged.
     """
     if len(archive) > MAX_ARCHIVE_BYTES:
         raise RecoveryError("KMIP recovery archive exceeds the supported limit.")

@@ -39,7 +39,14 @@ STATE = Path("/var/lib/atlaso/kmip")
 
 
 def _rename_absent(source: str, destination: str, source_fd: int, destination_fd: int) -> None:
-    """Atomically rename without replacing any concurrent target entry."""
+    """Atomically rename without replacing any concurrent target entry.
+
+    Args:
+        source: Source entry name beneath the pinned source descriptor.
+        destination: Destination entry name that must not already exist.
+        source_fd: Pinned parent descriptor containing the source entry.
+        destination_fd: Pinned parent descriptor receiving the entry.
+    """
     if sys.platform != "linux":
         raise RecoveryError("Recovery publication requires the appliance Linux filesystem contract.")
     libc = ctypes.CDLL(None, use_errno=True)
@@ -54,7 +61,11 @@ def _rename_absent(source: str, destination: str, source_fd: int, destination_fd
 
 
 def _secure_anchor(anchor: Path) -> int:
-    """Pin a root-only journal/candidate parent, rejecting redirected ancestors."""
+    """Pin a root-only journal/candidate parent, rejecting redirected ancestors.
+
+    Args:
+        anchor: Protected root directory for pending recovery custody.
+    """
     if not anchor.is_absolute():
         raise RecoveryError("Recovery anchor must be absolute.")
     fd = os.open("/", os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
@@ -82,7 +93,12 @@ def _secure_anchor(anchor: Path) -> int:
 
 
 def _journal(anchor: Path, document: dict[str, Any]) -> None:
-    """Flush a complete journal before any active directory entry is moved."""
+    """Flush a complete journal before any active directory entry is moved.
+
+    Args:
+        anchor: Protected root directory for pending recovery custody.
+        document: Complete checkpoint document to publish durably.
+    """
     temporary = anchor / ("journal-" + uuid.uuid4().hex)
     _exclusive_file(temporary, json.dumps(document, sort_keys=True).encode())
     os.replace(temporary, anchor / "pending.json")
@@ -99,7 +115,11 @@ def pending() -> bool:
 
 
 def assert_startup_allowed(config_path: Path) -> None:
-    """Require root-recorded approval of this exact runtime during pending import."""
+    """Require root-recorded approval of this exact runtime during pending import.
+
+    Args:
+        config_path: Installed runtime configuration bound to recovery approval.
+    """
     if not pending():
         return
     try:
@@ -114,7 +134,12 @@ def assert_startup_allowed(config_path: Path) -> None:
 
 
 def authorize(config_path: Path, *, complete: bool = False) -> None:
-    """Bind reviewed Apply to the imported provider/fingerprint graph and inode."""
+    """Bind reviewed Apply to the imported provider/fingerprint graph and inode.
+
+    Args:
+        config_path: Installed runtime configuration bound to recovery approval.
+        complete: Whether to archive the pending journal after successful Apply.
+    """
     fd = _secure_anchor(ANCHOR)
     try:
         if not pending():
@@ -167,7 +192,12 @@ def authorize(config_path: Path, *, complete: bool = False) -> None:
 
 
 def service_checkpoint(request: dict[str, Any], *, finish: bool = False) -> dict[str, Any]:
-    """Persist original service posture before quiescence and retain failed retries."""
+    """Persist original service posture before quiescence and retain failed retries.
+
+    Args:
+        request: Validated helper request containing operation and service posture.
+        finish: Whether to archive the completed service checkpoint.
+    """
     fd = _secure_anchor(ANCHOR)
     try:
         path = ANCHOR / "service.json"
@@ -195,7 +225,12 @@ def service_checkpoint(request: dict[str, Any], *, finish: bool = False) -> dict
 
 
 def _empty_target(directory: Path, secrets_key: str) -> None:
-    """Authenticate zero native keys without creating a missing store."""
+    """Authenticate zero native keys without creating a missing store.
+
+    Args:
+        directory: Private store directory to validate without modifying active state.
+        secrets_key: Target appliance credential used only for encrypted master custody.
+    """
     entries = {entry.name for entry in directory.iterdir()}
     if not entries:
         return
@@ -214,7 +249,13 @@ def _empty_target(directory: Path, secrets_key: str) -> None:
 
 
 def _discard_unjournaled_candidate(name: str, candidate_fd: int, anchor_fd: int) -> None:
-    """Remove only the pinned, unpublished flat candidate and flush its parent."""
+    """Remove only the pinned, unpublished flat candidate and flush its parent.
+
+    Args:
+        name: Candidate entry name beneath the pinned recovery anchor.
+        candidate_fd: Pinned descriptor of the newly created candidate directory.
+        anchor_fd: Pinned descriptor of the protected recovery anchor.
+    """
     identity = os.fstat(candidate_fd)
     entry = os.stat(name, dir_fd=anchor_fd, follow_symlinks=False)
     if (entry.st_dev, entry.st_ino) != (identity.st_dev, identity.st_ino):
@@ -236,6 +277,13 @@ def import_archive(archive: bytes, passphrase: str, secrets_key: str, *, uid: in
 
     The helper owns daemon quiescence and the appliance transaction lock. Retry
     after a crash uses the same archive; conflicting state remains preserved.
+
+    Args:
+        archive: Bounded encrypted recovery bundle supplied by the caller.
+        passphrase: Request-bound recovery passphrase, never retained or logged.
+        secrets_key: Target appliance credential used only for encrypted master custody.
+        uid: Appliance service owner for imported operational files.
+        gid: Appliance service group for imported operational files.
     """
     snapshot = decrypt(archive, passphrase)
     digest = hashlib.sha256(archive).hexdigest()

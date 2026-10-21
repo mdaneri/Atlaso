@@ -306,6 +306,9 @@ def _load_or_create_kek(
 
     Raises:
         KeyStoreError: If the operation encounters an invalid state.
+
+    Args:
+        read_only: Whether to authenticate an existing store without creating or changing files.
     """
     master_bytes = _master_key(secrets_key)
     recovery_path = path.with_name("recovery-master.bin")
@@ -454,6 +457,9 @@ class WrappedKeyStore:
 
         Raises:
             KeyStoreError: If the operation encounters an invalid state.
+
+        Args:
+            read_only: Whether to authenticate an existing store without creating or changing files.
         """
         if read_only and any(database_path.with_name(database_path.name + suffix).exists() for suffix in ("-wal", "-journal")):
             raise KeyStoreError("KMIP offline snapshot requires settled SQLite journal state.")

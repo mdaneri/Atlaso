@@ -30,7 +30,11 @@ class RecoveryError(ValueError):
 
 
 def _json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    """Refuse duplicate JSON properties rather than choosing an ambiguous value."""
+    """Refuse duplicate JSON properties rather than choosing an ambiguous value.
+
+    Args:
+        pairs: Decoded JSON name/value pairs checked for duplicate names.
+    """
     result: dict[str, Any] = {}
     for key, value in pairs:
         if key in result:
@@ -40,14 +44,24 @@ def _json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _derive(passphrase: str, salt: bytes) -> bytes:
-    """Derive an archive key with fixed, bounded work and memory requirements."""
+    """Derive an archive key with fixed, bounded work and memory requirements.
+
+    Args:
+        passphrase: Request-bound recovery passphrase, never retained or logged.
+        salt: Random archive salt used for key derivation.
+    """
     if not isinstance(passphrase, str) or not 12 <= len(passphrase.encode("utf-8")) <= 1024:
         raise RecoveryError("Use a recovery passphrase containing 12 to 1,024 UTF-8 bytes.")
     return Scrypt(salt=salt, length=32, n=32768, r=8, p=1).derive(passphrase.encode("utf-8"))
 
 
 def encrypt(snapshot: dict[str, Any], passphrase: str) -> bytes:
-    """Encrypt one validated in-memory snapshot; no password verifier is emitted."""
+    """Encrypt one validated in-memory snapshot; no password verifier is emitted.
+
+    Args:
+        snapshot: Authenticated logical snapshot whose key custody and trust are validated.
+        passphrase: Request-bound recovery passphrase, never retained or logged.
+    """
     plaintext = json.dumps(snapshot, separators=(",", ":"), sort_keys=True).encode()
     if len(plaintext) > MAX_ARCHIVE_BYTES - 128:
         raise RecoveryError("Recovery store exceeds the supported archive limit.")
@@ -56,7 +70,12 @@ def encrypt(snapshot: dict[str, Any], passphrase: str) -> bytes:
 
 
 def decrypt(archive: bytes, passphrase: str) -> dict[str, Any]:
-    """Authenticate the entire archive before parsing any candidate state."""
+    """Authenticate the entire archive before parsing any candidate state.
+
+    Args:
+        archive: Bounded encrypted recovery bundle supplied by the caller.
+        passphrase: Request-bound recovery passphrase, never retained or logged.
+    """
     if not isinstance(archive, bytes) or not len(MAGIC) + 44 <= len(archive) <= MAX_ARCHIVE_BYTES:
         raise RecoveryError("Recovery archive is incomplete or exceeds the supported limit.")
     if not archive.startswith(MAGIC):
@@ -79,7 +98,11 @@ def decrypt(archive: bytes, passphrase: str) -> dict[str, Any]:
 
 
 def validate_trust(trust: Any) -> None:
-    """Validate exact public provider identities and certificate relationships."""
+    """Validate exact public provider identities and certificate relationships.
+
+    Args:
+        trust: Public provider, vCenter and certificate relationships.
+    """
     from uuid import UUID
 
 
@@ -139,6 +162,10 @@ def capture(store: Any, trust: dict[str, Any]) -> dict[str, Any]:
 
     The caller must quiesce the daemon across this call; a Python lock alone does
     not serialize another process. No plaintext operational key is exported.
+
+    Args:
+        store: Opened wrapped-key store used for the consistent snapshot.
+        trust: Public provider, vCenter and certificate relationships.
     """
     validate_trust(trust)
     with store._lock, store._connect() as db:
@@ -217,7 +244,12 @@ def build_candidate(snapshot: dict[str, Any], directory: Path, *, secrets_key: s
 
 
 def _exclusive_file(path: Path, data: bytes) -> None:
-    """Create sensitive candidate material without a permissive creation window."""
+    """Create sensitive candidate material without a permissive creation window.
+
+    Args:
+        path: Filesystem entry whose ownership and contents are checked.
+        data: Bytes written privately and flushed before publication.
+    """
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "wb") as stream:
         stream.write(data)

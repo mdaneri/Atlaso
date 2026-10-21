@@ -112,7 +112,12 @@ def _login(client) -> str:
 
 
 def test_kmip_recovery_api_requires_write_scope_and_keeps_trust_disabled(client, monkeypatch):
-    """Recovery returns ciphertext only and persists exact public IDs offline."""
+    """Recovery returns ciphertext only and persists exact public IDs offline.
+
+    Args:
+        client: Client supplied to this operation.
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
     import base64
 
     from atlaso.app.adapters.system import SystemAdapter
@@ -130,6 +135,14 @@ def test_kmip_recovery_api_requires_write_scope_and_keeps_trust_disabled(client,
     calls = []
 
     def helper(_self, group, action, **kwargs):
+        """Helper.
+
+        Args:
+            _self: Self supplied to this operation.
+            group: Group supplied to this operation.
+            action: Fixed supported privileged helper action.
+            **kwargs: Kwargs supplied to this operation.
+        """
         calls.append(action)
         assert group == "kms" and kwargs["timeout_seconds"] == 180
         result = {"archive": base64.b64encode(b"synthetic encrypted archive").decode()} if action == "recovery-export" else {"status": "pending-trust-review", "trust": trust}

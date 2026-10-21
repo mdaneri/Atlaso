@@ -24,7 +24,11 @@ PASSPHRASE = "synthetic-recovery-test-only"
 
 
 def snapshot_fixture(tmp_path: Path):
-    """Build an active synthetic key and its exact protected snapshot."""
+    """Build an active synthetic key and its exact protected snapshot.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+    """
     source = tmp_path / "source"
     provider = str(uuid4())
     store = WrappedKeyStore(source / "store.db", source / "kek.json", secrets_key="synthetic-source")
@@ -38,7 +42,11 @@ def snapshot_fixture(tmp_path: Path):
 
 
 def test_authenticated_roundtrip_preserves_exact_wrapped_identity_and_kek(tmp_path):
-    """A different appliance secret can recover the pre-export active key."""
+    """A different appliance secret can recover the pre-export active key.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+    """
     snapshot, metadata, plaintext = snapshot_fixture(tmp_path)
     archive = encrypt(snapshot, PASSPHRASE)
     assert plaintext not in archive
@@ -58,7 +66,12 @@ def test_authenticated_roundtrip_preserves_exact_wrapped_identity_and_kek(tmp_pa
 
 @pytest.mark.parametrize("damage", ["wrong-passphrase", "truncate", "corrupt", "version"])
 def test_archive_rejects_damage_before_candidate_creation(tmp_path, damage):
-    """Authentication and framing failures cannot reach store publication."""
+    """Authentication and framing failures cannot reach store publication.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+        damage: Malformed archive or snapshot variant exercised by the test.
+    """
     snapshot, _, _ = snapshot_fixture(tmp_path)
     archive = encrypt(snapshot, PASSPHRASE)
     passphrase = PASSPHRASE
@@ -77,7 +90,12 @@ def test_archive_rejects_damage_before_candidate_creation(tmp_path, damage):
 
 @pytest.mark.parametrize("damage", ["schema", "duplicate-key", "duplicate-provider", "incomplete", "missing-provider", "kek"])
 def test_authenticated_but_invalid_snapshot_is_rejected(tmp_path, damage):
-    """A valid passphrase never permits malformed or incomplete logical state."""
+    """A valid passphrase never permits malformed or incomplete logical state.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+        damage: Malformed archive or snapshot variant exercised by the test.
+    """
     snapshot, _, _ = snapshot_fixture(tmp_path)
     snapshot = copy.deepcopy(snapshot)
     if damage == "schema":
@@ -100,7 +118,11 @@ def test_authenticated_but_invalid_snapshot_is_rejected(tmp_path, damage):
 
 
 def test_nonempty_candidate_remains_unchanged(tmp_path):
-    """Candidate construction must never adopt an existing store."""
+    """Candidate construction must never adopt an existing store.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+    """
     snapshot, _, _ = snapshot_fixture(tmp_path)
     candidate = tmp_path / "candidate"
     candidate.mkdir()
@@ -112,7 +134,11 @@ def test_nonempty_candidate_remains_unchanged(tmp_path):
 
 
 def test_sqlite_handles_close_before_recovery_files_are_moved(tmp_path):
-    """Checkpoint and close permit Windows candidate validation and retry."""
+    """Checkpoint and close permit Windows candidate validation and retry.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+    """
     snapshot, _, _ = snapshot_fixture(tmp_path)
     candidate = tmp_path / "candidate"
     candidate.mkdir()
@@ -124,7 +150,12 @@ def test_sqlite_handles_close_before_recovery_files_are_moved(tmp_path):
 
 
 def test_recovery_apply_keeps_expired_public_history_without_requiring_its_trust(tmp_path, monkeypatch):
-    """Retained historical certificates must not make a reviewed Apply impossible."""
+    """Retained historical certificates must not make a reviewed Apply impossible.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
     from atlaso.app.kmip import recovery_runtime as runtime
     from atlaso.app.services.vsphere_key_providers import parse_public_certificate
     from tests.routers.api_v1.test_certificate_trust import _public_client_certificate
@@ -161,13 +192,23 @@ def test_recovery_apply_keeps_expired_public_history_without_requiring_its_trust
 
 @pytest.mark.parametrize("operation", ["export", "import"])
 def test_recovery_admission_contention_never_reaches_helper(monkeypatch, operation):
-    """Concurrent desired-state writers prevent any operational side effect."""
+    """Concurrent desired-state writers prevent any operational side effect.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+        operation: Recovery operation exercised by the test.
+    """
     from atlaso.app.services import kmip_recovery as service
     from atlaso.app.services.appliance_apply_admission import (
         ApplianceApplyAdmissionBusy,
     )
 
     def busy(_db):
+        """Busy.
+
+        Args:
+            _db: Db supplied to this operation.
+        """
         raise ApplianceApplyAdmissionBusy("synthetic contention")
 
     monkeypatch.setattr(service, "lock_appliance_apply_snapshot_tables", busy)
@@ -182,7 +223,13 @@ def test_recovery_admission_contention_never_reaches_helper(monkeypatch, operati
 @pytest.mark.skipif(os.name != "posix", reason="Native recovery directory-fd contract")
 @pytest.mark.parametrize("failure", ["duplicate-key", "journal-before-publish", "journal-after-publish"])
 def test_failed_preparation_cleans_only_unjournaled_candidate(tmp_path, monkeypatch, failure):
-    """Repeated rejected imports cannot accumulate partial key-bearing stores."""
+    """Repeated rejected imports cannot accumulate partial key-bearing stores.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+        monkeypatch: Pytest fixture replacing external dependencies.
+        failure: Injected preparation failure exercised by this regression.
+    """
     from atlaso.app.kmip import recovery_runtime as runtime
 
     snapshot, _, _ = snapshot_fixture(tmp_path)
@@ -203,6 +250,12 @@ def test_failed_preparation_cleans_only_unjournaled_candidate(tmp_path, monkeypa
     original_journal = runtime._journal
 
     def fail_journal(path, document):
+        """Fail journal.
+
+        Args:
+            path: Filesystem entry whose ownership and contents are checked.
+            document: Complete checkpoint document to publish durably.
+        """
         if failure == "journal-after-publish":
             original_journal(path, document)
         raise OSError("synthetic journal failure")
@@ -225,7 +278,11 @@ def test_failed_preparation_cleans_only_unjournaled_candidate(tmp_path, monkeypa
 
 @pytest.mark.skipif(os.name != "posix", reason="Native recovery directory-fd contract")
 def test_unjournaled_cleanup_refuses_replaced_candidate(tmp_path):
-    """An identity mismatch must preserve the replacement and original stores."""
+    """An identity mismatch must preserve the replacement and original stores.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+    """
     from atlaso.app.kmip import recovery_runtime as runtime
 
     anchor_fd = os.open(tmp_path, os.O_RDONLY | runtime.O_DIRECTORY)

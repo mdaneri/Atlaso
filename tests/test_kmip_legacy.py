@@ -9,7 +9,11 @@ from atlaso.app.kmip.legacy import LegacyStoreError, assert_legacy_empty
 
 
 def test_empty_missing_and_retained_legacy_stores(tmp_path):
-    """Empty-store proof is read-only; any application row blocks replacement."""
+    """Empty-store proof is read-only; any application row blocks replacement.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+    """
     state, config = tmp_path / "kms", tmp_path / "pykmip.conf"
     assert_legacy_empty(state, config)
     state.mkdir()
@@ -29,7 +33,12 @@ def test_empty_missing_and_retained_legacy_stores(tmp_path):
 
 @pytest.mark.parametrize("kind", ["corrupt", "unknown", "journal", "configured-missing"])
 def test_unavailable_legacy_evidence_fails_closed(tmp_path, kind):
-    """Missing configured data, corruption, and retained journals are preserved."""
+    """Missing configured data, corruption, and retained journals are preserved.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+        kind: Kind supplied to this operation.
+    """
     state, config = tmp_path / "kms", tmp_path / "pykmip.conf"
     state.mkdir()
     path = state / {"corrupt": "pykmip.db", "unknown": "retained", "journal": "pykmip.db-wal", "configured-missing": "missing.db"}[kind]
@@ -45,7 +54,13 @@ def test_unavailable_legacy_evidence_fails_closed(tmp_path, kind):
 
 @pytest.mark.parametrize("posture", ["active", "unavailable", "late-write", "inactive"])
 def test_release_admission_requires_stopped_writer_and_final_empty_proof(tmp_path, monkeypatch, posture):
-    """A candidate import must reject both an active old writer and its late commit."""
+    """A candidate import must reject both an active old writer and its late commit.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+        monkeypatch: Pytest fixture replacing external dependencies.
+        posture: Posture supplied to this operation.
+    """
     from atlaso.app.kmip import legacy
 
     state, config = tmp_path / "kms", tmp_path / "missing.conf"
@@ -55,6 +70,12 @@ def test_release_admission_requires_stopped_writer_and_final_empty_proof(tmp_pat
         db.execute("CREATE TABLE objects(id INTEGER PRIMARY KEY)")
 
     def probe(*_args, **_kwargs):
+        """Probe.
+
+        Args:
+            *_args: Args supplied to this operation.
+            **_kwargs: Kwargs supplied to this operation.
+        """
         if posture == "late-write":
             with sqlite3.connect(database) as db:
                 db.execute("INSERT INTO objects VALUES (1)")

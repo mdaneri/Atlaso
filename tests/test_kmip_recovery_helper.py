@@ -14,7 +14,13 @@ from tests.test_appliance_helper import load_helper_module
 
 @pytest.mark.parametrize("enabled", [False, True])
 def test_nonempty_legacy_blocks_apply_before_service_or_file_changes(tmp_path, monkeypatch, enabled):
-    """Both Apply modes preserve populated legacy bytes without invoking a writer."""
+    """Both Apply modes preserve populated legacy bytes without invoking a writer.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+        monkeypatch: Pytest fixture replacing external dependencies.
+        enabled: Desired KMS listener state for the scenario.
+    """
     helper = load_helper_module()
     legacy = tmp_path / "legacy"
     legacy.mkdir()
@@ -37,7 +43,14 @@ def test_nonempty_legacy_blocks_apply_before_service_or_file_changes(tmp_path, m
 
 @pytest.mark.parametrize("action,child_success", [("recovery-export", True), ("recovery-export", False), ("recovery-import", False), ("recovery-import", True)])
 def test_recovery_quiesces_both_writers_and_restores_or_keeps_offline(monkeypatch, capsys, action, child_success):
-    """No result is returned until service restoration or offline import completes."""
+    """No result is returned until service restoration or offline import completes.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+        capsys: Capsys supplied to this operation.
+        action: Fixed supported privileged helper action.
+        child_success: Child success supplied to this operation.
+    """
     helper = load_helper_module()
     initial = {"atlaso-kmip.service": (True, True), "atlaso-kms.service": (False, False)}
     states = dict(initial)
@@ -49,6 +62,12 @@ def test_recovery_quiesces_both_writers_and_restores_or_keeps_offline(monkeypatc
     monkeypatch.setattr(helper, "_ensure_kms_service_identity", lambda: (SimpleNamespace(pw_uid=1000), SimpleNamespace(gr_gid=1000)))
 
     def run(command, **kwargs):
+        """Run.
+
+        Args:
+            command: Command supplied to this operation.
+            **kwargs: Kwargs supplied to this operation.
+        """
         commands.append(command)
         action_name, unit = command[1], command[-1]
         active, enabled = states[unit]
@@ -57,6 +76,11 @@ def test_recovery_quiesces_both_writers_and_restores_or_keeps_offline(monkeypatc
         return subprocess.CompletedProcess(command, 0, "", "")
 
     def child(request):
+        """Child.
+
+        Args:
+            request: Validated helper request containing operation and service posture.
+        """
         if request["action"] == "service-capture":
             assert states == initial
             return subprocess.CompletedProcess([], 0, json.dumps({"states": initial}), "")
@@ -86,7 +110,11 @@ def test_recovery_quiesces_both_writers_and_restores_or_keeps_offline(monkeypatc
 
 
 def test_unavailable_operation_lock_refuses_without_dispatch(monkeypatch):
-    """Unsupported locking never falls back to an unguarded store mutation."""
+    """Unsupported locking never falls back to an unguarded store mutation.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "fcntl", None)
     monkeypatch.setattr(helper, "_handle_kms_locked", lambda *_args: pytest.fail("unguarded dispatch"))
@@ -95,10 +123,22 @@ def test_unavailable_operation_lock_refuses_without_dispatch(monkeypatch):
 
 @pytest.mark.parametrize("action", ["recovery-export", "recovery-import"])
 def test_live_recovery_main_returns_one_json_document(monkeypatch, capsys, action):
-    """The actual CLI path must remain consumable by the control plane parser."""
+    """The actual CLI path must remain consumable by the control plane parser.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+        capsys: Capsys supplied to this operation.
+        action: Fixed supported privileged helper action.
+    """
     helper = load_helper_module()
 
     def dispatch(observed, args):
+        """Dispatch.
+
+        Args:
+            observed: Observed supplied to this operation.
+            args: Args supplied to this operation.
+        """
         assert (observed, args) == (action, [])
         print(json.dumps({"archive": "synthetic"}))
         return 0
@@ -109,7 +149,12 @@ def test_live_recovery_main_returns_one_json_document(monkeypatch, capsys, actio
 
 
 def test_export_restoration_false_success_retains_checkpoint(monkeypatch, capsys):
-    """A restart that exits zero but never becomes healthy cannot finish recovery."""
+    """A restart that exits zero but never becomes healthy cannot finish recovery.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+        capsys: Capsys supplied to this operation.
+    """
     helper = load_helper_module()
     states = {"atlaso-kmip.service": (True, True), "atlaso-kms.service": (False, False)}
     children = []
@@ -119,6 +164,12 @@ def test_export_restoration_false_success_retains_checkpoint(monkeypatch, capsys
     monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
 
     def run(command, **_kwargs):
+        """Run.
+
+        Args:
+            command: Command supplied to this operation.
+            **_kwargs: Kwargs supplied to this operation.
+        """
         unit = command[-1]
         if command[1] == "stop":
             states[unit] = (False, states[unit][1])
@@ -126,6 +177,11 @@ def test_export_restoration_false_success_retains_checkpoint(monkeypatch, capsys
         return subprocess.CompletedProcess(command, 0, "", "")
 
     def child(request):
+        """Child.
+
+        Args:
+            request: Validated helper request containing operation and service posture.
+        """
         children.append(request["action"])
         document = {"states": states} if request["action"] == "service-capture" else {"archive": "synthetic"}
         return subprocess.CompletedProcess([], 0, json.dumps(document), "")
@@ -140,7 +196,13 @@ def test_export_restoration_false_success_retains_checkpoint(monkeypatch, capsys
 
 @pytest.mark.parametrize("kind", ["file", "symlink"])
 def test_factory_reset_recovery_rejects_unsafe_anchor_before_mutation(tmp_path, monkeypatch, kind):
-    """A redirected or non-directory anchor cannot expand reset's removal scope."""
+    """A redirected or non-directory anchor cannot expand reset's removal scope.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+        monkeypatch: Pytest fixture replacing external dependencies.
+        kind: Kind supplied to this operation.
+    """
     helper = load_helper_module()
     anchor = tmp_path / "recovery"
     outside = tmp_path / "preserved"
@@ -162,7 +224,12 @@ def test_factory_reset_recovery_rejects_unsafe_anchor_before_mutation(tmp_path, 
 
 
 def test_factory_reset_recovery_partial_failure_remains_retryable(tmp_path, monkeypatch):
-    """Interrupted retained-candidate deletion cannot report completion or block retry."""
+    """Interrupted retained-candidate deletion cannot report completion or block retry.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
     helper = load_helper_module()
     anchor = tmp_path / "recovery"
     candidate = anchor / "candidate-synthetic"
@@ -174,6 +241,12 @@ def test_factory_reset_recovery_partial_failure_remains_retryable(tmp_path, monk
     attempts = 0
 
     def interrupted(*args, **kwargs):
+        """Interrupted.
+
+        Args:
+            *args: Args supplied to this operation.
+            **kwargs: Kwargs supplied to this operation.
+        """
         nonlocal attempts
         attempts += 1
         if attempts == 1:
@@ -192,12 +265,22 @@ def test_factory_reset_recovery_partial_failure_remains_retryable(tmp_path, monk
 
 
 def test_factory_reset_absent_recovery_requires_durable_parent_readback(tmp_path, monkeypatch):
-    """An unlink whose flush failed must be flushed again before reset can advance."""
+    """An unlink whose flush failed must be flushed again before reset can advance.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "KMS_RECOVERY_DIR", tmp_path / "absent-recovery")
     attempts = []
 
     def sync(parent):
+        """Sync.
+
+        Args:
+            parent: Parent supplied to this operation.
+        """
         attempts.append(parent)
         if len(attempts) == 1:
             raise OSError("synthetic directory-flush failure")

@@ -4,7 +4,12 @@ from tests.routers.ui.helpers import login
 
 
 def test_kmip_recovery_maintenance_requires_csrf_and_never_renders_secrets(client, monkeypatch):
-    """Approved maintenance forms preserve CSRF and concealed request material."""
+    """Approved maintenance forms preserve CSRF and concealed request material.
+
+    Args:
+        client: Client supplied to this operation.
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
     from atlaso.app.services import kmip_recovery
 
     login(client)
@@ -15,10 +20,23 @@ def test_kmip_recovery_maintenance_requires_csrf_and_never_renders_secrets(clien
     calls = []
 
     def export(db, passphrase):
+        """Export.
+
+        Args:
+            db: Desired-state database session holding writer admission.
+            passphrase: Request-bound recovery passphrase, never retained or logged.
+        """
         calls.append("export")
         return b"synthetic encrypted archive"
 
     def import_bundle(db, archive, passphrase):
+        """Import bundle.
+
+        Args:
+            db: Desired-state database session holding writer admission.
+            archive: Bounded encrypted recovery bundle supplied by the caller.
+            passphrase: Request-bound recovery passphrase, never retained or logged.
+        """
         calls.append("import")
         assert archive == b"synthetic encrypted archive"
 

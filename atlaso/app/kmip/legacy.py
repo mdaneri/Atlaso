@@ -83,7 +83,11 @@ def assert_legacy_empty(
 
 
 def _ordinary(path: Path) -> None:
-    """Reject redirected or shared filesystem evidence before opening it."""
+    """Reject redirected or shared filesystem evidence before opening it.
+
+    Args:
+        path: Filesystem entry whose ownership and contents are checked.
+    """
     for parent in (path, *path.parents):
         info = parent.lstat()
         if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
