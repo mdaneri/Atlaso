@@ -514,6 +514,39 @@ WantedBy=timers.target
            "ReadWritePaths=/var/lib/atlaso-kmip-log-history\n", mode=0o644)
 
 
+def _failure_diagnostic(stage: str, error: BaseException) -> str:
+    """Locate a failed lifecycle step without exposing exception data or paths.
+
+    Args:
+        stage: Fixed operation stage selected by this module's entry point.
+        error: Caught failure whose message, arguments and locals stay private.
+    """
+    category = "invalid-state"
+    for kind, name in ((OSError, "filesystem"), (sqlite3.Error, "database"),
+                       (subprocess.SubprocessError, "service")):
+        if isinstance(error, kind):
+            category = name
+            break
+    modules = {
+        "atlaso.app.services.external_history_lifecycle": "lifecycle",
+        "__main__": "lifecycle",
+        "atlaso.app.services.nginx_log_sealing": "nginx-sealing",
+        "atlaso.app.services.nginx_log_capture": "nginx-capture",
+        "atlaso.app.services.producer_log_history": "producer-history",
+        "atlaso.app.services.app_history_cutover": "app-cutover",
+    }
+    site = "unknown"
+    trace = error.__traceback__
+    while trace is not None:
+        module = trace.tb_frame.f_globals.get("__name__")
+        if module in modules:
+            site = f"{modules[module]}:{trace.tb_lineno}"
+        trace = trace.tb_next
+    number = error.errno if isinstance(error, OSError) else None
+    errno = f" errno={number}" if type(number) is int and 0 < number < 4096 else ""
+    return f"stage={stage} category={category} site={site}{errno}"
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run only the fixed install, periodic collection, or KMS cutover operation.
 
@@ -529,25 +562,37 @@ def main(argv: list[str] | None = None) -> int:
     if importlib.import_module("os").geteuid() != 0:
         print("External history lifecycle requires the appliance root account.", file=sys.stderr)
         return 2
+    stage = "prepare-state"
     try:
         _private(ROOT)
+        stage = "acquire-lock"
         with lifecycle_lock(ROOT):
             if arguments.operation == "kms-cutover":
+                stage = "kms-cutover"
                 prepare_kms(resume=False)
             elif arguments.operation == "collect":
+                stage = "collect-nginx"
                 collect_nginx()
             else:
+                stage = "check-rotation-owners"
                 _vendor_rotation_check()
+                stage = "install-units"
                 install_units()
+                stage = "reload-units"
                 _systemctl("daemon-reload")
+                stage = "collect-nginx"
                 collect_nginx()
+                stage = "kms-cutover"
                 prepare_kms(resume=True)
+                stage = "enable-timer"
                 _systemctl("enable", "--now", TIMER)
     except RotationConflict:
         print("External Nginx rotation ownership requires explicit history migration.", file=sys.stderr)
         return 3
-    except (OSError, ValueError, KeyError, TypeError, AttributeError, sqlite3.Error, subprocess.SubprocessError):
-        print("External history lifecycle failed; retained recovery state was preserved.", file=sys.stderr)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, sqlite3.Error, subprocess.SubprocessError) as error:
+        diagnostic = _failure_diagnostic(stage, error)
+        print(f"External history lifecycle failed ({diagnostic}); retained recovery state was preserved.",
+              file=sys.stderr)
         return 1
     return 0
 

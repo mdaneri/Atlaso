@@ -2,6 +2,8 @@
 
 import json
 import sqlite3
+import subprocess
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -316,3 +318,92 @@ def test_collector_lock_excludes_second_lifecycle_owner(tmp_path):
         with pytest.raises(sqlite3.OperationalError, match="locked"):
             with lifecycle.lifecycle_lock(tmp_path):
                 pytest.fail("second lifecycle owner acquired the held writer lock")
+
+
+@pytest.mark.parametrize("stage", [
+    "prepare-state", "acquire-lock", "check-rotation-owners", "install-units",
+    "reload-units", "collect-nginx", "kms-cutover", "enable-timer",
+])
+def test_install_failure_reports_stage_without_exception_payload(monkeypatch, capsys, stage):
+    """Failures identify the exact step, stop execution and keep payloads private.
+
+    Args:
+        monkeypatch: Model the appliance operations without touching host state.
+        capsys: Inspect only the value-free entry point diagnostic.
+        stage: Failing operation in the real install sequence.
+    """
+    stages = ["prepare-state", "acquire-lock", "check-rotation-owners", "install-units",
+              "reload-units", "collect-nginx", "kms-cutover", "enable-timer"]
+    calls = []
+
+    def operation(name):
+        """Record a step, injecting a synthetic sensitive failure at its boundary.
+
+        Args:
+            name: Fixed stage being modelled.
+        """
+        calls.append(name)
+        if name == stage:
+            raise OSError(13, "synthetic-secret-do-not-emit", "/private/synthetic-secret")
+
+    monkeypatch.setattr(lifecycle, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(lifecycle, "importlib", SimpleNamespace(
+        import_module=lambda _: SimpleNamespace(geteuid=lambda: 0)))
+    monkeypatch.setattr(lifecycle, "_private", lambda _: operation("prepare-state"))
+    monkeypatch.setattr(lifecycle, "lifecycle_lock", lambda _: (
+        operation("acquire-lock"), nullcontext())[1])
+    monkeypatch.setattr(lifecycle, "_vendor_rotation_check", lambda: operation("check-rotation-owners"))
+    monkeypatch.setattr(lifecycle, "install_units", lambda: operation("install-units"))
+    monkeypatch.setattr(lifecycle, "_systemctl", lambda *args: operation(
+        "reload-units" if args == ("daemon-reload",) else "enable-timer"))
+    monkeypatch.setattr(lifecycle, "collect_nginx", lambda: operation("collect-nginx"))
+    monkeypatch.setattr(lifecycle, "prepare_kms", lambda **_: operation("kms-cutover"))
+    assert lifecycle.main(["install"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert f"stage={stage} category=filesystem" in captured.err
+    assert "errno=13" in captured.err
+    assert "retained recovery state was preserved" in captured.err
+    assert "synthetic-secret" not in captured.err
+    assert "/private/" not in captured.err
+    assert "Traceback" not in captured.err
+    assert calls == stages[:stages.index(stage) + 1]
+
+
+@pytest.mark.parametrize(("error", "category"), [
+    (ValueError("synthetic-secret"), "invalid-state"),
+    (sqlite3.OperationalError("synthetic-secret"), "database"),
+    (subprocess.CalledProcessError(1, ["synthetic-secret"], output="synthetic-secret"), "service"),
+])
+def test_failure_diagnostic_uses_fixed_categories(error, category):
+    """Exception text and service arguments never become diagnostic fields.
+
+    Args:
+        error: Synthetic exception carrying sensitive-looking data.
+        category: Expected fixed diagnostic category.
+    """
+    result = lifecycle._failure_diagnostic("collect-nginx", error)
+    assert result == f"stage=collect-nginx category={category} site=unknown"
+
+
+def test_failure_diagnostic_locates_trusted_source_without_path(monkeypatch):
+    """A real lifecycle traceback yields a source line, not a filename or value.
+
+    Args:
+        monkeypatch: Make the subprocess fail without launching a service command.
+    """
+    def failed(*args, **kwargs):
+        """Model an unavailable executable with a private path in its exception."""
+        raise FileNotFoundError(2, "synthetic-secret", "/private/synthetic-secret")
+
+    monkeypatch.setattr(lifecycle.subprocess, "run", failed)
+    try:
+        lifecycle._systemctl("daemon-reload")
+    except OSError as error:
+        result = lifecycle._failure_diagnostic("reload-units", error)
+    else:
+        pytest.fail("synthetic service failure was not raised")
+    assert "site=lifecycle:" in result
+    assert "errno=2" in result
+    assert "synthetic-secret" not in result
+    assert "/private/" not in result

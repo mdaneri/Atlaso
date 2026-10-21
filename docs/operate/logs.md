@@ -49,6 +49,12 @@ without replaying raw secrets; an interruption before sanitization requires oper
 unavailable. Do not delete a selected store or its pending state to resume logging. Existing displayed pages remain
 available in the browser when a request fails.
 
+External-history lifecycle failures report the failing stage, a fixed error category, and the deepest known Atlaso
+source location. Filesystem failures also include a numeric operating-system error code when available. Match the
+source location to the exact installed or build commit when investigating; it is not a filesystem pathname.
+Diagnostics omit exception messages, command output, log contents, and runtime paths. Preserve the recovery state
+and the build's source identity rather than deleting state or bypassing activation after a failure.
+
 For audited mutations using `record_audit`, an App-log capture failure after the audit commit does not change the
 successful mutation response. The saved state and Audit event remain durable. The process emits the value-free
 `event=audit_post_commit_reporting_failed` diagnostic to stderr for operator investigation; it contains no audit
