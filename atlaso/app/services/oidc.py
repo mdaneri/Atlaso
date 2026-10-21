@@ -72,6 +72,7 @@ OIDC_TOKEN_ENDPOINT_AUTH_METHOD = "client_secret_basic"
 OIDC_AUTHORIZATION_FLOW_AVAILABLE = True
 OIDC_TOKEN_LIFETIME_SECONDS = 300
 OIDC_AUTHORIZATION_CODE_LIFETIME_SECONDS = 60
+OIDC_LOGIN_TRANSACTION_LIFETIME_SECONDS = 300
 OIDC_DEFAULT_HOSTNAME = "oidc.atlaso.internal"
 OIDC_DEFAULT_PORT = 443
 OIDC_DNS_RECORD_DESCRIPTION = "Created from OpenID Connect provider endpoint."
@@ -2098,7 +2099,7 @@ def begin_authorization(
         or (max_age is not None and not 0 <= max_age <= 2_147_483_647)
     ):
         raise OidcConfigurationError("Invalid authorization request.")
-    provider = ensure_provider_settings(db)
+    ensure_provider_settings(db)
     now = utcnow()
     db.execute(
         delete(OidcAuthorizationTransaction).where(
@@ -2113,7 +2114,7 @@ def begin_authorization(
         scopes=" ".join(dict.fromkeys(requested)), state=state, nonce=nonce,
         code_challenge=code_challenge, browser_session_id=browser_session_id, prompt=prompt,
         max_age=max_age, login_hint=login_hint[:240],
-        expires_at=now + timedelta(seconds=provider.authorization_code_lifetime_seconds),
+        expires_at=now + timedelta(seconds=OIDC_LOGIN_TRANSACTION_LIFETIME_SECONDS),
     )
     db.add(row)
     db.flush()

@@ -104,7 +104,9 @@ algorithm negotiation is accepted.
 
 Only `response_type=code`, query response mode, confidential `client_secret_basic`, and PKCE `S256` are accepted. Every
 request has an exact stored redirect URI, `state`, `nonce`, and a server-side short-lived authorization transaction
-bound to the signed browser session. Codes are random opaque values whose SHA-256 digest is stored; redemption uses one
+bound to the signed browser session. Interactive sign-in has a fixed five-minute window; after it expires, start a new
+authorization request. Issued authorization codes have a separate 60-second lifetime. Codes are random opaque values
+whose SHA-256 digest is stored; redemption uses one
 conditional `UPDATE ... RETURNING` operation, so a code can succeed once even when two token requests race.
 Editing a client invalidates its pending authorization transactions, and code issuance independently rechecks the
 client's current enabled state, organization, exact redirect, and granted scopes.

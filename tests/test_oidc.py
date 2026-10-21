@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
 from urllib.parse import parse_qs, urlsplit
 
+import pytest
 from sqlalchemy import select, text
 
 
@@ -2340,3 +2341,48 @@ def test_begin_authorization_purges_expired_transactions_and_codes(client):
             db.execute(select(OidcAuthorizationTransaction.transaction_id)).scalar_one()
             == newest_transaction
         )
+
+
+@pytest.mark.parametrize("elapsed_seconds, succeeds", [(62, True), (299, True), (300, False), (301, False)])
+def test_interactive_login_window_is_separate_from_code_lifetime(client, monkeypatch, elapsed_seconds, succeeds):
+    """Keep interactive login usable for five minutes and issued codes limited to sixty seconds.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture replacing the OIDC service clock.
+        elapsed_seconds: Elapsed time since the authorization request began.
+        succeeds: Whether the interactive transaction should still permit sign-in.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import OidcAuthorizationCode, OidcAuthorizationTransaction
+    from atlaso.app.services import oidc as service
+
+    client_id, secret = _configure_protocol_client()
+    baseline = service.utcnow()
+    monkeypatch.setattr(service, "utcnow", lambda: baseline)
+    verifier = "t" * 64
+    transaction, csrf, _cookie = _start_login(client, _authorization_parameters(client_id, verifier))
+    with SessionLocal() as db:
+        row = db.execute(select(OidcAuthorizationTransaction)).scalar_one()
+        assert row.expires_at.replace(tzinfo=timezone.utc) == baseline + timedelta(seconds=300)
+
+    issued_at = baseline + timedelta(seconds=elapsed_seconds)
+    monkeypatch.setattr(service, "utcnow", lambda: issued_at)
+    response = _finish_local_login(client, transaction, csrf)
+    assert response.status_code == 303
+    callback = parse_qs(urlsplit(response.headers["location"]).query)
+    if not succeeds:
+        assert callback["error"] == ["access_denied"]
+        assert "code" not in callback
+        with SessionLocal() as db:
+            assert db.execute(select(OidcAuthorizationCode)).scalar_one_or_none() is None
+        return
+
+    assert "error" not in callback
+    with SessionLocal() as db:
+        row = db.execute(select(OidcAuthorizationCode)).scalar_one()
+        assert row.expires_at.replace(tzinfo=timezone.utc) == issued_at + timedelta(seconds=60)
+    monkeypatch.setattr(service, "utcnow", lambda: issued_at + timedelta(seconds=60))
+    exchange = _exchange_code(client, client_id=client_id, secret=secret, code=callback["code"][0], verifier=verifier)
+    assert exchange.status_code == 400
+    assert exchange.json()["error"] == "invalid_grant"
