@@ -215,7 +215,8 @@ jobs:
   python-tests:
     name: ${{ github.event_name == 'workflow_dispatch' && 'Trusted Python tests validation' || github.event_name == 'pull_request' && github.actor == 'github-actions[bot]' && 'Approval-gated Python tests' || 'Python tests' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Include dependency setup and runner cleanup around the complete suite.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
         with:

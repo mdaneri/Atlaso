@@ -11,6 +11,9 @@ status: current
 
 Read before changing release, trusted CI, signing, promotion, or Pages workflows, or performing publication.
 
+The complete Python CI job has a two-hour deadline covering locked dependency setup, the full suite, and runner cleanup.
+Local Python validation remains focused; the canonical CI check must complete successfully.
+
 Trusted version refresh dispatches CI from protected `main` with the exact PR number, base SHA, and head SHA. Candidate
 validation jobs remain read-only. Only separate no-checkout jobs may publish the canonical `Version policy`, `Repository
 checks`, and `Python tests` commit statuses after revalidating the open same-repository PR and exact head/base. Preserve
