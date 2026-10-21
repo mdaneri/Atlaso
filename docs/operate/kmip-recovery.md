@@ -59,8 +59,8 @@ recovery journal exists, so a corrected archive can be submitted. Uncertain rest
 3. Open **Maintenance > KMIP recovery**. Select the `.atkmip` bundle, enter its passphrase, and confirm
    **Import KMIP recovery offline**.
 4. Atlaso authenticates and validates the complete candidate before publication. Nonempty native or legacy stores,
-   wrong passphrases, corruption, unsupported schemas, duplicate identifiers or provider-scoped vCenter names, incomplete trust, and inconsistent KEK
-   custody fail closed. Existing keys are never migrated or regenerated.
+   wrong passphrases, corruption, unsupported schemas, duplicate identifiers or provider-scoped vCenter names,
+   incomplete trust, and inconsistent KEK custody fail closed. Existing keys are never migrated or regenerated.
 5. Imported provider/vCenter records are disabled and have no applied baseline. The listener remains offline.
    On **vSphere Key Providers**, review the restored provider UUIDs and exact public-client fingerprints against
    independent records. Enable only the reviewed original relationships. Expired certificates remain preserved as
