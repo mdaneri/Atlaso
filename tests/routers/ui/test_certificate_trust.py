@@ -1321,12 +1321,14 @@ def test_vcenter_enrollment_manual_routes_keep_admin_and_csrf_guards(
         client.app.dependency_overrides.pop(transport.require_session_identity, None)
 
 
-def test_inventory_requires_tls_before_credentials_and_changes_no_trust(client, monkeypatch):
+@pytest.mark.parametrize("name", ["Configured Lab vCenter", ""])
+def test_inventory_requires_tls_before_credentials_and_changes_no_trust(client, monkeypatch, name):
     """Inventory keeps TLS gating, credential locality, and saved trust unchanged.
 
     Args:
         client: Isolated HTTP test client.
         monkeypatch: Fixture replacing external credential and network calls.
+        name: Available configured instance name or honest unavailable empty string.
     """
     from atlaso.app.routers.ui import certificate_trust as transport
 
@@ -1342,7 +1344,7 @@ def test_inventory_requires_tls_before_credentials_and_changes_no_trust(client, 
             **kwargs: Pinned inventory connection arguments.
         """
         calls.append(kwargs)
-        return DiscoveredInventory(name="VMware vCenter Server", cluster_ids=("a", "b"))
+        return DiscoveredInventory(name=name, cluster_ids=("a", "b"))
 
     monkeypatch.setattr(transport, "discover_vcenter_inventory", discover)
     monkeypatch.setattr(transport, "decrypt_secret", lambda _: pytest.fail("Unexpected Vault access"))
@@ -1354,7 +1356,7 @@ def test_inventory_requires_tls_before_credentials_and_changes_no_trust(client, 
     assert not calls
     response = client.post("/vsphere-key-providers/enrollment/inventory", data={**data, "confirmed_https_fingerprint": certificate_fingerprint(leaf)})
     assert response.status_code == 200, response.text
-    assert response.json() == {"name": "VMware vCenter Server", "cluster_ids": ["a", "b"]}
+    assert response.json() == {"name": name, "cluster_ids": ["a", "b"]}
     assert response.headers["cache-control"] == "no-store"
     assert calls[0]["port"] == 443
     assert calls[0]["username"] == "temporary-user"
