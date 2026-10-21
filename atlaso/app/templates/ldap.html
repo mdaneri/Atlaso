@@ -126,7 +126,8 @@
             {% if ldap_selected_organization.description %}<div><span>Description</span><strong>{{ ldap_selected_organization.description }}</strong></div>{% endif %}
             <div><span>Suffix</span><strong>{{ ldap_selected_organization.suffix_dn }}</strong></div>
             <div><span>Users base</span><strong>ou=users,{{ ldap_selected_organization.suffix_dn }}</strong></div>
-            <div><span>Groups base</span><strong>ou=groups,{{ ldap_selected_organization.suffix_dn }}</strong></div>
+            <div><span>VCF groups base</span><strong>ou=groups,{{ ldap_selected_organization.suffix_dn }}</strong></div>
+            <div><span>vCenter groups base</span><strong>ou=vcenter-groups,{{ ldap_selected_organization.suffix_dn }}</strong></div>
             <div><span>VCF bind DN</span><strong>{{ ldap_selected_organization.bind_dn }}</strong></div>
           </div>
 

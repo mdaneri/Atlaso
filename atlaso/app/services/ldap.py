@@ -159,6 +159,15 @@ def groups_base_dn(organization: LdapOrganization) -> str:
     return f"ou=groups,{organization.suffix_dn}"
 
 
+def vcenter_groups_base_dn(organization: LdapOrganization) -> str:
+    """Return the separate RFC4519 group projection used by vCenter OpenLDAP.
+
+    Args:
+        organization: Organization owning the isolated directory suffix.
+    """
+    return f"ou=vcenter-groups,{organization.suffix_dn}"
+
+
 def service_accounts_base_dn(organization: LdapOrganization) -> str:
     """Return service accounts base dn.
 
@@ -504,6 +513,7 @@ def ldap_organization_to_dict(organization: LdapOrganization, *, reveal_bind_sec
         "suffix_dn": organization.suffix_dn,
         "users_base_dn": users_base_dn(organization),
         "groups_base_dn": groups_base_dn(organization),
+        "vcenter_groups_base_dn": vcenter_groups_base_dn(organization),
         "service_accounts_base_dn": service_accounts_base_dn(organization),
         "bind_dn": organization.bind_dn,
         "bind_secret_present": bool(organization.bind_password_encrypted),

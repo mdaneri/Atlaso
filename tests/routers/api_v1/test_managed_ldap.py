@@ -46,6 +46,9 @@ def test_ldap_api_manages_isolated_organizations_users_groups_and_vcf_mapping(cl
     assert org_a.status_code == 201, org_a.text
     assert org_b.status_code == 201, org_b.text
     assert org_a.json()["suffix_dn"] != org_b.json()["suffix_dn"]
+    for organization in (org_a.json(), org_b.json()):
+        assert organization["vcenter_groups_base_dn"] == f"ou=vcenter-groups,{organization['suffix_dn']}"
+        assert organization["groups_base_dn"] == f"ou=groups,{organization['suffix_dn']}"
     assert org_a.json()["raw_bind_password"]
     assert org_a.json()["raw_bind_password"] not in json.dumps(
         client.get("/api/v1/ldap/organizations", headers=headers).json()

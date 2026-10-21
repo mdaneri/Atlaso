@@ -5245,6 +5245,10 @@ def _ldap_config_errors(payload: dict) -> list[str]:
             if not isinstance(group, dict):
                 errors.append(f"{label}: group entries must be objects.")
                 continue
+            try:
+                _ldap_vcenter_group_dn(group, suffix)
+            except ValueError:
+                errors.append(f"{label}: group DN must belong to this organization's groups base.")
             group_id = int(group.get("id") or 0)
             members = group.get("members") or []
             if group.get("enabled") and not members:
@@ -5408,7 +5412,7 @@ def _render_ldap_slapd_config(
                 "maxsize 1073741824",
                 "index objectClass eq",
                 "index uid,cn,mail,employeeType eq,pres,sub",
-                "index member,memberOf eq",
+                "index member,uniqueMember,memberOf eq",
                 "index entryUUID eq",
                 "overlay ppolicy",
                 f"ppolicy_default \"{policy_dn}\"",
@@ -5420,7 +5424,7 @@ def _render_ldap_slapd_config(
                 "memberof-memberof-ad memberOf",
                 "memberof-refint TRUE",
                 "overlay refint",
-                "refint_attributes member memberOf manager",
+                "refint_attributes member uniqueMember memberOf manager",
                 (
                     'access to attrs=userPassword,pwdHistory,pwdAccountLockedTime '
                     'by dn.exact="gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth" manage '
@@ -5555,6 +5559,20 @@ def _ldap_delete_entries(dns: list[str]) -> int:
     return 0
 
 
+def _ldap_vcenter_group_dn(group: dict, suffix: str) -> str:
+    """Project an existing escaped group RDN without changing its original entry.
+
+    Args:
+        group: Group with a DN under the organization's canonical groups base.
+        suffix: Organization's isolated naming context.
+    """
+    dn = str(group.get("dn") or "")
+    base = f",ou=groups,{suffix}"
+    if not dn.lower().endswith(base.lower()) or len(dn) <= len(base):
+        raise ValueError("Group DN is outside the organization's groups base.")
+    return f"{dn[:-len(base)]},ou=vcenter-groups,{suffix}"
+
+
 def _ldap_reconcile_organization(organization: dict, policy: dict) -> int:
     """Perform LDAP reconcile organization.
 
@@ -5569,6 +5587,7 @@ def _ldap_reconcile_organization(organization: dict, policy: dict) -> int:
         (suffix, {"objectClass": ["top", "domain"], root_attribute: root_value}),
         (f"ou=users,{suffix}", {"objectClass": ["top", "organizationalUnit"], "ou": "users"}),
         (f"ou=groups,{suffix}", {"objectClass": ["top", "organizationalUnit"], "ou": "groups"}),
+        (f"ou=vcenter-groups,{suffix}", {"objectClass": ["top", "organizationalUnit"], "ou": "vcenter-groups"}),
         (f"ou=service-accounts,{suffix}", {"objectClass": ["top", "organizationalUnit"], "ou": "service-accounts"}),
         (f"ou=system,{suffix}", {"objectClass": ["top", "organizationalUnit"], "ou": "system"}),
     ]
@@ -5669,6 +5688,39 @@ def _ldap_reconcile_organization(organization: dict, policy: dict) -> int:
         returncode = _ldap_upsert_entry(group["dn"], attributes)
         if returncode != 0:
             return returncode
+    # vCenter's native OpenLDAP mapping requires a different structural class.
+    # Separate entries preserve VCF's existing schema, memberOf and entryUUID;
+    # normal upserts likewise retain each projection's server-issued entryUUID.
+    projected_dns = {
+        int(group["id"]): _ldap_vcenter_group_dn(group, suffix)
+        for group in organization.get("groups", [])
+    }
+    for group in organization.get("groups", []):
+        if not group.get("enabled"):
+            continue
+        attributes = {
+            "objectClass": ["top", "groupOfUniqueNames"],
+            "cn": group["name"],
+            "description": group.get("description") or "",
+            "uniqueMember": [
+                projected_dns[int(member["id"])] if member["type"] == "group" else str(member["dn"])
+                for member in group.get("members", [])
+            ],
+        }
+        returncode = _ldap_upsert_entry(projected_dns[int(group["id"])], attributes)
+        if returncode != 0:
+            return returncode
+    desired_projection_dns = {
+        projected_dns[int(group["id"])].lower()
+        for group in organization.get("groups", []) if group.get("enabled")
+    }
+    stale_projection_dns = [
+        dn for dn in _ldap_list_dns(f"ou=vcenter-groups,{suffix}")
+        if dn.lower() not in desired_projection_dns
+    ]
+    returncode = _ldap_delete_entries(stale_projection_dns)
+    if returncode != 0:
+        return returncode
     desired_group_dns = {
         str(group["dn"]).lower()
         for group in organization.get("groups", [])
