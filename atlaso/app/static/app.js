@@ -6153,7 +6153,7 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null, onSave
     autoName = "";
     discoveredClusterIds = [];
     clusterOptions?.replaceChildren();
-    if (inventoryStatus) inventoryStatus.textContent = "Connect to vCenter to discover its About product name and KMIP clusters.";
+    if (inventoryStatus) inventoryStatus.textContent = "Connect to vCenter to discover its configured instance name and KMIP clusters.";
     if (inventoryRetry) inventoryRetry.disabled = false;
   };
   const clearServerTrust = () => {
@@ -6287,13 +6287,13 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null, onSave
   const runInventory = async (controller) => {
     const sequence = ++inventorySequence;
     if (inventoryRetry) inventoryRetry.disabled = true;
-    if (inventoryStatus) inventoryStatus.textContent = "Loading vCenter About information and KMIP clusters…";
+    if (inventoryStatus) inventoryStatus.textContent = "Loading vCenter instance name and KMIP clusters…";
     clusterOptions?.replaceChildren();
     controller.setError("");
     try {
       const result = await request("inventory");
       if (sequence !== inventorySequence) return false;
-      if (typeof result.name !== "string" || !result.name.trim() || !Array.isArray(result.cluster_ids)
+      if (typeof result.name !== "string" || !Array.isArray(result.cluster_ids)
           || result.cluster_ids.some((id) => typeof id !== "string" || !id)) {
         throw new Error("vCenter returned invalid name or cluster inventory. Retry discovery or configure manually.");
       }
@@ -6307,9 +6307,12 @@ function initializeVsphereEnrollmentWizard(form, dialog, launcher = null, onSave
         option.value = id;
         return option;
       }));
-      if (inventoryStatus) inventoryStatus.textContent = discoveredClusterIds.length
-        ? `Discovered ${discoveredClusterIds.length} KMIP clusters. Select one or type a custom ID. The About name is a product display label.`
-        : "vCenter returned no KMIP clusters. You can enter a custom ID, but register it in vCenter before certificate inspection.";
+      const nameStatus = result.name
+        ? "The configured vCenter instance name is editable."
+        : "The configured vCenter instance name is unavailable. Enter a name or keep your saved/custom name.";
+      if (inventoryStatus) inventoryStatus.textContent = (discoveredClusterIds.length
+        ? `Discovered ${discoveredClusterIds.length} KMIP clusters. Select one or type a custom ID.`
+        : "vCenter returned no KMIP clusters. You can enter a custom ID, but register it in vCenter before certificate inspection.") + ` ${nameStatus}`;
       return true;
     } catch (error) {
       if (sequence !== inventorySequence) return false;

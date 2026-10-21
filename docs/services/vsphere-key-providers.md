@@ -69,7 +69,8 @@ Successful setup refreshes the trust rows and pending Apply state in place.
    vCenter API path. Continue to inspect the public HTTPS certificate without authenticating. Compare its SHA-256
    fingerprint through an independent trusted source and select the confirmation checkbox; no fingerprint retyping
    is required. In manual mode, enter the username and password on the Login step; Vault mode skips that step.
-   Atlaso fills the vCenter name from the authenticated About product name and loads all returned KMIP cluster IDs.
+   Atlaso fills the vCenter name from the authenticated configured instance name when available,
+   and loads all returned KMIP cluster IDs.
    Select the provider and choose a cluster from the editable dropdown, or type a custom ID. You can edit the display
    name. A custom ID must already be registered in vCenter before certificate inspection can succeed; this wizard does
    not create clusters. Then review the discovered public KMIP client certificate
@@ -86,10 +87,18 @@ clears certificate confirmation and requires another probe before authentication
 vCenter cluster to point only to the configured Atlaso hostname and
 port. Client authorization remains an exact fingerprint-to-provider-UUID mapping.
 
-The name comes from `ServiceContent.about.name`, the product display name documented by
-[Broadcom AboutInfo](https://developer.broadcom.com/xapis/virtual-infrastructure-json-api/latest/data-structures/AboutInfo/).
-It is separate from the endpoint hostname, instance UUID, Atlaso provider UUID, and cluster ID. Refreshing a saved
-trusted vCenter preserves its name. Cluster choices use the same pinned authenticated connection and
+The name comes from the configured `VirtualCenter.InstanceName` setting, queried read-only through
+`ServiceContent.setting` and
+[Broadcom OptionManager.QueryOptions](https://developer.broadcom.com/xapis/virtual-infrastructure-json-api/latest/sdk/vim25/release/OptionManager/moId/QueryOptions/post/).
+This is the configured vCenter instance label shown in native vSphere inventory/runtime settings. It may be an FQDN
+or IP address; it is not inferred from the connection endpoint. `ServiceContent.about.name` describes the product
+(for example, **VMware vCenter Server**) and is never used as the instance name. The endpoint hostname, immutable
+`about.instanceUuid`, Atlaso provider UUID, and KMIP cluster ID retain their separate meanings.
+Reading this setting requires `System.Read` on the root folder. If the setting is missing, denied, malformed, empty,
+or too long for Atlaso's 120-character name field, cluster discovery still runs and the wizard asks you to enter a name.
+It never substitutes the product label, endpoint, or UUID. Saved and operator-entered names are preserved, including
+on refresh; this correction never renames database records automatically.
+Cluster choices use the same pinned authenticated connection and
 [Broadcom ListKmsClusters](https://developer.broadcom.com/xapis/virtual-infrastructure-json-api/latest/sdk/vim25/release/CryptoManagerKmip/moId/ListKmsClusters/post/)
 without management-type or status filters. Choosing an entry does not verify its Atlaso endpoint: certificate inspection
 still checks that the selected cluster points only to this Atlaso hostname and port.
