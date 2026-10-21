@@ -92,7 +92,8 @@ replacement proxy's socket, review its shutdown with the proxy changes; the serv
 Registry handoffs account for every applied listener address, including non-first addresses in a multi-address binding.
 For an enabled service moving to another socket, keep the replacement proxy disabled, apply the service move first,
 then enable and apply the proxy. Disabled intent can be saved or edited while its primary or redirect socket is
-occupied; enabling it rechecks service, port-forward, and peer proxy socket ownership before saving. This preserves certificate setup and listener release ordering.
+occupied; enabling it rechecks service, port-forward, and peer proxy socket ownership before saving. This preserves
+certificate setup and listener release ordering.
 When a native service takes a disabled or moved proxy's still-applied socket, review Public Services with that service.
 The protected publication releases nginx's old listener before the service starts. A served hostname also cannot claim
 a peer route's upstream hostname, including disabled peer intent, because that would redirect the peer's backend DNS.
