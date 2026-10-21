@@ -66,6 +66,97 @@ def test_installed_collector_imports_complete_legacy_and_continues(tmp_path, mon
     assert json.loads((root / "nginx-state.json").read_text())["next"] == 2
 
 
+@pytest.mark.parametrize("missing", [("access.log",), ("error.log",), ("access.log", "error.log")])
+def test_fresh_collector_accepts_streams_nginx_has_not_opened(tmp_path, monkeypatch, missing):
+    """Fresh bootstrap configurations may not open either normal log stream.
+
+    Args:
+        tmp_path: Owned synthetic appliance filesystem.
+        monkeypatch: Model a live Nginx that does not open unconfigured streams.
+        missing: Streams absent before initial collection.
+    """
+    root, logs, _ = _nginx_fixture(tmp_path, monkeypatch)
+    for name in missing:
+        (logs / name).unlink()
+    monkeypatch.setattr(lifecycle, "reopen_nginx_logs", lambda: None)
+    lifecycle.collect_nginx()
+    for name, source in (("access.log", "nginx-access"), ("error.log", "nginx-error")):
+        expected = () if name in missing else ("initial",)
+        assert history.read_page(lifecycle.NGINX_STORE, source).lines == expected
+        assert (logs / name).is_file()
+        assert (logs / name).read_bytes() == b""
+    (logs / "error.log").write_text("later\n", encoding="utf-8")
+    lifecycle.collect_nginx()
+    expected_error = ("later",) if "error.log" in missing else ("initial", "later")
+    assert history.read_page(lifecycle.NGINX_STORE, "nginx-error").lines == expected_error
+    assert json.loads((root / "nginx-state.json").read_text())["next"] == 2
+
+
+def test_missing_active_log_with_archive_still_requires_reconciliation(tmp_path, monkeypatch):
+    """Missing active files cannot hide an incomplete retained legacy inventory.
+
+    Args:
+        tmp_path: Owned synthetic appliance filesystem.
+        monkeypatch: Bind the collector to synthetic paths.
+    """
+    root, logs, count = _nginx_fixture(tmp_path, monkeypatch)
+    (logs / "access.log").unlink()
+    (logs / "access.log.1").write_text("retained\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="Incomplete App log rotation inventory"):
+        lifecycle.collect_nginx()
+    assert (logs / "access.log.1").read_text() == "retained\n"
+    assert not (logs / "access.log").exists()
+    assert not (root / "nginx-state.json").exists()
+    assert not count
+
+
+def test_missing_active_log_after_activation_is_not_recreated(tmp_path, monkeypatch):
+    """Unexpected deletion outside a sealing transaction remains a hard failure.
+
+    Args:
+        tmp_path: Owned synthetic appliance filesystem.
+        monkeypatch: Bind the collector to synthetic paths.
+    """
+    root, logs, count = _nginx_fixture(tmp_path, monkeypatch)
+    lifecycle.collect_nginx()
+    original = (root / "nginx-state.json").read_bytes()
+    (logs / "access.log").unlink()
+    with pytest.raises(FileNotFoundError):
+        lifecycle.collect_nginx()
+    assert not (logs / "access.log").exists()
+    assert (root / "nginx-state.json").read_bytes() == original
+    assert len(count) == 1
+
+
+def test_prepare_nginx_streams_preserves_existing_bytes_and_identity(tmp_path, monkeypatch):
+    """Preparation leaves an existing producer file untouched.
+
+    Args:
+        tmp_path: Owned synthetic appliance filesystem.
+        monkeypatch: Bind the collector to synthetic paths.
+    """
+    _, logs, _ = _nginx_fixture(tmp_path, monkeypatch)
+    before = {name: ((logs / name).stat().st_ino, (logs / name).read_bytes())
+              for name in ("access.log", "error.log")}
+    lifecycle._prepare_nginx_log_files()
+    assert before == {name: ((logs / name).stat().st_ino, (logs / name).read_bytes()) for name in before}
+
+
+def test_prepare_nginx_streams_refuses_hardlinked_log(tmp_path, monkeypatch):
+    """Exclusive creation does not turn a linked existing file into trusted input.
+
+    Args:
+        tmp_path: Owned synthetic appliance filesystem.
+        monkeypatch: Bind the collector to synthetic paths.
+    """
+    _, logs, _ = _nginx_fixture(tmp_path, monkeypatch)
+    (logs / "access.log").unlink()
+    (logs / "access.log").hardlink_to(logs / "error.log")
+    with pytest.raises(ValueError, match="ordinary owned filesystem entry"):
+        lifecycle._prepare_nginx_log_files()
+    assert (logs / "error.log").read_text() == "initial\n"
+
+
 def test_collector_restarts_pending_generation_without_duplicate_rows(tmp_path, monkeypatch):
     """A timer killed after capture resumes its pending generation before rotating.
 

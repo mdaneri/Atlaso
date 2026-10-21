@@ -291,6 +291,33 @@ def _activate(store: Path, source: str) -> None:
     history.activate_source(store, source, generation=page.generation, through=page.through)
 
 
+def _prepare_nginx_log_files() -> None:
+    """Create only missing empty streams in the trusted Nginx log directory.
+
+    A fresh configuration without virtual hosts may leave access.log unopened,
+    even after a successful USR1. Never truncate or replace a producer's file.
+    Call only before the first inventory is bound, or immediately after our
+    cooperative rename/reopen within an existing sealing transaction.
+    """
+    parent = _ordinary(NGINX_LOGS, directory=True)
+    if os.name == "posix" and (parent.st_uid != int(importlib.import_module("os").geteuid()) or
+                               stat.S_IMODE(parent.st_mode) & 0o022):
+        raise ValueError("Nginx log parent must exclude unrelated writers.")
+    for name in ("access.log", "error.log"):
+        path = NGINX_LOGS / name
+        try:
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                                 getattr(os, "O_NOFOLLOW", 0), 0o640)
+        except FileExistsError:
+            _ordinary(path)
+        else:
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            _sync_directory(NGINX_LOGS)
+
+
 def collect_nginx() -> None:
     """Import the complete initial inventory or collect the next immutable pair."""
     _vendor_rotation_check()
@@ -307,6 +334,9 @@ def collect_nginx() -> None:
         archived: dict[str, list[str]] = {}
         for name in ("access.log", "error.log"):
             archived[name] = [path.name for path in inventory(NGINX_LOGS / name) if path.name != name]
+        # Validate both complete legacy inventories before creating any empty
+        # stream. Missing active files alongside archives remain a hard failure.
+        _prepare_nginx_log_files()
         state = {"schema": 1, "phase": "initial", "next": 0, "pending": None, "archives": archived}
         _write(state_path, state)
     if state.get("schema") != 1 or state.get("phase") not in {"initial", "active"}:
@@ -346,7 +376,12 @@ def collect_nginx() -> None:
         """
         return nginx_writers_closed(current | archived_identities)
 
-    seal_generation(NGINX_LOGS, generation, reopen=reopen_nginx_logs, writers_closed=all_writers_closed)
+    def reopen() -> None:
+        """Reopen the producer, then retain empty current streams it leaves unused."""
+        reopen_nginx_logs()
+        _prepare_nginx_log_files()
+
+    seal_generation(NGINX_LOGS, generation, reopen=reopen, writers_closed=all_writers_closed)
     if state["phase"] == "initial":
         history.initialize(NGINX_STORE)
         for basename, source in (("access.log", "nginx-access"), ("error.log", "nginx-error")):

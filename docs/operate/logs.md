@@ -55,6 +55,12 @@ source location to the exact installed or build commit when investigating; it is
 Diagnostics omit exception messages, command output, log contents, and runtime paths. Preserve the recovery state
 and the build's source identity rather than deleting state or bypassing activation after a failure.
 
+Fresh bootstrap configurations may not open an HTTP access or error log until a virtual host uses it. The collector
+creates missing empty streams before binding the initial inventory and after its own cooperative reopen, using
+exclusive creation in the trusted log directory. Existing files are never truncated or replaced. Missing active files
+alongside retained archives, or unexpected deletion outside the sealing transaction after activation, still require
+reconciliation.
+
 For audited mutations using `record_audit`, an App-log capture failure after the audit commit does not change the
 successful mutation response. The saved state and Audit event remain durable. The process emits the value-free
 `event=audit_post_commit_reporting_failed` diagnostic to stderr for operator investigation; it contains no audit
