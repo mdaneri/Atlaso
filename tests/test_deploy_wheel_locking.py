@@ -13,7 +13,7 @@ import stat
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -161,6 +161,99 @@ class DeploymentLockTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("lacks deployment locking", result.stderr)
         self.assertFalse(self.helper.ATLASO_DEPLOYMENT_LOCK_PATH.exists())
+
+    def test_outer_systemd_dispatch_refuses_before_preflight(self):
+        """Wheel contention cannot prepare directories, stop units, or spawn a child."""
+        with subprocess.Popen(
+            ["sh", "-c", self.shell], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        ) as deploy:
+            try:
+                self.assertTrue(select.select([deploy.stdout], [], [], 10)[0])
+                self.assertEqual(deploy.stdout.readline().strip(), "acquired")
+                with ExitStack() as patches:
+                    patches.enter_context(patch.dict(os.environ, {"ATLASO_HELPER_USE_SYSTEMD_RUN": "1"}))
+                    patches.enter_context(patch.object(self.helper.shutil, "which", return_value="/usr/bin/systemd-run"))
+                    # Side effects stay behind the real outer lock, including
+                    # bounded-check dispatch even without the opt-in flag.
+                    preflight = patches.enter_context(patch.object(self.helper, "_privileged_powershell_environment"))
+                    stop = patches.enter_context(patch.object(self.helper, "_quiesce_appliance_update_status_unit"))
+                    child = patches.enter_context(patch.object(self.helper, "_run"))
+                    for action in ("check", "apply", "sync-sources", "status-publish", "status-finish"):
+                        with self.subTest(action=action):
+                            output = io.StringIO()
+                            with redirect_stdout(output):
+                                result = self.helper.main([
+                                    "atlaso-helper", "appliance-update", action, "--real",
+                                    "job_012345abcdef" if action.startswith("status-") else str(self.root / "config.json"),
+                                ])
+                            self.assertEqual(result, 73)
+                            self.assertEqual(json.loads(output.getvalue().splitlines()[-1]), {
+                                "status": "deployment-busy", "mutation_started": False,
+                            })
+                    preflight.assert_not_called()
+                    stop.assert_not_called()
+                    child.assert_not_called()
+            finally:
+                deploy.communicate("release\n", timeout=10)
+            self.assertEqual(deploy.returncode, 0)
+
+    def test_outer_systemd_lock_covers_preflight_child_and_cleanup(self):
+        """Real parent admission excludes wheel deployment until dispatch unwinds."""
+        events = []
+
+        def excluded(stage):
+            """Assert an independent deployer remains excluded at this stage.
+
+            Args:
+                stage: Side effect observed within the admitted systemd wrapper.
+            """
+            result = subprocess.run(
+                ["sh", "-c", self.shell], input="release\n", text=True,
+                capture_output=True, timeout=10, check=False,
+            )
+            self.assertEqual(result.returncode, 2, result.stderr)
+            events.append(stage)
+
+        def environment():
+            """Model environment mutation only after outer admission."""
+            excluded("environment")
+            return dict.fromkeys(("HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"), "/unused")
+
+        def child(command, **kwargs):
+            """Model synchronous child execution and nested shared admission.
+
+            Args:
+                command: Transient helper command.
+                **kwargs: Bounded transport options.
+            """
+            with self.helper._appliance_update_deployment_guard("check"):
+                excluded("child")
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with ExitStack() as patches:
+            patches.enter_context(patch.object(self.helper, "_privileged_powershell_environment", environment))
+            patches.enter_context(patch.object(self.helper, "_run", child))
+            patches.enter_context(patch.object(self.helper, "_quiesce_appliance_update_status_unit", lambda _job: excluded("stop")))
+            patches.enter_context(patch.object(self.helper, "_quiesce_appliance_update_unit", lambda *_args, **_kwargs: excluded("quiesce")))
+            patches.enter_context(patch.object(self.helper, "_cleanup_stale_photon_repository_views", lambda **_kwargs: excluded("cleanup")))
+            for action in ("check", "status-publish", "status-finish"):
+                events.clear()
+                with redirect_stdout(io.StringIO()):
+                    self.assertEqual(self.helper._run_real_action_with_systemd(
+                        "appliance-update", action,
+                        ["job_012345abcdef" if action.startswith("status-") else str(self.root / "config.json")],
+                    ), 0)
+                self.assertEqual(events, ["environment", "child", "quiesce", "cleanup"] if action == "check" else ["stop", "environment", "child"])
+            # An exception after admission releases the parent lock as well.
+            patches.enter_context(patch.object(self.helper, "_run", side_effect=OSError("fixture failure")))
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(self.helper._run_real_action_with_systemd("appliance-update", "apply", []), 75)
+        result = subprocess.run(
+            ["sh", "-c", self.shell], input="release\n", text=True,
+            capture_output=True, timeout=10, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_helper_capability_is_rechecked_under_lock(self):
         """Refuse when an updater replaced the helper before exclusive acquisition."""

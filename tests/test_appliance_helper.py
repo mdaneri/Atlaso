@@ -12119,7 +12119,7 @@ def test_appliance_update_apply_uses_a_fixed_task_stream_unit(monkeypatch, tmp_p
         or subprocess.CompletedProcess(command, 0, "", ""),
     )
 
-    assert helper._run_real_action_with_systemd(
+    assert helper._run_real_action_with_systemd_admitted(
         "appliance-update",
         "apply",
         [str(manifest)],
@@ -12213,7 +12213,7 @@ def test_appliance_update_status_transitions_serialize_one_fixed_task_unit(
         or subprocess.CompletedProcess(command, 0, "", ""),
     )
 
-    assert helper._run_real_action_with_systemd(
+    assert helper._run_real_action_with_systemd_admitted(
         "appliance-update",
         action,
         [job_id],
@@ -12249,7 +12249,7 @@ def test_appliance_update_status_transition_fails_closed_on_quiescence_failure(
         ),
     )
 
-    assert helper._run_real_action_with_systemd(
+    assert helper._run_real_action_with_systemd_admitted(
         "appliance-update",
         "status-publish",
         ["job_012345abcdef"],
@@ -12453,7 +12453,7 @@ def test_appliance_update_receives_writable_powershell_environment(monkeypatch, 
     monkeypatch.setattr(helper, "_quiesce_appliance_update_unit", lambda *args, **kwargs: {})
     monkeypatch.setattr(helper, "_cleanup_stale_photon_repository_views", lambda **kwargs: None)
 
-    assert helper._run_real_action_with_systemd(
+    assert helper._run_real_action_with_systemd_admitted(
         "appliance-update",
         "check",
         [str(config_path)],

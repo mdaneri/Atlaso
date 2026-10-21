@@ -279,7 +279,9 @@ Older helpers fail closed: create a fresh disposable bootstrap VM from an image 
 do not manually replace its helper to bypass admission. Deployment holds an exclusive lock on
 `/run/atlaso-appliance-mutation.lock` through asset installation and web readiness, releasing it before starting or
 restoring the worker so queued updates and interrupted-helper reconciliation can resume. Appliance Update helpers take shared
-locks on the same inode before mutation, including status publication; an active operation refuses conflicting work.
+locks on the same inode before mutation, including status publication. The outer systemd dispatcher acquires admission
+before preparing privileged directories or stopping a status unit, and holds it through child execution and cleanup;
+an active operation refuses conflicting work.
 An update refused solely because deployment owns this lock remains queued for the normal worker retry interval.
 The helper records explicit no-mutation admission evidence with its distinct conflict status; check, source-sync and
 installation tasks retry using the same task and child identities. Completed children remain unchanged. This does not

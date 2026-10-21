@@ -104,7 +104,7 @@ def test_check_deadline_keeps_process_tree_and_cleanup_owned(helper, monkeypatch
     monkeypatch.setattr(helper, "_run", run)
     monkeypatch.setattr(helper, "_quiesce_appliance_update_unit", quiesce)
     monkeypatch.setattr(helper, "_cleanup_stale_photon_repository_views", lambda **kwargs: events.append("credentials"))
-    result = helper._run_real_action_with_systemd("appliance-update", "check", [str(manifest)])
+    result = helper._run_real_action_with_systemd_admitted("appliance-update", "check", [str(manifest)])
     assert result == {"success": 0, "timeout": 124, "cleanup-failure": 75}[outcome]
     assert events == (["run", "quiesce"] if outcome == "cleanup-failure" else ["run", "quiesce", "credentials"])
 
@@ -118,7 +118,7 @@ def test_install_has_no_check_deadline(helper, monkeypatch):
     """
     commands = []
     monkeypatch.setattr(helper, "_run", lambda command: commands.append(command) or subprocess.CompletedProcess(command, 0, "", ""))
-    assert helper._run_real_action_with_systemd("appliance-update", "apply", ["/missing/config"]) == 0
+    assert helper._run_real_action_with_systemd_admitted("appliance-update", "apply", ["/missing/config"]) == 0
     assert not any("RuntimeMaxSec" in item for item in commands[0])
 
 
