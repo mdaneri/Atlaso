@@ -2109,12 +2109,17 @@ def begin_authorization(
     db.execute(
         delete(OidcAuthorizationCode).where(OidcAuthorizationCode.expires_at <= now)
     )
+    transaction_lifetime_seconds = (
+        OIDC_AUTHORIZATION_CODE_LIFETIME_SECONDS
+        if prompt == "none"
+        else OIDC_LOGIN_TRANSACTION_LIFETIME_SECONDS
+    )
     row = OidcAuthorizationTransaction(
         transaction_id=_new_opaque_value(), oidc_client_id=client.id, redirect_uri=redirect_uri,
         scopes=" ".join(dict.fromkeys(requested)), state=state, nonce=nonce,
         code_challenge=code_challenge, browser_session_id=browser_session_id, prompt=prompt,
         max_age=max_age, login_hint=login_hint[:240],
-        expires_at=now + timedelta(seconds=OIDC_LOGIN_TRANSACTION_LIFETIME_SECONDS),
+        expires_at=now + timedelta(seconds=transaction_lifetime_seconds),
     )
     db.add(row)
     db.flush()

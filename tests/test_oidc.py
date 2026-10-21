@@ -2386,3 +2386,30 @@ def test_interactive_login_window_is_separate_from_code_lifetime(client, monkeyp
     exchange = _exchange_code(client, client_id=client_id, secret=secret, code=callback["code"][0], verifier=verifier)
     assert exchange.status_code == 400
     assert exchange.json()["error"] == "invalid_grant"
+
+
+def test_silent_authorization_keeps_the_short_transaction_lifetime(client, monkeypatch):
+    """Do not extend abandoned silent requests when increasing interactive login time.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture replacing the OIDC service clock.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import OidcAuthorizationTransaction
+    from atlaso.app.services import oidc as service
+
+    client_id, _secret = _configure_protocol_client()
+    baseline = service.utcnow()
+    monkeypatch.setattr(service, "utcnow", lambda: baseline)
+    response = client.get(
+        "https://testserver/identity/authorize",
+        params=_authorization_parameters(client_id, "s" * 64, prompt="none"),
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert parse_qs(urlsplit(response.headers["location"]).query)["error"] == ["login_required"]
+    with SessionLocal() as db:
+        row = db.execute(select(OidcAuthorizationTransaction)).scalar_one()
+        assert row.prompt == "none"
+        assert row.expires_at.replace(tzinfo=timezone.utc) == baseline + timedelta(seconds=60)
