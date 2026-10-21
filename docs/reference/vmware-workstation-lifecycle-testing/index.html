@@ -4578,6 +4578,32 @@ condition by deleting a
 backup or rewriting preferences broadly. Registration absence covers the supplied complete storage roots and provider
 inventory; a caller must not omit an unregistered VM storage location to obtain a successful result.</p>
 <h3 id="wheel-only-deployment-authentication">Wheel-only deployment authentication<a class="headerlink" href="#wheel-only-deployment-authentication" title="Permanent link">&para;</a></h3>
+<p>Wheel deployment admits only a canonical unsigned bootstrap environment or a legacy direct development virtualenv.
+Before package installation or service, helper, trust-store, or database changes, it refuses signed release destinations,
+unrecognized or inconsistent release links, invalid bootstrap metadata, and retained Appliance Update maintenance,
+status, restart-gate, or finalizer evidence. This applies to both upgrades and downgrades and to same-version wheels:
+matching version text does not prove matching signed bytes. Both SSH authentication paths use this admission.</p>
+<p>The installed helper must support <code>appliance-update wheel-deploy-lock-v1 --real</code> before deployment can proceed.
+Older helpers fail closed: create a fresh disposable bootstrap VM from an image containing the lock-capable helper;
+do not manually replace its helper to bypass admission. Deployment holds an exclusive lock on
+<code>/run/atlaso-appliance-mutation.lock</code> through asset installation and web readiness, releasing it before starting or
+restoring the worker so queued updates and interrupted-helper reconciliation can resume. Appliance Update helpers take shared
+locks on the same inode before mutation, including status publication. The outer systemd dispatcher acquires admission
+before preparing privileged directories or stopping a status unit, and holds it through child execution and cleanup;
+an active operation refuses conflicting work.
+An update refused solely because deployment owns this lock remains queued for the normal worker retry interval.
+The helper records explicit no-mutation admission evidence with its distinct conflict status; check, source-sync and
+installation tasks retry using the same task and child identities. Completed children remain unchanged. This does not
+relax the existing cleanup-required handling when prior helper ownership or credential cleanup cannot be proven.
+Shared update locks permit the updater's own recovery and worker handoff helpers to run together. Ordinary startup
+guards with no update evidence remain available to deployment's service restarts. Never delete or replace the lock file
+to clear a conflict: wait for the owning operation to finish and retry admission.</p>
+<p>Use signed Appliance Update to change a signed release. For wheel testing, create a separate disposable bootstrap VM
+through the <a href="#normal-test-vm-creation-ownership">receipt-bound creation workflow</a>. A refusal preserves the original
+release links, receipt, package environment, database, and recovery state. It does not reset an already damaged signed
+environment or clear a maintenance hold. Retain the exact verified release assets and failed task evidence for supported
+recovery; do not rewrite receipts or finalizers, remove maintenance markers, or retry a wheel deployment to bypass them.
+A successful internal OpenAPI probe alone does not establish front-door recovery or a healthy rollback.</p>
 <p>For a wheel-only deployment to the canonical test VM, use <code>scripts/windows/vmware/deploy-wheel.ps1</code> with the secure
 Windows 1Password handoff documented in the <a href="../full-technical-reference/">full technical reference</a>. Verify the unique
 <code>Atlaso</code> Environment and concealed <code>DEFAULT_ADMIN_PASSWORD</code> variable by name, then pass its opaque Environment ID
