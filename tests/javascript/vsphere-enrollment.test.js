@@ -220,17 +220,17 @@ function makeRuntime(respond, onSaved = null) {
   return { form, wizard, options, errors, skipped, shown, page, resets, reloads };
 }
 
-test("login discovers the About display name and complete editable cluster choices", async () => {
+test("login discovers the configured instance name and complete editable cluster choices", async () => {
   const requests = [];
   const { form, options, wizard } = makeRuntime(async (url, body) => {
     requests.push({ url, body });
-    return { name: "VMware vCenter Server", cluster_ids: ["cluster-a", "cluster-b", "inactive-cluster"] };
+    return { name: "Configured Lab vCenter", cluster_ids: ["cluster-a", "cluster-b", "inactive-cluster"] };
   });
   form.elements.username.value = "request-user";
   form.elements.password.value = "request-password";
   assert.equal(await options.onNext({ controller: wizard, step: { id: "login" } }), true);
   assert.equal(requests[0].url, "/vsphere-key-providers/enrollment/inventory");
-  assert.equal(form.elements.name.value, "VMware vCenter Server");
+  assert.equal(form.elements.name.value, "Configured Lab vCenter");
   assert.deepEqual(form.clusterOptions.children.map((option) => option.value), ["cluster-a", "cluster-b", "inactive-cluster"]);
   form.elements.cluster_id.value = "custom-new-id";
   await form.elements.cluster_id.dispatch("input");
@@ -258,6 +258,22 @@ test("inventory distinguishes failure from empty success and retries without los
   assert.equal(form.elements.name.value, "vCenter Server");
   assert.match(form.inventoryStatus.textContent, /returned no KMIP clusters/);
   assert.equal(form.elements.cluster_id.value, "custom");
+});
+
+test("missing configured name keeps clusters editable and never supplies a product or endpoint fallback", async () => {
+  let name = "Configured Lab vCenter";
+  const { form, options, wizard } = makeRuntime(async () => ({ name, cluster_ids: ["keep-cluster"] }));
+  await options.onNext({ controller: wizard, step: { id: "login" } });
+  assert.equal(form.elements.name.value, name);
+  name = "";
+  await form.inventoryRetry.dispatch("click");
+  assert.equal(form.elements.name.value, "");
+  assert.equal(form.clusterOptions.children[0].value, "keep-cluster");
+  assert.match(form.inventoryStatus.textContent, /instance name is unavailable.*Enter a name/);
+  form.elements.name.value = "Operator label";
+  await form.elements.name.dispatch("input");
+  await form.inventoryRetry.dispatch("click");
+  assert.equal(form.elements.name.value, "Operator label");
 });
 
 test("endpoint and credential changes discard discovered selections and reject delayed inventory", async () => {
@@ -292,7 +308,7 @@ test("refresh preserves the saved name and Vault discovery occurs after TLS conf
   const calls = [];
   const { form, options, wizard } = makeRuntime(async (url, body) => {
     calls.push({ url, body });
-    return { name: "Product name", cluster_ids: ["existing"] };
+    return { name: "Configured instance", cluster_ids: ["existing"] };
   });
   options.onOpen({ context: { id: "saved-id", name: "Saved identity", hostname: "vc.example.test", provider_id: "p" } });
   form.elements.credential_mode.value = "vault";
