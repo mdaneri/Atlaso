@@ -144,7 +144,7 @@ def test_kmip_recovery_api_requires_write_scope_and_keeps_trust_disabled(client,
             **kwargs: Kwargs supplied to this operation.
         """
         calls.append(action)
-        assert group == "kms" and kwargs["timeout_seconds"] == 180
+        assert group == "kms" and kwargs["timeout_seconds"] == 1800
         result = {"archive": base64.b64encode(b"synthetic encrypted archive").decode()} if action == "recovery-export" else {"status": "pending-trust-review", "trust": trust}
         return AdapterResult(command=["atlaso-helper", group, action], dry_run=False, returncode=0, stdout=json.dumps(result))
 

@@ -44,6 +44,8 @@ collected. No plaintext operational key is returned through the management UI or
 
 An export succeeds only after the helper restores the prior KMS service state. A failure requires checking service
 health before retrying. Retain older verified bundles until the replacement has been independently tested.
+The management helper allows up to 30 minutes for the bounded operation and service restoration on a slow appliance.
+Wait for its result and service-health readback before retrying.
 
 ## Restore onto an empty target
 

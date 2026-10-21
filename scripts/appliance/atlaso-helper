@@ -1441,16 +1441,19 @@ def _kms_service_identity_available() -> tuple[bool, bool]:
     return group_available, account_available
 
 
-def _ensure_kms_service_identity() -> tuple[object, object]:
+def _ensure_kms_service_identity(*, command_timeout: float | None = None) -> tuple[object, object]:
     """Ensure KMS service identity.
 
+    Args:
+        command_timeout: Optional bound for account commands during recovery.
     """
+    run_options = {"timeout": command_timeout} if command_timeout is not None else {}
     group_available, account_available = _kms_service_identity_available()
     if not group_available:
         groupadd = _command_path("groupadd")
         if groupadd is None:
             raise ValueError("groupadd command not found for KMS service-account reconciliation.")
-        created_group = _run([groupadd, "--system", KMS_SERVICE_USER])
+        created_group = _run([groupadd, "--system", KMS_SERVICE_USER], **run_options)
         if created_group.returncode != 0:
             raise ValueError("Could not reconcile the atlaso-kmip system group.")
     if not account_available:
@@ -1468,7 +1471,8 @@ def _ensure_kms_service_identity() -> tuple[object, object]:
                 "--shell",
                 "/sbin/nologin",
                 KMS_SERVICE_USER,
-            ]
+            ],
+            **run_options,
         )
         if created_account.returncode != 0:
             raise ValueError("Could not reconcile the atlaso-kmip system account.")
@@ -6703,7 +6707,7 @@ def _handle_kms_recovery(action: str, args: list[str]) -> int:
         request["action"] = "export" if action == "recovery-export" else "import"
         request["secrets_key"] = _kms_secrets_key()
         if action == "recovery-import":
-            account, group = _ensure_kms_service_identity()
+            account, group = _ensure_kms_service_identity(command_timeout=30)
             request.update(uid=account.pw_uid, gid=group.gr_gid)
         result = _kms_recovery_child(request)
         if result.returncode != 0:

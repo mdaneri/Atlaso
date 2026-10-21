@@ -59,7 +59,7 @@ def test_recovery_quiesces_both_writers_and_restores_or_keeps_offline(monkeypatc
     monkeypatch.setattr(helper, "_kms_service_snapshot", lambda unit: states[unit])
     monkeypatch.setattr(helper, "_kms_legacy_check", lambda **kwargs: proofs.append(kwargs))
     monkeypatch.setattr(helper, "_kms_secrets_key", lambda: "synthetic-target")
-    monkeypatch.setattr(helper, "_ensure_kms_service_identity", lambda: (SimpleNamespace(pw_uid=1000), SimpleNamespace(gr_gid=1000)))
+    monkeypatch.setattr(helper, "_ensure_kms_service_identity", lambda **_kwargs: (SimpleNamespace(pw_uid=1000), SimpleNamespace(gr_gid=1000)))
 
     def run(command, **kwargs):
         """Run.
@@ -290,3 +290,123 @@ def test_factory_reset_absent_recovery_requires_durable_parent_readback(tmp_path
         helper._remove_factory_reset_kmip_recovery()
     assert helper._remove_factory_reset_kmip_recovery() is False
     assert attempts == [tmp_path, tmp_path]
+
+
+@pytest.mark.parametrize("action,child_timeout", [("recovery-export", False), ("recovery-export", True), ("recovery-import", True)])
+def test_outer_recovery_budget_covers_slow_operation_and_restoration(monkeypatch, capsys, action, child_timeout):
+    """Slow bounded child and service calls leave enough time for restoration.
+
+    Args:
+        monkeypatch: Pytest fixture replacing subprocesses and the clock.
+        capsys: Pytest fixture capturing the single safe helper response.
+        action: Recovery operation exercised under worst-case bounded latency.
+        child_timeout: Whether the operational child exhausts its inner timeout.
+    """
+    from atlaso.app.services.kmip_recovery import RECOVERY_HELPER_TIMEOUT_SECONDS
+
+    helper = load_helper_module()
+    elapsed = 0
+    initial = {"atlaso-kmip.service": (True, True), "atlaso-kms.service": (True, True)}
+    states = dict(initial)
+    restored = []
+
+    def advance(seconds):
+        """Advance the synthetic clock without sleeping.
+
+        Args:
+            seconds: Bounded operation latency to account for.
+        """
+        nonlocal elapsed
+        elapsed += seconds
+        assert elapsed < RECOVERY_HELPER_TIMEOUT_SECONDS
+
+    def snapshot(unit):
+        """Return the service state after a maximally slow supported probe.
+
+        Args:
+            unit: Writer whose service state is observed.
+        """
+        advance(30)
+        return states[unit]
+
+    def legacy(**_kwargs):
+        """Budget conservative legacy checks without reading a real store.
+
+        Args:
+            **_kwargs: Optional stopped-writer proof request.
+        """
+        advance(90)
+
+    def run(command, **kwargs):
+        """Run a simulated bounded service command and update its posture.
+
+        Args:
+            command: Exact service command emitted by recovery.
+            **kwargs: Explicit timeout supplied by the helper.
+        """
+        advance(kwargs["timeout"])
+        operation, unit = command[1], command[-1]
+        active, enabled = states[unit]
+        states[unit] = (False if "--now" in command else operation == "restart" if operation in {"restart", "stop"} else active,
+                        operation == "enable" if operation in {"enable", "disable"} else enabled)
+        restored.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def child(request):
+        """Consume a whole child budget, including checkpoint and finish calls.
+
+        Args:
+            request: Isolated recovery operation dispatched by the helper.
+        """
+        advance(120)
+        if request["action"] == "service-capture":
+            return subprocess.CompletedProcess([], 0, json.dumps({"states": initial}), "")
+        if request["action"] in {"export", "import"} and child_timeout:
+            raise subprocess.TimeoutExpired("synthetic recovery", 120)
+        return subprocess.CompletedProcess([], 0, "{}", "")
+
+    monkeypatch.setattr(helper, "_kms_service_snapshot", snapshot)
+    monkeypatch.setattr(helper, "_kms_legacy_check", legacy)
+    monkeypatch.setattr(helper, "_kms_secrets_key", lambda: "synthetic")
+    monkeypatch.setattr(helper, "_run", run)
+    monkeypatch.setattr(helper, "_kms_recovery_child", child)
+    monkeypatch.setattr(helper.time, "sleep", advance)
+    monkeypatch.setattr(helper, "_ensure_kms_service_identity", lambda **_kwargs: (SimpleNamespace(pw_uid=1000), SimpleNamespace(gr_gid=1000)))
+    payload = {"passphrase": "synthetic", "trust": {}} if action == "recovery-export" else {"passphrase": "synthetic", "archive": "synthetic"}
+    monkeypatch.setattr(helper.sys, "stdin", io.StringIO(json.dumps(payload)))
+    assert helper._handle_kms_recovery(action, []) == (2 if child_timeout else 0)
+    assert states == initial
+    assert elapsed > 180
+    assert ["systemctl", "restart", "atlaso-kmip.service"] in restored
+    capsys.readouterr()
+
+
+@pytest.mark.parametrize("command_timeout", [None, 30])
+def test_recovery_identity_commands_accept_bounded_timeout(monkeypatch, command_timeout):
+    """Bound recovery account creation without changing ordinary callers.
+
+    Args:
+        monkeypatch: Pytest fixture replacing account tools and lookup functions.
+        command_timeout: Explicit recovery bound or ordinary caller default.
+    """
+    helper = load_helper_module()
+    calls = []
+
+    def run(command, **kwargs):
+        """Record account commands without creating any host identity.
+
+        Args:
+            command: Account tool and fixed reconciliation arguments.
+            **kwargs: Optional subprocess budget forwarded by the helper.
+        """
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_kms_service_identity_available", lambda: (False, False))
+    monkeypatch.setattr(helper, "_command_path", lambda name: "/usr/sbin/" + name)
+    monkeypatch.setattr(helper, "_run", run)
+    monkeypatch.setattr(helper.pwd, "getpwnam", lambda _name: SimpleNamespace(pw_uid=1000))
+    monkeypatch.setattr(helper.grp, "getgrnam", lambda _name: SimpleNamespace(gr_gid=1000))
+    helper._ensure_kms_service_identity(command_timeout=command_timeout)
+    assert len(calls) == 2
+    assert all(options == ({} if command_timeout is None else {"timeout": 30}) for _command, options in calls)

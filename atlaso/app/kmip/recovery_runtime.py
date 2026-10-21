@@ -328,6 +328,10 @@ def import_archive(archive: bytes, passphrase: str, secrets_key: str, *, uid: in
                 identity = (info.st_dev, info.st_ino)
                 try:
                     build_candidate(snapshot, ANCHOR / candidate, secrets_key=secrets_key)
+                    # File fsync alone does not persist their directory entries.
+                    # Publish custody only after both candidate and anchor are durable.
+                    os.fsync(preparing_fd)
+                    os.fsync(anchor_fd)
                     journal = {"schema": 1, "archive": digest, "candidate": candidate, "old": old,
                                "identity": identity, "trust": snapshot["trust"]}
                     _journal(ANCHOR, journal)

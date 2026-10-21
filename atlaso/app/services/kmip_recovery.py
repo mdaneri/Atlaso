@@ -26,6 +26,10 @@ from atlaso.app.services.appliance_apply_admission import (
 )
 from atlaso.app.services.vsphere_key_providers import parse_public_certificate
 
+# Budget includes three 120s children, all sequential 30s probes/commands,
+# account reconciliation, sustained restoration checks and cleanup margin.
+RECOVERY_HELPER_TIMEOUT_SECONDS = 1800
+
 
 def public_trust(db: Session) -> dict[str, Any]:
     """Capture exact provider IDs and public certificate bytes from desired state.
@@ -51,7 +55,7 @@ def _request(action: str, payload: dict[str, Any]) -> dict[str, Any]:
         payload: Request-bound helper input serialized through standard input.
     """
     result = SystemAdapter()._helper_result(
-        "kms", action, input_text=json.dumps(payload), timeout_seconds=180,
+        "kms", action, input_text=json.dumps(payload), timeout_seconds=RECOVERY_HELPER_TIMEOUT_SECONDS,
         dry_run_message="Recovery requires a live appliance.", dry_run_returncode=2,
     )
     if result.dry_run or result.returncode != 0:

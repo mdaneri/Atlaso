@@ -372,3 +372,55 @@ def test_completion_failure_retains_pending_gate_and_resumes(tmp_path, monkeypat
     assert json.loads((anchor / "completed-synthetic.json").read_bytes()) == journal
     states = {"atlaso-kmip.service": [False, False], "atlaso-kms.service": [False, False]}
     assert runtime.service_checkpoint({"binding": "different", "operation": "export", "states": states}) == {"states": states}
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Native recovery directory-fd contract")
+def test_candidate_directory_is_durable_before_journal(tmp_path, monkeypatch):
+    """Publication cannot journal a candidate whose directory entries are unflushed.
+
+    Args:
+        tmp_path: Isolated filesystem directory supplied by pytest.
+        monkeypatch: Pytest fixture observing native fsync ordering.
+    """
+    from atlaso.app.kmip import recovery_runtime as runtime
+
+    snapshot, _, _ = snapshot_fixture(tmp_path)
+    archive = encrypt(snapshot, PASSPHRASE)
+    anchor = tmp_path / "anchor"
+    anchor.mkdir()
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setattr(runtime, "ANCHOR", anchor)
+    monkeypatch.setattr(runtime, "STATE", state)
+    monkeypatch.setattr(runtime, "_secure_anchor", lambda path: os.open(path, os.O_RDONLY | runtime.O_DIRECTORY))
+    flushed = set()
+    fsync = os.fsync
+
+    def record_fsync(fd):
+        """Record the flushed inode before executing its native flush.
+
+        Args:
+            fd: File or directory descriptor passed to fsync.
+        """
+        info = os.fstat(fd)
+        flushed.add((info.st_dev, info.st_ino))
+        fsync(fd)
+
+    def journal(path, document):
+        """Reject the test journal after verifying candidate durability ordering.
+
+        Args:
+            path: Protected anchor containing the candidate.
+            document: Pending custody document about to be published.
+        """
+        for directory in (path, path / document["candidate"]):
+            info = directory.stat()
+            assert (info.st_dev, info.st_ino) in flushed
+        raise OSError("synthetic stop before journal publication")
+
+    monkeypatch.setattr(runtime.os, "fsync", record_fsync)
+    monkeypatch.setattr(runtime, "_journal", journal)
+    with pytest.raises(OSError, match="synthetic stop"):
+        runtime.import_archive(archive, PASSPHRASE, "synthetic-target", uid=os.getuid(), gid=os.getgid())
+    assert not list(anchor.iterdir())
+    assert not list(state.iterdir())
