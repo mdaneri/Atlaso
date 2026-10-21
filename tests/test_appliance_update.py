@@ -638,8 +638,12 @@ def test_real_install_marks_evidence_expected_only_after_apply_starts(monkeypatc
     assert events == ["persist", "apply"]
 
 
-def test_worker_persists_apply_started_for_interruption_recovery():
-    """Keep durable apply-started evidence when the worker is interrupted."""
+def test_worker_persists_apply_started_for_interruption_recovery(client):
+    """Keep durable apply-started evidence when the worker is interrupted.
+
+    Args:
+        client: Test client whose fixture initializes the isolated database.
+    """
     from atlaso.app import ui, worker
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, JobStep
