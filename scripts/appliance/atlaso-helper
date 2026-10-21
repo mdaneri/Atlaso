@@ -438,6 +438,7 @@ PXE_BOOT_BINARY_DIRS = [
 ]
 KMS_APPLY_DIR = Path("/var/lib/atlaso/apply/kms")
 KMS_STATE_DIR = Path("/var/lib/atlaso/kmip")
+KMS_RECOVERY_DIR = Path("/var/lib/atlaso-kmip-recovery")
 KMS_LOG_DIR = Path("/var/log/atlaso/kmip")
 NGINX_ACCESS_LOG_PATH = Path("/var/log/nginx/access.log")
 NGINX_ERROR_LOG_PATH = Path("/var/log/nginx/error.log")
@@ -29569,6 +29570,7 @@ def _factory_reset_retained_runtime_paths_are_safe() -> list[str]:
         for child in KMS_STATE_DIR.iterdir():
             if not child.is_symlink() and not child.is_file():
                 raise ValueError(f"factory-reset KMIP state entry is unsafe: {child.name}")
+    _factory_reset_kmip_recovery_path_is_safe()
     for path, label in (
         (MANAGED_PHOTON_REPO_PATH, "managed Photon repository"),
         (UPDATE_SOURCE_STATE_PATH, "update-source state"),
@@ -29579,6 +29581,56 @@ def _factory_reset_retained_runtime_paths_are_safe() -> list[str]:
     if repositories and _command_path("pwsh") is None:
         raise ValueError("factory-reset could not locate PowerShell to remove synchronized repositories")
     return repositories
+
+
+def _factory_reset_kmip_recovery_path_is_safe() -> None:
+    """Refuse redirected recovery custody before any retained-state cleanup."""
+    path = KMS_RECOVERY_DIR
+    if path.is_symlink() or (path.exists() and (not path.is_dir() or path.resolve() != path)):
+        raise ValueError("factory-reset KMIP recovery directory is unsafe")
+
+
+def _remove_factory_reset_kmip_recovery() -> bool:
+    """Retire all recovery custody durably without following retained links."""
+    _factory_reset_kmip_recovery_path_is_safe()
+    path = KMS_RECOVERY_DIR
+    if not path.exists():
+        if path.parent.exists():
+            _fsync_factory_reset_directory(path.parent)
+        return False
+    if os.name != "posix":
+        shutil.rmtree(path)
+        _fsync_factory_reset_directory(path.parent)
+        return True
+    if not shutil.rmtree.avoids_symlink_attacks:
+        raise ValueError("factory-reset cannot safely remove KMIP recovery custody")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    parent_fd = os.open(path.parent, flags)
+    try:
+        try:
+            root_fd = os.open(path.name, flags, dir_fd=parent_fd)
+        except FileNotFoundError:
+            os.fsync(parent_fd)
+            return False
+        try:
+            identity = os.fstat(root_fd)
+            for name in os.listdir(root_fd):
+                metadata = os.stat(name, dir_fd=root_fd, follow_symlinks=False)
+                if stat.S_ISDIR(metadata.st_mode):
+                    shutil.rmtree(name, dir_fd=root_fd)
+                else:
+                    os.unlink(name, dir_fd=root_fd)
+            os.fsync(root_fd)
+            observed = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+            if (observed.st_dev, observed.st_ino) != (identity.st_dev, identity.st_ino):
+                raise ValueError("factory-reset KMIP recovery directory identity changed")
+            os.rmdir(path.name, dir_fd=parent_fd)
+            os.fsync(parent_fd)
+        finally:
+            os.close(root_fd)
+    finally:
+        os.close(parent_fd)
+    return True
 
 
 def _fsync_factory_reset_directory(path: Path) -> None:
@@ -29662,6 +29714,7 @@ def _reset_factory_retained_runtime() -> int:
                 removed_kmip_entries += 1
             if removed_kmip_entries:
                 _fsync_factory_reset_directory(KMS_STATE_DIR)
+        kmip_recovery_removed = _remove_factory_reset_kmip_recovery()
         if UPDATE_SOURCE_STATE_PATH.is_file():
             UPDATE_SOURCE_STATE_PATH.unlink()
             _fsync_factory_reset_directory(UPDATE_SOURCE_STATE_PATH.parent)
@@ -29673,6 +29726,7 @@ def _reset_factory_retained_runtime() -> int:
             {
                 "factory_reset_retained_runtime": "cleanup complete",
                 "kmip_entries_removed": removed_kmip_entries,
+                "kmip_recovery_removed": kmip_recovery_removed,
                 "legacy_powershell_home_removed": legacy_powershell_home_removed,
                 "powershell_repositories_removed": len(repositories),
             },

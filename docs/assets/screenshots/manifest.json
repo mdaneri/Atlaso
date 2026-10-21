@@ -749,6 +749,48 @@
       "sensitive_data_reviewed": true
     },
     {
+      "path": "assets/screenshots/kmip-recovery-desktop.webp",
+      "route": "/ui/management/backup-restore",
+      "state": "recovery-maintenance",
+      "viewport": "1600x1000",
+      "source_commit": "d211a99b2fdbbef3e1f2322f3ba3921b42dd3fc5+working-tree",
+      "atlaso_version": "0.9.441",
+      "caption": "KMIP recovery forms and empty-target guidance on the documentation appliance in the desktop viewport.",
+      "alt": "Atlaso Maintenance KMIP recovery tab with separate encrypted export and offline import forms in the desktop viewport.",
+      "capture_method": "codex-in-app-browser",
+      "documentation_page": "operate/kmip-recovery.md",
+      "brand_variant": "light",
+      "sensitive_data_reviewed": true
+    },
+    {
+      "path": "assets/screenshots/kmip-recovery-export-confirm-desktop.webp",
+      "route": "/ui/management/backup-restore",
+      "state": "export-confirmation-preview",
+      "viewport": "1600x1000",
+      "source_commit": "d211a99b2fdbbef3e1f2322f3ba3921b42dd3fc5+working-tree",
+      "atlaso_version": "0.9.441",
+      "caption": "Review the brief KMS writer pause before export. This documentation preview was canceled without creating an archive.",
+      "alt": "Atlaso shared confirmation dialog explaining that recovery export pauses writers and restores their prior service state.",
+      "capture_method": "codex-in-app-browser",
+      "documentation_page": "operate/kmip-recovery.md",
+      "brand_variant": "light",
+      "sensitive_data_reviewed": true
+    },
+    {
+      "path": "assets/screenshots/kmip-recovery-responsive.webp",
+      "route": "/ui/management/backup-restore",
+      "state": "recovery-maintenance",
+      "viewport": "900x1200",
+      "source_commit": "d211a99b2fdbbef3e1f2322f3ba3921b42dd3fc5+working-tree",
+      "atlaso_version": "0.9.441",
+      "caption": "KMIP recovery forms and empty-target guidance on the documentation appliance in the responsive viewport.",
+      "alt": "Atlaso Maintenance KMIP recovery tab with separate encrypted export and offline import forms in the responsive viewport.",
+      "capture_method": "codex-in-app-browser",
+      "documentation_page": "operate/kmip-recovery.md",
+      "brand_variant": "light",
+      "sensitive_data_reviewed": true
+    },
+    {
       "path": "assets/screenshots/ldap-clean-desktop.webp",
       "route": "/ldap",
       "state": "clean",

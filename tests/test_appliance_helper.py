@@ -6528,6 +6528,13 @@ def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
     kmip_state.mkdir()
     for name in ("store.db", "store.db-wal", "kek.json"):
         (kmip_state / name).write_text("fixture", encoding="utf-8")
+    kmip_recovery = tmp_path / "kmip-recovery"
+    kmip_recovery.mkdir()
+    for name in ("pending.json", "approved.json", "service.json", "journal-interrupted"):
+        (kmip_recovery / name).write_bytes(b"synthetic recovery custody")
+    for name in ("candidate-synthetic", "previous-synthetic"):
+        (kmip_recovery / name).mkdir()
+        (kmip_recovery / name / "kek.json").write_bytes(b"synthetic retained envelope")
     managed_repo = tmp_path / "atlaso-managed.repo"
     managed_repo.write_text("credential-bearing fixture", encoding="utf-8")
     update_state = tmp_path / "update-sources.json"
@@ -6559,6 +6566,7 @@ def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
         lambda: True,
     )
     monkeypatch.setattr(helper, "KMS_STATE_DIR", kmip_state)
+    monkeypatch.setattr(helper, "KMS_RECOVERY_DIR", kmip_recovery)
     monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", managed_repo)
     monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", update_state)
     monkeypatch.setattr(helper, "ATLASO_LEGACY_POWERSHELL_HOME", legacy_powershell_home)
@@ -6577,16 +6585,21 @@ def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
 
     assert helper._handle_factory_reset("reset-retained-runtime", []) == 0
     assert list(kmip_state.iterdir()) == []
+    assert not kmip_recovery.exists()
     assert not managed_repo.exists()
     assert not update_state.exists()
     assert not legacy_powershell_home.exists()
     expected_synced_directories = [managed_repo.parent]
     if os.name != "posix":
         expected_synced_directories.append(legacy_powershell_home.parent)
-    expected_synced_directories.extend([kmip_state, update_state.parent])
+    expected_synced_directories.append(kmip_state)
+    if os.name != "posix":
+        expected_synced_directories.append(kmip_recovery.parent)
+    expected_synced_directories.append(update_state.parent)
     assert synced_directories == expected_synced_directories
     output = json.loads(capsys.readouterr().out)
     assert output["kmip_entries_removed"] == 3
+    assert output["kmip_recovery_removed"] is True
     assert output["legacy_powershell_home_removed"] is True
     assert output["powershell_repositories_removed"] == 1
 
@@ -6629,6 +6642,7 @@ def test_factory_reset_fsyncs_photon_removal_before_partial_failure_retry(
     monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: True)
     monkeypatch.setattr(helper, "_factory_reset_retained_runtime_paths_are_safe", lambda: {"PrivateGallery"})
     monkeypatch.setattr(helper, "KMS_STATE_DIR", kmip_state)
+    monkeypatch.setattr(helper, "KMS_RECOVERY_DIR", tmp_path / "absent-recovery")
     monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", managed_repo)
     monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", update_state)
     monkeypatch.setattr(
@@ -6648,7 +6662,7 @@ def test_factory_reset_fsyncs_photon_removal_before_partial_failure_retry(
     assert synced_directories == [managed_repo.parent]
     assert helper._handle_factory_reset("reset-retained-runtime", []) == 0
 
-    assert synced_directories == [managed_repo.parent, update_state.parent]
+    assert synced_directories == [managed_repo.parent, tmp_path, update_state.parent]
     assert not managed_repo.exists()
     assert "could not remove synchronized package-source" in capsys.readouterr().err
 

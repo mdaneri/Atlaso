@@ -13,6 +13,17 @@ Use **Maintenance > KMIP recovery** to preserve operational key custody separate
 Keep the original appliance and its storage intact throughout recovery. Recovery is an experimental VCF 9.1 capability;
 the implemented archive contract does not establish an encrypted-workload support matrix.
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso Maintenance KMIP recovery tab with separate encrypted export and offline import forms in the desktop viewport.](../assets/screenshots/kmip-recovery-desktop.webp)
+
+*Figure: KMIP recovery forms and empty-target guidance on the documentation appliance in the desktop viewport.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 ## Before exporting
 
 1. Complete the existing provider and public-client trust configuration through global **Appliance Apply**.
@@ -76,6 +87,11 @@ rename, edit, or reconstruct store files to clear a gate. Do not expose their co
 An ordinary Apply failure uses the existing KMS cutover rollback procedure. An incomplete import remains offline;
 do not force-start it or replace its pending marker. Keep the original appliance available throughout recovery.
 
+Complete **Factory reset** deliberately removes both active KMIP state and all retained recovery custody, including
+pending markers, checkpoints, private candidates, and previous directories. It does not preserve an appliance-local
+recovery copy. Verify an independently stored bundle before choosing reset; interrupted cleanup must resume through
+the existing protected reset workflow.
+
 ## Legacy PyKMIP transition
 
 Native startup, KMS Apply, and candidate release admission require read-only legacy emptiness evidence. Atlaso checks
@@ -106,3 +122,20 @@ workload tests and will perform them separately in production. This waives that 
 access, deployment, mutation, or workload test is authorized for the agent. Encrypted-VM, vSAN, and restored-workload
 access are **not reported as passed**; support remains limited to the matrix actually observed. Security and
 disaster-recovery review, local correctness checks, and recovery safety remain required.
+
+<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+## Additional verified states
+
+These captures show responsive layouts and useful operational states referenced by this page.
+
+### Backup and restore
+
+![Atlaso shared confirmation dialog explaining that recovery export pauses writers and restores their prior service state.](../assets/screenshots/kmip-recovery-export-confirm-desktop.webp)
+
+*Figure: Review the brief KMS writer pause before export. This documentation preview was canceled without creating an archive.*
+
+![Atlaso Maintenance KMIP recovery tab with separate encrypted export and offline import forms in the responsive viewport.](../assets/screenshots/kmip-recovery-responsive.webp)
+
+*Figure: KMIP recovery forms and empty-target guidance on the documentation appliance in the responsive viewport.*
+
+<!-- END GENERATED ADDITIONAL SCREENSHOTS -->

@@ -136,3 +136,74 @@ def test_export_restoration_false_success_retains_checkpoint(monkeypatch, capsys
     assert helper._handle_kms_recovery("recovery-export", []) == 2
     assert children == ["service-capture", "export"]
     assert not capsys.readouterr().out
+
+
+@pytest.mark.parametrize("kind", ["file", "symlink"])
+def test_factory_reset_recovery_rejects_unsafe_anchor_before_mutation(tmp_path, monkeypatch, kind):
+    """A redirected or non-directory anchor cannot expand reset's removal scope."""
+    helper = load_helper_module()
+    anchor = tmp_path / "recovery"
+    outside = tmp_path / "preserved"
+    outside.mkdir()
+    sentinel = outside / "retained"
+    sentinel.write_bytes(b"unchanged")
+    if kind == "file":
+        anchor.write_bytes(b"unchanged")
+    else:
+        try:
+            anchor.symlink_to(outside, target_is_directory=True)
+        except OSError:
+            pytest.skip("Host does not permit creating directory symlinks")
+    monkeypatch.setattr(helper, "KMS_RECOVERY_DIR", anchor)
+    with pytest.raises(ValueError, match="recovery directory is unsafe"):
+        helper._remove_factory_reset_kmip_recovery()
+    assert sentinel.read_bytes() == b"unchanged"
+    assert anchor.exists()
+
+
+def test_factory_reset_recovery_partial_failure_remains_retryable(tmp_path, monkeypatch):
+    """Interrupted retained-candidate deletion cannot report completion or block retry."""
+    helper = load_helper_module()
+    anchor = tmp_path / "recovery"
+    candidate = anchor / "candidate-synthetic"
+    candidate.mkdir(parents=True)
+    (candidate / "kek.json").write_bytes(b"synthetic custody")
+    (anchor / "pending.json").write_bytes(b"synthetic pending marker")
+    monkeypatch.setattr(helper, "KMS_RECOVERY_DIR", anchor)
+    original = helper.shutil.rmtree
+    attempts = 0
+
+    def interrupted(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("synthetic interrupted deletion")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(helper.shutil, "rmtree", interrupted)
+    if hasattr(original, "avoids_symlink_attacks"):
+        interrupted.avoids_symlink_attacks = original.avoids_symlink_attacks
+    with pytest.raises(OSError):
+        helper._remove_factory_reset_kmip_recovery()
+    assert candidate.exists()
+    assert helper._remove_factory_reset_kmip_recovery() is True
+    assert not anchor.exists()
+    assert helper._remove_factory_reset_kmip_recovery() is False
+
+
+def test_factory_reset_absent_recovery_requires_durable_parent_readback(tmp_path, monkeypatch):
+    """An unlink whose flush failed must be flushed again before reset can advance."""
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "KMS_RECOVERY_DIR", tmp_path / "absent-recovery")
+    attempts = []
+
+    def sync(parent):
+        attempts.append(parent)
+        if len(attempts) == 1:
+            raise OSError("synthetic directory-flush failure")
+
+    monkeypatch.setattr(helper, "_fsync_factory_reset_directory", sync)
+    with pytest.raises(OSError):
+        helper._remove_factory_reset_kmip_recovery()
+    assert helper._remove_factory_reset_kmip_recovery() is False
+    assert attempts == [tmp_path, tmp_path]
