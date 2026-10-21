@@ -36,6 +36,9 @@ listeners. See [Public Services](../services/public-services.md) for the listene
 5. Revoke the token when its client is retired or its value may have been exposed. Create a replacement instead of
    trying to recover or reuse the old secret.
 
+Token issuance saves the token and its creation audit event in one transaction for both the API and management UI.
+If that transaction fails, neither record is saved and no token secret is returned.
+
 Treat bearer tokens like passwords. Do not put them in command history, source files, screenshots, issue reports,
 authenticated URLs, or shared logs. Prefer a secret manager for automation and an environment variable for short-lived
 interactive work.
