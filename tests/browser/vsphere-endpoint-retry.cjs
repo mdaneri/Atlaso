@@ -55,7 +55,7 @@ assert(!detail.includes("192.168.1.254"), "Remote values must not reach the brow
         const url = route.request().url();
         if (url.endsWith("/probe")) return route.fulfill({ json: { https_fingerprint: "AA:BB:CC" } });
         if (url.endsWith("/inventory")) {
-          return route.fulfill({ json: { name: "Synthetic vCenter product", cluster_ids: ["Default"] } });
+          return route.fulfill({ json: { name: "Synthetic configured vCenter", cluster_ids: ["Default"] } });
         }
         if (url.endsWith("/inspect")) {
           if (++attempts === 1) return route.fulfill({ status: 422, json: { detail } });
@@ -85,7 +85,7 @@ assert(!detail.includes("192.168.1.254"), "Remote values must not reach the brow
       await page.locator('[name="username"]').fill("synthetic-user");
       await page.locator('[name="password"]').fill("synthetic-password");
       await next.click(); // Login
-      await page.waitForFunction(() => document.querySelector('[name="name"]').value === 'Synthetic vCenter product');
+      await page.waitForFunction(() => document.querySelector('[name="name"]').value === 'Synthetic configured vCenter');
       await page.locator('[name="name"]').fill("Synthetic lab");
       await page.locator('[name="cluster_id"]').fill("Default");
       await page.locator('[name="provider_id"]').selectOption("provider-1");
