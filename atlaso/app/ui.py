@@ -3499,7 +3499,7 @@ def retained_startup_management_handoff_job_ids(db: Session) -> tuple[str, ...]:
 
 
 def recover_interrupted_appliance_apply_jobs(
-    db: Session, *, startup: bool = False, job_ids: tuple[str, ...] | None = None,
+    db: Session, *, startup: bool = False, job_ids: tuple[str, ...] | None = None, retry_terminal: bool = False,
 ) -> int:
     """Return recover interrupted appliance apply jobs.
 
@@ -3507,6 +3507,7 @@ def recover_interrupted_appliance_apply_jobs(
         db: Active database session.
         startup: Restore native handoff state before serving, retaining its pending mutation lock.
         job_ids: Exact startup-retained jobs to confirm; None performs the initial startup scan.
+        retry_terminal: Retry retained terminal ownership without recording a fictional restart.
     """
     candidates = (
         select(Job)
@@ -3566,6 +3567,7 @@ def recover_interrupted_appliance_apply_jobs(
             )
     for job in jobs:
         job_was_pending = job.status == JobStatus.PENDING.value
+        retrying_terminal = retry_terminal and job.status in {JobStatus.FAILED.value, JobStatus.CANCELLED.value}
         for step in job.steps:
             if step.status == JobStatus.RUNNING.value:
                 step.status = JobStatus.FAILED.value
@@ -3577,8 +3579,9 @@ def recover_interrupted_appliance_apply_jobs(
                 step.error = "Skipped because the appliance apply task was interrupted."
                 step.finished_at = finished
                 step.progress_percent = 100
-        job.status = JobStatus.FAILED.value
-        job.finished_at = finished
+        if not retrying_terminal:
+            job.status = JobStatus.FAILED.value
+            job.finished_at = finished
         job.progress_percent = 100
         handoff_recovery = handoff_recoveries.get(job.id)
         if handoff_recovery is not None:
@@ -3615,9 +3618,10 @@ def recover_interrupted_appliance_apply_jobs(
                 "Review current appliance state and submit the selected changes again."
             )
         payload = _job_payload(job)
-        payload["state"] = "failed"
-        payload["interrupted"] = True
-        payload["interrupted_at"] = finished.isoformat()
+        payload["state"] = job.status if retrying_terminal else "failed"
+        if not retrying_terminal:
+            payload["interrupted"] = True
+            payload["interrupted_at"] = finished.isoformat()
         if payload.get("network_runtime_commit_pending"):
             recovery = SystemAdapter(dry_run=False).reconcile_network_transaction(
                 job.id, committed=payload.get("network_application_committed") is True,
@@ -3631,10 +3635,12 @@ def recover_interrupted_appliance_apply_jobs(
                     "Interrupted Network Apply was reconciled to its previous configuration."
                 )
             else:
-                job.status = JobStatus.RUNNING.value
-                job.finished_at = None
+                if not retrying_terminal:
+                    job.status = JobStatus.RUNNING.value
+                    job.finished_at = None
                 job.error = "Network transaction recovery needs attention; runtime ownership remains pending."
-                payload["state"] = "cleanup-required"
+                if not retrying_terminal:
+                    payload["state"] = "cleanup-required"
         publishing_recovery = publishing_recoveries.get(job.id)
         if publishing_recovery is not None:
             payload["traffic_publishing_recovery"] = adapter_result_to_payload(publishing_recovery)
@@ -3671,6 +3677,17 @@ def recover_interrupted_appliance_apply_jobs(
                 payload["management_handoff_runtime_commit_pending"] = True
                 if payload.get("management_handoff_application_committed") is not True:
                     payload.pop("management_handoff_application_committed", None)
+        if retrying_terminal:
+            payload["runtime_recovery_retried_at"] = finished.isoformat()
+            still_pending = any(payload.get(key) is True for key in (
+                "management_handoff_runtime_commit_pending", "network_runtime_commit_pending",
+                "traffic_publishing_runtime_commit_pending",
+            ))
+            job.error = (
+                "Runtime recovery remains unproven; inspect the retained recovery evidence before retrying."
+                if still_pending else
+                "Runtime recovery was verified. Review the original task failure and submit desired changes again."
+            )
         job.result = json.dumps(payload, indent=2, sort_keys=True)
     db.commit()
     return len(jobs)
@@ -15639,7 +15656,7 @@ def execute_traffic_publishing_pair(
         if succeeded:
             # Never refresh desired state here: edits made during native publication
             # belong to the next Apply, not to this pair's committed baselines.
-            update_appliance_apply_baselines(db, units, set(by_id))
+            update_appliance_apply_baselines(db, units, set(by_id), dry_run=adapter.dry_run)
             if has_wan and not adapter.dry_run:
                 synchronize_routing_service_runtime(
                     db, routing_enabled=by_id["wan"]["context"]["routes_wan_settings"].routing_enabled,
@@ -16781,14 +16798,19 @@ def project_selected_handoff_listener_units(
         })
 
 
-def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], selected_ids: set[str]) -> None:
+def update_appliance_apply_baselines(
+    db: Session, units: list[dict[str, Any]], selected_ids: set[str], *, dry_run: bool = False,
+) -> None:
     """Update appliance apply baselines.
 
     Args:
         db: Active database session.
         units: Units supplied by the caller.
         selected_ids: Selected ids supplied by the caller.
+        dry_run: Simulated execution, which cannot advance native appliance baselines.
     """
+    if dry_run and get_settings().environment == "appliance":
+        return
     # Every unit shares the single JSON baseline row, including unrelated Apply.
     # Keep admission through the caller commit and reload any cached older value.
     acquire_network_objects_write_lock(db)
@@ -18441,10 +18463,15 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                             None,
                         )
                         if settings_result is not None:
-                            settings_result["baseline_updated"] = settings_complete
+                            baseline_skipped = bool(group_result.get("dry_run")) and get_settings().environment == "appliance"
+                            settings_result["baseline_updated"] = settings_complete and not baseline_skipped
                             if not settings_complete:
                                 settings_result["remaining_pending_reason"] = (
                                     "Non-management Appliance Settings changes remain pending."
+                                )
+                            elif baseline_skipped:
+                                settings_result["remaining_pending_reason"] = (
+                                    "Dry run did not advance native appliance baselines."
                                 )
                             settings_step = steps_by_key.get("appliance_settings")
                             if settings_step is not None:
@@ -18453,6 +18480,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                             db,
                             applied,
                             applied_ids,
+                            dry_run=bool(group_result.get("dry_run")),
                         )
                         if not group_result.get("dry_run") and group_result.get("listener_baselines"):
                             updated_baselines = load_appliance_apply_baselines(db)
@@ -18679,7 +18707,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                     # The helper's restart timer is running. Persist the exact executed
                     # baseline with the transition before releasing publication admission.
                     if result["success"]:
-                        update_appliance_apply_baselines(db, [unit], {"appliance_settings"})
+                        update_appliance_apply_baselines(db, [unit], {"appliance_settings"}, dry_run=bool(result.get("dry_run")))
                         settings_baseline_recorded = True
                     db.commit()
                 prune_network_boot_media = False
@@ -18755,12 +18783,12 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         if unit["id"] == "ca" and not result.get("dry_run"):
                             guard_ca_apply_publication(db, applied_unit)
                         if not settings_baseline_recorded:
-                            update_appliance_apply_baselines(db, [applied_unit], {unit["id"]})
+                            update_appliance_apply_baselines(db, [applied_unit], {unit["id"]}, dry_run=bool(result.get("dry_run")))
                         ca_reload_units.discard(unit["id"])
                         if deferred_ca_baseline is not None and not ca_reload_units:
                             if not result.get("dry_run"):
                                 guard_ca_apply_publication(db, deferred_ca_baseline)
-                            update_appliance_apply_baselines(db, [deferred_ca_baseline], {"ca"})
+                            update_appliance_apply_baselines(db, [deferred_ca_baseline], {"ca"}, dry_run=bool(result.get("dry_run")))
                             deferred_ca_baseline = None
                 else:
                     failed = True

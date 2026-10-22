@@ -135,6 +135,12 @@ Management recovery rejects unrelated pending Certificate Authority, Appliance S
 changes that already have an applied baseline. Resolve those changes through Appliance Apply before retrying. If protected
 settings change while recovery is being submitted, the console stops instead of including the new edits.
 
+If a failed Appliance Apply still has unproven management rollback, its task retains recovery ownership. When console
+correction preflight starts, Atlaso retries existing recovery for that exact retained terminal task under database
+writer admission. If rollback still cannot be proven, correction remains blocked and the console identifies the task
+and instructs you to inspect its recovery evidence in **Tasks**. Reaching the appliance again, including after a reboot,
+does not by itself prove that rollback completed or restored the previous DHCP/static mode.
+
 The editor supports IPv4 DHCP or static configuration. IPv6 can be disabled, automatic through RA/SLAAC, or static.
 Static IPv4 and IPv6 gateways must be on-link and cannot equal their interface address; an IPv6 gateway may instead be
 link-local.

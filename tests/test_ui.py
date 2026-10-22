@@ -16553,20 +16553,22 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
         completed_review = test_client.get("/appliance-apply/review")
         assert completed_review.status_code == 200
         assert completed_review.json()["initial_apply_required"] is False
-        assert completed_review.json()["units"] == []
+        pending_units = completed_review.json()["units"]
+        assert [unit["id"] for unit in pending_units] == ["ntpd"]
+        assert pending_units[0]["has_baseline"] is False
 
     with database.SessionLocal() as db:
         baseline = db.execute(select(Setting).where(Setting.key == "appliance_apply.baselines.v1")).scalar_one()
         assert '"local_users"' in baseline.value
         assert '"vcf_private_registry"' in baseline.value
-        applied_ntpd_baseline = json.loads(baseline.value)["ntpd"]
+        assert "ntpd" not in json.loads(baseline.value)
         from atlaso.app.ui import initialize_factory_appliance_apply_baseline
 
         assert initialize_factory_appliance_apply_baseline(db) is False
         preserved_baseline = db.execute(
             select(Setting).where(Setting.key == "appliance_apply.baselines.v1")
         ).scalar_one()
-        assert json.loads(preserved_baseline.value)["ntpd"] == applied_ntpd_baseline
+        assert "ntpd" not in json.loads(preserved_baseline.value)
         admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
         assert admin.os_sync_status == "applied"
         assert admin.os_password_applied_at is not None

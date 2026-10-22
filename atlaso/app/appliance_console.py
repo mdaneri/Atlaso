@@ -1100,10 +1100,42 @@ def _ensure_no_active_apply() -> None:
     Raises:
         ConsoleOperationError: If the operation encounters an invalid state.
     """
-    from atlaso.app.ui import active_appliance_apply_job
+    from atlaso.app.services.appliance_apply_admission import (
+        ApplianceApplyAdmissionBusy,
+        lock_appliance_apply_snapshot_tables,
+    )
+    from atlaso.app.ui import (
+        active_appliance_apply_job,
+        recover_interrupted_appliance_apply_jobs,
+    )
 
     with SessionLocal() as db:
         active = active_appliance_apply_job(db)
+        recovery_flags = (
+            "management_handoff_runtime_commit_pending", "network_runtime_commit_pending",
+            "traffic_publishing_runtime_commit_pending",
+        )
+        if (active is not None and active.status in {"failed", "cancelled"}
+                and any(json.loads(active.result or "{}").get(flag) is True for flag in recovery_flags)):
+            # A terminal task can still own native rollback. Reconcile that exact
+            # task under writer admission; never clear its flags to allow an edit.
+            job_id = active.id
+            db.rollback()
+            try:
+                lock_appliance_apply_snapshot_tables(db)
+            except ApplianceApplyAdmissionBusy:
+                raise ConsoleOperationError("Appliance state is being updated; retry console recovery.") from None
+            db.expire_all()
+            active = active_appliance_apply_job(db)
+            if active is not None and active.id == job_id and active.status in {"failed", "cancelled"}:
+                recover_interrupted_appliance_apply_jobs(db, job_ids=(job_id,), retry_terminal=True)
+                db.expire_all()
+                active = active_appliance_apply_job(db)
+            if active is not None:
+                raise ConsoleOperationError(
+                    f"Appliance apply task {active.id} still owns runtime recovery. "
+                    "Recovery could not be verified; inspect its recovery evidence before retrying."
+                )
         if active is not None:
             raise ConsoleOperationError(f"Appliance apply task {active.id} is already {active.status}.")
 
