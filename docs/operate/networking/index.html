@@ -1186,6 +1186,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#convert-dhcp-management-to-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Convert DHCP management to Access
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#reusing-a-prefix-on-separate-networks" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4137,6 +4148,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#convert-dhcp-management-to-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Convert DHCP management to Access
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#reusing-a-prefix-on-separate-networks" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4477,6 +4499,22 @@ routing-domain isolation does not acquire an orphaned guard merely from rollback
 Connected routes remain available without a gateway and when forwarding is disabled. A configured management gateway
 adds the off-subnet default route. Networkd owns DHCP/IPv6 router-advertisement routes and their expiry in the same
 domain tables; the management default also remains available to appliance connections that have not selected a source.</p>
+<h3 id="convert-dhcp-management-to-access">Convert DHCP management to Access<a class="headerlink" href="#convert-dhcp-management-to-access" title="Permanent link">&para;</a></h3>
+<p>To keep the current management address while moving the interface into the Access routing domain, stage both desired
+state changes before one global Apply:</p>
+<ol>
+<li>On the management interface row, choose <strong>Convert DHCP lease to static</strong>. Review the observed <strong>IPv4 CIDR</strong> and
+   usable <strong>IPv4 Gateway</strong>; confirm that the address and prefix are intended and the gateway is on-link. This saves
+   static Network desired state only.</li>
+<li>On that interface, change <strong>Role</strong> from <strong>management</strong> to <strong>access</strong>. Keep <strong>Management UI</strong> enabled. Review the
+   role-conversion summary for the management gateway moved to <strong>Routing &amp; WAN</strong>. This saves the role and route desired
+   state only; no intermediate Apply is needed.</li>
+<li>Open <strong>Review appliance changes</strong> and submit <strong>Network</strong> with its required dependencies and the staged <strong>Routing &amp;
+   WAN</strong> unit together. Inspect the complete plan before choosing <strong>Submit appliance changes</strong>. The protected handoff
+   keeps the old management path until the Access path and migrated route are ready.</li>
+</ol>
+<p>If either review shows an unexpected address or gateway, cancel or correct the desired state before applying. See
+<a href="../appliance-apply/">Apply appliance changes</a> for review, monitoring, and verification steps.</p>
 <h3 id="reusing-a-prefix-on-separate-networks">Reusing a prefix on separate networks<a class="headerlink" href="#reusing-a-prefix-on-separate-networks" title="Permanent link">&para;</a></h3>
 <p>The dedicated management network and a separate lab network may use the same prefix with different appliance addresses.
 Atlaso selects local reply routes by the appliance's exact source address, rather than assigning the entire prefix to

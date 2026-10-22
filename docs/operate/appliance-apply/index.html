@@ -1095,17 +1095,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#understand-the-workflow" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Understand the workflow
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#review-pending-changes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3997,17 +3986,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#understand-the-workflow" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Understand the workflow
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#review-pending-changes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4229,20 +4207,12 @@ changes</strong>.</p>
 <li>no other Appliance Apply task pending or running.</li>
 </ul>
 <p>Before submitting a change that can interrupt management access, prepare the local appliance or VMware console.</p>
-<h2 id="understand-the-workflow">Understand the workflow<a class="headerlink" href="#understand-the-workflow" title="Permanent link">&para;</a></h2>
-<pre class="mermaid"><code>flowchart LR
-    A[Edit desired state] --&gt; B[Review pending units]
-    B --&gt; C{Unit valid?}
-    C -- No --&gt; D[Return to its settings page]
-    D --&gt; B
-    C -- Yes --&gt; E[Inspect summary and diff]
-    E --&gt; F[Submit selected units]
-    F --&gt; G[Monitor component tasks]
-    G --&gt; H[Verify appliance state]</code></pre>
 <p>Atlaso groups related settings into apply units. DNS and DHCP share one <code>DNS/DHCP (dnsmasq)</code> unit. Web Terminal changes
 can require <strong>Appliance Settings</strong>, <strong>Public Services</strong>, and <strong>Firewall</strong>. A management-to-access conversion with a
-gateway change also selects <strong>Routing &amp; WAN</strong> with Network and uses the protected handoff. A WAN-only change
-to a mirrored management default uses the same handoff. Each WAN unit executes from its captured snapshot.
+gateway change also selects <strong>Routing &amp; WAN</strong> with Network and uses the protected handoff. For the combined
+DHCP-to-Access sequence without an intermediate Apply, see the
+<a href="../networking/#convert-dhcp-management-to-access">networking guide</a>. A WAN-only change to a mirrored management
+default uses the same handoff. Each WAN unit executes from its captured snapshot.
 When effective source NAT or port forwarding depends on changed Network and WAN state, reviewing Network also
 selects and locks <strong>Routing &amp; WAN</strong>. The review validates that WAN candidate before submission, so required changes
 and any blocking errors are visible together.
@@ -4350,6 +4320,11 @@ Examples include checking service health, resolving a managed DNS name, reaching
 installed configuration from the appliance console. Use the service-specific procedure; a green UI status is insufficient.</p>
 <p>In development, adapters normally run in dry-run mode. A successful dry-run proves that Atlaso validated and recorded
 the command intent; it does not prove that Photon services changed.</p>
+<p>Appliance-mode dry runs validate and record command intent without changing native last-applied baselines. Development
+adapters may retain their comparison behavior, but dry-run results are not evidence of the appliance's native runtime
+configuration. Management rollback must use the prior addressing mode and values established from verified original
+runtime ownership and configuration; a dry run cannot establish that the prior address was static or replace native
+DHCP evidence.</p>
 <h2 id="recover-from-a-failed-apply">Recover from a failed apply<a class="headerlink" href="#recover-from-a-failed-apply" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Open the failed component and read its validation, ordered task events, error, and redacted command output.</li>
@@ -4367,6 +4342,10 @@ Startup restores native networking and listeners before serving, retaining the j
 confirmation checks the old path and records rollback before releasing the lock; failure leaves recovery pending.
 Recovery also runs after helper timeout because the fixed Apply service can outlive its waiter. Before retry, the helper
 stops and verifies the separate fixed recovery service to prevent concurrent network mutations.</p>
+<p>When rollback cannot be proven, the failed task retains ownership of recovery and blocks another management correction.
+A console correction preflight retries existing recovery for that exact retained terminal task. If recovery remains
+unproven, inspect the task's recovery result before starting another correction. A reachable management address, a
+reboot, or successful service startup alone does not prove that rollback completed or restored the prior addressing mode.</p>
 <p>The helper retains rollback state until Atlaso commits component results and baselines. If restart follows that commit,
 startup idempotently acknowledges the candidate instead of claiming rollback. Unproven helper acknowledgement or rollback
 keeps the Apply lock until startup or immediate recovery reconciles it, including older tasks without the pending marker.
