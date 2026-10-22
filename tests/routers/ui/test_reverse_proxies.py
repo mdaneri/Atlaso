@@ -1253,3 +1253,121 @@ def test_storage_dns_reconciliation_keeps_share_and_audits_uncommitted(client, m
         assert db.get_transaction() is transaction
         db.rollback()
         assert list(db.scalars(select(AuditEvent.id))) == audits
+
+@pytest.mark.parametrize("family", [4, 6])
+@pytest.mark.parametrize("selected", ["eth1", "eth2"])
+@pytest.mark.parametrize("naming", ["ip", "interface"])
+def test_storage_dns_provenance_ignores_unselected_duplicate_address(client, family, selected, naming):
+    """Keep storage DNS bound to its share during another NIC's Network edit.
+
+    Args:
+        client: Fixture initializing an isolated appliance database.
+        family: Address family duplicated on two access interfaces.
+        selected: Saved share interface, independent of inventory ordering.
+        naming: Canonical IP or interface target naming mode.
+    """
+    from atlaso.app import ui
+    from atlaso.app.models import (
+        ApplianceSettings,
+        DnsSettings,
+        EsxNfsShare,
+        EsxStorageVolume,
+        PhysicalInterface,
+    )
+    from atlaso.app.services.esx_storage import ESX_STORAGE_DNS_DESCRIPTION
+
+    with SessionLocal() as db:
+        for name in ("eth1", "eth2"):
+            interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == name))
+            interface.role = interface.mode = "access"
+            interface.admin_state = interface.oper_state = "up"
+            interface.ipv4_method = "static"
+            interface.ip_cidr = "192.0.2.10/24"
+            interface.ipv6_enabled = True
+            interface.ipv6_cidr = "2001:db8::10/64"
+            interface.check_duplicate_ip_addresses = False
+        db.scalar(select(ApplianceSettings)).service_dns_target_naming = naming
+        dns = db.scalar(select(DnsSettings))
+        dns.enabled = dns.authoritative = True
+        dns.domain, dns.disabled_domains = "example.test", ""
+        storage = ui.get_esx_storage_settings_row(db)
+        storage.enabled, storage.hostname = True, "nfs.example.test"
+        volume = EsxStorageVolume(name="dns-owner", stable_device_id="dns-owner",
+                                  source_type="mounted_ext4", mount_path="/mnt/dns-owner", state="mounted")
+        db.add(volume)
+        db.flush()
+        db.add(EsxNfsShare(datastore_name="dns-owner", volume_id=volume.id, interface_name=selected,
+                           relative_path="data", address_families="ipv4" if family == 4 else "ipv6", enabled=True))
+        db.commit()
+        ui.ensure_dns_for_esx_storage(db, actor=None)
+        previous_units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, previous_units, {unit["id"] for unit in previous_units})
+        baseline = ui.load_appliance_apply_baselines(db)["dnsmasq"]
+        records = [row for row in baseline["service_dns_records"] if row["description"] == ESX_STORAGE_DNS_DESCRIPTION]
+        assert len(records) == 2  # Canonical service hostname and rendered target hostname.
+        assert {row["source_interface"] for row in records} == {selected}
+        other = db.scalar(select(PhysicalInterface).where(
+            PhysicalInterface.name == ("eth2" if selected == "eth1" else "eth1")))
+        if family == 4:
+            other.ip_cidr = "192.0.2.20/24"
+        else:
+            other.ipv6_cidr = "2001:db8::20/64"
+        db.flush()
+        units = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        assert units["network"]["changed"]
+        generated = ui.network_generated_dns_unit(db, units)
+        assert generated is None or not any(
+            "binding changed independently" in error for error in generated["validation_errors"])
+        assert ui.load_appliance_apply_baselines(db)["dnsmasq"] == baseline
+
+
+
+@pytest.mark.parametrize("case", ["hostname", "address", "disabled", "ambiguous"])
+def test_storage_dns_capture_does_not_guess_unmatched_or_ambiguous_share(client, case):
+    """Refuse address-only attribution without one matching saved share source.
+
+    Args:
+        client: Fixture initializing an isolated appliance database.
+        case: Missing identity, disabled share, or multiple selected sources.
+    """
+    from atlaso.app import ui
+    from atlaso.app.models import (
+        ApplianceSettings,
+        DnsRecord,
+        EsxNfsShare,
+        EsxStorageVolume,
+        PhysicalInterface,
+    )
+    from atlaso.app.services.esx_storage import ESX_STORAGE_DNS_DESCRIPTION
+
+    with SessionLocal() as db:
+        for name in ("eth1", "eth2"):
+            interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == name))
+            interface.role = interface.mode = "access"
+            interface.admin_state = interface.oper_state = "up"
+            interface.ipv4_method, interface.ip_cidr = "static", "192.0.2.10/24"
+            interface.check_duplicate_ip_addresses = False
+        db.scalar(select(ApplianceSettings)).service_dns_target_naming = "interface"
+        settings = ui.get_esx_storage_settings_row(db)
+        settings.enabled, settings.hostname = True, "nfs.example.test"
+        volume = EsxStorageVolume(name="capture-owner", stable_device_id="capture-owner", source_type="mounted_ext4")
+        db.add(volume)
+        db.flush()
+        for name in (("eth1", "eth2") if case == "ambiguous" else ("eth1",)):
+            db.add(EsxNfsShare(datastore_name="capture-" + name, volume_id=volume.id,
+                               interface_name=name, address_families="ipv4", enabled=case != "disabled"))
+        hostname = "old-nfs.example.test" if case == "hostname" else settings.hostname
+        address = "192.0.2.20" if case == "address" else "192.0.2.10"
+        db.add(DnsRecord(hostname=hostname, address=address, record_type="A", enabled=True,
+                         description=ESX_STORAGE_DNS_DESCRIPTION))
+        db.flush()
+        config = f"host-record={hostname},{address}\n"
+        if case == "ambiguous":
+            db.add(DnsRecord(hostname="nfs-eth1.example.test", address=address, record_type="A", enabled=True,
+                             description=ESX_STORAGE_DNS_DESCRIPTION))
+            db.flush()
+            config += f"host-record=nfs-eth1.example.test,{address}\n"
+        records = ui.owned_service_dns_records(db, config)
+        assert next(row for row in records if row["hostname"] == hostname)["source_interface"] == ""
+        if case == "ambiguous":
+            assert next(row for row in records if row["hostname"] == "nfs-eth1.example.test")["source_interface"] == "eth1"

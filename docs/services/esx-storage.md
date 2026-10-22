@@ -37,6 +37,9 @@ the global appliance review.
 
 ## Architecture
 
+Applied storage DNS ownership follows the saved share interface and exact rendered hostname/address. Equal addresses
+on other interfaces do not transfer ownership; ambiguous or unmatched records do not acquire an inferred source.
+
 One `EsxNfsShare` is one datastore name, one backing directory, one selected storage interface or VLAN, and one
 preferred NFS version. A dual-stack share remains one database object and one data directory. Atlaso derives two
 equivalent connection paths when both families are enabled:

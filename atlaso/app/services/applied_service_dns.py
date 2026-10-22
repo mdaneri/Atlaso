@@ -8,8 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from atlaso.app.models import (
+    ApplianceSettings,
     CaSettings,
     DnsRecord,
+    EsxNfsShare,
+    EsxStorageSettings,
     KmsSettings,
     LdapSettings,
     NtpSettings,
@@ -24,7 +27,12 @@ from atlaso.app.models import (
 )
 from atlaso.app.services.appliance_settings import APPLIANCE_DNS_RECORD_DESCRIPTION
 from atlaso.app.services.dnsmasq import split_interfaces
-from atlaso.app.services.esx_storage import ESX_STORAGE_DNS_DESCRIPTION
+from atlaso.app.services.esx_storage import (
+    ESX_STORAGE_DNS_DESCRIPTION,
+    normalize_families,
+    target_hostname,
+    target_token,
+)
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_DNS_RECORD_DESCRIPTION,
     esxi_pxe_boot_settings,
@@ -220,6 +228,37 @@ def save_appliance_apply_baselines(db: Session, baselines: dict[str, dict[str, A
     invalidate_public_proxy_snapshot()
 
 
+def _storage_dns_sources(db: Session, options: list[dict[str, Any]]) -> dict[tuple[str, str], set[str]]:
+    """Match rendered storage records to the enabled shares selecting their NIC.
+
+    Args:
+        db: Session containing the saved storage settings and shares.
+        options: The same eligible interface addresses used by storage rendering.
+    """
+    sources: dict[tuple[str, str], set[str]] = {}
+    settings = db.scalars(select(EsxStorageSettings)).first()
+    if settings is None or not settings.enabled:
+        return sources
+    appliance = db.scalars(select(ApplianceSettings)).first()
+    naming = (appliance.service_dns_target_naming if appliance is not None else "ip") or "ip"
+    by_name = {option["name"]: option for option in options}
+    for share in db.scalars(select(EsxNfsShare).where(EsxNfsShare.enabled.is_(True))):
+        try:
+            families = normalize_families(share.address_families)
+        except ValueError:
+            continue
+        for address in by_name.get(share.interface_name, {}).get("addresses", []):
+            if ("ipv6" if ":" in address else "ipv4") not in families:
+                continue
+            try:
+                hostname = target_hostname(settings.hostname, target_token(address, naming, share.interface_name))
+            except ValueError:
+                continue
+            for name in (settings.hostname, hostname):
+                sources.setdefault((name, address), set()).add(share.interface_name)
+    return sources
+
+
 def owned_service_dns_records(db: Session, config: str) -> list[dict[str, str]]:
     """Capture exact owned records present in a rendered DNS snapshot.
 
@@ -260,7 +299,9 @@ def owned_service_dns_records(db: Session, config: str) -> list[dict[str, str]]:
                 service_interfaces[description] = selected[0]
     service_interfaces[ESXI_PXE_DNS_RECORD_DESCRIPTION] = primary_listen_interface(str(esxi_pxe_boot_settings(db).get("listen_interface") or ""))
     explicit_ptrs = {row.hostname for row in db.scalars(select(DnsRecord).where(DnsRecord.record_type == "PTR", DnsRecord.enabled.is_(True)))}
-    address_sources = {address: option["name"] for option in service_bind_options(db) for address in option["addresses"]}
+    bind_options = service_bind_options(db)
+    storage_sources = _storage_dns_sources(db, bind_options)
+    address_sources = {address: option["name"] for option in bind_options for address in option["addresses"]}
     # The management plane is deliberately excluded from service bind choices.
     # Its generated FQDN still needs provenance, including the assigned DHCP
     # address retained in observations while a static candidate is reviewed.
@@ -291,6 +332,9 @@ def owned_service_dns_records(db: Session, config: str) -> list[dict[str, str]]:
         if (row.description or "").startswith(DNS_OWNER_PREFIX):
             # Equal addresses on other NICs do not establish proxy ownership.
             matches = proxy_sources.get((row.description or "", row.hostname, row.address), set())
+            source = next(iter(matches)) if len(matches) == 1 else ""
+        if row.description == ESX_STORAGE_DNS_DESCRIPTION:
+            matches = storage_sources.get((row.hostname, row.address), set())
             source = next(iter(matches)) if len(matches) == 1 else ""
         if row.description == APPLIANCE_DNS_RECORD_DESCRIPTION:
             matches = management_sources.get(row.address, set())
