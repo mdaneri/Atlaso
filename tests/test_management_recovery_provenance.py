@@ -69,6 +69,45 @@ def test_original_backup_does_not_relax_native_ownership(helper, monkeypatch, tm
         helper._wait_restored_management_addresses(state, attempts=3)
 
 
+@pytest.mark.parametrize("name,match", [("99-dhcp-en.network", "eth* en*"), ("50-static-en.network", "eth0")])
+def test_original_legacy_network_default_supplies_rollback_mode(helper, monkeypatch, tmp_path, name, match):
+    """Legacy appliance defaults remain authoritative original runtime evidence."""
+    original = tmp_path / "original.bin"
+    original.write_text(f"[Match]\nName={match}\n[Network]\nDHCP=ipv4\n", encoding="utf-8")
+    state = rollback_state(paths=[{"name": "eth0", "ipv4_method": "static"}])
+    state["snapshots"] = [{"path": str(helper.NETWORKD_CONFIG_DIR / name), "existed": True, "backup": str(original)}]
+    sample = observed_link(addresses=[{"address": "192.0.2.10", "cidr": "192.0.2.10/24", "scope": "global",
+                                      "source": "DHCPv4", "state": "assigned", "dhcp4_lease": True}])
+    monkeypatch.setattr(helper, "_network_address_observation", lambda: native_observation(sample))
+    monkeypatch.setattr(helper.time, "sleep", lambda _delay: None)
+    assert helper._wait_restored_management_addresses(state, attempts=3)["stable_samples"] == 3
+
+
+@pytest.mark.parametrize("match", ["eth1", "eth* !eth0"])
+def test_original_default_does_not_override_nonmatching_interface(helper, tmp_path, match):
+    """A legacy file for another or explicitly excluded link cannot supply intent."""
+    original = tmp_path / "original.bin"
+    original.write_text(f"[Match]\nName={match}\n[Network]\nDHCP=ipv4\n", encoding="utf-8")
+    state = rollback_state(paths=[{"name": "eth0", "ipv4_method": "static"}])
+    state["snapshots"] = [{"path": str(helper.NETWORKD_CONFIG_DIR / "99-dhcp-en.network"),
+                           "existed": True, "backup": str(original)}]
+    assert helper._management_handoff_original_paths(state)[0]["ipv4_method"] == "static"
+
+
+def test_original_canonical_network_precedes_legacy_default(helper, tmp_path):
+    """A later wildcard DHCP default cannot replace the original exact static file."""
+    static = tmp_path / "static.bin"
+    static.write_text("[Match]\nName=eth0\n[Network]\nDHCP=no\n", encoding="utf-8")
+    dynamic = tmp_path / "dynamic.bin"
+    dynamic.write_text("[Match]\nName=eth* en*\n[Network]\nDHCP=ipv4\n", encoding="utf-8")
+    state = rollback_state()
+    state["snapshots"] = [
+        {"path": str(helper.NETWORKD_CONFIG_DIR / "99-dhcp-en.network"), "existed": True, "backup": str(dynamic)},
+        {"path": str(helper.NETWORKD_MGMT_CONFIG_PATH), "existed": True, "backup": str(static)},
+    ]
+    assert helper._management_handoff_original_paths(state)[0]["ipv4_method"] == "static"
+
+
 @pytest.mark.parametrize("unsafe", [None, "table", "interface", "seed", "dead", "gateway", "source", "host", "type"])
 def test_dhcp_gateway_host_seed_retires_only_with_same_domain_replacements(helper, monkeypatch, tmp_path, unsafe):
     """A DHCP /32 need not survive a verified static default plus connected route."""

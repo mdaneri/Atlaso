@@ -18462,10 +18462,15 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                             None,
                         )
                         if settings_result is not None:
-                            settings_result["baseline_updated"] = settings_complete
+                            baseline_skipped = bool(group_result.get("dry_run")) and get_settings().environment == "appliance"
+                            settings_result["baseline_updated"] = settings_complete and not baseline_skipped
                             if not settings_complete:
                                 settings_result["remaining_pending_reason"] = (
                                     "Non-management Appliance Settings changes remain pending."
+                                )
+                            elif baseline_skipped:
+                                settings_result["remaining_pending_reason"] = (
+                                    "Dry run did not advance native appliance baselines."
                                 )
                             settings_step = steps_by_key.get("appliance_settings")
                             if settings_step is not None:

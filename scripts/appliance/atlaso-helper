@@ -33,6 +33,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from datetime import datetime, timezone
+from fnmatch import fnmatchcase
 from ipaddress import (
     IPv4Address,
     IPv4Network,
@@ -33391,6 +33392,7 @@ def _management_handoff_original_paths(state: dict) -> list[dict]:
     for row in paths:
         candidates = []
         allowed = {NETWORKD_MGMT_CONFIG_PATH, NETWORKD_CONFIG_DIR / _networkd_managed_filename(row["name"], "network")}
+        allowed.update(NETWORKD_CONFIG_DIR / name for name in NETWORKD_DEFAULT_APPLIANCE_FILES)
         for item in state.get("snapshots", []):
             if Path(str(item.get("path", ""))) not in allowed or not item.get("existed"):
                 continue
@@ -33408,7 +33410,11 @@ def _management_handoff_original_paths(state: dict) -> list[dict]:
                         names = value.split()
                     elif section == "Network" and key == "DHCP":
                         dhcp = value.lower()
-            if names == [row["name"]]:
+            positive = [pattern for pattern in names if not pattern.startswith("!")]
+            # Only positive Name globs are needed by the canonical appliance
+            # defaults. Preserve ambiguous negative-match configurations.
+            excluded = any(pattern.startswith("!") for pattern in names)
+            if positive and not excluded and any(fnmatchcase(row["name"], pattern) for pattern in positive):
                 if dhcp not in {"yes", "true", "ipv4", "no", "false", "ipv6"}:
                     raise ValueError("original management DHCP mode is unsupported")
                 candidates.append((Path(item["path"]).name, dhcp))
