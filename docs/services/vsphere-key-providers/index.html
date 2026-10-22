@@ -285,6 +285,8 @@
       
         
       
+        
+      
     
     
     
@@ -678,6 +680,8 @@
       
         
           
+        
+      
         
       
         
@@ -1269,6 +1273,40 @@
     
   
   Backup and restore
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/kmip-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  KMIP disaster recovery
 
     
   </span>
@@ -4432,6 +4470,8 @@ paths, rejects symbolic links and private-key material, and installs the bundle 
 TLS 1.2 or newer, permits X.509 partial-chain verification for explicitly imported leaf trust, and still authorizes the
 connection only when the peer's exact fingerprint maps to one provider UUID.</p>
 <h2 id="api-access">API access<a class="headerlink" href="#api-access" title="Permanent link">&para;</a></h2>
+<p>For separate passphrase-encrypted operational backups, empty-target import, pending public-trust review, interruption
+handling, and unchanged legacy-store protection, follow <a href="../../operate/kmip-recovery/">KMIP disaster recovery</a>.</p>
 <p>Reads require <code>read:kms</code>; mutations require <code>write:kms</code>. The versioned resources are rooted at
 <code>/api/v1/vsphere-key-providers</code> and include listener settings, providers, trusted vCenters, certificates, readiness,
 health, lifecycle counts, and the public server chain. See the generated OpenAPI document at <code>/openapi.json</code> for request,
