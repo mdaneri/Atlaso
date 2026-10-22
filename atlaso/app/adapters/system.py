@@ -32,7 +32,7 @@ def _log_helper_outcome(group: str, action: str, result: "AdapterResult") -> Non
     stage = "validation" if action.startswith("validate") else "recovery" if action.startswith("recover") else "cleanup" if action in {"cleanup", "reset-tool"} else "execution"
     observing = action in {"status", "logs", "leases", "access-logs", "error-logs", "source", "read-log", "check",
                            "page", "inventory", "address-status", "dhcp-dns", "capabilities", "verify-pool",
-                           "read-software-depot-id", "status-inspect", "restart-inspect"}
+                           "read-software-depot-id", "status-inspect", "restart-inspect", "listener-status"}
     reason = failure_reason(result.stderr, result.returncode) if result.returncode else "none"
     if stage == "validation" and reason == "helper_failed":
         reason = "validation_rejected"
@@ -573,6 +573,13 @@ class SystemAdapter:
             "kms",
             "status",
             dry_run_message=json.dumps({"status": "not-reported", "providers": {}}),
+        )
+
+    def kms_listener_status(self) -> AdapterResult:
+        """Read only the active deployed KMIP listener, without accessing secrets."""
+        return self._helper_result(
+            "kms", "listener-status", timeout_seconds=10,
+            dry_run_message="{}",
         )
 
     def apply_ldap_config(self, config_path: str) -> AdapterResult:

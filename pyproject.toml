@@ -91,6 +91,7 @@ show_error_codes = true
 warn_unused_configs = true
 follow_imports = "silent"
 files = [
+  "atlaso/app/services/kmip_listener_admission.py",
   "atlaso/app/services/appliance_apply_admission.py",
   "atlaso/important_events.py",
   "atlaso/app/services/important_task_events.py",
