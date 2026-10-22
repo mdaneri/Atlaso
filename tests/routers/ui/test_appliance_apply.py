@@ -3024,18 +3024,19 @@ def test_appliance_apply_job_persists_helper_confirmed_transition(client, monkey
                 "status": JobStatus.SUCCEEDED.value, "dry_run": False,
                 "commands": [], "management_status_transition": transition}
 
-    def baseline(db, units, selected_ids):
+    def baseline(db, units, selected_ids, *, dry_run=False):
         """The runner retains publication admission through exactly one baseline write.
 
         Args:
             db: Database session participating in the admitted transaction.
             units: Captured appliance units supplied by the caller.
             selected_ids: Identifiers of the executed units whose baselines are committed.
+            dry_run: Whether the execution was simulated rather than native.
         """
         assert db.get_transaction() is publication_transaction["value"]
         assert not admitted.is_set()
         baseline_updates.append(selected_ids)
-        return update_baselines(db, units, selected_ids)
+        return update_baselines(db, units, selected_ids, dry_run=dry_run)
 
     monkeypatch.setattr(ui, "execute_appliance_apply_unit", execute)
     monkeypatch.setattr(ui, "update_appliance_apply_baselines", baseline)

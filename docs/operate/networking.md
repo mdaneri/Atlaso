@@ -60,6 +60,24 @@ Connected routes remain available without a gateway and when forwarding is disab
 adds the off-subnet default route. Networkd owns DHCP/IPv6 router-advertisement routes and their expiry in the same
 domain tables; the management default also remains available to appliance connections that have not selected a source.
 
+### Convert DHCP management to Access
+
+To keep the current management address while moving the interface into the Access routing domain, stage both desired
+state changes before one global Apply:
+
+1. On the management interface row, choose **Convert DHCP lease to static**. Review the observed **IPv4 CIDR** and
+   usable **IPv4 Gateway**; confirm that the address and prefix are intended and the gateway is on-link. This saves
+   static Network desired state only.
+2. On that interface, change **Role** from **management** to **access**. Keep **Management UI** enabled. Review the
+   role-conversion summary for the management gateway moved to **Routing & WAN**. This saves the role and route desired
+   state only; no intermediate Apply is needed.
+3. Open **Review appliance changes** and submit **Network** with its required dependencies and the staged **Routing &
+   WAN** unit together. Inspect the complete plan before choosing **Submit appliance changes**. The protected handoff
+   keeps the old management path until the Access path and migrated route are ready.
+
+If either review shows an unexpected address or gateway, cancel or correct the desired state before applying. See
+[Apply appliance changes](appliance-apply.md) for review, monitoring, and verification steps.
+
 ### Reusing a prefix on separate networks
 
 The dedicated management network and a separate lab network may use the same prefix with different appliance addresses.
