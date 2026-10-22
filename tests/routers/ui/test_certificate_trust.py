@@ -1062,6 +1062,81 @@ def test_vcenter_enrollment_manual_credentials_are_request_local(client, monkeyp
         assert all(password not in (event.detail or "") for event in audit)
 
 
+def test_enrollment_rechecks_listener_ip_admission_before_saving_trust(client, monkeypatch) -> None:
+    """Losing local listener proof after inspection prevents approval without saving trust.
+
+    Args:
+        client: Isolated authenticated application test client.
+        monkeypatch: Fixture replacing remote discovery and local admission evidence.
+    """
+    from atlaso.app.routers.ui import certificate_trust as transport
+    from atlaso.app.services.vsphere_enrollment import _check_cluster_endpoint
+
+    csrf = _login(client)
+    leaf = b"synthetic-listener-admission-leaf"
+    host = "vcsa.example.test"
+    public_pem, _ = _public_client_certificate(host)
+    parsed = parse_public_certificate(public_pem)
+    discovered = DiscoveredClient(
+        certificate_pem=public_pem, fingerprint_sha256=str(parsed["fingerprint_sha256"]),
+        subject=str(parsed["subject"]), not_valid_after=str(parsed["not_valid_after"]),
+        cluster_id="Default", vcenter_host=host,
+    )
+    admitted = {"192.168.1.254"}
+    admission_reads = []
+
+    def admission(_db, *, port):
+        """Return the current synthetic local admission set for each request.
+
+        Args:
+            _db: Request database session, unused by this synthetic projection.
+            port: Configured KMIP port captured to prove repeated admission.
+        """
+        admission_reads.append(port)
+        return frozenset(admitted)
+
+    def discover(**kwargs):
+        """Check synthetic remote members using the request's local admission evidence.
+
+        Args:
+            **kwargs: Connection and independently admitted listener parameters.
+        """
+        _check_cluster_endpoint(
+            [{"name": kwargs["atlaso_host"], "address": "192.168.1.254", "port": 5696}],
+            kwargs["atlaso_host"], kwargs["atlaso_port"], listener_addresses=kwargs["listener_addresses"],
+        )
+        return discovered
+
+    monkeypatch.setattr(transport, "vcenter_https_leaf", lambda *_args, **_kwargs: leaf)
+    monkeypatch.setattr(transport, "applied_kmip_listener_addresses", admission)
+    monkeypatch.setattr(transport, "discover_vcenter_client", discover)
+    with SessionLocal() as db:
+        provider = VsphereKeyProvider(id=str(uuid4()), name="Synthetic IP admission", enabled=True)
+        db.add(provider)
+        db.commit()
+        provider_id = provider.id
+        before = db.query(VsphereTrustedVcenterCertificate).count()
+    data = {
+        "csrf": csrf, "credential_source": "manual", "hostname": host,
+        "username": "synthetic-user", "password": "synthetic-password", "cluster_id": "Default",
+        "confirmed_https_fingerprint": certificate_fingerprint(leaf),
+    }
+    response = client.post("/vsphere-key-providers/enrollment/inspect", data=data)
+    assert response.status_code == 200, response.text
+    assert response.json()["client_fingerprint"] == parsed["fingerprint_sha256"]
+    admitted.clear()
+    response = client.post("/vsphere-key-providers/enrollment/approve", data={
+        **data, "provider_id": provider_id, "name": "Synthetic vCenter",
+        "expected_client_fingerprint": parsed["fingerprint_sha256"],
+    })
+    assert response.status_code == 422
+    assert "Missing or stale evidence" in response.json()["detail"]
+    assert admission_reads == [5696, 5696]
+    with SessionLocal() as db:
+        assert db.query(VsphereTrustedVcenterCertificate).count() == before
+        assert db.query(VsphereTrustedVcenter).filter_by(provider_id=provider_id).count() == 0
+
+
 def test_vcenter_enrollment_manual_invalid_source_or_host_stops_before_probe(
     client, monkeypatch
 ) -> None:

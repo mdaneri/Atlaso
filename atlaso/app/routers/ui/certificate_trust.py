@@ -60,6 +60,7 @@ from atlaso.app.services.dnsmasq import (
     split_addresses,
     split_interfaces,
 )
+from atlaso.app.services.kmip_listener_admission import applied_kmip_listener_addresses
 from atlaso.app.services.kms import (
     KMS_DEFAULT_CONFIG_PATH,
     KMS_DEFAULT_DATABASE_PATH,
@@ -1945,6 +1946,7 @@ def build_routers(
             discovered = discover_vcenter_client(
                 **connection, cluster_id=cluster_id,
                 atlaso_host=settings.hostname, atlaso_port=settings.port,
+                listener_addresses=applied_kmip_listener_addresses(db, port=settings.port),
             )
         record_audit(
             db,
