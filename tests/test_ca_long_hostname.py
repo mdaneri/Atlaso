@@ -67,8 +67,11 @@ def test_first_boot_ca_reconciliation_retains_long_appliance_identity(client, tm
             paths, strict=True,
         ):
             response = endpoint(leaf.id, identity, db)
+            filename = PurePosixPath(path)
+            if endpoint is download_ca_certificate:
+                filename = filename.with_suffix(".pem")
             assert response.headers["Content-Disposition"] == (
-                f'attachment; filename="{PurePosixPath(path).name}"'
+                f'attachment; filename="{filename.name}"'
             )
 
         # Exercise the production deployment writer with public material only.

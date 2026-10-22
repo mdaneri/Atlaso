@@ -1,5 +1,6 @@
 """Test ca behavior."""
 
+import base64
 import json
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from atlaso.app.services.ca import (
     import_root_ca_material,
     issue_certificate,
     render_ca_apply_payload,
+    validate_ca_csr_text,
     validate_ca_private_key_material,
 )
 
@@ -238,6 +240,45 @@ def test_csr_subject_is_preserved_when_request_common_name_is_long():
     issued = x509.load_pem_x509_certificate(record.certificate_pem.encode("ascii"))
     assert issued.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value == "CSR supplied subject"
     assert record.private_key_encrypted is None
+
+
+def test_ca_csr_validation_requires_bounded_single_signed_pkcs10_request():
+    """Accept valid CSR PEM and reject malformed, unsigned, or oversized input."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    csr = (
+        x509.CertificateSigningRequestBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "csr.example.test")]))
+        .sign(key, hashes.SHA256())
+    )
+    valid_pem = csr.public_bytes(serialization.Encoding.PEM).decode("ascii")
+    assert validate_ca_csr_text(valid_pem) is None
+
+    malformed = "-----BEGIN CERTIFICATE REQUEST-----\nMII=\n-----END CERTIFICATE REQUEST-----"
+    assert "valid PKCS#10" in validate_ca_csr_text(malformed)
+
+    csr_der = csr.public_bytes(serialization.Encoding.DER)
+    tampered_der = csr_der[:-1] + bytes([csr_der[-1] ^ 1])
+    tampered_pem = (
+        "-----BEGIN CERTIFICATE REQUEST-----\n"
+        + base64.b64encode(tampered_der).decode("ascii")
+        + "\n-----END CERTIFICATE REQUEST-----"
+    )
+    assert validate_ca_csr_text(tampered_pem) == "CSR signature is invalid."
+
+    private_key_pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode("ascii")
+    assert "exactly one" in validate_ca_csr_text(private_key_pem)
+    assert "exactly one" in validate_ca_csr_text(valid_pem + valid_pem)
+    assert validate_ca_csr_text("x" * (64 * 1024 + 1)) == "CSR must not exceed 64 KiB."
+    assert validate_ca_csr_text(" " * (64 * 1024 + 1) + valid_pem) == "CSR must not exceed 64 KiB."
 
 
 def test_checked_in_vmware_development_root_ca_contract():

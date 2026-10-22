@@ -1371,3 +1371,93 @@ def test_storage_dns_capture_does_not_guess_unmatched_or_ambiguous_share(client,
         assert next(row for row in records if row["hostname"] == hostname)["source_interface"] == ""
         if case == "ambiguous":
             assert next(row for row in records if row["hostname"] == "nfs-eth1.example.test")["source_interface"] == "eth1"
+
+
+@pytest.mark.parametrize("family", [4, 6])
+@pytest.mark.parametrize("duplicate", ["eth1", "eth2"])
+def test_multi_interface_service_dns_ignores_unselected_duplicate(client, family, duplicate):
+    """Keep both NTP DNS bindings independent of an unselected duplicate NIC.
+
+    Args:
+        client: Fixture initializing the isolated appliance database.
+        family: Address family changed on the unselected interface.
+        duplicate: Selected interface whose address is duplicated elsewhere.
+    """
+    from atlaso.app import ui
+    from atlaso.app.models import DnsSettings, NtpSettings, PhysicalInterface
+    from atlaso.app.services.service_dns_defaults import NTP_DNS_DESCRIPTION
+
+    with SessionLocal() as db:
+        for name, token in (("eth1", "10"), ("eth2", "20"), ("eth3", "10" if duplicate == "eth1" else "20")):
+            interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == name))
+            if interface is None:
+                interface = PhysicalInterface(name=name, mac_address="02:00:00:00:00:03", driver="test", speed="1000")
+                db.add(interface)
+            interface.role = interface.mode = "access"
+            interface.admin_state = interface.oper_state = "up"
+            interface.ipv4_method, interface.ip_cidr = "static", f"192.0.2.{token}/24"
+            interface.ipv6_enabled, interface.ipv6_cidr = True, f"2001:db8::{token}/64"
+            interface.check_duplicate_ip_addresses = False
+        dns = db.scalar(select(DnsSettings))
+        dns.enabled = dns.authoritative = True
+        dns.domain, dns.disabled_domains = "example.test", ""
+        ntp = db.scalar(select(NtpSettings))
+        ntp.enabled, ntp.hostname = True, "ntp.example.test"
+        ntp.listen_interface = "eth1,eth2"
+        ntp.listen_address = "192.0.2.10,192.0.2.20,2001:db8::10,2001:db8::20"
+        db.commit()
+        ui.ensure_dns_for_ntp(db, ntp, actor=None)
+        previous_units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, previous_units, {unit["id"] for unit in previous_units})
+        baseline = ui.load_appliance_apply_baselines(db)["dnsmasq"]
+        records = [row for row in baseline["service_dns_records"]
+                   if row["description"] == NTP_DNS_DESCRIPTION and row["record_type"] in {"A", "AAAA"}]
+        assert {row["address"] for row in records} == {"192.0.2.10", "192.0.2.20", "2001:db8::10", "2001:db8::20"}
+        assert all(row["source_interface"] == ("eth1" if row["address"].endswith("10") else "eth2") for row in records)
+        other = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth3"))
+        if family == 4:
+            other.ip_cidr = "192.0.2.30/24"
+        else:
+            other.ipv6_cidr = "2001:db8::30/64"
+        db.flush()
+        units = {unit["id"]: unit for unit in ui.appliance_apply_units(db)}
+        assert units["network"]["changed"]
+        generated = ui.network_generated_dns_unit(db, units)
+        assert generated is None or not any(
+            "binding changed independently" in error for error in generated["validation_errors"])
+        assert ui.load_appliance_apply_baselines(db)["dnsmasq"] == baseline
+
+
+@pytest.mark.parametrize("family", [4, 6])
+@pytest.mark.parametrize("case", ["single", "ambiguous", "unmatched"])
+def test_service_dns_capture_requires_unique_selected_address(client, family, case):
+    """Capture only a unique selected source and retain ordinary single-NIC ownership.
+
+    Args:
+        client: Fixture initializing the isolated appliance database.
+        family: Address family captured in the applied DNS snapshot.
+        case: Single selected source, ambiguous selected sources, or unmatched address.
+    """
+    from atlaso.app import ui
+    from atlaso.app.models import DnsRecord, NtpSettings, PhysicalInterface
+    from atlaso.app.services.service_dns_defaults import NTP_DNS_DESCRIPTION
+
+    address = "192.0.2.10" if family == 4 else "2001:db8::10"
+    with SessionLocal() as db:
+        for name in ("eth1", "eth2"):
+            interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == name))
+            interface.role = interface.mode = "access"
+            interface.admin_state = interface.oper_state = "up"
+            interface.ipv4_method, interface.ip_cidr = "static", "192.0.2.10/24"
+            interface.ipv6_enabled, interface.ipv6_cidr = True, "2001:db8::10/64"
+        ntp = db.scalar(select(NtpSettings))
+        ntp.listen_interface = "eth1" if case == "single" else "eth1,eth2"
+        if case == "unmatched":
+            address = "192.0.2.30" if family == 4 else "2001:db8::30"
+        db.add(DnsRecord(hostname="ntp.example.test", address=address,
+                         record_type="A" if family == 4 else "AAAA", enabled=True,
+                         description=NTP_DNS_DESCRIPTION))
+        db.flush()
+        records = ui.owned_service_dns_records(db, f"host-record=ntp.example.test,{address}\n")
+        record = next(row for row in records if row["hostname"] == "ntp.example.test")
+        assert record["source_interface"] == ("eth1" if case == "single" else "")

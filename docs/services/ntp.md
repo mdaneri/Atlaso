@@ -38,6 +38,10 @@ This verified appliance view provides visual orientation before you begin.
    hostname through the DNS/DHCP unit after NTP succeeds when its managed record changed. If managed LDAP is active,
    Atlaso also includes any changed CA, DNS/DHCP, Firewall, and Managed LDAP dependency units in the same task.
 
+Managed NTP/NTS DNS records retain the matching selected interface for each published address, including when
+multiple interfaces are selected. Changing an unselected interface with a duplicate address does not require an
+unrelated NTP or DNS binding change. Ambiguous selected sources are not assigned to an arbitrary interface.
+
 ## Appliance clock source
 
 When the NTP service is disabled, **Appliance time source** selects one clock authority:

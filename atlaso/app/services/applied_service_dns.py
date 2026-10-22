@@ -285,7 +285,7 @@ def owned_service_dns_records(db: Session, config: str) -> list[dict[str, str]]:
             key = (DNS_OWNER_PREFIX + str(proxy.id), proxy.hostname, listener["address"])
             proxy_sources.setdefault(key, set()).add(listener["interface"])
     directives = {line.removeprefix("# atlaso-authoritative-config: ") for line in config.splitlines()}
-    service_interfaces = {}
+    service_interfaces: dict[str, list[str]] = {}
     for model, description in (
         (CaSettings, CA_PORTAL_DNS_DESCRIPTION), (KmsSettings, KMS_DNS_RECORD_DESCRIPTION),
         (LdapSettings, LDAP_DNS_RECORD_DESCRIPTION), (OidcProviderSettings, OIDC_DNS_RECORD_DESCRIPTION),
@@ -295,12 +295,12 @@ def owned_service_dns_records(db: Session, config: str) -> list[dict[str, str]]:
         settings = db.scalars(select(model)).first()
         if settings is not None:
             selected = split_interfaces(getattr(settings, "listen_interface", None))
-            if len(selected) == 1:
-                service_interfaces[description] = selected[0]
-    service_interfaces[ESXI_PXE_DNS_RECORD_DESCRIPTION] = primary_listen_interface(str(esxi_pxe_boot_settings(db).get("listen_interface") or ""))
+            service_interfaces[description] = selected
+    service_interfaces[ESXI_PXE_DNS_RECORD_DESCRIPTION] = split_interfaces(str(esxi_pxe_boot_settings(db).get("listen_interface") or ""))
     explicit_ptrs = {row.hostname for row in db.scalars(select(DnsRecord).where(DnsRecord.record_type == "PTR", DnsRecord.enabled.is_(True)))}
     bind_options = service_bind_options(db)
     storage_sources = _storage_dns_sources(db, bind_options)
+    option_addresses = {option["name"]: set(option["addresses"]) for option in bind_options}
     address_sources = {address: option["name"] for option in bind_options for address in option["addresses"]}
     # The management plane is deliberately excluded from service bind choices.
     # Its generated FQDN still needs provenance, including the assigned DHCP
@@ -328,7 +328,12 @@ def owned_service_dns_records(db: Session, config: str) -> list[dict[str, str]]:
         if directive not in directives:
             continue
         generated_ptr = row.record_type in {"A", "AAAA"} and ip_address(row.address).reverse_pointer not in explicit_ptrs
-        source = service_interfaces.get(row.description or "", address_sources.get(row.address, ""))
+        source = address_sources.get(row.address, "")
+        if row.description in service_interfaces:
+            # Only selected interfaces can establish this service's DNS source.
+            matches = {name for name in service_interfaces[row.description]
+                       if row.address in option_addresses.get(name, set())}
+            source = next(iter(matches)) if len(matches) == 1 else ""
         if (row.description or "").startswith(DNS_OWNER_PREFIX):
             # Equal addresses on other NICs do not establish proxy ownership.
             matches = proxy_sources.get((row.description or "", row.hostname, row.address), set())

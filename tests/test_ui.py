@@ -1039,7 +1039,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}382`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}383`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
@@ -1055,11 +1055,11 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'accept.includes("text/html")' in service_worker.text
     assert '!hasDownloadLikePath(url)' in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=ldap-grid-998-1" in service_worker.text
+    assert "/static/app.css?v=ca-csr-intake-1028-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=vsphere-instance-name-1016" in service_worker.text
+    assert "/static/app.js?v=ca-csr-intake-1028-1" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1085,7 +1085,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     )
     assert offline_stylesheet is not None
     assert offline_stylesheet.group(1) == (
-        "/static/app.css?v=ldap-grid-998-1"
+        "/static/app.css?v=ca-csr-intake-1028-1"
     )
     assert f'"{offline_stylesheet.group(1)}"' in service_worker.text
 
@@ -1113,8 +1113,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=vsphere-instance-name-1016"),
-        (public_base, "/static/app.js?v=vsphere-instance-name-1016"),
+        (base, "/static/app.js?v=ca-csr-intake-1028-1"),
+        (public_base, "/static/app.js?v=ca-csr-intake-1028-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1123,7 +1123,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
         assert shell.index(
             "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11"
         ) < shell.index(app_asset)
-    assert "/static/app.css?v=ldap-grid-998-1" in public_base
+    assert "/static/app.css?v=ca-csr-intake-1028-1" in public_base
 
     wizard_templates = [
         templates / "automation.html",
@@ -1787,9 +1787,9 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=ldap-grid-998-1" in page.text
+    assert "/static/app.css?v=ca-csr-intake-1028-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11" in page.text
-    assert "/static/app.js?v=vsphere-instance-name-1016" in page.text
+    assert "/static/app.js?v=ca-csr-intake-1028-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -9513,6 +9513,8 @@ def test_certificate_authority_page_renders(client):
     assert "data-ca-csr-open" in ca.text
     assert 'data-atlaso-wizard-step="csr"' in ca.text
     assert 'name="csr_text"' in ca.text
+    assert 'type="file" accept=".csr,.pem" data-ca-csr-file' in ca.text
+    assert 'name="description" rows="3"' in ca.text
     assert "function initializeCaCsrWizard()" in client.get("/static/app.js").text
     certificate_wizard = ca.text.split('id="ca-certificate-dialog"', 1)[1].split("</dialog>", 1)[0]
     identity_step = certificate_wizard.split('data-atlaso-wizard-step="identity"', 1)[1].split("</section>", 1)[0]
@@ -9726,6 +9728,132 @@ def test_certificate_request_creation_validates_profile_and_sans(client):
     assert "missing-san.atlaso.internal" not in names
     assert "invalid-ip.atlaso.internal" not in names
     assert "disabled-profile.atlaso.internal" not in names
+
+
+@pytest.mark.parametrize("intake_path", [
+    "/certificate-authority/certificates", "/ca/requests", "/ui/public/ca/requests",
+])
+def test_certificate_request_intake_rejects_invalid_csrs_before_staging(client, intake_path):
+    """Reject invalid CSR content with recoverable validation and no new desired rows.
+
+    Args:
+        client: Application client backed by an isolated test database.
+        intake_path: Management or public portal submission route under test.
+    """
+    import base64
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+    from sqlalchemy import func, select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import (
+        CaCertificate,
+        CaProfile,
+        CaSettings,
+        PhysicalInterface,
+    )
+
+    login(client)
+    headers = {"accept": "application/json"}
+    page_path = "/certificate-authority"
+    if intake_path == "/ui/public/ca/requests":
+        with SessionLocal() as db:
+            settings = db.scalar(select(CaSettings))
+            settings.enabled = True
+            settings.listen_interface = "eth2"
+            settings.listen_address = "192.168.87.32"
+            interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+            interface.role = "access"
+            interface.ip_cidr = "192.168.87.32/24"
+            db.commit()
+        headers["host"] = "ca.atlaso.internal"
+        page_path = intake_path
+        login_page = client.get(page_path, headers=headers)
+        login_csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+        authenticated = client.post(
+            "/ui/public/ca/requests/login", headers=headers,
+            data={"csrf": login_csrf, "username": "admin", "password": "atlaso-admin"},
+            follow_redirects=False,
+        )
+        assert authenticated.status_code == 303
+    page = client.get(page_path, headers=headers)
+    assert page.status_code == 200
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    csr = (
+        x509.CertificateSigningRequestBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "submitted.example.test")]))
+        .sign(key, hashes.SHA256())
+    )
+    valid_pem = csr.public_bytes(serialization.Encoding.PEM).decode("ascii")
+    csr_der = csr.public_bytes(serialization.Encoding.DER)
+    tampered_der = csr_der[:-1] + bytes([csr_der[-1] ^ 1])
+    invalid_signature_pem = (
+        "-----BEGIN CERTIFICATE REQUEST-----\n"
+        + base64.b64encode(tampered_der).decode("ascii")
+        + "\n-----END CERTIFICATE REQUEST-----"
+    )
+    private_key_pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode("ascii")
+    with SessionLocal() as db:
+        profile_id = db.scalar(select(CaProfile.id).where(CaProfile.name == "VCF service TLS"))
+        before_count = db.scalar(select(func.count()).select_from(CaCertificate))
+
+    invalid_requests = [
+        ("malformed", "-----BEGIN CERTIFICATE REQUEST-----\nMII=\n-----END CERTIFICATE REQUEST-----"),
+        ("bad-signature", invalid_signature_pem),
+        ("private-key", private_key_pem),
+        ("extra-pem", valid_pem + valid_pem),
+        ("oversized", "x" * (64 * 1024 + 1)),
+        ("oversized-padding", " " * (64 * 1024 + 1) + valid_pem),
+    ]
+    for label, csr_text in invalid_requests:
+        response = client.post(
+            intake_path,
+            headers=headers,
+            data={
+                "csrf": csrf,
+                "common_name": f"{label}.example.test",
+                "profile_id": str(profile_id),
+                "subject_alt_names": f"{label}.example.test",
+                "csr_text": csr_text,
+                "enabled": "on",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 422
+        assert isinstance(response.json()["detail"], str)
+
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(CaCertificate)) == before_count
+        assert not db.scalar(
+            select(CaCertificate.id).where(CaCertificate.common_name.in_([f"{label}.example.test" for label, _ in invalid_requests]))
+        )
+
+    accepted = client.post(
+        intake_path,
+        headers=headers,
+        data={
+            "csrf": csrf,
+            "common_name": "valid-csr.example.test",
+            "profile_id": str(profile_id),
+            "subject_alt_names": "valid-csr.example.test",
+            "csr_text": valid_pem,
+            "enabled": "on",
+        },
+        follow_redirects=False,
+    )
+    assert accepted.status_code == 303
+    with SessionLocal() as db:
+        staged = db.scalar(select(CaCertificate).where(CaCertificate.common_name == "valid-csr.example.test"))
+        assert staged.status == "csr-staged"
+        assert staged.csr_text == valid_pem.strip()
 
 
 def test_certificate_request_editing_enforces_immutable_and_managed_boundaries(client):
@@ -10674,6 +10802,7 @@ def test_certificate_authority_issues_encrypted_managed_certs_and_exports(client
     Args:
         client: HTTP test client used to exercise the Atlaso application.
     """
+    from cryptography import x509
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -10704,9 +10833,13 @@ def test_certificate_authority_issues_encrypted_managed_certs_and_exports(client
         assert managed.private_key_encrypted.startswith("fernet:v1:")
         assert managed.certificate_pem.startswith("-----BEGIN CERTIFICATE-----")
         certificate_id = managed.id
+        certificate_name = managed.common_name
 
     cert = client.get(f"/certificate-authority/certificates/{certificate_id}/downloads/certificate.pem")
     assert cert.status_code == 200
+    assert cert.headers["content-disposition"] == f'attachment; filename="{certificate_name}.pem"'
+    assert cert.headers["content-type"].startswith("application/x-pem-file")
+    assert x509.load_pem_x509_certificate(cert.content)
     assert "BEGIN CERTIFICATE" in cert.text
     assert "BEGIN PRIVATE KEY" not in cert.text
 
