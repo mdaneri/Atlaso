@@ -31,6 +31,7 @@ PRIMARY_IMAGES = {
     "operate/appliance-console.md": "appliance-console-applied.webp",
     "operate/appliance-update.md": "appliance-update-repository-setup-required-desktop.webp",
     "operate/backup-restore.md": "backup-restore-clean-desktop.webp",
+    "operate/kmip-recovery.md": "kmip-recovery-desktop.webp",
     "operate/automation.md": "automation-clean-desktop.webp",
     "operate/networking.md": "physical-interfaces-clean-desktop.webp",
     "operate/network-objects.md": "network-objects-clean-desktop.webp",

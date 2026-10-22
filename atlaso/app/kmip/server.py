@@ -1174,6 +1174,11 @@ def build_server(config: ServiceConfig, *, secrets_key: str) -> KmipTcpServer | 
     Returns:
         The built server.
     """
+    from atlaso.app.kmip.legacy import assert_release_admission
+    from atlaso.app.kmip.recovery_runtime import assert_startup_allowed
+
+    assert_release_admission()
+    assert_startup_allowed(Path("/etc/atlaso/kmip/server.json"))
     context = tls_context(config)
     store = WrappedKeyStore(
         config.database_path,
