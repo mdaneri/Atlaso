@@ -2037,6 +2037,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#vcenter-openldap-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        vCenter OpenLDAP groups
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#vcf-automation-integration" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3976,6 +3987,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#vcenter-openldap-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        vCenter OpenLDAP groups
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#vcf-automation-integration" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4208,8 +4230,9 @@ remains local in v1.</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>dc=&lt;organization&gt;,dc=ldap,dc=atlaso,dc=internal
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── ou=users
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>├── ou=groups
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>├── ou=service-accounts
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>└── ou=system
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>├── ou=vcenter-groups
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>├── ou=service-accounts
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>└── ou=system
 </span></code></pre></div>
 <h2 id="directory-behavior">Directory behavior<a class="headerlink" href="#directory-behavior" title="Permanent link">&para;</a></h2>
 <p>The helper generates one MDB database per enabled organization and configures the <code>ppolicy</code>, <code>memberof</code>, and
@@ -4257,6 +4280,57 @@ shows generated passwords once; those passwords follow the same in-memory-only s
 passwords. The result changes the primary action to <strong>Done</strong>, which closes the modal and clears the one-time CSV from the
 page. If Atlaso restarts before those passwords are applied, VCF Helper summarizes the affected users per organization
 and <strong>Recover missing passwords</strong> generates replacement credentials in one operation with a new one-time CSV.</p>
+<h2 id="vcenter-openldap-groups">vCenter OpenLDAP groups<a class="headerlink" href="#vcenter-openldap-groups" title="Permanent link">&para;</a></h2>
+<p>Each organization also publishes <code>ou=vcenter-groups,&lt;organization suffix&gt;</code> during global LDAP Apply. These separate
+entries use RFC4519 <code>groupOfUniqueNames</code> and DN-valued <code>uniqueMember</code>, matching the native OpenLDAP schema mapping
+inspected on vCenter Server 9.1.1. <a href="https://knowledge.broadcom.com/external/article/316480">Broadcom KB316480</a> specifies
+the same schema for its listed versions through 8.x; that article alone does not establish 9.x interoperability.</p>
+<p>The original <code>ou=groups</code> entries retain <code>groupOfNames/member</code>, their existing <code>entryUUID</code>, and the <code>memberOf</code> overlay
+used by VCF Automation. The vCenter copies receive their own server-issued <code>entryUUID</code>, retained across ordinary
+membership edits and repeated Apply. Atlaso does not combine conflicting structural classes or replace the original
+groups. Group deletion, disablement or renaming removes the corresponding old projection during Apply; recreating a
+deleted DN produces a new identity, so review external role assignments afterward. Recovery exports include both
+subtrees and their UUIDs; importing an older archive adds the missing projection on the next global LDAP Apply.</p>
+<p>To configure a vCenter OpenLDAP identity source:</p>
+<ol>
+<li>Submit the organization's pending changes through global <strong>Review appliance changes</strong>, including Managed LDAP and
+   its required dependencies. Do not create or modify directory entries manually.</li>
+<li>Use verified LDAPS and the organization's read-only bind identity. Retain existing local break-glass access.</li>
+<li>Set the users base to <code>ou=users,&lt;organization suffix&gt;</code> and the groups base to the <strong>vCenter groups base</strong> shown in
+   Managed LDAP. Keep VCF Automation's existing <strong>VCF groups base</strong> unchanged. Searching from the suffix root can
+   expose both representations; use the consumer-specific base.</li>
+<li>Verify direct-group discovery in the permission-principal picker and independently with
+   <code>UserDirectory.RetrieveUserGroups</code> with group search enabled. Grant a test group a scoped role and verify that a
+   direct member can use that role. A successful user login alone does not verify group discovery or authorization.</li>
+</ol>
+<table>
+<thead>
+<tr>
+<th>Membership behavior</th>
+<th>Contract and verification boundary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Direct users</td>
+<td>vCenter copies reference original user DNs through <code>uniqueMember</code>; native discovery and role use require version-specific acceptance.</td>
+</tr>
+<tr>
+<td>Nested groups</td>
+<td>Copies reference copies in the same organization. No flattening occurs; verify native nested authorization separately from direct membership.</td>
+</tr>
+<tr>
+<td>VCF <code>memberOf</code></td>
+<td>Original direct backlinks remain unchanged; copies do not add a second set of backlinks to users.</td>
+</tr>
+<tr>
+<td>OIDC mapped groups</td>
+<td>Atlaso's existing cycle-safe direct and nested desired-state graph remains authoritative.</td>
+</tr>
+</tbody>
+</table>
+<p>Changing the vCenter search base is an external configuration action. Review it separately and preserve existing
+sources and permissions until the replacement path has passed the checks above.</p>
 <h2 id="vcf-automation-integration">VCF Automation integration<a class="headerlink" href="#vcf-automation-integration" title="Permanent link">&para;</a></h2>
 <p>Open the <strong>Managed LDAP for VCF</strong> tile on the VCF Helper page for both manual bundles and the guided inspection,
 configuration, and verification workflow. The Managed LDAP page remains focused on directory service settings,
