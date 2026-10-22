@@ -4252,7 +4252,8 @@ Successful setup refreshes the trust rows and pending Apply state in place.</p>
    Atlaso issues and manages the shared KMIP server certificate from its CA when KMS is enabled. Run global
    <strong>Appliance Apply</strong> to deploy the server certificate and listener. Keep the provider's immutable UUID for the
    later approval step.</li>
-<li>In the VCF 9.1 vSphere Client, add Atlaso's hostname and port as a standard KMS/key provider. Use vCenter's
+<li>In the VCF 9.1 vSphere Client, add Atlaso's hostname (or a verified applied listener IP described below) and port
+   as a standard KMS/key provider. Use vCenter's
    <strong>Establish Trust</strong> controls to trust Atlaso's server identity. The Atlaso listener rail exposes its public server
    chain. A root-CA trust choice is preferable where vCenter supports it, because vCenter versions that pin only the
    leaf need trust re-establishment after server-certificate renewal. Confirm the server identity independently.</li>
@@ -4282,8 +4283,8 @@ or the page is hidden, including browser Back-cache navigation;
 they are not saved to a Vault, provider state, audit detail, task, or browser storage. A Vault credential is referenced
 by stable vault and entry IDs; its password is never placed in the page. Changing the server or credential source
 clears certificate confirmation and requires another probe before authentication. Discovery requires the selected
-vCenter cluster to point only to the configured Atlaso hostname and
-port. Client authorization remains an exact fingerprint-to-provider-UUID mapping.</p>
+vCenter cluster to point only to the configured Atlaso hostname or independently verified applied listener IPs,
+with the exact configured port on every member. Client authorization remains an exact fingerprint-to-provider-UUID mapping.</p>
 <p>The name comes from the configured <code>VirtualCenter.InstanceName</code> setting, queried read-only through
 <code>ServiceContent.setting</code> and
 <a href="https://developer.broadcom.com/xapis/virtual-infrastructure-json-api/latest/sdk/vim25/release/OptionManager/moId/QueryOptions/post/">Broadcom OptionManager.QueryOptions</a>.
@@ -4298,7 +4299,7 @@ on refresh; this correction never renames database records automatically.
 Cluster choices use the same pinned authenticated connection and
 <a href="https://developer.broadcom.com/xapis/virtual-infrastructure-json-api/latest/sdk/vim25/release/CryptoManagerKmip/moId/ListKmsClusters/post/">Broadcom ListKmsClusters</a>
 without management-type or status filters. Choosing an entry does not verify its Atlaso endpoint: certificate inspection
-still checks that the selected cluster points only to this Atlaso hostname and port.</p>
+still checks every selected cluster member against the supported hostname/IP and exact port rules below.</p>
 <p>The Target step reports loading, an explicitly empty inventory, or an actionable failure. <strong>Refresh vCenter choices</strong>
 retries discovery without replacing a custom name or cluster ID. Changing the server, credential source, saved URI,
 login credentials, or TLS confirmation discards discovered choices and any selected value from that inventory;
@@ -4306,6 +4307,13 @@ explicit custom values remain editable. Delayed responses from the previous conn
 failure, retry or enter the name and cluster ID explicitly. <strong>Configure manually</strong> remains available without a vCenter
 connection or inventory. Discovery never creates or deletes a cluster, changes keys, approves trust, or runs Apply.</p>
 <h3 id="resolve-a-target-endpoint-mismatch">Resolve a Target endpoint mismatch<a class="headerlink" href="#resolve-a-target-endpoint-mismatch" title="Permanent link">&para;</a></h3>
+<p>The VCF 9.1 API represents the KMS server <strong>name</strong>, transport <strong>address</strong>, and <strong>port</strong> as separate fields in
+<a href="https://developer.broadcom.com/xapis/vsphere-web-services-api/latest/vim.encryption.KmipServerInfo.html">Broadcom KmipServerInfo</a>.
+The server name is a display label; matching it to Atlaso's hostname never authorizes a destination. For example,
+<code>name=kms.lab.internal</code>, <code>address=192.168.1.254</code>, <code>port=5696</code> passes only if that exact IP and port are admitted as
+Atlaso's applied listener. The provider display name, Atlaso provider UUID/key namespace, vCenter instance identity,
+and KMIP cluster ID remain separate. This address check permits public-certificate inspection; it does not establish
+reachability, TLS trust, or key-operation interoperability.</p>
 <p>If <strong>Target</strong> reports <strong>The vCenter KMIP cluster does not point only to this Atlaso endpoint</strong>, discovery stops before
 retrieving the client certificate. The message names the expected <strong>configured</strong> Atlaso hostname and port and gives
 repair guidance. It is identical for all endpoint-check failures, including missing, empty, malformed, or mixed
@@ -4316,9 +4324,17 @@ Inspect the complete cluster directly in vCenter to find the differing configura
    desired-state values; the message does not prove that the listener is applied, reachable, or trusted. If settings
    changed, review and complete global <strong>Appliance Apply</strong> before checking vCenter connectivity.</li>
 <li>In vCenter, inspect <strong>every</strong> KMS member of the selected standard provider/cluster, including additional members
-   outside the visible row. Each address must use the configured Atlaso hostname and each port must match. Case and a
-   trailing DNS dot are ignored; IP addresses and other DNS aliases are not accepted in place of that hostname, even
-   if they resolve to the same address. Atlaso does not use DNS resolution as proof of endpoint ownership.</li>
+   outside the visible row. Each transport address must use the configured Atlaso hostname or an independently
+   admitted applied listener IP, and each port must match exactly. Hostname case and a trailing DNS dot are ignored.
+   IPv4 and canonical-equivalent IPv6 addresses are accepted only when successful KMIP Apply recorded the address,
+   port, and owning interface, the read-only privileged helper confirms the active service's deployed listener
+   configuration agrees with that baseline, the applied Network snapshot pins that owner, and fresh native observation
+   confirms the same usable address on its up interface and pinned MAC. VLANs also require the exact parent, tag,
+   and up links.
+   DHCP and automatic IPv6 require native dynamic-source evidence. An old lease, pending desired-state address,
+   unrelated management address, missing source record, inactive service, or unavailable observation cannot admit an IP.
+   Complete successful Network/KMIP Apply to establish missing ownership, or use the configured hostname. DNS aliases and
+   arbitrary DNS resolution never prove ownership. A cluster containing even one foreign address or wrong port fails.</li>
 <li>Select the intended cluster or correct its configuration through your site's approved procedure. Preserve active
    providers, keys, certificates, and workloads; do not delete a member, replace a provider, or reset trust merely to
    clear this message. If the provider is in use or ownership is uncertain, stop and consult its administrator.</li>
