@@ -5929,11 +5929,6 @@ async function readCaCsrFile(file) {
   if (!file || !/\.(?:csr|pem)$/i.test(file.name || "")) {
     throw new Error("Choose a file with a .csr or .pem extension.");
   }
-  const mediaType = String(file.type || "").toLowerCase();
-  const acceptedMediaTypes = ["application/pkcs10", "application/pkcs10-signature", "application/octet-stream", "application/x-pem-file", "text/plain"];
-  if (mediaType && !acceptedMediaTypes.includes(mediaType)) {
-    throw new Error("Choose a PEM text file or a PKCS#10 certificate signing request.");
-  }
   if (!Number.isFinite(file.size) || file.size <= 0 || file.size > CA_CSR_MAX_BYTES) {
     throw new Error("Choose a CSR file larger than zero and no larger than 64 KiB.");
   }

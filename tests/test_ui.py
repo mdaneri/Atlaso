@@ -9730,6 +9730,95 @@ def test_certificate_request_creation_validates_profile_and_sans(client):
     assert "disabled-profile.atlaso.internal" not in names
 
 
+def test_certificate_request_intake_rejects_invalid_csrs_before_staging(client):
+    """Reject invalid CSR content with recoverable validation and no new desired rows."""
+    import base64
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+    from sqlalchemy import func, select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate, CaProfile
+
+    login(client)
+    page = client.get("/certificate-authority")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    csr = (
+        x509.CertificateSigningRequestBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "submitted.example.test")]))
+        .sign(key, hashes.SHA256())
+    )
+    valid_pem = csr.public_bytes(serialization.Encoding.PEM).decode("ascii")
+    csr_der = csr.public_bytes(serialization.Encoding.DER)
+    tampered_der = csr_der[:-1] + bytes([csr_der[-1] ^ 1])
+    invalid_signature_pem = (
+        "-----BEGIN CERTIFICATE REQUEST-----\n"
+        + base64.b64encode(tampered_der).decode("ascii")
+        + "\n-----END CERTIFICATE REQUEST-----"
+    )
+    private_key_pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode("ascii")
+    with SessionLocal() as db:
+        profile_id = db.scalar(select(CaProfile.id).where(CaProfile.name == "VCF service TLS"))
+        before_count = db.scalar(select(func.count()).select_from(CaCertificate))
+
+    invalid_requests = [
+        ("malformed", "-----BEGIN CERTIFICATE REQUEST-----\nMII=\n-----END CERTIFICATE REQUEST-----"),
+        ("bad-signature", invalid_signature_pem),
+        ("private-key", private_key_pem),
+        ("extra-pem", valid_pem + valid_pem),
+        ("oversized", "x" * (64 * 1024 + 1)),
+        ("oversized-padding", " " * (64 * 1024 + 1) + valid_pem),
+    ]
+    for label, csr_text in invalid_requests:
+        response = client.post(
+            "/certificate-authority/certificates",
+            headers={"accept": "application/json"},
+            data={
+                "csrf": csrf,
+                "common_name": f"{label}.example.test",
+                "profile_id": str(profile_id),
+                "subject_alt_names": f"{label}.example.test",
+                "csr_text": csr_text,
+                "enabled": "on",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 422
+        assert isinstance(response.json()["detail"], str)
+
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(CaCertificate)) == before_count
+        assert not db.scalar(
+            select(CaCertificate.id).where(CaCertificate.common_name.in_([f"{label}.example.test" for label, _ in invalid_requests]))
+        )
+
+    accepted = client.post(
+        "/certificate-authority/certificates",
+        data={
+            "csrf": csrf,
+            "common_name": "valid-csr.example.test",
+            "profile_id": str(profile_id),
+            "subject_alt_names": "valid-csr.example.test",
+            "csr_text": valid_pem,
+            "enabled": "on",
+        },
+        follow_redirects=False,
+    )
+    assert accepted.status_code == 303
+    with SessionLocal() as db:
+        staged = db.scalar(select(CaCertificate).where(CaCertificate.common_name == "valid-csr.example.test"))
+        assert staged.status == "csr-staged"
+        assert staged.csr_text == valid_pem.strip()
+
+
 def test_certificate_request_editing_enforces_immutable_and_managed_boundaries(client):
     """Verify that certificate request editing enforces immutable and managed boundaries.
 

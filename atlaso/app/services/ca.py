@@ -31,6 +31,7 @@ CA_SERVER_PROFILE_NAME = "VCF service TLS"
 CA_CLIENT_PROFILE_NAME = "VCF KMIP client"
 CA_STATUS_VALUES = {"planned", "csr-staged", "issued", "revoked"}
 SAFE_NAME_PATTERN = re.compile(r"[^A-Za-z0-9_.-]+")
+CA_CSR_MAX_BYTES = 64 * 1024
 
 
 @dataclass(frozen=True)
@@ -812,6 +813,45 @@ def ca_certificate_can_delete(certificate: CaCertificate) -> bool:
         certificate: Certificate record whose managed status controls deletion.
     """
     return not certificate.managed_owner
+
+
+def validate_ca_csr_text(csr_text: str) -> str | None:
+    """Validate one bounded PEM PKCS#10 request and its signature.
+
+    Args:
+        csr_text: Optional CSR text submitted with a certificate request.
+
+    Returns:
+        A safe validation message, or ``None`` for an empty optional CSR or a valid signed CSR.
+    """
+    try:
+        original_bytes = csr_text.encode("utf-8")
+    except UnicodeEncodeError:
+        return "CSR must be valid UTF-8 PEM text."
+    if len(original_bytes) > CA_CSR_MAX_BYTES:
+        return "CSR must not exceed 64 KiB."
+    normalized = csr_text.strip()
+    if not normalized:
+        return None
+    pem_bytes = normalized.encode("utf-8")
+    lines = normalized.splitlines()
+    if (
+        len(lines) < 3
+        or lines[0] not in (
+            "-----BEGIN CERTIFICATE REQUEST-----",
+            "-----BEGIN NEW CERTIFICATE REQUEST-----",
+        )
+        or lines[-1] != lines[0].replace("BEGIN", "END", 1)
+        or re.fullmatch(r"[A-Za-z0-9+/=\s]+", "\n".join(lines[1:-1])) is None
+    ):
+        return "CSR must contain exactly one PEM-encoded PKCS#10 certificate request."
+    try:
+        csr = x509.load_pem_x509_csr(pem_bytes)
+        if not csr.is_signature_valid:
+            return "CSR signature is invalid."
+    except (InvalidSignature, TypeError, UnsupportedAlgorithm, ValueError):
+        return "CSR is not a valid PKCS#10 certificate request."
+    return None
 
 
 def validate_ca_certificate_request(

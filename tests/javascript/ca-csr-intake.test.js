@@ -10,9 +10,18 @@ const helpers = app.slice(helperStart, helperEnd);
 const context = vm.createContext({ TextEncoder, TextDecoder, Error, Number, String, RegExp });
 vm.runInContext(`${helpers}\nglobalThis.caCsr = { validateCaCsrPem, readCaCsrFile };`, context);
 
-const validPem = [
+const framedPem = [
   "-----BEGIN CERTIFICATE REQUEST-----",
   "MII=",
+  "-----END CERTIFICATE REQUEST-----",
+].join("\n");
+const validCsrPem = [
+  "-----BEGIN CERTIFICATE REQUEST-----",
+  "MIHWMH4CAQAwHDEaMBgGA1UEAwwRbWltZS5leGFtcGxlLnRlc3QwWTATBgcqhkjO",
+  "PQIBBggqhkjOPQMBBwNCAAS8y4tbolyEQk67P4N7AQ44JhwKDoyKy5Ir62zN9P3V",
+  "EL2l1EoaVvfxlSXd4gU+wbwkQRZpiCGkyKeyGWquXe26oAAwCgYIKoZIzj0EAwID",
+  "SAAwRQIhANMsSqf/8CwoU31O1yL/pwJ5jfANoing0XGkI5gavinvAiAGgKIZ2MI/",
+  "ngXttbMyLBCPdrBNphS56rdkhYtKxZSDpA==",
   "-----END CERTIFICATE REQUEST-----",
 ].join("\n");
 
@@ -26,23 +35,24 @@ function file(name, contents, size = Buffer.byteLength(contents), type = "") {
   };
 }
 
-test("CSR validation accepts pasted request PEM and rejects non-CSR blocks", () => {
-  assert.equal(context.caCsr.validateCaCsrPem(validPem), "");
-  assert.equal(context.caCsr.validateCaCsrPem(validPem.replace("BEGIN CERTIFICATE REQUEST", "BEGIN NEW CERTIFICATE REQUEST").replace("END CERTIFICATE REQUEST", "END NEW CERTIFICATE REQUEST")), "");
+test("CSR client framing accepts request PEM syntax and rejects non-CSR blocks", () => {
+  assert.equal(context.caCsr.validateCaCsrPem(framedPem), "");
+  assert.equal(context.caCsr.validateCaCsrPem(framedPem.replace("BEGIN CERTIFICATE REQUEST", "BEGIN NEW CERTIFICATE REQUEST").replace("END CERTIFICATE REQUEST", "END NEW CERTIFICATE REQUEST")), "");
   assert.match(context.caCsr.validateCaCsrPem("-----BEGIN CERTIFICATE-----\nMII=\n-----END CERTIFICATE-----"), /complete PEM certificate signing request/);
-  assert.match(context.caCsr.validateCaCsrPem(`${validPem}\nextra`), /no extra content/);
-  assert.match(context.caCsr.validateCaCsrPem(validPem.replace("MII=", "M!I=")), /valid base64/);
+  assert.match(context.caCsr.validateCaCsrPem(`${framedPem}\nextra`), /no extra content/);
+  assert.match(context.caCsr.validateCaCsrPem(framedPem.replace("MII=", "M!I=")), /valid base64/);
 });
 
-test("CSR file reader accepts bounded .csr/.pem files and rejects unsafe inputs", async () => {
-  assert.equal(await context.caCsr.readCaCsrFile(file("request.CSR", validPem)), validPem);
-  assert.equal(await context.caCsr.readCaCsrFile(file("request.pem", validPem)), validPem);
-  assert.equal(await context.caCsr.readCaCsrFile(file("request.csr", validPem, undefined, "application/pkcs10")), validPem);
-  await assert.rejects(context.caCsr.readCaCsrFile(file("request.crt", validPem)), /\.csr or \.pem/);
-  await assert.rejects(context.caCsr.readCaCsrFile(file("request.pem", validPem, undefined, "application/x-pkcs12")), /PEM text file or a PKCS#10/);
+test("CSR file reader accepts bounded .csr/.pem text framing and rejects unsafe inputs", async () => {
+  assert.equal(await context.caCsr.readCaCsrFile(file("request.CSR", validCsrPem)), validCsrPem);
+  assert.equal(await context.caCsr.readCaCsrFile(file("request.pem", validCsrPem, undefined, "application/x-x509-ca-cert")), validCsrPem);
+  assert.equal(await context.caCsr.readCaCsrFile(file("request.csr", validCsrPem, undefined, "application/octet-stream")), validCsrPem);
+  assert.equal(await context.caCsr.readCaCsrFile(file("request.pem", validCsrPem, undefined, "application/unknown")), validCsrPem);
+  await assert.rejects(context.caCsr.readCaCsrFile(file("request.crt", validCsrPem)), /\.csr or \.pem/);
   await assert.rejects(context.caCsr.readCaCsrFile(file("empty.pem", "")), /larger than zero/);
-  await assert.rejects(context.caCsr.readCaCsrFile(file("large.pem", validPem, 64 * 1024 + 1)), /no larger than 64 KiB/);
+  await assert.rejects(context.caCsr.readCaCsrFile(file("large.pem", framedPem, 64 * 1024 + 1)), /no larger than 64 KiB/);
   await assert.rejects(context.caCsr.readCaCsrFile(file("private.pem", "-----BEGIN PRIVATE KEY-----\nMII=\n-----END PRIVATE KEY-----")), /Private-key/);
+  await assert.rejects(context.caCsr.readCaCsrFile(file("private.pem", "-----BEGIN PRIVATE KEY-----\nMII=\n-----END PRIVATE KEY-----", undefined, "application/octet-stream")), /Private-key/);
   const invalidUtf8 = { name: "request.pem", size: 1, arrayBuffer: async () => Uint8Array.of(0xff).buffer };
   await assert.rejects(context.caCsr.readCaCsrFile(invalidUtf8), /valid UTF-8/);
 });
@@ -114,7 +124,7 @@ function wizardHarness() {
   return { form, wizardConfig, errors, clearCount };
 }
 
-function deferredFile(name, contents = validPem) {
+function deferredFile(name, contents = framedPem) {
   let finish;
   const arrayBuffer = new Promise(resolve => { finish = resolve; });
   return {
@@ -138,7 +148,7 @@ test("a newer file selection wins when CSR reads complete out of order", async (
   await secondRead;
   first.finish();
   await firstRead;
-  assert.equal(form.csr.value, validPem);
+  assert.equal(form.csr.value, framedPem);
   assert.equal(form.status.textContent, "CSR file loaded into the text field.");
   assert.deepEqual(errors, []);
 });
@@ -162,7 +172,7 @@ test("paste, file-picker cancel, form reset, and wizard close invalidate pending
     form.status.textContent = "newer state";
     pending.finish();
     await read;
-    assert.notEqual(form.csr.value, validPem, `${invalidate} must not be overwritten`);
+    assert.notEqual(form.csr.value, framedPem, `${invalidate} must not be overwritten`);
     assert.equal(form.status.textContent, "newer state", `${invalidate} status must remain untouched`);
     assert.deepEqual(errors, [], `${invalidate} must not surface a stale error`);
   }

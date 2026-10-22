@@ -84,6 +84,8 @@ metadata, SANs, PEM content, and final review.
 In its CSR step, paste the request or select **Upload a CSR file** to load a PEM-encoded `.csr` or `.pem` file up to
 64 KiB. Inspect the populated **CSR PEM** field before review. Private keys, certificate-only files, invalid text,
 and oversized files are rejected; the existing pasted content remains available if a file cannot be loaded.
+Before staging, Atlaso checks that the request is a parseable PKCS#10 CSR with a valid signature. A failed check leaves
+desired state unchanged and returns an error in the wizard so the request can be corrected.
 The request description supports multiple lines. On wide screens, the certificate grid fills the remaining viewport
 space and retains horizontal scrolling for its columns; narrower or hidden panels use the compact fallback.
 

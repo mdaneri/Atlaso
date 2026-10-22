@@ -55,6 +55,7 @@ from atlaso.app.services.ca import (
     safe_certificate_name,
     split_multiline,
     validate_ca_certificate_request,
+    validate_ca_csr_text,
 )
 from atlaso.app.services.dnsmasq import (
     split_addresses,
@@ -1599,6 +1600,9 @@ def build_routers(
         )
         if validation_errors:
             raise HTTPException(status_code=422, detail=" ".join(validation_errors))
+        csr_error = validate_ca_csr_text(csr_text)
+        if csr_error:
+            raise HTTPException(status_code=422, detail=csr_error)
         normalized_csr = csr_text.strip()
         certificate = CaCertificate(
             common_name=common_name.strip(),
