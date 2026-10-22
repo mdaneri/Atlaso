@@ -5908,11 +5908,12 @@ function initializeCaSettings(root = document) {
 const CA_CSR_MAX_BYTES = 64 * 1024;
 
 function validateCaCsrPem(value) {
-  const text = String(value || "").trim();
-  if (!text) return "Provide a PEM certificate signing request.";
-  if (new TextEncoder().encode(text).byteLength > CA_CSR_MAX_BYTES) {
+  const rawText = String(value || "");
+  if (new TextEncoder().encode(rawText).byteLength > CA_CSR_MAX_BYTES) {
     return "The CSR must be no larger than 64 KiB.";
   }
+  const text = rawText.trim();
+  if (!text) return "Provide a PEM certificate signing request.";
   if (/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/i.test(text)) {
     return "Private-key files or PEM blocks are not accepted. Provide only a certificate signing request.";
   }

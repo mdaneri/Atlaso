@@ -82,7 +82,8 @@ identity, while enablement has a
 dedicated step for both certificate profiles and requests. **CSR Intake** uses the same guided pattern to separate
 metadata, SANs, PEM content, and final review.
 In its CSR step, paste the request or select **Upload a CSR file** to load a PEM-encoded `.csr` or `.pem` file up to
-64 KiB. Inspect the populated **CSR PEM** field before review. Private keys, certificate-only files, invalid text,
+64 KiB, including surrounding whitespace. Inspect the populated **CSR PEM** field before review. Private keys,
+certificate-only files, invalid text,
 and oversized files are rejected; the existing pasted content remains available if a file cannot be loaded.
 While a selected file is loading, the wizard blocks advancing or submitting so review uses the completed CSR text.
 Before staging through management intake or either certificate request portal, Atlaso checks that the request is a

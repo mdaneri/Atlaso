@@ -57,6 +57,16 @@ test("CSR file reader accepts bounded .csr/.pem text framing and rejects unsafe 
   await assert.rejects(context.caCsr.readCaCsrFile(invalidUtf8), /valid UTF-8/);
 });
 
+test("pasted CSR limits count raw UTF-8 bytes including surrounding whitespace", () => {
+  const paddingBytes = 64 * 1024 - Buffer.byteLength(validCsrPem);
+  const atLimit = " ".repeat(paddingBytes) + validCsrPem;
+  assert.equal(context.caCsr.validateCaCsrPem(atLimit), "");
+  assert.match(context.caCsr.validateCaCsrPem(` ${atLimit}`), /no larger than 64 KiB/);
+  assert.match(context.caCsr.validateCaCsrPem(`${atLimit}\n`), /no larger than 64 KiB/);
+  const unicodePadding = "\u2003".repeat(Math.floor(paddingBytes / 3) + 1);
+  assert.match(context.caCsr.validateCaCsrPem(`${validCsrPem}${unicodePadding}`), /no larger than 64 KiB/);
+});
+
 function wizardHarness() {
   let wizardConfig;
   const errors = [];
