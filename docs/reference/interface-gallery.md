@@ -99,6 +99,18 @@ Figure: Backup and Restore in the verified clean-appliance desktop state.
 
 Figure: Backup and Restore in the verified clean-appliance responsive state.
 
+![Atlaso Maintenance KMIP recovery tab with separate encrypted export and offline import forms in the desktop viewport.](../assets/screenshots/kmip-recovery-desktop.webp)
+
+Figure: KMIP recovery forms and empty-target guidance on the documentation appliance in the desktop viewport.
+
+![Atlaso shared confirmation dialog explaining that recovery export pauses writers and restores their prior service state.](../assets/screenshots/kmip-recovery-export-confirm-desktop.webp)
+
+Figure: Review the brief KMS writer pause before export. This documentation preview was canceled without creating an archive.
+
+![Atlaso Maintenance KMIP recovery tab with separate encrypted export and offline import forms in the responsive viewport.](../assets/screenshots/kmip-recovery-responsive.webp)
+
+Figure: KMIP recovery forms and empty-target guidance on the documentation appliance in the responsive viewport.
+
 ## Ca
 
 Route: `/ui/public/ca`

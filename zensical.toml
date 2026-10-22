@@ -32,6 +32,7 @@ nav = [
     { "Appliance Update" = "operate/appliance-update.md" },
     { "1Password bridge recovery" = "operate/onepassword-credential-bridge-recovery.md" },
     { "Backup and restore" = "operate/backup-restore.md" },
+    { "KMIP disaster recovery" = "operate/kmip-recovery.md" },
     { "Diagnostic support bundles" = "operate/diagnostics.md" },
     { "Automation" = "operate/automation.md" },
     { "Use the API" = "operate/api.md" },

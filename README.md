@@ -53,8 +53,10 @@ how verbosity affects App logs, and where native evidence can remain incomplete.
 administrator to confirm the displayed HTTPS certificate with a checkbox before using request-only manual credentials
 or a saved Vault credential. The administrator then inspects and approves the exact public client certificate for one
 provider before Appliance Apply permits KMIP key operations. Atlaso CA manages the server identity; certificate cutover
-retains the prior files and service state for recovery. Live VCF 9.1 interoperability and recovery acceptance remain gated
-by issue #172.
+retains the prior files and service state for recovery. The feature remains experimental; support is limited to the
+VCF 9.1 matrix actually observed. The maintainer owns separate encrypted-workload verification.
+The [KMIP disaster-recovery runbook](docs/operate/kmip-recovery.md) covers authenticated passphrase-encrypted bundles,
+empty-target restore, and legacy-store protection.
 
 [VCF Helper lab overrides](docs/services/vcf-helper.md#lab--non-production-overrides) let administrators review either
 or both fixed domainmanager properties in a tile-launched wizard on VCF Installer and SDDC Manager 9.0.x / 9.1.x.

@@ -23,6 +23,7 @@ from atlaso.app.database import (
     ensure_vcf_depot_running_operation_index,
     init_db,
 )
+from atlaso.app.kmip.legacy import assert_release_admission
 from atlaso.app.oidc import admin_router as oidc_admin_router
 from atlaso.app.oidc import public_router as oidc_public_router
 from atlaso.app.openapi import API_VALIDATION_RESPONSES, OPENAPI_TAGS
@@ -244,6 +245,7 @@ def create_app() -> FastAPI:
     Returns:
         The created app.
     """
+    assert_release_admission()
     settings = get_settings()
     appliance_mutation_lock = asyncio.Lock()
     app = FastAPI(
