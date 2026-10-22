@@ -93,6 +93,9 @@ internally and retain their CSRF, role, request validation, and listener checks.
 
 ## Verify and recover
 
+For external appliance TLS, follow [Appliance certificates with Atlaso](appliance-certificates.md). It covers SRM,
+vCenter Machine SSL, CSR ownership, public root trust, certificate chains, verification, and recovery.
+
 After apply, verify the presented management certificate and download the expected public root certificate. Keep a VM
 snapshot or equivalent rollback point before replacing active trust. Use [VCF Certificate Trust](vcf-trust.md) for the
 separate task that installs the active Atlaso root into a supported VCF appliance.
