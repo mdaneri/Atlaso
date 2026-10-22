@@ -2,6 +2,8 @@
 
 import json
 import sqlite3
+import subprocess
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -62,6 +64,97 @@ def test_installed_collector_imports_complete_legacy_and_continues(tmp_path, mon
     assert (logs / ".atlaso-history/0000000000000000/access.log").read_text() == "initial\n"
     assert len(count) == 2
     assert json.loads((root / "nginx-state.json").read_text())["next"] == 2
+
+
+@pytest.mark.parametrize("missing", [("access.log",), ("error.log",), ("access.log", "error.log")])
+def test_fresh_collector_accepts_streams_nginx_has_not_opened(tmp_path, monkeypatch, missing):
+    """Fresh bootstrap configurations may not open either normal log stream.
+
+    Args:
+        tmp_path: Owned synthetic appliance filesystem.
+        monkeypatch: Model a live Nginx that does not open unconfigured streams.
+        missing: Streams absent before initial collection.
+    """
+    root, logs, _ = _nginx_fixture(tmp_path, monkeypatch)
+    for name in missing:
+        (logs / name).unlink()
+    monkeypatch.setattr(lifecycle, "reopen_nginx_logs", lambda: None)
+    lifecycle.collect_nginx()
+    for name, source in (("access.log", "nginx-access"), ("error.log", "nginx-error")):
+        expected = () if name in missing else ("initial",)
+        assert history.read_page(lifecycle.NGINX_STORE, source).lines == expected
+        assert (logs / name).is_file()
+        assert (logs / name).read_bytes() == b""
+    (logs / "error.log").write_text("later\n", encoding="utf-8")
+    lifecycle.collect_nginx()
+    expected_error = ("later",) if "error.log" in missing else ("initial", "later")
+    assert history.read_page(lifecycle.NGINX_STORE, "nginx-error").lines == expected_error
+    assert json.loads((root / "nginx-state.json").read_text())["next"] == 2
+
+
+def test_missing_active_log_with_archive_still_requires_reconciliation(tmp_path, monkeypatch):
+    """Missing active files cannot hide an incomplete retained legacy inventory.
+
+    Args:
+        tmp_path: Owned synthetic appliance filesystem.
+        monkeypatch: Bind the collector to synthetic paths.
+    """
+    root, logs, count = _nginx_fixture(tmp_path, monkeypatch)
+    (logs / "access.log").unlink()
+    (logs / "access.log.1").write_text("retained\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="Incomplete App log rotation inventory"):
+        lifecycle.collect_nginx()
+    assert (logs / "access.log.1").read_text() == "retained\n"
+    assert not (logs / "access.log").exists()
+    assert not (root / "nginx-state.json").exists()
+    assert not count
+
+
+def test_missing_active_log_after_activation_is_not_recreated(tmp_path, monkeypatch):
+    """Unexpected deletion outside a sealing transaction remains a hard failure.
+
+    Args:
+        tmp_path: Owned synthetic appliance filesystem.
+        monkeypatch: Bind the collector to synthetic paths.
+    """
+    root, logs, count = _nginx_fixture(tmp_path, monkeypatch)
+    lifecycle.collect_nginx()
+    original = (root / "nginx-state.json").read_bytes()
+    (logs / "access.log").unlink()
+    with pytest.raises(FileNotFoundError):
+        lifecycle.collect_nginx()
+    assert not (logs / "access.log").exists()
+    assert (root / "nginx-state.json").read_bytes() == original
+    assert len(count) == 1
+
+
+def test_prepare_nginx_streams_preserves_existing_bytes_and_identity(tmp_path, monkeypatch):
+    """Preparation leaves an existing producer file untouched.
+
+    Args:
+        tmp_path: Owned synthetic appliance filesystem.
+        monkeypatch: Bind the collector to synthetic paths.
+    """
+    _, logs, _ = _nginx_fixture(tmp_path, monkeypatch)
+    before = {name: ((logs / name).stat().st_ino, (logs / name).read_bytes())
+              for name in ("access.log", "error.log")}
+    lifecycle._prepare_nginx_log_files()
+    assert before == {name: ((logs / name).stat().st_ino, (logs / name).read_bytes()) for name in before}
+
+
+def test_prepare_nginx_streams_refuses_hardlinked_log(tmp_path, monkeypatch):
+    """Exclusive creation does not turn a linked existing file into trusted input.
+
+    Args:
+        tmp_path: Owned synthetic appliance filesystem.
+        monkeypatch: Bind the collector to synthetic paths.
+    """
+    _, logs, _ = _nginx_fixture(tmp_path, monkeypatch)
+    (logs / "access.log").unlink()
+    (logs / "access.log").hardlink_to(logs / "error.log")
+    with pytest.raises(ValueError, match="ordinary owned filesystem entry"):
+        lifecycle._prepare_nginx_log_files()
+    assert (logs / "error.log").read_text() == "initial\n"
 
 
 def test_collector_restarts_pending_generation_without_duplicate_rows(tmp_path, monkeypatch):
@@ -316,3 +409,97 @@ def test_collector_lock_excludes_second_lifecycle_owner(tmp_path):
         with pytest.raises(sqlite3.OperationalError, match="locked"):
             with lifecycle.lifecycle_lock(tmp_path):
                 pytest.fail("second lifecycle owner acquired the held writer lock")
+
+
+@pytest.mark.parametrize("stage", [
+    "prepare-state", "acquire-lock", "check-rotation-owners", "install-units",
+    "reload-units", "collect-nginx", "kms-cutover", "enable-timer",
+])
+def test_install_failure_reports_stage_without_exception_payload(monkeypatch, capsys, stage):
+    """Failures identify the exact step, stop execution and keep payloads private.
+
+    Args:
+        monkeypatch: Model the appliance operations without touching host state.
+        capsys: Inspect only the value-free entry point diagnostic.
+        stage: Failing operation in the real install sequence.
+    """
+    stages = ["prepare-state", "acquire-lock", "check-rotation-owners", "install-units",
+              "reload-units", "collect-nginx", "kms-cutover", "enable-timer"]
+    calls = []
+
+    def operation(name):
+        """Record a step, injecting a synthetic sensitive failure at its boundary.
+
+        Args:
+            name: Fixed stage being modelled.
+        """
+        calls.append(name)
+        if name == stage:
+            raise OSError(13, "synthetic-secret-do-not-emit", "/private/synthetic-secret")
+
+    monkeypatch.setattr(lifecycle, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(lifecycle, "importlib", SimpleNamespace(
+        import_module=lambda _: SimpleNamespace(geteuid=lambda: 0)))
+    monkeypatch.setattr(lifecycle, "_private", lambda _: operation("prepare-state"))
+    monkeypatch.setattr(lifecycle, "lifecycle_lock", lambda _: (
+        operation("acquire-lock"), nullcontext())[1])
+    monkeypatch.setattr(lifecycle, "_vendor_rotation_check", lambda: operation("check-rotation-owners"))
+    monkeypatch.setattr(lifecycle, "install_units", lambda: operation("install-units"))
+    monkeypatch.setattr(lifecycle, "_systemctl", lambda *args: operation(
+        "reload-units" if args == ("daemon-reload",) else "enable-timer"))
+    monkeypatch.setattr(lifecycle, "collect_nginx", lambda: operation("collect-nginx"))
+    monkeypatch.setattr(lifecycle, "prepare_kms", lambda **_: operation("kms-cutover"))
+    assert lifecycle.main(["install"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert f"stage={stage} category=filesystem" in captured.err
+    assert "errno=13" in captured.err
+    assert "retained recovery state was preserved" in captured.err
+    assert "synthetic-secret" not in captured.err
+    assert "/private/" not in captured.err
+    assert "Traceback" not in captured.err
+    assert calls == stages[:stages.index(stage) + 1]
+
+
+@pytest.mark.parametrize(("error", "category"), [
+    (ValueError("synthetic-secret"), "invalid-state"),
+    (sqlite3.OperationalError("synthetic-secret"), "database"),
+    (subprocess.CalledProcessError(1, ["synthetic-secret"], output="synthetic-secret"), "service"),
+])
+def test_failure_diagnostic_uses_fixed_categories(error, category):
+    """Exception text and service arguments never become diagnostic fields.
+
+    Args:
+        error: Synthetic exception carrying sensitive-looking data.
+        category: Expected fixed diagnostic category.
+    """
+    result = lifecycle._failure_diagnostic("collect-nginx", error)
+    assert result == f"stage=collect-nginx category={category} site=unknown"
+
+
+def test_failure_diagnostic_locates_trusted_source_without_path(monkeypatch):
+    """A real lifecycle traceback yields a source line, not a filename or value.
+
+    Args:
+        monkeypatch: Make the subprocess fail without launching a service command.
+    """
+    def failed(*args, **kwargs):
+        """Model an unavailable executable with a private path in its exception.
+
+        Args:
+            *args: Ignored synthetic subprocess positional arguments.
+            **kwargs: Ignored synthetic subprocess keyword arguments.
+        """
+        raise FileNotFoundError(2, "synthetic-secret", "/private/synthetic-secret")
+
+    monkeypatch.setattr(lifecycle.subprocess, "run", failed)
+    try:
+        lifecycle._systemctl("daemon-reload")
+    except OSError as error:
+        result = lifecycle._failure_diagnostic("reload-units", error)
+    else:
+        pytest.fail("synthetic service failure was not raised")
+    assert "site=lifecycle:" in result
+    assert "errno=2" in result
+    assert "synthetic-secret" not in result
+    assert "/private/" not in result
