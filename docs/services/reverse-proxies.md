@@ -78,6 +78,8 @@ Disable or move the proxy before changing its address, renaming or deleting its 
 Rejected edits preserve the interface, proxy, and owned DNS records together.
 Interface edits also validate the final rebased service listeners before committing; disabling duplicate-address checks
 does not permit a native service to take an enabled proxy's socket.
+Physical-interface API and UI edits return **422 Unprocessable Content** for these conflicts, including those detected
+during dependent DNS refresh; the rejected transaction preserves prior settings and audits.
 PXE HTTP and a proxy can use the same port on distinct addresses. Sharing an exact socket still requires compatible
 HTTP publication and the same interface ownership; HTTPS cannot take the PXE HTTP socket.
 DHCP reservation create and edit reject proxy-owned DNS names, including short names expanded by their scope.

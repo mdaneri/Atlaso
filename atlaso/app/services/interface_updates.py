@@ -1124,12 +1124,13 @@ def refresh_interface_dependent_addresses(
             )
             mark_changed("ESXi PXE")
 
-    if dns_refresher is not None:
-        for label in dns_refresher(db, actor):
-            mark_changed(label)
     # Listener rebasing and DNS normalization can introduce claims absent from
-    # the original interface check. Validate the complete final transaction.
+    # the original interface check. Normalize validation failures from either
+    # stage so API and UI edits report a rejected transaction consistently.
     try:
+        if dns_refresher is not None:
+            for label in dns_refresher(db, actor):
+                mark_changed(label)
         validate_service_listener_sockets(db)
     except ValueError as exc:
         raise PhysicalInterfaceUpdateError(str(exc)) from exc
