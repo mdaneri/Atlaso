@@ -136,6 +136,44 @@ function deferredFile(name, contents = framedPem) {
   };
 }
 
+test("pending replacement CSR reads block advancing and review submission", async () => {
+  const { form, wizardConfig } = wizardHarness();
+  form.csr.value = validCsrPem;
+  const first = deferredFile("first.pem");
+  const replacement = deferredFile("replacement.pem", validCsrPem);
+  form.file.files = [first.file];
+  const firstRead = form.file.listeners.change[0]();
+  form.file.files = [replacement.file];
+  const replacementRead = form.file.listeners.change[0]();
+  const validate = id => wizardConfig.validateStep({ form, step: { id } });
+  for (const id of ["csr", "review"]) {
+    assert.equal(validate(id).valid, false);
+    assert.match(validate(id).message, /finish loading/);
+  }
+  assert.equal(form.csr.value, validCsrPem, "retain previous text while loading");
+  first.finish();
+  await firstRead;
+  assert.equal(validate("review").valid, false, "stale completion cannot unlock submission");
+  replacement.finish();
+  await replacementRead;
+  assert.equal(validate("csr").valid, true);
+  assert.equal(validate("review").valid, true);
+});
+
+test("failed replacement reads preserve the prior CSR and release the pending guard", async () => {
+  const { form, wizardConfig, errors } = wizardHarness();
+  form.csr.value = validCsrPem;
+  const invalid = deferredFile("invalid.pem", "not a CSR");
+  form.file.files = [invalid.file];
+  const read = form.file.listeners.change[0]();
+  assert.equal(wizardConfig.validateStep({ form, step: { id: "review" } }).valid, false);
+  invalid.finish();
+  await read;
+  assert.equal(form.csr.value, validCsrPem);
+  assert.equal(wizardConfig.validateStep({ form, step: { id: "csr" } }).valid, true);
+  assert.equal(errors.length, 1);
+});
+
 test("a newer file selection wins when CSR reads complete out of order", async () => {
   const { form, errors } = wizardHarness();
   const first = deferredFile("first.pem");
@@ -172,6 +210,7 @@ test("paste, file-picker cancel, form reset, and wizard close invalidate pending
     form.status.textContent = "newer state";
     pending.finish();
     await read;
+    assert.equal(wizardConfig.validateStep({ form, step: { id: "review" } }).valid, true);
     assert.notEqual(form.csr.value, framedPem, `${invalidate} must not be overwritten`);
     assert.equal(form.status.textContent, "newer state", `${invalidate} status must remain untouched`);
     assert.deepEqual(errors, [], `${invalidate} must not surface a stale error`);

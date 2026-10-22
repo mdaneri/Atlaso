@@ -5957,12 +5957,14 @@ function initializeCaCsrWizard() {
   const csrField = form.elements.namedItem("csr_text");
   const fileStatus = form.querySelector("[data-ca-csr-file-status]");
   let pendingFileRead = 0;
+  let fileReadPending = false;
   let importingFile = false;
   const clearFileStatus = () => {
     if (fileStatus instanceof HTMLElement) fileStatus.textContent = "";
   };
   const invalidatePendingFileRead = () => {
     pendingFileRead += 1;
+    fileReadPending = false;
     if (fileInput instanceof HTMLInputElement) fileInput.value = "";
   };
   const wizard = window.AtlasoUiPatterns.createWizard({
@@ -5977,6 +5979,7 @@ function initializeCaCsrWizard() {
     discardTitle: "Discard CSR intake?",
     discardMessage: "The request metadata and CSR entered in this wizard will be lost.",
     validateStep: ({ form: activeForm, step }) => {
+      if (fileReadPending) return { valid: false, field: fileInput, message: "Wait for the CSR file to finish loading before continuing." };
       if (step.id !== "csr") return { valid: true };
       const error = validateCaCsrPem(activeForm.elements.csr_text.value);
       return error ? { valid: false, field: "csr_text", message: error } : { valid: true };
@@ -6006,6 +6009,7 @@ function initializeCaCsrWizard() {
     fileInput.addEventListener("change", async () => {
       const file = fileInput.files?.[0];
       const sequence = ++pendingFileRead;
+      fileReadPending = Boolean(file);
       fileInput.value = "";
       if (!file) {
         clearFileStatus();
@@ -6015,6 +6019,7 @@ function initializeCaCsrWizard() {
       try {
         const csr = await readCaCsrFile(file);
         if (sequence !== pendingFileRead) return;
+        fileReadPending = false;
         importingFile = true;
         csrField.value = csr;
         csrField.dispatchEvent(new Event("input", { bubbles: true }));
@@ -6024,6 +6029,7 @@ function initializeCaCsrWizard() {
       } catch (error) {
         importingFile = false;
         if (sequence !== pendingFileRead) return;
+        fileReadPending = false;
         wizard.setError(error instanceof Error ? error.message : "The selected CSR file could not be read.", fileInput);
         if (fileStatus instanceof HTMLElement) fileStatus.textContent = "The file was not loaded.";
       }
