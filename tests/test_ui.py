@@ -9731,7 +9731,11 @@ def test_certificate_request_creation_validates_profile_and_sans(client):
 
 
 def test_certificate_request_intake_rejects_invalid_csrs_before_staging(client):
-    """Reject invalid CSR content with recoverable validation and no new desired rows."""
+    """Reject invalid CSR content with recoverable validation and no new desired rows.
+
+    Args:
+        client: Application client backed by an isolated test database.
+    """
     import base64
 
     from cryptography import x509
