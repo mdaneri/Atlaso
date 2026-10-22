@@ -1130,3 +1130,83 @@ def test_restore_reserves_target_automatic_service_alias_atomically(client, targ
         assert export_settings_archive(db, actor="test")["data"] == before
         assert list(db.scalars(select(AuditEvent.id))) == audits
         assert db.get(PhysicalInterface, observed.id).host_ipv6_cidr == "2001:db8:55::10/64"
+
+
+@pytest.mark.parametrize("service", ["backup", "ldap"])
+@pytest.mark.parametrize("proxy_enabled", [False, True])
+@pytest.mark.parametrize("conflict", [False, True])
+@pytest.mark.parametrize("renamed", [False, True])
+def test_restore_projects_target_service_sockets_before_replacement(client, service, proxy_enabled, conflict, renamed):
+    """Reject an enabled proxy occupying the target-derived protocol listener atomically.
+
+    Args:
+        client: Isolated appliance database fixture.
+        service: Exclusive backup or plain LDAP listener in archived desired state.
+        proxy_enabled: Whether the restored proxy claims its socket.
+        conflict: Whether the target observation moves onto the saved proxy address.
+        renamed: Preserve target observation matching across a unique MAC rename.
+    """
+    from atlaso.app.models import LdapOrganization
+
+    with SessionLocal() as db:
+        observed = PhysicalInterface(name="eth9", mac_address="02:00:00:00:00:99", role="access",
+                                     mode="access", admin_state="up", oper_state="up",
+                                     ipv4_method="static", ip_cidr="192.0.2.8/24", ipv6_enabled=True,
+                                     host_ipv6_cidr="2001:db8:55::10/64")
+        db.add_all([observed, LdapOrganization(name="Fixture", slug="fixture", suffix_dn="dc=fixture,dc=test")])
+        listener = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        listener.ipv6_enabled, listener.ipv6_cidr = True, "2001:db8:55::10/64"
+        db.commit()
+        save_proxy(db, payload(enabled=True, scheme="http", port=5696, redirect_http=False,
+                               listeners=[{"interface": "eth2", "address": "2001:db8:55::10"}]), actor="test")
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        row = next(row for row in archive["data"]["physical_interfaces"] if row["name"] == "eth9")
+        row["host_ipv6_cidr"] = "2001:db8:44::7/64"
+        if renamed:
+            row["name"] = "eth8"
+        if not conflict:
+            observed.host_ipv6_cidr = "2001:db8:55::20/64"
+            db.commit()
+        archive["data"]["reverse_proxies"][0]["enabled"] = proxy_enabled
+        if service == "backup":
+            archive["data"]["vcf_backup_settings"][0].update(
+                enabled=True, port=5696, listen_interface=row["name"],
+                listen_address="192.0.2.8", sftp_username="admin")
+        else:
+            archive["data"]["ldap_settings"][0].update(
+                enabled=True, ldap_enabled=True, ldaps_enabled=False, ldap_port=5696,
+                listen_interface=row["name"], listen_address="192.0.2.8\n2001:db8:44::7")
+        before = deepcopy(export_settings_archive(db, actor="test")["data"])
+        audits = list(db.scalars(select(AuditEvent.id)))
+        if proxy_enabled and conflict:
+            with pytest.raises(ValueError, match="exclusive Atlaso service|cannot share"):
+                restore_settings_archive(db, archive)
+            db.expire_all()
+            assert export_settings_archive(db, actor="test")["data"] == before
+            assert list(db.scalars(select(AuditEvent.id))) == audits
+            assert db.get(PhysicalInterface, observed.id).host_ipv6_cidr == "2001:db8:55::10/64"
+        else:
+            counts = restore_settings_archive(db, archive)
+            assert counts["reverse_proxies"] == 1
+
+
+def test_target_service_claim_projection_does_not_use_foreign_observations(client):
+    """Do not treat archived automatic addresses as matched target evidence.
+
+    Args:
+        client: Isolated appliance fixture for a structurally complete archive.
+    """
+    from atlaso.app.services.settings_archive import (
+        _archive_port_forward_listener_claims,
+    )
+
+    with SessionLocal() as db:
+        archive = export_settings_archive(db, actor="test")["data"]
+        archive["vcf_backup_settings"][0].update(enabled=True, port=5696, listen_interface="eth2",
+                                                 listen_address="2001:db8::10")
+        interface = next(row for row in archive["physical_interfaces"] if row["name"] == "eth2")
+        interface.update(ipv6_enabled=True, ipv6_cidr=None, host_ipv6_cidr="2001:db8::10/64")
+        before = deepcopy(archive)
+        claims = _archive_port_forward_listener_claims(archive, target_interfaces=[])
+        assert not any(claim.start == 5696 for claim in claims)
+        assert archive == before

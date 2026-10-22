@@ -2037,11 +2037,14 @@ def _archive_routes_wan_feature_state(
     )
 
 
-def _archive_port_forward_listener_claims(data: dict[str, list[dict[str, Any]]]) -> list[ListenerClaim]:
+def _archive_port_forward_listener_claims(
+    data: dict[str, list[dict[str, Any]]], *, target_interfaces: list[PhysicalInterface] | None = None,
+) -> list[ListenerClaim]:
     """Resolve listener claims against the candidate archive without touching live state.
 
     Args:
         data: Structurally validated archive sections.
+        target_interfaces: Optional candidate interfaces carrying matched local observations.
 
     The same resolver must interpret custom service ports, optional protocol
     toggles and Network Boot's DHCP selection on both restore and ordinary save.
@@ -2057,9 +2060,11 @@ def _archive_port_forward_listener_claims(data: dict[str, list[dict[str, Any]]])
         ARCHIVE_SECTION_MODELS[name](**_model_kwargs_with_scalar_defaults(ARCHIVE_SECTION_MODELS[name], row))
         for name in service_sections for row in data.get(name, [])
     ])
-    # Only Network Boot's existing relational selector needs a database. Service
-    # credentials and unrelated foreign-key targets are never staged here.
+    # Network Boot and optional target-interface projection share this isolated
+    # database. Service credentials and unrelated foreign-key targets are never staged here.
     models = {name: ARCHIVE_SECTION_MODELS[name] for name in ("appliance_settings", "dhcp_scopes", "settings")}
+    if target_interfaces is not None:
+        models.update(physical_interfaces=PhysicalInterface, vlan_interfaces=VlanInterface)
     engine = create_engine("sqlite://")
     try:
         Base.metadata.create_all(engine, tables=[
@@ -2071,6 +2076,25 @@ def _archive_port_forward_listener_claims(data: dict[str, list[dict[str, Any]]])
                     model(**_model_kwargs_with_scalar_defaults(model, row))
                     for row in data.get(section, [])
                 ])
+            if target_interfaces is not None:
+                from atlaso.app.services.applied_service_dns import service_bind_options
+
+                local = {interface.name: interface for interface in target_interfaces}
+                for interface in candidate_db.scalars(select(PhysicalInterface)):
+                    observed = local.get(interface.name)
+                    # Desired static addresses and IPv6 enablement remain archived
+                    # intent; automatic addresses and availability come from this target.
+                    interface.host_ip_cidr = observed.host_ip_cidr if observed else None
+                    interface.host_ipv6_cidr = observed.host_ipv6_cidr if observed else None
+                    interface.oper_state = observed.oper_state if observed else "missing"
+                candidate_db.flush()
+                options = {option["name"]: option["addresses"] for option in service_bind_options(candidate_db)}
+                for service in services:
+                    selected = [name for name in split_interfaces(service.listen_interface) if name in options]
+                    service.listen_interface = "\n".join(selected)
+                    service.listen_address = "\n".join(dict.fromkeys(
+                        address for name in selected for address in options[name]
+                    ))
             return listener_claims_for_settings(services, esxi_pxe_boot_settings(candidate_db))
     finally:
         engine.dispose()
@@ -4237,12 +4261,14 @@ def _validate_archive_database_relationships(db: Session, data: dict[str, list[d
             mac = (observed.mac_address or "").strip().lower()
             if mac:
                 by_mac.setdefault(mac, []).append(observed)
+        matched_projected: list[PhysicalInterface] = []
         for interface in projected:
             matches = by_mac.get((interface.mac_address or "").strip().lower(), [])
             # Stable unique MAC matching retains observations across candidate
             # renames; name matching also protects foreign archive selections.
             observed = matches[0] if len(matches) == 1 else by_name.get(interface.name)
             if observed is not None:
+                matched_projected.append(interface)
                 # Availability is target observation too: stale archived "missing"
                 # state must not hide aliases from a locally present MAC match.
                 interface.oper_state = observed.oper_state
@@ -4261,6 +4287,8 @@ def _validate_archive_database_relationships(db: Session, data: dict[str, list[d
             projected, [VlanInterface(**_model_kwargs_with_scalar_defaults(VlanInterface, row))
                         for row in data.get("vlan_interfaces", [])], projected_settings,
         )]
+
+        claims.extend(_archive_port_forward_listener_claims(data, target_interfaces=matched_projected))
 
         claims.extend(
             ListenerClaim(binding["interface"], binding["address"], "tcp", port, port, "nginx", scheme)

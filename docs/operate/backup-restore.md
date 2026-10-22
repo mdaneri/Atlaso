@@ -53,7 +53,9 @@ encrypted private-key material for other included certificates; retain the appli
 material. Global CA and Public Services Apply regenerate proxy certificates after restore. Restore changes desired
 state only; use global Appliance Apply to republish proxies. Restore preflight also checks proxy upstreams against the
 target appliance's complete current address inventory, including secondary observed IPv6 addresses omitted from portable
-archives, before replacing any desired state. See the [reverse-proxy guide](../services/reverse-proxies.md).
+archives, before replacing any desired state. It also derives service sockets from the archived interface selections
+and matched target observations, including unique-MAC interface renames. An enabled proxy cannot occupy an exclusive
+service listener after automatic rebasing; rejection preserves desired state and audit rows. See the [reverse-proxy guide](../services/reverse-proxies.md).
 
 ## Create a backup
 

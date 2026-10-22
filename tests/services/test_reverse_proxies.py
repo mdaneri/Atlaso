@@ -2371,21 +2371,23 @@ def test_disabled_proxy_stages_occupied_socket_and_rechecks_enable(owner, redire
         engine.dispose()
 
 
+@pytest.mark.parametrize("model_name", ["KmsSettings", "VcfBackupSettings"])
 @pytest.mark.parametrize("ipv6", [False, True])
 @pytest.mark.parametrize("startup", [False, True])
 @pytest.mark.parametrize(("proxy_enabled", "collides"), [(True, True), (False, True), (True, False)])
-def test_automatic_service_socket_refresh_preserves_binding_on_conflict(monkeypatch, ipv6, startup, proxy_enabled, collides):
+def test_automatic_service_socket_refresh_preserves_binding_on_conflict(monkeypatch, ipv6, startup, proxy_enabled, collides, model_name):
     """Reject observed socket collisions atomically while allowing safe refreshes.
 
     Args:
+        model_name: Address-bound protocol settings whose automatic refresh is guarded.
         monkeypatch: Replace only host discovery for the startup caller.
         ipv6: Exercise SLAAC instead of DHCP observations.
         startup: Use the startup caller that defers ownership conflicts.
         proxy_enabled: Whether the existing proxy owns its socket.
         collides: Whether the new observation uses the proxy address.
     """
-    from atlaso.app import main, ui
-    from atlaso.app.models import DnsRecord, KmsSettings
+    from atlaso.app import main, models, ui
+    from atlaso.app.models import DnsRecord
 
     engine, db = create_db()
     try:
@@ -2401,7 +2403,7 @@ def test_automatic_service_socket_refresh_preserves_binding_on_conflict(monkeypa
             host_ip_cidr=None if ipv6 else old + "/24",
             ipv6_enabled=ipv6, host_ipv6_cidr=old + "/64" if ipv6 else None,
         )
-        service = KmsSettings(enabled=True, hostname="owned.example.test", port=5696,
+        service = getattr(models, model_name)(enabled=True, port=5696,
                               listen_interface="eth2", listen_address=old)
         db.add_all([second, service])
         db.commit()
@@ -2544,3 +2546,46 @@ def test_startup_inventory_does_not_hide_unrelated_discovery_failures(monkeypatc
         db.rollback()
         db.close()
         engine.dispose()
+
+
+@pytest.mark.parametrize("ipv6", [False, True])
+def test_apply_preview_does_not_commit_conflicting_backup_rebase(client, ipv6):
+    """Reject the first refresh before backup context can commit a conflicting binding.
+
+    Args:
+        client: Seeded isolated appliance fixture.
+        ipv6: Exercise an observed SLAAC address instead of DHCPv4.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VcfBackupSettings
+
+    with SessionLocal() as db:
+        source = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        source.ipv6_enabled, source.ipv6_cidr = ipv6, "2001:db8::10/64" if ipv6 else None
+        proxy_address = "2001:db8::10" if ipv6 else source.ip_cidr.split("/")[0]
+        observed = PhysicalInterface(name="eth9", mac_address="02:00:00:00:00:99", role="access", mode="access",
+                                     admin_state="up", oper_state="up", ipv4_method="static" if ipv6 else "dhcp",
+                                     ip_cidr="192.0.2.8/24" if ipv6 else None,
+                                     host_ip_cidr=None if ipv6 else "192.0.2.8/24", ipv6_enabled=ipv6,
+                                     host_ipv6_cidr="2001:db8::20/64" if ipv6 else None)
+        db.add(observed)
+        backup = db.scalar(select(VcfBackupSettings))
+        backup.enabled, backup.port, backup.listen_interface = True, 5696, "eth9"
+        backup.listen_address = "192.0.2.8\n2001:db8::20" if ipv6 else "192.0.2.8"
+        db.commit()
+        save_proxy(db, payload(enabled=True, scheme="http", port=5696, redirect_http=False,
+                               listeners=[{"interface": "eth2", "address": proxy_address}]), actor="test")
+        if ipv6:
+            observed.host_ipv6_cidr = proxy_address + "/64"
+        else:
+            observed.host_ip_cidr = proxy_address + "/24"
+        db.commit()
+        binding = backup.listen_address
+        audits = list(db.scalars(select(AuditEvent.id)))
+        with pytest.raises(ValueError, match="Service listener conflicts"):
+            ui.appliance_apply_units(db)
+        db.commit()
+        db.expire_all()
+        assert backup.listen_address == binding
+        assert list(db.scalars(select(AuditEvent.id))) == audits

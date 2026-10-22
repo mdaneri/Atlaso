@@ -7123,7 +7123,7 @@ def refresh_interface_service_dns_aliases(db: Session, actor: str | None = None)
         # Console, restore, and observation refresh paths can update interface rows
         # without running the desired-interface mutation service. Re-derive cached
         # listener addresses before reconciling their owned records.
-        for model in (CaSettings, KmsSettings, NtpSettings, VcfOfflineDepotSettings, VcfPrivateRegistrySettings):
+        for model in (CaSettings, KmsSettings, NtpSettings, VcfBackupSettings, VcfOfflineDepotSettings, VcfPrivateRegistrySettings):
             for settings in db.execute(select(model)).scalars():
                 normalize_service_bind_settings(db, settings)
         for model in (LdapSettings, OidcProviderSettings):
