@@ -1109,7 +1109,7 @@ def build_routers(
             resource_type="ca_certificate",
             resource_id=str(certificate.id),
         )
-        filename = f"{safe_certificate_name(certificate.common_name)}.crt"
+        filename = f"{safe_certificate_name(certificate.common_name)}.pem"
         return Response(
             certificate.certificate_pem.encode("utf-8"),
             media_type="application/x-pem-file",

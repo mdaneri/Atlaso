@@ -77,12 +77,40 @@ rename procedure first; issuing a certificate with a new name does not rename th
 If a newly added profile is missing from the CSR wizard, cancel the blank wizard and reload the CA page before
 starting intake again. Exporting a private key is unnecessary for an appliance-generated CSR.
 
-For example, with OpenSSL available, these commands inspect only public material:
+### Understand the downloaded files
+
+Atlaso's **Export → Certificate** downloads a PEM-encoded leaf named `<name>.pem`. Older Atlaso releases downloaded
+the same PEM format with a `.crt` filename. PEM describes the encoding; a `.crt` extension alone does not mean the
+contents are binary DER. A PEM certificate contains
+`-----BEGIN CERTIFICATE-----` and `-----END CERTIFICATE-----` markers.
+
+| Download | Filename | Contents |
+| --- | --- | --- |
+| **Export → Certificate** | `<name>.pem` | One PEM leaf certificate |
+| **Export → Certificate chain** | `<name>-chain.pem` | PEM leaf followed by the Atlaso root for newly issued certificates |
+| **Download root CA** | `atlaso-root-ca.pem` | Public PEM root certificate, without the leaf |
+| **Download CA bundle** | `atlaso-ca-bundle.pem` | Public PEM root certificate in the current direct-root issuing model |
+| **Export → Private key** | `<name>.key` | Separate PEM private key, available only when Atlaso generated and holds it |
+
+For a CSR generated in SRM or vCenter, **Private key** is disabled because Atlaso does not have that key. Use the
+target's signed-CSR response import option. These downloads are separate PEM artifacts, not a PKCS#12/PFX bundle.
+
+For an older `.crt` download, if an import file picker requires `.pem`, save a copy of the already PEM-encoded file
+with a `.pem` extension. No encoding conversion is needed. Renaming a file does not convert DER or PKCS#12 into PEM,
+supply a missing private key, or change the certificate's usages.
+
+For separate certificate and CA-chain inputs, use the leaf and **Download root CA** when Atlaso signs directly.
+Do not put **Export → Certificate chain** into a CA-only field: that export includes the leaf. Choosing a PKCS#12
+import option instead of a signed-CSR option also requires a different artifact; renaming `.crt` to `.p12` cannot
+produce one.
+
+For these OpenSSL examples, save the public CSR as `appliance.csr.pem` and the downloaded leaf as `appliance.pem`.
+Keep the root's downloaded filename, `atlaso-root-ca.pem`. These commands inspect only public material:
 
 ```sh
 openssl req -in appliance.csr.pem -noout -verify -text
-openssl x509 -in appliance.crt.pem -noout -text
-openssl verify -CAfile atlaso-root.pem appliance.crt.pem
+openssl x509 -in appliance.pem -noout -text
+openssl verify -CAfile atlaso-root-ca.pem appliance.pem
 ```
 
 For an intermediate CA, supply its certificates with OpenSSL's `-untrusted` option when verifying the leaf. Compare
@@ -188,7 +216,7 @@ custody and import procedure first. A leaf certificate issued for one CSR cannot
 For a target whose leaf is signed directly by Atlaso, a fresh HTTPS check can use the verified public root:
 
 ```sh
-curl --cacert atlaso-root.pem https://srm.lab.example:5480/
+curl --cacert atlaso-root-ca.pem https://srm.lab.example:5480/
 ```
 
 Success requires both a trusted chain and a matching SAN. Verify the served leaf fingerprint independently of an

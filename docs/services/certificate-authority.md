@@ -95,6 +95,9 @@ internally and retain their CSRF, role, request validation, and listener checks.
 
 For external appliance TLS, follow [Appliance certificates with Atlaso](appliance-certificates.md). It covers SRM,
 vCenter Machine SSL, CSR ownership, public root trust, certificate chains, verification, and recovery.
+**Export → Certificate** downloads a public PEM leaf with a `.pem` filename. Older releases used `.crt` for the same
+PEM encoding. **Export → Certificate chain** includes the leaf and issuer chain; download the root separately for a
+CA-only import field.
 
 After apply, verify the presented management certificate and download the expected public root certificate. Keep a VM
 snapshot or equivalent rollback point before replacing active trust. Use [VCF Certificate Trust](vcf-trust.md) for the

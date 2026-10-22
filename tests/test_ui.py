@@ -10674,6 +10674,7 @@ def test_certificate_authority_issues_encrypted_managed_certs_and_exports(client
     Args:
         client: HTTP test client used to exercise the Atlaso application.
     """
+    from cryptography import x509
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -10704,9 +10705,13 @@ def test_certificate_authority_issues_encrypted_managed_certs_and_exports(client
         assert managed.private_key_encrypted.startswith("fernet:v1:")
         assert managed.certificate_pem.startswith("-----BEGIN CERTIFICATE-----")
         certificate_id = managed.id
+        certificate_name = managed.common_name
 
     cert = client.get(f"/certificate-authority/certificates/{certificate_id}/downloads/certificate.pem")
     assert cert.status_code == 200
+    assert cert.headers["content-disposition"] == f'attachment; filename="{certificate_name}.pem"'
+    assert cert.headers["content-type"].startswith("application/x-pem-file")
+    assert x509.load_pem_x509_certificate(cert.content)
     assert "BEGIN CERTIFICATE" in cert.text
     assert "BEGIN PRIVATE KEY" not in cert.text
 
