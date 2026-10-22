@@ -9,6 +9,11 @@ status: current
 
 # Use the Atlaso API
 
+Managed LDAP organization responses include `vcenter_groups_base_dn`, the separate
+`groupOfUniqueNames/uniqueMember` search base created by global LDAP Apply. The existing `groups_base_dn` remains
+the VCF Automation `groupOfNames/member` base. Existing paths, operation IDs, authorization and request shapes remain
+unchanged. See [Managed LDAP compatibility groups](../services/managed-ldap.md#vcenter-openldap-groups).
+
 DHCP pool verification uses `GET /api/v1/dhcp/scopes/{scope_id}/verification` (`read:dhcp`) and
 `POST /api/v1/dhcp/scopes/{scope_id}/verification` (`write:dhcp`). POST queues a bounded, report-only worker task and
 returns `202` with its task ID; unavailable applied identity or admission returns `409`. It accepts a managed IPv4

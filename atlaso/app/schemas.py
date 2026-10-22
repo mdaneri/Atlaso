@@ -864,6 +864,7 @@ class LdapOrganizationResponse(BaseModel):
         suffix_dn: Returned suffix dn value for this ldap organization resource.
         users_base_dn: Returned users base dn value for this ldap organization resource.
         groups_base_dn: Returned groups base dn value for this ldap organization resource.
+        vcenter_groups_base_dn: Separate groupOfUniqueNames search base for vCenter OpenLDAP.
         service_accounts_base_dn: Returned service accounts base dn value for this ldap organization
             resource.
         bind_dn: Returned bind dn value for this ldap organization resource.
@@ -891,6 +892,7 @@ class LdapOrganizationResponse(BaseModel):
     suffix_dn: Annotated[str, Field(description='Returned suffix dn value for this ldap organization resource.')]
     users_base_dn: Annotated[str, Field(description='Returned users base dn value for this ldap organization resource.')]
     groups_base_dn: Annotated[str, Field(description='Returned groups base dn value for this ldap organization resource.')]
+    vcenter_groups_base_dn: Annotated[str, Field(description='Isolated groupOfUniqueNames/uniqueMember projection search base for vCenter OpenLDAP, published only by global LDAP Apply.')]
     service_accounts_base_dn: Annotated[str, Field(description='Returned service accounts base dn value for this ldap organization resource.')]
     bind_dn: Annotated[str, Field(description='Returned bind dn value for this ldap organization resource.')]
     bind_secret_present: Annotated[bool, Field(description='Whether bind secret is securely staged without exposing its value.')]
