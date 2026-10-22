@@ -648,7 +648,13 @@ def build_routers(
             ip_addresses: Ip addresses supplied by the caller.
             description: Human-readable description of the resource.
             csr_text: Csr text supplied by the caller.
+
+        Raises:
+            HTTPException: If CSR validation fails before staging.
         """
+        csr_error = validate_ca_csr_text(csr_text)
+        if csr_error:
+            raise HTTPException(status_code=422, detail=csr_error)
         certificate = CaCertificate(
             common_name=common_name.strip(),
             profile_id=parse_ca_profile_id(profile_id),

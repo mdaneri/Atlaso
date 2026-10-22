@@ -9730,11 +9730,15 @@ def test_certificate_request_creation_validates_profile_and_sans(client):
     assert "disabled-profile.atlaso.internal" not in names
 
 
-def test_certificate_request_intake_rejects_invalid_csrs_before_staging(client):
+@pytest.mark.parametrize("intake_path", [
+    "/certificate-authority/certificates", "/ca/requests", "/ui/public/ca/requests",
+])
+def test_certificate_request_intake_rejects_invalid_csrs_before_staging(client, intake_path):
     """Reject invalid CSR content with recoverable validation and no new desired rows.
 
     Args:
         client: Application client backed by an isolated test database.
+        intake_path: Management or public portal submission route under test.
     """
     import base64
 
@@ -9745,10 +9749,38 @@ def test_certificate_request_intake_rejects_invalid_csrs_before_staging(client):
     from sqlalchemy import func, select
 
     from atlaso.app.database import SessionLocal
-    from atlaso.app.models import CaCertificate, CaProfile
+    from atlaso.app.models import (
+        CaCertificate,
+        CaProfile,
+        CaSettings,
+        PhysicalInterface,
+    )
 
     login(client)
-    page = client.get("/certificate-authority")
+    headers = {"accept": "application/json"}
+    page_path = "/certificate-authority"
+    if intake_path == "/ui/public/ca/requests":
+        with SessionLocal() as db:
+            settings = db.scalar(select(CaSettings))
+            settings.enabled = True
+            settings.listen_interface = "eth2"
+            settings.listen_address = "192.168.87.32"
+            interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+            interface.role = "access"
+            interface.ip_cidr = "192.168.87.32/24"
+            db.commit()
+        headers["host"] = "ca.atlaso.internal"
+        page_path = intake_path
+        login_page = client.get(page_path, headers=headers)
+        login_csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+        authenticated = client.post(
+            "/ui/public/ca/requests/login", headers=headers,
+            data={"csrf": login_csrf, "username": "admin", "password": "atlaso-admin"},
+            follow_redirects=False,
+        )
+        assert authenticated.status_code == 303
+    page = client.get(page_path, headers=headers)
+    assert page.status_code == 200
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     csr = (
@@ -9783,8 +9815,8 @@ def test_certificate_request_intake_rejects_invalid_csrs_before_staging(client):
     ]
     for label, csr_text in invalid_requests:
         response = client.post(
-            "/certificate-authority/certificates",
-            headers={"accept": "application/json"},
+            intake_path,
+            headers=headers,
             data={
                 "csrf": csrf,
                 "common_name": f"{label}.example.test",
@@ -9805,7 +9837,8 @@ def test_certificate_request_intake_rejects_invalid_csrs_before_staging(client):
         )
 
     accepted = client.post(
-        "/certificate-authority/certificates",
+        intake_path,
+        headers=headers,
         data={
             "csrf": csrf,
             "common_name": "valid-csr.example.test",
