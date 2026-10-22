@@ -3635,8 +3635,9 @@ def recover_interrupted_appliance_apply_jobs(
                     "Interrupted Network Apply was reconciled to its previous configuration."
                 )
             else:
-                job.status = JobStatus.RUNNING.value
-                job.finished_at = None
+                if not retrying_terminal:
+                    job.status = JobStatus.RUNNING.value
+                    job.finished_at = None
                 job.error = "Network transaction recovery needs attention; runtime ownership remains pending."
                 payload["state"] = "cleanup-required"
         publishing_recovery = publishing_recoveries.get(job.id)
@@ -15654,7 +15655,7 @@ def execute_traffic_publishing_pair(
         if succeeded:
             # Never refresh desired state here: edits made during native publication
             # belong to the next Apply, not to this pair's committed baselines.
-            update_appliance_apply_baselines(db, units, set(by_id))
+            update_appliance_apply_baselines(db, units, set(by_id), dry_run=adapter.dry_run)
             if has_wan and not adapter.dry_run:
                 synchronize_routing_service_runtime(
                     db, routing_enabled=by_id["wan"]["context"]["routes_wan_settings"].routing_enabled,

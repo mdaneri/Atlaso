@@ -291,6 +291,33 @@ def _activate(store: Path, source: str) -> None:
     history.activate_source(store, source, generation=page.generation, through=page.through)
 
 
+def _prepare_nginx_log_files() -> None:
+    """Create only missing empty streams in the trusted Nginx log directory.
+
+    A fresh configuration without virtual hosts may leave access.log unopened,
+    even after a successful USR1. Never truncate or replace a producer's file.
+    Call only before the first inventory is bound, or immediately after our
+    cooperative rename/reopen within an existing sealing transaction.
+    """
+    parent = _ordinary(NGINX_LOGS, directory=True)
+    if os.name == "posix" and (parent.st_uid != int(importlib.import_module("os").geteuid()) or
+                               stat.S_IMODE(parent.st_mode) & 0o022):
+        raise ValueError("Nginx log parent must exclude unrelated writers.")
+    for name in ("access.log", "error.log"):
+        path = NGINX_LOGS / name
+        try:
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                                 getattr(os, "O_NOFOLLOW", 0), 0o640)
+        except FileExistsError:
+            _ordinary(path)
+        else:
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            _sync_directory(NGINX_LOGS)
+
+
 def collect_nginx() -> None:
     """Import the complete initial inventory or collect the next immutable pair."""
     _vendor_rotation_check()
@@ -307,6 +334,9 @@ def collect_nginx() -> None:
         archived: dict[str, list[str]] = {}
         for name in ("access.log", "error.log"):
             archived[name] = [path.name for path in inventory(NGINX_LOGS / name) if path.name != name]
+        # Validate both complete legacy inventories before creating any empty
+        # stream. Missing active files alongside archives remain a hard failure.
+        _prepare_nginx_log_files()
         state = {"schema": 1, "phase": "initial", "next": 0, "pending": None, "archives": archived}
         _write(state_path, state)
     if state.get("schema") != 1 or state.get("phase") not in {"initial", "active"}:
@@ -346,7 +376,12 @@ def collect_nginx() -> None:
         """
         return nginx_writers_closed(current | archived_identities)
 
-    seal_generation(NGINX_LOGS, generation, reopen=reopen_nginx_logs, writers_closed=all_writers_closed)
+    def reopen() -> None:
+        """Reopen the producer, then retain empty current streams it leaves unused."""
+        reopen_nginx_logs()
+        _prepare_nginx_log_files()
+
+    seal_generation(NGINX_LOGS, generation, reopen=reopen, writers_closed=all_writers_closed)
     if state["phase"] == "initial":
         history.initialize(NGINX_STORE)
         for basename, source in (("access.log", "nginx-access"), ("error.log", "nginx-error")):
@@ -514,6 +549,39 @@ WantedBy=timers.target
            "ReadWritePaths=/var/lib/atlaso-kmip-log-history\n", mode=0o644)
 
 
+def _failure_diagnostic(stage: str, error: BaseException) -> str:
+    """Locate a failed lifecycle step without exposing exception data or paths.
+
+    Args:
+        stage: Fixed operation stage selected by this module's entry point.
+        error: Caught failure whose message, arguments and locals stay private.
+    """
+    category = "invalid-state"
+    for kind, name in ((OSError, "filesystem"), (sqlite3.Error, "database"),
+                       (subprocess.SubprocessError, "service")):
+        if isinstance(error, kind):
+            category = name
+            break
+    modules = {
+        "atlaso.app.services.external_history_lifecycle": "lifecycle",
+        "__main__": "lifecycle",
+        "atlaso.app.services.nginx_log_sealing": "nginx-sealing",
+        "atlaso.app.services.nginx_log_capture": "nginx-capture",
+        "atlaso.app.services.producer_log_history": "producer-history",
+        "atlaso.app.services.app_history_cutover": "app-cutover",
+    }
+    site = "unknown"
+    trace = error.__traceback__
+    while trace is not None:
+        module = trace.tb_frame.f_globals.get("__name__")
+        if module in modules:
+            site = f"{modules[module]}:{trace.tb_lineno}"
+        trace = trace.tb_next
+    number = error.errno if isinstance(error, OSError) else None
+    errno = f" errno={number}" if type(number) is int and 0 < number < 4096 else ""
+    return f"stage={stage} category={category} site={site}{errno}"
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run only the fixed install, periodic collection, or KMS cutover operation.
 
@@ -529,25 +597,37 @@ def main(argv: list[str] | None = None) -> int:
     if importlib.import_module("os").geteuid() != 0:
         print("External history lifecycle requires the appliance root account.", file=sys.stderr)
         return 2
+    stage = "prepare-state"
     try:
         _private(ROOT)
+        stage = "acquire-lock"
         with lifecycle_lock(ROOT):
             if arguments.operation == "kms-cutover":
+                stage = "kms-cutover"
                 prepare_kms(resume=False)
             elif arguments.operation == "collect":
+                stage = "collect-nginx"
                 collect_nginx()
             else:
+                stage = "check-rotation-owners"
                 _vendor_rotation_check()
+                stage = "install-units"
                 install_units()
+                stage = "reload-units"
                 _systemctl("daemon-reload")
+                stage = "collect-nginx"
                 collect_nginx()
+                stage = "kms-cutover"
                 prepare_kms(resume=True)
+                stage = "enable-timer"
                 _systemctl("enable", "--now", TIMER)
     except RotationConflict:
         print("External Nginx rotation ownership requires explicit history migration.", file=sys.stderr)
         return 3
-    except (OSError, ValueError, KeyError, TypeError, AttributeError, sqlite3.Error, subprocess.SubprocessError):
-        print("External history lifecycle failed; retained recovery state was preserved.", file=sys.stderr)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, sqlite3.Error, subprocess.SubprocessError) as error:
+        diagnostic = _failure_diagnostic(stage, error)
+        print(f"External history lifecycle failed ({diagnostic}); retained recovery state was preserved.",
+              file=sys.stderr)
         return 1
     return 0
 

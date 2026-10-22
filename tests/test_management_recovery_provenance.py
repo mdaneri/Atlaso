@@ -3,6 +3,7 @@
 import copy
 import json
 import subprocess
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -321,3 +322,67 @@ def test_appliance_network_dry_run_preserves_native_baseline_through_runner(clie
         assert job.status == JobStatus.SUCCEEDED.value, job.error
         assert json.loads(job.result)["units"][0]["dry_run"] is True
         assert ui.load_appliance_apply_baselines(db) == original
+
+
+@pytest.mark.parametrize("keys", [("firewall", "nat"), ("network", "wan", "firewall", "nat")])
+def test_appliance_paired_dry_run_preserves_all_native_baselines(client, monkeypatch, keys):
+    """Paired publication must propagate simulation through baseline admission."""
+    from atlaso.app import ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    class SimulatedPublication:
+        dry_run = True
+
+        def validate_traffic_publishing(self, *args):
+            return AdapterResult(command=["validate"], dry_run=True)
+
+        def apply_traffic_publishing(self, *args):
+            return AdapterResult(command=["apply"], dry_run=True)
+
+    units = [{"id": key, "label": key, "snapshot_hash": "simulated", "summary": [],
+              "config_path": key, "config_preview": "simulated", "config_diff": "",
+              "validation_errors": [], "validation_warnings": []} for key in keys]
+    original = {key: {"snapshot_hash": "native", "config_preview": "original"} for key in keys}
+    monkeypatch.setattr(ui, "get_settings", lambda: SimpleNamespace(environment="appliance"))
+    with SessionLocal() as db:
+        ui.save_appliance_apply_baselines(db, original)
+        job = Job(id="job_paired_dry_run", type="appliance-apply", status="running", created_by="admin", result="{}")
+        db.add(job)
+        db.commit()
+        results = ui.execute_traffic_publishing_pair(db, job, units, adapter=SimulatedPublication())
+        assert len(results) == len(keys)
+        assert all(result["success"] and result["dry_run"] for result in results)
+        assert ui.load_appliance_apply_baselines(db) == original
+
+
+@pytest.mark.parametrize("status", ["failed", "cancelled"])
+def test_console_can_repeat_failed_network_recovery_without_losing_terminal_time(client, monkeypatch, status):
+    """An unsuccessful Network retry stays terminal and can be retried again."""
+    from atlaso.app import appliance_console, ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    finished = datetime(2026, 10, 22, 16, 55)
+    with SessionLocal() as db:
+        db.add(Job(id="job_network_retained", type="appliance-apply", status=status, created_by="admin",
+                   finished_at=finished, result=json.dumps({"network_runtime_commit_pending": True})))
+        db.commit()
+    calls = []
+
+    def reconcile(self, job_id, *, committed=False):
+        calls.append((job_id, committed))
+        return AdapterResult(command=["network", "recover"], dry_run=False, returncode=1)
+
+    monkeypatch.setattr(ui.SystemAdapter, "reconcile_network_transaction", reconcile)
+    for _attempt in range(2):
+        with pytest.raises(appliance_console.ConsoleOperationError, match="still owns runtime recovery"):
+            appliance_console._ensure_no_active_apply()
+        with SessionLocal() as db:
+            job = db.get(Job, "job_network_retained")
+            assert job.status == status
+            assert job.finished_at == finished
+            assert json.loads(job.result)["network_runtime_commit_pending"] is True
+    assert calls == [("job_network_retained", False)] * 2
