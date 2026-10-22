@@ -3,6 +3,60 @@
 from tests.routers.ui.helpers import login
 
 
+def test_kmip_recovery_maintenance_requires_csrf_and_never_renders_secrets(client, monkeypatch):
+    """Approved maintenance forms preserve CSRF and concealed request material.
+
+    Args:
+        client: Client supplied to this operation.
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
+    from atlaso.app.services import kmip_recovery
+
+    login(client)
+    page = client.get("/ui/management/backup-restore")
+    assert "KMIP disaster recovery" in page.text
+    assert 'name="passphrase"' in page.text and 'type="password"' in page.text
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    calls = []
+
+    def export(db, passphrase):
+        """Export.
+
+        Args:
+            db: Desired-state database session holding writer admission.
+            passphrase: Request-bound recovery passphrase, never retained or logged.
+        """
+        calls.append("export")
+        return b"synthetic encrypted archive"
+
+    def import_bundle(db, archive, passphrase):
+        """Import bundle.
+
+        Args:
+            db: Desired-state database session holding writer admission.
+            archive: Bounded encrypted recovery bundle supplied by the caller.
+            passphrase: Request-bound recovery passphrase, never retained or logged.
+        """
+        calls.append("import")
+        assert archive == b"synthetic encrypted archive"
+
+    monkeypatch.setattr(kmip_recovery, "export_archive", export)
+    monkeypatch.setattr(kmip_recovery, "import_archive", import_bundle)
+    prefix = "/ui/management/backup-restore/kmip"
+    payload = {"csrf": "invalid", "passphrase": "synthetic-hidden-passphrase"}
+    assert client.post(prefix + "/export", data=payload).status_code == 403
+    assert not calls
+    payload["csrf"] = csrf
+    exported = client.post(prefix + "/export", data=payload)
+    assert exported.content == b"synthetic encrypted archive"
+    assert exported.headers["cache-control"] == "no-store"
+    imported = client.post(prefix + "/import", data=payload, files={"archive": ("synthetic.atkmip", b"synthetic encrypted archive")}, follow_redirects=False)
+    assert imported.status_code == 303
+    assert imported.headers["location"] == "/ui/management/vsphere-key-providers"
+    assert payload["passphrase"] not in imported.text
+    assert calls == ["export", "import"]
+
+
 def test_settings_restore_preserves_current_host_apply_baselines(client):
     """Desired-state imports must retain trusted applied-state evidence from this host.
 
@@ -45,6 +99,8 @@ def test_settings_backup_router_owns_exact_transport_set():
             ("GET",),
             "backup_restore_page",
         ),
+        ("/ui/management/backup-restore/kmip/export", ("POST",), "export_kmip_recovery"),
+        ("/ui/management/backup-restore/kmip/import", ("POST",), "import_kmip_recovery"),
         (
             "/ui/management/backup-restore/export",
             ("POST",),

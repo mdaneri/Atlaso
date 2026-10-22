@@ -4269,6 +4269,31 @@ def test_worker_restart_keeps_release_finalizer_scoped_to_its_child(client, monk
         assert "worker restarted" in (steps[-1].error or "")
 
 
+def _allow_synthetic_legacy_release_probe(monkeypatch, helper):
+    """Stub only legacy admission when the release fixture has no real venv.
+
+    Args:
+        monkeypatch: Pytest fixture replacing external dependencies.
+        helper: Isolated helper module exercising release rollback.
+    """
+    original_run = helper._run
+
+    def run(command, **kwargs):
+        """Accept the synthetic candidate probe and preserve other subprocesses.
+
+        Args:
+            command: Exact candidate interpreter and legacy module invocation.
+            **kwargs: Original subprocess options preserved for other commands.
+        """
+        if command[1:] == ["-I", "-m", "atlaso.app.kmip.legacy"]:
+            assert Path(command[0]).parts[-3:] == (".venv", "bin", "python")
+            return subprocess.CompletedProcess(command, 0, "", "")
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(helper, "_run", run)
+    monkeypatch.setattr(helper, "_kms_service_snapshot", lambda _unit: (False, False))
+
+
 def test_no_change_release_failure_finalizer_retains_readiness_commands(monkeypatch, tmp_path):
     """Verify already-active release failures preserve their diagnostic checks.
 
@@ -4279,6 +4304,7 @@ def test_no_change_release_failure_finalizer_retains_readiness_commands(monkeypa
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
+    _allow_synthetic_legacy_release_probe(monkeypatch, helper)
     release = release_payload()
     bundle_bytes = b"signed release bundle"
     release["bundle"] = {
@@ -4414,6 +4440,7 @@ def test_failed_candidate_restores_previous_release_and_database(
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
+    _allow_synthetic_legacy_release_probe(monkeypatch, helper)
     home = tmp_path / "opt/atlaso"
     releases = home / "releases"
     previous = releases / "0.8.9"

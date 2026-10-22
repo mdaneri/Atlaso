@@ -111,6 +111,69 @@ def _login(client) -> str:
     return page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
 
+def test_kmip_recovery_api_requires_write_scope_and_keeps_trust_disabled(client, monkeypatch):
+    """Recovery returns ciphertext only and persists exact public IDs offline.
+
+    Args:
+        client: Client supplied to this operation.
+        monkeypatch: Pytest fixture replacing external dependencies.
+    """
+    import base64
+
+    from atlaso.app.adapters.system import SystemAdapter
+    from atlaso.app.models import (
+        VsphereTrustedVcenter,
+        VsphereTrustedVcenterCertificate,
+    )
+
+    provider, vcenter, certificate = (str(uuid4()) for _ in range(3))
+    pem, _synthetic_private_key = _public_client_certificate()
+    parsed = __import__("atlaso.app.services.vsphere_key_providers", fromlist=["parse_public_certificate"]).parse_public_certificate(pem)
+    trust = {"providers": [{"id": provider, "name": "Recovered synthetic provider", "description": "", "enabled": True}],
+             "vcenters": [{"id": vcenter, "provider_id": provider, "name": "Synthetic vCenter", "hostname": "vcsa.example.test", "description": "", "enabled": True}],
+             "certificates": [{"id": certificate, "trusted_vcenter_id": vcenter, "certificate_pem": pem, "fingerprint_sha256": parsed["fingerprint_sha256"]}]}
+    calls = []
+
+    def helper(_self, group, action, **kwargs):
+        """Helper.
+
+        Args:
+            _self: Self supplied to this operation.
+            group: Group supplied to this operation.
+            action: Fixed supported privileged helper action.
+            **kwargs: Kwargs supplied to this operation.
+        """
+        calls.append(action)
+        assert group == "kms" and kwargs["timeout_seconds"] == 1800
+        result = {"archive": base64.b64encode(b"synthetic encrypted archive").decode()} if action == "recovery-export" else {"status": "pending-trust-review", "trust": trust}
+        return AdapterResult(command=["atlaso-helper", group, action], dry_run=False, returncode=0, stdout=json.dumps(result))
+
+    monkeypatch.setattr(SystemAdapter, "_helper_result", helper)
+    read_headers = {"Authorization": "Bearer " + _token(client, ["read:kms"])}
+    write_headers = {"Authorization": "Bearer " + _token(client, ["write:kms"])}
+    prefix = "/api/v1/vsphere-key-providers/recovery"
+    payload = {"passphrase": "synthetic-recovery-only"}
+    assert client.post(prefix + "/export", headers=read_headers, json=payload).status_code == 403
+    assert not calls
+    rejected = client.post(prefix + "/export", headers=write_headers, json={"passphrase": "short"})
+    assert rejected.status_code == 422
+    assert "short" not in rejected.text
+    exported = client.post(prefix + "/export", headers=write_headers, json=payload)
+    assert exported.status_code == 200 and exported.content == b"synthetic encrypted archive"
+    assert exported.headers["cache-control"] == "no-store"
+    imported = client.post(prefix + "/import", headers=write_headers, json={**payload, "archive": base64.b64encode(b"synthetic encrypted archive").decode()})
+    assert imported.status_code == 200, imported.text
+    assert imported.json() == {"status": "pending-trust-review"}
+    with SessionLocal() as db:
+        assert db.get(VsphereKeyProvider, provider).enabled is False
+        assert db.get(VsphereKeyProvider, provider).applied_at is None
+        assert db.get(VsphereTrustedVcenter, vcenter).enabled is False
+        assert db.get(VsphereTrustedVcenterCertificate, certificate).certificate_pem == pem
+    before = list(calls)
+    assert client.post(prefix + "/import", headers=write_headers, json={**payload, "archive": "c3ludGhldGlj"}).status_code == 409
+    assert calls == before
+
+
 def test_provider_api_enforces_scopes_public_certificates_and_global_fingerprint_uniqueness(
     client,
 ) -> None:
