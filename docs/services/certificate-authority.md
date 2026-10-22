@@ -81,6 +81,16 @@ long names, operator notes, and multi-value SAN lists remain readable before rev
 identity, while enablement has a
 dedicated step for both certificate profiles and requests. **CSR Intake** uses the same guided pattern to separate
 metadata, SANs, PEM content, and final review.
+In its CSR step, paste the request or select **Upload a CSR file** to load a PEM-encoded `.csr` or `.pem` file up to
+64 KiB, including surrounding whitespace. Inspect the populated **CSR PEM** field before review. Private keys,
+certificate-only files, invalid text,
+and oversized files are rejected; the existing pasted content remains available if a file cannot be loaded.
+While a selected file is loading, the wizard blocks advancing or submitting so review uses the completed CSR text.
+Before staging through management intake or either certificate request portal, Atlaso checks that the request is a
+parseable PKCS#10 CSR with a valid signature. A failed check leaves desired state unchanged and returns a validation
+error; correct the request and submit it again.
+The request description supports multiple lines. On wide screens, the certificate grid fills the remaining viewport
+space and retains horizontal scrolling for its columns; narrower or hidden panels use the compact fallback.
 
 The public portal exposes only the approved public certificate surface. It must not disclose operator-only state or
 offer administrative actions.
@@ -92,6 +102,12 @@ existing non-`/ui` paths. Eligible legacy `GET`/`HEAD` bookmarks redirect tempor
 internally and retain their CSRF, role, request validation, and listener checks.
 
 ## Verify and recover
+
+For external appliance TLS, follow [Appliance certificates with Atlaso](appliance-certificates.md). It covers SRM,
+vCenter Machine SSL, CSR ownership, public root trust, certificate chains, verification, and recovery.
+**Export → Certificate** downloads a public PEM leaf with a `.pem` filename. Older releases used `.crt` for the same
+PEM encoding. **Export → Certificate chain** includes the leaf and issuer chain; download the root separately for a
+CA-only import field.
 
 After apply, verify the presented management certificate and download the expected public root certificate. Keep a VM
 snapshot or equivalent rollback point before replacing active trust. Use [VCF Certificate Trust](vcf-trust.md) for the

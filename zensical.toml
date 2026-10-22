@@ -46,6 +46,7 @@ nav = [
     { "NTP and NTS" = "services/ntp.md" },
     { "Public Services" = "services/public-services.md" },
     { "Certificate Authority" = "services/certificate-authority.md" },
+    { "Appliance certificates with Atlaso" = "services/appliance-certificates.md" },
     { "ESX storage" = "services/esx-storage.md" },
     { "Network boot" = "services/ipxe.md" },
     { "vSphere Key Providers" = "services/vsphere-key-providers.md" },

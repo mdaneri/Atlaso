@@ -24,7 +24,14 @@ def helper():
 
 @pytest.mark.parametrize("lease", [True, False])
 def test_original_dhcp_backup_overrides_simulated_static_rollback(helper, monkeypatch, tmp_path, lease):
-    """The exact original configuration authorizes DHCP, never an address alone."""
+    """The exact original configuration authorizes DHCP, never an address alone.
+
+    Args:
+        helper: Loaded appliance helper module.
+        monkeypatch: Fixture for replacing native observations.
+        tmp_path: Temporary directory for the original configuration backup.
+        lease: Whether the observed DHCP address has an active lease.
+    """
     state = rollback_state(paths=[{"name": "eth0", "ipv4_method": "static"}])
     original = tmp_path / "original.bin"
     original.write_text("[Match]\nName=eth0\n[Network]\nDHCP=ipv4\n", encoding="utf-8")
@@ -46,7 +53,14 @@ def test_original_dhcp_backup_overrides_simulated_static_rollback(helper, monkey
 
 @pytest.mark.parametrize("change", ["static", "other-interface", "missing", "wrong-mac", "conflict"])
 def test_original_backup_does_not_relax_native_ownership(helper, monkeypatch, tmp_path, change):
-    """A real static config or invalid original DHCP ownership still fails closed."""
+    """A real static config or invalid original DHCP ownership still fails closed.
+
+    Args:
+        helper: Loaded appliance helper module.
+        monkeypatch: Fixture for replacing native observations.
+        tmp_path: Temporary directory for the original configuration backup.
+        change: Original-configuration or native-ownership condition to reject.
+    """
     state = rollback_state(paths=[{"name": "eth0", "ipv4_method": "static"}])
     original = tmp_path / "original.bin"
     original.write_text("[Match]\nName=" + ("eth1" if change == "other-interface" else "eth0")
@@ -71,7 +85,15 @@ def test_original_backup_does_not_relax_native_ownership(helper, monkeypatch, tm
 
 @pytest.mark.parametrize("name,match", [("99-dhcp-en.network", "eth* en*"), ("50-static-en.network", "eth0")])
 def test_original_legacy_network_default_supplies_rollback_mode(helper, monkeypatch, tmp_path, name, match):
-    """Legacy appliance defaults remain authoritative original runtime evidence."""
+    """Legacy appliance defaults remain authoritative original runtime evidence.
+
+    Args:
+        helper: Loaded appliance helper module.
+        monkeypatch: Fixture for replacing native observations.
+        tmp_path: Temporary directory for the original configuration backup.
+        name: Snapshotted legacy network default filename.
+        match: Interface match expression from that original file.
+    """
     original = tmp_path / "original.bin"
     original.write_text(f"[Match]\nName={match}\n[Network]\nDHCP=ipv4\n", encoding="utf-8")
     state = rollback_state(paths=[{"name": "eth0", "ipv4_method": "static"}])
@@ -85,7 +107,13 @@ def test_original_legacy_network_default_supplies_rollback_mode(helper, monkeypa
 
 @pytest.mark.parametrize("match", ["eth1", "eth* !eth0"])
 def test_original_default_does_not_override_nonmatching_interface(helper, tmp_path, match):
-    """A legacy file for another or explicitly excluded link cannot supply intent."""
+    """A legacy file for another or explicitly excluded link cannot supply intent.
+
+    Args:
+        helper: Loaded appliance helper module.
+        tmp_path: Temporary directory for the original configuration backup.
+        match: Interface match expression that must not select the management link.
+    """
     original = tmp_path / "original.bin"
     original.write_text(f"[Match]\nName={match}\n[Network]\nDHCP=ipv4\n", encoding="utf-8")
     state = rollback_state(paths=[{"name": "eth0", "ipv4_method": "static"}])
@@ -95,7 +123,12 @@ def test_original_default_does_not_override_nonmatching_interface(helper, tmp_pa
 
 
 def test_original_canonical_network_precedes_legacy_default(helper, tmp_path):
-    """A later wildcard DHCP default cannot replace the original exact static file."""
+    """A later wildcard DHCP default cannot replace the original exact static file.
+
+    Args:
+        helper: Loaded appliance helper module.
+        tmp_path: Temporary directory for the original configuration backups.
+    """
     static = tmp_path / "static.bin"
     static.write_text("[Match]\nName=eth0\n[Network]\nDHCP=no\n", encoding="utf-8")
     dynamic = tmp_path / "dynamic.bin"
@@ -110,7 +143,14 @@ def test_original_canonical_network_precedes_legacy_default(helper, tmp_path):
 
 @pytest.mark.parametrize("unsafe", [None, "table", "interface", "seed", "dead", "gateway", "source", "host", "type"])
 def test_dhcp_gateway_host_seed_retires_only_with_same_domain_replacements(helper, monkeypatch, tmp_path, unsafe):
-    """A DHCP /32 need not survive a verified static default plus connected route."""
+    """A DHCP /32 need not survive a verified static default plus connected route.
+
+    Args:
+        helper: Loaded appliance helper module.
+        monkeypatch: Fixture for replacing route observations.
+        tmp_path: Temporary directory for route-domain fixtures.
+        unsafe: Whether a successor route is intentionally unsafe.
+    """
     common = {"table": 100, "metric": 1024, "holdover_metric": 2049,
               "preferred_source": "192.0.2.10", "scope": "link", "gateway": ""}
     host = {**common, "destination": "192.0.2.1/32", "protocol": "dhcp"}
@@ -160,7 +200,13 @@ def test_dhcp_gateway_host_seed_retires_only_with_same_domain_replacements(helpe
 
 @pytest.mark.parametrize("recovered", [True, False])
 def test_console_reconciles_exact_terminal_owner_before_correction(client, monkeypatch, recovered):
-    """Only verified recovery clears the exact terminal task's admission flag."""
+    """Only verified recovery clears the exact terminal task's admission flag.
+
+    Args:
+        client: Initialized application test client.
+        monkeypatch: Fixture for replacing admission and recovery calls.
+        recovered: Whether native recovery is proven successful.
+    """
     from atlaso.app import appliance_console, ui
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
@@ -176,7 +222,11 @@ def test_console_reconciles_exact_terminal_owner_before_correction(client, monke
     calls = []
 
     def recover(self, *, startup=False):
-        """Return bounded rollback evidence through the real recovery coordinator."""
+        """Return bounded rollback evidence through the real recovery coordinator.
+
+        Args:
+            startup: Whether recovery was requested during startup.
+        """
         calls.append(startup)
         return AdapterResult(
             command=["management-handoff", "recover"],
@@ -201,7 +251,12 @@ def test_console_reconciles_exact_terminal_owner_before_correction(client, monke
 
 
 def test_console_does_not_recover_running_apply(client, monkeypatch):
-    """An active task continues to own admission without starting recovery."""
+    """An active task continues to own admission without starting recovery.
+
+    Args:
+        client: Initialized application test client.
+        monkeypatch: Fixture for observing recovery calls.
+    """
     from atlaso.app import appliance_console, ui
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
@@ -214,6 +269,11 @@ def test_console_does_not_recover_running_apply(client, monkeypatch):
     calls = []
 
     def recover(self, *, startup=False):
+        """Record any attempt to recover the active task.
+
+        Args:
+            startup: Whether recovery was requested during startup.
+        """
         calls.append(startup)
         return AdapterResult(command=[], dry_run=False, returncode=0)
 
@@ -224,7 +284,12 @@ def test_console_does_not_recover_running_apply(client, monkeypatch):
 
 
 def test_console_retained_recovery_respects_busy_writer_admission(client, monkeypatch):
-    """A busy writer keeps the failed task untouched and blocks console correction."""
+    """A busy writer keeps the failed task untouched and blocks console correction.
+
+    Args:
+        client: Initialized application test client.
+        monkeypatch: Fixture for replacing writer admission and recovery.
+    """
     from atlaso.app import appliance_console, ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job
@@ -239,6 +304,11 @@ def test_console_retained_recovery_respects_busy_writer_admission(client, monkey
     recoveries = []
 
     def busy(_db):
+        """Reject admission while another snapshot-table writer is active.
+
+        Args:
+            _db: Database session passed to the admission lock.
+        """
         raise ApplianceApplyAdmissionBusy
 
     monkeypatch.setattr("atlaso.app.services.appliance_apply_admission.lock_appliance_apply_snapshot_tables", busy)
@@ -253,7 +323,15 @@ def test_console_retained_recovery_respects_busy_writer_admission(client, monkey
 
 @pytest.mark.parametrize("environment,dry_run,updated", [("appliance", True, False), ("appliance", False, True), ("development", True, True)])
 def test_appliance_dry_run_preserves_native_baseline(client, monkeypatch, environment, dry_run, updated):
-    """Simulation cannot replace a native appliance's last applied Network intent."""
+    """Simulation cannot replace a native appliance's last applied Network intent.
+
+    Args:
+        client: Initialized application test client.
+        monkeypatch: Fixture for selecting environment behavior.
+        environment: Runtime environment name.
+        dry_run: Whether the adapter simulates its command.
+        updated: Whether baseline metadata should advance.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
 
@@ -269,7 +347,12 @@ def test_appliance_dry_run_preserves_native_baseline(client, monkeypatch, enviro
 
 
 def test_appliance_network_dry_run_preserves_native_baseline_through_runner(client, monkeypatch):
-    """The real Apply runner cannot promote simulated Network intent in appliance mode."""
+    """The real Apply runner cannot promote simulated Network intent in appliance mode.
+
+    Args:
+        client: Initialized application test client.
+        monkeypatch: Fixture for isolating Apply runner dependencies.
+    """
     from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, JobStatus, JobStep
@@ -329,6 +412,13 @@ def test_appliance_network_dry_run_preserves_native_baseline_through_runner(clie
         dry_run = True
 
     def execute(current_unit, *, adapter=None, db=None):
+        """Produce a successful simulated result for a submitted unit.
+
+        Args:
+            current_unit: Submitted Apply unit.
+            adapter: Adapter selected by the Apply runner.
+            db: Active database session, when supplied by the runner.
+        """
         return {
             "unit_id": current_unit["id"],
             "label": current_unit["label"],
@@ -365,7 +455,13 @@ def test_appliance_network_dry_run_preserves_native_baseline_through_runner(clie
 
 @pytest.mark.parametrize("keys", [("firewall", "nat"), ("network", "wan", "firewall", "nat")])
 def test_appliance_paired_dry_run_preserves_all_native_baselines(client, monkeypatch, keys):
-    """Paired publication must propagate simulation through baseline admission."""
+    """Paired publication must propagate simulation through baseline admission.
+
+    Args:
+        client: Initialized application test client.
+        monkeypatch: Fixture for replacing environment settings.
+        keys: Apply-unit keys included in the simulated operation.
+    """
     from atlaso.app import ui
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
@@ -375,9 +471,19 @@ def test_appliance_paired_dry_run_preserves_all_native_baselines(client, monkeyp
         dry_run = True
 
         def validate_traffic_publishing(self, *args):
+            """Return a successful simulated validation result.
+
+            Args:
+                *args: Validation inputs supplied by the paired operation.
+            """
             return AdapterResult(command=["validate"], dry_run=True)
 
         def apply_traffic_publishing(self, *args):
+            """Return a successful simulated publication result.
+
+            Args:
+                *args: Publication inputs supplied by the paired operation.
+            """
             return AdapterResult(command=["apply"], dry_run=True)
 
     units = [{"id": key, "label": key, "snapshot_hash": "simulated", "summary": [],
@@ -398,7 +504,13 @@ def test_appliance_paired_dry_run_preserves_all_native_baselines(client, monkeyp
 
 @pytest.mark.parametrize("status", ["failed", "cancelled"])
 def test_console_can_repeat_failed_network_recovery_without_losing_terminal_time(client, monkeypatch, status):
-    """An unsuccessful Network retry stays terminal and can be retried again."""
+    """An unsuccessful Network retry stays terminal and can be retried again.
+
+    Args:
+        client: Initialized application test client.
+        monkeypatch: Fixture for replacing Network reconciliation.
+        status: Existing terminal status to preserve across retries.
+    """
     from atlaso.app import appliance_console, ui
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
@@ -412,6 +524,12 @@ def test_console_can_repeat_failed_network_recovery_without_losing_terminal_time
     calls = []
 
     def reconcile(self, job_id, *, committed=False):
+        """Report a failed Network transaction reconciliation attempt.
+
+        Args:
+            job_id: Apply task whose Network transaction is being reconciled.
+            committed: Whether the task should be acknowledged as committed.
+        """
         calls.append((job_id, committed))
         return AdapterResult(command=["network", "recover"], dry_run=False, returncode=1)
 

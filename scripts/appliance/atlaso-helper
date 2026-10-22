@@ -31693,7 +31693,11 @@ def _transition_dhcp_gateway_host_replaced(row: dict, evidence: dict, observed: 
                  and destination.subnet_of(ip_network(route["destination"]))
                  and ip_address(source) in ip_network(route["destination"])]
     def replaced(routes: list[dict]) -> bool:
-        """Require a non-seed successor for one captured route in this same table."""
+        """Require a non-seed successor for one captured route in this same table.
+
+        Args:
+            routes: Captured routes requiring a native successor in the original domain.
+        """
         return any(
             _transition_route_successor({"name": row["name"], **route}, live, seed_metrics)
             and str(live.get("table", row["table"])) == str(row["table"])

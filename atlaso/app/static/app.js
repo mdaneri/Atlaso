@@ -4055,7 +4055,7 @@ function initializeCaCertificatesTable() {
   if (!(element instanceof HTMLElement)) return;
   const profileOptions = JSON.parse(element.dataset.profileOptions || "[]");
   const defaultProfileId = profileOptions[0]?.id || "";
-  initializeAtlasoResourceWizard({
+  const collection = initializeAtlasoResourceWizard({
     elementId: "ca-certificates-table",
     formSelector: "[data-ca-certificate-form]",
     dialogId: "ca-certificate-dialog",
@@ -4128,7 +4128,6 @@ function initializeCaCertificatesTable() {
       },
     ],
     options: {
-      height: "420px",
       rowHeight: 28,
       placeholder: "No certificate requests configured.",
       columns: [
@@ -4152,6 +4151,32 @@ function initializeCaCertificatesTable() {
       rowFormatter: (row) => markNewRecordRow(row, "common_name"),
     },
   });
+  const table = collection?.table;
+  if (table) {
+    let resizeFrame = 0;
+    const resize = () => {
+      const footerHeight = document.querySelector(".management-info-footnote")?.getBoundingClientRect().height || 0;
+      const height = dnsRecordsGridHeight(element, window.innerWidth, window.innerHeight - footerHeight);
+      const nextHeight = height === null ? "" : `${height}px`;
+      if (element.style.height === nextHeight) return;
+      element.style.height = nextHeight;
+      table.setHeight(nextHeight);
+      table.redraw(true);
+    };
+    const scheduleResize = () => {
+      window.cancelAnimationFrame(resizeFrame);
+      resizeFrame = window.requestAnimationFrame(resize);
+    };
+    table.on("tableBuilt", scheduleResize);
+    window.addEventListener("resize", scheduleResize);
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(scheduleResize).observe(element.closest(".wide-panel") || element);
+    }
+    document.querySelectorAll('[data-tab-target="ca-certificates-panel"]').forEach((button) => {
+      button.addEventListener("click", scheduleResize);
+    });
+    scheduleResize();
+  }
 }
 
 function caRequestStatusFormatter(cell) {
@@ -5880,6 +5905,45 @@ function initializeCaSettings(root = document) {
   });
 }
 
+const CA_CSR_MAX_BYTES = 64 * 1024;
+
+function validateCaCsrPem(value) {
+  const rawText = String(value || "");
+  if (new TextEncoder().encode(rawText).byteLength > CA_CSR_MAX_BYTES) {
+    return "The CSR must be no larger than 64 KiB.";
+  }
+  const text = rawText.trim();
+  if (!text) return "Provide a PEM certificate signing request.";
+  if (/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/i.test(text)) {
+    return "Private-key files or PEM blocks are not accepted. Provide only a certificate signing request.";
+  }
+  const match = text.match(/^-----BEGIN (NEW )?CERTIFICATE REQUEST-----\r?\n([\s\S]*?)\r?\n-----END \1CERTIFICATE REQUEST-----$/);
+  if (!match) return "Provide one complete PEM certificate signing request with no extra content.";
+  const base64 = match[2].replace(/\s/g, "");
+  if (!base64 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(base64)) {
+    return "The CSR PEM body is not valid base64.";
+  }
+  return "";
+}
+
+async function readCaCsrFile(file) {
+  if (!file || !/\.(?:csr|pem)$/i.test(file.name || "")) {
+    throw new Error("Choose a file with a .csr or .pem extension.");
+  }
+  if (!Number.isFinite(file.size) || file.size <= 0 || file.size > CA_CSR_MAX_BYTES) {
+    throw new Error("Choose a CSR file larger than zero and no larger than 64 KiB.");
+  }
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer());
+  } catch {
+    throw new Error("The selected file is not valid UTF-8 text.");
+  }
+  const validationError = validateCaCsrPem(text);
+  if (validationError) throw new Error(validationError);
+  return text.trim();
+}
+
 function initializeCaCsrWizard() {
   const dialog = document.getElementById("ca-csr-dialog");
   const form = document.querySelector("[data-ca-csr-form]");
@@ -5890,17 +5954,45 @@ function initializeCaCsrWizard() {
     || !(launcher instanceof HTMLButtonElement)
     || !window.AtlasoUiPatterns
   ) return;
+  const fileInput = form.querySelector("[data-ca-csr-file]");
+  const csrField = form.elements.namedItem("csr_text");
+  const fileStatus = form.querySelector("[data-ca-csr-file-status]");
+  let pendingFileRead = 0;
+  let fileReadPending = false;
+  let importingFile = false;
+  const clearFileStatus = () => {
+    if (fileStatus instanceof HTMLElement) fileStatus.textContent = "";
+  };
+  const invalidatePendingFileRead = () => {
+    pendingFileRead += 1;
+    fileReadPending = false;
+    if (fileInput instanceof HTMLInputElement) fileInput.value = "";
+  };
   const wizard = window.AtlasoUiPatterns.createWizard({
     form,
     dialog,
     steps: [
       { id: "identity", title: "Define the CSR request", description: "Choose its common name, certificate profile, and operator purpose." },
       { id: "names", title: "Register certificate names", description: "Enter the DNS names and IP addresses encoded by the client request." },
-      { id: "csr", title: "Paste the CSR", description: "Provide the complete PEM certificate signing request." },
+      { id: "csr", title: "Provide the CSR", description: "Paste a PEM certificate signing request or choose a .csr or .pem file." },
       { id: "review", title: "Review CSR intake", description: "Confirm the staged request and global appliance-apply boundary." },
     ],
     discardTitle: "Discard CSR intake?",
     discardMessage: "The request metadata and CSR entered in this wizard will be lost.",
+    validateStep: ({ form: activeForm, step }) => {
+      if (fileReadPending) return { valid: false, field: fileInput, message: "Wait for the CSR file to finish loading before continuing." };
+      if (step.id !== "csr") return { valid: true };
+      const error = validateCaCsrPem(activeForm.elements.csr_text.value);
+      return error ? { valid: false, field: "csr_text", message: error } : { valid: true };
+    },
+    onOpen: () => {
+      invalidatePendingFileRead();
+      clearFileStatus();
+    },
+    onClose: () => {
+      invalidatePendingFileRead();
+      clearFileStatus();
+    },
     prepareReview: () => renderAtlasoWizardReview(form, [
       { label: "Common name", field: "common_name" },
       { label: "Profile", field: "profile_id" },
@@ -5910,6 +6002,50 @@ function initializeCaCsrWizard() {
       { label: "CSR", value: () => form.elements.csr_text.value.trim() ? "PEM supplied" : "Missing" },
     ]),
   });
+  if (fileInput instanceof HTMLInputElement && csrField instanceof HTMLTextAreaElement) {
+    form.addEventListener("reset", () => {
+      invalidatePendingFileRead();
+      clearFileStatus();
+    });
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files?.[0];
+      const sequence = ++pendingFileRead;
+      fileReadPending = Boolean(file);
+      fileInput.value = "";
+      if (!file) {
+        clearFileStatus();
+        return;
+      }
+      if (fileStatus instanceof HTMLElement) fileStatus.textContent = "Reading CSR file…";
+      try {
+        const csr = await readCaCsrFile(file);
+        if (sequence !== pendingFileRead) return;
+        fileReadPending = false;
+        importingFile = true;
+        csrField.value = csr;
+        csrField.dispatchEvent(new Event("input", { bubbles: true }));
+        importingFile = false;
+        wizard.clearError();
+        if (fileStatus instanceof HTMLElement) fileStatus.textContent = "CSR file loaded into the text field.";
+      } catch (error) {
+        importingFile = false;
+        if (sequence !== pendingFileRead) return;
+        fileReadPending = false;
+        wizard.setError(error instanceof Error ? error.message : "The selected CSR file could not be read.", fileInput);
+        if (fileStatus instanceof HTMLElement) fileStatus.textContent = "The file was not loaded.";
+      }
+    });
+    fileInput.addEventListener("cancel", () => {
+      invalidatePendingFileRead();
+      clearFileStatus();
+    });
+    csrField.addEventListener("input", () => {
+      if (importingFile) return;
+      invalidatePendingFileRead();
+      wizard.clearError();
+      clearFileStatus();
+    });
+  }
   launcher.addEventListener("click", () => wizard.open({ launcher }));
 }
 

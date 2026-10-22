@@ -37,20 +37,6 @@ You need:
 
 Before submitting a change that can interrupt management access, prepare the local appliance or VMware console.
 
-## Understand the workflow
-
-```mermaid
-flowchart LR
-    A[Edit desired state] --> B[Review pending units]
-    B --> C{Unit valid?}
-    C -- No --> D[Return to its settings page]
-    D --> B
-    C -- Yes --> E[Inspect summary and diff]
-    E --> F[Submit selected units]
-    F --> G[Monitor component tasks]
-    G --> H[Verify appliance state]
-```
-
 Atlaso groups related settings into apply units. DNS and DHCP share one `DNS/DHCP (dnsmasq)` unit. Web Terminal changes
 can require **Appliance Settings**, **Public Services**, and **Firewall**. A management-to-access conversion with a
 gateway change also selects **Routing & WAN** with Network and uses the protected handoff. For the combined

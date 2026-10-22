@@ -3618,7 +3618,7 @@ def recover_interrupted_appliance_apply_jobs(
                 "Review current appliance state and submit the selected changes again."
             )
         payload = _job_payload(job)
-        payload["state"] = "failed"
+        payload["state"] = job.status if retrying_terminal else "failed"
         if not retrying_terminal:
             payload["interrupted"] = True
             payload["interrupted_at"] = finished.isoformat()
@@ -3639,7 +3639,8 @@ def recover_interrupted_appliance_apply_jobs(
                     job.status = JobStatus.RUNNING.value
                     job.finished_at = None
                 job.error = "Network transaction recovery needs attention; runtime ownership remains pending."
-                payload["state"] = "cleanup-required"
+                if not retrying_terminal:
+                    payload["state"] = "cleanup-required"
         publishing_recovery = publishing_recoveries.get(job.id)
         if publishing_recovery is not None:
             payload["traffic_publishing_recovery"] = adapter_result_to_payload(publishing_recovery)

@@ -55,6 +55,7 @@ from atlaso.app.services.ca import (
     safe_certificate_name,
     split_multiline,
     validate_ca_certificate_request,
+    validate_ca_csr_text,
 )
 from atlaso.app.services.dnsmasq import (
     split_addresses,
@@ -647,7 +648,13 @@ def build_routers(
             ip_addresses: Ip addresses supplied by the caller.
             description: Human-readable description of the resource.
             csr_text: Csr text supplied by the caller.
+
+        Raises:
+            HTTPException: If CSR validation fails before staging.
         """
+        csr_error = validate_ca_csr_text(csr_text)
+        if csr_error:
+            raise HTTPException(status_code=422, detail=csr_error)
         certificate = CaCertificate(
             common_name=common_name.strip(),
             profile_id=parse_ca_profile_id(profile_id),
@@ -1109,7 +1116,7 @@ def build_routers(
             resource_type="ca_certificate",
             resource_id=str(certificate.id),
         )
-        filename = f"{safe_certificate_name(certificate.common_name)}.crt"
+        filename = f"{safe_certificate_name(certificate.common_name)}.pem"
         return Response(
             certificate.certificate_pem.encode("utf-8"),
             media_type="application/x-pem-file",
@@ -1599,6 +1606,9 @@ def build_routers(
         )
         if validation_errors:
             raise HTTPException(status_code=422, detail=" ".join(validation_errors))
+        csr_error = validate_ca_csr_text(csr_text)
+        if csr_error:
+            raise HTTPException(status_code=422, detail=csr_error)
         normalized_csr = csr_text.strip()
         certificate = CaCertificate(
             common_name=common_name.strip(),

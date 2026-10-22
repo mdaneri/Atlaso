@@ -17,7 +17,15 @@ import pytest
 def test_management_handoff_settings_result_reports_baseline_evidence_through_runner(
     client, monkeypatch, environment, dry_run, baseline_updated,
 ):
-    """Persisted handoff task evidence reflects whether native baselines advanced."""
+    """Persisted handoff task evidence reflects whether native baselines advanced.
+
+    Args:
+        client: Initialized application test client.
+        monkeypatch: Fixture for isolating Apply runner dependencies.
+        environment: Runtime environment name.
+        dry_run: Whether the adapter simulates its commands.
+        baseline_updated: Whether native baseline evidence should advance.
+    """
     from atlaso.app import ui
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
@@ -101,6 +109,11 @@ def test_management_handoff_settings_result_reports_baseline_evidence_through_ru
             self.dry_run = dry_run
 
         def acknowledge_management_handoff(self, _job_id):
+            """Acknowledge candidate state with the configured execution mode.
+
+            Args:
+                _job_id: Apply task whose management handoff is committed.
+            """
             return AdapterResult(
                 command=["management-handoff", "acknowledge"],
                 dry_run=dry_run,
@@ -109,6 +122,17 @@ def test_management_handoff_settings_result_reports_baseline_evidence_through_ru
 
     def execute_handoff(_units, *, job_id, adapter, db, include_wan=False, include_nat=False,
                         include_dnsmasq=False):
+        """Return successful results for the units in a bundled handoff.
+
+        Args:
+            _units: Current Apply units keyed by unit identifier.
+            job_id: Apply task executing the handoff.
+            adapter: System adapter selected by the runner.
+            db: Active database session.
+            include_wan: Whether the handoff includes WAN-dependent work.
+            include_nat: Whether the handoff includes traffic publishing.
+            include_dnsmasq: Whether the handoff includes DNS/DHCP work.
+        """
         assert job_id == task_id
         assert adapter.dry_run is dry_run
         assert not include_wan and not include_nat and not include_dnsmasq
