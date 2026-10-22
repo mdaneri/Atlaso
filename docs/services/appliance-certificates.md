@@ -64,7 +64,8 @@ rename procedure first; issuing a certificate with a new name does not rename th
    with **+ Add profile here**. Match the vendor's algorithm, validity, key usage, extended key usage (EKU), and SAN
    requirements. Avoid changing a shared profile to satisfy one appliance.
 3. Open **CSR Intake → Start CSR intake**. Enter the common name, profile, description, DNS SANs and IP SANs, then
-   paste the complete PEM CSR. Review the identity and select **Stage CSR request**. Confirm control of every SAN;
+   paste the complete PEM CSR or select **Upload a CSR file** for a PEM-encoded `.csr` or `.pem` file up to 64 KiB.
+   Review the populated CSR and identity, then select **Stage CSR request**. Confirm control of every SAN;
    the signed certificate's names must match the intended target, not merely the names an unverified CSR requests.
 4. Open **Review appliance changes**. Select **Certificate Authority** and inspect any required dependencies.
    Deselect unrelated pending units. Submit the reviewed plan and confirm its task succeeded before installing.
@@ -197,6 +198,25 @@ Atlaso's **VCF service TLS** profile supplies `serverAuth`; check its other sett
    Atlaso root. Complete the review and replacement.
 6. Reconnect with strict TLS, verify the served leaf and administrator login, and check dependent services.
 
+For native API automation, generate the request with
+[`POST /api/vcenter/certificate-management/vcenter/tls-csr`](https://developer.broadcom.com/xapis/vsphere-automation-api/latest/api/vcenter/certificate-management/vcenter/tls-csr/post/).
+Keep the returned CSR public and the generated private key inside vCenter. If Atlaso is not already trusted, import
+its verified public root using
+[`POST /api/vcenter/certificate-management/vcenter/trusted-root-chains`](https://developer.broadcom.com/xapis/vsphere-automation-api/latest/api/vcenter/certificate-management/vcenter/trusted-root-chains/post/)
+with `{"cert_chain":{"cert_chain":["<Atlaso root PEM>"]}}`, then independently read back the stored root fingerprint.
+For a vCenter-generated CSR and an already trusted issuer, replace Machine SSL using
+[`PUT /api/vcenter/certificate-management/vcenter/tls`](https://developer.broadcom.com/xapis/vsphere-automation-api/latest/api/vcenter/certificate-management/vcenter/tls/put/)
+with `{"cert":"<signed leaf PEM>"}`. The tested operation returned HTTP 204. Do not supply or export a private key
+for this path. Reconnect afterward with the expected CA and exact new leaf fingerprint, then establish a fresh
+administrator session and check appliance health.
+
+In the tested IP-PNID lab, a certificate containing only the correct IP SAN was rejected with
+`com.vmware.certificatemanagement.invalidargument.san.empty`. Issuing the same vCenter-owned CSR with its existing
+PNID entered in both Atlaso's **DNS SANs** and **IP SANs** resolved that rejection. This is an observation for the
+tested build, not a reason to replace a deployment's FQDN with an IP address. Prefer an established FQDN/PNID and
+verify the actual issued SANs. Broadcom also documents
+[SAN-empty import failures](https://knowledge.broadcom.com/external/article/416683/replace-cert-failed-subject-alternate-na.html).
+
 Replacing vCenter Machine SSL can require SRM or replication reconfiguration and site reconnection. Follow
 [Broadcom's recovery procedure after a vCenter SSL change](https://knowledge.broadcom.com/external/article/312784/site-recovery-manager-or-vsphere-replica.html).
 Confirm outbound root trust on dependent appliances rather than accepting an unexpected fingerprint blindly.
@@ -240,5 +260,13 @@ strict CA and IP-SAN verification on ports 443 and
 5480, and a fresh authenticated configuration API session. That initial test used the appliance's factory hostname;
 it establishes certificate installation, not readiness of that hostname for deployment.
 
-The vCenter steps above are vendor-documented and have not yet been executed in this lab. vCenter registration, site
-pairing, replication, recovery plans, other appliance products, and a renamed SRM require their own acceptance checks.
+The lab also exercised vCenter **9.1.1.0 build 25712839**: native RSA 2048 CSR, Atlaso's **VCF service TLS** profile,
+verified root import/readback, Machine SSL replacement through the native API, exact new leaf and strict CA/IP-SAN
+verification on ports 443 and 5480, fresh administrator API login, and green appliance health. The final certificate
+included the existing IP PNID in both DNS and IP SANs; an earlier IP-only SAN attempt was rejected and left the
+original served certificate intact. The private key remained inside vCenter. The tested vCenter had no linked
+replication partners, no vCenter HA deployment, and no registered hosts or VMs, so this does not establish dependent
+workload or integration acceptance.
+
+vCenter registration, site pairing, replication, recovery plans, other appliance products, and a renamed SRM require
+their own acceptance checks.

@@ -81,6 +81,11 @@ long names, operator notes, and multi-value SAN lists remain readable before rev
 identity, while enablement has a
 dedicated step for both certificate profiles and requests. **CSR Intake** uses the same guided pattern to separate
 metadata, SANs, PEM content, and final review.
+In its CSR step, paste the request or select **Upload a CSR file** to load a PEM-encoded `.csr` or `.pem` file up to
+64 KiB. Inspect the populated **CSR PEM** field before review. Private keys, certificate-only files, invalid text,
+and oversized files are rejected; the existing pasted content remains available if a file cannot be loaded.
+The request description supports multiple lines. On wide screens, the certificate grid fills the remaining viewport
+space and retains horizontal scrolling for its columns; narrower or hidden panels use the compact fallback.
 
 The public portal exposes only the approved public certificate surface. It must not disclose operator-only state or
 offer administrative actions.

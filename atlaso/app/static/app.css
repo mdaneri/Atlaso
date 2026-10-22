@@ -3341,6 +3341,17 @@ textarea {
   overflow-x: auto;
 }
 
+.ca-certificates-table {
+  height: clamp(300px, 42vh, 420px);
+  min-height: 300px;
+  width: 100%;
+  max-width: 100%;
+}
+
+.ca-certificates-table .tabulator-tableholder {
+  overflow-x: auto;
+}
+
 .tabulator {
   border: 0;
   background: white;

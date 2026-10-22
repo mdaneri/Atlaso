@@ -9513,6 +9513,8 @@ def test_certificate_authority_page_renders(client):
     assert "data-ca-csr-open" in ca.text
     assert 'data-atlaso-wizard-step="csr"' in ca.text
     assert 'name="csr_text"' in ca.text
+    assert 'type="file" accept=".csr,.pem" data-ca-csr-file' in ca.text
+    assert 'name="description" rows="3"' in ca.text
     assert "function initializeCaCsrWizard()" in client.get("/static/app.js").text
     certificate_wizard = ca.text.split('id="ca-certificate-dialog"', 1)[1].split("</dialog>", 1)[0]
     identity_step = certificate_wizard.split('data-atlaso-wizard-step="identity"', 1)[1].split("</section>", 1)[0]
