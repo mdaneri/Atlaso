@@ -4509,6 +4509,10 @@ def _validate_archive_row(
         raise ValueError(
             f"The settings archive row {row_index} in '{section_name}' is missing required field '{missing_fields[0]}'."
         )
+    if section_name == "reverse_proxy_routes" and not isinstance(row["proxy_name"], str):
+        raise ValueError(
+            f"The settings archive row {row_index} in '{section_name}' field 'proxy_name' must be a string."
+        )
     blank_allowed = ARCHIVE_BLANK_REQUIRED_TEXT_FIELDS.get(section_name, set())
     blank_fields = sorted(
         field

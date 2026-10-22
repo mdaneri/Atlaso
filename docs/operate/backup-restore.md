@@ -48,14 +48,17 @@ Before replacing desired state, restore rejects enabled mappings that collide wi
 service listeners configured in the archive, including custom ports and Network Boot bindings.
 
 Settings archives include reverse-proxy desired state and ordered routes, but not active relay generations, cached
-health observations, or proxy-owned CA certificate rows and their private keys. The broader CA archive still includes
-encrypted private-key material for other included certificates; retain the appliance secrets key with recovery
-material. Global CA and Public Services Apply regenerate proxy certificates after restore. Restore changes desired
-state only; use global Appliance Apply to republish proxies. Restore preflight also checks proxy upstreams against the
-target appliance's complete current address inventory, including secondary observed IPv6 addresses omitted from portable
-archives, before replacing any desired state. It also derives service sockets from the archived interface selections
-and matched target observations, including unique-MAC interface renames. An enabled proxy cannot occupy an exclusive
-service listener after automatic rebasing; rejection preserves desired state and audit rows. See the [reverse-proxy guide](../services/reverse-proxies.md).
+health observations, or proxy-owned CA certificate rows and their private keys. The broader CA archive still
+includes encrypted private-key material for other included certificates; retain the appliance secrets key with
+recovery material. Global CA and Public Services Apply regenerate proxy certificates after restore. Restore changes
+desired state only; use global Appliance Apply to republish proxies. Route owner names must be non-empty strings;
+malformed relationship types are rejected during archive validation before any desired state is replaced. Restore
+preflight also checks proxy upstreams against the target appliance's complete current address inventory, including
+secondary observed IPv6 addresses omitted from portable archives, before replacing any desired state. It also
+derives service sockets from the archived interface selections and matched target observations, including
+unique-MAC interface renames. An enabled proxy cannot occupy an exclusive service listener after automatic
+rebasing; rejection preserves desired state and audit rows. See the [reverse-proxy
+guide](../services/reverse-proxies.md).
 
 ## Create a backup
 

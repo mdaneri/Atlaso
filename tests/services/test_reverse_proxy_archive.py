@@ -1210,3 +1210,42 @@ def test_target_service_claim_projection_does_not_use_foreign_observations(clien
         claims = _archive_port_forward_listener_claims(archive, target_interfaces=[])
         assert not any(claim.start == 5696 for claim in claims)
         assert archive == before
+
+
+@pytest.mark.parametrize("owner", [[], {}, False, 17], ids=["array", "object", "boolean", "integer"])
+def test_archive_route_owner_requires_string_before_summary_restore_and_upload(client, owner):
+    """Malformed relationship types return validation errors without replacing state.
+
+    Args:
+        client: Isolated appliance application fixture.
+        owner: Invalid JSON route owner value.
+    """
+    import json
+
+    from atlaso.app.services.settings_archive import archive_summary
+    from tests.routers.ui.helpers import login
+
+    login(client)
+    page = client.get("/backup-restore")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        save_proxy(db, payload(listeners=[{"interface": "eth2", "address": interface.ip_cidr.split("/")[0]}]), actor="test")
+        archive = export_settings_archive(db, actor="test")
+        before = deepcopy(archive["data"])
+        audits = list(db.scalars(select(AuditEvent.id).order_by(AuditEvent.id)))
+        archive["data"]["reverse_proxy_routes"][0]["proxy_name"] = owner
+        message = "field 'proxy_name' must be a string"
+        with pytest.raises(ValueError, match=message):
+            archive_summary(archive)
+        with pytest.raises(ValueError, match=message):
+            restore_settings_archive(db, archive)
+    response = client.post(
+        "/backup-restore/restore", data={"csrf": csrf},
+        files={"archive_file": ("invalid.json", json.dumps(archive).encode("utf-8"), "application/json")},
+    )
+    assert response.status_code == 400
+    assert "proxy_name" in response.text and "must be a string" in response.text
+    with SessionLocal() as db:
+        assert export_settings_archive(db, actor="test")["data"] == before
+        assert list(db.scalars(select(AuditEvent.id).order_by(AuditEvent.id))) == audits
