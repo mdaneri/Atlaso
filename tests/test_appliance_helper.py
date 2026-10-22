@@ -13425,6 +13425,94 @@ def test_kms_helper_status_returns_only_authenticated_redacted_counts(monkeypatc
     assert "key_id" not in output
 
 
+def test_kms_listener_status_returns_only_active_public_binding(monkeypatch, tmp_path, capsys):
+    """Read protected deployed metadata without credentials, keys, or host mutation.
+
+    Args:
+        monkeypatch: Fixture replacing fixed paths and native service observation.
+        tmp_path: Isolated directory containing the synthetic deployed configuration.
+        capsys: Fixture capturing the public metadata and redacted diagnostics.
+    """
+    helper = load_helper_module()
+    config = tmp_path / "server.json"
+    config.write_text(json.dumps({
+        "enabled": True,
+        "listen": {"addresses": ["192.168.1.254", "2001:0db8::254"], "port": 5696},
+        "private_marker": "never-return-this-private-value",
+    }), encoding="utf8")
+    monkeypatch.setattr(helper, "KMS_CONFIG_PATH", config)
+    commands = []
+
+    def active(command, **kwargs):
+        """Permit only the bounded native service-active observation.
+
+        Args:
+            command: Native command whose identity must match the KMIP service check.
+            **kwargs: Execution options whose timeout must remain bounded.
+        """
+        assert command == ["systemctl", "is-active", "--quiet", "atlaso-kmip.service"]
+        assert kwargs == {"timeout": 5}
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_run", active)
+    monkeypatch.setattr(helper, "_kms_secrets_key", lambda: pytest.fail("No secret access allowed"))
+    assert helper.main(["atlaso-helper", "kms", "listener-status", "--real"]) == 0
+    output = capsys.readouterr()
+    assert json.loads(output.out) == {
+        "enabled": True, "listen": {"addresses": ["192.168.1.254", "2001:db8::254"], "port": 5696},
+    }
+    assert "private" not in output.out + output.err
+    assert len(commands) == 1
+    assert ("kms", "listener-status") in helper.NO_PATH_ACTIONS
+    assert "listener-status" in helper.COMMANDS["kms"]
+    assert helper._handle_kms("listener-status", [str(config)]) == 2
+
+
+@pytest.mark.parametrize("document", [
+    "invalid-private-marker", "{}", "null",
+    json.dumps({"enabled": False, "listen": {"addresses": ["192.168.1.254"], "port": 5696}}),
+    json.dumps({"enabled": True, "listen": {"addresses": ["private-marker"], "port": 5696}}),
+    json.dumps({"enabled": True, "listen": {"addresses": ["192.168.1.254"], "port": "5696"}}),
+])
+def test_kms_listener_status_rejects_unavailable_binding_without_raw_output(monkeypatch, tmp_path, capsys, document):
+    """Invalid deployed evidence never crosses the public listener metadata boundary.
+
+    Args:
+        monkeypatch: Fixture replacing the fixed deployed configuration path.
+        tmp_path: Isolated directory containing malformed or disabled configuration.
+        capsys: Fixture capturing redacted output for comparison.
+        document: Invalid or disabled deployed listener JSON used by this case.
+    """
+    helper = load_helper_module()
+    config = tmp_path / "server.json"
+    config.write_text(document, encoding="utf8")
+    monkeypatch.setattr(helper, "KMS_CONFIG_PATH", config)
+    assert helper._handle_kms("listener-status", []) == 2
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == "KMIP listener evidence is unavailable.\n"
+
+
+def test_kms_listener_status_rejects_inactive_service(monkeypatch, tmp_path, capsys):
+    """Saved configuration does not assert an active native listener.
+
+    Args:
+        monkeypatch: Fixture replacing the config path and service-active observation.
+        tmp_path: Isolated directory containing valid synthetic listener configuration.
+        capsys: Fixture verifying unavailable evidence never exposes native stderr.
+    """
+    helper = load_helper_module()
+    config = tmp_path / "server.json"
+    config.write_text(json.dumps({"enabled": True, "listen": {"addresses": ["192.168.1.254"], "port": 5696}}))
+    monkeypatch.setattr(helper, "KMS_CONFIG_PATH", config)
+    monkeypatch.setattr(helper, "_run", lambda *_args, **_kwargs: subprocess.CompletedProcess([], 3, "", "private-marker"))
+    assert helper._handle_kms("listener-status", []) == 2
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "private-marker" not in output.err
+
+
 @pytest.mark.parametrize("total,returncode", [(0, 0), (2, 0), (0, 2)])
 def test_kms_status_authenticates_retained_store_without_service_credential(
     monkeypatch, tmp_path, capsys, total, returncode,
