@@ -20,6 +20,14 @@ CANONICAL_BROWSER_ROOTS = {
 
 CAPTURE_OVERRIDES = {
     **{
+        stem: {
+            "source_commit": "d211a99b2fdbbef3e1f2322f3ba3921b42dd3fc5+working-tree",
+            "atlaso_version": "0.9.441",
+            "capture_method": "codex-in-app-browser",
+        }
+        for stem in ("kmip-recovery-desktop", "kmip-recovery-responsive", "kmip-recovery-export-confirm-desktop")
+    },
+    **{
         f"{slug}-clean-{viewport}": {
             "source_commit": "0e529c0426542b83d145a7524c69f49bd1c2f596",
             "atlaso_version": "0.9.358",
@@ -296,6 +304,7 @@ DOCUMENTATION_PAGES = {
     "operate/appliance-console.md": ("appliance-console-",),
     "operate/appliance-update.md": ("appliance-update-",),
     "operate/backup-restore.md": ("backup-restore-",),
+    "operate/kmip-recovery.md": ("kmip-recovery-",),
     "operate/automation.md": ("automation-",),
     "operate/networking.md": ("physical-interfaces-", "routes-wan-", "vlan-interfaces-"),
     "operate/network-objects.md": ("network-objects-",),
@@ -364,6 +373,19 @@ ROUTES = {
 }
 
 SPECIAL = {
+    **{
+        f"kmip-recovery-{viewport}": (
+            "/ui/management/backup-restore", "recovery-maintenance",
+            f"KMIP recovery forms and empty-target guidance on the documentation appliance in the {viewport} viewport.",
+            f"Atlaso Maintenance KMIP recovery tab with separate encrypted export and offline import forms in the {viewport} viewport.",
+        )
+        for viewport in ("desktop", "responsive")
+    },
+    "kmip-recovery-export-confirm-desktop": (
+        "/ui/management/backup-restore", "export-confirmation-preview",
+        "Review the brief KMS writer pause before export. This documentation preview was canceled without creating an archive.",
+        "Atlaso shared confirmation dialog explaining that recovery export pauses writers and restores their prior service state.",
+    ),
     **{
         f"traffic-publishing-port-forwarding-{viewport}": (
             "/ui/management/traffic-publishing", "port-forwarding",

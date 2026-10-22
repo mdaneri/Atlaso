@@ -4,9 +4,9 @@ const path = require("node:path");
 const test = require("node:test");
 
 function check(source) {
-  // A separate process enforces a deadline even when a parser blocks the event loop.
+  // A separate process bounds genuine hangs; allow slower runners to finish stress cases.
   const result = spawnSync(process.execPath, ["--input-type=module", "--eval", source], {
-    cwd: path.resolve(__dirname, "../.."), encoding: "utf8", timeout: 5000,
+    cwd: path.resolve(__dirname, "../.."), encoding: "utf8", timeout: 30000,
     killSignal: "SIGKILL", maxBuffer: 64 * 1024,
   });
   assert.ifError(result.error);

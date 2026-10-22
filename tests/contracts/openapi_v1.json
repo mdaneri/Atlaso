@@ -4206,6 +4206,66 @@
         "title": "JobResponse",
         "type": "object"
       },
+      "KmipRecoveryExportRequest": {
+        "description": "Request-bound passphrase for offline authenticated recovery export.",
+        "properties": {
+          "passphrase": {
+            "description": "Recovery passphrase, used only in memory and never retained; 12 to 1024 UTF-8 bytes.",
+            "format": "password",
+            "maxLength": 1024,
+            "minLength": 12,
+            "title": "Passphrase",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "passphrase"
+        ],
+        "title": "KmipRecoveryExportRequest",
+        "type": "object"
+      },
+      "KmipRecoveryImportRequest": {
+        "description": "Encrypted archive; no plaintext operational key enters the API.",
+        "properties": {
+          "archive": {
+            "description": "Base64-encoded authenticated .atkmip recovery archive, at most 32 MiB before base64 encoding.",
+            "maxLength": 44739244,
+            "title": "Archive",
+            "type": "string"
+          },
+          "passphrase": {
+            "description": "Recovery passphrase, used only in memory and never retained; 12 to 1024 UTF-8 bytes.",
+            "format": "password",
+            "maxLength": 1024,
+            "minLength": 12,
+            "title": "Passphrase",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "passphrase",
+          "archive"
+        ],
+        "title": "KmipRecoveryImportRequest",
+        "type": "object"
+      },
+      "KmipRecoveryImportResponse": {
+        "description": "Imported state remains offline until explicit trust review and Apply.",
+        "properties": {
+          "status": {
+            "description": "pending-trust-review means keys are offline; review and enable restored trust, then submit global Appliance Apply.",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "KmipRecoveryImportResponse",
+        "type": "object"
+      },
       "LdapBindCredentialResponse": {
         "description": "Fields returned by the Atlaso ldap bind credential API.\n\nAttributes:\n    organization: Returned organization value for this ldap bind credential resource.\n    raw_bind_password: Generated LDAP bind password shown once after rotation, or null when a\n        custom password was supplied.",
         "properties": {
@@ -20054,6 +20114,110 @@
           }
         ],
         "summary": "Create Vsphere Key Provider",
+        "tags": [
+          "vSphere Key Providers"
+        ]
+      }
+    },
+    "/api/v1/vsphere-key-providers/recovery/export": {
+      "post": {
+        "description": "Requires write:kms. Immediately quiesces both KMS writers, authenticates the native store, and downloads a passphrase-encrypted recovery bundle. Restores prior service posture before returning. This is separate from settings backup. Fails closed on legacy data, incomplete state, or unavailable recovery evidence; no plaintext operational key is returned.",
+        "operationId": "exportKmipRecovery",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KmipRecoveryExportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Authenticated encrypted recovery bundle."
+          },
+          "409": {
+            "description": "Offline recovery admission or validation failed."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Export encrypted KMIP disaster recovery",
+        "tags": [
+          "vSphere Key Providers"
+        ]
+      }
+    },
+    "/api/v1/vsphere-key-providers/recovery/import": {
+      "post": {
+        "description": "Requires write:kms. Immediately validates an authenticated recovery archive, quiesces both writers, and publishes only onto an empty native target. Persists the exact public provider/trust graph disabled in one database transaction. A durable pending marker blocks key serving until review and global Appliance Apply. Retry the same archive after interruption; conflicting or nonempty state is preserved. Never migrates legacy keys.",
+        "operationId": "importKmipRecovery",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KmipRecoveryImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KmipRecoveryImportResponse"
+                }
+              }
+            },
+            "description": "Imported keys remain offline pending trust review and global Apply."
+          },
+          "409": {
+            "description": "Empty-target admission or recovery validation failed."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Import KMIP recovery onto an empty target",
         "tags": [
           "vSphere Key Providers"
         ]

@@ -6528,6 +6528,13 @@ def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
     kmip_state.mkdir()
     for name in ("store.db", "store.db-wal", "kek.json"):
         (kmip_state / name).write_text("fixture", encoding="utf-8")
+    kmip_recovery = tmp_path / "kmip-recovery"
+    kmip_recovery.mkdir()
+    for name in ("pending.json", "approved.json", "service.json", "journal-interrupted"):
+        (kmip_recovery / name).write_bytes(b"synthetic recovery custody")
+    for name in ("candidate-synthetic", "previous-synthetic"):
+        (kmip_recovery / name).mkdir()
+        (kmip_recovery / name / "kek.json").write_bytes(b"synthetic retained envelope")
     managed_repo = tmp_path / "atlaso-managed.repo"
     managed_repo.write_text("credential-bearing fixture", encoding="utf-8")
     update_state = tmp_path / "update-sources.json"
@@ -6559,6 +6566,7 @@ def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
         lambda: True,
     )
     monkeypatch.setattr(helper, "KMS_STATE_DIR", kmip_state)
+    monkeypatch.setattr(helper, "KMS_RECOVERY_DIR", kmip_recovery)
     monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", managed_repo)
     monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", update_state)
     monkeypatch.setattr(helper, "ATLASO_LEGACY_POWERSHELL_HOME", legacy_powershell_home)
@@ -6577,16 +6585,21 @@ def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
 
     assert helper._handle_factory_reset("reset-retained-runtime", []) == 0
     assert list(kmip_state.iterdir()) == []
+    assert not kmip_recovery.exists()
     assert not managed_repo.exists()
     assert not update_state.exists()
     assert not legacy_powershell_home.exists()
     expected_synced_directories = [managed_repo.parent]
     if os.name != "posix":
         expected_synced_directories.append(legacy_powershell_home.parent)
-    expected_synced_directories.extend([kmip_state, update_state.parent])
+    expected_synced_directories.append(kmip_state)
+    if os.name != "posix":
+        expected_synced_directories.append(kmip_recovery.parent)
+    expected_synced_directories.append(update_state.parent)
     assert synced_directories == expected_synced_directories
     output = json.loads(capsys.readouterr().out)
     assert output["kmip_entries_removed"] == 3
+    assert output["kmip_recovery_removed"] is True
     assert output["legacy_powershell_home_removed"] is True
     assert output["powershell_repositories_removed"] == 1
 
@@ -6629,6 +6642,7 @@ def test_factory_reset_fsyncs_photon_removal_before_partial_failure_retry(
     monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: True)
     monkeypatch.setattr(helper, "_factory_reset_retained_runtime_paths_are_safe", lambda: {"PrivateGallery"})
     monkeypatch.setattr(helper, "KMS_STATE_DIR", kmip_state)
+    monkeypatch.setattr(helper, "KMS_RECOVERY_DIR", tmp_path / "absent-recovery")
     monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", managed_repo)
     monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", update_state)
     monkeypatch.setattr(
@@ -6648,7 +6662,7 @@ def test_factory_reset_fsyncs_photon_removal_before_partial_failure_retry(
     assert synced_directories == [managed_repo.parent]
     assert helper._handle_factory_reset("reset-retained-runtime", []) == 0
 
-    assert synced_directories == [managed_repo.parent, update_state.parent]
+    assert synced_directories == [managed_repo.parent, tmp_path, update_state.parent]
     assert not managed_repo.exists()
     assert "could not remove synchronized package-source" in capsys.readouterr().err
 
@@ -12862,7 +12876,7 @@ def test_kms_helper_rejects_config_outside_apply_dir(tmp_path):
     config_path = tmp_path / "server.json"
     config_path.write_text(kms_config_text(tmp_path), encoding="utf-8")
 
-    assert helper._handle_kms("validate", [str(config_path)]) == 2
+    assert helper._handle_kms_locked("validate", [str(config_path)]) == 2
 
 
 def test_kms_helper_validates_disabled_staged_config(monkeypatch, tmp_path):
@@ -12886,7 +12900,7 @@ def test_kms_helper_validates_disabled_staged_config(monkeypatch, tmp_path):
     monkeypatch.setattr(helper, "KMS_CONFIG_DIR", managed_root / "kmip")
     monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
 
-    assert helper._handle_kms("validate", [str(config_path)]) == 0
+    assert helper._handle_kms_locked("validate", [str(config_path)]) == 0
 
 
 @pytest.mark.parametrize(
@@ -12924,12 +12938,14 @@ def test_kms_helper_rejects_coerced_json_types(
     assert any(expected in error for error in helper._kms_config_errors(config_path))
 
 
+@pytest.mark.parametrize("completion_failure", ["none", "returncode", "timeout"])
 @pytest.mark.parametrize("legacy_active", [False, True])
-def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, legacy_active):
+def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, legacy_active, completion_failure):
     """Verify that kms helper apply installs atlaso kmip service.
 
     Args:
         legacy_active: Whether the legacy listener is active before replacement.
+        completion_failure: Failure injected at the possibly committed completion boundary.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
@@ -13019,6 +13035,8 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
     monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed_root)
     monkeypatch.setattr(helper, "_run", fake_run)
     monkeypatch.setattr(helper, "_run_with_input", fake_run_with_input)
+    monkeypatch.setattr(helper, "_kms_legacy_check", lambda **_kwargs: None)
+    monkeypatch.setattr(helper, "_kms_recovery_child", lambda _request: subprocess.CompletedProcess([], 0, "{}", ""))
     monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(helper, "_command_path", lambda name: Path("/usr/bin") / name)
     monkeypatch.setattr(helper.pwd, "getpwnam", lambda _name: SimpleNamespace(pw_uid=1001))
@@ -13046,7 +13064,7 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
             return fake_run(command, **kwargs)
 
         monkeypatch.setattr(helper, "_run", fail_upgrade_restart)
-        assert helper._handle_kms("apply", [str(config_path)]) == 1
+        assert helper._handle_kms_locked("apply", [str(config_path)]) == 1
         assert ["systemctl", "restart", "atlaso-kms.service"] in commands
         assert not service_path.exists()
         assert not (managed_root / "kmip" / ".cutover-rollback").exists()
@@ -13054,7 +13072,27 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
         credential_inputs.clear()
         monkeypatch.setattr(helper, "_run", fake_run)
 
-    assert helper._handle_kms("apply", [str(config_path)]) == 0
+    if completion_failure != "none":
+        def fail_completion(request):
+            """Simulate a child that may have committed before reporting failure.
+
+            Args:
+                request: Isolated recovery helper operation.
+            """
+            if request["action"] == "complete":
+                if completion_failure == "timeout":
+                    raise subprocess.TimeoutExpired("synthetic completion", 120)
+                return subprocess.CompletedProcess([], 2, "", "")
+            return subprocess.CompletedProcess([], 0, "{}", "")
+
+        monkeypatch.setattr(helper, "_kms_recovery_child", fail_completion)
+        assert helper._handle_kms_locked("apply", [str(config_path)]) == 1
+        assert helper.KMS_CONFIG_PATH.read_bytes() == config_path.read_bytes()
+        assert commands[-1] == ["systemctl", "disable", "--now", "atlaso-kmip.service"]
+        assert ["systemctl", "restart", "atlaso-kms.service"] not in commands
+        assert not (managed_root / "kmip" / ".cutover-rollback").exists()
+        return
+    assert helper._handle_kms_locked("apply", [str(config_path)]) == 0
 
     assert (managed_root / "kmip" / "server.json").is_file()
     runtime_trust_path = managed_root / "kmip" / "client-trust.pem"
@@ -13121,7 +13159,7 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
         before_credentials = list(credential_inputs)
         with monkeypatch.context() as snapshot_patch:
             snapshot_patch.setattr(Path, failed_method, fail_snapshot)
-            assert helper._handle_kms("apply", [str(config_path)]) == 1
+            assert helper._handle_kms_locked("apply", [str(config_path)]) == 1
         assert not (managed_root / "kmip" / ".cutover-rollback").exists()
         assert all(command[:2] == ["systemctl", "show"] for command in commands[before_commands:])
         assert credential_inputs == before_credentials
@@ -13157,16 +13195,26 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
                     raise OSError("snapshot cleanup unavailable")
             return original_rmtree(path, *args, **kwargs)
 
+        def preserve_pending_during_cleanup(request):
+            """Refuse completion before a failed snapshot retirement is handled.
+
+            Args:
+                request: Recovery helper action invoked by the cutover.
+            """
+            assert request["action"] != "complete", "cleanup failure must retain the pending gate"
+            return subprocess.CompletedProcess([], 0, "{}", "")
+
         with monkeypatch.context() as cleanup_patch:
             cleanup_patch.setattr(helper.shutil, "rmtree", fail_snapshot_cleanup)
-            assert helper._handle_kms("apply", [str(config_path)]) == 1
+            cleanup_patch.setattr(helper, "_kms_recovery_child", preserve_pending_during_cleanup)
+            assert helper._handle_kms_locked("apply", [str(config_path)]) == 1
         assert cleanup_attempts == 2
         assert (managed_root / "kmip" / "server.json").read_bytes() == previous_config
         assert runtime_trust_path.read_bytes() == previous_trust
         assert kms_credential_path.read_bytes() == previous_credential
         assert rollback_dir.exists() == persistent_cleanup_failure
         if persistent_cleanup_failure:
-            assert helper._handle_kms("apply", [str(config_path)]) == 2
+            assert helper._handle_kms_locked("apply", [str(config_path)]) == 2
             original_rmtree(rollback_dir)
     failed_restart = False
 
@@ -13185,7 +13233,7 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
         return fake_run(command, **kwargs)
 
     monkeypatch.setattr(helper, "_run", fail_first_restart)
-    assert helper._handle_kms("apply", [str(config_path)]) == 1
+    assert helper._handle_kms_locked("apply", [str(config_path)]) == 1
     assert failed_restart
     assert (managed_root / "kmip" / "server.json").read_bytes() == previous_config
     assert runtime_trust_path.read_bytes() == previous_trust
@@ -13214,7 +13262,7 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
         return fake_run(command, **kwargs)
 
     monkeypatch.setattr(helper, "_run", fail_delayed_startup)
-    assert helper._handle_kms("apply", [str(config_path)]) == 1
+    assert helper._handle_kms_locked("apply", [str(config_path)]) == 1
     assert health_samples == 2
     assert (managed_root / "kmip" / "server.json").read_bytes() == previous_config
     assert runtime_trust_path.read_bytes() == previous_trust
@@ -13251,7 +13299,7 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
             return fake_run(command, **kwargs)
 
         monkeypatch.setattr(helper, "_run", fail_rotation_with_prior_state)
-        assert helper._handle_kms("apply", [str(config_path)]) == 1
+        assert helper._handle_kms_locked("apply", [str(config_path)]) == 1
         enablement = [command for command in state_commands if command[1] in {"enable", "disable"} and command[-1] == "atlaso-kmip.service"]
         assert enablement[-1] == ["systemctl", "enable" if prior_enabled else "disable", "atlaso-kmip.service"]
         assert state_commands.count(["systemctl", "restart", "atlaso-kmip.service"]) == (2 if prior_active else 1)
@@ -13278,7 +13326,7 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
             monkeypatch.setattr(helper, "_run", ambiguous_probe)
             before_ownership = list(ownership)
             before_credentials = list(credential_inputs)
-            assert helper._handle_kms("apply", [str(config_path)]) == 2
+            assert helper._handle_kms_locked("apply", [str(config_path)]) == 2
             assert ownership == before_ownership
             assert credential_inputs == before_credentials
             assert (managed_root / "kmip" / "server.json").read_bytes() == previous_config
@@ -13296,7 +13344,7 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
         return fake_run(command, **kwargs)
 
     monkeypatch.setattr(helper, "_run", fail_all_restarts)
-    assert helper._handle_kms("apply", [str(config_path)]) == 1
+    assert helper._handle_kms_locked("apply", [str(config_path)]) == 1
     rollback_dir = managed_root / "kmip" / ".cutover-rollback"
     assert (rollback_dir / "server.json").read_bytes() == previous_config
     assert json.loads((rollback_dir / "state.json").read_text(encoding="utf-8")) == {
@@ -13305,12 +13353,12 @@ def test_kms_helper_apply_installs_atlaso_kmip_service(monkeypatch, tmp_path, le
         "legacy_was_active": legacy_active,
         "legacy_was_enabled": legacy_active,
     }
-    assert helper._handle_kms("apply", [str(config_path)]) == 2
+    assert helper._handle_kms_locked("apply", [str(config_path)]) == 2
     disabled_config = json.loads(config_path.read_text(encoding="utf-8"))
     disabled_config["enabled"] = False
     config_path.write_text(json.dumps(disabled_config), encoding="utf-8")
     before_commands = list(commands)
-    assert helper._handle_kms("apply", [str(config_path)]) == 2
+    assert helper._handle_kms_locked("apply", [str(config_path)]) == 2
     assert commands == before_commands
     assert kms_credential_path.read_bytes() == previous_credential
     assert (rollback_dir / "server.json").read_bytes() == previous_config
@@ -13418,7 +13466,7 @@ def test_kms_helper_status_returns_only_authenticated_redacted_counts(monkeypatc
         lambda command, **kwargs: subprocess.CompletedProcess(command, 0, json.dumps(status_payload), ""),
     )
 
-    assert helper._handle_kms("status", []) == 0
+    assert helper._handle_kms_locked("status", []) == 0
     output = capsys.readouterr().out
     assert json.loads(output) == status_payload
     assert "protected-runtime-secret" not in output
@@ -13434,6 +13482,7 @@ def test_kms_listener_status_returns_only_active_public_binding(monkeypatch, tmp
         capsys: Fixture capturing the public metadata and redacted diagnostics.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_kms_operation_lock", nullcontext)
     config = tmp_path / "server.json"
     config.write_text(json.dumps({
         "enabled": True,
@@ -13485,6 +13534,7 @@ def test_kms_listener_status_rejects_unavailable_binding_without_raw_output(monk
         document: Invalid or disabled deployed listener JSON used by this case.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_kms_operation_lock", nullcontext)
     config = tmp_path / "server.json"
     config.write_text(document, encoding="utf8")
     monkeypatch.setattr(helper, "KMS_CONFIG_PATH", config)
@@ -13503,6 +13553,7 @@ def test_kms_listener_status_rejects_inactive_service(monkeypatch, tmp_path, cap
         capsys: Fixture verifying unavailable evidence never exposes native stderr.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_kms_operation_lock", nullcontext)
     config = tmp_path / "server.json"
     config.write_text(json.dumps({"enabled": True, "listen": {"addresses": ["192.168.1.254"], "port": 5696}}))
     monkeypatch.setattr(helper, "KMS_CONFIG_PATH", config)
@@ -13574,7 +13625,7 @@ def test_kms_status_authenticates_retained_store_without_service_credential(
         )
 
     monkeypatch.setattr(helper.subprocess, "run", status_child)
-    assert helper._handle_kms("status", []) == returncode
+    assert helper._handle_kms_locked("status", []) == returncode
     captured = capsys.readouterr()
     if returncode:
         assert captured.out == ""
@@ -13622,7 +13673,7 @@ def test_kms_status_rejects_incomplete_store_before_credential_access(
 
     monkeypatch.setattr(helper, "_kms_secrets_key", unexpected_secret_access)
     monkeypatch.setattr(helper, "_run", lambda _command: pytest.fail("Unexpected credential decryption"))
-    assert helper._handle_kms("status", []) == 2
+    assert helper._handle_kms_locked("status", []) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "unavailable" in captured.err
@@ -13661,7 +13712,7 @@ def test_kms_status_child_failure_is_redacted(monkeypatch, tmp_path, capsys, tim
         raise OSError("sensitive-marker")
 
     monkeypatch.setattr(helper.subprocess, "run", failed_child)
-    assert helper._handle_kms("status", []) == 2
+    assert helper._handle_kms_locked("status", []) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "unavailable" in captured.err
@@ -13687,7 +13738,7 @@ def test_kms_status_without_service_credential_requires_appliance_secret(
     monkeypatch.setattr(helper, "KMS_CREDENTIAL_PATH", tmp_path / "absent-runtime.cred")
     monkeypatch.setattr(helper, "KMS_STATE_DIR", tmp_path / "retained-state")
     monkeypatch.setattr(helper, "ATLASO_ENV_PATH", environment_path)
-    assert helper._handle_kms("status", []) == 2
+    assert helper._handle_kms_locked("status", []) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "credential is unavailable" in captured.err
@@ -13713,7 +13764,7 @@ def test_kms_helper_status_fails_closed_when_store_material_cannot_be_authentica
     monkeypatch.setattr(helper, "KMS_CONFIG_PATH", tmp_path / "missing-server.json")
     monkeypatch.setattr(helper, "KMS_CREDENTIAL_PATH", tmp_path / "missing-credential")
 
-    assert helper._handle_kms("status", []) == 2
+    assert helper._handle_kms_locked("status", []) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "unavailable" in captured.err
@@ -13736,7 +13787,7 @@ def test_kms_helper_status_reports_empty_only_when_all_fixed_runtime_state_is_ab
     monkeypatch.setattr(helper, "KMS_CONFIG_PATH", tmp_path / "missing-server.json")
     monkeypatch.setattr(helper, "KMS_CREDENTIAL_PATH", tmp_path / "missing-credential")
 
-    assert helper._handle_kms("status", []) == 0
+    assert helper._handle_kms_locked("status", []) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["store_status"] == "empty"
     assert payload["providers"] == {}

@@ -8,6 +8,8 @@ import os
 import sqlite3
 import threading
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -16,6 +18,29 @@ from typing import Iterable
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+STORE_SCHEMA_SQL = """
+                PRAGMA journal_mode = WAL;
+                PRAGMA synchronous = FULL;
+                CREATE TABLE IF NOT EXISTS store_metadata (
+                    name TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS wrapped_keys (
+                    provider_id TEXT NOT NULL,
+                    key_id TEXT NOT NULL,
+                    algorithm TEXT NOT NULL CHECK (algorithm = 'AES'),
+                    key_length INTEGER NOT NULL CHECK (key_length = 256),
+                    name TEXT CHECK (name IS NULL OR length(name) BETWEEN 1 AND 256),
+                    state TEXT NOT NULL CHECK (state IN ('Pre-Active', 'Active')),
+                    created_at TEXT NOT NULL,
+                    activated_at TEXT,
+                    nonce BLOB NOT NULL CHECK (length(nonce) = 12),
+                    ciphertext BLOB NOT NULL,
+                    aad_json TEXT NOT NULL,
+                    PRIMARY KEY (provider_id, key_id)
+                );
+                """
 
 STORE_SCHEMA_VERSION = 2
 KEK_ENVELOPE_FORMAT = "atlaso-kmip-kek-v2"
@@ -271,6 +296,7 @@ def _load_or_create_kek(
     path: Path,
     *,
     secrets_key: str,
+    read_only: bool = False,
 ) -> tuple[bytes, _KekEnvelope]:
     """Return or create kek.
 
@@ -280,8 +306,21 @@ def _load_or_create_kek(
 
     Raises:
         KeyStoreError: If the operation encounters an invalid state.
+
+    Args:
+        read_only: Whether to authenticate an existing store without creating or changing files.
     """
-    master = AESGCM(_master_key(secrets_key))
+    master_bytes = _master_key(secrets_key)
+    recovery_path = path.with_name("recovery-master.bin")
+    if recovery_path.exists():
+        try:
+            sealed = recovery_path.read_bytes()
+            if len(sealed) != 60:
+                raise KeyStoreError("KMIP recovery custody is invalid.")
+            master_bytes = AESGCM(master_bytes).decrypt(sealed[:12], sealed[12:], b"atlaso-kmip-recovery-master-v1")
+        except (OSError, InvalidTag) as exc:
+            raise KeyStoreError("KMIP recovery custody could not be authenticated.") from exc
+    master = AESGCM(master_bytes)
     if path.exists():
         try:
             envelope = json.loads(path.read_text(encoding="utf-8"))
@@ -333,13 +372,16 @@ def _load_or_create_kek(
                 )
             if len(kek) != 32:
                 raise KeyStoreError("KMIP KEK envelope is invalid.")
-            os.chmod(path, 0o600)
-            return _master_key(secrets_key), state
+            if not read_only:
+                os.chmod(path, 0o600)
+            return master_bytes, state
         except (InvalidTag, json.JSONDecodeError, OSError, ValueError) as exc:
             raise KeyStoreError(
                 "KMIP KEK could not be opened with the configured appliance secrets key."
             ) from exc
 
+    if read_only:
+        raise KeyStoreError("KMIP read-only store is incomplete.")
     path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
     kek = os.urandom(32)
@@ -404,7 +446,7 @@ class WrappedKeyStore:
         kek_path: Filesystem path used for kek.
     """
 
-    def __init__(self, database_path: Path, kek_path: Path, *, secrets_key: str) -> None:
+    def __init__(self, database_path: Path, kek_path: Path, *, secrets_key: str, read_only: bool = False) -> None:
         """Initialize the wrapped key store.
 
         Args:
@@ -415,7 +457,13 @@ class WrappedKeyStore:
 
         Raises:
             KeyStoreError: If the operation encounters an invalid state.
+
+        Args:
+            read_only: Whether to authenticate an existing store without creating or changing files.
         """
+        if read_only and any(database_path.with_name(database_path.name + suffix).exists() for suffix in ("-wal", "-journal")):
+            raise KeyStoreError("KMIP offline snapshot requires settled SQLite journal state.")
+        self._read_only = read_only
         self.database_path = database_path
         self.kek_path = kek_path
         self._lock = threading.RLock()
@@ -423,24 +471,32 @@ class WrappedKeyStore:
             raise KeyStoreError(
                 "KMIP operational store and KEK envelope must exist together."
             )
-        self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        os.chmod(self.database_path.parent, 0o700)
+        if not read_only:
+            self.database_path.parent.mkdir(parents=True, exist_ok=True)
+            os.chmod(self.database_path.parent, 0o700)
         master_key, envelope = _load_or_create_kek(
             self.kek_path,
             secrets_key=secrets_key,
+            read_only=read_only,
         )
         self._master_key = bytearray(master_key)
         self._kek = bytearray(envelope.kek)
         self._envelope = envelope
         self._initialize()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         """Return connect."""
-        connection = sqlite3.connect(self.database_path, timeout=10)
+        connection = (sqlite3.connect(self.database_path.resolve().as_uri() + "?mode=ro&immutable=1", uri=True, timeout=10)
+                      if self._read_only else sqlite3.connect(self.database_path, timeout=10))
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 10000")
-        return connection
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def _initialize(self) -> None:
         """Handle initialize.
@@ -449,33 +505,13 @@ class WrappedKeyStore:
             KeyStoreError: If the operation encounters an invalid state.
         """
         with self._lock, self._connect() as connection:
-            connection.executescript(
-                """
-                PRAGMA journal_mode = WAL;
-                PRAGMA synchronous = FULL;
-                CREATE TABLE IF NOT EXISTS store_metadata (
-                    name TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS wrapped_keys (
-                    provider_id TEXT NOT NULL,
-                    key_id TEXT NOT NULL,
-                    algorithm TEXT NOT NULL CHECK (algorithm = 'AES'),
-                    key_length INTEGER NOT NULL CHECK (key_length = 256),
-                    name TEXT CHECK (name IS NULL OR length(name) BETWEEN 1 AND 256),
-                    state TEXT NOT NULL CHECK (state IN ('Pre-Active', 'Active')),
-                    created_at TEXT NOT NULL,
-                    activated_at TEXT,
-                    nonce BLOB NOT NULL CHECK (length(nonce) = 12),
-                    ciphertext BLOB NOT NULL,
-                    aad_json TEXT NOT NULL,
-                    PRIMARY KEY (provider_id, key_id)
-                );
-                """
-            )
+            if not self._read_only:
+                connection.executescript(STORE_SCHEMA_SQL)
             row = connection.execute(
                 "SELECT value FROM store_metadata WHERE name = 'schema_version'"
             ).fetchone()
+            if row is None and self._read_only:
+                raise KeyStoreError("KMIP read-only store schema is incomplete.")
             if row is None:
                 connection.execute(
                     "INSERT INTO store_metadata(name, value) VALUES ('schema_version', ?)",
@@ -484,7 +520,8 @@ class WrappedKeyStore:
             elif row["value"] != str(STORE_SCHEMA_VERSION):
                 raise KeyStoreError("KMIP operational store schema version is unsupported.")
             self._verify_store_commitment(connection)
-        os.chmod(self.database_path, 0o600)
+        if not self._read_only:
+            os.chmod(self.database_path, 0o600)
 
     def _write_envelope(self, envelope: _KekEnvelope) -> None:
         """Persist envelope.
@@ -510,6 +547,10 @@ class WrappedKeyStore:
             KeyStoreError: If the operation encounters an invalid state.
         """
         observed = _store_commitment(connection)
+        if self._read_only:
+            if not self._envelope.commitment or self._envelope.pending_commitment is not None or observed != self._envelope.commitment:
+                raise KeyStoreError("KMIP read-only store integrity or transaction state is unavailable.")
+            return
         if not self._envelope.commitment:
             self._write_envelope(
                 _KekEnvelope(

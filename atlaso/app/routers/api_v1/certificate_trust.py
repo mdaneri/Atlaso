@@ -1,5 +1,6 @@
 """Own Certificate Authority and vSphere Key Provider API v1 transports."""
 
+import base64
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Annotated, Any
@@ -14,6 +15,7 @@ from fastapi import (
     status,
 )
 from fastapi import Path as ApiPath
+from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -49,6 +51,7 @@ from atlaso.app.security import (
     Identity,
     require_scope,
 )
+from atlaso.app.services import kmip_recovery
 from atlaso.app.services.appliance_settings import (
     APPLIANCE_SETTINGS_STAGED_CONFIG_PATH as APPLIANCE_SETTINGS_STAGED_CONFIG_PATH,
 )
@@ -99,6 +102,25 @@ class CertificateTrustApiRouter:
     endpoints: Mapping[str, Endpoint]
 
 
+
+class KmipRecoveryExportRequest(BaseModel):
+    """Request-bound passphrase for offline authenticated recovery export."""
+
+    passphrase: SecretStr = Field(min_length=12, max_length=1024, description="Recovery passphrase, used only in memory and never retained; 12 to 1024 UTF-8 bytes.")
+
+
+class KmipRecoveryImportRequest(KmipRecoveryExportRequest):
+    """Encrypted archive; no plaintext operational key enters the API."""
+
+    archive: str = Field(max_length=44739244, description="Base64-encoded authenticated .atkmip recovery archive, at most 32 MiB before base64 encoding.")
+
+
+class KmipRecoveryImportResponse(BaseModel):
+    """Imported state remains offline until explicit trust review and Apply."""
+
+    status: str = Field(description="pending-trust-review means keys are offline; review and enable restored trust, then submit global Appliance Apply.")
+
+
 def build_router(
     dependencies: CertificateTrustApiDependencies,
 ) -> CertificateTrustApiRouter:
@@ -108,6 +130,58 @@ def build_router(
         dependencies: Facade-provided transport dependencies.
     """
     router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
+
+    @router.post(
+        "/vsphere-key-providers/recovery/export", operation_id="exportKmipRecovery", tags=["vSphere Key Providers"],
+        summary="Export encrypted KMIP disaster recovery", response_model=None,
+        description="Requires write:kms. Immediately quiesces both KMS writers, authenticates the native store, and downloads a passphrase-encrypted recovery bundle. Restores prior service posture before returning. This is separate from settings backup. Fails closed on legacy data, incomplete state, or unavailable recovery evidence; no plaintext operational key is returned.",
+        responses={200: {"description": "Authenticated encrypted recovery bundle.", "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}},
+                   409: {"description": "Offline recovery admission or validation failed."}},
+    )
+    def export_kmip_recovery(payload: KmipRecoveryExportRequest,
+                             identity: Annotated[Identity, Depends(require_scope("write:kms"))],
+                             db: Session = Depends(get_db)) -> Response:
+        """Download only an encrypted archive after verified service restoration.
+
+        Args:
+            payload: Request-bound helper input serialized through standard input.
+            identity: Identity supplied to this operation.
+            db: Desired-state database session holding writer admission.
+        """
+        try:
+            archive = kmip_recovery.export_archive(db, payload.passphrase.get_secret_value())
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        record_audit(db, actor=identity.username, action="export_kmip_recovery", resource_type="kms", detail="Encrypted recovery export")
+        db.commit()
+        return Response(archive, media_type="application/octet-stream", headers={"Cache-Control": "no-store", "Content-Disposition": 'attachment; filename="atlaso-kmip-recovery.atkmip"'})
+
+    @router.post(
+        "/vsphere-key-providers/recovery/import", operation_id="importKmipRecovery", tags=["vSphere Key Providers"],
+        summary="Import KMIP recovery onto an empty target", response_model=KmipRecoveryImportResponse,
+        description="Requires write:kms. Immediately validates an authenticated recovery archive, quiesces both writers, and publishes only onto an empty native target. Persists the exact public provider/trust graph disabled in one database transaction. A durable pending marker blocks key serving until review and global Appliance Apply. Retry the same archive after interruption; conflicting or nonempty state is preserved. Never migrates legacy keys.",
+        responses={200: {"description": "Imported keys remain offline pending trust review and global Apply."},
+                   409: {"description": "Empty-target admission or recovery validation failed."}},
+    )
+    def import_kmip_recovery(payload: KmipRecoveryImportRequest,
+                             identity: Annotated[Identity, Depends(require_scope("write:kms"))],
+                             db: Session = Depends(get_db)) -> KmipRecoveryImportResponse:
+        """Persist restored public trust atomically; retain offline state on failure.
+
+        Args:
+            payload: Request-bound helper input serialized through standard input.
+            identity: Identity supplied to this operation.
+            db: Desired-state database session holding writer admission.
+        """
+        try:
+            kmip_recovery.import_archive(db, base64.b64decode(payload.archive, validate=True), payload.passphrase.get_secret_value())
+            record_audit(db, actor=identity.username, action="import_kmip_recovery", resource_type="kms", detail="Offline recovery pending trust review")
+            db.commit()
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        return KmipRecoveryImportResponse(status="pending-trust-review")
+
     get_kms_settings_row = dependencies.get_kms_settings_row
     service_bind_options = dependencies.service_bind_options
 
