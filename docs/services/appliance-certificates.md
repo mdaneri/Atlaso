@@ -92,11 +92,15 @@ the CSR and leaf public keys as well as reading their subjects; matching names a
 
 ### Select a profile and generate the CSR
 
-The lab workflow used a dedicated **SRM Lab TLS** server profile: RSA 2048, 365-day validity, SAN required, key usage
-`digitalSignature,keyEncipherment`, and EKUs `serverAuth,clientAuth`. Atlaso's default **VCF service TLS** profile has
-`serverAuth` only. Confirm the full requirements for your product/version and authentication mode; SRM/replication
-certificate-based authentication can also require client authentication. See
+Create a dedicated **SRM Lab TLS** server profile: RSA 2048, 365-day validity, SAN required, key usage
+`digitalSignature,keyEncipherment,dataEncipherment`, and EKUs `serverAuth,clientAuth`. Atlaso's default
+**VCF service TLS** profile has `serverAuth` only. Confirm the full requirements for your product/version and
+authentication mode against
 [Broadcom's SRM/replication certificate guidance](https://knowledge.broadcom.com/external/article/375573).
+
+The initial installation-only lab test omitted `dataEncipherment`; it did not validate certificate-based site pairing.
+Include all three key usages when issuing a certificate for this workflow, and reissue an existing certificate that
+lacks a required usage before attempting pairing. Do not treat successful certificate import as pairing acceptance.
 
 Generate the CSR through the appliance's supported certificate administration workflow. For automation, the
 [configuration API CSR operation](https://developer.broadcom.com/xapis/srm-appliance-config-api/latest/appliance/certificates/actions/generate-csr/post/)
@@ -111,7 +115,8 @@ configured appliance identity and the verified address, for example `srm.lab.exa
 
 ### Install and verify
 
-1. Issue the CSR through Atlaso as described above, including the SRM-specific profile and both required EKUs.
+1. Issue the CSR through Atlaso as described above, including the SRM-specific profile, all three key usages
+   (`digitalSignature,keyEncipherment,dataEncipherment`), and both required EKUs (`serverAuth,clientAuth`).
 2. Use the appliance's signed-CSR certificate import workflow. For the configuration API, send
    `POST /api/rest/configure/v2/appliance/certificates/server` with only the `csr_format` representation:
 
@@ -202,7 +207,8 @@ disable validation to conceal the failure.
 ## Validation coverage
 
 The lab exercised Atlaso 0.9.446 with VCF Protection and Recovery **9.1.1.0100 build 25753785**: native appliance CSR,
-RSA 2048, both TLS EKUs, leaf/root import, exact leaf fingerprint, strict CA and IP-SAN verification on ports 443 and
+RSA 2048, key usages `digitalSignature,keyEncipherment`, both TLS EKUs, leaf/root import, exact leaf fingerprint,
+strict CA and IP-SAN verification on ports 443 and
 5480, and a fresh authenticated configuration API session. That initial test used the appliance's factory hostname;
 it establishes certificate installation, not readiness of that hostname for deployment.
 
