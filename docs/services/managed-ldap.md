@@ -47,6 +47,7 @@ The default organization layout is:
 dc=<organization>,dc=ldap,dc=atlaso,dc=internal
 ├── ou=users
 ├── ou=groups
+├── ou=vcenter-groups
 ├── ou=service-accounts
 └── ou=system
 ```
@@ -106,6 +107,42 @@ shows generated passwords once; those passwords follow the same in-memory-only s
 passwords. The result changes the primary action to **Done**, which closes the modal and clears the one-time CSV from the
 page. If Atlaso restarts before those passwords are applied, VCF Helper summarizes the affected users per organization
 and **Recover missing passwords** generates replacement credentials in one operation with a new one-time CSV.
+
+## vCenter OpenLDAP groups
+
+Each organization also publishes `ou=vcenter-groups,<organization suffix>` during global LDAP Apply. These separate
+entries use RFC4519 `groupOfUniqueNames` and DN-valued `uniqueMember`, matching the native OpenLDAP schema mapping
+inspected on vCenter Server 9.1.1. [Broadcom KB316480](https://knowledge.broadcom.com/external/article/316480) specifies
+the same schema for its listed versions through 8.x; that article alone does not establish 9.x interoperability.
+
+The original `ou=groups` entries retain `groupOfNames/member`, their existing `entryUUID`, and the `memberOf` overlay
+used by VCF Automation. The vCenter copies receive their own server-issued `entryUUID`, retained across ordinary
+membership edits and repeated Apply. Atlaso does not combine conflicting structural classes or replace the original
+groups. Group deletion, disablement or renaming removes the corresponding old projection during Apply; recreating a
+deleted DN produces a new identity, so review external role assignments afterward. Recovery exports include both
+subtrees and their UUIDs; importing an older archive adds the missing projection on the next global LDAP Apply.
+
+To configure a vCenter OpenLDAP identity source:
+
+1. Submit the organization's pending changes through global **Review appliance changes**, including Managed LDAP and
+   its required dependencies. Do not create or modify directory entries manually.
+2. Use verified LDAPS and the organization's read-only bind identity. Retain existing local break-glass access.
+3. Set the users base to `ou=users,<organization suffix>` and the groups base to the **vCenter groups base** shown in
+   Managed LDAP. Keep VCF Automation's existing **VCF groups base** unchanged. Searching from the suffix root can
+   expose both representations; use the consumer-specific base.
+4. Verify direct-group discovery in the permission-principal picker and independently with
+   `UserDirectory.RetrieveUserGroups` with group search enabled. Grant a test group a scoped role and verify that a
+   direct member can use that role. A successful user login alone does not verify group discovery or authorization.
+
+| Membership behavior | Contract and verification boundary |
+| --- | --- |
+| Direct users | vCenter copies reference original user DNs through `uniqueMember`; native discovery and role use require version-specific acceptance. |
+| Nested groups | Copies reference copies in the same organization. No flattening occurs; verify native nested authorization separately from direct membership. |
+| VCF `memberOf` | Original direct backlinks remain unchanged; copies do not add a second set of backlinks to users. |
+| OIDC mapped groups | Atlaso's existing cycle-safe direct and nested desired-state graph remains authoritative. |
+
+Changing the vCenter search base is an external configuration action. Review it separately and preserve existing
+sources and permissions until the replacement path has passed the checks above.
 
 ## VCF Automation integration
 

@@ -45,6 +45,9 @@ def test_custom_bind_password_forms_validate_without_echoing_or_partial_rotation
     fields["confirm_bind_password"] = password
     created = client.post("/ldap/organizations", data=fields)
     assert created.status_code == 201
+    assert "vCenter groups base" in created.text
+    assert "ou=vcenter-groups,dc=custom-ui,dc=ldap,dc=atlaso,dc=internal" in created.text
+    assert "VCF groups base" in created.text
     assert password not in created.text
     assert "data-ldap-bind-secret-auto-open" not in created.text
     with SessionLocal() as db:

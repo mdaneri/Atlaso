@@ -31,7 +31,8 @@ Native appliance acceptance remains incomplete, so this workflow retains roadmap
 
 - **Infrastructure** — deploy and operate a Photon OS appliance across supported virtualization platforms.
 - **Storage** — provide lab storage and manage VCF depot and backup workflows.
-- **Identity** — manage local users, LDAP, OpenID Connect, certificates, and scoped credentials.
+- **Identity** — manage local users, LDAP, OpenID Connect, certificates, and scoped credentials. Managed LDAP exposes
+  separate [VCF and vCenter group search bases](docs/services/managed-ldap.md#vcenter-openldap-groups).
 - **Networking** — configure interfaces, default-off routing with explicit IPv4/IPv6 forwarding permissions, source
   NAT and dual-stack port forwarding with explicit ingress, WAN simulation, DNS, DHCP,
   firewall policy, public services, and network boot through reviewed desired state.

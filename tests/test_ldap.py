@@ -112,6 +112,29 @@ def test_ldap_password_policy_and_renderer_never_expose_unstaged_hashes():
     assert bundle["rootCaPem"] == ""
 
 
+def test_vcenter_group_base_is_isolated_in_apply_api_and_manual_bundle():
+    """Expose an additive search base without changing VCF's schema or memberships."""
+    settings = LdapSettings()
+    for number in (1, 2):
+        organization = LdapOrganization(
+            id=number, name=f"Org {number}", slug=f"org-{number}",
+            suffix_dn=f"dc=org-{number},dc=example", bind_password_encrypted="encrypted",
+        )
+        organization.users = []
+        organization.groups = []
+        payload = ldap_apply_payload(settings, [organization], include_secrets=False)
+        row = payload["organizations"][0]
+        assert row["vcenter_groups_base_dn"] == f"ou=vcenter-groups,dc=org-{number},dc=example"
+        bundle = manual_vcf_bundle(settings, organization, root_ca_pem="public-ca")
+        assert bundle["organization"]["vcenter_groups_base_dn"] == row["vcenter_groups_base_dn"]
+        mapping = bundle["vcfAutomation91"]["definedSettings"]["groupAttributes"]
+        assert mapping["objectClass"] == "groupOfNames"
+        assert mapping["membership"] == "member"
+        assert mapping["backLinkIdentifier"] == "memberOf"
+        assert mapping["objectIdentifier"] == "entryUUID"
+        assert "encrypted" not in str(bundle)
+
+
 def test_ldap_nested_group_cycle_detection():
     """Verify that ldap nested group cycle detection."""
     organization = LdapOrganization(id=1, name="Org", slug="org", suffix_dn="dc=org,dc=example")
