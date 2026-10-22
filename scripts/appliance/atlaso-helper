@@ -31665,6 +31665,44 @@ def _seed_transition_routes(state: dict, bindings: list[dict], marker: Path) -> 
             raise ValueError("previous management route seed failed")
 
 
+def _transition_dhcp_gateway_host_replaced(row: dict, evidence: dict, observed: list[dict], seed_metrics: set[int]) -> bool:
+    """Prove that static connected/default routes replace a DHCP gateway host route.
+
+    Args:
+        row: Exact journaled DHCP host route being retired.
+        evidence: Original MAC-bound routing inventory for this table.
+        observed: Live routes read through the same interface/table selector.
+        seed_metrics: Metrics owned by temporary transition seeds.
+    """
+    destination = ip_network(row["destination"])
+    if (destination.version != 4 or destination.prefixlen != 32 or row.get("gateway")
+            or _transition_route_protocol(row.get("protocol")) != "dhcp"):
+        return False
+    source = row.get("preferred_source")
+    if not source:
+        return False
+    gateway = str(destination.network_address)
+    defaults = [route for route in evidence["routes"]
+                if route["destination"] == "0.0.0.0/0" and route.get("gateway") == gateway
+                and route.get("preferred_source") == source]
+    connected = [route for route in evidence["routes"]
+                 if not route.get("gateway") and route.get("scope") == "link"
+                 and ip_network(route["destination"]).version == 4
+                 and ip_network(route["destination"]).prefixlen < 32
+                 and destination.subnet_of(ip_network(route["destination"]))
+                 and ip_address(source) in ip_network(route["destination"])]
+    def replaced(routes: list[dict]) -> bool:
+        """Require a non-seed successor for one captured route in this same table."""
+        return any(
+            _transition_route_successor({"name": row["name"], **route}, live, seed_metrics)
+            and str(live.get("table", row["table"])) == str(row["table"])
+            and str(live.get("gateway") or "") == route.get("gateway", "")
+            and (route.get("gateway") or (live.get("prefsrc") == source and live.get("scope") == "link"))
+            for route in routes for live in observed
+        )
+    return replaced(defaults) and replaced(connected)
+
+
 def _retire_transition_routes(
     state: dict, marker: Path, *, require_replacement: bool, allow_disappeared_source: bool = False,
     allow_unselected_legacy: bool = False, allow_unselected_after_reconcile: bool = False,
@@ -31707,7 +31745,7 @@ def _retire_transition_routes(
             raise ValueError("transition route seed is ambiguous")
         if require_replacement and not any(
             _transition_route_successor(row, item, seed_metrics) for item in observed
-        ):
+        ) and not _transition_dhcp_gateway_host_replaced(row, evidence, observed, seed_metrics):
             old_source_absent = (allow_disappeared_source and _transition_old_source_absent(
                 row["name"], evidence["mac"], evidence["cidrs"], family,
             ))
@@ -32196,6 +32234,7 @@ def _snapshot_management_handoff(payload: dict) -> dict:
         ),
         "wan_rollback_config_path": str(payload.get("wan_rollback_config_path") or ""),
     }
+    state["previous_management_paths"] = _management_handoff_original_paths(state)
     _durable_management_handoff_state_write(state, MANAGEMENT_HANDOFF_STATE_PATH)
     MANAGEMENT_HANDOFF_COMMIT_PATH.unlink(missing_ok=True)
     return state
@@ -33339,6 +33378,46 @@ def _restore_management_handoff_links(state: dict, commands: list[dict[str, obje
         raise ValueError("network link rollback incomplete: " + "; ".join(bounded))
 
 
+def _management_handoff_original_paths(state: dict) -> list[dict]:
+    """Bind previous IPv4 intent to the exact original networkd file backups.
+
+    This also repairs the interpretation of older journals captured after a
+    simulated Apply. It never adopts current desired state or rewrites evidence.
+
+    Args:
+        state: Durable original management handoff snapshots and paths.
+    """
+    paths = [dict(row) for row in state.get("previous_management_paths", [])]
+    for row in paths:
+        candidates = []
+        allowed = {NETWORKD_MGMT_CONFIG_PATH, NETWORKD_CONFIG_DIR / _networkd_managed_filename(row["name"], "network")}
+        for item in state.get("snapshots", []):
+            if Path(str(item.get("path", ""))) not in allowed or not item.get("existed"):
+                continue
+            original = Path(str(item["backup"]))
+            if original.is_symlink() or not original.is_file() or original.stat().st_size > 262144:
+                raise ValueError("original management addressing backup is unavailable")
+            section, names, dhcp = "", [], "no"
+            for line in original.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line.startswith("[") and line.endswith("]"):
+                    section = line[1:-1]
+                elif "=" in line and not line.startswith(("#", ";")):
+                    key, value = [part.strip() for part in line.split("=", 1)]
+                    if section == "Match" and key == "Name":
+                        names = value.split()
+                    elif section == "Network" and key == "DHCP":
+                        dhcp = value.lower()
+            if names == [row["name"]]:
+                if dhcp not in {"yes", "true", "ipv4", "no", "false", "ipv6"}:
+                    raise ValueError("original management DHCP mode is unsupported")
+                candidates.append((Path(item["path"]).name, dhcp))
+        if candidates:
+            # networkd selects the lexically first matching .network file.
+            row["ipv4_method"] = "dhcp" if min(candidates)[1] in {"yes", "true", "ipv4"} else "static"
+    return paths
+
+
 def _wait_restored_management_addresses(state: dict, *, attempts: int = 31) -> dict:
     """Require stable native ownership of the old listener before restarting it.
 
@@ -33347,7 +33426,7 @@ def _wait_restored_management_addresses(state: dict, *, attempts: int = 31) -> d
         attempts: Sample bound within the thirty-second reacquisition window.
     """
     routing = state.get("previous_management_routing")
-    paths = {row["name"]: row for row in state.get("previous_management_paths", [])}
+    paths = {row["name"]: row for row in _management_handoff_original_paths(state)}
     expected = {str(ip_address(value)) for value in state.get("previous_management_addresses", [])}
     if not expected or not isinstance(routing, dict) or not routing:
         raise ValueError("restored management address ownership snapshot is missing")

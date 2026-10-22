@@ -153,6 +153,12 @@ installed configuration from the appliance console. Use the service-specific pro
 In development, adapters normally run in dry-run mode. A successful dry-run proves that Atlaso validated and recorded
 the command intent; it does not prove that Photon services changed.
 
+Appliance-mode dry runs validate and record command intent without changing native last-applied baselines. Development
+adapters may retain their comparison behavior, but dry-run results are not evidence of the appliance's native runtime
+configuration. Management rollback must use the prior addressing mode and values established from verified original
+runtime ownership and configuration; a dry run cannot establish that the prior address was static or replace native
+DHCP evidence.
+
 ## Recover from a failed apply
 
 1. Open the failed component and read its validation, ordered task events, error, and redacted command output.
@@ -171,6 +177,11 @@ Startup restores native networking and listeners before serving, retaining the j
 confirmation checks the old path and records rollback before releasing the lock; failure leaves recovery pending.
 Recovery also runs after helper timeout because the fixed Apply service can outlive its waiter. Before retry, the helper
 stops and verifies the separate fixed recovery service to prevent concurrent network mutations.
+
+When rollback cannot be proven, the failed task retains ownership of recovery and blocks another management correction.
+A console correction preflight retries existing recovery for that exact retained terminal task. If recovery remains
+unproven, inspect the task's recovery result before starting another correction. A reachable management address, a
+reboot, or successful service startup alone does not prove that rollback completed or restored the prior addressing mode.
 
 The helper retains rollback state until Atlaso commits component results and baselines. If restart follows that commit,
 startup idempotently acknowledges the candidate instead of claiming rollback. Unproven helper acknowledgement or rollback
