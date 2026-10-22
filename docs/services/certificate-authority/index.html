@@ -18,7 +18,7 @@
         <link rel="prev" href="../public-services/">
       
       
-        <link rel="next" href="../esx-storage/">
+        <link rel="next" href="../appliance-certificates/">
       
       
         
@@ -315,6 +315,8 @@
       
         
           
+        
+      
         
       
         
@@ -1521,6 +1523,8 @@
       
         
       
+        
+      
     
     
     
@@ -1942,6 +1946,40 @@
   
 </nav>
       
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../appliance-certificates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance certificates with Atlaso
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
     </li>
   
 
@@ -4131,6 +4169,8 @@
       
         
       
+        
+      
     
     
     
@@ -4235,7 +4275,17 @@ The request wizard presents the common name, profile, multiline description, DNS
 long names, operator notes, and multi-value SAN lists remain readable before review. Descriptions stay with request
 identity, while enablement has a
 dedicated step for both certificate profiles and requests. <strong>CSR Intake</strong> uses the same guided pattern to separate
-metadata, SANs, PEM content, and final review.</p>
+metadata, SANs, PEM content, and final review.
+In its CSR step, paste the request or select <strong>Upload a CSR file</strong> to load a PEM-encoded <code>.csr</code> or <code>.pem</code> file up to
+64 KiB, including surrounding whitespace. Inspect the populated <strong>CSR PEM</strong> field before review. Private keys,
+certificate-only files, invalid text,
+and oversized files are rejected; the existing pasted content remains available if a file cannot be loaded.
+While a selected file is loading, the wizard blocks advancing or submitting so review uses the completed CSR text.
+Before staging through management intake or either certificate request portal, Atlaso checks that the request is a
+parseable PKCS#10 CSR with a valid signature. A failed check leaves desired state unchanged and returns a validation
+error; correct the request and submit it again.
+The request description supports multiple lines. On wide screens, the certificate grid fills the remaining viewport
+space and retains horizontal scrolling for its columns; narrower or hidden panels use the compact fallback.</p>
 <p>The public portal exposes only the approved public certificate surface. It must not disclose operator-only state or
 offer administrative actions.</p>
 <p>The management authority is canonical at <code>/ui/management/certificate-authority</code>, with its authenticated request list at
@@ -4244,6 +4294,11 @@ offer administrative actions.</p>
 existing non-<code>/ui</code> paths. Eligible legacy <code>GET</code>/<code>HEAD</code> bookmarks redirect temporarily; public mutations are bridged
 internally and retain their CSRF, role, request validation, and listener checks.</p>
 <h2 id="verify-and-recover">Verify and recover<a class="headerlink" href="#verify-and-recover" title="Permanent link">&para;</a></h2>
+<p>For external appliance TLS, follow <a href="../appliance-certificates/">Appliance certificates with Atlaso</a>. It covers SRM,
+vCenter Machine SSL, CSR ownership, public root trust, certificate chains, verification, and recovery.
+<strong>Export → Certificate</strong> downloads a public PEM leaf with a <code>.pem</code> filename. Older releases used <code>.crt</code> for the same
+PEM encoding. <strong>Export → Certificate chain</strong> includes the leaf and issuer chain; download the root separately for a
+CA-only import field.</p>
 <p>After apply, verify the presented management certificate and download the expected public root certificate. Keep a VM
 snapshot or equivalent rollback point before replacing active trust. Use <a href="../vcf-trust/">VCF Certificate Trust</a> for the
 separate task that installs the active Atlaso root into a supported VCF appliance.</p>
@@ -4334,13 +4389,13 @@ through its audit commit. Disabled services or CA profiles must be enabled befor
         
         
           
-          <a href="../esx-storage/" class="md-footer__link md-footer__link--next" aria-label="Next: ESX storage">
+          <a href="../appliance-certificates/" class="md-footer__link md-footer__link--next" aria-label="Next: Appliance certificates with Atlaso">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                ESX storage
+                Appliance certificates with Atlaso
               </div>
             </div>
             <div class="md-footer__button md-icon">

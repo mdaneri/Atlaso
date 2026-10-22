@@ -1,0 +1,4661 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Issue and install Atlaso-signed TLS certificates for SRM, vCenter, and other CSR-capable appliances.">
+      
+      
+        <meta name="author" content="Atlaso contributors">
+      
+      
+        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/services/appliance-certificates/">
+      
+      
+        <link rel="prev" href="../certificate-authority/">
+      
+      
+        <link rel="next" href="../esx-storage/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/brand/favicon.ico">
+      <meta name="generator" content="zensical-0.0.69">
+    
+    
+      
+        <title>Appliance certificates with Atlaso - Atlaso Documentation</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.e15858d4.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.b27955a4.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/atlaso.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Atlaso Documentation" class="md-header__button md-logo" aria-label="Atlaso Documentation" data-md-component="logo">
+      
+  <img src="../../assets/brand/atlaso-logo-horizontal-dark.svg" alt="Atlaso Documentation">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Atlaso Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Appliance certificates with Atlaso
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mdaneri/Atlaso" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mdaneri/Atlaso
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/" class="md-tabs__link">
+          
+  
+  Getting started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../operate/" class="md-tabs__link">
+          
+  
+  Operate
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  Services
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/" class="md-tabs__link">
+          
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../contribute/" class="md-tabs__link">
+          
+  
+  Contribute
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+      
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../project/" class="md-tabs__link">
+          
+  
+  Project
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="Atlaso Documentation" class="md-nav__button md-logo" aria-label="Atlaso Documentation" data-md-component="logo">
+      
+  <img src="../../assets/brand/atlaso-logo-horizontal-dark.svg" alt="Atlaso Documentation">
+
+    </a>
+    Atlaso Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mdaneri/Atlaso" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mdaneri/Atlaso
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../getting-started/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Getting started
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+          </div>
+        
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../operate/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Operate
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_3">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Operate
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Dashboard
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/navigation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Primary navigation
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/monitor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Monitor
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/logs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Operational logs
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/audit-log/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Audit log
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Tasks
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-apply/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance Apply
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance settings
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Network configuration
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/network-objects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Network Objects
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/traffic-publishing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Traffic Publishing
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Local appliance console
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-update/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance Update
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/onepassword-credential-bridge-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  1Password bridge recovery
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/backup-restore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Backup and restore
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/kmip-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  KMIP disaster recovery
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Diagnostic support bundles
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/automation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Automation
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Use the API
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/web-terminal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Web Terminal
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Services
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+            <label class="md-nav__title" for="__nav_4">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Services
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dns/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  DNS
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dhcp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  DHCP
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../firewall/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Firewall
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ntp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  NTP and NTS
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../public-services/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Public Services
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../certificate-authority/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Certificate Authority
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance certificates with Atlaso
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance certificates with Atlaso
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#choose-the-certificate-and-trust-operation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Choose the certificate and trust operation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prepare-the-target" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Prepare the target
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#issue-an-appliance-csr-through-atlaso" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Issue an appliance CSR through Atlaso
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Issue an appliance CSR through Atlaso">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#understand-the-downloaded-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Understand the downloaded files
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#srm-and-vcf-protection-and-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        SRM and VCF Protection and Recovery
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SRM and VCF Protection and Recovery">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#select-a-profile-and-generate-the-csr" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Select a profile and generate the CSR
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#install-and-verify" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Install and verify
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vcenter-machine-ssl" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        vCenter Machine SSL
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#other-appliances" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Other appliances
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verify-renew-and-recover" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Verify, renew, and recover
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation-coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Validation coverage
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../esx-storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  ESX storage
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ipxe/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Network boot
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vsphere-key-providers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  vSphere Key Providers
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../local-users/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Local users
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../managed-ldap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Managed LDAP
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../oidc-provider/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  OpenID Connect provider
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vcf-backups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VCF backups
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vcf-helper/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VCF Helper
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vaults/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Vaults
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vcf-offline-depot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VCF Offline Depot
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vcf-private-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VCF Private Registry
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vcf-trust/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VCF certificate trust
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reference
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_5">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Reference
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API reference
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/interface-gallery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Verified interface gallery
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/appliance-apply-technical/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance Apply technical reference
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/appliance-console-technical/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Local console technical reference
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/vsphere-key-provider-protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  vSphere Key Provider protocol
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/vsphere-key-provider-security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  vSphere Key Provider security
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/full-technical-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Full technical reference
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/virtualization-artifacts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Portable virtualization artifacts
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/vmware-workstation-lifecycle-testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  VMware lifecycle testing
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/certificate-address-control/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Certificate address control
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../contribute/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Contribute
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_6">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Contribute
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/dependency-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Dependency management
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/documentation-authoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Documentation authoring
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/python-documentation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Python documentation
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/python-static-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Python static analysis
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/diagnostic-collectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Diagnostic collector authoring
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/router-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Router architecture
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/api-authoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  API authoring standard
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/windows-image-build-wsl/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Windows image-build WSL environment
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/ui-design-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  UI design guide
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/agent-policies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Detailed agent policies
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/progressive-policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Progressive agent policy
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/agent-workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent worktree and delegation workflow
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/pr-workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  PR review and delivery
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/credential-policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent credential policy
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/release-policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Release and publication policy
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/powershell-authoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  PowerShell authoring
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/completed-task-cleanup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Completed task cleanup command
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../project/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Project
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_7">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Project
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/what-is-atlaso/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  What is Atlaso?
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/github-project/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development project
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/ui-compliance-matrix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  UI compliance matrix
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/branding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Brand assets
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../assets/brand/BRAND_GUIDE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Brand kit
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/ca-roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  CA roadmap
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/routing-wan-roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Routing and WAN roadmap
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/appliance-console-design-qa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Appliance console design QA
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--historical"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project/monitor-apply-ux-design-qa/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Monitor interaction design QA
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--historical"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
+        
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#choose-the-certificate-and-trust-operation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Choose the certificate and trust operation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prepare-the-target" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Prepare the target
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#issue-an-appliance-csr-through-atlaso" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Issue an appliance CSR through Atlaso
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Issue an appliance CSR through Atlaso">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#understand-the-downloaded-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Understand the downloaded files
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#srm-and-vcf-protection-and-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        SRM and VCF Protection and Recovery
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="SRM and VCF Protection and Recovery">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#select-a-profile-and-generate-the-csr" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Select a profile and generate the CSR
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#install-and-verify" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Install and verify
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#vcenter-machine-ssl" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        vCenter Machine SSL
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#other-appliances" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Other appliances
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verify-renew-and-recover" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Verify, renew, and recover
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation-coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Validation coverage
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="../" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Services
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/services/appliance-certificates.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-pen" viewBox="0 0 24 24"><path d="M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"/><path d="M14 2v5a1 1 0 0 0 1 1h5M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z"/></svg>
+    </a>
+  
+  
+    
+      
+    
+    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/services/appliance-certificates.md" title="View source of this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-code-2" viewBox="0 0 24 24"><path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5M5 16l-3 3 3 3M9 22l3-3-3-3"/></svg>
+    </a>
+  
+
+
+<h1 id="appliance-certificates-with-atlaso">Appliance certificates with Atlaso<a class="headerlink" href="#appliance-certificates-with-atlaso" title="Permanent link">&para;</a></h1>
+<p>Use Atlaso as the issuing CA while the target appliance generates its own certificate signing request (CSR) and keeps
+its private key. Install the signed leaf certificate and public CA chain through the target's native administration
+workflow. Start with <a href="../certificate-authority/">Certificate Authority</a> for CA configuration and access.</p>
+<h2 id="choose-the-certificate-and-trust-operation">Choose the certificate and trust operation<a class="headerlink" href="#choose-the-certificate-and-trust-operation" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Material and destination</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Replace SRM appliance TLS</td>
+<td>SRM-generated CSR, signed leaf, and CA chain in the SRM certificate installer</td>
+</tr>
+<tr>
+<td>Replace vCenter Machine SSL</td>
+<td>vCenter-generated CSR, signed leaf, and trusted root chain in Certificate Management</td>
+</tr>
+<tr>
+<td>Trust the server from a browser or API client</td>
+<td>Verified public Atlaso root in that client's trusted CA store</td>
+</tr>
+<tr>
+<td>Trust another server from an appliance</td>
+<td>Verified public CA certificates in the appliance's supported outbound trust store</td>
+</tr>
+<tr>
+<td>Trust Atlaso from VCF Installer or SDDC Manager</td>
+<td>Use the separate <a href="../vcf-trust/">VCF Certificate Trust</a> workflow</td>
+</tr>
+<tr>
+<td>Enroll a KMIP client</td>
+<td>Follow <a href="../vsphere-key-providers/">vSphere Key Providers</a>, which has different certificate purposes</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Include the public Atlaso root in the appliance's CA-chain input.</strong> If the root signs the leaf directly, the chain
+contains that root alone. With intermediate issuers, include the intermediates in issuer order, ending with the root.
+Keep the leaf separate when the installer has separate leaf and chain fields. Installing a chain does not establish
+trust in every browser, peer appliance, or outbound trust store; configure each relying party separately.</p>
+<p>Download <strong>Download root CA</strong> from the Atlaso CA page and verify its SHA-256 fingerprint through an independently
+trusted record or appliance console before trusting it. Distribute only public certificates. The root private key
+stays in Atlaso; the target private key stays in the target appliance for the CSR workflows below.</p>
+<p>The CA can issue and apply certificates with <strong>Listen interfaces</strong> empty. Select an eligible access interface only
+when you intend to publish its public certificate portal on that network. DNS listening is a separate service
+configuration; the dedicated management role is reserved for the management UI.</p>
+<h2 id="prepare-the-target">Prepare the target<a class="headerlink" href="#prepare-the-target" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Record the exact product/version, certificate role, target VM identity, current certificate fingerprint, and
+   recovery procedure. Schedule any required maintenance and preserve the vendor-supported backup or rollback point.</li>
+<li>Configure a proper appliance FQDN before requesting a certificate, for example <code>srm.lab.example</code> or
+   <code>vcenter.lab.example</code>. Confirm forward DNS, any vendor-required reverse DNS, and resolution from the appliance and
+   its clients. Do not use a factory <code>localhost.localdomain</code> identity for deployment.</li>
+<li>Record the exact names clients use. Include each required DNS name as a DNS SAN; include an address as an IP SAN
+   only when clients connect by that address. An IP in Common Name or a DNS SAN does not replace an IP SAN.</li>
+<li>With DHCP, arrange an address reservation or managed DNS updates before relying on a persistent address. If the
+   address changes, update DNS and replace any certificate whose IP SAN no longer matches.</li>
+<li>Verify current time on Atlaso and the target. Follow <a href="../ntp/">NTP and NTS</a>; keep the intended clock source rather
+   than enabling both NTPsec and VMware Tools clock synchronization.</li>
+<li>Verify the target's existing TLS identity before sending administrator credentials. For a factory certificate,
+   establish its fingerprint through the verified appliance console or another independent trusted observation.
+   Never substitute disabled TLS verification for identity confirmation.</li>
+</ol>
+<p>Renaming a registered appliance may affect service registration and site pairing. Follow the version-matched vendor
+rename procedure first; issuing a certificate with a new name does not rename the operating system or update DNS.</p>
+<h2 id="issue-an-appliance-csr-through-atlaso">Issue an appliance CSR through Atlaso<a class="headerlink" href="#issue-an-appliance-csr-through-atlaso" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Generate the CSR in the target appliance. Save the public PEM CSR and keep the corresponding private key there.
+   Do not generate another CSR before installing the response: that can replace the key associated with the request.</li>
+<li>In <strong>Certificate Authority → Profiles</strong>, select a suitable enabled server profile or create a dedicated profile
+   with <strong>+ Add profile here</strong>. Match the vendor's algorithm, validity, key usage, extended key usage (EKU), and SAN
+   requirements. Avoid changing a shared profile to satisfy one appliance.</li>
+<li>Open <strong>CSR Intake → Start CSR intake</strong>. Enter the common name, profile, description, DNS SANs and IP SANs, then
+   paste the complete PEM CSR or select <strong>Upload a CSR file</strong> for a PEM-encoded <code>.csr</code> or <code>.pem</code> file up to 64 KiB.
+   Review the populated CSR and identity, then select <strong>Stage CSR request</strong>. Confirm control of every SAN;
+   the signed certificate's names must match the intended target, not merely the names an unverified CSR requests.</li>
+<li>Open <strong>Review appliance changes</strong>. Select <strong>Certificate Authority</strong> and inspect any required dependencies.
+   Deselect unrelated pending units. Submit the reviewed plan and confirm its task succeeded before installing.</li>
+<li>In <strong>Certificate Requests</strong>, confirm the request is <strong>issued</strong>. Open its row menu and select
+   <strong>Export → Certificate</strong>. Download the public root separately. Inspect any exported certificate chain before using
+   it: an installer with separate inputs expects a leaf-only file and a CA-only chain file.</li>
+<li>Check the signed leaf against the original CSR: public key, subject, DNS/IP SANs, validity, issuer, key usages,
+   EKUs, and non-CA basic constraints. Verify its signature chain against the expected public root.</li>
+</ol>
+<p>If a newly added profile is missing from the CSR wizard, cancel the blank wizard and reload the CA page before
+starting intake again. Exporting a private key is unnecessary for an appliance-generated CSR.</p>
+<h3 id="understand-the-downloaded-files">Understand the downloaded files<a class="headerlink" href="#understand-the-downloaded-files" title="Permanent link">&para;</a></h3>
+<p>Atlaso's <strong>Export → Certificate</strong> downloads a PEM-encoded leaf named <code>&lt;name&gt;.pem</code>. Older Atlaso releases downloaded
+the same PEM format with a <code>.crt</code> filename. PEM describes the encoding; a <code>.crt</code> extension alone does not mean the
+contents are binary DER. A PEM certificate contains
+<code>-----BEGIN CERTIFICATE-----</code> and <code>-----END CERTIFICATE-----</code> markers.</p>
+<table>
+<thead>
+<tr>
+<th>Download</th>
+<th>Filename</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Export → Certificate</strong></td>
+<td><code>&lt;name&gt;.pem</code></td>
+<td>One PEM leaf certificate</td>
+</tr>
+<tr>
+<td><strong>Export → Certificate chain</strong></td>
+<td><code>&lt;name&gt;-chain.pem</code></td>
+<td>PEM leaf followed by the Atlaso root for newly issued certificates</td>
+</tr>
+<tr>
+<td><strong>Download root CA</strong></td>
+<td><code>atlaso-root-ca.pem</code></td>
+<td>Public PEM root certificate, without the leaf</td>
+</tr>
+<tr>
+<td><strong>Download CA bundle</strong></td>
+<td><code>atlaso-ca-bundle.pem</code></td>
+<td>Public PEM root certificate in the current direct-root issuing model</td>
+</tr>
+<tr>
+<td><strong>Export → Private key</strong></td>
+<td><code>&lt;name&gt;.key</code></td>
+<td>Separate PEM private key, available only when Atlaso generated and holds it</td>
+</tr>
+</tbody>
+</table>
+<p>For a CSR generated in SRM or vCenter, <strong>Private key</strong> is disabled because Atlaso does not have that key. Use the
+target's signed-CSR response import option. These downloads are separate PEM artifacts, not a PKCS#12/PFX bundle.</p>
+<p>For an older <code>.crt</code> download, if an import file picker requires <code>.pem</code>, save a copy of the already PEM-encoded file
+with a <code>.pem</code> extension. No encoding conversion is needed. Renaming a file does not convert DER or PKCS#12 into PEM,
+supply a missing private key, or change the certificate's usages.</p>
+<p>For separate certificate and CA-chain inputs, use the leaf and <strong>Download root CA</strong> when Atlaso signs directly.
+Do not put <strong>Export → Certificate chain</strong> into a CA-only field: that export includes the leaf. Choosing a PKCS#12
+import option instead of a signed-CSR option also requires a different artifact; renaming <code>.crt</code> to <code>.p12</code> cannot
+produce one.</p>
+<p>For these OpenSSL examples, save the public CSR as <code>appliance.csr.pem</code> and the downloaded leaf as <code>appliance.pem</code>.
+Keep the root's downloaded filename, <code>atlaso-root-ca.pem</code>. These commands inspect only public material:</p>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>openssl<span class="w"> </span>req<span class="w"> </span>-in<span class="w"> </span>appliance.csr.pem<span class="w"> </span>-noout<span class="w"> </span>-verify<span class="w"> </span>-text
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>openssl<span class="w"> </span>x509<span class="w"> </span>-in<span class="w"> </span>appliance.pem<span class="w"> </span>-noout<span class="w"> </span>-text
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>openssl<span class="w"> </span>verify<span class="w"> </span>-CAfile<span class="w"> </span>atlaso-root-ca.pem<span class="w"> </span>appliance.pem
+</span></code></pre></div>
+<p>For an intermediate CA, supply its certificates with OpenSSL's <code>-untrusted</code> option when verifying the leaf. Compare
+the CSR and leaf public keys as well as reading their subjects; matching names alone do not prove a key match.</p>
+<h2 id="srm-and-vcf-protection-and-recovery">SRM and VCF Protection and Recovery<a class="headerlink" href="#srm-and-vcf-protection-and-recovery" title="Permanent link">&para;</a></h2>
+<h3 id="select-a-profile-and-generate-the-csr">Select a profile and generate the CSR<a class="headerlink" href="#select-a-profile-and-generate-the-csr" title="Permanent link">&para;</a></h3>
+<p>Create a dedicated <strong>SRM Lab TLS</strong> server profile: RSA 2048, 365-day validity, SAN required, key usage
+<code>digitalSignature,keyEncipherment,dataEncipherment</code>, and EKUs <code>serverAuth,clientAuth</code>. Atlaso's default
+<strong>VCF service TLS</strong> profile has <code>serverAuth</code> only. Confirm the full requirements for your product/version and
+authentication mode against
+<a href="https://knowledge.broadcom.com/external/article/375573">Broadcom's SRM/replication certificate guidance</a>.</p>
+<p>The initial installation-only lab test omitted <code>dataEncipherment</code>; it did not validate certificate-based site pairing.
+Include all three key usages when issuing a certificate for this workflow, and reissue an existing certificate that
+lacks a required usage before attempting pairing. Do not treat successful certificate import as pairing acceptance.</p>
+<p>Generate the CSR through the appliance's supported certificate administration workflow. For automation, the
+<a href="https://developer.broadcom.com/xapis/srm-appliance-config-api/latest/appliance/certificates/actions/generate-csr/post/">configuration API CSR operation</a>
+generates the key inside the appliance. For example, the API base for <code>srm.lab.example</code> is
+<code>https://srm.lab.example/api/rest/configure/v2</code>. On the tested Protection and Recovery 9.1.1 appliance, the
+configuration API served port 443; port 5480 served the management UI.</p>
+<p>Use the authenticated configuration API session mechanism documented for your version. Keep passwords and session
+headers out of command arguments, URLs, saved request files, transcripts, and logs. The CSR input uses
+<code>common_name</code>, <code>organization</code>, <code>organization_unit</code>, <code>country</code>, <code>fqdn</code> for DNS names, and <code>ip</code> for IP SANs. Use the
+configured appliance identity and the verified address, for example <code>srm.lab.example</code> and <code>192.168.50.20</code>.</p>
+<h3 id="install-and-verify">Install and verify<a class="headerlink" href="#install-and-verify" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Issue the CSR through Atlaso as described above, including the SRM-specific profile, all three key usages
+   (<code>digitalSignature,keyEncipherment,dataEncipherment</code>), and both required EKUs (<code>serverAuth,clientAuth</code>).</li>
+<li>Use the appliance's signed-CSR certificate import workflow. For the configuration API, send
+   <code>POST /api/rest/configure/v2/appliance/certificates/server</code> with only the <code>csr_format</code> representation:</li>
+</ol>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">&quot;csr_format&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">&quot;certificate&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;signed leaf certificate PEM&gt;&quot;</span><span class="p">,</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">&quot;ca_chain&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;&lt;Atlaso root certificate PEM&gt;&quot;</span><span class="p">]</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="p">}</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>Replace placeholders with PEM strings encoded by a JSON serializer. Include intermediate certificates if
+   applicable. The <a href="https://developer.broadcom.com/xapis/srm-appliance-config-api/latest/appliance/certificates/server/post/">native certificate update operation</a>
+   returns HTTP 204 on success. No private key upload is needed because SRM owns the CSR key.
+3. Wait for the appliance endpoints to become ready. Make fresh TLS connections to ports 443 and 5480, verify the
+   exact new leaf fingerprint, and validate the chain and requested hostname against the expected Atlaso root.
+4. Sign in again and check native appliance health and version. Reconfigure registration and reconnect the site
+   pair when required by the vendor procedure; then check replication and the supported recovery test separately.</p>
+<p>Do not assume every release accepts the same PKCS#12/PFX format. Broadcom documents version-specific limitations in
+<a href="https://knowledge.broadcom.com/external/article/422890/configuring-ca-signed-certificates-for-v.html">SRM/VLSR/replication CA certificate configuration</a>.
+Prefer the native CSR response path when the appliance generated the request.</p>
+<p>If SRM must connect to a vCenter that now presents an Atlaso-signed Machine SSL certificate, its outbound trust must
+also recognize that CA. This is distinct from installing SRM's own leaf and chain. Follow the version-matched
+<a href="https://knowledge.broadcom.com/external/article/312683/srm-site-pairing-fails-with-unknown-ssl.html">SRM trusted-CA procedure</a>
+and verify registration/site pairing afterward; do not infer trust-store contents from a successful leaf import.</p>
+<h2 id="vcenter-machine-ssl">vCenter Machine SSL<a class="headerlink" href="#vcenter-machine-ssl" title="Permanent link">&para;</a></h2>
+<p>This section follows <a href="https://knowledge.broadcom.com/external/article/403973">Broadcom's vSphere Client procedure for vCenter 7.x, 8.x and 9.x</a>.
+It replaces Machine SSL; changing the VMCA root is a separate operation. Verify requirements for your exact build.</p>
+<p>For Machine SSL, use <code>serverAuth</code> as the EKU; do not reuse the SRM profile's dual-purpose EKUs. Broadcom specifies
+an empty EKU or server authentication only for this role, while NSX cluster and some ESX client uses differ. See
+<a href="https://knowledge.broadcom.com/external/article/434679/nsx-and-vcenter-server-machine-ssl-certi.html">Broadcom's EKU requirements</a>.
+Atlaso's <strong>VCF service TLS</strong> profile supplies <code>serverAuth</code>; check its other settings against your version's requirements.</p>
+<ol>
+<li>Prepare the supported backup and rollback point. For Enhanced Linked Mode, follow Broadcom's coordinated offline
+   snapshot requirement for all linked vCenters. Disable vCenter HA as required by that procedure before rotation.</li>
+<li>Confirm the FQDN matches the Primary Network Identifier (PNID), resolves correctly, and appears in the DNS SANs.
+   Wildcards are unsupported.</li>
+<li>As an authorized SSO certificate administrator, open <strong>Administration → Certificate Management → Machine SSL</strong>
+   in the vSphere Client. Select the vCenter certificate and generate its CSR.</li>
+<li>Submit that CSR through Atlaso with a profile satisfying the vCenter certificate requirements. Verify the issued
+   certificate and preserve the vCenter-owned key.</li>
+<li>Select <strong>Import and Replace Certificate</strong>, choosing the external CA option for a CSR generated by vCenter.
+   This uses the private key retained inside vCenter. Supply only the leaf certificate and a separate trusted CA
+   chain, including the
+   Atlaso root. Complete the review and replacement.</li>
+<li>Reconnect with strict TLS, verify the served leaf and administrator login, and check dependent services.</li>
+</ol>
+<p>For native API automation, generate the request with
+<a href="https://developer.broadcom.com/xapis/vsphere-automation-api/latest/api/vcenter/certificate-management/vcenter/tls-csr/post/"><code>POST /api/vcenter/certificate-management/vcenter/tls-csr</code></a>.
+Keep the returned CSR public and the generated private key inside vCenter. If Atlaso is not already trusted, import
+its verified public root using
+<a href="https://developer.broadcom.com/xapis/vsphere-automation-api/latest/api/vcenter/certificate-management/vcenter/trusted-root-chains/post/"><code>POST /api/vcenter/certificate-management/vcenter/trusted-root-chains</code></a>
+with <code>{"cert_chain":{"cert_chain":["&lt;Atlaso root PEM&gt;"]}}</code>, then independently read back the stored root fingerprint.
+For a vCenter-generated CSR and an already trusted issuer, replace Machine SSL using
+<a href="https://developer.broadcom.com/xapis/vsphere-automation-api/latest/api/vcenter/certificate-management/vcenter/tls/put/"><code>PUT /api/vcenter/certificate-management/vcenter/tls</code></a>
+with <code>{"cert":"&lt;signed leaf PEM&gt;"}</code>. The tested operation returned HTTP 204. Do not supply or export a private key
+for this path. Reconnect afterward with the expected CA and exact new leaf fingerprint, then establish a fresh
+administrator session and check appliance health.</p>
+<p>In the tested IP-PNID lab, a certificate containing only the correct IP SAN was rejected with
+<code>com.vmware.certificatemanagement.invalidargument.san.empty</code>. Issuing the same vCenter-owned CSR with its existing
+PNID entered in both Atlaso's <strong>DNS SANs</strong> and <strong>IP SANs</strong> resolved that rejection. This is an observation for the
+tested build, not a reason to replace a deployment's FQDN with an IP address. Prefer an established FQDN/PNID and
+verify the actual issued SANs. Broadcom also documents
+<a href="https://knowledge.broadcom.com/external/article/416683/replace-cert-failed-subject-alternate-na.html">SAN-empty import failures</a>.</p>
+<p>Replacing vCenter Machine SSL can require SRM or replication reconfiguration and site reconnection. Follow
+<a href="https://knowledge.broadcom.com/external/article/312784/site-recovery-manager-or-vsphere-replica.html">Broadcom's recovery procedure after a vCenter SSL change</a>.
+Confirm outbound root trust on dependent appliances rather than accepting an unexpected fingerprint blindly.</p>
+<h2 id="other-appliances">Other appliances<a class="headerlink" href="#other-appliances" title="Permanent link">&para;</a></h2>
+<p>Use the same CSR custody and Atlaso issuance steps when the product supports an external CA. Before installation,
+consult that product's version-matched instructions for certificate roles, SANs, EKUs, algorithm, chain order, import
+format, service restart, and dependent trust updates. ESX, NSX and other appliances have their own lifecycle rules;
+the SRM JSON body is specific to its configuration API.</p>
+<p>For a product that requires an externally generated private key or PKCS#12, establish its supported secure key
+custody and import procedure first. A leaf certificate issued for one CSR cannot be paired with a different key.</p>
+<h2 id="verify-renew-and-recover">Verify, renew, and recover<a class="headerlink" href="#verify-renew-and-recover" title="Permanent link">&para;</a></h2>
+<p>For a target whose leaf is signed directly by Atlaso, a fresh HTTPS check can use the verified public root:</p>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>--cacert<span class="w"> </span>atlaso-root-ca.pem<span class="w"> </span>https://srm.lab.example:5480/
+</span></code></pre></div>
+<p>Success requires both a trusted chain and a matching SAN. Verify the served leaf fingerprint independently of an
+HTTP success response, then check authenticated application health and each dependent integration. Trusting the root
+cannot fix a wrong hostname, missing EKU, expired certificate, or mismatched key.</p>
+<p>Track expiry and renew early through the same appliance CSR workflow. After a hostname/address change, generate a
+new CSR and certificate for the new identity. Plan root rotation separately, distributing new trust before switching
+leaves and retaining required old trust during the transition.</p>
+<p>If import fails, preserve the existing working configuration and inspect the CSR/key match, PEM format, chain, SANs,
+validity and profile. If services fail after replacement, use the recorded vendor recovery procedure and coordinated
+backup/rollback point. Restore registrations and peer trust as needed; do not replace unrelated certificates or
+disable validation to conceal the failure.</p>
+<h2 id="validation-coverage">Validation coverage<a class="headerlink" href="#validation-coverage" title="Permanent link">&para;</a></h2>
+<p>The lab exercised Atlaso 0.9.446 with VCF Protection and Recovery <strong>9.1.1.0100 build 25753785</strong>: native appliance CSR,
+RSA 2048, key usages <code>digitalSignature,keyEncipherment</code>, both TLS EKUs, leaf/root import, exact leaf fingerprint,
+strict CA and IP-SAN verification on ports 443 and
+5480, and a fresh authenticated configuration API session. That initial test used the appliance's factory hostname;
+it establishes certificate installation, not readiness of that hostname for deployment.</p>
+<p>The lab also exercised vCenter <strong>9.1.1.0 build 25712839</strong>: native RSA 2048 CSR, Atlaso's <strong>VCF service TLS</strong> profile,
+verified root import/readback, Machine SSL replacement through the native API, exact new leaf and strict CA/IP-SAN
+verification on ports 443 and 5480, fresh administrator API login, and green appliance health. The final certificate
+included the existing IP PNID in both DNS and IP SANs; an earlier IP-only SAN attempt was rejected and left the
+original served certificate intact. The private key remained inside vCenter. The tested vCenter had no linked
+replication partners, no vCenter HA deployment, and no registered hosts or VMs, so this does not establish dependent
+workload or integration acceptance.</p>
+<p>vCenter registration, site pairing, replication, recovery plans, other appliance products, and a renamed SRM require
+their own acceptance checks.</p>
+
+
+
+
+
+
+
+
+
+  
+  
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-circle-arrow-up" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4M12 16V8"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../certificate-authority/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Certificate Authority">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Certificate Authority
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../esx-storage/" class="md-footer__link md-footer__link--next" aria-label="Next: ESX storage">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                ESX storage
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright © 2026 Atlaso contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["content.action.edit","content.action.view","content.code.copy","navigation.footer","navigation.indexes","navigation.instant","navigation.instant.prefetch","navigation.path","navigation.sections","navigation.tabs","navigation.tabs.sticky","navigation.top","navigation.tracking","search.highlight"],"redirect":null,"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.8b1c90bd.min.js"></script>
+      
+    
+  </body>
+</html>
