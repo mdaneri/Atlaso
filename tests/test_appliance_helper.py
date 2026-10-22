@@ -7014,6 +7014,101 @@ def test_ldap_reconcile_clears_lock_for_every_enabled_user(monkeypatch):
     assert (user["dn"], "pwdAccountLockedTime") in deleted_attributes
 
 
+def test_ldap_vcenter_projection_preserves_vcf_groups_and_reconciles_only_owned_copies(monkeypatch):
+    """Keep VCF membership intact while publishing separate native-vCenter groups.
+
+    Args:
+        monkeypatch: Replace directory I/O with a persistent entry inventory.
+    """
+    helper = load_helper_module()
+    payload = ldap_payload()
+    organization = payload["organizations"][0]
+    suffix = organization["suffix_dn"]
+    leaf = organization["groups"][0]
+    parent = {
+        "id": 2, "name": "Nested, Operators", "enabled": True,
+        "dn": f"cn=Nested\\, Operators,ou=groups,{suffix}",
+        "members": [{"type": "group", "id": 1, "dn": leaf["dn"]}],
+    }
+    organization["groups"].append(parent)
+    leaf_copy = f"cn=VCF Administrators,ou=vcenter-groups,{suffix}"
+    parent_copy = f"cn=Nested\\, Operators,ou=vcenter-groups,{suffix}"
+    stale_copy = f"cn=Removed,ou=vcenter-groups,{suffix}"
+    entries = {}
+    deleted = []
+
+    def upsert(dn, attributes, **_kwargs):
+        """Capture an LDAP upsert without changing the directory.
+
+        Args:
+            dn: Distinguished name of the entry being reconciled.
+            attributes: Desired LDAP attributes captured for assertions.
+            **_kwargs: Additional reconciliation options unused by this capture.
+        """
+        entries[dn] = attributes
+        return 0
+
+    monkeypatch.setattr(helper, "_ldap_upsert_entry", upsert)
+    monkeypatch.setattr(helper, "_ldap_delete_attribute", lambda *_args: 0)
+    monkeypatch.setattr(helper, "_ldap_list_dns", lambda base: [leaf_copy, parent_copy, stale_copy] if base == f"ou=vcenter-groups,{suffix}" else [])
+    monkeypatch.setattr(helper, "_ldap_delete_entries", lambda dns: deleted.extend(dns) or 0)
+    assert helper._ldap_reconcile_organization(organization, payload["service"]["password_policy"]) == 0
+    assert entries[leaf["dn"]]["objectClass"] == ["top", "groupOfNames"]
+    assert entries[leaf["dn"]]["member"] == [organization["users"][0]["dn"]]
+    assert entries[parent["dn"]]["member"] == [leaf["dn"]]
+    assert entries[leaf_copy]["objectClass"] == ["top", "groupOfUniqueNames"]
+    assert entries[leaf_copy]["uniqueMember"] == [organization["users"][0]["dn"]]
+    assert entries[parent_copy]["uniqueMember"] == [leaf_copy]
+    assert "member" not in entries[leaf_copy]
+    assert deleted == [stale_copy]
+    config = helper._render_ldap_slapd_config(payload)
+    assert "memberof-group-oc groupOfNames" in config
+    assert "memberof-member-ad member" in config
+    assert "refint_attributes member uniqueMember memberOf manager" in config
+    assert "index member,uniqueMember,memberOf eq" in config
+
+    # Reapply changes only membership: it must never delete/recreate live copies
+    # or force an entryUUID/structural-class replacement.
+    deleted.clear()
+    assert helper._ldap_reconcile_organization(organization, payload["service"]["password_policy"]) == 0
+    assert deleted == [stale_copy]
+    assert all("entryUUID" not in attrs for attrs in entries.values())
+    assert all("structuralObjectClass" not in attrs for attrs in entries.values())
+    parent["enabled"] = False
+    deleted.clear()
+    assert helper._ldap_reconcile_organization(organization, payload["service"]["password_policy"]) == 0
+    assert parent_copy in deleted
+    assert leaf_copy not in deleted
+
+
+def test_ldap_vcenter_projection_rejects_foreign_group_dn_before_apply():
+    """Reject a group whose RDN cannot be projected within its own suffix."""
+    helper = load_helper_module()
+    payload = ldap_payload()
+    payload["organizations"][0]["groups"][0]["dn"] = "cn=Foreign,ou=groups,dc=other,dc=example"
+    assert "group DN must belong" in " ".join(helper._ldap_config_errors(payload))
+
+
+def test_ldap_existing_projection_upsert_preserves_structural_class_and_uuid(monkeypatch):
+    """Existing entries receive membership updates without identity replacement.
+
+    Args:
+        monkeypatch: Capture the actual update LDIF instead of executing ldapmodify.
+    """
+    helper = load_helper_module()
+    changes = []
+    monkeypatch.setattr(helper, "_ldap_entry_exists", lambda _dn: True)
+    monkeypatch.setattr(helper, "_ldap_modify", lambda ldif: changes.append(ldif) or 0)
+    assert helper._ldap_upsert_entry("cn=Operators,ou=vcenter-groups,dc=org,dc=example", {
+        "objectClass": ["top", "groupOfUniqueNames"],
+        "cn": "Operators", "uniqueMember": ["uid=operator,ou=users,dc=org,dc=example"],
+    }) == 0
+    assert "replace: uniqueMember" in changes[0]
+    assert "objectClass" not in changes[0]
+    assert "entryUUID" not in changes[0]
+    assert "changetype: add" not in changes[0]
+
+
 def test_ldap_recovery_restores_slapd_ownership(monkeypatch, tmp_path):
     """Verify that ldap recovery restores slapd ownership.
 
@@ -7025,7 +7120,14 @@ def test_ldap_recovery_restores_slapd_ownership(monkeypatch, tmp_path):
     payload = ldap_payload(enabled=True)
     suffix = payload["organizations"][0]["suffix_dn"]
     ldif_path = tmp_path / "org-a.ldif"
-    ldif_path.write_text(f"dn: {suffix}\nobjectClass: domain\ndc: org-a\n", encoding="utf-8")
+    original_ldif = (
+        f"dn: {suffix}\nobjectClass: domain\ndc: org-a\n\n"
+        f"dn: cn=Operators,ou=groups,{suffix}\nobjectClass: groupOfNames\n"
+        f"member: uid=operator,ou=users,{suffix}\nentryUUID: 11111111-1111-4111-8111-111111111111\n\n"
+        f"dn: cn=Operators,ou=vcenter-groups,{suffix}\nobjectClass: groupOfUniqueNames\n"
+        f"uniqueMember: uid=operator,ou=users,{suffix}\nentryUUID: 22222222-2222-4222-8222-222222222222\n"
+    )
+    ldif_path.write_text(original_ldif, encoding="utf-8")
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(
         json.dumps(
@@ -7063,6 +7165,7 @@ def test_ldap_recovery_restores_slapd_ownership(monkeypatch, tmp_path):
             command: Command and arguments to execute.
         """
         if Path(command[0]).name == "slapadd":
+            assert Path(command[command.index("-l") + 1]).read_text(encoding="utf-8") == original_ldif
             (data_dir / "data.mdb").write_text("restored", encoding="utf-8")
         return subprocess.CompletedProcess(command, 0, "", "")
 

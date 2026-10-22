@@ -4403,6 +4403,19 @@ def host_state_checks(args: argparse.Namespace) -> dict[str, Any]:
             "-b ou=groups,dc=lifecycle-org-a,dc=ldap,dc=atlaso,dc=internal "
             "'(cn=Lifecycle Nested Administrators)' member"
         ),
+        "ldap_vcenter_group_projection": (
+            "set -eu; "
+            "base='dc=lifecycle-org-a,dc=ldap,dc=atlaso,dc=internal'; "
+            "direct=$(ldapsearch -LLL -o ldif-wrap=no -Y EXTERNAL -H ldapi:/// "
+            '-b "ou=vcenter-groups,$base" '
+            "'(&(objectClass=groupOfUniqueNames)(cn=Lifecycle Operators))' uniqueMember entryUUID); "
+            'printf "%s\\n" "$direct" | grep -F "uniqueMember: uid=operator,ou=users,$base"; '
+            'printf "%s\\n" "$direct" | grep -E "^entryUUID: [0-9a-f-]+$"; '
+            "nested=$(ldapsearch -LLL -o ldif-wrap=no -Y EXTERNAL -H ldapi:/// "
+            '-b "ou=vcenter-groups,$base" '
+            "'(&(objectClass=groupOfUniqueNames)(cn=Lifecycle Nested Administrators))' uniqueMember); "
+            'printf "%s\\n" "$nested" | grep -F "uniqueMember: cn=Lifecycle Operators,ou=vcenter-groups,$base"'
+        ),
         "vcf_backups": (
             "test -f /etc/ssh/sshd_config.d/atlaso-vcf-backups.conf && "
             "grep -F Match\\ User\\ vcf-backup /etc/ssh/sshd_config.d/atlaso-vcf-backups.conf && "
