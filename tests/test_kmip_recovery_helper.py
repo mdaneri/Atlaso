@@ -109,16 +109,19 @@ def test_recovery_quiesces_both_writers_and_restores_or_keeps_offline(monkeypatc
     assert all("synthetic" not in " ".join(command) for command in commands)
 
 
-def test_unavailable_operation_lock_refuses_without_dispatch(monkeypatch):
+@pytest.mark.parametrize("action", ["apply", "status", "listener-status", "recovery-export", "recovery-import"])
+def test_unavailable_operation_lock_refuses_without_dispatch(monkeypatch, action):
     """Unsupported locking never falls back to an unguarded store mutation.
 
     Args:
         monkeypatch: Pytest fixture replacing external dependencies.
+        action: KMIP operation which must never bypass unavailable locking.
     """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "fcntl", None)
     monkeypatch.setattr(helper, "_handle_kms_locked", lambda *_args: pytest.fail("unguarded dispatch"))
-    assert helper._handle_kms("apply", ["synthetic"]) == 2
+    monkeypatch.setattr(helper, "_handle_kms_recovery", lambda *_args: pytest.fail("unguarded recovery"))
+    assert helper._handle_kms(action, []) == 2
 
 
 @pytest.mark.parametrize("action", ["recovery-export", "recovery-import"])

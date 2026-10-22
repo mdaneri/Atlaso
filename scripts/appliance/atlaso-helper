@@ -100,7 +100,7 @@ COMMANDS: dict[str, set[str]] = {
     "firewall": {"validate", "apply", "replay"},
     "dnsmasq": {"validate", "apply", "reload", "leases", "logs", "verify-pool"},
     "ca": {"validate", "apply"},
-    "kms": {"validate", "apply", "status", "recovery-export", "recovery-import"},
+    "kms": {"validate", "apply", "status", "listener-status", "recovery-export", "recovery-import"},
     "ldap": {"validate", "apply", "status", "export", "logs", "authenticate"},
     "ntpd": {"validate", "apply", "status", "logs", "capabilities", "reconcile", "guard"},
     "nginx": {"logs", "access-logs", "error-logs"},
@@ -213,6 +213,7 @@ NO_PATH_ACTIONS = {
     ("kms", "status"),
     ("kms", "recovery-export"),
     ("kms", "recovery-import"),
+    ("kms", "listener-status"),
     ("nginx", "logs"),
     ("nginx", "access-logs"),
     ("nginx", "error-logs"),
@@ -6770,6 +6771,29 @@ def _handle_kms_locked(action: str, args: list[str]) -> int:
         action: Action consumed by handle KMS.
         args: Parsed command-line options consumed by the operation.
     """
+    if action == "listener-status":
+        if args:
+            print("kms listener-status does not accept arguments", file=sys.stderr)
+            return 2
+        try:
+            payload = _read_kms_config(KMS_CONFIG_PATH)
+            listen = payload.get("listen")
+            if (payload.get("enabled") is not True or not isinstance(listen, dict)
+                    or set(listen) != {"addresses", "port"}
+                    or type(listen.get("port")) is not int or not 1 <= listen["port"] <= 65535
+                    or not isinstance(listen.get("addresses"), list) or not listen["addresses"]
+                    or any(not isinstance(value, str) for value in listen["addresses"])):
+                raise ValueError("Unavailable listener")
+            addresses = [str(ip_address(value)) for value in listen["addresses"]]
+            if _run(["systemctl", "is-active", "--quiet", "atlaso-kmip.service"], timeout=5).returncode != 0:
+                raise ValueError("Inactive listener")
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            print("KMIP listener evidence is unavailable.", file=sys.stderr)
+            return 2
+        # Only public listener metadata crosses this boundary. Never include the
+        # remaining config, operational store, trust, credentials, or raw errors.
+        print(json.dumps({"enabled": True, "listen": {"addresses": addresses, "port": listen["port"]}}))
+        return 0
     if action == "status":
         if args:
             print("kms status does not accept arguments", file=sys.stderr)
@@ -35474,7 +35498,7 @@ def main(argv: list[str]) -> int:
         return _handle_network(action, normalized_args)
     if (group, action) == ("dnsmasq", "verify-pool") and real_apply:
         return _verify_dhcp_pool(normalized_args)
-    if (group, action) == ("kms", "status"):
+    if group == "kms" and action in {"status", "listener-status"}:
         return _handle_kms(action, normalized_args)
     if real_apply and group == "kms" and action in {"recovery-export", "recovery-import"}:
         return _handle_kms(action, normalized_args)

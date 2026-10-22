@@ -430,12 +430,15 @@ def test_oversized_record_is_bounded_after_redaction_consumes_full_source(loggin
     assert "synthetic-long-key-fragment" not in "\n".join(syslog_handler.messages)
 
 
-def test_helper_observation_transitions_are_quiet_and_independent(caplog, monkeypatch):
+@pytest.mark.parametrize("group,action", [("network", "status"), ("kms", "listener-status")])
+def test_helper_observation_transitions_are_quiet_and_independent(caplog, monkeypatch, group, action):
     """Suppress repeated observations without confusing independent source actions.
 
     Args:
         caplog: Capture typed helper events.
         monkeypatch: Isolate the process observation cache.
+        group: Helper subsystem whose observation transitions are exercised.
+        action: Read-only helper action requiring quiet, deduplicated readiness events.
     """
     from atlaso.app.adapters import system
 
@@ -444,17 +447,20 @@ def test_helper_observation_transitions_are_quiet_and_independent(caplog, monkey
     healthy = system.AdapterResult(command=["ignored"], dry_run=False, returncode=0)
     failed = system.AdapterResult(command=["ignored"], dry_run=False, returncode=1,
                                   stderr="permission denied password=synthetic-secret")
-    system._log_helper_outcome("network", "status", healthy)
-    for group, action in (("logs", "page"), ("network", "address-status"), ("appliance-update", "status-inspect")):
+    system._log_helper_outcome(group, action, healthy)
+    for other_group, other_action in (("logs", "page"), ("network", "address-status"), ("appliance-update", "status-inspect")):
         for _ in range(3):
-            system._log_helper_outcome(group, action, healthy)
+            system._log_helper_outcome(other_group, other_action, healthy)
     assert not caplog.records
-    system._log_helper_outcome("network", "status", failed)
+    system._log_helper_outcome(group, action, failed)
     system._log_helper_outcome("network", "logs", healthy)
-    system._log_helper_outcome("network", "status", failed)
+    system._log_helper_outcome(group, action, failed)
     assert len(caplog.records) == 1
+    assert caplog.records[0].levelno == logging.WARNING
+    assert "stage=readiness" in caplog.records[0].message
     assert "reason=permission_denied" in caplog.text
     assert "synthetic-secret" not in caplog.text
-    system._log_helper_outcome("network", "status", healthy)
+    system._log_helper_outcome(group, action, healthy)
     assert len(caplog.records) == 2
+    assert caplog.records[-1].levelno == logging.INFO
     assert "outcome=succeeded" in caplog.records[-1].message

@@ -54,7 +54,8 @@ Successful setup refreshes the trust rows and pending Apply state in place.
    Atlaso issues and manages the shared KMIP server certificate from its CA when KMS is enabled. Run global
    **Appliance Apply** to deploy the server certificate and listener. Keep the provider's immutable UUID for the
    later approval step.
-2. In the VCF 9.1 vSphere Client, add Atlaso's hostname and port as a standard KMS/key provider. Use vCenter's
+2. In the VCF 9.1 vSphere Client, add Atlaso's hostname (or a verified applied listener IP described below) and port
+   as a standard KMS/key provider. Use vCenter's
    **Establish Trust** controls to trust Atlaso's server identity. The Atlaso listener rail exposes its public server
    chain. A root-CA trust choice is preferable where vCenter supports it, because vCenter versions that pin only the
    leaf need trust re-establishment after server-certificate renewal. Confirm the server identity independently.
@@ -84,8 +85,8 @@ or the page is hidden, including browser Back-cache navigation;
 they are not saved to a Vault, provider state, audit detail, task, or browser storage. A Vault credential is referenced
 by stable vault and entry IDs; its password is never placed in the page. Changing the server or credential source
 clears certificate confirmation and requires another probe before authentication. Discovery requires the selected
-vCenter cluster to point only to the configured Atlaso hostname and
-port. Client authorization remains an exact fingerprint-to-provider-UUID mapping.
+vCenter cluster to point only to the configured Atlaso hostname or independently verified applied listener IPs,
+with the exact configured port on every member. Client authorization remains an exact fingerprint-to-provider-UUID mapping.
 
 The name comes from the configured `VirtualCenter.InstanceName` setting, queried read-only through
 `ServiceContent.setting` and
@@ -101,7 +102,7 @@ on refresh; this correction never renames database records automatically.
 Cluster choices use the same pinned authenticated connection and
 [Broadcom ListKmsClusters](https://developer.broadcom.com/xapis/virtual-infrastructure-json-api/latest/sdk/vim25/release/CryptoManagerKmip/moId/ListKmsClusters/post/)
 without management-type or status filters. Choosing an entry does not verify its Atlaso endpoint: certificate inspection
-still checks that the selected cluster points only to this Atlaso hostname and port.
+still checks every selected cluster member against the supported hostname/IP and exact port rules below.
 
 The Target step reports loading, an explicitly empty inventory, or an actionable failure. **Refresh vCenter choices**
 retries discovery without replacing a custom name or cluster ID. Changing the server, credential source, saved URI,
@@ -111,6 +112,14 @@ failure, retry or enter the name and cluster ID explicitly. **Configure manually
 connection or inventory. Discovery never creates or deletes a cluster, changes keys, approves trust, or runs Apply.
 
 ### Resolve a Target endpoint mismatch
+
+The VCF 9.1 API represents the KMS server **name**, transport **address**, and **port** as separate fields in
+[Broadcom KmipServerInfo](https://developer.broadcom.com/xapis/vsphere-web-services-api/latest/vim.encryption.KmipServerInfo.html).
+The server name is a display label; matching it to Atlaso's hostname never authorizes a destination. For example,
+`name=kms.lab.internal`, `address=192.168.1.254`, `port=5696` passes only if that exact IP and port are admitted as
+Atlaso's applied listener. The provider display name, Atlaso provider UUID/key namespace, vCenter instance identity,
+and KMIP cluster ID remain separate. This address check permits public-certificate inspection; it does not establish
+reachability, TLS trust, or key-operation interoperability.
 
 If **Target** reports **The vCenter KMIP cluster does not point only to this Atlaso endpoint**, discovery stops before
 retrieving the client certificate. The message names the expected **configured** Atlaso hostname and port and gives
@@ -122,9 +131,17 @@ Inspect the complete cluster directly in vCenter to find the differing configura
    desired-state values; the message does not prove that the listener is applied, reachable, or trusted. If settings
    changed, review and complete global **Appliance Apply** before checking vCenter connectivity.
 2. In vCenter, inspect **every** KMS member of the selected standard provider/cluster, including additional members
-   outside the visible row. Each address must use the configured Atlaso hostname and each port must match. Case and a
-   trailing DNS dot are ignored; IP addresses and other DNS aliases are not accepted in place of that hostname, even
-   if they resolve to the same address. Atlaso does not use DNS resolution as proof of endpoint ownership.
+   outside the visible row. Each transport address must use the configured Atlaso hostname or an independently
+   admitted applied listener IP, and each port must match exactly. Hostname case and a trailing DNS dot are ignored.
+   IPv4 and canonical-equivalent IPv6 addresses are accepted only when successful KMIP Apply recorded the address,
+   port, and owning interface, the read-only privileged helper confirms the active service's deployed listener
+   configuration agrees with that baseline, the applied Network snapshot pins that owner, and fresh native observation
+   confirms the same usable address on its up interface and pinned MAC. VLANs also require the exact parent, tag,
+   and up links.
+   DHCP and automatic IPv6 require native dynamic-source evidence. An old lease, pending desired-state address,
+   unrelated management address, missing source record, inactive service, or unavailable observation cannot admit an IP.
+   Complete successful Network/KMIP Apply to establish missing ownership, or use the configured hostname. DNS aliases and
+   arbitrary DNS resolution never prove ownership. A cluster containing even one foreign address or wrong port fails.
 3. Select the intended cluster or correct its configuration through your site's approved procedure. Preserve active
    providers, keys, certificates, and workloads; do not delete a member, replace a provider, or reset trust merely to
    clear this message. If the provider is in use or ownership is uncertain, stop and consult its administrator.
