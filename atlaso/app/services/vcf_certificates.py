@@ -987,7 +987,17 @@ def _dispatch(
         )
     if operation == "review":
         _names(values, state["names"])
+        reviewed_revision = _revision(state)
         _revalidate(db, state, credentials)
+        # Native reads can be slow. Serialize the nonce write with execute and
+        # reload after admission so those reads cannot restore stale checkpoints.
+        acquire_network_objects_write_lock(db)
+        db.refresh(row)
+        state = json.loads(row.value)
+        if state["state"] != "prepared" or _revision(state) != reviewed_revision:
+            raise CertificateOperationError(
+                "Operation changed during review. Reconcile or review its current state again."
+            )
         nonce = secrets.token_hex(24)
         state["review_nonce"] = nonce
         token = _serializer().dumps(

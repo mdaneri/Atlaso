@@ -484,6 +484,63 @@ def test_reviewed_profile_or_names_change_rejected(db, monkeypatch):
         service.dispatch(db, "admin", "review", request, tasks)
 
 
+@pytest.mark.parametrize("change", ["execute", "material"])
+def test_slow_review_cannot_overwrite_installation_or_changed_material(db, monkeypatch, change):
+    """Reject a review whose operation changes during native revalidation.
+
+    Args:
+        db: Isolated database session with durable operation rows.
+        monkeypatch: Fixture replacing native discovery and revalidation.
+        change: Concurrent installation admission or reviewed-material change.
+    """
+    _dispatch_mocks(monkeypatch)
+    monkeypatch.setattr(service, "_revalidate", lambda *_: None)
+    tasks = _Tasks()
+    prepared = service.dispatch(db, "admin", "prepare", _prepare_values(), tasks)
+    row = db.scalar(select(Setting).where(Setting.key == service.PREFIX + prepared["operation_id"]))
+    state = json.loads(row.value)
+    state.update(state="prepared", checkpoint="certificate_prepared",
+                 replacement_certificate={"fingerprint_sha256": "new"},
+                 issuer="Atlaso", trust_changes=["root"])
+    row.value = json.dumps(state)
+    db.commit()
+    request = _prepare_values(operation_id=prepared["operation_id"])
+    reviewed = service.dispatch(db, "admin", "review", request, tasks)
+    entered = False
+
+    def change_during_native_read(*_args):
+        """Admit the competing action before the slow review can save.
+
+        Args:
+            *_args: Unused native revalidation arguments.
+        """
+        nonlocal entered
+        if entered:
+            return
+        entered = True
+        if change == "execute":
+            service.dispatch(db, "admin", "execute", dict(request, token=reviewed["token"], acknowledged=True), tasks)
+        else:
+            current = json.loads(row.value)
+            current["replacement_certificate"] = {"fingerprint_sha256": "changed"}
+            row.value = json.dumps(current)
+            db.commit()
+
+    monkeypatch.setattr(service, "_revalidate", change_during_native_read)
+    with pytest.raises(service.CertificateOperationError, match="changed during review"):
+        service.dispatch(db, "admin", "review", request, tasks)
+    db.refresh(row)
+    current = json.loads(row.value)
+    if change == "execute":
+        assert current["state"] == "installing"
+        assert current["checkpoint"] == "queued_installation"
+        assert "review_nonce" not in current
+        assert len(tasks.calls) == 2
+    else:
+        assert current["replacement_certificate"]["fingerprint_sha256"] == "changed"
+        assert len(tasks.calls) == 1
+
+
 def test_review_expired_token_refused(db, monkeypatch):
     """Verify review expired token refused.
 
