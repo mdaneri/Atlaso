@@ -69,6 +69,14 @@ All clients are confidential and use `client_secret_basic`. Client IDs and secre
 randomness. Secrets are stored only as Argon2 hashes and plaintext is returned once on client creation or rotation.
 Rotation replaces the hash in the same transaction, so the previous secret is immediately invalid.
 
+After **Register confidential client** or **Rotate secret**, a focused **Copy this credential now** dialog shows the
+client ID and a masked **Client secret**. Choose **Copy client secret** to transfer the value directly to your secret
+manager without revealing it. **Reveal client secret** displays it deliberately and hides it again after 15 seconds;
+choose **Hide client secret** to mask it sooner. If clipboard access fails, the dialog stays open with recovery
+instructions. Store the value before choosing **Done** or pressing Escape: closing the dialog clears the credential
+from the page and leaves a non-secret confirmation above the client grid. Navigating away also discards it. Reopening
+the client editor cannot recover it; rotate the secret if it was lost, then update the relying party immediately.
+
 Administrators can delete a client from the Authentication page through the shared confirmation modal. Deletion removes
 its secret hash and exact redirect records immediately from application state, requires no global appliance apply, and
 releases any restrictive organization reference so that a previously bound managed LDAP organization can be deleted

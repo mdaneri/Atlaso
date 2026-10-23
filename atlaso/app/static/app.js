@@ -11855,14 +11855,94 @@ async function oidcFormRequest(url, formData, { expectJson = true } = {}) {
 }
 
 function setOidcSecretResult(clientId, secret) {
-  const result = document.getElementById("oidc-client-secret-result");
-  const textarea = result?.querySelector("textarea");
-  if (!(result instanceof HTMLElement) || !(textarea instanceof HTMLTextAreaElement)) return;
-  textarea.value = secret || "";
-  result.querySelector(".muted").textContent = `Client ID: ${clientId}. The plaintext value is not stored and cannot be shown again.`;
-  result.classList.remove("hidden");
-  textarea.focus();
-  textarea.select();
+  const credential = initializeOidcSecretModal();
+  credential?.show(clientId, secret);
+}
+
+function initializeOidcSecretModal() {
+  const dialog = document.getElementById("oidc-client-secret-modal");
+  if (!(dialog instanceof HTMLDialogElement)) return null;
+  if (dialog.atlasoOidcSecret) return dialog.atlasoOidcSecret;
+  const input = dialog.querySelector("[data-oidc-secret-value]");
+  const clientId = dialog.querySelector("[data-oidc-secret-client-id]");
+  const reveal = dialog.querySelector("[data-oidc-secret-reveal]");
+  const copy = dialog.querySelector("[data-oidc-secret-copy]");
+  const done = dialog.querySelector("[data-oidc-secret-close]");
+  const status = dialog.querySelector("[data-oidc-secret-status]");
+  const confirmation = document.getElementById("oidc-client-secret-result");
+  if (!(input instanceof HTMLInputElement)) return null;
+  let maskTimer;
+  let launcher;
+  let generation = 0;
+  const mask = () => {
+    window.clearTimeout(maskTimer);
+    input.type = "password";
+    reveal.setAttribute("aria-pressed", "false");
+    reveal.setAttribute("aria-label", "Reveal client secret");
+    reveal.title = "Reveal client secret";
+    dialog.querySelector("[data-oidc-secret-slash]").classList.toggle("hidden", true);
+  };
+  const clear = () => {
+    generation += 1;
+    mask();
+    input.value = "";
+    input.removeAttribute("value");
+    clientId.textContent = "";
+    status.textContent = "";
+    dialog.removeAttribute("data-oidc-secret-auto-open");
+    if (confirmation) confirmation.textContent = "Confidential client saved. Its one-time secret is no longer displayed.";
+  };
+  const show = (id, secret) => {
+    generation += 1;
+    mask();
+    input.value = secret || "";
+    clientId.textContent = id || "";
+    status.textContent = "";
+    launcher = document.activeElement;
+    confirmation?.classList.remove("hidden");
+    if (confirmation) confirmation.textContent = "Confidential client saved. Store its one-time secret before closing the credential dialog.";
+    // Run after the registration wizard has closed and restored collection focus.
+    window.requestAnimationFrame(() => {
+      if (!input.value) return;
+      if (!dialog.open) dialog.showModal();
+      done.focus({ preventScroll: true });
+    });
+  };
+  reveal.addEventListener("click", () => {
+    if (input.type === "text") return mask();
+    input.type = "text";
+    reveal.setAttribute("aria-pressed", "true");
+    reveal.setAttribute("aria-label", "Hide client secret");
+    reveal.title = "Hide client secret";
+    dialog.querySelector("[data-oidc-secret-slash]").classList.toggle("hidden", false);
+    maskTimer = window.setTimeout(mask, 15000);
+  });
+  copy.addEventListener("click", async () => {
+    const copiedGeneration = generation;
+    try {
+      await copyTextToClipboard(input.value, "Client secret copied");
+      if (generation === copiedGeneration && dialog.open && input.value) status.textContent = "Client secret copied. Store it in your secret manager.";
+    } catch {
+      if (generation === copiedGeneration && dialog.open && input.value) status.textContent = "Copy failed. Reveal the secret to copy it manually before choosing Done.";
+    }
+  });
+  done.addEventListener("click", () => dialog.close());
+  dialog.addEventListener("close", () => {
+    clear();
+    const target = launcher?.isConnected && !launcher.closest?.("dialog")
+      ? launcher : document.querySelector("[data-oidc-client-add]");
+    target?.focus?.({ preventScroll: true });
+    launcher = null;
+  });
+  // Native modal dialog semantics contain focus and handle Escape. A cached page
+  // must never resurrect a dismissed one-time credential on history navigation.
+  window.addEventListener("pagehide", () => {
+    clear();
+    if (dialog.open) dialog.close();
+  });
+  dialog.atlasoOidcSecret = { show };
+  if (dialog.hasAttribute("data-oidc-secret-auto-open")) show(clientId.textContent, input.value);
+  return dialog.atlasoOidcSecret;
 }
 
 function validateOidcRedirectUriField(form, fieldName, { required = false } = {}) {
@@ -12216,7 +12296,11 @@ function initializeOidcClientsTable() {
       const payload = await oidcFormRequest(url, body);
       const client = payload.client || payload;
       await refreshRow(client, recordId ? Number(recordId) : null);
-      if (payload.client_secret) setOidcSecretResult(client.client_id, payload.client_secret);
+      if (payload.client_secret) {
+        wizard.close("submit");
+        setOidcSecretResult(client.client_id, payload.client_secret);
+        return { valid: true, close: false };
+      }
       return { valid: true };
     },
   });
@@ -26527,6 +26611,7 @@ document.addEventListener("DOMContentLoaded", initializePhysicalInterfacesTable)
 document.addEventListener("DOMContentLoaded", initializeApiTokensTable);
 document.addEventListener("DOMContentLoaded", () => initializeOidcProviderSettings());
 document.addEventListener("DOMContentLoaded", initializeOidcClientsTable);
+document.addEventListener("DOMContentLoaded", initializeOidcSecretModal);
 document.addEventListener("DOMContentLoaded", initializeOidcKeysTable);
 document.addEventListener("DOMContentLoaded", initializeOidcGroupMappingsTable);
 document.addEventListener("DOMContentLoaded", initializeOidcSubjectsTable);

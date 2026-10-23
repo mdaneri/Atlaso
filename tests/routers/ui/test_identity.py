@@ -1,4 +1,7 @@
 """Test extracted identity-management UI transports."""
+import re
+from html import unescape
+
 from sqlalchemy import select
 
 from atlaso.app.database import SessionLocal
@@ -10,6 +13,57 @@ from atlaso.app.services.oidc import (
 )
 from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 from tests.test_oidc import _admin_headers, _configure_protocol_client
+
+
+def test_oidc_ui_one_time_credentials_use_masked_dialog_not_inline_banner(client):
+    """Creation and rotation return one dialog; later reads cannot retrieve secrets."""
+    login(client)
+    page = client.get("/openid-connect")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    created = client.post(
+        "/authentication/oidc/clients",
+        data={
+            "name": "Dialog regression client",
+            "redirect_uris": "https://rp.example.test/callback",
+            "allowed_scopes": "openid",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+    )
+    assert created.status_code == 200
+    with SessionLocal() as db:
+        row = db.execute(
+            select(OidcClient).where(OidcClient.name == "Dialog regression client")
+        ).scalar_one()
+        record_id = row.id
+    rotated = client.post(
+        f"/authentication/oidc/clients/{record_id}/rotate-secret",
+        data={"csrf": csrf},
+    )
+    assert rotated.status_code == 200
+    for response in (created, rotated):
+        before, dialog_and_after = response.text.split(
+            '<dialog id="oidc-client-secret-modal"', 1
+        )
+        dialog, after = dialog_and_after.split("</dialog>", 1)
+        assert "data-oidc-secret-auto-open" in dialog
+        assert 'aria-describedby="oidc-client-secret-description"' in dialog
+        assert 'type="password" readonly autocomplete="off"' in dialog
+        assert "data-oidc-secret-reveal" in dialog
+        assert "data-oidc-secret-copy" in dialog
+        assert "data-oidc-secret-close autofocus" in dialog
+        assert "<textarea" not in dialog
+        match = re.search(r'id="oidc-client-secret-value"[^>]*value="([^"]+)"', dialog)
+        assert match is not None
+        secret = unescape(match.group(1))
+        assert secret not in before + after
+        later = client.get("/openid-connect")
+        assert secret not in later.text
+        assert "data-oidc-secret-auto-open" not in later.text
+        listing = client.get("/api/v1/oidc/clients", headers=_admin_headers(client))
+        assert listing.status_code == 200
+        assert secret not in listing.text
+    assert 'id="oidc-client-secret-result" class="alert success' in created.text
 
 
 def test_identity_ui_router_owns_exact_transport_set():
