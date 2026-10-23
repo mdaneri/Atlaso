@@ -50,7 +50,7 @@ def test_physical_install_inventory_requires_empty_checksum_file() -> None:
             STATE.verify_files(files, installation_media=True)
 
 
-@pytest.mark.parametrize("state", ["pristine", "secret", "agent_directory", "ssh_key"])
+@pytest.mark.parametrize("state", ["pristine", "secret", "agent_directory", "ssh_key", "vmware_lock"])
 def test_physical_install_keeps_full_identity_and_directory_checks(tmp_path, monkeypatch, state):
     """Exercise the complete physical verifier with portable root-metadata doubles.
 
@@ -62,12 +62,13 @@ def test_physical_install_keeps_full_identity_and_directory_checks(tmp_path, mon
     staging = tmp_path / STATE.STAGING
     staging.mkdir(parents=True)
     (staging / "SHA256SUMS").write_bytes(b"")
-    (tmp_path / STATE.INITIALIZATION_LOCK).write_bytes(b"")
     environment = tmp_path / "etc/atlaso/atlaso.env"
     environment.parent.mkdir(parents=True)
     environment.write_text("".join(f"{name}=INITIALIZATION_REQUIRED\n" for name in ("ATLASO_SECRET_KEY", "ATLASO_SECRETS_KEY", "ATLASO_BOOTSTRAP_ADMIN_PASSWORD")))
     if state == "secret":
         environment.write_text(environment.read_text().replace("INITIALIZATION_REQUIRED", "fixture-initialized-value"))
+    elif state == "vmware_lock":
+        (tmp_path / STATE.INITIALIZATION_LOCK).write_bytes(b"")
     elif state == "agent_directory":
         (staging / "qemu").mkdir()
     elif state == "ssh_key":
@@ -127,7 +128,7 @@ def test_complete_template_preserves_preseeded_lock(tmp_path: Path, lock_state: 
     if lock_state != "missing":
         lock.write_bytes(b"changed" if lock_state == "changed" else b"")
         lock.chmod(0o666 if lock_state == "permissions" else 0o640)
-    if lock_state == "pristine":
+    if (installation_media and lock_state == "missing") or (not installation_media and lock_state == "pristine"):
         STATE.verify(tmp_path, installation_media=installation_media)
     else:
         with pytest.raises(SystemExit, match="initialization lock"):

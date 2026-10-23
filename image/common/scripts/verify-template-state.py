@@ -77,15 +77,20 @@ def verify(root: Path, *, installation_media: bool = False) -> None:
             )
     if list((root / "etc/ssh").glob("ssh_host_*")):
         raise SystemExit("Template contains generated SSH host identity")
-    # Provisioning pre-seeds this empty handshake to hold services until deployed
-    # customization finishes. Its presence is required, not evidence of a boot.
+    # Virtual templates require the pre-seeded empty customization handshake.
+    # Physical installations must reach tty1 without a VMware customizer.
     lock = root / INITIALIZATION_LOCK
-    if not lock.is_file() or lock.is_symlink():
-        raise SystemExit("Template initialization lock is missing or unsafe")
-    info = lock.lstat()
-    if (info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o640
-            or info.st_nlink != 1 or info.st_size != 0):
-        raise SystemExit("Template initialization lock is not pristine")
+    if installation_media:
+        # No VMware customizer is installed to release this tty1 handshake.
+        if lock.exists() or lock.is_symlink():
+            raise SystemExit("Physical installation contains a VMware initialization lock")
+    else:
+        if not lock.is_file() or lock.is_symlink():
+            raise SystemExit("Template initialization lock is missing or unsafe")
+        info = lock.lstat()
+        if (info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o640
+                or info.st_nlink != 1 or info.st_size != 0):
+            raise SystemExit("Template initialization lock is not pristine")
     staging = root / STAGING
     if not staging.is_dir() or staging.is_symlink():
         raise SystemExit("Template offline guest-tool staging is missing or unsafe")
