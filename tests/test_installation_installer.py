@@ -23,6 +23,66 @@ Args:
     return module
 
 
+@pytest.mark.parametrize("boot_failure", [False, True])
+def test_shared_provisioning_follows_native_grub_generation(monkeypatch, tmp_path, boot_failure):
+    """Retain native finalization and generate boot files before shared provisioning.
+
+    Args:
+        monkeypatch: Scoped native backend replacement.
+        tmp_path: Isolated target containing the generated boot configuration.
+        boot_failure: Whether native bootloader generation fails before provisioning.
+    """
+    module = load_installer(monkeypatch)
+    events = []
+    grub = tmp_path / "grub.cfg"
+
+    class Backend:
+        def __init__(self, **kwargs):
+            """Replace only shared provisioning with a checked ordering probe.
+
+            Args:
+                **kwargs: Native constructor settings supplied by the adapter.
+            """
+            self._provision_atlaso = self.checked_provisioning
+
+        def checked_provisioning(self):
+            assert grub.read_text() == "native generated configuration"
+            events.append("provision")
+
+        def configure(self, config):
+            """Accept the adapter configuration without target mutation.
+
+            Args:
+                config: Native installation configuration.
+            """
+
+        def _finalize_system(self):
+            events.append("native-finalize")
+
+        def _setup_grub(self):
+            events.append("native-grub")
+            if boot_failure:
+                raise RuntimeError("native bootloader failure")
+            grub.write_text("native generated configuration")
+
+        def _unsafe_install(self):
+            self._finalize_system()
+            self._setup_grub()
+            events.append("native-fstab-and-postinstall")
+
+        def _unmount_all(self):
+            events.append("cleanup")
+
+    monkeypatch.setitem(sys.modules, "installer", SimpleNamespace(Installer=Backend))
+    if boot_failure:
+        with pytest.raises(RuntimeError, match="native bootloader failure"):
+            module.install(tmp_path, {"packages": ["linux"]}, {}, {}, ("unused", "unused"))
+        assert events == ["native-finalize", "native-grub", "cleanup"]
+    else:
+        module.install(tmp_path, {"packages": ["linux"]}, {}, {}, ("unused", "unused"))
+        assert events == ["native-finalize", "native-grub", "provision", "native-fstab-and-postinstall"]
+
+
 def test_prompt_masks_secret_and_does_not_invoke_native_confirmation_lookup(monkeypatch):
     """
     Args:

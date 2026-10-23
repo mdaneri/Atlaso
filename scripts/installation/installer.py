@@ -301,8 +301,14 @@ def install(media: Path, identity: dict, config: dict, consent: dict, credential
             revalidate_disks(self.install_config, consent, disk_inventory())
             super()._partition_disks()
 
-        def _finalize_system(self):
-            super()._finalize_system()
+        def _setup_grub(self):
+            # Shared provisioning brands and validates the generated Photon GRUB
+            # configuration. Native _finalize_system runs too early for it.
+            super()._setup_grub()
+            self._provision_atlaso()
+
+        def _provision_atlaso(self):
+            """Reuse shared provisioning after native bootloader configuration exists."""
             target = Path(self.photon_root)
             target_media = target / str(media).lstrip("/")
             target_media.mkdir(parents=True, exist_ok=True)
