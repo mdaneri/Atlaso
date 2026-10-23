@@ -142,6 +142,9 @@ def test_pinned_transport_captures_and_sends_cookie_only_for_vim25_xml():
         def read(self, _size):
             return b"ok"
 
+        def close(self):
+            pass
+
     class Connection:
         def __init__(self, _target, _context):
             self.sock = Socket()
