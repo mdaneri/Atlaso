@@ -129,3 +129,4 @@ def test_offline_chroot_skips_live_host_setup_and_image_compaction() -> None:
     assert 'if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then\n  log_step "preserving and activating external service log history"' in source
     assert 'if [ -z "$ATLASO_INSTALLATION_MEDIA" ] && command -v iptables' in source
     assert 'if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then\n  zero_fill_free_space /' in source
+    assert 'if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then\n  python3 "$ATLASO_HOME/image/common/scripts/verify-template-state.py" --installation-media\nelse\n  python3 "$ATLASO_HOME/image/common/scripts/verify-template-state.py"\nfi' in source

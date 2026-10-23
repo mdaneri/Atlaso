@@ -25,12 +25,17 @@ FORBIDDEN = (
 )
 
 
-def verify_files(files: dict[str, bytes]) -> None:
+def verify_files(files: dict[str, bytes], *, installation_media: bool = False) -> None:
     """Verify exact offline RPM inventory and both unconsumed provider closures.
 
     Args:
         files: Regular file bytes relative to the trusted staging directory.
+        installation_media: Require the intentionally empty physical-install inventory.
     """
+    if installation_media:
+        if files != {"SHA256SUMS": b""}:
+            raise SystemExit("Physical installation guest-tool inventory must be empty")
+        return
     if "SHA256SUMS" not in files:
         raise SystemExit(
             "Template guest-tool checksum manifest is missing; rebuild the template"
@@ -57,11 +62,12 @@ def verify_files(files: dict[str, bytes]) -> None:
             raise SystemExit(f"Template guest-tool package changed: {name}")
 
 
-def verify(root: Path) -> None:
+def verify(root: Path, *, installation_media: bool = False) -> None:
     """Inspect a template filesystem without modifying first-boot state.
 
     Args:
         root: Template filesystem root; defaults to the provisioning guest root.
+        installation_media: Validate physical-install staging without virtual-agent payloads.
     """
     for name in FORBIDDEN:
         path = root / name
@@ -102,9 +108,9 @@ def verify(root: Path) -> None:
             raise SystemExit(
                 "Template guest-tool staging has unsafe permissions or file types"
             )
-    if directories != {"hyperv", "qemu"}:
+    if directories != (set() if installation_media else {"hyperv", "qemu"}):
         raise SystemExit("Template guest-tool staging has unexpected directories")
-    verify_files(files)
+    verify_files(files, installation_media=installation_media)
     environment = (root / "etc/atlaso/atlaso.env").read_text()
     for name in (
         "ATLASO_SECRET_KEY",
@@ -121,4 +127,6 @@ def verify(root: Path) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("/"))
-    verify(parser.parse_args().root)
+    parser.add_argument("--installation-media", action="store_true", help="Require empty physical-install guest-agent staging.")
+    args = parser.parse_args()
+    verify(args.root, installation_media=args.installation_media)

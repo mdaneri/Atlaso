@@ -1290,7 +1290,11 @@ if find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit | grep -q .
   echo "Final Photon update left reusable host identity material in the image." >&2
   exit 2
 fi
-python3 "$ATLASO_HOME/image/common/scripts/verify-template-state.py"
+if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then
+  python3 "$ATLASO_HOME/image/common/scripts/verify-template-state.py" --installation-media
+else
+  python3 "$ATLASO_HOME/image/common/scripts/verify-template-state.py"
+fi
 if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   rpm -q open-vm-tools >/dev/null
 fi
