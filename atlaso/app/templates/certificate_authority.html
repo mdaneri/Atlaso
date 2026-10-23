@@ -354,7 +354,8 @@
   <section class="hidden" data-atlaso-wizard-step="names">
     <div class="form-stack">
       <label><span class="field-label"><span>DNS SANs</span><button class="help-icon" type="button" data-help="One DNS name per line. Server certificates should include every hostname clients will use.">i</button></span><textarea name="subject_alt_names" rows="4" placeholder="vcsa.atlaso.internal"></textarea></label>
-      <label><span class="field-label"><span>IP SANs</span><button class="help-icon" type="button" data-help="Optional IP subject alternative names, one per line, for clients that connect by IP address.">i</button></span><textarea name="ip_addresses" rows="4" placeholder="192.168.50.20"></textarea></label>
+      <label><span class="field-label"><span>IP SANs</span><button class="help-icon" type="button" data-help="Optional IP subject alternative names, one per line, for clients that connect by IP address.">i</button></span><textarea name="ip_addresses" rows="4" placeholder="192.168.50.20" aria-describedby="ca-csr-ip-san-error"></textarea></label>
+      <span id="ca-csr-ip-san-error" class="muted" data-ca-ip-san-error role="status" aria-live="polite"></span>
     </div>
   </section>
   <section class="hidden" data-atlaso-wizard-step="csr">
@@ -441,7 +442,8 @@
   <section class="hidden" data-atlaso-wizard-step="names">
     <div class="form-stack">
       <label><span class="field-label"><span>DNS SANs</span><button class="help-icon" type="button" data-help="One DNS name per line. Include every hostname clients will use.">i</button></span><textarea name="subject_alt_names" rows="5"></textarea></label>
-      <label><span class="field-label"><span>IP SANs</span><button class="help-icon" type="button" data-help="Optional IP subject alternative names, one per line.">i</button></span><textarea name="ip_addresses" rows="5"></textarea></label>
+      <label><span class="field-label"><span>IP SANs</span><button class="help-icon" type="button" data-help="Optional IP subject alternative names, one per line.">i</button></span><textarea name="ip_addresses" rows="5" aria-describedby="ca-certificate-ip-san-error"></textarea></label>
+      <span id="ca-certificate-ip-san-error" class="muted" data-ca-ip-san-error role="status" aria-live="polite"></span>
     </div>
   </section>
   <section class="hidden" data-atlaso-wizard-step="enablement">
