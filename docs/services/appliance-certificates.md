@@ -10,6 +10,17 @@ status: current
 
 ## Atlaso Appliance Certificate Replacement
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso Appliance Certificate Replacement credential step in the desktop viewport.](../assets/screenshots/vcf-appliance-certificate-wizard-desktop.webp)
+
+*Figure: Choose a saved vault credential or request-local manual login before confirming target TLS identity.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 VCF Helper automates the native CSR, Atlaso issuance, and replacement path for standalone vCenter and unregistered
 standalone SRM / Protection and Recovery appliances running 8.x or later, subject to native capability checks.
 vCenter HA, linked vCenters, registered SRM, and unknown topology are blocked for coordinated vendor workflows.
@@ -294,6 +305,12 @@ the exact replacement leaf; fresh authenticated logins succeeded. SRM's automati
 reported green health. The vCenter installation response was lost after dispatch; an independent connection and
 readback established success, and the install was not repeated.
 
+The complete VCF Helper browser wizard was then exercised independently against both appliances, including the
+native permission and topology preflight, one acknowledged CSR preparation, exact final review, and one installation
+approval. Both operations completed with installation, exact served certificate, strict TLS, fresh authenticated
+login, and health verified separately. Reloaded operation links restored the recorded results without retaining
+manual passwords. Desktop and responsive captures below show these verified lab states.
+
 This development CA and lab establish functional test coverage only. They do not represent production trust or a
 production CA deployment. Unit contracts cover 8.x and 9.x behavior, but native appliance validation above covers
 9.1.1 only. The appliance certificate workflows' linked-vCenter, HA, registered-SRM, and unknown-topology exclusions
@@ -303,3 +320,32 @@ and is not implemented.
 
 Earlier SRM and vCenter installation-only observations are historical and superseded by the validated procedure and
 acceptance record above; they must not be used to infer pairing, replication, or recovery-plan acceptance.
+
+<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+## Additional verified states
+
+These captures show responsive layouts and useful operational states referenced by this page.
+
+### VCF Helper
+
+![Atlaso certificate replacement results for SRM showing five separately verified outcomes in the desktop viewport.](../assets/screenshots/vcf-appliance-certificate-srm-results-desktop.webp)
+
+*Figure: SRM 9.1.1 passed all five lab checks. Integration workflows remain untested.*
+
+![Atlaso certificate replacement results for SRM showing five separately verified outcomes in the responsive viewport.](../assets/screenshots/vcf-appliance-certificate-srm-results-responsive.webp)
+
+*Figure: SRM 9.1.1 passed all five lab checks. Integration workflows remain untested.*
+
+![Atlaso certificate replacement results for vCenter showing five separately verified outcomes in the desktop viewport.](../assets/screenshots/vcf-appliance-certificate-vcenter-results-desktop.webp)
+
+*Figure: vCenter 9.1.1 passed all five lab checks. Integration workflows remain untested.*
+
+![Atlaso certificate replacement results for vCenter showing five separately verified outcomes in the responsive viewport.](../assets/screenshots/vcf-appliance-certificate-vcenter-results-responsive.webp)
+
+*Figure: vCenter 9.1.1 passed all five lab checks. Integration workflows remain untested.*
+
+![Atlaso Appliance Certificate Replacement credential step in the responsive viewport.](../assets/screenshots/vcf-appliance-certificate-wizard-responsive.webp)
+
+*Figure: Choose a saved vault credential or request-local manual login before confirming target TLS identity.*
+
+<!-- END GENERATED ADDITIONAL SCREENSHOTS -->

@@ -21,6 +21,20 @@ CANONICAL_BROWSER_ROOTS = {
 CAPTURE_OVERRIDES = {
     **{
         stem: {
+            "source_commit": "20f4cbf5c1d72f2b51923b8f222b9a28dcc50465",
+            "atlaso_version": "0.9.454",
+            "capture_method": "playwright-edge",
+        }
+        for stem in (
+            "vcf-helper-tabs-deployment-desktop", "vcf-helper-tabs-certificates-desktop",
+            "vcf-helper-tabs-certificates-responsive", "vcf-appliance-certificate-wizard-desktop",
+            "vcf-appliance-certificate-wizard-responsive", "vcf-appliance-certificate-srm-results-desktop",
+            "vcf-appliance-certificate-srm-results-responsive", "vcf-appliance-certificate-vcenter-results-desktop",
+            "vcf-appliance-certificate-vcenter-results-responsive",
+        )
+    },
+    **{
+        stem: {
             "source_commit": "d211a99b2fdbbef3e1f2322f3ba3921b42dd3fc5+working-tree",
             "atlaso_version": "0.9.441",
             "capture_method": "codex-in-app-browser",
@@ -328,6 +342,7 @@ DOCUMENTATION_PAGES = {
     ),
     "services/vcf-backups.md": ("vcf-backups-",),
     "services/vcf-helper.md": ("vcf-helper-",),
+    "services/appliance-certificates.md": ("vcf-appliance-certificate-",),
     "services/vaults.md": ("vaults-",),
     "services/vcf-offline-depot.md": ("vcf-depot-browser-", "vcf-offline-depot-"),
     "services/vcf-private-registry.md": ("vcf-private-registry-",),
@@ -373,6 +388,31 @@ ROUTES = {
 }
 
 SPECIAL = {
+    **{
+        f"vcf-helper-tabs-{tab}-{viewport}": (
+            "/ui/management/vcf-helper", "functional-tabs",
+            f"The {tab.title()} tab groups related helpers on the dedicated lab appliance.",
+            f"Atlaso VCF Helper {tab.title()} tab in the {viewport} viewport.",
+        )
+        for tab, viewport in (("deployment", "desktop"), ("certificates", "desktop"), ("certificates", "responsive"))
+    },
+    **{
+        f"vcf-appliance-certificate-wizard-{viewport}": (
+            "/ui/management/vcf-helper", "credential-choice",
+            "Choose a saved vault credential or request-local manual login before confirming target TLS identity.",
+            f"Atlaso Appliance Certificate Replacement credential step in the {viewport} viewport.",
+        )
+        for viewport in ("desktop", "responsive")
+    },
+    **{
+        f"vcf-appliance-certificate-{product}-results-{viewport}": (
+            "/ui/management/vcf-helper", "native-lab-verified-results",
+            f"{title} 9.1.1 passed all five lab checks. Integration workflows remain untested.",
+            f"Atlaso certificate replacement results for {title} showing five separately verified outcomes in the {viewport} viewport.",
+        )
+        for product, title in (("srm", "SRM"), ("vcenter", "vCenter"))
+        for viewport in ("desktop", "responsive")
+    },
     **{
         f"kmip-recovery-{viewport}": (
             "/ui/management/backup-restore", "recovery-maintenance",

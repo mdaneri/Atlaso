@@ -11,6 +11,17 @@ status: current
 VCF Helper prepares deployment DNS desired state. It is available under `VCF Workflows` at
 `/ui/management/vcf-helper`.
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso VCF Helper Deployment tab in the desktop viewport.](../assets/screenshots/vcf-helper-tabs-deployment-desktop.webp)
+
+*Figure: The Deployment tab groups related helpers on the dedicated lab appliance.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 ## Choose a helper
 
 Use the tabs inside **VCF Helper** to choose a workflow:
@@ -47,17 +58,6 @@ If a task outcome is uncertain, use **Reconcile status** and follow the displaye
 reservation remains held while remote state is unresolved. Do not create another CSR or repeat an uncertain install.
 For certificate requirements and the verified 9.1 lab coverage, see
 [Appliance Certificates](appliance-certificates.md).
-
-<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
-## Interface overview
-
-This verified appliance view provides visual orientation before you begin.
-
-![Atlaso VCF Helper page in the clean-appliance desktop viewport.](../assets/screenshots/vcf-helper-clean-desktop.webp)
-
-*Figure: VCF Helper in the verified clean-appliance desktop state.*
-
-<!-- END GENERATED INTERFACE OVERVIEW -->
 
 ## Lab / Non-production Overrides
 
@@ -512,8 +512,12 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### VCF Helper
 
-![Atlaso VCF Helper page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-helper-clean-responsive.webp)
+![Atlaso VCF Helper Certificates tab in the desktop viewport.](../assets/screenshots/vcf-helper-tabs-certificates-desktop.webp)
 
-*Figure: VCF Helper in the verified clean-appliance responsive state.*
+*Figure: The Certificates tab groups related helpers on the dedicated lab appliance.*
+
+![Atlaso VCF Helper Certificates tab in the responsive viewport.](../assets/screenshots/vcf-helper-tabs-certificates-responsive.webp)
+
+*Figure: The Certificates tab groups related helpers on the dedicated lab appliance.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

@@ -1083,7 +1083,9 @@ def _issue(db: Session, row: Setting, state: dict[str, Any]) -> None:
         ),
         issuer=x509.load_pem_x509_certificate(root.encode()).subject.rfc4514_string(),
         trust_changes=[
-            "Install the reviewed Atlaso root chain in the appliance trust store."
+            "Ensure the reviewed root chain is in vCenter's trusted root store before replacing Machine SSL."
+            if state["product"] == "vcenter"
+            else "Install the reviewed server certificate and issuer chain. Client and peer trust must be configured separately."
         ],
         state="prepared",
         checkpoint="certificate_prepared",
