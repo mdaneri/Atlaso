@@ -14,7 +14,12 @@ from scripts.installation.manifest import MANIFEST
 
 
 def _source(tmp_path: Path, package_line: str | None = None) -> Path:
-    """Create a source-shaped fixture with the shared install package command."""
+    """Create a source-shaped fixture with the shared install package command.
+
+Args:
+    tmp_path: Temporary directory for this test's filesystem fixtures.
+    package_line: Shared package-install command included in the fixture.
+"""
     source = tmp_path / "source"
     script = source / "image/common/scripts/provision-atlaso.sh"
     script.parent.mkdir(parents=True)
@@ -26,7 +31,12 @@ def _source(tmp_path: Path, package_line: str | None = None) -> Path:
 
 
 def _archive(path: Path, entries: list[tuple[str, bytes, str]]) -> None:
-    """Write a gzip tar archive with ordinary files or selected special entries."""
+    """Write a gzip tar archive with ordinary files or selected special entries.
+
+Args:
+    path: Path to the fixture or file being tested.
+    entries: Archive entries to place in the fixture.
+"""
     with path.open("wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed:
         with tarfile.open(fileobj=compressed, mode="w|", format=tarfile.PAX_FORMAT) as stream:
             for name, content, kind in entries:
@@ -41,6 +51,10 @@ def _archive(path: Path, entries: list[tuple[str, bytes, str]]) -> None:
 
 
 def test_package_selection_reuses_shared_packages_and_adds_offline_boot_assets(tmp_path: Path) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     source = _source(tmp_path)
 
     packages = build.package_selection(source)
@@ -61,11 +75,20 @@ def test_package_selection_reuses_shared_packages_and_adds_offline_boot_assets(t
     ids=["ambiguous-command", "shell-separator", "command-substitution", "empty-package-list"],
 )
 def test_package_selection_rejects_ambiguous_or_nonliteral_shared_packages(tmp_path: Path, text: str) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        text: Source text supplied to the package-selection parser.
+    """
     with pytest.raises(ValueError, match="ambiguous|invalid"):
         build.package_selection(_source(tmp_path, text))
 
 
 def test_pack_and_unpack_inputs_roundtrip_manifest_and_payload(tmp_path: Path) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     payload = tmp_path / "payload"
     payload.mkdir()
     (payload / MANIFEST).write_text('{"schema":1}\n', encoding="utf-8")
@@ -98,6 +121,11 @@ def test_pack_and_unpack_inputs_roundtrip_manifest_and_payload(tmp_path: Path) -
 def test_unpack_inputs_rejects_unsafe_archive_before_creating_destination(
     tmp_path: Path, entries: list[tuple[str, bytes, str]]
 ) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        entries: Archive entries to place in the fixture.
+    """
     archive = tmp_path / "bad.tar.gz"
     destination = tmp_path / "must-not-exist"
     _archive(archive, entries)
@@ -111,6 +139,11 @@ def test_unpack_inputs_rejects_unsafe_archive_before_creating_destination(
 def test_unpack_inputs_rejects_expansion_bound_before_creating_destination(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     archive = tmp_path / "large.tar.gz"
     _archive(archive, [("large", b"x", "file")])
     destination = tmp_path / "must-not-exist"
@@ -128,6 +161,10 @@ def test_unpack_inputs_rejects_expansion_bound_before_creating_destination(
             return self
 
         def __exit__(self, *_args: object) -> None:
+            """
+            Args:
+                *_args: Additional positional arguments supplied to the test double.
+            """
             return None
 
         def __iter__(self):
@@ -144,6 +181,11 @@ def test_unpack_inputs_rejects_expansion_bound_before_creating_destination(
 def test_unpack_inputs_rejects_capacity_and_destination_collisions_preflight(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     archive = tmp_path / "candidate.tar.gz"
     _archive(archive, [("one", b"payload", "file")])
     destination = tmp_path / "capacity-denied"
@@ -160,6 +202,10 @@ def test_unpack_inputs_rejects_capacity_and_destination_collisions_preflight(
 
 
 def test_pack_inputs_rejects_existing_output_without_replacing_it(tmp_path: Path) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     payload = tmp_path / "payload"
     payload.mkdir()
     (payload / MANIFEST).write_text("{}", encoding="utf-8")
@@ -175,12 +221,22 @@ def test_pack_inputs_rejects_existing_output_without_replacing_it(tmp_path: Path
 def test_capture_packages_uses_current_closure_without_install_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     repository = _source(tmp_path)
     output = tmp_path / "rpms"
     commands: list[list[str]] = []
     packages = build.package_selection(repository)
 
     def run(command: list[str], *, check: bool) -> None:
+        """
+        Args:
+            command: Subprocess argument vector received by the test double.
+            check: Whether the caller requested subprocess failure checking.
+        """
         assert check is True
         commands.append(command)
         if "--downloadonly" in command:
@@ -201,6 +257,10 @@ def test_capture_packages_uses_current_closure_without_install_target(
 
 
 def _rpm_repository(tmp_path: Path) -> tuple[Path, Path]:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     rpms = tmp_path / "rpms"
     scratch = tmp_path / "scratch"
     rpms.mkdir()
@@ -212,9 +272,19 @@ def _rpm_repository(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def _mock_createrepo(monkeypatch: pytest.MonkeyPatch, *, metadata: bytes = b"fresh metadata") -> list[list[str]]:
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        metadata: Generated repository metadata emitted by the test double.
+    """
     calls: list[list[str]] = []
 
     def run(command: list[str], *, check: bool) -> None:
+        """
+        Args:
+            command: Subprocess argument vector received by the test double.
+            check: Whether the caller requested subprocess failure checking.
+        """
         assert check is True
         calls.append(command)
         output = Path(command[command.index("--outputdir") + 1])
@@ -230,6 +300,11 @@ def _mock_createrepo(monkeypatch: pytest.MonkeyPatch, *, metadata: bytes = b"fre
 def test_rebuild_repository_replaces_candidate_metadata_and_keeps_rpmdb(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     rpms, scratch = _rpm_repository(tmp_path)
     old = rpms / "repodata"
     old.mkdir()
@@ -248,6 +323,11 @@ def test_rebuild_repository_replaces_candidate_metadata_and_keeps_rpmdb(
 
 
 def test_rebuild_repository_accepts_missing_old_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     rpms, scratch = _rpm_repository(tmp_path)
     calls = _mock_createrepo(monkeypatch)
 
@@ -261,11 +341,21 @@ def test_rebuild_repository_accepts_missing_old_metadata(tmp_path: Path, monkeyp
 def test_rebuild_repository_rejects_extra_createrepo_output_entries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     rpms, scratch = _rpm_repository(tmp_path)
     calls = _mock_createrepo(monkeypatch)
     original_run = build.subprocess.run
 
     def run_with_extra_entry(command: list[str], *, check: bool) -> None:
+        """
+        Args:
+            command: Subprocess argument vector received by the test double.
+            check: Whether the caller requested subprocess failure checking.
+        """
         original_run(command, check=check)
         (Path(command[command.index("--outputdir") + 1]) / "unexpected.txt").write_bytes(b"extra")
 
@@ -282,6 +372,12 @@ def test_rebuild_repository_rejects_extra_createrepo_output_entries(
 def test_rebuild_repository_rejects_scratch_collisions_before_moving_old_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, collision: str
 ) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        collision: Filesystem entry that should collide with the rebuild operation.
+    """
     rpms, scratch = _rpm_repository(tmp_path)
     old = rpms / "repodata"
     old.mkdir()
@@ -299,6 +395,11 @@ def test_rebuild_repository_rejects_scratch_collisions_before_moving_old_metadat
 def test_rebuild_repository_rejects_non_directory_repodata_without_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     rpms, scratch = _rpm_repository(tmp_path)
     old = rpms / "repodata"
     old.write_bytes(b"ambiguous metadata")
@@ -313,12 +414,22 @@ def test_rebuild_repository_rejects_non_directory_repodata_without_mutation(
 def test_rebuild_repository_preserves_untrusted_metadata_if_generation_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     rpms, scratch = _rpm_repository(tmp_path)
     old = rpms / "repodata"
     old.mkdir()
     (old / "repomd.xml").write_bytes(b"old metadata")
 
     def fail(*_args: object, **_kwargs: object) -> None:
+        """
+        Args:
+            *_args: Additional positional arguments supplied to the test double.
+            **_kwargs: Additional keyword arguments supplied to the test double.
+        """
         raise build.subprocess.CalledProcessError(1, "createrepo_c")
 
     monkeypatch.setattr(build.subprocess, "run", fail)
@@ -333,6 +444,11 @@ def test_rebuild_repository_preserves_untrusted_metadata_if_generation_fails(
 def test_rebuild_repository_rejects_symlinked_input_before_moving_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     rpms, scratch = _rpm_repository(tmp_path)
     old = rpms / "repodata"
     old.mkdir()

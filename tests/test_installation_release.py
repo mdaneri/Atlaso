@@ -18,6 +18,10 @@ def _workflow():
 
 
 def _admission_code(marker: str) -> str:
+    """
+    Args:
+        marker: Marker used by this test case.
+    """
     steps = _workflow()["jobs"]["finalize"]["steps"]
     shell = next(step["run"] for step in steps if step.get("id") == "admission")
     snippets = re.findall(r"^\s*python -[^\n]*<<'PY'\n(.*?)^PY$", shell, re.MULTILINE | re.DOTALL)
@@ -26,6 +30,13 @@ def _admission_code(marker: str) -> str:
 
 @pytest.mark.parametrize("sha,tag", [("short", "installation-v0.9.454-rc.1"), ("a" * 40, "v0.9.454"), ("a" * 40, "installation-v0.9.454-rc.0")])
 def test_release_identity_rejects_nonexact_or_noninstallation_tags(monkeypatch, tmp_path, sha, tag):
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        sha: Payload checksum supplied to the release identity case.
+        tag: Release tag supplied to the admission case.
+    """
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["-", sha, tag])
     with pytest.raises(SystemExit):
@@ -35,6 +46,12 @@ def test_release_identity_rejects_nonexact_or_noninstallation_tags(monkeypatch, 
 
 @pytest.mark.parametrize("assets", [[], [{"name": "installation-artifact-index.json.sig", "size": 20}], [{"name": "unrelated.iso", "size": 20}], [{"name": "installation-inputs.tar.gz", "size": 19 * 1024**3}], [{"name": "installation-inputs.tar.gz", "size": 20}] * 2])
 def test_unsigned_admission_rejects_partial_colliding_or_oversized_assets(monkeypatch, tmp_path, assets):
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        assets: Asset inventory supplied to the release admission case.
+    """
     code = _admission_code("candidate draft is incomplete")
     monkeypatch.chdir(tmp_path)
     (tmp_path / "candidate-release.json").write_text(json.dumps({"assets": assets}))
@@ -43,6 +60,11 @@ def test_unsigned_admission_rejects_partial_colliding_or_oversized_assets(monkey
 
 
 def test_publication_requires_the_exact_signed_asset_set(monkeypatch, tmp_path):
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     code = _admission_code("candidate contains extra")
     monkeypatch.chdir(tmp_path)
     (tmp_path / "final").mkdir()
@@ -78,6 +100,12 @@ def test_signing_staging_and_publication_use_separate_protected_gates():
 
 @pytest.mark.parametrize("mutation", [None, "missing", "extra", "digest"])
 def test_publication_revalidates_fresh_assets_before_exposing_release(monkeypatch, tmp_path, mutation):
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        mutation: Callback that changes one signed fixture input.
+    """
     steps = _workflow()["jobs"]["finalize"]["steps"]
     publication = next(step for step in steps if step.get("name") == "Publish maintainer-validated exact ISO")
     shell = publication["run"]

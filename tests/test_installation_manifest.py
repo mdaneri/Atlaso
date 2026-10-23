@@ -17,7 +17,12 @@ from scripts.verify_installation_iso import verify_release
 
 @pytest.fixture
 def signed_media(tmp_path, monkeypatch):
-    """Create synthetic signed content without an operational signing secret."""
+    """Create synthetic signed content without an operational signing secret.
+
+Args:
+    tmp_path: Temporary directory for this test's filesystem fixtures.
+    monkeypatch: Pytest fixture for replacing controlled dependencies.
+"""
     openssl = shutil.which("openssl")
     if openssl is None:
         bundled = Path("C:/Program Files/Git/usr/bin/openssl.exe")
@@ -28,6 +33,11 @@ def signed_media(tmp_path, monkeypatch):
     original_run = subprocess.run
 
     def run(command, **kwargs):
+        """
+        Args:
+            command: Subprocess argument vector received by the test double.
+            **kwargs: Additional subprocess options received by the test double.
+        """
         return original_run([openssl, *command[1:]], **kwargs)
 
     monkeypatch.setattr(manifest.subprocess, "run", run)
@@ -61,6 +71,10 @@ def signed_media(tmp_path, monkeypatch):
 
 
 def test_complete_media_is_verified_with_openssl(signed_media):
+    """
+    Args:
+        signed_media: Synthetic signed media fixture used by the test.
+    """
     root, trust, scratch, value, _ = signed_media
     assert manifest.verify_media(root, trust, scratch=scratch) == value
     assert not list(scratch.iterdir())
@@ -68,6 +82,11 @@ def test_complete_media_is_verified_with_openssl(signed_media):
 
 @pytest.mark.parametrize("mutation", ["file", "extra", "signature", "manifest", "trust"])
 def test_changed_media_is_rejected(signed_media, mutation):
+    """
+    Args:
+        signed_media: Synthetic signed media fixture used by the test.
+        mutation: Callback that changes one signed fixture input.
+    """
     root, trust, scratch, _, _ = signed_media
     if mutation == "file":
         (root / "rpms/linux-fixture.rpm").write_bytes(b"different bytes")
@@ -88,6 +107,12 @@ def test_changed_media_is_rejected(signed_media, mutation):
 
 @pytest.mark.parametrize("field,value", [("architecture", "aarch64"), ("schema", 2), ("packages", ["linux;echo injected"]), ("packages", [["linux"]]), ("photon_installer", "2.3"), ("rpm_inventory", []), ("source_commit", "b" * 40)])
 def test_even_signed_incompatible_metadata_is_rejected(signed_media, field, value):
+    """
+    Args:
+        signed_media: Synthetic signed media fixture used by the test.
+        field: Manifest field modified by the parameterized case.
+        value: Value supplied to the test case.
+    """
     root, trust, scratch, document, key = signed_media
     document[field] = value
     write_signed(root / manifest.MANIFEST, document, key)
@@ -96,6 +121,10 @@ def test_even_signed_incompatible_metadata_is_rejected(signed_media, field, valu
 
 
 def test_release_verification_binds_parts_to_version_and_commit(signed_media):
+    """
+    Args:
+        signed_media: Synthetic signed media fixture used by the test.
+    """
     root, trust, scratch, _, key = signed_media
     iso = root / "atlaso.iso"
     iso.write_bytes(b"synthetic ISO bytes")
@@ -118,6 +147,10 @@ def test_release_verification_binds_parts_to_version_and_commit(signed_media):
 
 
 def test_signed_rpm_inventory_must_match_every_rpm(signed_media):
+    """
+    Args:
+        signed_media: Synthetic signed media fixture used by the test.
+    """
     root, trust, scratch, value, key = signed_media
     value["rpm_inventory"][0]["sha256"] = "0" * 64
     write_signed(root / manifest.MANIFEST, value, key)

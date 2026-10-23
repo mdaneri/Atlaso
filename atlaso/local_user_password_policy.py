@@ -16,12 +16,12 @@ def validate_password(password: str, username: str, policy: dict[str, bool | int
     """Validate password.
 
     Args:
-        password: Password supplied for the immediate authenticated operation.
-        username: Account name used for authentication or lookup.
-        policy: Policy values to validate or enforce.
+        password: Candidate password whose contents are checked against the policy.
+        username: Account name that must not appear in the password when prohibited.
+        policy: Minimum-length and character-class requirements to enforce.
 
     Returns:
-        The validate password result.
+        Human-readable policy violations; an empty list means the password is acceptable.
     """
     errors: list[str] = []
     min_length = int(policy.get("min_length") or DEFAULT_PASSWORD_POLICY["min_length"])

@@ -17,6 +17,13 @@ from scripts.installation import iso as installation_iso
 
 
 def _cpio_entry(name: str, data: bytes, mode: int, ino: int) -> bytes:
+    """
+    Args:
+        name: Archive member name supplied to the fixture helper.
+        data: Input bytes whose checksum is calculated.
+        mode: File mode assigned to the synthetic archive entry.
+        ino: Synthetic archive inode number.
+    """
     encoded_name = name.encode("utf-8") + b"\x00"
     fields = (ino, mode, 0, 0, 1, 0, len(data), 0, 0, 0, 0, len(encoded_name), 0)
     result = bytearray(b"070701" + b"".join(f"{value:08x}".encode("ascii") for value in fields))
@@ -28,6 +35,10 @@ def _cpio_entry(name: str, data: bytes, mode: int, ino: int) -> bytes:
 
 
 def _initrd(*, unshare: bool = True) -> tuple[bytes, bytes]:
+    """
+    Args:
+        unshare: Whether the required unshare utility is available to the case.
+    """
     photon_installer = b"pinned Photon installer 2.2"
     entries = [
         ("usr", b"", stat.S_IFDIR | 0o755),
@@ -50,10 +61,22 @@ def _initrd(*, unshare: bool = True) -> tuple[bytes, bytes]:
 
 
 def _add_iso_file(iso: pycdlib.PyCdlib, path: str, name: str, data: bytes) -> None:
+    """
+    Args:
+        iso: ISO fixture being inspected or modified.
+        path: Path to the fixture or file being tested.
+        name: Archive member name supplied to the fixture helper.
+        data: Input bytes whose checksum is calculated.
+    """
     iso.add_fp(io.BytesIO(data), len(data), iso_path=path, rr_name=name)
 
 
 def _source_iso(path: Path, *, unshare: bool = True) -> tuple[str, bytes]:
+    """
+    Args:
+        path: Path to the fixture or file being tested.
+        unshare: Whether the required unshare utility is available to the case.
+    """
     initrd, photon_installer = _initrd(unshare=unshare)
     image = pycdlib.PyCdlib()
     image.new(interchange_level=3, rock_ridge="1.09", vol_ident="PHOTON")
@@ -77,6 +100,10 @@ def _source_iso(path: Path, *, unshare: bool = True) -> tuple[str, bytes]:
 
 
 def _payload(root: Path) -> None:
+    """
+    Args:
+        root: Root directory containing the fixture payload.
+    """
     (root / "source/scripts/installation").mkdir(parents=True)
     (root / "payload-manifest.json").write_bytes(b"{}\n")
     (root / "payload-manifest.json.sig").write_bytes(b"signature\n")
@@ -86,12 +113,23 @@ def _payload(root: Path) -> None:
 
 
 def _extract(iso: pycdlib.PyCdlib, *, rr_path: str) -> bytes:
+    """
+    Args:
+        iso: ISO fixture being inspected or modified.
+        rr_path: Rock Ridge path to extract from the ISO fixture.
+    """
     result = io.BytesIO()
     iso.get_file_from_iso_fp(result, rr_path=rr_path)
     return result.getvalue()
 
 
 def _prepared_inputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, unshare: bool = True):
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        unshare: Whether the required unshare utility is available to the case.
+    """
     source = tmp_path / "photon.iso"
     source_hash, photon_installer = _source_iso(source, unshare=unshare)
     monkeypatch.setattr(installation_iso, "SOURCE_ISO_SHA512", source_hash)
@@ -107,6 +145,11 @@ def _prepared_inputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, unshare
 def test_remaster_preserves_efi_boot_and_embeds_interactive_offline_installer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     source, payload, trust = _prepared_inputs(tmp_path, monkeypatch)
     output = tmp_path / "atlaso.iso"
 
@@ -144,6 +187,11 @@ def test_remaster_preserves_efi_boot_and_embeds_interactive_offline_installer(
 
 
 def test_rejects_unpinned_source_before_creating_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     source, payload, trust = _prepared_inputs(tmp_path, monkeypatch)
     monkeypatch.setattr(installation_iso, "SOURCE_ISO_SHA512", "0" * 128)
     output = tmp_path / "atlaso.iso"
@@ -155,6 +203,11 @@ def test_rejects_unpinned_source_before_creating_output(tmp_path: Path, monkeypa
 
 
 def test_rejects_photon_installer_version_mismatch_before_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     source, payload, trust = _prepared_inputs(tmp_path, monkeypatch)
     monkeypatch.setattr(installation_iso, "PHOTON_INSTALLER_SHA256", "0" * 64)
     output = tmp_path / "atlaso.iso"
@@ -166,6 +219,11 @@ def test_rejects_photon_installer_version_mismatch_before_output(tmp_path: Path,
 
 
 def test_requires_unshare_in_initrd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     source, payload, trust = _prepared_inputs(tmp_path, monkeypatch, unshare=False)
     output = tmp_path / "atlaso.iso"
 
@@ -176,6 +234,11 @@ def test_requires_unshare_in_initrd(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
 
 def test_rejects_existing_output_without_replacing_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     source, payload, trust = _prepared_inputs(tmp_path, monkeypatch)
     output = tmp_path / "atlaso.iso"
     output.write_bytes(b"keep")
@@ -189,6 +252,11 @@ def test_rejects_existing_output_without_replacing_it(tmp_path: Path, monkeypatc
 def test_rejects_insufficient_capacity_before_opening_inputs_or_spooling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     source, payload, trust = _prepared_inputs(tmp_path, monkeypatch)
     output = tmp_path / "atlaso.iso"
 
@@ -212,6 +280,11 @@ def test_rejects_insufficient_capacity_before_opening_inputs_or_spooling(
 
 
 def test_rejects_payload_hardlinks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     source, payload, trust = _prepared_inputs(tmp_path, monkeypatch)
     alias = payload / "payload-alias"
     os.link(payload / "payload-manifest.json", alias)
@@ -221,6 +294,11 @@ def test_rejects_payload_hardlinks(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
 
 def test_rejects_output_inside_payload_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     source, payload, trust = _prepared_inputs(tmp_path, monkeypatch)
     output = payload / "atlaso.iso"
 
@@ -231,6 +309,11 @@ def test_rejects_output_inside_payload_root(tmp_path: Path, monkeypatch: pytest.
 
 
 def test_rejects_short_iso_name_collisions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     source, payload, trust = _prepared_inputs(tmp_path, monkeypatch)
     monkeypatch.setattr(installation_iso, "_iso_component", lambda _relative: "AAAAAAAA")
     output = tmp_path / "atlaso.iso"
@@ -244,6 +327,11 @@ def test_rejects_short_iso_name_collisions(tmp_path: Path, monkeypatch: pytest.M
 def test_payload_remaster_scales_to_many_files_with_bounded_open_handles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     source, payload, trust = _prepared_inputs(tmp_path, monkeypatch)
     expected = {}
     for index in range(1205):
@@ -259,6 +347,11 @@ def test_payload_remaster_scales_to_many_files_with_bounded_open_handles(
     max_live_streams = 0
 
     def tracked_open(*args, **kwargs):
+        """
+        Args:
+            *args: Args used by this test case.
+            **kwargs: Additional subprocess options received by the test double.
+        """
         nonlocal max_live_streams
         item = original_open(*args, **kwargs)
         opened_streams.append(item.stream)

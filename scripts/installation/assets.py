@@ -16,6 +16,10 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _safe_name(value: object) -> str:
+    """Validate a release asset basename for cross-platform use.
+
+    Args:
+        value: Value to validate or serialize."""
     if (
         not isinstance(value, str)
         or not value
@@ -36,12 +40,21 @@ def _safe_name(value: object) -> str:
 
 
 def _is_reparse_point(path: Path, info: os.stat_result) -> bool:
+    """Check whether a path is a symbolic link or reparse point.
+
+    Args:
+        path: Filesystem path to the input or target.
+        info: Stat metadata used to identify the filesystem object."""
     attributes = getattr(info, "st_file_attributes", 0)
     reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
     return path.is_symlink() or bool(attributes & reparse_flag)
 
 
 def _check_path_chain(path: Path) -> Path:
+    """Validate that every path ancestor is an ordinary directory.
+
+    Args:
+        path: Filesystem path to the input or target."""
     absolute = Path(os.path.abspath(path))
     chain = list(reversed((absolute, *absolute.parents)))
     for item in chain:
@@ -57,6 +70,10 @@ def _check_path_chain(path: Path) -> Path:
 
 
 def _open_regular(path: Path) -> tuple[BinaryIO, os.stat_result]:
+    """Open an ordinary single-link file without following links.
+
+    Args:
+        path: Filesystem path to the input or target."""
     absolute = _check_path_chain(path)
     info = absolute.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
@@ -73,10 +90,18 @@ def _open_regular(path: Path) -> tuple[BinaryIO, os.stat_result]:
 
 def _identity(info: os.stat_result) -> tuple[int, int, int, int]:
     # Windows updates ctime when an open handle changes metadata precision.
+    """Return stable filesystem identity fields for change detection.
+
+    Args:
+        info: Stat metadata used to identify the filesystem object."""
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
 
 
 def _digest_stream(stream: BinaryIO) -> tuple[int, str]:
+    """Calculate the byte count and SHA-256 digest of a stream.
+
+    Args:
+        stream: Open binary stream to read or hash."""
     digest = hashlib.sha256()
     size = 0
     while chunk := stream.read(_CHUNK_BYTES):
@@ -86,6 +111,10 @@ def _digest_stream(stream: BinaryIO) -> tuple[int, str]:
 
 
 def _file_metadata(path: Path) -> tuple[os.stat_result, int, str]:
+    """Read a stable file identity, size, and SHA-256 digest.
+
+    Args:
+        path: Filesystem path to the input or target."""
     with _open_regular(path)[0] as stream:
         before = os.fstat(stream.fileno())
         size, digest = _digest_stream(stream)
@@ -96,6 +125,10 @@ def _file_metadata(path: Path) -> tuple[os.stat_result, int, str]:
 
 
 def _exclusive_output(path: Path) -> tuple[BinaryIO, tuple[int, int]]:
+    """Create an output file exclusively and return its identity.
+
+    Args:
+        path: Filesystem path to the input or target."""
     absolute = _check_path_chain(path.parent) / path.name
     _safe_name(path.name)
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
@@ -106,6 +139,11 @@ def _exclusive_output(path: Path) -> tuple[BinaryIO, tuple[int, int]]:
 
 
 def _remove_owned(path: Path, identity: tuple[int, int]) -> None:
+    """Remove a partially created asset only if its identity still matches.
+
+    Args:
+        path: Filesystem path to the input or target.
+        identity: Recorded device and inode identity used to confirm ownership."""
     try:
         info = path.lstat()
         if (info.st_dev, info.st_ino) == identity and stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
@@ -115,6 +153,10 @@ def _remove_owned(path: Path, identity: tuple[int, int]) -> None:
 
 
 def _validate_manifest(manifest: object) -> tuple[str, int, str, list[dict[str, object]]]:
+    """Validate the signed asset manifest and return normalized entries.
+
+    Args:
+        manifest: Asset manifest or candidate metadata to validate."""
     if not isinstance(manifest, dict) or set(manifest) != {"schema", "iso", "assets"}:
         raise ValueError("manifest must contain exactly schema, iso, and assets")
     if type(manifest["schema"]) is not int or manifest["schema"] != 1:
@@ -165,7 +207,12 @@ def _validate_manifest(manifest: object) -> tuple[str, int, str, list[dict[str, 
 
 
 def split_iso(source: Path, destination: Path, *, part_bytes: int = MAX_PART_BYTES) -> dict[str, object]:
-    """Copy an ISO into a single safe asset or ordered checksum-verified parts."""
+    """Copy an ISO into a single safe asset or ordered checksum-verified parts.
+
+    Args:
+        source: Input source file or directory.
+        destination: Existing directory that receives the generated files.
+        part_bytes: Maximum byte count for each output asset part."""
     if type(part_bytes) is not int or not 1 <= part_bytes <= MAX_PART_BYTES:
         raise ValueError(f"part_bytes must be between 1 and {MAX_PART_BYTES}")
     source_path = Path(source)
@@ -234,6 +281,11 @@ def split_iso(source: Path, destination: Path, *, part_bytes: int = MAX_PART_BYT
 
 
 def _verify_asset(path: Path, entry: dict[str, object]) -> os.stat_result:
+    """Verify an asset against its signed size and checksum.
+
+    Args:
+        path: Filesystem path to the input or target.
+        entry: Manifest entry describing the expected asset."""
     info, size, digest = _file_metadata(path)
     if size != entry["size"] or digest != entry["sha256"]:
         raise ValueError(f"asset checksum or size mismatch: {path.name}")
@@ -241,7 +293,12 @@ def _verify_asset(path: Path, entry: dict[str, object]) -> os.stat_result:
 
 
 def verify_and_reassemble(manifest: dict, asset_root: Path, output: Path) -> None:
-    """Verify every declared asset, then exclusively create the reconstructed ISO."""
+    """Verify every declared asset, then exclusively create the reconstructed ISO.
+
+    Args:
+        manifest: Asset manifest or candidate metadata to validate.
+        asset_root: Directory containing the assets listed in the manifest.
+        output: Destination path for the generated output."""
     _, expected_size, expected_digest, assets = _validate_manifest(manifest)
     root = _check_path_chain(Path(asset_root))
     if not stat.S_ISDIR(root.lstat().st_mode):

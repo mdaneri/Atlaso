@@ -16,7 +16,16 @@ def _device(
     mountpoints: list[str | None] | None = None,
     children: list[dict] | None = None,
 ) -> dict:
-    """Build one lsblk-compatible device record."""
+    """Build one lsblk-compatible device record.
+
+Args:
+    path: Path to the fixture or file being tested.
+    size: Disk capacity recorded in the inventory fixture.
+    device_type: Block-device type recorded in the inventory fixture.
+    read_only: Whether the fixture device is marked read-only.
+    mountpoints: Mount points reported for the fixture device.
+    children: Child block devices reported by the fixture.
+"""
     return {
         "path": path,
         "type": device_type,
@@ -46,7 +55,12 @@ def _config() -> dict:
 
 
 def _identity(path: str, *, serial: str | None = None) -> dict:
-    """Build the exact identity projection captured from eligible inventory."""
+    """Build the exact identity projection captured from eligible inventory.
+
+Args:
+    path: Path to the fixture or file being tested.
+    serial: Disk serial identity included in the fixture.
+"""
     return {
         "path": path,
         "size": 128 * 1024**3,
@@ -109,7 +123,13 @@ def test_revalidate_accepts_unchanged_consent_for_root_efi_and_custom_mounts() -
 def test_revalidate_cancels_changed_identity_or_selected_set_before_native_work(
     monkeypatch: pytest.MonkeyPatch, consent_change: str, inventory_change: str
 ) -> None:
-    """Stop before native mutations when disk identity or the consent set changes."""
+    """Stop before native mutations when disk identity or the consent set changes.
+
+Args:
+    monkeypatch: Pytest fixture for replacing controlled dependencies.
+    consent_change: Consent identity change applied by the parameterized case.
+    inventory_change: Current inventory change applied by the parameterized case.
+"""
     config = _config()
     selected = disks.selected_disks(config)
     consent = {path: _identity(path) for path in selected}
@@ -138,7 +158,13 @@ def test_revalidate_cancels_changed_identity_or_selected_set_before_native_work(
     ],
 )
 def test_revalidate_rejects_unsupported_boot_or_architecture(key: str, value: str, message: str) -> None:
-    """Keep the admitted installation target x86-64 UEFI."""
+    """Keep the admitted installation target x86-64 UEFI.
+
+Args:
+    key: Configuration key selected by the parameterized case.
+    value: Value supplied to the test case.
+    message: Expected validation message or prompt text.
+"""
     config = _config()
     config[key] = value
     consent = {path: _identity(path) for path in disks.selected_disks(config)}
@@ -157,7 +183,12 @@ def test_revalidate_rejects_unsupported_boot_or_architecture(key: str, value: st
     ],
 )
 def test_revalidate_rejects_noncanonical_or_reserved_mounts(target: str, message: str) -> None:
-    """Refuse unsafe custom mount targets in the confirmed layout."""
+    """Refuse unsafe custom mount targets in the confirmed layout.
+
+Args:
+    target: Destination root or target under test.
+    message: Expected validation message or prompt text.
+"""
     config = _config()
     config["partitions"][2]["mountpoint"] = target
     consent = {path: _identity(path) for path in disks.selected_disks(config)}

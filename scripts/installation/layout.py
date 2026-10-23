@@ -21,7 +21,11 @@ UUID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{3,127}\Z")
 
 
 def ordinary_bytes(path: Path, *, trusted: bool = True) -> bytes:
-    """Read a bounded single-link file and reject writable or linked trust paths."""
+    """Read a bounded single-link file and reject writable or linked trust paths.
+
+    Args:
+        path: Filesystem path to the input or target.
+        trusted: Whether the profile is being read from a trusted source."""
     if path.resolve(strict=True) != path.absolute():
         raise ValueError("installation metadata cannot use symbolic links")
     if trusted:
@@ -42,7 +46,10 @@ def ordinary_bytes(path: Path, *, trusted: bool = True) -> bytes:
 
 
 def installation_profile(*, profile_path: Path = PROFILE_PATH) -> bool:
-    """Identify an ISO installation; malformed or dangling markers fail closed."""
+    """Identify an ISO installation; malformed or dangling markers fail closed.
+
+    Args:
+        profile_path: Path to the trusted installed-storage profile."""
     if not os.path.lexists(profile_path):
         return False
     if ordinary_bytes(profile_path) != PROFILE.encode():
@@ -51,7 +58,10 @@ def installation_profile(*, profile_path: Path = PROFILE_PATH) -> bool:
 
 
 def validate_layout(value: object) -> dict:
-    """Validate the complete schema before any native filesystem observation."""
+    """Validate the complete schema before any native filesystem observation.
+
+    Args:
+        value: Value to validate or serialize."""
     if not isinstance(value, dict) or set(value) != {"schema", "architecture", "mounts"}:
         raise ValueError("installation layout fields are invalid")
     if type(value["schema"]) is not int or value["schema"] != 1 or value["architecture"] != "x86_64":
@@ -84,12 +94,19 @@ def validate_layout(value: object) -> dict:
 
 
 def load_layout(path: Path = LAYOUT_PATH, *, trusted: bool = True) -> dict:
-    """Load a root-controlled storage record; never infer a replacement layout."""
+    """Load a root-controlled storage record; never infer a replacement layout.
+
+    Args:
+        path: Filesystem path to the input or target.
+        trusted: Whether the profile is being read from a trusted source."""
     return validate_layout(json.loads(ordinary_bytes(path, trusted=trusted)))
 
 
 def verify_layout(path: Path = LAYOUT_PATH) -> dict:
-    """Verify UUID-backed existing mounts only, with no mount or format commands."""
+    """Verify UUID-backed existing mounts only, with no mount or format commands.
+
+    Args:
+        path: Filesystem path to the input or target."""
     layout = load_layout(path)
     for mount in layout["mounts"]:
         target = mount["target"]
@@ -106,7 +123,11 @@ def verify_layout(path: Path = LAYOUT_PATH) -> dict:
 
 
 def record_layout(partitions: list[dict], destination: Path) -> dict:
-    """Receipt Photon-created filesystems while the native installer holds them."""
+    """Receipt Photon-created filesystems while the native installer holds them.
+
+    Args:
+        partitions: Installed partition records to persist in the layout.
+        destination: Existing directory that receives the generated files."""
     mounts = []
     for partition in partitions:
         target = partition.get("mountpoint")

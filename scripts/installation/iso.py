@@ -123,6 +123,12 @@ class _FileSlice(io.RawIOBase):
     """Give PyCdlib an independent seekable view over one shared spool file."""
 
     def __init__(self, stream: BinaryIO, offset: int, length: int) -> None:
+        """Initialize the object with its supplied stream and slice bounds.
+
+        Args:
+            stream: Open binary stream to read or hash.
+            offset: Absolute or relative position within the stream.
+            length: Number of bytes exposed by this slice."""
         super().__init__()
         self._stream = stream
         self._offset = offset
@@ -142,6 +148,11 @@ class _FileSlice(io.RawIOBase):
         return self._position
 
     def seek(self, offset: int, whence: int = os.SEEK_SET) -> int:
+        """Move the cursor within this file slice.
+
+        Args:
+            offset: Absolute or relative position within the stream.
+            whence: Reference point used to calculate the seek position."""
         if whence == os.SEEK_SET:
             position = offset
         elif whence == os.SEEK_CUR:
@@ -156,6 +167,10 @@ class _FileSlice(io.RawIOBase):
         return position
 
     def readinto(self, buffer: bytearray | memoryview) -> int:
+        """Read bytes from the file slice into a caller-provided buffer.
+
+        Args:
+            buffer: Writable byte buffer for reading the current slice."""
         if self.closed:
             raise ValueError("I/O operation on closed file slice")
         available = max(0, self._length - self._position)
@@ -170,15 +185,29 @@ class _FileSlice(io.RawIOBase):
 
 
 def _identity(info: os.stat_result) -> tuple[int, int, int, int]:
+    """Return stable filesystem identity fields for change detection.
+
+    Args:
+        info: Stat metadata used to identify the filesystem object."""
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
 
 
 def _is_reparse(path: Path, info: os.stat_result) -> bool:
+    """Check whether a path is a symbolic link or reparse point.
+
+    Args:
+        path: Filesystem path to the input or target.
+        info: Stat metadata used to identify the filesystem object."""
     reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
     return path.is_symlink() or bool(getattr(info, "st_file_attributes", 0) & reparse_flag)
 
 
 def _checked_path(path: Path, *, final_kind: str) -> Path:
+    """Validate an input path and return its absolute form.
+
+    Args:
+        path: Filesystem path to the input or target.
+        final_kind: Required filesystem type for the final path component."""
     if ".." in Path(path).parts:
         raise ValueError("path ancestry must not contain parent traversal")
     absolute = Path(os.path.abspath(path))
@@ -200,6 +229,10 @@ def _checked_path(path: Path, *, final_kind: str) -> Path:
 
 
 def _checked_new_path(path: Path) -> Path:
+    """Validate a new output path without creating it.
+
+    Args:
+        path: Filesystem path to the input or target."""
     parent = _checked_path(path.parent, final_kind="directory")
     result = parent / path.name
     if not path.name or path.name in {".", ".."}:
@@ -210,6 +243,11 @@ def _checked_new_path(path: Path) -> Path:
 
 
 def _hash_stream(stream: BinaryIO, algorithm: str) -> str:
+    """Hash an open input stream and restore its position.
+
+    Args:
+        stream: Open binary stream to read or hash.
+        algorithm: Hash algorithm used to verify the stream."""
     stream.seek(0)
     digest = hashlib.new(algorithm)
     while chunk := stream.read(_CHUNK_SIZE):
@@ -224,6 +262,12 @@ def _open_pinned(
     relative: PurePosixPath | None = None,
     hash_algorithm: str = "sha256",
 ) -> _PinnedFile:
+    """Open an ordinary file and record its verified identity and digest.
+
+    Args:
+        path: Filesystem path to the input or target.
+        relative: Payload path relative to its root directory.
+        hash_algorithm: Hash algorithm used to pin the file contents."""
     absolute = _checked_path(path, final_kind="file")
     before = absolute.lstat()
     stream = open_pinned_input(absolute)
@@ -252,6 +296,10 @@ def _open_pinned(
 
 
 def _verify_pinned(item: _PinnedFile) -> None:
+    """Confirm that a pinned input still matches its recorded identity and digest.
+
+    Args:
+        item: Pinned file record whose identity and contents are checked."""
     current = item.path.lstat()
     if _identity(current) != item.identity or current.st_mode != item.mode:
         raise ValueError(f"input changed during ISO assembly: {item.path.name}")
@@ -276,6 +324,10 @@ def _verify_pinned(item: _PinnedFile) -> None:
 
 
 def _payload_inventory(root: Path) -> tuple[list[Path], list[Path]]:
+    """Enumerate ordinary payload files and directories.
+
+    Args:
+        root: Root directory containing the files being checked."""
     directories = [root]
     files: list[Path] = []
     pending = [root]
@@ -297,6 +349,10 @@ def _payload_inventory(root: Path) -> tuple[list[Path], list[Path]]:
 
 
 def _canonical_cpio_name(raw_name: bytes) -> str:
+    """Validate and normalize a cpio archive entry name.
+
+    Args:
+        raw_name: Raw filename bytes read from the archive."""
     if not raw_name or raw_name.startswith(b"/") or b"\\" in raw_name:
         raise ValueError("initrd cpio contains an unsafe path")
     try:
@@ -316,6 +372,10 @@ def _canonical_cpio_name(raw_name: bytes) -> str:
 
 
 def _parse_newc(archive: bytes) -> tuple[list[_CpioEntry], bytes, bytes]:
+    """Parse and validate a single newc cpio archive.
+
+    Args:
+        archive: Newc cpio archive bytes to parse or rewrite."""
     entries: list[_CpioEntry] = []
     seen: set[str] = set()
     offset = 0
@@ -370,6 +430,14 @@ def _parse_newc(archive: bytes) -> tuple[list[_CpioEntry], bytes, bytes]:
 
 
 def _newc_entry(magic: bytes, name: str, mode: int, ino: int, data: bytes = b"") -> bytes:
+    """Encode one entry in the selected newc cpio format.
+
+    Args:
+        magic: Newc archive format marker used for the record.
+        name: Entry name to encode in the archive.
+        mode: Filesystem mode stored in the archive record.
+        ino: Inode number stored in the archive record.
+        data: File contents stored in the archive record."""
     encoded_name = name.encode("utf-8") + b"\x00"
     checksum = sum(data) & 0xFFFFFFFF if magic == b"070702" else 0
     fields = (
@@ -396,6 +464,14 @@ def _newc_entry(magic: bytes, name: str, mode: int, ino: int, data: bytes = b"")
 
 
 def _rewrite_newc(archive: bytes, launcher: bytes, trust: bytes, *, bootstrap: bytes = b"", manifest_code: bytes = b"") -> bytes:
+    """Replace the initrd launcher and embed the trusted verifier.
+
+    Args:
+        archive: Newc cpio archive bytes to parse or rewrite.
+        launcher: Trusted console launcher bytes embedded in the initrd.
+        trust: Public trust key bytes embedded in the initrd.
+        bootstrap: Trusted initrd bootstrap source to embed.
+        manifest_code: Trusted manifest verifier source to embed."""
     entries, magic, padding = _parse_newc(archive)
     by_name = {entry.name: entry for entry in entries if not entry.is_trailer}
     required_unshare = by_name.get("usr/bin/unshare")
@@ -455,6 +531,11 @@ def _rewrite_newc(archive: bytes, launcher: bytes, trust: bytes, *, bootstrap: b
 
 
 def _cpio_data(raw: bytes, magic: bytes) -> bytes:
+    """Extract file contents from a raw cpio record.
+
+    Args:
+        raw: Raw cpio record bytes to decode.
+        magic: Newc archive format marker used for the record."""
     name_size = int(raw[94:102], 16)
     file_size = int(raw[54:62], 16)
     data_start = (_CPIO_HEADER_SIZE + name_size + 3) & ~3
@@ -462,10 +543,21 @@ def _cpio_data(raw: bytes, magic: bytes) -> bytes:
 
 
 def _iso_component(relative: PurePosixPath) -> str:
+    """Create a stable short ISO identifier for a payload path.
+
+    Args:
+        relative: Payload path relative to its root directory."""
     return hashlib.sha256(relative.as_posix().encode("utf-8")).hexdigest()[:16].upper()
 
 
 def _add_payload(iso, root: Path, pinned: list[_PinnedFile], spool: BinaryIO) -> None:
+    """Stage and add the signed payload tree to the ISO.
+
+    Args:
+        iso: Open PyCdlib image being updated.
+        root: Root directory containing the files being checked.
+        pinned: Collection used to retain and verify pinned payload file identities.
+        spool: Temporary binary stream holding staged payload bytes."""
     from scripts.interop.create_photon_kickstart_iso import iso_record_exists
 
     if iso_record_exists(iso, iso_path=PAYLOAD_ISO_ROOT):
@@ -534,6 +626,10 @@ def _add_payload(iso, root: Path, pinned: list[_PinnedFile], spool: BinaryIO) ->
 
 
 def _create_exclusive_output(path: Path) -> tuple[BinaryIO, tuple[int, int]]:
+    """Create an absent ISO output and retain its filesystem identity.
+
+    Args:
+        path: Filesystem path to the input or target."""
     with path.open("xb") as created:
         info = os.fstat(created.fileno())
         identity = (info.st_dev, info.st_ino)
@@ -561,6 +657,11 @@ def _create_exclusive_output(path: Path) -> tuple[BinaryIO, tuple[int, int]]:
 
 
 def _remove_owned_output(path: Path, identity: tuple[int, int]) -> None:
+    """Remove an incomplete ISO only when its identity still matches.
+
+    Args:
+        path: Filesystem path to the input or target.
+        identity: Recorded device and inode identity used to confirm ownership."""
     try:
         current = path.lstat()
         if (current.st_dev, current.st_ino) == identity and stat.S_ISREG(current.st_mode) and current.st_nlink == 1:
@@ -570,7 +671,13 @@ def _remove_owned_output(path: Path, identity: tuple[int, int]) -> None:
 
 
 def build_iso(source_iso: Path, payload_root: Path, output: Path, *, trust_key: Path) -> None:
-    """Create a new Atlaso offline installer ISO from the pinned Photon source."""
+    """Create a new Atlaso offline installer ISO from the pinned Photon source.
+
+    Args:
+        source_iso: Pinned Photon installation ISO used as the remaster base.
+        payload_root: Prepared signed Atlaso payload directory to embed.
+        output: Destination path for the generated output.
+        trust_key: Trusted public key used to verify signed metadata."""
     try:
         import pycdlib
     except ImportError as exc:

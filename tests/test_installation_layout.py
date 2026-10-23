@@ -14,12 +14,22 @@ from scripts.installation import layout
 
 
 def _mount(target: str, uuid: str, filesystem: str = "ext4") -> dict[str, str]:
-    """Build one recorded filesystem mount."""
+    """Build one recorded filesystem mount.
+
+Args:
+    target: Destination root or target under test.
+    uuid: Filesystem UUID recorded in the layout fixture.
+    filesystem: Filesystem type recorded in the layout fixture.
+"""
     return {"target": target, "uuid": uuid, "filesystem": filesystem}
 
 
 def _layout(*mounts: dict[str, str]) -> dict:
-    """Build a valid x86-64 installation layout around the supplied mounts."""
+    """Build a valid x86-64 installation layout around the supplied mounts.
+
+Args:
+    *mounts: Mount records included in the synthetic layout.
+"""
     return {"schema": 1, "architecture": "x86_64", "mounts": list(mounts)}
 
 
@@ -112,13 +122,22 @@ def test_validate_layout_accepts_root_efi_and_custom_mounts() -> None:
     ],
 )
 def test_validate_layout_rejects_malformed_or_unsafe_records(value: object, message: str) -> None:
-    """Reject unsupported schemas, noncanonical paths, duplicate IDs and reserved mounts."""
+    """Reject unsupported schemas, noncanonical paths, duplicate IDs and reserved mounts.
+
+Args:
+    value: Value supplied to the test case.
+    message: Expected validation message or prompt text.
+"""
     with pytest.raises(ValueError, match=message):
         layout.validate_layout(value)
 
 
 def test_load_layout_can_skip_host_trust_checks_for_windows_fixtures(tmp_path: Path) -> None:
-    """Validate receipt bytes independently of unavailable Windows root ownership."""
+    """Validate receipt bytes independently of unavailable Windows root ownership.
+
+Args:
+    tmp_path: Temporary directory for this test's filesystem fixtures.
+"""
     path = tmp_path / "layout.json"
     value = _layout(_mount("/", "root-fs-01"), _mount("/boot/efi", "efi-fs-01", "vfat"))
     path.write_text(json.dumps(value), encoding="utf-8")
@@ -130,19 +149,35 @@ def test_load_layout_can_skip_host_trust_checks_for_windows_fixtures(tmp_path: P
 def test_ordinary_bytes_checks_controlled_root_trust_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trusted_uid: int
 ) -> None:
-    """Exercise root-owner and writable-mode gates with controlled stat metadata."""
+    """Exercise root-owner and writable-mode gates with controlled stat metadata.
+
+Args:
+    tmp_path: Temporary directory for this test's filesystem fixtures.
+    monkeypatch: Pytest fixture for replacing controlled dependencies.
+    trusted_uid: Owner identity supplied by the controlled trust fixture.
+"""
     path = tmp_path / "layout.json"
     path.write_text("{}", encoding="utf-8")
     original_stat = Path.stat
     original_fstat = os.fstat
 
     def controlled_stat(target: Path, *args, **kwargs):
+        """
+        Args:
+            target: Destination root or target under test.
+            *args: Args used by this test case.
+            **kwargs: Additional subprocess options received by the test double.
+        """
         info = original_stat(target, *args, **kwargs)
         if target == path:
             return info
         return SimpleNamespace(st_uid=trusted_uid, st_mode=stat.S_IFDIR | 0o755)
 
     def controlled_fstat(descriptor: int):
+        """
+        Args:
+            descriptor: Open file descriptor used by the metadata fixture.
+        """
         info = original_fstat(descriptor)
         return SimpleNamespace(
             st_dev=info.st_dev,
@@ -172,7 +207,12 @@ def test_ordinary_bytes_checks_controlled_root_trust_metadata(
 def test_verify_layout_accepts_only_exact_findmnt_identity(
     monkeypatch: pytest.MonkeyPatch, observed: list[dict[str, str]]
 ) -> None:
-    """Compare mounted UUID and filesystem evidence without invoking mutations."""
+    """Compare mounted UUID and filesystem evidence without invoking mutations.
+
+Args:
+    monkeypatch: Pytest fixture for replacing controlled dependencies.
+    observed: Filesystem observation returned by the mocked command.
+"""
     value = _layout(_mount("/", "root-fs-01"), _mount("/boot/efi", "efi-fs-01", "vfat"))
     commands: list[list[str]] = []
 
@@ -180,15 +220,32 @@ def test_verify_layout_accepts_only_exact_findmnt_identity(
         """Keep POSIX mountpoint canonicalization platform independent."""
 
         def __init__(self, value: str):
+            """
+            Args:
+                value: Value supplied to the test case.
+            """
             self.value = value
 
         def resolve(self, *, strict: bool = False) -> "PosixPathShim":
+            """
+            Args:
+                strict: Whether path resolution requires the target to exist.
+            """
             return self
 
         def __eq__(self, other: object) -> bool:
+            """
+            Args:
+                other: Value compared by the path shim fixture.
+            """
             return isinstance(other, PosixPathShim) and self.value == other.value
 
     def check_output(command: list[str], *, text: bool) -> str:
+        """
+        Args:
+            command: Subprocess argument vector received by the test double.
+            text: Source text supplied to the package-selection parser.
+        """
         assert text is True
         commands.append(command)
         result = observed if command[3] == "/" else [{"uuid": "efi-fs-01", "fstype": "vfat"}]
@@ -213,12 +270,22 @@ def test_verify_layout_accepts_only_exact_findmnt_identity(
 def test_record_layout_uses_blkid_and_writes_root_efi_and_custom_receipt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Record native installer mount identities and omit non-filesystem partitions."""
+    """Record native installer mount identities and omit non-filesystem partitions.
+
+Args:
+    tmp_path: Temporary directory for this test's filesystem fixtures.
+    monkeypatch: Pytest fixture for replacing controlled dependencies.
+"""
     destination = tmp_path / "installation-layout.json"
     commands: list[list[str]] = []
     identities = {"/dev/nvme0n1p2": "root-fs-01", "/dev/nvme0n1p1": "efi-fs-01", "/dev/sdb1": "depot-fs-01"}
 
     def check_output(command: list[str], *, text: bool) -> str:
+        """
+        Args:
+            command: Subprocess argument vector received by the test double.
+            text: Source text supplied to the package-selection parser.
+        """
         assert text is True
         commands.append(command)
         return identities[command[-1]] + "\n"

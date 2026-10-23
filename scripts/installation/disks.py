@@ -12,10 +12,19 @@ IDENTITY_FIELDS = ("path", "size", "serial", "wwn", "maj:min")
 
 
 def eligible_disks(inventory: dict, *, swaps: set[str], held: set[str]) -> dict[str, dict]:
-    """Exclude installation media, mounted trees, active swap, and held devices."""
+    """Exclude installation media, mounted trees, active swap, and held devices.
+
+    Args:
+        inventory: Block-device inventory returned by the system.
+        swaps: Device paths currently active as swap.
+        held: Device paths held by another block-device consumer."""
     result = {}
 
     def busy(device: dict) -> bool:
+        """Determine whether a device or one of its children is in use.
+
+        Args:
+            device: Block-device record or device path to inspect."""
         return (
             device.get("path") in swaps | held
             or bool(device.get("mountpoints") and any(device["mountpoints"]))
@@ -55,7 +64,10 @@ def disk_inventory() -> dict[str, dict]:
 
 
 def selected_disks(config: dict) -> list[str]:
-    """Return every disk the native backend will partition, including EFI boot."""
+    """Return every disk the native backend will partition, including EFI boot.
+
+    Args:
+        config: Installer configuration describing the target layout."""
     default = config.get("disk")
     partitions = config.get("partitions", [])
     selected = {default, *(partition.get("disk", default) for partition in partitions)}
@@ -65,7 +77,12 @@ def selected_disks(config: dict) -> list[str]:
 
 
 def revalidate_disks(config: dict, consent: dict[str, dict], current: dict[str, dict]) -> None:
-    """Require exact consent and unchanged eligible identities before partitioning."""
+    """Require exact consent and unchanged eligible identities before partitioning.
+
+    Args:
+        config: Installer configuration describing the target layout.
+        consent: Previously confirmed disk identities for this installation.
+        current: Current eligible disk identities to compare with consent."""
     selected = selected_disks(config)
     if set(selected) != set(consent):
         raise ValueError("installation disk set differs from the confirmed plan")

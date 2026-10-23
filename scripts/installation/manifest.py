@@ -21,7 +21,10 @@ HEX = re.compile(r"[0-9a-f]{64}\Z")
 
 
 def digest(path: Path) -> str:
-    """Hash a regular single-link file without accepting a linked ancestor."""
+    """Hash a regular single-link file without accepting a linked ancestor.
+
+    Args:
+        path: Filesystem path to the input or target."""
     if path.resolve(strict=True) != path.absolute():
         raise ValueError("installation inputs cannot contain symbolic links")
     with path.open("rb") as handle:
@@ -38,12 +41,21 @@ def digest(path: Path) -> str:
 
 
 def canonical_json(value: dict) -> bytes:
-    """Reuse the canonical representation used by Atlaso release signers."""
+    """Reuse the canonical representation used by Atlaso release signers.
+
+    Args:
+        value: Value to validate or serialize."""
     return (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n").encode()
 
 
 def verify_signature(document: Path, signature: Path, trust_key: Path, *, scratch: Path) -> dict:
-    """Verify Ed25519 with Photon's OpenSSL instead of bootstrapping Python deps."""
+    """Verify Ed25519 with Photon's OpenSSL instead of bootstrapping Python deps.
+
+    Args:
+        document: Signed metadata document to verify.
+        signature: Detached signature file for the metadata document.
+        trust_key: Trusted public key used to verify signed metadata.
+        scratch: Existing private directory for temporary validation data."""
     for path in (document, signature, trust_key):
         digest(path)
     if document.stat().st_size > 8 * 1024 * 1024 or signature.stat().st_size > 4096:
@@ -68,7 +80,10 @@ def verify_signature(document: Path, signature: Path, trust_key: Path, *, scratc
 
 
 def inventory(root: Path) -> list[dict]:
-    """Enumerate exact media files without admitting links or special entries."""
+    """Enumerate exact media files without admitting links or special entries.
+
+    Args:
+        root: Root directory containing the files being checked."""
     records = []
     for path in sorted(root.rglob("*")):
         if path.is_symlink() or (not path.is_file() and not path.is_dir()):
@@ -83,7 +98,12 @@ def inventory(root: Path) -> list[dict]:
 
 
 def verify_media(root: Path, trust_key: Path, *, scratch: Path) -> dict:
-    """Authenticate every embedded byte before permitting disk writes."""
+    """Authenticate every embedded byte before permitting disk writes.
+
+    Args:
+        root: Root directory containing the files being checked.
+        trust_key: Trusted public key used to verify signed metadata.
+        scratch: Existing private directory for temporary validation data."""
     value = verify_signature(root / MANIFEST, root / SIGNATURE, trust_key, scratch=scratch)
     if value.get("schema") != 1 or value.get("architecture") != "x86_64" or value.get("photon_installer") != "2.2":
         raise ValueError("installation media schema or architecture is unsupported")

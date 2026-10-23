@@ -18,7 +18,13 @@ def _load_bootstrap():
 
 
 def _configure_cli(monkeypatch: pytest.MonkeyPatch, module, tmp_path: Path) -> Path:
-    """Point the bootstrap at an untrusted-media fixture and local scratch."""
+    """Point the bootstrap at an untrusted-media fixture and local scratch.
+
+Args:
+    monkeypatch: Pytest fixture for replacing controlled dependencies.
+    module: Loaded module under test.
+    tmp_path: Temporary directory for this test's filesystem fixtures.
+"""
     media = tmp_path / "media"
     installer = media / "source/scripts/installation/installer.py"
     installer.parent.mkdir(parents=True)
@@ -30,6 +36,10 @@ def _configure_cli(monkeypatch: pytest.MonkeyPatch, module, tmp_path: Path) -> P
             return str(tmp_path)
 
         def __exit__(self, *_args: object) -> None:
+            """
+            Args:
+                *_args: Additional positional arguments supplied to the test double.
+            """
             return None
 
     monkeypatch.setattr(module.tempfile, "TemporaryDirectory", lambda **_kwargs: Scratch())
@@ -39,17 +49,33 @@ def _configure_cli(monkeypatch: pytest.MonkeyPatch, module, tmp_path: Path) -> P
 def test_bootstrap_uses_initrd_pinned_verifier_and_executes_only_after_verification(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     module = _load_bootstrap()
     media = _configure_cli(monkeypatch, module, tmp_path)
     trusted_manifest = Path(module.verify_media.__globals__["__file__"]).resolve()
     events = []
 
     def verify(candidate: Path, trust_key: Path, *, scratch: Path) -> dict:
+        """
+        Args:
+            candidate: Untrusted candidate media path supplied to the verifier.
+            trust_key: Public trust key used by the verification fixture.
+            scratch: Task-local scratch directory for verification.
+        """
         events.append(("verify", candidate, trust_key, scratch))
         assert str(candidate) not in module.sys.path
         return {"schema": 1}
 
     def execv(executable: str, arguments: list[str]) -> None:
+        """
+        Args:
+            executable: Executable path passed to the mocked process launcher.
+            arguments: Argument vector passed to the mocked executable.
+        """
         events.append(("exec", executable, arguments))
 
     monkeypatch.setattr(module, "verify_media", verify)
@@ -72,11 +98,21 @@ def test_bootstrap_uses_initrd_pinned_verifier_and_executes_only_after_verificat
 def test_failed_trusted_verification_never_executes_media_code(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     module = _load_bootstrap()
     _configure_cli(monkeypatch, module, tmp_path)
     events = []
 
     def reject_media(*_args, **_kwargs) -> None:
+        """
+        Args:
+            *_args: Additional positional arguments supplied to the test double.
+            **_kwargs: Additional keyword arguments supplied to the test double.
+        """
         events.append("verify")
         raise ValueError("signature rejected")
 
@@ -92,12 +128,22 @@ def test_failed_trusted_verification_never_executes_media_code(
 def test_bootstrap_does_not_load_untrusted_media_module_before_exec(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     module = _load_bootstrap()
     media = _configure_cli(monkeypatch, module, tmp_path)
     events = []
     monkeypatch.setattr(module, "verify_media", lambda *_args, **_kwargs: events.append("verified"))
 
     def execv(_executable: str, arguments: list[str]) -> None:
+        """
+        Args:
+            _executable: Executable path passed to the mocked process launcher.
+            arguments: Argument vector passed to the mocked executable.
+        """
         events.append("exec")
         assert arguments[1] == str(media / "source/scripts/installation/installer.py")
         assert "installation_adapter" not in module.sys.modules

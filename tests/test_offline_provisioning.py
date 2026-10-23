@@ -12,7 +12,12 @@ PROVISIONER = Path("image/common/scripts/provision-atlaso.sh")
 
 @pytest.mark.parametrize("offline", [False, True])
 def test_build_information_contains_one_selected_package_provenance(tmp_path, offline):
-    """Execute the real renderer against a task-local destination with tool doubles."""
+    """Execute the real renderer against a task-local destination with tool doubles.
+
+Args:
+    tmp_path: Temporary directory for this test's filesystem fixtures.
+    offline: Whether the fixture describes offline provisioning.
+"""
     shell = shutil.which("sh") or "C:/Program Files/Git/usr/bin/sh.exe"
     if not Path(shell).is_file():
         pytest.skip("POSIX shell is unavailable")

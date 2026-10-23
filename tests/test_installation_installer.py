@@ -11,7 +11,11 @@ import pytest
 
 
 def load_installer(monkeypatch):
-    """Load the native-console adapter on Windows with a noninteractive console."""
+    """Load the native-console adapter on Windows with a noninteractive console.
+
+Args:
+    monkeypatch: Pytest fixture for replacing controlled dependencies.
+"""
     monkeypatch.setitem(sys.modules, "curses", SimpleNamespace())
     spec = importlib.util.spec_from_file_location("installation_adapter", Path("scripts/installation/installer.py"))
     module = importlib.util.module_from_spec(spec)
@@ -20,11 +24,19 @@ def load_installer(monkeypatch):
 
 
 def test_prompt_masks_secret_and_does_not_invoke_native_confirmation_lookup(monkeypatch):
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     module = load_installer(monkeypatch)
     calls = []
 
     class Reader:
         def __init__(self, *args):
+            """
+            Args:
+                *args: Args used by this test case.
+            """
             calls.append(args)
             args[13]["value"] = "synthetic operator input"
 
@@ -39,6 +51,11 @@ def test_prompt_masks_secret_and_does_not_invoke_native_confirmation_lookup(monk
 
 
 def test_environment_value_round_trips_posix_shell_metacharacters(monkeypatch, tmp_path):
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     module = load_installer(monkeypatch)
     shell = Path(shutil.which("sh") or r"C:\Program Files\Git\usr\bin\sh.exe")
     if not shell.is_file():
@@ -68,14 +85,29 @@ def test_environment_value_round_trips_posix_shell_metacharacters(monkeypatch, t
 
 
 def _install_fake_native_backend(monkeypatch, target, events, *, fail_at=None):
-    """Install a native-backend double that drives the adapter's completion callback."""
+    """Install a native-backend double that drives the adapter's completion callback.
+
+Args:
+    monkeypatch: Pytest fixture for replacing controlled dependencies.
+    target: Destination root or target under test.
+    events: Recorded backend events used to verify operation order.
+    fail_at: Backend stage that should raise an error.
+"""
     module = load_installer(monkeypatch)
 
     class Backend:
         def __init__(self, **_kwargs):
+            """
+            Args:
+                **_kwargs: Additional keyword arguments supplied to the test double.
+            """
             self.photon_root = str(target)
 
         def configure(self, config):
+            """
+            Args:
+                config: Installer configuration passed to the fake backend.
+            """
             self.install_config = config
 
         def _clear_vgs(self):
@@ -99,6 +131,11 @@ def _install_fake_native_backend(monkeypatch, target, events, *, fail_at=None):
 
 
 def test_native_completion_callback_applies_chosen_credentials_only_after_boot_setup(monkeypatch, tmp_path):
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     target = tmp_path / "target"
     atlaso = target / "etc/atlaso"
     atlaso.mkdir(parents=True)
@@ -109,6 +146,12 @@ def test_native_completion_callback_applies_chosen_credentials_only_after_boot_s
     chpasswd = []
 
     def run(command, *, input, **kwargs):
+        """
+        Args:
+            command: Subprocess argument vector received by the test double.
+            input: Standard input supplied to the mocked subprocess.
+            **kwargs: Additional subprocess options received by the test double.
+        """
         events.append("chpasswd")
         chpasswd.append((command, input, kwargs))
 
@@ -154,6 +197,12 @@ def test_native_completion_callback_applies_chosen_credentials_only_after_boot_s
 def test_native_failure_before_completion_callback_preserves_no_profile(
     monkeypatch, tmp_path, failure_stage
 ):
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        failure_stage: Native installation stage where the test injects failure.
+    """
     target = tmp_path / "target"
     atlaso = target / "etc/atlaso"
     atlaso.mkdir(parents=True)
@@ -183,6 +232,10 @@ def test_native_failure_before_completion_callback_preserves_no_profile(
 
 
 def test_cancelled_prompt_returns_no_consent(monkeypatch):
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     module = load_installer(monkeypatch)
     reader = SimpleNamespace(get_user_string=lambda: SimpleNamespace(success=False))
     monkeypatch.setitem(sys.modules, "windowstringreader", SimpleNamespace(WindowStringReader=lambda *args: reader))
@@ -191,6 +244,10 @@ def test_cancelled_prompt_returns_no_consent(monkeypatch):
 
 
 def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatch):
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     module = load_installer(monkeypatch)
     calls = []
 
@@ -199,10 +256,20 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
             return 25, 80
 
         def bkgd(self, *_args):
+            """
+            Args:
+                *_args: Additional positional arguments supplied to the test double.
+            """
             pass
 
     class SelectDisk:
         def __init__(self, _height, _width, config):
+            """
+            Args:
+                _height: Console height supplied to the fake UI callback.
+                _width: Console width supplied to the fake UI callback.
+                config: Installer configuration passed to the fake backend.
+            """
             self.config = config
 
         def display(self):
@@ -232,6 +299,15 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
     monkeypatch.setattr(module, "revalidate_disks", lambda *_args: calls.append("revalidate"))
 
     def prompt(_height, _width, title, _message, *, secret=False, validator=None):
+        """
+        Args:
+            _height: Console height supplied to the fake UI callback.
+            _width: Console width supplied to the fake UI callback.
+            title: Prompt title shown by the console adapter.
+            _message: Prompt text passed to the fake UI callback.
+            secret: Whether the fake prompt should conceal its input.
+            validator: Validation callback passed to the prompt.
+        """
         calls.append((title, secret))
         if title == "Review planned partitions":
             return "NEXT"
@@ -259,6 +335,10 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
 
 
 def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partition(monkeypatch):
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     module = load_installer(monkeypatch)
     interactions = []
 
@@ -267,16 +347,32 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
             return 30, 100
 
         def bkgd(self, *_args):
+            """
+            Args:
+                *_args: Additional positional arguments supplied to the test double.
+            """
             pass
 
     class Device:
         def __init__(self, _model, path, _size):
+            """
+            Args:
+                _model: Model string supplied to the fake disk record.
+                path: Path to the fixture or file being tested.
+                _size: Display size supplied to the fake disk record.
+            """
             self.path = path
 
     class SelectDisk:
         selected = iter(("/dev/nvme0n1", "/dev/nvme0n1", "/dev/nvme0n1", "/dev/sdb"))
 
         def __init__(self, _height, _width, selection):
+            """
+            Args:
+                _height: Console height supplied to the fake UI callback.
+                _width: Console width supplied to the fake UI callback.
+                selection: Mutable disk selection returned by the fake selector.
+            """
             self.selection = selection
 
         def display(self):
@@ -299,6 +395,12 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
 
     class CustomPartition:
         def __init__(self, _height, _width, config):
+            """
+            Args:
+                _height: Console height supplied to the fake UI callback.
+                _width: Console width supplied to the fake UI callback.
+                config: Installer configuration passed to the fake backend.
+            """
             self.config = config
             self.disk_to_index = {"/dev/nvme0n1": 0, "/dev/sdb": 1}
             self.devices = [Device("NVMe", "/dev/nvme0n1", "128 GiB"), Device("SATA", "/dev/sdb", "256 GiB")]
@@ -319,6 +421,10 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
             return SimpleNamespace(success=True)
 
         def validate_partition(self, _values):
+            """
+            Args:
+                _values: Partition fields passed to the fake validator.
+            """
             return True, ""
 
         def next(self):
@@ -352,6 +458,15 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
     monkeypatch.setattr(module, "selected_disks", lambda _config: ["/dev/nvme0n1", "/dev/sdb"])
     monkeypatch.setattr(module, "revalidate_disks", lambda *_args: None)
     def prompt(_height, _width, title, message, *, secret=False, validator=None):
+        """
+        Args:
+            _height: Console height supplied to the fake UI callback.
+            _width: Console width supplied to the fake UI callback.
+            title: Prompt title shown by the console adapter.
+            message: Expected validation message or prompt text.
+            secret: Whether the fake prompt should conceal its input.
+            validator: Validation callback passed to the prompt.
+        """
         if title == "Review planned partitions":
             return "NEXT"
         if title == "Review Atlaso installation disk":
@@ -388,14 +503,27 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
 
 
 def test_changed_disk_prevents_native_partition_call(monkeypatch, tmp_path):
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     module = load_installer(monkeypatch)
     mutations = []
 
     class Backend:
         def __init__(self, **kwargs):
+            """
+            Args:
+                **kwargs: Additional subprocess options received by the test double.
+            """
             pass
 
         def configure(self, value):
+            """
+            Args:
+                value: Value supplied to the test case.
+            """
             self.install_config = value
 
         def _unsafe_install(self):
@@ -417,14 +545,27 @@ def test_changed_disk_prevents_native_partition_call(monkeypatch, tmp_path):
 
 
 def test_custom_boot_only_disk_has_capacity_before_native_efi_insertion(monkeypatch, tmp_path):
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     module = load_installer(monkeypatch)
     sizes = []
 
     class Backend:
         def __init__(self, **_kwargs):
+            """
+            Args:
+                **_kwargs: Additional keyword arguments supplied to the test double.
+            """
             pass
 
         def configure(self, config):
+            """
+            Args:
+                config: Installer configuration passed to the fake backend.
+            """
             self.install_config = config
             self._get_disk_sizes()
             sizes.append(self.disk_sizes)
@@ -446,14 +587,28 @@ def test_custom_boot_only_disk_has_capacity_before_native_efi_insertion(monkeypa
 
 @pytest.mark.parametrize("failure", ["native", "docker"])
 def test_native_failure_cannot_continue_or_use_network_fallback(monkeypatch, tmp_path, failure):
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        failure: Failure mode to exercise.
+    """
     module = load_installer(monkeypatch)
     events = []
 
     class Backend:
         def __init__(self, **kwargs):
+            """
+            Args:
+                **kwargs: Additional subprocess options received by the test double.
+            """
             pass
 
         def configure(self, value):
+            """
+            Args:
+                value: Value supplied to the test case.
+            """
             self.install_config = value
 
         def _unsafe_install(self):
@@ -473,6 +628,10 @@ def test_native_failure_cannot_continue_or_use_network_fallback(monkeypatch, tmp
 
 
 def test_iso_identity_initialization_preserves_chosen_credentials(monkeypatch):
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     spec = importlib.util.spec_from_file_location("iso_identity", Path("scripts/appliance/atlaso-initialize-machine-identity.py"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -491,12 +650,21 @@ def test_iso_identity_initialization_preserves_chosen_credentials(monkeypatch):
 
 
 def test_bad_installation_receipt_blocks_identity_changes(monkeypatch):
+    """
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     spec = importlib.util.spec_from_file_location("iso_identity_invalid", Path("scripts/appliance/atlaso-initialize-machine-identity.py"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     monkeypatch.setenv("ATLASO_STORAGE_PROFILE", "installation")
 
     def fail(command, **kwargs):
+        """
+        Args:
+            command: Subprocess argument vector received by the test double.
+            **kwargs: Additional subprocess options received by the test double.
+        """
         raise subprocess.CalledProcessError(1, command)
 
     monkeypatch.setattr(module.subprocess, "run", fail)

@@ -28,7 +28,10 @@ BASE_PACKAGES = {"filesystem", "bash", "linux", "linux-firmware", "photon-releas
 
 
 def package_selection(source: Path) -> list[str]:
-    """Reuse the shared provisioner's package selection, adding native boot assets."""
+    """Reuse the shared provisioner's package selection, adding native boot assets.
+
+    Args:
+        source: Input source file or directory."""
     text = (source / "image/common/scripts/provision-atlaso.sh").read_text()
     commands = re.findall(r'run_tdnf "Photon appliance package installation" \\\n  install ([^\n]+)', text)
     if len(commands) != 1:
@@ -40,7 +43,11 @@ def package_selection(source: Path) -> list[str]:
 
 
 def source_archive(repository: Path, commit: str) -> dict[str, bytes]:
-    """Read only ordinary tracked files from one exact, main-reachable Git commit."""
+    """Read only ordinary tracked files from one exact, main-reachable Git commit.
+
+    Args:
+        repository: Atlaso repository checkout used as the trusted source.
+        commit: Full source commit SHA being prepared."""
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError("source commit must be a full SHA")
     subprocess.run(["git", "-C", str(repository), "merge-base", "--is-ancestor", commit, "origin/main"], check=True)
@@ -65,7 +72,11 @@ def source_archive(repository: Path, commit: str) -> dict[str, bytes]:
 
 
 def verify_source(source: Path, expected: dict[str, bytes]) -> None:
-    """Bind every staged deployment source to the trusted exact-commit snapshot."""
+    """Bind every staged deployment source to the trusted exact-commit snapshot.
+
+    Args:
+        source: Input source file or directory.
+        expected: Trusted file mapping expected from the source snapshot."""
     files = inventory(source)
     if {item["path"] for item in files} != set(expected):
         raise ValueError("installation deployment source inventory differs from Git")
@@ -75,7 +86,12 @@ def verify_source(source: Path, expected: dict[str, bytes]) -> None:
 
 
 def verify_rpms(root: Path, source: Path, scratch: Path) -> list[dict]:
-    """Reuse the release RPM verification tool boundary and admitted Photon keys."""
+    """Reuse the release RPM verification tool boundary and admitted Photon keys.
+
+    Args:
+        root: Root directory containing the files being checked.
+        source: Input source file or directory.
+        scratch: Existing private directory for temporary validation data."""
     from scripts.verify_virtualization_guest_wheel import (
         _photon_repository_inventory,
         _require_admitted_runtime_package,
@@ -114,7 +130,11 @@ def verify_rpms(root: Path, source: Path, scratch: Path) -> list[dict]:
 
 
 def capture_packages(repository: Path, output: Path) -> None:
-    """Resolve the complete RPM closure during an authorized Photon build."""
+    """Resolve the complete RPM closure during an authorized Photon build.
+
+    Args:
+        repository: Atlaso repository checkout used as the trusted source.
+        output: Destination path for the generated output."""
     if output.exists() or output.is_symlink() or not output.is_absolute():
         raise ValueError("RPM capture requires an absent absolute caller-owned output")
     packages = package_selection(repository)
@@ -129,7 +149,11 @@ def capture_packages(repository: Path, output: Path) -> None:
 
 
 def pack_inputs(payload: Path, output: Path) -> None:
-    """Package ordinary candidate files without secret or environment discovery."""
+    """Package ordinary candidate files without secret or environment discovery.
+
+    Args:
+        payload: Prepared candidate directory to package.
+        output: Destination path for the generated output."""
     records = inventory(payload)
     names = sorted({item["path"] for item in records} | {MANIFEST})
     if sum((payload / name).stat().st_size for name in names) > 16 * 1024**3:
@@ -147,7 +171,11 @@ def pack_inputs(payload: Path, output: Path) -> None:
 
 
 def unpack_inputs(archive: Path, destination: Path) -> None:
-    """Extract a bounded candidate archive without links or path traversal."""
+    """Extract a bounded candidate archive without links or path traversal.
+
+    Args:
+        archive: Newc cpio archive bytes to parse or rewrite.
+        destination: Existing directory that receives the generated files."""
     digest(archive)
     if destination.exists() or destination.is_symlink():
         raise ValueError("candidate extraction destination must be absent")
@@ -185,7 +213,15 @@ def unpack_inputs(archive: Path, destination: Path) -> None:
 
 
 def validate_candidate(root: Path, *, repository: Path, commit: str, version: str, trust_key: Path, scratch: Path) -> dict:
-    """Revalidate an untrusted staged candidate before accessing a signing key."""
+    """Revalidate an untrusted staged candidate before accessing a signing key.
+
+    Args:
+        root: Root directory containing the files being checked.
+        repository: Atlaso repository checkout used as the trusted source.
+        commit: Full source commit SHA being prepared.
+        version: Software release version expected in the candidate.
+        trust_key: Trusted public key used to verify signed metadata.
+        scratch: Existing private directory for temporary validation data."""
     from scripts.prepare_virtualization_source import verify_directory
 
     source = root / "source"
@@ -209,7 +245,10 @@ def validate_candidate(root: Path, *, repository: Path, commit: str, version: st
 
 
 def repository_configuration(source: Path) -> tuple[str, str]:
-    """Render the same local-only repository configuration at preparation and signing."""
+    """Render the same local-only repository configuration at preparation and signing.
+
+    Args:
+        source: Input source file or directory."""
     keys = " ".join(f"file://{MEDIA}/source/image/common/photon-rpm-gpg/{path.name}" for path in sorted((source / "image/common/photon-rpm-gpg").glob("VMWARE-RPM-GPG-KEY*")))
     configuration = f"[main]\nreposdir={MEDIA}/rpm-repos\ngpgcheck=1\nkeepcache=0\n"
     repository = f"[atlaso-installation]\nname=Atlaso offline installation\nbaseurl=file://{MEDIA}/rpms\nenabled=1\ngpgcheck=1\ngpgkey={keys}\n"
@@ -217,7 +256,16 @@ def repository_configuration(source: Path) -> tuple[str, str]:
 
 
 def prepare_payload(*, repository: Path, commit: str, version: str, software: Path, rpms: Path, powercli: Path, output: Path) -> None:
-    """Stage only verified-source inputs; preserve incomplete output on failure."""
+    """Stage only verified-source inputs; preserve incomplete output on failure.
+
+    Args:
+        repository: Atlaso repository checkout used as the trusted source.
+        commit: Full source commit SHA being prepared.
+        version: Software release version expected in the candidate.
+        software: Verified software release payload directory.
+        rpms: Captured Photon RPM package directory.
+        powercli: PowerCLI module directory accepted by Validate mode.
+        output: Destination path for the generated output."""
     if output.exists() or output.is_symlink():
         raise ValueError("installation payload output must be absent")
     expected = source_archive(repository, commit)
@@ -251,7 +299,10 @@ def prepare_payload(*, repository: Path, commit: str, version: str, software: Pa
 
 
 def _require_ordinary_directory(path: Path) -> Path:
-    """Require a real directory and non-linked ancestry before repository mutation."""
+    """Require a real directory and non-linked ancestry before repository mutation.
+
+    Args:
+        path: Filesystem path to the input or target."""
     absolute = Path(os.path.abspath(path))
     if absolute.resolve(strict=True) != absolute:
         raise ValueError("installation repository paths cannot contain symbolic links")
@@ -266,7 +317,10 @@ def _require_ordinary_directory(path: Path) -> Path:
 
 
 def _validate_ordinary_tree(root: Path) -> list[dict]:
-    """Reject linked, special, or multiply-linked objects anywhere in a tree."""
+    """Reject linked, special, or multiply-linked objects anywhere in a tree.
+
+    Args:
+        root: Root directory containing the files being checked."""
     root = _require_ordinary_directory(root)
     for path in root.rglob("*"):
         info = path.lstat()
@@ -280,7 +334,11 @@ def _validate_ordinary_tree(root: Path) -> list[dict]:
 
 
 def rebuild_repository(rpms: Path, scratch: Path) -> None:
-    """Replace candidate RPM metadata with fresh SHA-256 metadata from its RPM files."""
+    """Replace candidate RPM metadata with fresh SHA-256 metadata from its RPM files.
+
+    Args:
+        rpms: Captured Photon RPM package directory.
+        scratch: Existing private directory for temporary validation data."""
     repository = _require_ordinary_directory(rpms)
     work = _require_ordinary_directory(scratch)
     metadata = repository / "repodata"

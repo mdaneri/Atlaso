@@ -10,10 +10,18 @@ from scripts.installation import assets
 
 
 def _sha(data: bytes) -> str:
+    """
+    Args:
+        data: Input bytes whose checksum is calculated.
+    """
     return hashlib.sha256(data).hexdigest()
 
 
 def test_small_iso_is_copied_as_one_asset_and_reassembled(tmp_path: Path) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     source = tmp_path / "source.iso"
     package = tmp_path / "package"
     package.mkdir()
@@ -32,6 +40,10 @@ def test_small_iso_is_copied_as_one_asset_and_reassembled(tmp_path: Path) -> Non
 
 
 def test_empty_iso_is_a_valid_single_asset(tmp_path: Path) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     source = tmp_path / "empty.iso"
     package = tmp_path / "package"
     package.mkdir()
@@ -46,6 +58,11 @@ def test_empty_iso_is_a_valid_single_asset(tmp_path: Path) -> None:
 
 
 def test_large_iso_parts_are_ordered_and_reassemble_exactly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     monkeypatch.setattr(assets, "GITHUB_ASSET_LIMIT", 8)
     source = tmp_path / "large.iso"
     package = tmp_path / "package"
@@ -66,6 +83,11 @@ def test_large_iso_parts_are_ordered_and_reassemble_exactly(tmp_path: Path, monk
 
 
 def test_iso_at_asset_limit_is_split(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     monkeypatch.setattr(assets, "GITHUB_ASSET_LIMIT", 4)
     source = tmp_path / "at-limit.iso"
     package = tmp_path / "package"
@@ -80,6 +102,11 @@ def test_iso_at_asset_limit_is_split(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 @pytest.mark.parametrize("part_bytes", [0, -1, assets.MAX_PART_BYTES + 1, True])
 def test_split_rejects_invalid_part_size(tmp_path: Path, part_bytes: int) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        part_bytes: Maximum byte count for each split ISO part.
+    """
     source = tmp_path / "source.iso"
     package = tmp_path / "package"
     package.mkdir()
@@ -90,6 +117,10 @@ def test_split_rejects_invalid_part_size(tmp_path: Path, part_bytes: int) -> Non
 
 
 def test_split_does_not_overwrite_existing_asset(tmp_path: Path) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     source = tmp_path / "same.iso"
     package = tmp_path / "package"
     package.mkdir()
@@ -104,6 +135,10 @@ def test_split_does_not_overwrite_existing_asset(tmp_path: Path) -> None:
 
 
 def test_reassembly_does_not_overwrite_existing_output(tmp_path: Path) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     source = tmp_path / "source.iso"
     package = tmp_path / "package"
     package.mkdir()
@@ -119,6 +154,11 @@ def test_reassembly_does_not_overwrite_existing_output(tmp_path: Path) -> None:
 
 
 def test_reassembly_verifies_every_part_before_creating_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     monkeypatch.setattr(assets, "GITHUB_ASSET_LIMIT", 4)
     source = tmp_path / "large.iso"
     package = tmp_path / "package"
@@ -135,6 +175,11 @@ def test_reassembly_verifies_every_part_before_creating_output(tmp_path: Path, m
 
 
 def test_reassembly_removes_only_its_incomplete_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     monkeypatch.setattr(assets, "GITHUB_ASSET_LIMIT", 4)
     source = tmp_path / "large.iso"
     package = tmp_path / "package"
@@ -145,6 +190,10 @@ def test_reassembly_removes_only_its_incomplete_output(tmp_path: Path, monkeypat
     calls = 0
 
     def mutate_after_preflight(path: Path):
+        """
+        Args:
+            path: Path to the fixture or file being tested.
+        """
         nonlocal calls
         calls += 1
         if calls == 3:
@@ -161,6 +210,10 @@ def test_reassembly_removes_only_its_incomplete_output(tmp_path: Path, monkeypat
 
 
 def test_reassembly_rejects_traversal_duplicates_missing_and_extra_entries(tmp_path: Path) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     package = tmp_path / "package"
     package.mkdir()
     source = tmp_path / "image.iso"
@@ -184,6 +237,11 @@ def test_reassembly_rejects_traversal_duplicates_missing_and_extra_entries(tmp_p
 
 
 def test_reassembly_rejects_extra_split_manifest_part(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     monkeypatch.setattr(assets, "GITHUB_ASSET_LIMIT", 4)
     source = tmp_path / "image.iso"
     package = tmp_path / "package"
@@ -198,6 +256,10 @@ def test_reassembly_rejects_extra_split_manifest_part(tmp_path: Path, monkeypatc
 
 @pytest.mark.skipif(not hasattr(os, "link"), reason="hard links are unavailable")
 def test_reassembly_rejects_hard_linked_assets(tmp_path: Path) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     package = tmp_path / "package"
     package.mkdir()
     source = tmp_path / "image.iso"
@@ -210,6 +272,10 @@ def test_reassembly_rejects_hard_linked_assets(tmp_path: Path) -> None:
 
 
 def test_reassembly_rejects_symlinked_ancestry(tmp_path: Path) -> None:
+    """
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
     package = tmp_path / "package"
     package.mkdir()
     source = tmp_path / "image.iso"

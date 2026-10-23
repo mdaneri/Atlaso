@@ -42,7 +42,12 @@ from scripts.installation.manifest import (  # noqa: E402 - direct-script reposi
 
 
 def write_signed(path: Path, value: dict, key) -> None:
-    """Write the existing detached Ed25519 JSON envelope without printing keys."""
+    """Write the existing detached Ed25519 JSON envelope without printing keys.
+
+    Args:
+        path: Filesystem path to the input or target.
+        value: Value to validate or serialize.
+        key: Signing key used to create detached metadata signatures."""
     content = canonical_json(value)
     path.write_bytes(content)
     signature = {"schema_version": 1, "algorithm": "ed25519", "key_id": KEY_ID, "signature": base64.b64encode(key.sign(content)).decode("ascii")}

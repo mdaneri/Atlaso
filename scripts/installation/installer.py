@@ -46,13 +46,24 @@ class Cancelled(Exception):
 
 
 def environment_value(value: str) -> str:
-    """Quote for the existing systemd environment file and shell consumers."""
+    """Quote for the existing systemd environment file and shell consumers.
+
+    Args:
+        value: Value to validate or serialize."""
     escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
     return '"' + escaped + '"'
 
 
 def prompt(maxy: int, maxx: int, title: str, message: str, *, secret: bool = False, validator=None) -> str:
-    """Reuse the Photon console field and masked input rather than a new UI kit."""
+    """Reuse the Photon console field and masked input rather than a new UI kit.
+
+    Args:
+        maxy: Available terminal height in rows.
+        maxx: Available terminal width in columns.
+        title: Prompt title displayed to the operator.
+        message: Prompt instructions displayed to the operator.
+        secret: Whether input must be concealed.
+        validator: Optional function that validates the entered value."""
     from windowstringreader import WindowStringReader
 
     state = {}
@@ -71,7 +82,11 @@ def prompt(maxy: int, maxx: int, title: str, message: str, *, secret: bool = Fal
 
 
 def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tuple[str, str]]:
-    """Collect the native layout, exact erasure consent, and concealed credentials."""
+    """Collect the native layout, exact erasure consent, and concealed credentials.
+
+    Args:
+        screen: Active curses screen used by the installer.
+        initial: Read-only disk identities captured before operator selection."""
     from custompartition import CustomPartition
     from device import Device
     from partitionpane import PartitionPane
@@ -103,6 +118,10 @@ def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tup
     # Device discovery is read-only and shared by Auto and Custom. A disk hosting
     # the mounted ISO, any active filesystem, or swap never enters these screens.
     def devices(*, byte_sizes: bool):
+        """Return eligible installer disks that still match the initial inventory.
+
+        Args:
+            byte_sizes: Byte counts used to format device sizes."""
         current = disk_inventory()
         return [
             Device(item.get("model") or "Unknown", path, str(item["size"]) if byte_sizes else f"{item['size'] // 1024**3} GiB")
@@ -116,6 +135,10 @@ def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tup
         """Extend only disk selection; Photon still validates and builds partitions."""
 
         def __init__(self, *args):
+            """Initialize the native partition editor and its per-row disk mappings.
+
+            Args:
+                *args: Arguments forwarded to the wrapped operation."""
             super().__init__(*args)
             self.partition_disks = {}
 
@@ -131,6 +154,10 @@ def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tup
             return super().create_function()
 
         def validate_partition(self, values):
+            """Validate a native custom partition and bind it to its selected disk.
+
+            Args:
+                values: Partition fields collected from the operator."""
             if values and values[2] == "/boot/efi":
                 return False, "Photon creates the EFI boot partition on the selected boot disk."
             if values and values[1] not in {"ext4", "xfs", "btrfs", "swap"}:
@@ -194,6 +221,11 @@ def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tup
     passwords = []
     for username in ("admin", "root"):
         def validator(value, account=username):
+            """Apply the local password policy to one concealed password entry.
+
+            Args:
+                value: Value to validate or serialize.
+                account: Local account whose password policy is being applied."""
             errors = validate_password(value, account, DEFAULT_PASSWORD_POLICY)
             return not errors, " ".join(errors)
 
@@ -209,7 +241,14 @@ def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tup
 
 
 def install(media: Path, identity: dict, config: dict, consent: dict, credentials: tuple[str, str]) -> None:
-    """Delegate partitions, base OS, bootloader and fstab to the pinned backend."""
+    """Delegate partitions, base OS, bootloader and fstab to the pinned backend.
+
+    Args:
+        media: Mounted installation payload directory.
+        identity: Machine identity to initialize on the installed system.
+        config: Installer configuration describing the target layout.
+        consent: Previously confirmed disk identities for this installation.
+        credentials: Administrator and root credentials collected by the installer."""
     from installer import Installer
 
     class AtlasoInstaller(Installer):
@@ -218,9 +257,17 @@ def install(media: Path, identity: dict, config: dict, consent: dict, credential
         def exit_gracefully(self, *args):
             # Photon 2.2's error helper can return to the installation sequence.
             # An Atlaso install must never turn a partial native failure green.
+            """Stop after a native installer failure so partial installation cannot succeed.
+
+            Args:
+                *args: Arguments forwarded to the wrapped operation."""
             raise RuntimeError("Photon installation failed; selected disks may require recovery")
 
         def _run_tdnf_in_docker(self, *args):
+            """Reject network-backed package installation during offline setup.
+
+            Args:
+                *args: Arguments forwarded to the wrapped operation."""
             raise RuntimeError("offline installation cannot fall back to a Docker repository")
 
         def _enable_network_in_chroot(self):

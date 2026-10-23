@@ -24,7 +24,14 @@ from scripts.installation.manifest import (  # noqa: E402 - script and zipapp en
 
 
 def verify_release(assets: Path, trust_key: Path, scratch: Path, *, version: str, commit: str) -> dict:
-    """Bind release assets and their reconstruction order to the selected identity."""
+    """Bind release assets and their reconstruction order to the selected identity.
+
+    Args:
+        assets: Directory containing the signed release assets.
+        trust_key: Trusted public key used to verify signed metadata.
+        scratch: Existing private directory for temporary validation data.
+        version: Software release version expected in the candidate.
+        commit: Full source commit SHA being prepared."""
     index_path = assets / "installation-artifact-index.json"
     value = verify_signature(index_path, index_path.with_suffix(".json.sig"), trust_key, scratch=scratch)
     if value.get("schema") != 1 or value.get("kind") != "atlaso-installation" or value.get("architecture") != "x86_64":
