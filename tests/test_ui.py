@@ -1113,8 +1113,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=ca-csr-intake-1028-1"),
-        (public_base, "/static/app.js?v=ca-csr-intake-1028-1"),
+        (base, "/static/app.js?v=ca-ip-sans-1039-1"),
+        (public_base, "/static/app.js?v=ca-ip-sans-1039-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1789,7 +1789,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=ca-csr-intake-1028-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11" in page.text
-    assert "/static/app.js?v=ca-csr-intake-1028-1" in page.text
+    assert "/static/app.js?v=ca-ip-sans-1039-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -10903,7 +10903,8 @@ def test_vsphere_key_provider_page_uses_shared_management_contract(client):
     assert "updateCertificateCounts" in app_js.text
     assert "await updateCertificateCounts(providerId, vcenterId, 1" in app_js.text
     assert "await updateCertificateCounts(data.provider_id, data.trusted_vcenter_id, -1" in app_js.text
-    certificate_actions = app_js.text.split("const certificateForm =", 1)[1].split(
+    provider_initializer = app_js.text.split("function initializeVsphereKeyProviderTables()", 1)[1]
+    certificate_actions = provider_initializer.split("const certificateForm =", 1)[1].split(
         'const healthElement = document.getElementById("vsphere-health-table")', 1
     )[0]
     assert certificate_actions.count("await refreshNetworkSideStack();") == 2
