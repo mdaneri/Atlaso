@@ -68,11 +68,12 @@
     for (const row of rows) { const item = document.createElement("div"); const label = document.createElement("span"); const value = document.createElement("strong"); label.textContent = row[0]; value.textContent = row[1] ?? ""; item.append(label, value); container.append(item); }
   }
   function paintOperation(result) {
+    if (operationId) wizard.markClean();
     node("result").textContent = `${result.state || "unknown"}${result.error ? ` — ${result.error}` : ""}`;
     node("progress").value = Number(result.progress_percent || 0);
     const verification = result.verification || {};
     for (const [key, target] of Object.entries({installation: "installation", exact_served_certificate: "served-certificate", strict_tls: "strict-tls", authenticated_login: "login", health: "health"})) {
-      node(target).textContent = verification[key] === true ? "Verified" : verification[key] === false ? "Needs attention" : "Not verified";
+      node(target).textContent = verification[key] === true ? "Verified" : ["failed", "needs_recovery"].includes(result.state) ? "Needs attention" : "Not verified";
     }
     if (result.job_id) { node("task").href = `${form.dataset.tasksRoot}?job_id=${encodeURIComponent(result.job_id)}`; node("task").classList.remove("hidden"); }
     node("continue-review").classList.toggle("hidden", result.state !== "prepared");
@@ -105,7 +106,18 @@
     node("result").textContent = ""; node("new-operation").classList.add("hidden");
   }
   async function poll() { if (!operationId || !dialog.open) return; await run(async () => paintOperation(await call(`/operations/${encodeURIComponent(operationId)}`))); }
-  const wizard = window.AtlasoUiPatterns.createWizard({form, dialog, steps: steps.map((id) => ({id, title: id, description: id})), validateStep: ({step}) => {
+  const stepCopy = {
+    credential: ["Choose credentials", "Select saved vault credentials or enter temporary credentials."],
+    server: ["Select the appliance", "Choose SRM or vCenter and enter its endpoint."],
+    fingerprint: ["Confirm TLS identity", "Compare the presented SHA-256 fingerprint with a trusted source."],
+    login: ["Sign in to the appliance", "Manual credentials are sent only after fingerprint confirmation."],
+    target: ["Check target and prerequisites", "Inspect native capabilities, topology, names, and certificate profiles."],
+    prepare: ["Prepare the certificate", "Confirm recovery readiness before requesting a target-owned CSR."],
+    review: ["Review the replacement", "Check the exact certificate, trust changes, interruption, and recovery plan."],
+    replace: ["Approve installation", "Install only the reviewed certificate after explicit approval."],
+    results: ["Verify operation results", "Review installation, TLS, login, and appliance health separately."],
+  };
+  const wizard = window.AtlasoUiPatterns.createWizard({form, dialog, steps: steps.map((id) => ({id, title: stepCopy[id][0], description: stepCopy[id][1]})), validateStep: ({step}) => {
     if (step.id === "credential") return Boolean(manual() || field("credential_entry_id").value);
     if (step.id === "fingerprint") return Boolean(probe && field("confirmed").checked);
     if (step.id === "login") return Boolean(probe && field("confirmed").checked && field("username").value && field("password").value);
@@ -149,7 +161,7 @@
         operationId = result.operation_id; saveOperation(operationId); wizard.setHighestStep("results"); wizard.showStep("results"); paintOperation(result);
       } else if (button.matches("[data-cert-review-action]")) {
         const result = await call("/review", {...credentials(), operation_id: operationId, ...targetFields()}); reviewToken = result.token;
-        const r = result.review; paintList(node("review"), [["Target", r.target], ["Current SHA-256", r.current_certificate.fingerprint_sha256], ["Replacement SHA-256", r.replacement_certificate.fingerprint_sha256], ["Issuer", r.issuer], ["Names", (r.names || []).join(", ")], ["Validity", r.replacement_certificate.not_before + " through " + r.replacement_certificate.not_after], ["Trust changes", (r.trust_changes || []).join(", ")], ["Interruption", r.interruption], ["Recovery", r.recovery_reference]]);
+        const r = result.review; paintList(node("review"), [["Target", r.target], ["Current SHA-256", r.current_certificate.fingerprint_sha256], ["Replacement SHA-256", r.replacement_certificate.fingerprint_sha256], ["Issuer", r.issuer], ["Issuer SHA-256", r.issuer_fingerprint_sha256], ["CA profile", r.profile], ["Names", (r.names || []).join(", ")], ["Validity", r.replacement_certificate.not_before + " through " + r.replacement_certificate.not_after], ["Trust changes", (r.trust_changes || []).join(", ")], ["Interruption", r.interruption], ["Recovery", r.recovery_reference]]);
       } else if (button.matches("[data-cert-execute]")) {
         const result = await call("/execute", {...credentials(), operation_id: operationId, token: reviewToken, acknowledged: field("install_acknowledged").checked}); reviewToken = null; wizard.setHighestStep("results"); wizard.showStep("results"); paintOperation(result);
       } else {

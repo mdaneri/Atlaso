@@ -18432,7 +18432,7 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert "Lab / Non-production Overrides requires JavaScript." in fallback
     assert "No changes are made by opening this page." in fallback
     assert "Review DNS" not in visible_workspace
-    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 9
+    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 10
     assert "Import passwords into a vault" in visible_workspace
     assert visible_workspace.count('class="vcf-helper-action-bands"') == 5
     groups = {key: visible_workspace.split(f'id="vcf-helper-{key}" role="tabpanel"', 1)[1].split('class="tab-panel', 1)[0] for key in ("deployment", "credentials", "certificates", "ldap", "lab")}

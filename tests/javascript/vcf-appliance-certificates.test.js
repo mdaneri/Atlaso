@@ -56,3 +56,13 @@ test('TLS probe sends endpoint identity only and wizard uses shared open and clo
   assert.match(js, /operationStorageKey = "atlaso:vcf-helper:certificate-operation"/);
   assert.match(js, /new URLSearchParams\(window\.location\.search\)\.get\("certificate_operation"\)/);
 });
+
+test('wizard labels, readonly CSR names, and results continuation are accessible', () => {
+  assert.match(js, /credential: \["Choose credentials"/);
+  assert.match(js, /results: \["Verify operation results"/);
+  assert.match(html, /name="common_name" required readonly/);
+  assert.match(html, /name="dns_names" rows="3" readonly/);
+  assert.match(html, /name="ip_addresses" rows="3" readonly/);
+  assert.match(html, /data-cert-continue-review>Continue to Review/);
+  assert.doesNotMatch(html, /data-cert-continue-review hidden/);
+});

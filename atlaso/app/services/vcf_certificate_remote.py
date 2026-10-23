@@ -12,6 +12,7 @@ import threading
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from http.cookies import CookieError, SimpleCookie
 from typing import Any
 from urllib.parse import quote
 
@@ -20,6 +21,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 
 _MAX_RESPONSE = 1024 * 1024
 _TIMEOUT = 30
+_VIM25_NAMESPACE = "urn:vim25"
 
 
 class RemoteError(RuntimeError):
@@ -88,6 +90,11 @@ class PinnedHTTPS:
 
     def __init__(self, target: Target):
         self.target = target
+        self._soap_cookie: str | None = None
+
+    def clear_soap_cookie(self) -> None:
+        """Discard the request-local SOAP session cookie."""
+        self._soap_cookie = None
 
     def probe(self) -> dict[str, Any]:
         """Read the unauthenticated TLS leaf directly; sends no HTTP bytes."""
@@ -134,6 +141,8 @@ class PinnedHTTPS:
         session_header: tuple[str, str] | None = None,
         body: Any = None,
         xml_body: str | None = None,
+        soap_namespace: str = "lookup",
+        capture_soap_cookie: bool = False,
     ) -> tuple[int, Any]:
         if (
             not path.startswith("/")
@@ -152,6 +161,10 @@ class PinnedHTTPS:
             raise RemoteError("Strict TLS requires the reviewed CA certificate")
         if body is not None and xml_body is not None:
             raise RemoteError("Choose one request body format")
+        if soap_namespace not in {"lookup", "vim25"} or (
+            soap_namespace == "vim25" and xml_body is None
+        ):
+            raise RemoteError("Invalid SOAP namespace")
         context = (
             ssl.create_default_context(cadata=self.target.ca_pem)
             if self.target.strict_tls
@@ -171,7 +184,11 @@ class PinnedHTTPS:
         deadline = min(
             time.monotonic() + _TIMEOUT, self.target.deadline or float("inf")
         )
-        timer = threading.Timer(_remaining(deadline), abort)
+        try:
+            timeout = _remaining(deadline)
+        except TimeoutError:
+            raise RemoteError("Appliance request deadline exceeded") from None
+        timer = threading.Timer(timeout, abort)
         timer.daemon = True
         timer.start()
         try:
@@ -192,6 +209,8 @@ class PinnedHTTPS:
                 headers["Authorization"] = f"Basic {token}"
             if session_header:
                 headers[session_header[0]] = session_header[1]
+            if soap_namespace == "vim25" and self._soap_cookie:
+                headers["Cookie"] = f"vmware_soap_session={self._soap_cookie}"
             payload = None
             if body is not None:
                 payload = json.dumps(body).encode()
@@ -199,9 +218,37 @@ class PinnedHTTPS:
             if xml_body is not None:
                 payload = xml_body.encode("utf-8")
                 headers["Content-Type"] = "text/xml; charset=utf-8"
-                headers["SOAPAction"] = "urn:lookup/2.0"
+                headers["SOAPAction"] = (
+                    "urn:lookup/2.0"
+                    if soap_namespace == "lookup"
+                    else "urn:vim25/8.0.0.0"
+                )
             conn.request(method, path, body=payload, headers=headers)
             response = conn.getresponse()
+            if capture_soap_cookie:
+                raw_cookie = response.getheader("Set-Cookie", "")
+                parsed_cookie = SimpleCookie()
+                try:
+                    if (
+                        not raw_cookie
+                        or len(raw_cookie) > 4096
+                        or any(char in raw_cookie for char in "\r\n")
+                    ):
+                        raise ValueError
+                    parsed_cookie.load(raw_cookie)
+                    morsel = parsed_cookie.get("vmware_soap_session")
+                except CookieError, ValueError:
+                    morsel = None
+                if (
+                    morsel is None
+                    or not morsel.value
+                    or len(morsel.value) > 2048
+                    or any(char in morsel.value for char in "\r\n;,")
+                ):
+                    raise RemoteError(
+                        "vCenter SOAP login returned an invalid session cookie"
+                    )
+                self._soap_cookie = morsel.value
             if response.length is not None and response.length > _MAX_RESPONSE:
                 raise RemoteError("Appliance response exceeds size limit")
             data = response.read(_MAX_RESPONSE + 1)
@@ -266,6 +313,26 @@ def _required_text(element: ET.Element, name: str) -> str:
     return value
 
 
+def _parse_vim25_xml(content: str, response_name: str) -> ET.Element:
+    """Parse bounded vSphere SOAP XML without DTDs, entities, or SOAP faults."""
+    if (
+        len(content.encode("utf-8")) > _MAX_RESPONSE
+        or "<!DOCTYPE" in content.upper()
+        or "<!ENTITY" in content.upper()
+    ):
+        raise RemoteError("vCenter SOAP response is invalid")
+    try:
+        root = ET.fromstring(content)
+    except ET.ParseError:
+        raise RemoteError("vCenter SOAP response is malformed") from None
+    if root.find(".//{http://schemas.xmlsoap.org/soap/envelope/}Fault") is not None:
+        raise RemoteError("vCenter SOAP request was rejected")
+    response = root.find(f".//{{{_VIM25_NAMESPACE}}}{response_name}")
+    if response is None:
+        raise RemoteError("vCenter SOAP response is missing required data")
+    return response
+
+
 class NativeAdapter:
     def __init__(self, target: Target, product: str):
         if product not in {"srm", "vcenter"}:
@@ -322,7 +389,7 @@ class NativeAdapter:
             or not isinstance(value, str)
             or not 0 < len(value) <= 4096
             or "\r" in value
-            or "\n" in value
+            or "\r\n" in value
         ):
             raise RemoteError("Appliance login returned an invalid session")
         self.session = value
@@ -516,6 +583,130 @@ class NativeAdapter:
         if not results:
             raise RemoteError("Lookup service returned no vCenter registrations")
         return results
+
+    def vcenter_permissions(self, credentials: Credentials) -> bool:
+        """Check native TLS CSR privileges before preparation, using a temporary SOAP login.
+
+        The check targets vCenter's root folder because certificate-management privileges
+        are global. Native CSR generation remains authoritative and may still reject it.
+        """
+        if self.product != "vcenter":
+            raise ValueError(
+                "Certificate permission checks are available only for vCenter"
+            )
+        service_envelope = f'''<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="{_VIM25_NAMESPACE}"><soapenv:Body><vim25:RetrieveServiceContent><_this type="ServiceInstance">ServiceInstance</_this></vim25:RetrieveServiceContent></soapenv:Body></soapenv:Envelope>'''
+        session_manager_ref: tuple[str, str] | None = None
+        try:
+            _, content = self.transport.request(
+                "POST", "/sdk", xml_body=service_envelope, soap_namespace="vim25"
+            )
+            if not isinstance(content, str):
+                raise RemoteError("vCenter service content is invalid")
+            service = _parse_vim25_xml(content, "RetrieveServiceContentResponse")
+            content_node = next(
+                (
+                    item
+                    for item in service.iter()
+                    if item.tag.rsplit("}", 1)[-1] == "returnval"
+                ),
+                None,
+            )
+            if content_node is None:
+                raise RemoteError("vCenter service content is missing references")
+            refs: dict[str, tuple[str, str]] = {}
+            for name in ("sessionManager", "rootFolder", "authorizationManager"):
+                ref = next(
+                    (
+                        item
+                        for item in content_node.iter()
+                        if item.tag.rsplit("}", 1)[-1] == name
+                    ),
+                    None,
+                )
+                if (
+                    ref is None
+                    or not ref.attrib.get("type")
+                    or not (ref.text or "").strip()
+                ):
+                    raise RemoteError("vCenter service content is missing references")
+                refs[name] = (ref.attrib["type"], (ref.text or "").strip())
+            session_manager_ref = refs["sessionManager"]
+            login_envelope = f'''<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="{_VIM25_NAMESPACE}"><soapenv:Body><vim25:Login><_this type="{_xml_escape(refs["sessionManager"][0])}">{_xml_escape(refs["sessionManager"][1])}</_this><userName>{_xml_escape(credentials.username)}</userName><password>{_xml_escape(credentials.password)}</password></vim25:Login></soapenv:Body></soapenv:Envelope>'''
+            _, login_content = self.transport.request(
+                "POST",
+                "/sdk",
+                xml_body=login_envelope,
+                soap_namespace="vim25",
+                capture_soap_cookie=True,
+            )
+            if not isinstance(login_content, str):
+                raise RemoteError("vCenter SOAP login response is invalid")
+            login = _parse_vim25_xml(login_content, "LoginResponse")
+            user_session = next(
+                (
+                    item
+                    for item in login.iter()
+                    if item.tag.rsplit("}", 1)[-1] == "returnval"
+                ),
+                None,
+            )
+            session_key_node = (
+                next(
+                    (
+                        item
+                        for item in user_session.iter()
+                        if item.tag.rsplit("}", 1)[-1] == "key"
+                    ),
+                    None,
+                )
+                if user_session is not None
+                else None
+            )
+            if (
+                user_session is None
+                or session_key_node is None
+                or not (session_key_node.text or "").strip()
+            ):
+                raise RemoteError("vCenter SOAP login response is invalid")
+            session_key = (session_key_node.text or "").strip()
+            entity_type, entity_id = refs["rootFolder"]
+            manager_type, manager_id = refs["authorizationManager"]
+            privilege_ids = (
+                "CertificateManagement.Manage",
+                "CertificateManagement.Administer",
+            )
+            privileges = "".join(f"<privId>{value}</privId>" for value in privilege_ids)
+            check_envelope = f'''<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="{_VIM25_NAMESPACE}"><soapenv:Body><vim25:HasPrivilegeOnEntity><_this type="{_xml_escape(manager_type)}">{_xml_escape(manager_id)}</_this><entity type="{_xml_escape(entity_type)}">{_xml_escape(entity_id)}</entity><sessionId>{_xml_escape(session_key)}</sessionId>{privileges}</vim25:HasPrivilegeOnEntity></soapenv:Body></soapenv:Envelope>'''
+            _, check_content = self.transport.request(
+                "POST", "/sdk", xml_body=check_envelope, soap_namespace="vim25"
+            )
+            if not isinstance(check_content, str):
+                raise RemoteError("vCenter privilege response is invalid")
+            checked = _parse_vim25_xml(check_content, "HasPrivilegeOnEntityResponse")
+            values = [
+                item
+                for item in checked.iter()
+                if item.tag.rsplit("}", 1)[-1] == "returnval"
+            ]
+            if len(values) != 2 or any(
+                (item.text or "").strip().lower() not in {"true", "false"}
+                for item in values
+            ):
+                raise RemoteError("vCenter privilege response is invalid")
+            return all((item.text or "").strip().lower() == "true" for item in values)
+        finally:
+            if self.transport._soap_cookie:
+                try:
+                    if session_manager_ref is not None:
+                        logout_envelope = f'''<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:vim25="{_VIM25_NAMESPACE}"><soapenv:Body><vim25:Logout><_this type="{_xml_escape(session_manager_ref[0])}">{_xml_escape(session_manager_ref[1])}</_this></vim25:Logout></soapenv:Body></soapenv:Envelope>'''
+                        self.transport.request(
+                            "POST",
+                            "/sdk",
+                            xml_body=logout_envelope,
+                            soap_namespace="vim25",
+                        )
+                finally:
+                    self.transport.clear_soap_cookie()
 
     def vcenter_ha(self) -> Any:
         if self.product != "vcenter":

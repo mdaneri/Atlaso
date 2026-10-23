@@ -7322,6 +7322,67 @@ textarea {
   }
 }
 
+/* Certificate replacement keeps the shared wizard rail and actions within the viewport. */
+#vcf-appliance-certificate-modal .vcf-sddc-wizard-panel {
+  height: min(720px, calc(100dvh - 56px));
+  max-height: calc(100dvh - 56px);
+  min-height: 0;
+}
+
+#vcf-appliance-certificate-modal .vcf-sddc-wizard-rail {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+#vcf-appliance-certificate-modal .vcf-sddc-step-list {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+#vcf-appliance-certificate-modal .vcf-sddc-wizard-main {
+  min-height: 0;
+}
+
+#vcf-appliance-certificate-modal .vcf-sddc-wizard-body {
+  min-height: 0;
+  max-height: none;
+}
+
+#vcf-appliance-certificate-modal .vcf-sddc-wizard-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+}
+
+@media (max-width: 960px) {
+  #vcf-appliance-certificate-modal .vcf-sddc-wizard-panel {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  #vcf-appliance-certificate-modal .vcf-sddc-wizard-rail {
+    grid-template-rows: auto auto;
+    gap: 6px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 10px 14px;
+  }
+
+  #vcf-appliance-certificate-modal .vcf-sddc-step-list {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 4px;
+  }
+
+  #vcf-appliance-certificate-modal .vcf-sddc-step-list li { flex: 0 0 auto; }
+  #vcf-appliance-certificate-modal .vcf-sddc-step-button { width: auto; padding: 6px 8px; }
+  #vcf-appliance-certificate-modal .vcf-sddc-step-button small { display: none; }
+}
+
 #diagnostics-wizard .field-label > span {
   min-width: 0;
   white-space: normal;

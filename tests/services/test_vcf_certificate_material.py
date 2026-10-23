@@ -13,6 +13,7 @@ from atlaso.app.services.vcf_certificate_material import (
     public_chain_pem,
     validate_csr,
     validate_issued_certificate,
+    validate_product_csr,
     validate_profile,
 )
 
@@ -255,3 +256,47 @@ def test_chain_rejects_expired_trust_root():
     )
     with pytest.raises(CertificateMaterialError):
         public_chain_pem(expired.public_bytes(serialization.Encoding.PEM), expired)
+
+
+def _csr_with_sans(dns=(), ips=()):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "vc.example.test")])
+    names = [x509.DNSName(value) for value in dns] + [
+        x509.IPAddress(ip_address(value)) for value in ips
+    ]
+    return (
+        x509.CertificateSigningRequestBuilder()
+        .subject_name(name)
+        .add_extension(x509.SubjectAlternativeName(names), critical=False)
+        .sign(key, hashes.SHA256())
+        .public_bytes(serialization.Encoding.PEM)
+    )
+
+
+def test_vcenter_native_ip_pnid_csr_exception_is_exact():
+    pem = _csr_with_sans(ips=["192.0.2.10"])
+    validate_product_csr(pem, "vcenter", {"192.0.2.10"}, {"192.0.2.10"})
+    with pytest.raises(CertificateMaterialError):
+        validate_product_csr(
+            pem, "vcenter", {"vc.example.test", "192.0.2.10"}, {"192.0.2.10"}
+        )
+    with pytest.raises(CertificateMaterialError):
+        validate_product_csr(
+            _csr_with_sans(dns=["vc.example.test"], ips=["192.0.2.10"]),
+            "vcenter",
+            {"192.0.2.10"},
+            {"192.0.2.10"},
+        )
+    with pytest.raises(CertificateMaterialError):
+        validate_product_csr(
+            _csr_with_sans(ips=["192.0.2.10", "192.0.2.11"]),
+            "vcenter",
+            {"192.0.2.10"},
+            {"192.0.2.10"},
+        )
+
+
+def test_srm_does_not_apply_vcenter_ip_pnid_exception():
+    pem = _csr_with_sans(ips=["192.0.2.10"])
+    with pytest.raises(CertificateMaterialError):
+        validate_product_csr(pem, "srm", {"192.0.2.10"}, {"192.0.2.10"})

@@ -1,6 +1,12 @@
 import hashlib
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
+
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 
 from atlaso.app.services.vcf_certificate_remote import (
     Credentials,
@@ -211,3 +217,93 @@ class TransportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _root_pem():
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Atlaso Test Root")])
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(9)
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=30))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    pem = cert.public_bytes(serialization.Encoding.PEM).decode()
+    return pem, cert.fingerprint(hashes.SHA256()).hex()
+
+
+def test_trusted_root_present_skips_import():
+    root, fingerprint = _root_pem()
+    adapter = NativeAdapter(Target("vc.test", 443, "a" * 64), "vcenter")
+    adapter.session = "session"
+    adapter.trusted_root_present = Mock(return_value=True)
+    adapter._request = Mock()
+    assert adapter.import_and_verify_root(root, fingerprint)
+    adapter._request.assert_not_called()
+
+
+def test_root_import_occurs_once_and_requires_readback():
+    root, fingerprint = _root_pem()
+    adapter = NativeAdapter(Target("vc.test", 443, "a" * 64), "vcenter")
+    adapter.session = "session"
+    adapter.trusted_root_present = Mock(side_effect=[False, True])
+    adapter.transport.request = Mock(return_value=(201, None))
+    assert adapter.import_and_verify_root(root, fingerprint)
+    adapter.transport.request.assert_called_once()
+    assert adapter.transport.request.call_args.args[:2] == (
+        "POST",
+        "/api/vcenter/certificate-management/vcenter/trusted-root-chains",
+    )
+
+
+def test_root_readback_failure_returns_false():
+    root, fingerprint = _root_pem()
+    adapter = NativeAdapter(Target("vc.test", 443, "a" * 64), "vcenter")
+    adapter.session = "session"
+    adapter.trusted_root_present = Mock(side_effect=[False, False])
+    adapter.transport.request = Mock(return_value=(201, None))
+    with unittest.TestCase().assertRaises(RemoteError):
+        adapter.import_and_verify_root(root, fingerprint)
+    adapter.transport.request.assert_called_once()
+
+
+def test_native_csr_and_install_require_expected_status():
+    for product, valid_csr_status in (("srm", 200), ("vcenter", 201)):
+        adapter = NativeAdapter(Target("vc.test", 443, "a" * 64), product)
+        adapter.session = "session"
+        adapter.transport.request = Mock(
+            return_value=(
+                valid_csr_status,
+                {"value" if product == "srm" else "csr": "CSR"},
+            )
+        )
+        assert adapter.generate_csr({}) == "CSR"
+        adapter.transport.request.return_value = (
+            299,
+            {"value" if product == "srm" else "csr": "CSR"},
+        )
+        with unittest.TestCase().assertRaises(RemoteError):
+            adapter.generate_csr({})
+    adapter = NativeAdapter(Target("vc.test", 443, "a" * 64), "vcenter")
+    adapter.session = "session"
+    adapter.transport.request = Mock(return_value=(200, None))
+    with unittest.TestCase().assertRaises(RemoteError):
+        adapter.install_csr("LEAF", [])
+
+
+def test_expired_target_deadline_fails_before_socket_or_credentials():
+    target = Target("vc.test", 443, "a" * 64, deadline=-1)
+    with patch(
+        "atlaso.app.services.vcf_certificate_remote.socket.create_connection"
+    ) as connect:
+        with unittest.TestCase().assertRaises(RemoteError):
+            PinnedHTTPS(target).request(
+                "POST", "/", credentials=Credentials("admin", "secret")
+            )
+        connect.assert_not_called()

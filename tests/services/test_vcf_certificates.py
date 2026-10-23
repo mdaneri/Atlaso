@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from atlaso.app.models import Base, Job, Setting, User
 from atlaso.app.services import vcf_certificates as service
+from atlaso.app.services.vcf_certificate_remote import RemoteError
 
 
 @pytest.fixture
@@ -157,7 +158,10 @@ def _dispatch_mocks(monkeypatch):
     monkeypatch.setattr(
         service,
         "_ca_snapshot",
-        lambda *_: {"root": {"fingerprint": "root"}, "profile": {"id": 1}},
+        lambda *_: {
+            "root": {"fingerprint_sha256": "a" * 64},
+            "profile": {"id": 1, "name": "vCenter Profile", "key_size": 2048},
+        },
     )
     monkeypatch.setattr(service, "_locks", lambda *_: ["vcf_cert_lock:identity"])
     monkeypatch.setattr(
@@ -363,3 +367,224 @@ def test_review_expired_token_refused(db, monkeypatch):
             tasks,
         )
     assert len(tasks.calls) == 1
+
+
+def _worker_state(db, action="prepare"):
+    op, _ = _record(
+        db, "queued_preparation" if action == "prepare" else "queued_installation"
+    )
+    row = db.scalar(select(Setting).where(Setting.key == service.PREFIX + op))
+    state = json.loads(row.value)
+    state.update(
+        state="preparing" if action == "prepare" else "installing",
+        product="vcenter",
+        address="vc.test",
+        port=443,
+        confirmed_tls_fingerprint="a" * 64,
+        credential_reference={"mode": "manual", "username": "admin"},
+        identity="vc.test",
+        product_info={"product": "vcenter", "version": "8.0"},
+        names={"common_name": "vc.test", "dns_names": ["vc.test"], "ip_addresses": []},
+        profile_id=1,
+        ca_snapshot={
+            "root": {"fingerprint_sha256": "a" * 64},
+            "profile": {"id": 1, "name": "vCenter"},
+        },
+        current_certificate={"fingerprint_sha256": "old"},
+        baseline_health={},
+        replacement_certificate={"fingerprint_sha256": "new"},
+        issuer="Atlaso",
+        issuer_fingerprint_sha256="a" * 64,
+        profile={"id": 1, "name": "vCenter"},
+        trust_changes=["root"],
+        recovery_reference="recovery point",
+    )
+    row.value = json.dumps(state)
+    job = db.get(Job, state["job_id"])
+    job.task_config_json = json.dumps({"operation_id": op, "action": action})
+    job.status = "pending"
+    db.commit()
+    return op, row, state, job
+
+
+def test_review_exposes_exact_issuer_fingerprint_and_profile(db, monkeypatch):
+    _dispatch_mocks(monkeypatch)
+    monkeypatch.setattr(service, "_revalidate", lambda *_: None)
+    tasks = _Tasks()
+    prepared = service.dispatch(db, "admin", "prepare", _prepare_values(), tasks)
+    row = db.scalar(
+        select(Setting).where(Setting.key == service.PREFIX + prepared["operation_id"])
+    )
+    state = json.loads(row.value)
+    state.update(
+        state="prepared",
+        checkpoint="certificate_prepared",
+        replacement_certificate={"fingerprint_sha256": "new"},
+        issuer="Atlaso",
+        issuer_fingerprint_sha256="b" * 64,
+        profile={"id": 1, "name": "vCenter Profile"},
+        trust_changes=["root"],
+    )
+    row.value = json.dumps(state)
+    db.commit()
+    review = service.dispatch(
+        db,
+        "admin",
+        "review",
+        _prepare_values(operation_id=prepared["operation_id"]),
+        tasks,
+    )["review"]
+    assert review["issuer_fingerprint_sha256"] == "a" * 64
+    assert review["profile"] == "vCenter Profile"
+
+
+def test_worker_csr_uncertain_failure_keeps_checkpoint_and_reservation(db, monkeypatch):
+
+    op, _, state, job = _worker_state(db)
+    monkeypatch.setattr(service, "SessionLocal", lambda: db)
+    monkeypatch.setattr(service, "_actor", lambda *_: None)
+    monkeypatch.setattr(
+        service,
+        "_credentials",
+        lambda *_: service.Credentials("admin", "worker-secret"),
+    )
+    monkeypatch.setattr(
+        service,
+        "_inspect",
+        lambda *_: {
+            key: state[key]
+            for key in ("identity", "product_info", "names", "current_certificate")
+        },
+    )
+    monkeypatch.setattr(service, "_ca_snapshot", lambda *_: state["ca_snapshot"])
+    monkeypatch.setattr(service, "_ready_ca", lambda *_: (object(), []))
+    monkeypatch.setattr(service, "_csr_spec", lambda *_: {"common_name": "vc.test"})
+
+    class Native:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def login(self, *_):
+            return "session"
+
+        def generate_csr(self, _):
+            db.expire_all()
+            persisted = json.loads(
+                db.get(
+                    Setting,
+                    db.scalar(
+                        select(Setting.id).where(Setting.key == service.PREFIX + op)
+                    ),
+                ).value
+            )
+            assert persisted["checkpoint"] == "csr_dispatch_pending"
+            raise RemoteError("connection lost")
+
+    monkeypatch.setattr(service, "NativeAdapter", lambda *_: Native())
+    service.run_job(job.id, {"username": "admin", "password": "worker-secret"})
+    db.expire_all()
+    current = json.loads(
+        db.scalar(select(Setting).where(Setting.key == service.PREFIX + op)).value
+    )
+    assert current["checkpoint"] == "csr_dispatch_pending"
+    assert current["state"] == "needs_recovery"
+    assert "csr_pem" not in current
+    assert (
+        db.scalar(
+            select(Setting).where(Setting.key == state["reservation_keys"][0])
+        ).value
+        == op
+    )
+    assert "worker-secret" not in job.task_config_json + job.result + job.error
+
+
+def test_revoked_admin_cannot_dispatch_csr(db, monkeypatch):
+
+    op, _, state, job = _worker_state(db)
+    monkeypatch.setattr(service, "SessionLocal", lambda: db)
+    monkeypatch.setattr(
+        service, "_credentials", lambda *_: service.Credentials("admin", "secret")
+    )
+    monkeypatch.setattr(
+        service,
+        "_inspect",
+        lambda *_: {
+            key: state[key]
+            for key in ("identity", "product_info", "names", "current_certificate")
+        },
+    )
+    monkeypatch.setattr(service, "_ca_snapshot", lambda *_: state["ca_snapshot"])
+    monkeypatch.setattr(service, "_ready_ca", lambda *_: (object(), []))
+    monkeypatch.setattr(service, "_csr_spec", lambda *_: {})
+    db.get(User, 1).enabled = False
+    db.commit()
+    native = Mock()
+    monkeypatch.setattr(service, "NativeAdapter", lambda *_: native)
+    service.run_job(job.id, {"username": "admin", "password": "secret"})
+    native.generate_csr.assert_not_called()
+    assert (
+        db.scalar(
+            select(Setting).where(Setting.key == state["reservation_keys"][0])
+        ).value
+        == op
+    )
+
+
+def test_install_uncertain_response_verifies_without_repeating_write(db, monkeypatch):
+
+    op, _, state, job = _worker_state(db, "install")
+    monkeypatch.setattr(service, "SessionLocal", lambda: db)
+    monkeypatch.setattr(service, "_actor", lambda *_: None)
+    monkeypatch.setattr(
+        service,
+        "_credentials",
+        lambda *_: service.Credentials("admin", "install-secret"),
+    )
+    monkeypatch.setattr(service, "_revalidate", lambda *_: None)
+    monkeypatch.setattr(service, "_material", lambda *_: ("LEAF PEM", "ROOT PEM"))
+    monkeypatch.setattr(service, "_verify", lambda *args: True)
+
+    class Native:
+        def __init__(self):
+            self.install_calls = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def login(self, *_):
+            return "session"
+
+        def import_and_verify_root(self, *_):
+            return True
+
+        def install_csr(self, *_):
+            self.install_calls += 1
+            db.expire_all()
+            row = db.scalar(select(Setting).where(Setting.key == service.PREFIX + op))
+            assert (
+                json.loads(row.value)["checkpoint"] == "installation_dispatch_pending"
+            )
+            raise RemoteError("lost install response")
+
+    native = Native()
+    monkeypatch.setattr(service, "NativeAdapter", lambda *_: native)
+    monkeypatch.setattr(service.time, "sleep", lambda *_: None)
+    service.run_job(job.id, {"username": "admin", "password": "install-secret"})
+    db.expire_all()
+    state_now = json.loads(
+        db.scalar(select(Setting).where(Setting.key == service.PREFIX + op)).value
+    )
+    assert native.install_calls == 1
+    assert state_now["state"] == "succeeded"
+    assert state_now["checkpoint"] == "verified"
+    assert (
+        db.scalar(select(Setting).where(Setting.key == state["reservation_keys"][0]))
+        is None
+    )
+    assert "install-secret" not in job.task_config_json + job.result + (job.error or "")

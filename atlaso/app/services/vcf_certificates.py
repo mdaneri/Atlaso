@@ -282,6 +282,24 @@ def _state(
 
 
 def _save(db: Session, row: Setting, state: dict[str, Any]) -> None:
+    stages = {
+        "queued_preparation": 0,
+        "csr_dispatch_pending": 25,
+        "csr_received": 55,
+        "certificate_prepared": 100,
+        "queued_installation": 0,
+        "root_import_dispatch_pending": 20,
+        "installation_dispatch_pending": 40,
+        "verifying_readiness": 65,
+        "verified": 100,
+        "reconciled_verified": 100,
+    }
+    state["progress_percent"] = stages.get(
+        state["checkpoint"], state.get("progress_percent", 0)
+    )
+    job = db.get(Job, state.get("job_id")) if state.get("job_id") else None
+    if job is not None and job.status in {"pending", "running"}:
+        job.progress_percent = state["progress_percent"]
     row.value, row.updated_at = _json(state), utcnow()
     db.commit()
 
@@ -386,11 +404,19 @@ def _inspect(
 ) -> dict[str, Any]:
     settings, profiles = _ready_ca(db, product)
     with NativeAdapter(target, product) as native:
+        if product == "srm" and credentials.username != "admin":
+            raise CertificateOperationError(
+                "Use SRM's native appliance administrator account, admin."
+            )
         native.login(credentials)
         info = native.product_info()
         if not isinstance(info, dict) or not supported_version(product, info):
             raise CertificateOperationError(
                 "Only natively detected SRM / Protection and Recovery or standalone vCenter 8.x and later are supported."
+            )
+        if product == "vcenter" and not native.vcenter_permissions(credentials):
+            raise CertificateOperationError(
+                "The selected account requires CertificateManagement.Manage and CertificateManagement.Administer on this standalone vCenter."
             )
         native.current_certificate()
         served = PinnedHTTPS(target).probe()
@@ -480,13 +506,27 @@ def _inspect(
             sorted(names["ip_addresses"]),
         )
         try:
-            target_addresses = {str(item[4][0]) for item in socket.getaddrinfo(target.host, target.port, type=socket.SOCK_STREAM)}
+            target_addresses = {
+                str(item[4][0])
+                for item in socket.getaddrinfo(
+                    target.host, target.port, type=socket.SOCK_STREAM
+                )
+            }
             for name in names["dns_names"]:
-                resolved = {str(item[4][0]) for item in socket.getaddrinfo(name, target.port, type=socket.SOCK_STREAM)}
+                resolved = {
+                    str(item[4][0])
+                    for item in socket.getaddrinfo(
+                        name, target.port, type=socket.SOCK_STREAM
+                    )
+                }
                 if not resolved.intersection(target_addresses):
-                    raise CertificateOperationError("A discovered DNS SAN does not resolve to this appliance. Correct DNS before preparation.")
+                    raise CertificateOperationError(
+                        "A discovered DNS SAN does not resolve to this appliance. Correct DNS before preparation."
+                    )
         except OSError:
-            raise CertificateOperationError("A discovered DNS SAN cannot be resolved from Atlaso. Correct DNS before preparation.") from None
+            raise CertificateOperationError(
+                "A discovered DNS SAN cannot be resolved from Atlaso. Correct DNS before preparation."
+            ) from None
         health = native.health()
         if not healthy_services(product, health):
             raise CertificateOperationError(
@@ -730,10 +770,14 @@ def _dispatch(
             "operation_id": operation_id,
             "token": token,
             "review": {
-                "target": state["address"],
+                "target": f"{state['address']} (port {state['port']})",
                 "current_certificate": state["current_certificate"],
                 "replacement_certificate": state["replacement_certificate"],
                 "issuer": state["issuer"],
+                "issuer_fingerprint_sha256": state["ca_snapshot"]["root"][
+                    "fingerprint_sha256"
+                ],
+                "profile": state["ca_snapshot"]["profile"]["name"],
                 "names": state["names"]["dns_names"] + state["names"]["ip_addresses"],
                 "trust_changes": state["trust_changes"],
                 "interruption": "Appliance management and dependent services may restart. Monitor this task for up to fifteen minutes.",
@@ -1087,6 +1131,9 @@ def _reconcile(
 ) -> dict[str, Any]:
     checkpoint = state["checkpoint"]
     if state["state"] == "succeeded":
+        return operation_status(db, state["actor"], state["operation_id"])
+    if state["state"] == "prepared":
+        _revalidate(db, state, credentials)
         return operation_status(db, state["actor"], state["operation_id"])
     if checkpoint == "queued_preparation":
         # No worker crossed the durable pre-dispatch checkpoint.
