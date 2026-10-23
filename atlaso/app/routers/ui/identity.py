@@ -667,6 +667,13 @@ def build_router(dependencies: IdentityUiDependencies) -> IdentityUiRouter:
         Requires an administrator session and CSRF token. This immediate audit-only
         action neither retrieves credentials nor changes client or appliance state.
         The browser retains the already-issued value only until its dialog closes.
+
+        Args:
+            request: Browser request carrying the administrator session.
+            client_id: Public client identifier associated with the one-time value.
+            csrf: Validated session token authorizing the audit submission.
+            identity: Authenticated administrator requesting the reveal.
+            db: Active database session used to persist the value-free audit event.
         """
         require_admin_identity(identity)
         verify_csrf(request, csrf)

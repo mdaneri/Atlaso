@@ -22,7 +22,11 @@ from tests.test_oidc import _admin_headers, _configure_protocol_client
 
 
 def test_oidc_ui_one_time_credentials_use_masked_dialog_not_inline_banner(client):
-    """Creation and rotation return one dialog; later reads cannot retrieve secrets."""
+    """Creation and rotation return one dialog; later reads cannot retrieve secrets.
+
+    Args:
+        client: HTTP test client exercising the one-time credential responses.
+    """
     login(client)
     page = client.get("/openid-connect")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -73,7 +77,11 @@ def test_oidc_ui_one_time_credentials_use_masked_dialog_not_inline_banner(client
 
 
 def test_oidc_secret_reveal_audit_is_value_free_admin_csrf_protected_and_no_store(client):
-    """Audit every reveal before display, without a credential retrieval operation."""
+    """Audit every reveal before display, without a credential retrieval operation.
+
+    Args:
+        client: HTTP test client exercising audit authorization and response headers.
+    """
     login(client)
     page = client.get("/openid-connect")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
