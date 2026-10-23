@@ -15,7 +15,7 @@
         <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/services/oidc-provider/">
       
       
-        <link rel="prev" href="../managed-ldap/">
+        <link rel="prev" href="../vcenter-ldap/">
       
       
         <link rel="next" href="../vcf-backups/">
@@ -315,6 +315,8 @@
       
         
           
+        
+      
         
       
         
@@ -1529,6 +1531,8 @@
       
         
       
+        
+      
     
     
     
@@ -2015,6 +2019,40 @@
     
   
   Managed LDAP
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vcenter-ldap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  vCenter OpenLDAP
 
     
   </span>
@@ -4299,6 +4337,8 @@
       
         
       
+        
+      
     
     
     
@@ -4390,6 +4430,17 @@ referenced by a client cannot be silently removed.</p>
 <p>All clients are confidential and use <code>client_secret_basic</code>. Client IDs and secrets are generated from cryptographic
 randomness. Secrets are stored only as Argon2 hashes and plaintext is returned once on client creation or rotation.
 Rotation replaces the hash in the same transaction, so the previous secret is immediately invalid.</p>
+<p>After <strong>Register confidential client</strong> or <strong>Rotate secret</strong>, a focused <strong>Copy this credential now</strong> dialog shows the
+client ID and a masked <strong>Client secret</strong>. Choose <strong>Copy client secret</strong> to transfer the value directly to your secret
+manager without revealing it. <strong>Reveal client secret</strong> displays it deliberately and hides it again after 15 seconds;
+choose <strong>Hide client secret</strong> to mask it sooner. If clipboard access fails, the dialog stays open with recovery
+instructions. Store the value before choosing <strong>Done</strong> or pressing Escape: closing the dialog clears the credential
+from the page and leaves a non-secret confirmation above the client grid. Navigating away also discards it. Reopening
+the client editor cannot recover it; rotate the secret if it was lost, then update the relying party immediately.</p>
+<p>Every Reveal first submits an administrator-session, CSRF-protected audit action at
+<code>/ui/management/authentication/oidc/client-secret-reveal-audit</code>. This browser-only, non-cacheable operation records the
+actor and client record ID without receiving or returning the secret. If auditing fails, the value stays masked and
+the dialog offers a retry. It does not retrieve stored credentials, change client settings, or require Appliance Apply.</p>
 <p>Administrators can delete a client from the Authentication page through the shared confirmation modal. Deletion removes
 its secret hash and exact redirect records immediately from application state, requires no global appliance apply, and
 releases any restrictive organization reference so that a previously bound managed LDAP organization can be deleted
@@ -4571,7 +4622,7 @@ LDAP sources; social/federated identity; SAML; SCIM; wildcard redirects; front-c
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../managed-ldap/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Managed LDAP">
+          <a href="../vcenter-ldap/" class="md-footer__link md-footer__link--prev" aria-label="Previous: vCenter OpenLDAP">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -4581,7 +4632,7 @@ LDAP sources; social/federated identity; SAML; SCIM; wildcard redirects; front-c
                 Previous
               </span>
               <div class="md-ellipsis">
-                Managed LDAP
+                vCenter OpenLDAP
               </div>
             </div>
           </a>

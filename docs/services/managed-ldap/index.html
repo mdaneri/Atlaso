@@ -18,7 +18,7 @@
         <link rel="prev" href="../local-users/">
       
       
-        <link rel="next" href="../oidc-provider/">
+        <link rel="next" href="../vcenter-ldap/">
       
       
         
@@ -315,6 +315,8 @@
       
         
           
+        
+      
         
       
         
@@ -1529,6 +1531,8 @@
       
         
       
+        
+      
     
     
     
@@ -2199,6 +2203,40 @@
   
 </nav>
       
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../vcenter-ldap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  vCenter OpenLDAP
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
     </li>
   
 
@@ -4233,6 +4271,8 @@
       
         
       
+        
+      
     
     
     
@@ -4361,6 +4401,8 @@ passwords. The result changes the primary action to <strong>Done</strong>, which
 page. If Atlaso restarts before those passwords are applied, VCF Helper summarizes the affected users per organization
 and <strong>Recover missing passwords</strong> generates replacement credentials in one operation with a new one-time CSV.</p>
 <h2 id="vcenter-openldap-groups">vCenter OpenLDAP groups<a class="headerlink" href="#vcenter-openldap-groups" title="Permanent link">&para;</a></h2>
+<p>For the complete vCenter Server LDAPS identity-source setup, user-login verification, bind rotation, and removal
+procedure, see <a href="../vcenter-ldap/">vCenter OpenLDAP login with Atlaso</a>.</p>
 <p>Each organization also publishes <code>ou=vcenter-groups,&lt;organization suffix&gt;</code> during global LDAP Apply. These separate
 entries use RFC4519 <code>groupOfUniqueNames</code> and DN-valued <code>uniqueMember</code>, matching the native OpenLDAP schema mapping
 inspected on vCenter Server 9.1.1. <a href="https://knowledge.broadcom.com/external/article/316480">Broadcom KB316480</a> specifies
@@ -4528,13 +4570,13 @@ only a successfully committed settings restore or factory reset clears it.</p>
         
         
           
-          <a href="../oidc-provider/" class="md-footer__link md-footer__link--next" aria-label="Next: OpenID Connect provider">
+          <a href="../vcenter-ldap/" class="md-footer__link md-footer__link--next" aria-label="Next: vCenter OpenLDAP">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                OpenID Connect provider
+                vCenter OpenLDAP
               </div>
             </div>
             <div class="md-footer__button md-icon">

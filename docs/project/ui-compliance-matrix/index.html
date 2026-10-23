@@ -355,6 +355,8 @@
       
         
       
+        
+      
     
     
     
@@ -1527,6 +1529,8 @@
       
         
       
+        
+      
     
     
     
@@ -2010,6 +2014,40 @@
     
   
   Managed LDAP
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/vcenter-ldap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  vCenter OpenLDAP
 
     
   </span>
@@ -4749,8 +4787,12 @@ are explicitly inventoried so route/template changes cannot silently escape the 
 <ul>
 <li>Shared shell: <code>about-modal</code>, <code>confirm-modal</code>, <code>preview-modal</code>, <code>ntp-source-health-modal</code>,
   <code>appliance-apply-modal</code>, <code>task-detail-modal</code>, and <code>task-log-modal</code>.</li>
-<li>Authentication and users: <code>oidc-client-dialog</code>, <code>oidc-key-dialog</code>, <code>api-token-dialog</code>, <code>user-account-dialog</code>, and
-  <code>user-password-modal</code>.</li>
+<li>Authentication and users: <code>oidc-client-dialog</code>, <code>oidc-client-secret-modal</code>, <code>oidc-key-dialog</code>, <code>api-token-dialog</code>,
+  <code>user-account-dialog</code>, and <code>user-password-modal</code>.</li>
+<li>The OIDC one-time credential handoff reuses the Managed LDAP credential dialog within the wizard-backed client
+  collection. Its masked field, audited Reveal, Copy, Done/Escape disposal, and focus restoration have focused
+  server/browser-logic regression coverage and a synthetic native-browser smoke check. This records the handoff
+  contract without claiming new deployed-appliance, narrow-viewport, or zoom acceptance.</li>
 <li>Factory Reset uses <code>factory-reset-password-modal</code> for non-grid settings, reusing the Local Users password dialog.
   Only Change-selected accounts are prompted at submission; inline validation, contained focus/hover help, cancellation
   cleanup, and the shared destructive confirmation preserve the reset boundary.</li>
