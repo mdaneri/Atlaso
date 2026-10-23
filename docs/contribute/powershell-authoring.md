@@ -25,3 +25,8 @@ Install the exact repository analyzer with
 `.psm1`, and `.psd1` file. Credential parameters must use `SecureString` or `PSCredential`, must not declare default
 values, and must not rely on broad `PSAvoidUsingPlainTextForPassword` suppressions. CI and pre-commit run the same
 checker so the local and pull-request requirements remain identical.
+
+Run the isolated Photon build-state regression on Windows with
+`pwsh -NoProfile -File tests/powershell/Test-PhotonBuildStateRoot.ps1 -RepositoryRoot (Resolve-Path .).Path`.
+It extracts wrapper functions through the PowerShell AST without running the image build. Keep required helper
+imports synchronized with the functions under test, and reject missing or duplicate definitions during setup.
