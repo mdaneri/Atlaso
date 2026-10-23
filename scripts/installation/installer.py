@@ -155,6 +155,8 @@ def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tup
             return result
 
         def delete(self):
+            # The pinned Photon 2.2 control is Delete All, not row deletion.
+            # Its delete() resets partitionsnumber to zero and clears every row.
             self.partition_disks.clear()
             return super().delete()
 

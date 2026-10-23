@@ -74,3 +74,33 @@ def test_signing_staging_and_publication_use_separate_protected_gates():
     assert '"$VALIDATED_ISO_SHA256"' in admission["run"]
     assert "--draft=false --prerelease --latest=false" in publication["run"]
     assert not any("cache" in step.get("with", {}) for step in steps)
+
+
+@pytest.mark.parametrize("mutation", [None, "missing", "extra", "digest"])
+def test_publication_revalidates_fresh_assets_before_exposing_release(monkeypatch, tmp_path, mutation):
+    steps = _workflow()["jobs"]["finalize"]["steps"]
+    publication = next(step for step in steps if step.get("name") == "Publish maintainer-validated exact ISO")
+    shell = publication["run"]
+    assert shell.index('--dir publication-candidate') < shell.index('python scripts/verify_installation_iso.py') < shell.index('--draft=false')
+    code = re.search(r"python - <<'PY'\n(.*?)^PY$", shell, re.MULTILINE | re.DOTALL).group(1)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VALIDATED_ISO_SHA256", "a" * 64)
+    candidate = tmp_path / "publication-candidate"
+    candidate.mkdir()
+    names = ["atlaso.iso", "installation-artifact-index.json", "installation-artifact-index.json.sig", "verify-installation.pyz"]
+    for name in names:
+        (candidate / name).write_text("fixture")
+    index = {"asset_manifest": {"iso": {"sha256": "a" * 64}, "assets": [{"name": "atlaso.iso"}]}, "verifier": {"name": "verify-installation.pyz"}}
+    if mutation == "digest":
+        index["asset_manifest"]["iso"]["sha256"] = "b" * 64
+    (candidate / "installation-artifact-index.json").write_text(json.dumps(index))
+    if mutation == "missing":
+        (candidate / "atlaso.iso").unlink()
+    if mutation == "extra":
+        names.append("unexpected")
+    (tmp_path / "publication-release.json").write_text(json.dumps({"assets": [{"name": name} for name in names]}))
+    if mutation is None:
+        exec(compile(code, str(WORKFLOW), "exec"), {})
+    else:
+        with pytest.raises(SystemExit):
+            exec(compile(code, str(WORKFLOW), "exec"), {})

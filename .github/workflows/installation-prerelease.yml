@@ -189,11 +189,30 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.prerelease_tag }}
           RELEASE_SHA: ${{ inputs.release_sha }}
+          VALIDATED_ISO_SHA256: ${{ inputs.validated_iso_sha256 }}
         run: |
           set -euo pipefail
           test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
           TAG="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.sha)"
           test "$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG" --jq .object.sha)" = "$RELEASE_SHA"
+          mkdir publication-candidate
+          gh release view "$RELEASE_TAG" --json assets > publication-release.json
+          gh release download "$RELEASE_TAG" --dir publication-candidate
+          . ./installation.env
+          python scripts/verify_installation_iso.py --assets publication-candidate \
+            --trust-key image/common/update-trust/atlaso-release-2026-01.pem \
+            --version "$VERSION" --commit "$RELEASE_SHA" --scratch verification
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          index = json.load(open('publication-candidate/installation-artifact-index.json'))
+          expected = {item['name'] for item in index['asset_manifest']['assets']}
+          expected |= {'installation-artifact-index.json', 'installation-artifact-index.json.sig', index['verifier']['name']}
+          current = {item['name'] for item in json.load(open('publication-release.json'))['assets']}
+          downloaded = {item.name for item in Path('publication-candidate').iterdir()}
+          if current != expected or downloaded != expected or index['asset_manifest']['iso']['sha256'] != os.environ['VALIDATED_ISO_SHA256']:
+              raise SystemExit('publication candidate differs from the validated signed asset set')
+          PY
           gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false \
             --notes 'Signed offline x86-64 UEFI installation candidate. Secure Boot disabled. Physical-hardware acceptance remains pending; see issue #542.'
           mkdir published
