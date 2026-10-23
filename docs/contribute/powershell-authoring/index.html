@@ -4035,6 +4035,10 @@ next edit and every edited PowerShell file adopts the complete standard at once.
 <code>.psm1</code>, and <code>.psd1</code> file. Credential parameters must use <code>SecureString</code> or <code>PSCredential</code>, must not declare default
 values, and must not rely on broad <code>PSAvoidUsingPlainTextForPassword</code> suppressions. CI and pre-commit run the same
 checker so the local and pull-request requirements remain identical.</p>
+<p>Run the isolated Photon build-state regression on Windows with
+<code>pwsh -NoProfile -File tests/powershell/Test-PhotonBuildStateRoot.ps1 -RepositoryRoot (Resolve-Path .).Path</code>.
+It extracts wrapper functions through the PowerShell AST without running the image build. Keep required helper
+imports synchronized with the functions under test, and reject missing or duplicate definitions during setup.</p>
 
 
 
