@@ -360,6 +360,24 @@ def _state(
     return row, state
 
 
+def _admit_state_write(db: Session, row: Setting, state: dict[str, Any]) -> None:
+    """Reject stale checkpoint writers under the shared transaction lock.
+
+    Args:
+        db: Database session owning the checkpoint transaction.
+        row: Persistent operation row to reload after writer admission.
+        state: Locally observed state carrying its last committed write revision.
+    """
+    acquire_network_objects_write_lock(db)
+    db.refresh(row)
+    current = json.loads(row.value)
+    if current.get("write_revision", 0) != state.get("write_revision", 0):
+        db.rollback()
+        raise CertificateOperationError(
+            "Operation changed during reconciliation or checkpoint update. Read its current state before retrying."
+        )
+
+
 def _save(db: Session, row: Setting, state: dict[str, Any]) -> None:
     """Persist a public checkpoint and synchronize its task progress.
 
@@ -368,6 +386,7 @@ def _save(db: Session, row: Setting, state: dict[str, Any]) -> None:
         row: Persistent public operation Setting row.
         state: Public operation checkpoint and reviewed inputs.
     """
+    _admit_state_write(db, row, state)
     stages = {
         "queued_preparation": 0,
         "csr_dispatch_pending": 25,
@@ -390,6 +409,7 @@ def _save(db: Session, row: Setting, state: dict[str, Any]) -> None:
     job = db.get(Job, state.get("job_id")) if state.get("job_id") else None
     if job is not None and job.status in {"pending", "running"}:
         job.progress_percent = state["progress_percent"]
+    state["write_revision"] = state.get("write_revision", 0) + 1
     row.value, row.updated_at = _json(state), utcnow()
     db.commit()
 
@@ -518,6 +538,8 @@ def _release(db: Session, state: dict[str, Any]) -> None:
         db: Database session holding operation records and target reservations.
         state: Public operation checkpoint and reviewed inputs.
     """
+    row, _ = _state(db, state["operation_id"], state["actor"])
+    _admit_state_write(db, row, state)
     db.execute(
         delete(Setting).where(
             Setting.key.in_(state["reservation_keys"]),
@@ -1222,6 +1244,7 @@ def run_job(job_id: str, manual_values: dict[str, Any] | None = None) -> None:
         row, state = _state(db, plan["operation_id"], job.created_by)
         job.status, job.started_at = "running", utcnow()
         db.commit()
+        write_state = True
         try:
             _actor(db, state["actor"])
             reference = state["credential_reference"]
@@ -1323,8 +1346,8 @@ def run_job(job_id: str, manual_values: dict[str, Any] | None = None) -> None:
         except Exception as exc:  # noqa: BLE001 - every unexpected worker failure must preserve remote uncertainty.
             db.rollback()
             row, state = _state(db, plan["operation_id"], job.created_by)
-            state["state"] = "needs_recovery"
-            state["error"] = (
+            write_state = state.get("job_id") == job_id
+            error = (
                 str(exc)
                 if isinstance(
                     exc,
@@ -1332,12 +1355,13 @@ def run_job(job_id: str, manual_values: dict[str, Any] | None = None) -> None:
                 )
                 else "Operation interrupted. Reconcile before retrying; native writes may have occurred."
             )
+            if write_state:
+                state["state"], state["error"] = "needs_recovery", error
             job = db.get(Job, job_id)
             if job is not None:
-                job.status, job.error = "failed", state["error"]
+                job.status, job.error = "failed", error
         finally:
             state["progress_percent"] = 100
-            row.value = _json(state)
             if job is not None:
                 job.finished_at, job.progress_percent = utcnow(), 100
                 job.result = _json(
@@ -1347,13 +1371,24 @@ def run_job(job_id: str, manual_values: dict[str, Any] | None = None) -> None:
                         "verification": state["verification"],
                     }
                 )
+            if write_state:
+                try:
+                    _save(db, row, state)
+                except CertificateOperationError:
+                    # A newer owner keeps its checkpoints. Fail only this job.
+                    db.rollback()
+                    job = db.get(Job, job_id)
+                    if job is not None:
+                        job.status = "failed"
+                        job.error = "Operation advanced during worker completion. Reconcile its current task."
+                        job.finished_at = utcnow()
             record_audit(
                 db,
                 actor=state["actor"],
                 action="vcf_certificate_" + plan["action"],
                 resource_type=JOB_TYPE,
                 resource_id=job_id,
-                success=state["state"] in {"prepared", "succeeded"},
+                success=job is not None and job.status == "succeeded",
                 detail=_json(
                     {
                         "operation_id": state["operation_id"],
@@ -1386,7 +1421,7 @@ def _issue(db: Session, row: Setting, state: dict[str, Any]) -> None:
         raise CertificateOperationError(
             "Native CSR common name differs from the reviewed identity."
         )
-    acquire_network_objects_write_lock(db)
+    _admit_state_write(db, row, state)
     settings, profiles = _ready_ca(db, state["product"], state["profile_id"])
     if _ca_snapshot(db, state["product"], state["profile_id"]) != state["ca_snapshot"]:
         raise CertificateOperationError(

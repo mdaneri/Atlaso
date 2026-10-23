@@ -54,6 +54,8 @@ Settings restore preserves this appliance's certificate checkpoints and target r
 in settings archives. After a restart, interrupted jobs require reconciliation. If operation records are missing or
 damaged, Atlaso marks the job failed without releasing surviving reservations; inspect native state and task history
 before retrying.
+Concurrent review or reconciliation requests cannot overwrite newer checkpoints or release their reservations.
+If another request advances the operation, read its current status before retrying.
 
 Use Atlaso as the issuing CA while the target appliance generates its own certificate signing request (CSR) and keeps
 its private key. Install the signed leaf certificate and public CA chain through the target's native administration

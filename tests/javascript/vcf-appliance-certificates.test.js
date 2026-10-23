@@ -141,3 +141,36 @@ test('empty vaults allow manual login while usable vaults require a key selectio
     assert.equal(skipped.includes('login'), !manual);
   }
 });
+
+test('closing during preparation keeps operation context and clears the password', async () => {
+  const fields = new Map(); const listeners = {}; let respond; let saved;
+  const get = (name) => {
+    if (!fields.has(name)) fields.set(name, {value: '', options: [], checked: false, disabled: false,
+      classList: {toggle() {}, add() {}, remove() {}}, addEventListener() {}, matches() { return false; }});
+    return fields.get(name);
+  };
+  Object.assign(get('address'), {value: 'vc.example.test'});
+  get('username').value = 'admin'; get('password').value = 'temporary';
+  get('confirmed').checked = true;
+  const dialog = {open: true, addEventListener(name, callback) { listeners[name] = callback; }};
+  const form = {elements: {namedItem: get}, dataset: {endpoint: '/certificates'}, closest: () => dialog,
+    querySelector: get, querySelectorAll: () => [], addEventListener(name, callback) { listeners[`form:${name}`] = callback; },
+    reset() { for (const field of fields.values()) { field.value = ''; field.checked = false; } }};
+  vm.runInNewContext(js, {document: {querySelector: (selector) => selector.includes('-form') ? form : get('opener')},
+    window: {location: {search: ''}, localStorage: {getItem: () => '', setItem(_key, value) { saved = value; }},
+      clearTimeout() {}, AtlasoUiPatterns: {createWizard: () => ({setSkippedSteps() {}, setHighestStep() {}, showStep() {}, markClean() {}})}},
+    URLSearchParams, fetch: () => new Promise((resolve) => { respond = resolve; })});
+  const button = {matches: (selector) => selector === '[data-cert-prepare]'};
+  listeners['form:click']({target: {closest: () => button}, preventDefault() {}});
+  dialog.open = false; listeners.close();
+  assert.equal(get('password').value, '');
+  assert.equal(get('address').value, 'vc.example.test');
+  assert.equal(get('confirmed').checked, true);
+  respond({ok: true, json: async () => ({operation_id: 'accepted', state: 'preparing', product: 'vcenter'})});
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(saved, 'accepted');
+  assert.equal(get('address').value, 'vc.example.test');
+  assert.equal(get('username').value, 'admin');
+  assert.equal(get('address').disabled, true);
+  assert.equal(get('password').value, '');
+});

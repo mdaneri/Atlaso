@@ -541,6 +541,79 @@ def test_slow_review_cannot_overwrite_installation_or_changed_material(db, monke
         assert len(tasks.calls) == 1
 
 
+@pytest.mark.parametrize("checkpoint", ["queued_installation", "root_import_dispatch_pending"])
+def test_slow_reconciliation_cannot_overwrite_new_installation(db, monkeypatch, checkpoint):
+    """Keep the newer installation when two reconciliation reads interleave.
+
+    Args:
+        db: Isolated session with certificate task state.
+        monkeypatch: Fixture replacing native reads with a competing request.
+        checkpoint: Interrupted pre-installation checkpoint to reconcile.
+    """
+    _dispatch_mocks(monkeypatch)
+    tasks = _Tasks()
+    prepared = service.dispatch(db, "admin", "prepare", _prepare_values(), tasks)
+    row = db.scalar(select(Setting).where(Setting.key == service.PREFIX + prepared["operation_id"]))
+    state = json.loads(row.value)
+    state.update(state="needs_recovery", checkpoint=checkpoint,
+                 replacement_certificate={"fingerprint_sha256": "new"},
+                 issuer="Atlaso", trust_changes=["root"])
+    row.value = json.dumps(state)
+    db.get(Job, state["job_id"]).status = "failed"
+    db.commit()
+    request = _prepare_values(operation_id=prepared["operation_id"])
+    entered = False
+
+    def competing_request(*_args):
+        """Complete recovery, review, and admission during the slower read.
+
+        Args:
+            *_args: Unused native revalidation arguments.
+        """
+        nonlocal entered
+        if entered:
+            return
+        entered = True
+        service.dispatch(db, "admin", "reconcile", request, tasks)
+        review = service.dispatch(db, "admin", "review", request, tasks)
+        service.dispatch(db, "admin", "execute", dict(request, token=review["token"], acknowledged=True), tasks)
+
+    monkeypatch.setattr(service, "_revalidate", competing_request)
+    with pytest.raises(service.CertificateOperationError, match="changed during reconciliation"):
+        service.dispatch(db, "admin", "reconcile", request, tasks)
+    db.refresh(row)
+    current = json.loads(row.value)
+    assert current["state"] == "installing"
+    assert current["checkpoint"] == "queued_installation"
+    assert "review_nonce" not in current
+    assert len(tasks.calls) == 2
+    assert db.get(Job, current["job_id"]).status == "pending"
+    assert db.scalar(select(Setting).where(Setting.key == "vcf_cert_lock:identity")).value == current["operation_id"]
+
+
+@pytest.mark.parametrize("release", [False, True])
+def test_stale_checkpoint_writer_cannot_save_or_release_reservations(db, release):
+    """Use a persisted revision to reject stale writers even within one phase.
+
+    Args:
+        db: Isolated session containing a reserved certificate operation.
+        release: Whether the stale writer attempts reservation release.
+    """
+    op, original = _record(db)
+    row = db.scalar(select(Setting).where(Setting.key == service.PREFIX + op))
+    newer = dict(original, checkpoint="csr_dispatch_pending")
+    service._save(db, row, newer)
+    stale = dict(original, state="failed", checkpoint="reconciled_not_dispatched")
+    with pytest.raises(service.CertificateOperationError, match="changed during reconciliation"):
+        if release:
+            service._release(db, stale)
+        else:
+            service._save(db, row, stale)
+    db.refresh(row)
+    assert json.loads(row.value)["checkpoint"] == "csr_dispatch_pending"
+    assert db.scalar(select(Setting).where(Setting.key == "vcf_cert_lock:identity")).value == op
+
+
 def test_review_expired_token_refused(db, monkeypatch):
     """Verify review expired token refused.
 
@@ -753,6 +826,39 @@ def test_worker_csr_uncertain_failure_keeps_checkpoint_and_reservation(db, monke
         == op
     )
     assert "worker-secret" not in job.task_config_json + job.result + job.error
+
+
+def test_old_worker_failure_keeps_newer_job_checkpoints(db, monkeypatch):
+    """A superseded worker fails its own task without rewriting the newer owner.
+
+    Args:
+        db: Isolated session containing the old worker task.
+        monkeypatch: Fixture interleaving a newer admission during credential lookup.
+    """
+    op, row, state, job = _worker_state(db)
+    old_job_id = job.id
+    monkeypatch.setattr(service, "SessionLocal", lambda: db)
+
+    def advance_then_fail(*_args):
+        """Persist a newer task before the old worker reports failure.
+
+        Args:
+            *_args: Unused credential-resolution arguments.
+        """
+        current = json.loads(row.value)
+        current.update(state="installing", checkpoint="queued_installation")
+        service._enqueue(db, current, "install")
+        service._save(db, row, current)
+        raise RemoteError("Old worker interrupted")
+
+    monkeypatch.setattr(service, "_credentials", advance_then_fail)
+    service.run_job(old_job_id)
+    current = json.loads(db.scalar(select(Setting).where(Setting.key == service.PREFIX + op)).value)
+    assert current["state"] == "installing"
+    assert current["checkpoint"] == "queued_installation"
+    assert current["job_id"] != old_job_id
+    assert db.get(Job, old_job_id).status == "failed"
+    assert db.get(Job, current["job_id"]).status == "pending"
 
 
 def test_revoked_admin_cannot_dispatch_csr(db, monkeypatch):

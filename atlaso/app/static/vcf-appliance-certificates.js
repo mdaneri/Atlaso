@@ -205,7 +205,7 @@
   dialog.addEventListener("close", () => {
     window.clearTimeout(pollTimer); pollTimer = null;
     field("password").value = ""; reviewToken = null;
-    if (!operationId) { form.reset(); probe = null; inspection = null; }
+    if (!operationId && !busy) { form.reset(); probe = null; inspection = null; }
   });
   updateMode();
 })();
