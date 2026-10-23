@@ -69,6 +69,7 @@
   }
   function paintOperation(result) {
     if (operationId) wizard.markClean();
+    node("operation-target").textContent = `${result.product === "vcenter" ? "vCenter" : "SRM / Protection and Recovery"} — ${result.address || ""}:${result.port || 443}`;
     node("result").textContent = `${result.state || "unknown"}${result.error ? ` — ${result.error}` : ""}`;
     node("progress").value = Number(result.progress_percent || 0);
     const verification = result.verification || {};
@@ -92,7 +93,14 @@
     field("confirmed").checked = Boolean(result.confirmed_tls_fingerprint); probe = result.confirmed_tls_fingerprint ? {fingerprint: result.confirmed_tls_fingerprint} : null;
     node("fingerprint").textContent = probe?.fingerprint || "Not checked";
     field("username").value = reference.username || ""; field("password").value = "";
-    if (reference.mode === "vault") { field("credential_vault_id").value = String(reference.vault_id || ""); field("credential_entry_id").value = String(reference.entry_id || ""); }
+    if (reference.mode === "vault") {
+      for (const [name, value, label] of [["credential_vault_id", reference.vault_id, "Saved vault"], ["credential_entry_id", reference.entry_id, "Saved key"]]) {
+        const select = field(name);
+        if (![...select.options].some((option) => option.value === String(value))) select.add(new Option(label, String(value)));
+        select.value = String(value);
+      }
+      field("password").disabled = true;
+    } else { field("credential_vault_id").value = ""; field("credential_entry_id").value = ""; }
     if (result.names) { field("common_name").value = result.names.common_name || ""; field("dns_names").value = (result.names.dns_names || []).join("\n"); field("ip_addresses").value = (result.names.ip_addresses || []).join("\n"); }
     if (result.profile_id) { const select = field("profile_id"); if (![...select.options].some((option) => option.value === String(result.profile_id))) select.add(new Option("Saved profile", String(result.profile_id))); select.value = String(result.profile_id); }
     field("recovery_reference").value = result.recovery_reference || "";

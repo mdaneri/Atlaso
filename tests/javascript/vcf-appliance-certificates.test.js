@@ -66,3 +66,10 @@ test('wizard labels, readonly CSR names, and results continuation are accessible
   assert.match(html, /data-cert-continue-review>Continue to Review/);
   assert.doesNotMatch(html, /data-cert-continue-review hidden/);
 });
+
+test('resumed vault operations preserve both credential references and identify the target', () => {
+  assert.match(js, /new Option\(label, String\(value\)\)/);
+  assert.match(js, /\["credential_entry_id", reference\.entry_id, "Saved key"\]/);
+  assert.match(js, /node\("operation-target"\)\.textContent/);
+  assert.match(html, /data-cert-operation-target/);
+});

@@ -36,7 +36,7 @@ The wizard guides you through **Credential**, **Server**, **TLS fingerprint**, *
 SDDC Manager. Linked vCenters, vCenter HA, registered SRM, unknown topology, and unsupported capabilities require the
 coordinated native product procedure.
 
-The current certificate SANs and native hostname seed the editable reviewed names. Correct native identity and DNS
+The current certificate SANs and native hostname determine the read-only reviewed names. Correct native identity and DNS
 before preparation; Atlaso refuses stale/missing target SANs rather than silently substituting names. A ready CA and an
 enabled exact product profile must already exist. The replacement private key remains on the target. Recovery
 acknowledgement, no-pending-operation acknowledgement, and final certificate installation each require explicit
