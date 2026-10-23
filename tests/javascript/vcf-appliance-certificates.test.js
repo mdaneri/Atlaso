@@ -67,6 +67,13 @@ test('wizard labels, readonly CSR names, and results continuation are accessible
   assert.doesNotMatch(html, /data-cert-continue-review hidden/);
 });
 
+test('SDDC Manager target is named distinctly and results are domain scoped', () => {
+  assert.match(html, /<option value="sddc">SDDC Manager<\/option>/);
+  assert.match(html, /SDDC Manager targets only its own initialized management-domain appliance resource/);
+  assert.match(js, /result\.product === "sddc" \? "SDDC Manager"/);
+  assert.match(js, /result\.domain_id \? ` · Management domain \$\{result\.domain_id\}`/);
+});
+
 test('resumed vault operations preserve both credential references and identify the target', () => {
   assert.match(js, /new Option\(label, String\(value\)\)/);
   assert.match(js, /\["credential_entry_id", reference\.entry_id, "Saved key"\]/);

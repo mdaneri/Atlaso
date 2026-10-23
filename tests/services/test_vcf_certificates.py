@@ -1,7 +1,7 @@
 """Durable-state checks for VCF appliance certificate operations."""
 
 import json
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -199,6 +199,33 @@ class _Tasks:
 
     def add_task(self, func, *args, **kwargs):
         self.calls.append((func, args, kwargs))
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_srm_health_baseline_preserves_accepted_native_variants(wrapped, legacy):
+    rows = [
+        {
+            "service_name" if legacy else "id": "service",
+            "startup_type": "automatic",
+            "service_status" if legacy else "is_running": "running" if legacy else True,
+            "url": "excluded",
+        }
+    ]
+    health = {"list": rows} if wrapped else rows
+    assert service.healthy_services("srm", health)
+    baseline = {"list": service._srm_service_rows(health)}
+    assert baseline == {
+        "list": [
+            {
+                "id": "service",
+                "name": "service",
+                "startup_type": "automatic",
+                "is_running": True,
+            }
+        ]
+    }
+    assert service.healthy_services("srm", health, baseline)
 
 
 def test_prepare_dispatch_persists_checkpoint_without_password(db, monkeypatch):
@@ -588,3 +615,129 @@ def test_install_uncertain_response_verifies_without_repeating_write(db, monkeyp
         is None
     )
     assert "install-secret" not in job.task_config_json + job.result + (job.error or "")
+
+
+def _sddc_worker(db, monkeypatch, action="prepare"):
+    op, row, state, job = _worker_state(db, action)
+    state["product"] = "sddc"
+    state["product_info"] = {
+        "product": "sddc",
+        "role": "SddcManager",
+        "version": "9.1.1",
+        "identity": "sddc.test",
+        "domain_id": "d1",
+        "resource_id": "r1",
+    }
+    row.value = json.dumps(state)
+    db.commit()
+    monkeypatch.setattr(service, "SessionLocal", lambda: db)
+    monkeypatch.setattr(
+        service,
+        "_credentials",
+        lambda *_: service.Credentials("admin", "private-password"),
+    )
+    monkeypatch.setattr(
+        service,
+        "_inspect",
+        lambda *_: {
+            key: state[key]
+            for key in ("identity", "product_info", "names", "current_certificate")
+        },
+    )
+    monkeypatch.setattr(service, "_ca_snapshot", lambda *_: state["ca_snapshot"])
+    monkeypatch.setattr(service, "_ready_ca", lambda *_: (object(), []))
+    monkeypatch.setattr(service, "_csr_spec", lambda *_: {})
+    monkeypatch.setattr(service, "_material", lambda *_: ("LEAF", "ROOT"))
+    native = MagicMock(spec=service.SddcAdapter)
+    native.__enter__.return_value = native
+    native.start_csr.return_value = "native-csr-1"
+    native.wait_csr.return_value = "PUBLIC CSR"
+    native.start_validation.return_value = "validation-1"
+    native.wait_validation.return_value = True
+    monkeypatch.setattr(service, "_native", lambda *_: native)
+
+    def issue(db, row, state):
+        state.update(
+            certificate_id=5,
+            replacement_certificate={"fingerprint_sha256": "new"},
+            state="preparing",
+            checkpoint="certificate_issued",
+        )
+        service._save(db, row, state)
+
+    monkeypatch.setattr(service, "_issue", issue)
+    return op, row, state, job, native
+
+
+def test_sddc_worker_records_task_ids_before_polling_and_requires_validation(
+    db, monkeypatch
+):
+    op, row, state, job, native = _sddc_worker(db, monkeypatch)
+
+    def started(_):
+        assert json.loads(row.value)["checkpoint"] == "csr_dispatch_pending"
+        return "native-csr-1"
+
+    native.start_csr.side_effect = started
+
+    def csr(task_id, _):
+        persisted = json.loads(row.value)
+        assert persisted["native_csr_task_id"] == task_id
+        assert persisted["checkpoint"] == "csr_task_submitted"
+        return "PUBLIC CSR"
+
+    native.wait_csr.side_effect = csr
+
+    def validated(validation_id, _):
+        persisted = json.loads(row.value)
+        assert persisted["native_validation_id"] == validation_id
+        assert persisted["certificate_id"] == 5
+        assert persisted["checkpoint"] == "validation_task_submitted"
+
+    native.wait_validation.side_effect = validated
+    service.run_job(job.id, {"username": "admin", "password": "private-password"})
+    db.expire_all()
+    persisted = json.loads(row.value)
+    assert persisted["state"] == "prepared"
+    assert persisted["checkpoint"] == "certificate_prepared"
+    native.start_csr.assert_called_once()
+    native.start_install.assert_not_called()
+    assert "private-password" not in row.value + job.task_config_json + job.result
+    assert (
+        db.scalar(select(Setting).where(Setting.key == state["reservation_keys"][0]))
+        is not None
+    )
+
+
+def test_sddc_interrupted_csr_reconciliation_reads_original_task_without_resubmission(
+    db, monkeypatch
+):
+    op, row, state, job, native = _sddc_worker(db, monkeypatch)
+    native.wait_csr.side_effect = RemoteError("request interrupted")
+    service.run_job(job.id, {"username": "admin", "password": "private-password"})
+    db.expire_all()
+    state = json.loads(row.value)
+    assert state["state"] == "needs_recovery"
+    assert state["checkpoint"] == "csr_task_submitted"
+    native.wait_csr.side_effect = None
+    row, state = service._state(db, op, "admin")
+    result = service._reconcile(
+        db, row, state, service.Credentials("admin", "private-password")
+    )
+    assert result["state"] == "prepared"
+    native.start_csr.assert_called_once()
+    native.start_install.assert_not_called()
+
+
+def test_sddc_uncertain_install_is_verified_without_repeating_native_write(
+    db, monkeypatch
+):
+    op, row, state, job, native = _sddc_worker(db, monkeypatch, "install")
+    monkeypatch.setattr(service, "_revalidate", lambda *_: None)
+    monkeypatch.setattr(service, "_verify", lambda *_: True)
+    native.start_install.side_effect = RemoteError("restart dropped response")
+    service.run_job(job.id, {"username": "admin", "password": "private-password"})
+    db.expire_all()
+    assert json.loads(row.value)["state"] == "succeeded"
+    native.start_install.assert_called_once_with("LEAF", ["ROOT"])
+    native.install_csr.assert_not_called()

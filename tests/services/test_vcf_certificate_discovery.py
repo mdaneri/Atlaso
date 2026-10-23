@@ -177,3 +177,66 @@ def test_vcenter_topology_rejects_empty_or_incomplete_registration():
     assert not standalone_vcenter(
         {"config_state": "NOTCONFIGURED"}, [{"node_id": "n1", "service_id": "s1"}]
     )
+
+
+@pytest.mark.parametrize("version", ["9.0.0.0", "9.1.1.0100", "9.1"])
+def test_sddc_supported_version_requires_native_manager_role(version):
+    assert supported_version(
+        "sddc",
+        {
+            "role": "SddcManager",
+            "version": version,
+            "identity": "sddc.example.test",
+            "domain_id": "domain-1",
+            "resource_id": "resource-1",
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "info",
+    [
+        {"role": "VcfInstaller", "version": "9.0.0.0"},
+        {"role": "SddcManager", "version": "8.0.0.0"},
+        {"role": "SddcManager", "version": "10.0.0.0"},
+        {"role": "SddcManager", "version": "unknown"},
+        {"version": "9.0.0.0"},
+    ],
+)
+def test_sddc_supported_version_rejects_wrong_role_or_version(info):
+    assert not supported_version("sddc", info)
+
+
+def test_sddc_names_preserve_current_sans_and_require_native_fqdn():
+    cert = _certificate(
+        ["old.example.test", "localhost"], ["192.0.2.10", "127.0.0.1"]
+    )
+    names = names_from_certificate(cert, "sddc", "sddc.example.test")
+    assert names.common_name == "sddc.example.test"
+    assert names.dns_names == ("old.example.test", "sddc.example.test")
+    assert names.ip_addresses == ("192.0.2.10",)
+    with pytest.raises(ValueError):
+        names_from_certificate(cert, "sddc", "192.0.2.20")
+    with pytest.raises(ValueError):
+        names_from_certificate(cert, "sddc", "localhost")
+
+
+def test_sddc_health_requires_complete_healthy_service_list_and_baseline():
+    healthy = {
+        "list": [
+            {"id": "sddc-manager", "status": "UP"},
+            {"id": "lcm", "status": "running"},
+        ]
+    }
+    assert healthy_services("sddc", healthy)
+    assert healthy_services("sddc", healthy, {"sddc-manager"})
+    assert not healthy_services("sddc", healthy, {"missing-service"})
+    assert not healthy_services("sddc", {"list": []})
+    assert not healthy_services(
+        "sddc", {"list": [{"id": "sddc-manager", "status": "UNKNOWN"}]}
+    )
+    assert not healthy_services(
+        "sddc",
+        {"list": [{"id": "sddc-manager", "status": "UP"}, {"id": "sddc-manager", "status": "UP"}]},
+    )
+    assert not healthy_services("sddc", {"list": [{"id": "sddc-manager"}]})

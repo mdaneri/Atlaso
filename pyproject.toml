@@ -114,6 +114,7 @@ files = [
   "atlaso/app/services/vcf_lab_overrides.py",
   "atlaso/app/services/vcf_certificates.py",
   "atlaso/app/services/vcf_certificate_remote.py",
+  "atlaso/app/services/vcf_certificate_sddc.py",
   "atlaso/app/services/vcf_certificate_material.py",
   "atlaso/app/services/vcf_certificate_discovery.py",
   "atlaso/app/services/remote_ssh.py",

@@ -111,7 +111,7 @@
         </span>
           </button>
           <button class="info-band vcf-helper-action-band" type="button" data-vcf-appliance-certificate-open aria-haspopup="dialog" aria-controls="vcf-appliance-certificate-modal" {% if not identity.has_role('admin') %}disabled aria-describedby="vcf-appliance-certificate-admin-reason"{% endif %}>
-            <span class="vcf-helper-action-copy"><span class="vcf-helper-action-title">Appliance Certificate Replacement</span><span class="muted">Replace the TLS certificate on a standalone vCenter or SRM appliance after reviewing identity, trust, and recovery requirements.</span></span>
+            <span class="vcf-helper-action-copy"><span class="vcf-helper-action-title">Appliance Certificate Replacement</span><span class="muted">Replace the TLS certificate on standalone vCenter, SRM, or SDDC Manager after reviewing identity, trust, and recovery requirements.</span></span>
           </button>
           {% if not identity.has_role('admin') %}<p class="muted" id="vcf-appliance-certificate-admin-reason">Administrator access is required to replace appliance certificates.</p>{% endif %}
         </div>
@@ -258,5 +258,5 @@
 </dialog>
 <script src="/static/vcf-lab-overrides.js?v=issue-873-6" defer></script>
 <script src="/static/vcf-helper-tabs.js?v=issue-1027-1" defer></script>
-<script src="/static/vcf-appliance-certificates.js?v=issue-1027-3" defer></script>
+<script src="/static/vcf-appliance-certificates.js?v=issue-1038-1" defer></script>
 {% endblock %}

@@ -68,8 +68,9 @@
     for (const row of rows) { const item = document.createElement("div"); const label = document.createElement("span"); const value = document.createElement("strong"); label.textContent = row[0]; value.textContent = row[1] ?? ""; item.append(label, value); container.append(item); }
   }
   function paintOperation(result) {
+    const productLabel = result.product === "vcenter" ? "vCenter" : result.product === "sddc" ? "SDDC Manager" : "SRM / Protection and Recovery";
+    node("operation-target").textContent = `${productLabel} — ${result.address || ""}:${result.port || 443}${result.domain_id ? ` · Management domain ${result.domain_id}` : ""}`;
     if (operationId) wizard.markClean();
-    node("operation-target").textContent = `${result.product === "vcenter" ? "vCenter" : "SRM / Protection and Recovery"} — ${result.address || ""}:${result.port || 443}`;
     node("result").textContent = `${result.state || "unknown"}${result.error ? ` — ${result.error}` : ""}`;
     node("progress").value = Number(result.progress_percent || 0);
     const verification = result.verification || {};
@@ -90,6 +91,7 @@
     operationId = result.operation_id;
     const reference = result.credential_reference || {};
     field("product").value = result.product || "srm"; field("address").value = result.address || ""; field("port").value = result.port || 443;
+    node("operation-target").textContent = `${result.product === "sddc" ? "SDDC Manager" : result.product === "vcenter" ? "vCenter" : "SRM / Protection and Recovery"} — ${result.address || ""}:${result.port || 443}${result.domain_id ? ` · Management domain ${result.domain_id}` : ""}`;
     field("confirmed").checked = Boolean(result.confirmed_tls_fingerprint); probe = result.confirmed_tls_fingerprint ? {fingerprint: result.confirmed_tls_fingerprint} : null;
     node("fingerprint").textContent = probe?.fingerprint || "Not checked";
     field("username").value = reference.username || ""; field("password").value = "";
@@ -116,7 +118,7 @@
   async function poll() { if (!operationId || !dialog.open) return; await run(async () => paintOperation(await call(`/operations/${encodeURIComponent(operationId)}`))); }
   const stepCopy = {
     credential: ["Choose credentials", "Select saved vault credentials or enter temporary credentials."],
-    server: ["Select the appliance", "Choose SRM or vCenter and enter its endpoint."],
+    server: ["Select the appliance", "Choose SRM, vCenter, or SDDC Manager and enter its endpoint."],
     fingerprint: ["Confirm TLS identity", "Compare the presented SHA-256 fingerprint with a trusted source."],
     login: ["Sign in to the appliance", "Manual credentials are sent only after fingerprint confirmation."],
     target: ["Check target and prerequisites", "Inspect native capabilities, topology, names, and certificate profiles."],
@@ -169,7 +171,7 @@
         operationId = result.operation_id; saveOperation(operationId); wizard.setHighestStep("results"); wizard.showStep("results"); paintOperation(result);
       } else if (button.matches("[data-cert-review-action]")) {
         const result = await call("/review", {...credentials(), operation_id: operationId, ...targetFields()}); reviewToken = result.token;
-        const r = result.review; paintList(node("review"), [["Target", r.target], ["Current SHA-256", r.current_certificate.fingerprint_sha256], ["Replacement SHA-256", r.replacement_certificate.fingerprint_sha256], ["Issuer", r.issuer], ["Issuer SHA-256", r.issuer_fingerprint_sha256], ["CA profile", r.profile], ["Names", (r.names || []).join(", ")], ["Validity", r.replacement_certificate.not_before + " through " + r.replacement_certificate.not_after], ["Trust changes", (r.trust_changes || []).join(", ")], ["Interruption", r.interruption], ["Recovery", r.recovery_reference]]);
+        const r = result.review; paintList(node("review"), [["Target", r.target], ...(r.domain_id ? [["Management domain", r.domain_id], ["SDDC Manager resource", r.resource_id]] : []), ["Current SHA-256", r.current_certificate.fingerprint_sha256], ["Replacement SHA-256", r.replacement_certificate.fingerprint_sha256], ["Issuer", r.issuer], ["Issuer SHA-256", r.issuer_fingerprint_sha256], ["CA profile", r.profile], ["Names", (r.names || []).join(", ")], ["Validity", r.replacement_certificate.not_before + " through " + r.replacement_certificate.not_after], ["Trust changes", (r.trust_changes || []).join(", ")], ["Interruption", r.interruption], ["Recovery", r.recovery_reference]]);
       } else if (button.matches("[data-cert-execute]")) {
         const result = await call("/execute", {...credentials(), operation_id: operationId, token: reviewToken, acknowledged: field("install_acknowledged").checked}); reviewToken = null; wizard.setHighestStep("results"); wizard.showStep("results"); paintOperation(result);
       } else {

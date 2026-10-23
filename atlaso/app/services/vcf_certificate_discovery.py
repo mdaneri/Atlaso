@@ -38,8 +38,18 @@ def _product_text(value: Any) -> str:
 
 
 def supported_version(product: str, info: dict[str, Any]) -> bool:
-    """Return whether native identity data identifies supported product version 8+."""
+    """Return whether native identity data identifies a supported product version."""
     product = product.casefold()
+    if product == "sddc":
+        if not isinstance(info, dict) or not isinstance(info.get("role"), str):
+            return False
+        if info["role"].casefold() != "sddcmanager":
+            return False
+        version = info.get("version")
+        if not isinstance(version, (str, int, float)):
+            return False
+        match = re.match(r"^\s*(\d+)(?:\.\d+)*(?:[-+].*)?\s*$", str(version))
+        return bool(match and int(match.group(1)) == 9)
     if product not in {"srm", "vcenter"}:
         return False
     identity = _product_text(info)
@@ -80,12 +90,35 @@ def names_from_certificate(
     cert: x509.Certificate, product: str, identity_hostname: str
 ) -> ApplianceNames:
     """Preserve certificate DNS/IP SANs and require the native appliance PNID."""
+    normalized_product = product.casefold()
     if (
-        product.casefold() not in {"srm", "vcenter"}
+        normalized_product not in {"srm", "vcenter", "sddc"}
         or not identity_hostname
         or identity_hostname != identity_hostname.strip()
     ):
         raise ValueError("Appliance identity hostname is invalid.")
+    if normalized_product == "sddc":
+        try:
+            ip_address(identity_hostname)
+        except ValueError:
+            labels = identity_hostname.rstrip(".").split(".")
+            if (
+                len(labels) < 2
+                or any(
+                    not label
+                    or len(label) > 63
+                    or label.startswith("-")
+                    or label.endswith("-")
+                    or not re.fullmatch(r"[A-Za-z0-9-]+", label)
+                    for label in labels
+                )
+                or identity_hostname.casefold() in {"localhost", "localhost.localdomain"}
+            ):
+                raise ValueError(
+                    "SDDC Manager identity must be a valid DNS FQDN."
+                ) from None
+        else:
+            raise ValueError("SDDC Manager identity must be a DNS FQDN.")
     try:
         san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
     except x509.ExtensionNotFound as exc:
@@ -102,7 +135,7 @@ def names_from_certificate(
         parsed = None
     if parsed is not None:
         ip_names.add(str(parsed))
-        if product.casefold() == "vcenter":
+        if normalized_product == "vcenter":
             dns_names.add(str(parsed))
     else:
         dns_names.add(identity_hostname)
@@ -123,6 +156,41 @@ def healthy_services(
             value = health.get("value", health.get("status"))
             return isinstance(value, str) and value.casefold() == "green"
         return False
+    if product.casefold() == "sddc":
+        if not isinstance(health, dict) or not isinstance(health.get("list"), list):
+            return False
+        services = health["list"]
+        if not services:
+            return False
+        service_ids: set[str] = set()
+        for item in services:
+            if not isinstance(item, dict):
+                return False
+            service_id = item.get("id")
+            status = item.get("status")
+            if (
+                not isinstance(service_id, str)
+                or not service_id.strip()
+                or service_id in service_ids
+                or not isinstance(status, str)
+                or status.upper() not in {"UP", "RUNNING", "ACTIVE"}
+            ):
+                return False
+            service_ids.add(service_id)
+        required: set[str] = set()
+        if isinstance(baseline, set):
+            required = set(baseline)
+        elif isinstance(baseline, dict):
+            baseline_services = baseline.get("list")
+            if not isinstance(baseline_services, list):
+                return False
+            for item in baseline_services:
+                if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                    return False
+                required.add(item["id"])
+        elif baseline is not None:
+            return False
+        return required <= service_ids
     if product.casefold() != "srm" or not isinstance(health, (list, dict)):
         return False
     services = health.get("list") if isinstance(health, dict) else health

@@ -40,12 +40,14 @@ on the tabs to navigate with the keyboard. Without JavaScript, the page displays
 
 ### Appliance Certificate Replacement
 
-Administrators can replace the certificate on a standalone vCenter or an unregistered standalone SRM / Protection and
-Recovery appliance using its native CSR and private key. Open **Certificates → Appliance Certificate Replacement**.
+Administrators can replace the certificate on a standalone vCenter, an unregistered standalone SRM / Protection and
+Recovery appliance, or the SDDC Manager appliance resource in its own initialized VCF 9.x management domain using the
+native CSR and private key. Open **Certificates → Appliance Certificate Replacement**.
 The wizard guides you through **Credential**, **Server**, **TLS fingerprint**, **Login** (manual credentials only),
-**Target and prerequisites**, **Prepare certificate**, **Review**, **Replace**, and **Results**. It does not target
-SDDC Manager. Linked vCenters, vCenter HA, registered SRM, unknown topology, and unsupported capabilities require the
-coordinated native product procedure.
+**Target and prerequisites**, **Prepare certificate**, **Review**, **Replace**, and **Results**. For SDDC Manager,
+Atlaso targets only its own management-domain appliance resource. VCF Installer, uninitialized appliances, and other
+domain-managed components are excluded. Linked vCenters, vCenter HA, registered SRM, unknown topology, and unsupported
+capabilities require the coordinated native product procedure.
 
 The current certificate SANs and native hostname determine the read-only reviewed names. Correct native identity and DNS
 before preparation; Atlaso refuses stale/missing target SANs rather than silently substituting names. A ready CA and an

@@ -300,3 +300,55 @@ def test_srm_does_not_apply_vcenter_ip_pnid_exception():
     pem = _csr_with_sans(ips=["192.0.2.10"])
     with pytest.raises(CertificateMaterialError):
         validate_product_csr(pem, "srm", {"192.0.2.10"}, {"192.0.2.10"})
+
+
+def test_sddc_profile_requires_exact_product_usages_and_supported_rsa_size():
+    profile = ProductProfile(
+        "sddc-manager",
+        True,
+        frozenset({"digitalSignature", "keyEncipherment"}),
+        frozenset({"serverAuth", "clientAuth"}),
+    )
+    validate_profile(profile, "sddc")
+    validate_profile(
+        ProductProfile(
+            "sddc-manager",
+            True,
+            profile.key_usages,
+            profile.extended_key_usages,
+            key_size=4096,
+        ),
+        "sddc",
+    )
+    with pytest.raises(CertificateMaterialError):
+        validate_profile(
+            ProductProfile(
+                "sddc-manager",
+                True,
+                profile.key_usages,
+                frozenset({"serverAuth"}),
+            ),
+            "sddc",
+        )
+    with pytest.raises(CertificateMaterialError):
+        validate_profile(
+            ProductProfile(
+                "sddc-manager",
+                True,
+                profile.key_usages,
+                profile.extended_key_usages,
+                key_size=1024,
+            ),
+            "sddc",
+        )
+
+
+def test_sddc_csr_requires_exact_reviewed_dns_and_ip_sans():
+    pem = _csr_with_sans(dns=["sddc.example.test"], ips=["192.0.2.30"])
+    validate_product_csr(pem, "sddc", {"sddc.example.test"}, {"192.0.2.30"})
+    with pytest.raises(CertificateMaterialError):
+        validate_product_csr(pem, "sddc", {"other.example.test"}, {"192.0.2.30"})
+    with pytest.raises(CertificateMaterialError):
+        validate_product_csr(
+            _csr_with_sans(ips=["192.0.2.30"]), "sddc", set(), {"192.0.2.30"}
+        )

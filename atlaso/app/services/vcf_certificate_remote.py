@@ -12,6 +12,7 @@ import threading
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from email.utils import parsedate_to_datetime
 from http.cookies import CookieError, SimpleCookie
 from typing import Any
 from urllib.parse import quote
@@ -91,6 +92,7 @@ class PinnedHTTPS:
     def __init__(self, target: Target):
         self.target = target
         self._soap_cookie: str | None = None
+        self.server_time: float | None = None
 
     def clear_soap_cookie(self) -> None:
         """Discard the request-local SOAP session cookie."""
@@ -105,6 +107,7 @@ class PinnedHTTPS:
             if self.target.strict_tls
             else ssl._create_unverified_context()
         )
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         try:
             deadline = min(
                 time.monotonic() + _TIMEOUT, self.target.deadline or float("inf")
@@ -170,6 +173,7 @@ class PinnedHTTPS:
             if self.target.strict_tls
             else ssl._create_unverified_context()
         )
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         conn = _PinnedConnection(self.target, context)
 
         def abort() -> None:
@@ -225,6 +229,15 @@ class PinnedHTTPS:
                 )
             conn.request(method, path, body=payload, headers=headers)
             response = conn.getresponse()
+            self.server_time = None
+            date_header = response.getheader("Date")
+            if isinstance(date_header, str):
+                try:
+                    server_date = parsedate_to_datetime(date_header)
+                    if server_date.tzinfo is not None:
+                        self.server_time = server_date.timestamp()
+                except ValueError, TypeError, OverflowError:
+                    pass
             if capture_soap_cookie:
                 raw_cookie = response.getheader("Set-Cookie", "")
                 parsed_cookie = SimpleCookie()

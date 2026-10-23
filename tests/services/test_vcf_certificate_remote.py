@@ -1,4 +1,5 @@
 import hashlib
+import ssl
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
@@ -37,6 +38,7 @@ class TransportTests(unittest.TestCase):
         )
         conn.connect.assert_called_once()
         conn.request.assert_called_once()
+        self.assertEqual(_ctx.return_value.minimum_version, ssl.TLSVersion.TLSv1_2)
 
     @patch("atlaso.app.services.vcf_certificate_remote._PinnedConnection")
     @patch("atlaso.app.services.vcf_certificate_remote.ssl._create_unverified_context")
@@ -141,6 +143,9 @@ class TransportTests(unittest.TestCase):
                         issuer=Mock(rfc4514_string=Mock(return_value="CN=ca")),
                     )
                     result = adapter.probe()
+                    self.assertEqual(
+                        context.return_value.minimum_version, ssl.TLSVersion.TLSv1_2
+                    )
             self.assertEqual(result["sha256"], self.target.fingerprint)
             connect.assert_called_once()
 
@@ -213,6 +218,9 @@ class TransportTests(unittest.TestCase):
                 )
             ).request("GET", "/")
             strict.assert_called_once()
+            self.assertEqual(
+                strict.return_value.minimum_version, ssl.TLSVersion.TLSv1_2
+            )
 
 
 if __name__ == "__main__":

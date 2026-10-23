@@ -1,6 +1,6 @@
 ---
 title: Appliance certificates with Atlaso
-description: Issue and install Atlaso-signed TLS certificates for SRM, vCenter, and other CSR-capable appliances.
+description: Issue and install Atlaso-signed TLS certificates for SRM, vCenter, SDDC Manager, and other CSR-capable appliances.
 audience:
   - operator
 status: current
@@ -24,7 +24,8 @@ This verified appliance view provides visual orientation before you begin.
 VCF Helper automates the native CSR, Atlaso issuance, and replacement path for standalone vCenter and unregistered
 standalone SRM / Protection and Recovery appliances running 8.x or later, subject to native capability checks.
 vCenter HA, linked vCenters, registered SRM, and unknown topology are blocked for coordinated vendor workflows.
-SDDC Manager support is a follow-on and is not implemented by this wizard. Unit contracts cover 8.x and 9.x behavior;
+The wizard also supports the SDDC Manager appliance resource in an initialized 9.x management domain. Unit contracts
+cover the supported version families;
 native appliance validation was performed on 9.1.1 builds only. Do not infer native 8.x acceptance from unit tests.
 
 The **Certificates → Appliance Certificate Replacement** wizard uses this sequence: credential source, product and
@@ -58,6 +59,7 @@ workflow. Start with [Certificate Authority](certificate-authority.md) for CA co
 | Operation | Material and destination |
 | --- | --- |
 | Replace SRM appliance TLS | SRM-generated CSR, signed leaf, and CA chain in the SRM certificate installer |
+| Replace SDDC Manager TLS | SDDC Manager-generated CSR, signed leaf, and public CA chain for its own resource |
 | Replace vCenter Machine SSL | vCenter-generated CSR, signed leaf, and trusted root chain in Certificate Management |
 | Trust the server from a browser or API client | Verified public Atlaso root in that client's trusted CA store |
 | Trust another server from an appliance | Verified public CA certificates in the appliance's supported outbound trust store |
@@ -263,6 +265,55 @@ Replacing vCenter Machine SSL can require SRM or replication reconfiguration and
 [Broadcom's recovery procedure after a vCenter SSL change](https://knowledge.broadcom.com/external/article/312784/site-recovery-manager-or-vsphere-replica.html).
 Confirm outbound root trust on dependent appliances rather than accepting an unexpected fingerprint blindly.
 
+## SDDC Manager 9.x
+
+Use an initialized **SDDC Manager**, with an active management domain and its own certificate resource. VCF Installer
+is a different appliance role and is not eligible. This workflow changes the SDDC Manager appliance certificate;
+managed vCenter, NSX, ESXi, and other resource certificates require their own coordinated procedures.
+
+1. Prepare a verified, supported SDDC Manager backup and recovery procedure and a maintenance window. Record the
+   management-domain ID, SDDC Manager resource ID, native FQDN, and independently verified current TLS fingerprint.
+   Check that the FQDN and every retained DNS SAN resolve to the appliance, its clock is correct, and native services
+   are healthy. Use an explicitly assigned SDDC Manager administrator account; Atlaso does not infer inherited group
+   permissions. Keep credentials in a vault or use the wizard's request-local login.
+2. Open **VCF Helper → Certificates → Appliance Certificate Replacement** and select **SDDC Manager**. Confirm the
+   exact TLS fingerprint before login. Inspect the target and select an existing ready Atlaso CA profile using RSA
+   2048, 3072, or 4096, `digitalSignature,keyEncipherment`, and `serverAuth,clientAuth`. Review the discovered FQDN,
+   SANs, management domain, and appliance resource. Correct native identity or DNS before continuing.
+3. Acknowledge recovery readiness and that no external CSR or replacement is pending, then select **Prepare
+   certificate** once. SDDC Manager creates the private key and CSR through its native domain-scoped task. Atlaso
+   records the returned task ID, retrieves only that resource's public CSR, validates it, and issues through the
+   selected profile. The private key remains on SDDC Manager.
+4. Atlaso submits the issued leaf and public chain to native certificate validation. After it succeeds, build the
+   final review and compare the current, replacement, and issuer fingerprints, exact resource and domain IDs,
+   certificate names, validity, trust changes, interruption, and recovery reference. Approve **Replace certificate**
+   only for those reviewed values. Atlaso records the native replacement task ID and verifies the result.
+5. Check installation, exact served certificate, strict TLS, fresh authenticated login, native task completion,
+   and service health separately. Validate browser and dependent-client trust using the reviewed public issuer.
+   Certificate replacement alone does not establish fleet, workload, or lifecycle-operation acceptance.
+
+The native APIs [generate a CSR][sddc-csr-put], [retrieve the public CSR][sddc-csr-get],
+[validate the issued certificate][sddc-validation], and [replace the selected resource certificate][sddc-install].
+Atlaso sends only the reviewed SDDC Manager resource ID in these domain-scoped operations.
+
+For the native UI path, open **Inventory → Workload Domains → the management domain → Certificates**. Select only
+**SDDC Manager**, generate and download its CSR, and submit that public CSR through Atlaso's **CSR Intake** with the
+profile above. After issuance, use the native **Upload and Install** / **Install Certificates** action for the same
+resource. Supply the server leaf and CA chain in their respective inputs; a combined chain is ordered leaf,
+intermediates, then root. Run **Validate** before **Install**, and follow the returned native task. Broadcom describes
+[this resource-scoped CSR and install sequence](https://knowledge.broadcom.com/external/article/446674).
+
+If a response is lost or a task is interrupted, preserve the recorded task, CSR, and certificate and use **Reconcile
+status**. Atlaso polls known task IDs without submitting another CSR or replacement. An unresolved CSR or native
+validation keeps the reservation. Use the supported SDDC Manager recovery procedure if native repair is required;
+never generate another key or install a different certificate to resolve an uncertain response. SDDC Manager native
+lab acceptance is pending; the SRM and vCenter evidence below does not establish it.
+
+[sddc-csr-put]: https://developer.broadcom.com/xapis/sddc-manager-api/latest/v1/domains/id/csrs/put/
+[sddc-csr-get]: https://developer.broadcom.com/xapis/sddc-manager-api/latest/v1/domains/id/csrs/get/
+[sddc-validation]: https://developer.broadcom.com/xapis/sddc-manager-api/latest/v1/domains/id/resource-certificates/validations/put/
+[sddc-install]: https://developer.broadcom.com/xapis/sddc-manager-api/latest/v1/domains/id/resource-certificates/put/
+
 ## Other appliances
 
 Use the same CSR custody and Atlaso issuance steps when the product supports an external CA. Before installation,
@@ -315,8 +366,8 @@ This development CA and lab establish functional test coverage only. They do not
 production CA deployment. Unit contracts cover 8.x and 9.x behavior, but native appliance validation above covers
 9.1.1 only. The appliance certificate workflows' linked-vCenter, HA, registered-SRM, and unknown-topology exclusions
 still require their coordinated native procedures. Registration, site pairing, replication, recovery plans, hosts,
-VMs, and dependent workload acceptance were not tested. SDDC Manager certificate replacement is a planned follow-on
-and is not implemented.
+VMs, and dependent workload acceptance were not tested. SDDC Manager native replacement validation remains pending;
+do not infer its acceptance from these tests.
 
 Earlier SRM and vCenter installation-only observations are historical and superseded by the validated procedure and
 acceptance record above; they must not be used to infer pairing, replication, or recovery-plan acceptance.
@@ -327,6 +378,14 @@ acceptance record above; they must not be used to infer pairing, replication, or
 These captures show responsive layouts and useful operational states referenced by this page.
 
 ### VCF Helper
+
+![Atlaso certificate wizard selecting SDDC Manager in the desktop viewport.](../assets/screenshots/vcf-appliance-certificate-sddc-server-desktop.webp)
+
+*Figure: Select SDDC Manager 9.x for its own appliance resource. Native SDDC validation remains pending.*
+
+![Atlaso certificate wizard selecting SDDC Manager in the responsive viewport.](../assets/screenshots/vcf-appliance-certificate-sddc-server-responsive.webp)
+
+*Figure: Select SDDC Manager 9.x for its own appliance resource. Native SDDC validation remains pending.*
 
 ![Atlaso certificate replacement results for SRM showing five separately verified outcomes in the desktop viewport.](../assets/screenshots/vcf-appliance-certificate-srm-results-desktop.webp)
 

@@ -647,6 +647,14 @@ Figure: VCF Backups in the verified clean-appliance responsive state.
 
 Route: `/ui/management/vcf-helper`
 
+![Atlaso certificate wizard selecting SDDC Manager in the desktop viewport.](../assets/screenshots/vcf-appliance-certificate-sddc-server-desktop.webp)
+
+Figure: Select SDDC Manager 9.x for its own appliance resource. Native SDDC validation remains pending.
+
+![Atlaso certificate wizard selecting SDDC Manager in the responsive viewport.](../assets/screenshots/vcf-appliance-certificate-sddc-server-responsive.webp)
+
+Figure: Select SDDC Manager 9.x for its own appliance resource. Native SDDC validation remains pending.
+
 ![Atlaso certificate replacement results for SRM showing five separately verified outcomes in the desktop viewport.](../assets/screenshots/vcf-appliance-certificate-srm-results-desktop.webp)
 
 Figure: SRM 9.1.1 passed all five lab checks. Integration workflows remain untested.

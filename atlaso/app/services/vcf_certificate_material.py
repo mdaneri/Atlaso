@@ -66,6 +66,10 @@ _PROFILE_REQUIREMENTS = {
         frozenset({"digitalSignature", "keyEncipherment"}),
         frozenset({"serverAuth"}),
     ),
+    "sddc": (
+        frozenset({"digitalSignature", "keyEncipherment"}),
+        frozenset({"serverAuth", "clientAuth"}),
+    ),
 }
 _EKUS = {
     "serverAuth": ExtendedKeyUsageOID.SERVER_AUTH,
@@ -93,11 +97,9 @@ def validate_profile(profile: ProductProfile, product: str) -> None:
         raise CertificateMaterialError(
             "The selected CA profile lacks required product key usages."
         )
-    if (product == "srm" and profile.key_size != 2048) or profile.key_size not in {
-        2048,
-        3072,
-        4096,
-    }:
+    if profile.key_size not in {2048, 3072, 4096} or (
+        product == "srm" and profile.key_size != 2048
+    ):
         raise CertificateMaterialError(
             "The native CSR key size does not support this profile. Use RSA 2048 for SRM."
         )
@@ -167,6 +169,10 @@ def validate_product_csr(
     its native CSR API encodes that numeric request only as an IP SAN. No other
     SAN differences are permitted between the native CSR and reviewed names.
     """
+    if product == "sddc" and not expected_dns:
+        raise CertificateMaterialError(
+            "SDDC Manager certificate must include its reviewed DNS identity."
+        )
     csr_dns = expected_dns - expected_ips if product == "vcenter" else expected_dns
     return validate_csr(pem, csr_dns, expected_ips)
 

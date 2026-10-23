@@ -21,7 +21,8 @@ CANONICAL_BROWSER_ROOTS = {
 CAPTURE_OVERRIDES = {
     **{
         stem: {
-            "source_commit": "20f4cbf5c1d72f2b51923b8f222b9a28dcc50465",
+            "source_commit": "5486d1671f59f67ea0778b9d98f42e0988f19d23+working-tree",
+            "source_tree": "a47979df272754c1f2e5b6b598ef631cfcad3e43",
             "atlaso_version": "0.9.454",
             "capture_method": "playwright-edge",
         }
@@ -31,6 +32,7 @@ CAPTURE_OVERRIDES = {
             "vcf-appliance-certificate-wizard-responsive", "vcf-appliance-certificate-srm-results-desktop",
             "vcf-appliance-certificate-srm-results-responsive", "vcf-appliance-certificate-vcenter-results-desktop",
             "vcf-appliance-certificate-vcenter-results-responsive",
+            "vcf-appliance-certificate-sddc-server-desktop", "vcf-appliance-certificate-sddc-server-responsive",
         )
     },
     **{
@@ -388,6 +390,14 @@ ROUTES = {
 }
 
 SPECIAL = {
+    **{
+        f"vcf-appliance-certificate-sddc-server-{viewport}": (
+            "/ui/management/vcf-helper", "sddc-target-selection",
+            "Select SDDC Manager 9.x for its own appliance resource. Native SDDC validation remains pending.",
+            f"Atlaso certificate wizard selecting SDDC Manager in the {viewport} viewport.",
+        )
+        for viewport in ("desktop", "responsive")
+    },
     **{
         f"vcf-helper-tabs-{tab}-{viewport}": (
             "/ui/management/vcf-helper", "functional-tabs",

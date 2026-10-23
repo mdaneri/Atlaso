@@ -62,6 +62,7 @@ from atlaso.app.services.vcf_certificate_remote import (
     RemoteError,
     Target,
 )
+from atlaso.app.services.vcf_certificate_sddc import SddcAdapter
 
 JOB_TYPE = "vcf-appliance-certificate"
 PREFIX = "vcf_cert_op:"
@@ -99,7 +100,7 @@ def _target(values: dict[str, Any]) -> tuple[str, Target]:
     product = str(values.get("product", ""))
     host = str(values.get("address", "")).strip().lower().rstrip(".").strip("[]")
     if (
-        product not in {"srm", "vcenter"}
+        product not in {"srm", "vcenter", "sddc"}
         or not host
         or len(host) > 253
         or not re.fullmatch(r"[a-z0-9.:-]+", host)
@@ -285,7 +286,11 @@ def _save(db: Session, row: Setting, state: dict[str, Any]) -> None:
     stages = {
         "queued_preparation": 0,
         "csr_dispatch_pending": 25,
+        "csr_task_submitted": 35,
         "csr_received": 55,
+        "certificate_issued": 70,
+        "validation_dispatch_pending": 75,
+        "validation_task_submitted": 80,
         "certificate_prepared": 100,
         "queued_installation": 0,
         "root_import_dispatch_pending": 20,
@@ -336,6 +341,10 @@ def operation_status(db: Session, actor: str, operation_id: str) -> dict[str, An
             "trust_changes",
             "recovery_reference",
             "verification",
+            "product_info",
+            "native_csr_task_id",
+            "native_validation_id",
+            "native_install_task_id",
         )
         if key in state
     }
@@ -346,6 +355,8 @@ def operation_status(db: Session, actor: str, operation_id: str) -> dict[str, An
             for key in ("mode", "username", "vault_id", "entry_id")
             if key in reference
         }
+    if state["product"] == "sddc":
+        result["domain_id"] = state["product_info"]["domain_id"]
     return result
 
 
@@ -399,11 +410,22 @@ def _release(db: Session, state: dict[str, Any]) -> None:
     )
 
 
+def _native(
+    target: Target, product: str, info: dict[str, Any] | None = None
+) -> NativeAdapter:
+    if product == "sddc":
+        native = SddcAdapter(target)
+        if info is not None:
+            native.configure_binding(info)
+        return native
+    return NativeAdapter(target, product)
+
+
 def _inspect(
     db: Session, product: str, target: Target, credentials: Credentials
 ) -> dict[str, Any]:
     settings, profiles = _ready_ca(db, product)
-    with NativeAdapter(target, product) as native:
+    with _native(target, product) as native:
         if product == "srm" and credentials.username != "admin":
             raise CertificateOperationError(
                 "Use SRM's native appliance administrator account, admin."
@@ -412,11 +434,15 @@ def _inspect(
         info = native.product_info()
         if not isinstance(info, dict) or not supported_version(product, info):
             raise CertificateOperationError(
-                "Only natively detected SRM / Protection and Recovery or standalone vCenter 8.x and later are supported."
+                "Select a natively detected SRM or standalone vCenter 8.x or later, or initialized SDDC Manager 9.x."
             )
-        if product == "vcenter" and not native.vcenter_permissions(credentials):
+        if product in {"vcenter", "sddc"} and not native.vcenter_permissions(
+            credentials
+        ):
             raise CertificateOperationError(
-                "The selected account requires CertificateManagement.Manage and CertificateManagement.Administer on this standalone vCenter."
+                "Use an explicitly assigned SDDC Manager administrator account."
+                if product == "sddc"
+                else "The selected account requires CertificateManagement.Manage and CertificateManagement.Administer on this standalone vCenter."
             )
         native.current_certificate()
         served = PinnedHTTPS(target).probe()
@@ -456,6 +482,12 @@ def _inspect(
                 )
             version = str(info["appliance_version"])
             topology = "Unregistered standalone appliance"
+        elif product == "sddc":
+            identity = str(info["identity"])
+            version = str(info["version"])
+            topology = "SDDC Manager's own resource in management domain " + str(
+                info["domain_id"]
+            )
         else:
             registrations = native.vcenter_registrations()
             if not standalone_vcenter(native.vcenter_ha(), registrations):
@@ -542,12 +574,21 @@ def _inspect(
                         "startup_type": item["startup_type"],
                         "is_running": item["is_running"],
                     }
-                    for item in health["list"]
+                    for item in _srm_service_rows(health)
                 ]
             }
     return {
         "target": target.host,
-        "product_info": {"product": product, "version": version, "identity": identity},
+        "product_info": {
+            "product": product,
+            "version": version,
+            "identity": identity,
+            **(
+                {key: info[key] for key in ("role", "domain_id", "resource_id")}
+                if product == "sddc"
+                else {}
+            ),
+        },
         "identity": identity,
         "names": names,
         "current_certificate": _metadata(cert),
@@ -569,6 +610,34 @@ def _inspect(
         "supported": bool(profiles),
         "issuer_fingerprint": settings.root_fingerprint,
     }
+
+
+def _srm_service_rows(health: Any) -> list[dict[str, Any]]:
+    """Normalize the same service variants accepted by the native health check."""
+    rows = health.get("list", []) if isinstance(health, dict) else health
+    normalized = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        service_id = item.get("id", item.get("service_name"))
+        running = item.get("is_running")
+        if running is None and isinstance(item.get("service_status"), str):
+            running = item["service_status"].casefold() == "running"
+        if (
+            not isinstance(service_id, str)
+            or not isinstance(item.get("startup_type"), str)
+            or not isinstance(running, bool)
+        ):
+            continue
+        normalized.append(
+            {
+                "id": service_id,
+                "name": item.get("name", service_id),
+                "startup_type": item["startup_type"],
+                "is_running": running,
+            }
+        )
+    return normalized
 
 
 def _enqueue(db: Session, state: dict[str, Any], action: str) -> Job:
@@ -778,6 +847,8 @@ def _dispatch(
                     "fingerprint_sha256"
                 ],
                 "profile": state["ca_snapshot"]["profile"]["name"],
+                "domain_id": state["product_info"].get("domain_id"),
+                "resource_id": state["product_info"].get("resource_id"),
                 "names": state["names"]["dns_names"] + state["names"]["ip_addresses"],
                 "trust_changes": state["trust_changes"],
                 "interruption": "Appliance management and dependent services may restart. Monitor this task for up to fifteen minutes.",
@@ -845,6 +916,17 @@ def _revalidate(db: Session, state: dict[str, Any], credentials: Credentials) ->
             "Target, topology, names, CA or profile changed. Reconcile before another review."
         )
     _material(db, state)
+    if state["product"] == "sddc":
+        with _native(target, "sddc", state["product_info"]) as native:
+            assert isinstance(native, SddcAdapter)
+            native.login(credentials)
+            if (
+                native.wait_csr(state["native_csr_task_id"], time.monotonic() + 30)
+                != state["csr_pem"]
+            ):
+                raise CertificateOperationError(
+                    "SDDC Manager's pending CSR changed. Preserve this operation and reconcile native state."
+                )
 
 
 def _material(db: Session, state: dict[str, Any]) -> tuple[str, str]:
@@ -883,6 +965,27 @@ def _material(db: Session, state: dict[str, Any]) -> tuple[str, str]:
 
 def _csr_spec(state: dict[str, Any], settings: CaSettings) -> dict[str, Any]:
     names = state["names"]
+    if state["product"] == "sddc":
+        info = state["product_info"]
+        return {
+            "csrGenerationSpec": {
+                "country": settings.country,
+                "state": settings.state or "Lab",
+                "locality": settings.locality or "Lab",
+                "organization": settings.organization or "Atlaso",
+                "organizationUnit": settings.organizational_unit or "Infrastructure",
+                "keySize": str(state["ca_snapshot"]["profile"]["key_size"]),
+                "keyAlgorithm": "RSA",
+            },
+            "resources": [
+                {
+                    "resourceId": info["resource_id"],
+                    "fqdn": info["identity"],
+                    "type": "SDDC_MANAGER",
+                    "sans": sorted(set(names["dns_names"] + names["ip_addresses"])),
+                }
+            ],
+        }
     if state["product"] == "srm":
         return {
             "common_name": names["common_name"],
@@ -946,20 +1049,33 @@ def run_job(job_id: str, manual_values: dict[str, Any] | None = None) -> None:
                     )
                 settings, _ = _ready_ca(db, state["product"], state["profile_id"])
                 spec = _csr_spec(state, settings)
-                with NativeAdapter(target, state["product"]) as native:
+                with _native(target, state["product"], state["product_info"]) as native:
                     native.login(credentials)
                     _actor(db, state["actor"])
                     state["checkpoint"] = "csr_dispatch_pending"
                     _save(db, row, state)
-                    csr_pem = native.generate_csr(spec)
+                    if isinstance(native, SddcAdapter):
+                        state["native_csr_task_id"] = native.start_csr(spec)
+                        state["checkpoint"] = "csr_task_submitted"
+                        _save(db, row, state)
+                        csr_pem = native.wait_csr(
+                            state["native_csr_task_id"],
+                            time.monotonic() + READINESS_SECONDS,
+                        )
+                    else:
+                        csr_pem = native.generate_csr(spec)
                     state["csr_pem"], state["checkpoint"] = csr_pem, "csr_received"
                     _save(db, row, state)
                 _issue(db, row, state)
+                if state["product"] == "sddc":
+                    _sddc_validation(db, row, state, credentials)
                 job.status = "succeeded"
             else:
                 _revalidate(db, state, credentials)
                 leaf, root = _material(db, state)
-                with NativeAdapter(target, state["product"]) as native:
+                if state["product"] == "sddc":
+                    _sddc_validation(db, row, state, credentials, installing=True)
+                with _native(target, state["product"], state["product_info"]) as native:
                     native.login(credentials)
                     _actor(db, state["actor"])
                     if state["product"] == "vcenter":
@@ -971,8 +1087,14 @@ def run_job(job_id: str, manual_values: dict[str, Any] | None = None) -> None:
                     state["checkpoint"] = "installation_dispatch_pending"
                     _save(db, row, state)
                     try:
-                        native.install_csr(leaf, [root])
-                        state["verification"]["installation"] = True
+                        if isinstance(native, SddcAdapter):
+                            state["native_install_task_id"] = native.start_install(
+                                leaf, [root]
+                            )
+                            _save(db, row, state)
+                        else:
+                            native.install_csr(leaf, [root])
+                            state["verification"]["installation"] = True
                     except RemoteError:
                         # A dropped response may mean installation completed.
                         # Verify the result; never repeat the remote write.
@@ -1087,8 +1209,41 @@ def _issue(db: Session, row: Setting, state: dict[str, Any]) -> None:
             if state["product"] == "vcenter"
             else "Install the reviewed server certificate and issuer chain. Client and peer trust must be configured separately."
         ],
-        state="prepared",
-        checkpoint="certificate_prepared",
+        state="preparing" if state["product"] == "sddc" else "prepared",
+        checkpoint="certificate_issued"
+        if state["product"] == "sddc"
+        else "certificate_prepared",
+    )
+    state.pop("error", None)
+    _save(db, row, state)
+
+
+def _sddc_validation(
+    db: Session,
+    row: Setting,
+    state: dict[str, Any],
+    credentials: Credentials,
+    *,
+    installing: bool = False,
+) -> None:
+    """Validate the exact issued material natively without repeating certificate writes."""
+    leaf, root = _material(db, state)
+    target = Target(state["address"], state["port"], state["confirmed_tls_fingerprint"])
+    with _native(target, "sddc", state["product_info"]) as native:
+        assert isinstance(native, SddcAdapter)
+        native.login(credentials)
+        if not state.get("native_validation_id"):
+            state["checkpoint"] = "validation_dispatch_pending"
+            _save(db, row, state)
+            state["native_validation_id"] = native.start_validation(leaf, [root])
+            state["checkpoint"] = "validation_task_submitted"
+            _save(db, row, state)
+        native.wait_validation(
+            state["native_validation_id"], time.monotonic() + READINESS_SECONDS
+        )
+    state["state"] = "installing" if installing else "prepared"
+    state["checkpoint"] = (
+        "queued_installation" if installing else "certificate_prepared"
     )
     state.pop("error", None)
     _save(db, row, state)
@@ -1117,12 +1272,18 @@ def _verify(
         state["verification"].update(
             exact_served_certificate=True, strict_tls=True, installation=True
         )
-        with NativeAdapter(target, state["product"]) as native:
+        with _native(target, state["product"], state["product_info"]) as native:
             native.login(credentials)
             state["verification"]["authenticated_login"] = True
             state["verification"]["health"] = healthy_services(
                 state["product"], native.health(), state["baseline_health"]
             )
+            if (
+                isinstance(native, SddcAdapter)
+                and state.get("native_install_task_id")
+                and not native.task_complete(state["native_install_task_id"])
+            ):
+                return False
         return state["verification"]["health"] is True
     except RemoteError, ValueError, KeyError:
         return False
@@ -1143,8 +1304,31 @@ def _reconcile(
         _release(db, state)
         _save(db, row, state)
         return operation_status(db, state["actor"], state["operation_id"])
+    if state["product"] == "sddc" and checkpoint == "csr_task_submitted":
+        target = Target(
+            state["address"], state["port"], state["confirmed_tls_fingerprint"]
+        )
+        with _native(target, "sddc", state["product_info"]) as native:
+            assert isinstance(native, SddcAdapter)
+            native.login(credentials)
+            state["csr_pem"] = native.wait_csr(
+                state["native_csr_task_id"], time.monotonic() + 30
+            )
+            state["checkpoint"] = "csr_received"
+            _save(db, row, state)
+        checkpoint = "csr_received"
     if checkpoint == "csr_received" and state.get("csr_pem"):
         _issue(db, row, state)  # Reuse the captured CSR; no remote regeneration.
+        if state["product"] == "sddc":
+            _sddc_validation(db, row, state, credentials)
+        return operation_status(db, state["actor"], state["operation_id"])
+    if state["product"] == "sddc" and checkpoint in {
+        "certificate_issued",
+        "validation_task_submitted",
+        "validation_dispatch_pending",
+    }:
+        _revalidate(db, state, credentials)
+        _sddc_validation(db, row, state, credentials)
         return operation_status(db, state["actor"], state["operation_id"])
     if checkpoint in {"queued_installation", "root_import_dispatch_pending"}:
         # The install checkpoint was never reached. Readback and a new review

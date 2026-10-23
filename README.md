@@ -65,6 +65,9 @@ SSH connects as `vcf` and uses separate root credentials through `su`, with veri
 service restart and explicit recovery. These lab-only settings do not certify hardware or establish production support.
 
 VCF Helper groups its workflows into Deployment, Credentials, Certificates, LDAP, and Lab tabs.
+The Appliance Certificate Replacement wizard supports standalone SRM and vCenter plus the SDDC Manager appliance
+resource in initialized VCF 9.x management domains. Native SDDC Manager lab validation remains pending; see the
+[certificate operator guide](docs/services/appliance-certificates.md#sddc-manager-9x) for API scope and limits.
 VCF Helper also lets administrators review supported, accessible VCF/ESX credential candidates and import selected
 passwords into encrypted vaults for URI-backed autofill and scripts or Kickstarts. See the
 [Vaults guide](docs/services/vaults.md#vcf-helper-import) for discovery coverage, endpoint mapping, and reimport
