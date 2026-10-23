@@ -360,7 +360,7 @@
   </div>
 </aside>
 </section>
-<dialog id="oidc-client-secret-modal" class="confirm-modal" aria-labelledby="oidc-client-secret-title" aria-describedby="oidc-client-secret-description" {{ 'data-oidc-secret-auto-open' if oidc_client_secret else '' }}>
+<dialog id="oidc-client-secret-modal" class="confirm-modal" aria-labelledby="oidc-client-secret-title" aria-describedby="oidc-client-secret-description" data-csrf="{{ csrf_token }}" {{ 'data-oidc-secret-auto-open' if oidc_client_secret else '' }}>
   <div class="confirm-modal-panel form-stack">
     <div class="confirm-modal-body">
       <p class="kicker">Confidential client credential</p>

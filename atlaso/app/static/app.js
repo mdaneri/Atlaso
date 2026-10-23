@@ -11839,6 +11839,7 @@ async function oidcFormRequest(url, formData, { expectJson = true } = {}) {
     method: "POST",
     body: formData,
     credentials: "same-origin",
+    cache: "no-store",
     headers: { "X-Atlaso-Grid": "1" },
   });
   if (!response.ok) {
@@ -11877,6 +11878,7 @@ function initializeOidcSecretModal() {
   const mask = () => {
     window.clearTimeout(maskTimer);
     input.type = "password";
+    reveal.disabled = false;
     reveal.setAttribute("aria-pressed", "false");
     reveal.setAttribute("aria-label", "Reveal client secret");
     reveal.title = "Reveal client secret";
@@ -11908,14 +11910,30 @@ function initializeOidcSecretModal() {
       done.focus({ preventScroll: true });
     });
   };
-  reveal.addEventListener("click", () => {
+  reveal.addEventListener("click", async () => {
+    if (!dialog.open || !input.value || reveal.disabled) return;
     if (input.type === "text") return mask();
-    input.type = "text";
-    reveal.setAttribute("aria-pressed", "true");
-    reveal.setAttribute("aria-label", "Hide client secret");
-    reveal.title = "Hide client secret";
-    dialog.querySelector("[data-oidc-secret-slash]").classList.toggle("hidden", false);
-    maskTimer = window.setTimeout(mask, 15000);
+    const revealGeneration = generation;
+    const body = new FormData();
+    body.set("csrf", dialog.dataset.csrf || "");
+    body.set("client_id", clientId.textContent);
+    reveal.disabled = true;
+    try {
+      const result = await oidcFormRequest(managementUiPath("/authentication/oidc/client-secret-reveal-audit"), body);
+      if (generation !== revealGeneration || !dialog.open || !input.value) return;
+      if (result?.audited !== true) throw new Error("Reveal was not audited.");
+      input.type = "text";
+      reveal.setAttribute("aria-pressed", "true");
+      reveal.setAttribute("aria-label", "Hide client secret");
+      reveal.title = "Hide client secret";
+      dialog.querySelector("[data-oidc-secret-slash]").classList.toggle("hidden", false);
+      status.textContent = "Client secret revealed. It will be hidden after 15 seconds.";
+      maskTimer = window.setTimeout(mask, 15000);
+    } catch {
+      if (generation === revealGeneration && dialog.open) status.textContent = "Reveal could not be audited. The secret remains masked; try again.";
+    } finally {
+      if (generation === revealGeneration) reveal.disabled = false;
+    }
   });
   copy.addEventListener("click", async () => {
     const copiedGeneration = generation;

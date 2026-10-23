@@ -77,6 +77,11 @@ instructions. Store the value before choosing **Done** or pressing Escape: closi
 from the page and leaves a non-secret confirmation above the client grid. Navigating away also discards it. Reopening
 the client editor cannot recover it; rotate the secret if it was lost, then update the relying party immediately.
 
+Every Reveal first submits an administrator-session, CSRF-protected audit action at
+`/ui/management/authentication/oidc/client-secret-reveal-audit`. This browser-only, non-cacheable operation records the
+actor and client record ID without receiving or returning the secret. If auditing fails, the value stays masked and
+the dialog offers a retry. It does not retrieve stored credentials, change client settings, or require Appliance Apply.
+
 Administrators can delete a client from the Authentication page through the shared confirmation modal. Deletion removes
 its secret hash and exact redirect records immediately from application state, requires no global appliance apply, and
 releases any restrictive organization reference so that a previously bound managed LDAP organization can be deleted
