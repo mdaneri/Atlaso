@@ -1362,8 +1362,21 @@ def recover_interrupted_jobs(db: Session) -> int:
         )
     )
     for job in jobs:
-        plan = json.loads(job.task_config_json)
-        row, state = _state(db, plan["operation_id"], job.created_by)
+        try:
+            plan = json.loads(job.task_config_json)
+            row, state = _state(db, plan["operation_id"], job.created_by)
+        except (CertificateOperationError, ValueError, TypeError, KeyError):
+            # A retained Job may predate preservation of runtime Settings, or
+            # its public state may be damaged. Do not block appliance startup
+            # or release any surviving target reservation without evidence.
+            job.status = "failed"
+            job.error = (
+                "Certificate operation records are missing or invalid. "
+                "Surviving reservations are retained. Inspect native appliance "
+                "state and task history before any CSR or replacement retry."
+            )
+            job.finished_at = utcnow()
+            continue
         state.update(
             state="needs_recovery",
             error="Atlaso restarted. Reconcile this recorded operation before another CSR or installation.",

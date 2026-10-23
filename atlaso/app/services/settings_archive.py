@@ -1785,6 +1785,8 @@ def _clear_desired_state(db: Session) -> None:
                 Setting.key != STATUS_KEY,
                 Setting.key != "appliance_apply.baselines.v1",
                 ~Setting.key.startswith("vcf_lab_", autoescape=True),
+                ~Setting.key.startswith("vcf_cert_op:", autoescape=True),
+                ~Setting.key.startswith("vcf_cert_lock:", autoescape=True),
             )
         db.execute(statement)
     db.flush()

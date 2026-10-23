@@ -92,6 +92,46 @@ def test_manual_credentials_are_request_local_only():
     assert service._manual(values, {"mode": "vault", "entry_id": 7}) is None
 
 
+def test_settings_restore_preserves_certificate_runtime_state(db):
+    from atlaso.app.services.settings_archive import _clear_desired_state
+
+    op, original = _record(db, checkpoint="installation_dispatch_pending")
+    db.add(Setting(key="unrelated_desired_setting", value="replace me"))
+    db.commit()
+    _clear_desired_state(db)
+    db.commit()
+    db.expire_all()
+    assert db.scalar(select(Setting).where(Setting.key == "unrelated_desired_setting")) is None
+    assert json.loads(db.scalar(select(Setting).where(Setting.key == service.PREFIX + op)).value) == original
+    assert db.scalar(select(Setting).where(Setting.key == "vcf_cert_lock:identity")).value == op
+    assert service.recover_interrupted_jobs(db) == 1
+    state = service.operation_status(db, "admin", op)
+    assert state["checkpoint"] == "installation_dispatch_pending"
+    assert state["state"] == "needs_recovery"
+
+
+@pytest.mark.parametrize("damage", ["missing", "invalid_json", "invalid_actor", "invalid_plan"])
+def test_restart_handles_orphaned_jobs_without_releasing_reservations(db, damage):
+    op, _ = _record(db)
+    row = db.scalar(select(Setting).where(Setting.key == service.PREFIX + op))
+    if damage == "missing":
+        db.delete(row)
+    elif damage == "invalid_json":
+        row.value = "broken public state"
+    elif damage == "invalid_actor":
+        row.value = json.dumps({"actor": "another-admin"})
+    else:
+        db.get(Job, "job_certificate").task_config_json = "[]"
+    db.commit()
+    assert service.recover_interrupted_jobs(db) == 1
+    job = db.get(Job, "job_certificate")
+    assert job.status == "failed"
+    assert "records are missing or invalid" in job.error
+    assert job.finished_at is not None
+    assert db.scalar(select(Setting).where(Setting.key == "vcf_cert_lock:identity")).value == op
+    assert service.recover_interrupted_jobs(db) == 0
+
+
 def test_names_reject_duplicate_or_unexpected_sans():
     expected = {"dns_names": ["vc.test"], "ip_addresses": ["192.0.2.10"]}
     with pytest.raises(service.CertificateOperationError):

@@ -50,6 +50,11 @@ uncertain write keeps its target reservation until reconciliation establishes th
 possibly pending CSR or repeat a possibly completed installation. Use the task's **Reconcile status** action and the
 vendor recovery reference.
 
+Settings restore preserves this appliance's certificate checkpoints and target reservations; they are not exported
+in settings archives. After a restart, interrupted jobs require reconciliation. If operation records are missing or
+damaged, Atlaso marks the job failed without releasing surviving reservations; inspect native state and task history
+before retrying.
+
 Use Atlaso as the issuing CA while the target appliance generates its own certificate signing request (CSR) and keeps
 its private key. Install the signed leaf certificate and public CA chain through the target's native administration
 workflow. Start with [Certificate Authority](certificate-authority.md) for CA configuration and access.
