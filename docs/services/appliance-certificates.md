@@ -8,6 +8,36 @@ status: current
 
 # Appliance certificates with Atlaso
 
+## Atlaso Appliance Certificate Replacement
+
+VCF Helper automates the native CSR, Atlaso issuance, and replacement path for standalone vCenter and unregistered
+standalone SRM / Protection and Recovery appliances running 8.x or later, subject to native capability checks.
+vCenter HA, linked vCenters, registered SRM, and unknown topology are blocked for coordinated vendor workflows.
+SDDC Manager support is a follow-on and is not implemented by this wizard. Unit contracts cover 8.x and 9.x behavior;
+native appliance validation was performed on 9.1.1 builds only. Do not infer native 8.x acceptance from unit tests.
+
+The **Certificates → Appliance Certificate Replacement** wizard uses this sequence: credential source, product and
+server, certificate fingerprint confirmation, manual login when needed, target/prerequisite inspection, explicit
+preparation acknowledgement, reviewed certificate and recovery plan, explicit replacement approval, and task results.
+Saved vault credentials are resolved server-side only after TLS identity confirmation; manual credentials are
+request-local. A change to target, credential, or fingerprint invalidates the review and prepared client state. Any
+existing operation must be reconciled before starting another.
+
+SAN values begin from the current certificate and native appliance identity. SRM's common name and hostname SAN use
+the configured native hostname; placeholder `localhost` and loopback SAN values are removed while valid existing
+names are retained. For vCenter, the native PNID is used; an IP PNID must appear in both DNS and IP SAN sets. Review
+the final SAN list carefully before preparation. The wizard requires an already-ready Atlaso CA and enabled profiles
+with exact usages: SRM requires RSA 2048 and `digitalSignature,keyEncipherment,dataEncipherment` with
+`serverAuth,clientAuth`; vCenter requires RSA 2048, 3072, or 4096 and `digitalSignature,keyEncipherment` with
+`serverAuth`. Shared CA profiles are not weakened to meet a target.
+
+The appliance generates and retains its private key. Atlaso stores only public certificate material, credential
+references, and operation checkpoints. Review tokens are single-use, bound to the administrator, and expire after
+ten minutes. Native requests are bounded to 30 seconds; readiness verification is bounded to 15 minutes. An
+uncertain write keeps its target reservation until reconciliation establishes the outcome. Never regenerate a
+possibly pending CSR or repeat a possibly completed installation. Use the task's **Reconcile status** action and the
+vendor recovery reference.
+
 Use Atlaso as the issuing CA while the target appliance generates its own certificate signing request (CSR) and keeps
 its private key. Install the signed leaf certificate and public CA chain through the target's native administration
 workflow. Start with [Certificate Authority](certificate-authority.md) for CA configuration and access.
@@ -255,19 +285,21 @@ disable validation to conceal the failure.
 
 ## Validation coverage
 
-The lab exercised Atlaso 0.9.446 with VCF Protection and Recovery **9.1.1.0100 build 25753785**: native appliance CSR,
-RSA 2048, key usages `digitalSignature,keyEncipherment`, both TLS EKUs, leaf/root import, exact leaf fingerprint,
-strict CA and IP-SAN verification on ports 443 and
-5480, and a fresh authenticated configuration API session. That initial test used the appliance's factory hostname;
-it establishes certificate installation, not readiness of that hostname for deployment.
+The completed native validation used SRM / Protection and Recovery **9.1.1.0100 build 25753785** with its configured
+FQDN and vCenter **9.1.1.0 build 25712839** with an IP PNID. For each appliance, the native appliance generated its
+CSR and retained the private key. Atlaso issued the CSR using its dedicated development CA. The resulting certificate
+was checked for CSR key match, requested SANs, validity, product key usages and EKUs, and chain signature/order. Each
+certificate was installed through the native product API. Fresh strict TLS connections to ports 443 and 5480 served
+the exact replacement leaf; fresh authenticated logins succeeded. SRM's automatic services were healthy and vCenter
+reported green health. The vCenter installation response was lost after dispatch; an independent connection and
+readback established success, and the install was not repeated.
 
-The lab also exercised vCenter **9.1.1.0 build 25712839**: native RSA 2048 CSR, Atlaso's **VCF service TLS** profile,
-verified root import/readback, Machine SSL replacement through the native API, exact new leaf and strict CA/IP-SAN
-verification on ports 443 and 5480, fresh administrator API login, and green appliance health. The final certificate
-included the existing IP PNID in both DNS and IP SANs; an earlier IP-only SAN attempt was rejected and left the
-original served certificate intact. The private key remained inside vCenter. The tested vCenter had no linked
-replication partners, no vCenter HA deployment, and no registered hosts or VMs, so this does not establish dependent
-workload or integration acceptance.
+This development CA and lab establish functional test coverage only. They do not represent production trust or a
+production CA deployment. Unit contracts cover 8.x and 9.x behavior, but native appliance validation above covers
+9.1.1 only. The appliance certificate workflows' linked-vCenter, HA, registered-SRM, and unknown-topology exclusions
+still require their coordinated native procedures. Registration, site pairing, replication, recovery plans, hosts,
+VMs, and dependent workload acceptance were not tested. SDDC Manager certificate replacement is a planned follow-on
+and is not implemented.
 
-vCenter registration, site pairing, replication, recovery plans, other appliance products, and a renamed SRM require
-their own acceptance checks.
+Earlier SRM and vCenter installation-only observations are historical and superseded by the validated procedure and
+acceptance record above; they must not be used to infer pairing, replication, or recovery-plan acceptance.

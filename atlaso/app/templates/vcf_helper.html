@@ -6,7 +6,7 @@
     <div class="panel-head">
       <div>
         <h2>VCF Helper</h2>
-        <p class="muted">Generate deployment helpers for VMware Cloud Foundation and save the resulting desired state in Atlaso.</p>
+        <p class="muted">Choose a helper for deployment, credentials, certificates, LDAP, or lab configuration.</p>
       </div>
     </div>
 
@@ -53,29 +53,21 @@
     <noscript>
       <p class="muted" data-vcf-lab-fallback>Lab / Non-production Overrides requires JavaScript. Enable it to select separate vcf SSH and root credentials, confirm target fingerprints, inspect the two domainmanager properties, and review the desired setting values. Administrator access is required. No changes are made by opening this page.</p>
     </noscript>
-    <div class="vcf-helper-subjects">
-      <div class="vcf-helper-subject-group" aria-labelledby="vcf-helper-platform-title">
-        <div class="vcf-helper-subject-head">
-          <h3 id="vcf-helper-platform-title">SDDC Manager / VCF Installer</h3>
-          <p class="muted">Deployment, naming, certificate trust, and software-depot helpers for the VCF platform appliances.</p>
-        </div>
+    <div class="tab-buttons tool-tabs vcf-helper-tabs" role="tablist" aria-label="VCF Helper categories" data-tab-storage-key="atlaso:vcf-helper:active-tab" data-initial-tab="{% if vcf_trust_auto_open or vcf_trust_errors %}certificates{% elif ldap_vcf_auto_open or ldap_generate_auto_open %}ldap{% elif vcf_helper_errors or vcf_helper_result or vcf_helper_delete_result or vcf_fqdn_auto_open %}deployment{% endif %}">
+      <button class="tab-button active" id="vcf-helper-deployment-tab" type="button" role="tab" data-tab-target="vcf-helper-deployment" aria-controls="vcf-helper-deployment" aria-selected="true">Deployment</button>
+      <button class="tab-button" id="vcf-helper-credentials-tab" type="button" role="tab" data-tab-target="vcf-helper-credentials" aria-controls="vcf-helper-credentials" aria-selected="false">Credentials</button>
+      <button class="tab-button" id="vcf-helper-certificates-tab" type="button" role="tab" data-tab-target="vcf-helper-certificates" aria-controls="vcf-helper-certificates" aria-selected="false">Certificates</button>
+      <button class="tab-button" id="vcf-helper-ldap-tab" type="button" role="tab" data-tab-target="vcf-helper-ldap" aria-controls="vcf-helper-ldap" aria-selected="false">LDAP</button>
+      <button class="tab-button" id="vcf-helper-lab-tab" type="button" role="tab" data-tab-target="vcf-helper-lab" aria-controls="vcf-helper-lab" aria-selected="false">Lab</button>
+    </div>
+    <div class="vcf-helper-subjects" data-vcf-helper-tab-panels>
+      <div class="tab-panel active" id="vcf-helper-deployment" role="tabpanel" aria-labelledby="vcf-helper-deployment-tab">
+        <h3>Deployment</h3>
         <div class="vcf-helper-action-bands">
-          <button class="info-band vcf-helper-action-band" type="button" data-vcf-vault-import-open aria-haspopup="dialog" aria-controls="vcf-vault-import-modal" {% if not identity.has_role('admin') or not vcf_vaults %}disabled{% endif %}>
-            <span class="vcf-helper-action-copy"><span class="vcf-helper-action-title">Import passwords into a vault</span><span class="muted">Discover supported VCF or ESX passwords from SDDC Manager or VCF Installer and import selected values into an existing vault.</span></span>
-          </button>
           <button class="info-band vcf-helper-action-band" type="button" data-vcf-fqdn-modal-open aria-haspopup="dialog" aria-controls="vcf-fqdn-modal">
         <span class="vcf-helper-action-copy">
           <span class="vcf-helper-action-title">Generated VCF FQDNs</span>
           <span class="muted">Choose a DNS zone and starting IP/prefix. Existing FQDNs stay untouched; new records are applied later through global Appliance Apply.</span>
-        </span>
-          </button>
-          <button class="info-band vcf-helper-action-band" type="button" data-vcf-lab-open aria-haspopup="dialog" aria-controls="vcf-lab-modal" {% if not identity.has_role('admin') %}disabled{% endif %}>
-            <span class="vcf-helper-action-copy"><span class="vcf-helper-action-title">Lab / Non-production Overrides</span><span class="muted">Inspect and edit two domainmanager properties using vcf SSH and separate root elevation. Administrator access required.</span></span>
-          </button>
-          <button class="info-band vcf-helper-action-band" type="button" onclick="document.getElementById('vcf-trust-modal').showModal()" aria-haspopup="dialog" aria-controls="vcf-trust-modal" {% if vcf_trust_ca_error %}disabled{% endif %}>
-        <span class="vcf-helper-action-copy">
-          <span class="vcf-helper-action-title">VCF Certificate Trust</span>
-          <span class="muted">Import the active Atlaso root CA into a VCF 9 Installer or SDDC Manager appliance, then verify trust and service recovery.</span>
         </span>
           </button>
           {% if identity.has_role('admin') or identity.has_role('service-admin') %}
@@ -101,12 +93,31 @@
           </div>
         </div>
       </div>
-
-      <div class="vcf-helper-subject-group" aria-labelledby="vcf-helper-ldap-title">
-        <div class="vcf-helper-subject-head">
-          <h3 id="vcf-helper-ldap-title">LDAP</h3>
-          <p class="muted">VCF Automation directory configuration and synthetic identity data for lab validation.</p>
+      <div class="tab-panel" id="vcf-helper-credentials" role="tabpanel" aria-labelledby="vcf-helper-credentials-tab" hidden>
+        <h3>Credentials</h3>
+        <div class="vcf-helper-action-bands">
+          <button class="info-band vcf-helper-action-band" type="button" data-vcf-vault-import-open aria-haspopup="dialog" aria-controls="vcf-vault-import-modal" {% if not identity.has_role('admin') or not vcf_vaults %}disabled{% endif %}>
+            <span class="vcf-helper-action-copy"><span class="vcf-helper-action-title">Import passwords into a vault</span><span class="muted">Discover supported VCF or ESX passwords from SDDC Manager or VCF Installer and import selected values into an existing vault.</span></span>
+          </button>
         </div>
+      </div>
+      <div class="tab-panel" id="vcf-helper-certificates" role="tabpanel" aria-labelledby="vcf-helper-certificates-tab" hidden>
+        <h3>Certificates</h3>
+        <div class="vcf-helper-action-bands">
+          <button class="info-band vcf-helper-action-band" type="button" onclick="document.getElementById('vcf-trust-modal').showModal()" aria-haspopup="dialog" aria-controls="vcf-trust-modal" {% if vcf_trust_ca_error %}disabled{% endif %}>
+        <span class="vcf-helper-action-copy">
+          <span class="vcf-helper-action-title">VCF Certificate Trust</span>
+          <span class="muted">Import the active Atlaso root CA into a VCF 9 Installer or SDDC Manager appliance, then verify trust and service recovery.</span>
+        </span>
+          </button>
+          <button class="info-band vcf-helper-action-band" type="button" data-vcf-appliance-certificate-open aria-haspopup="dialog" aria-controls="vcf-appliance-certificate-modal" {% if not identity.has_role('admin') %}disabled aria-describedby="vcf-appliance-certificate-admin-reason"{% endif %}>
+            <span class="vcf-helper-action-copy"><span class="vcf-helper-action-title">Appliance Certificate Replacement</span><span class="muted">Replace the TLS certificate on a standalone vCenter or SRM appliance after reviewing identity, trust, and recovery requirements.</span></span>
+          </button>
+          {% if not identity.has_role('admin') %}<p class="muted" id="vcf-appliance-certificate-admin-reason">Administrator access is required to replace appliance certificates.</p>{% endif %}
+        </div>
+      </div>
+      <div class="tab-panel" id="vcf-helper-ldap" role="tabpanel" aria-labelledby="vcf-helper-ldap-tab" hidden>
+        <h3>LDAP</h3>
         <div class="vcf-helper-action-bands">
           <div class="vcf-helper-action-wrap" {% if not vcf_ldap_authorized or not vcf_ldap_available %}data-help="{% if not vcf_ldap_authorized %}Administrator access is required for Managed LDAP helpers.{% else %}Enable Managed LDAP and at least one organization before using this helper.{% endif %}" tabindex="0" aria-label="Managed LDAP for VCF unavailable. {% if not vcf_ldap_authorized %}Administrator access is required.{% else %}Enable Managed LDAP and at least one organization.{% endif %}"{% endif %}>
             <button class="info-band vcf-helper-action-band" type="button" data-vcf-ldap-open aria-haspopup="dialog" aria-controls="vcf-ldap-modal" {% if not vcf_ldap_authorized or not vcf_ldap_available %}disabled{% endif %}>
@@ -126,6 +137,14 @@
           </div>
         </div>
       </div>
+      <div class="tab-panel" id="vcf-helper-lab" role="tabpanel" aria-labelledby="vcf-helper-lab-tab" hidden>
+        <h3>Lab</h3>
+        <div class="vcf-helper-action-bands">
+          <button class="info-band vcf-helper-action-band" type="button" data-vcf-lab-open aria-haspopup="dialog" aria-controls="vcf-lab-modal" {% if not identity.has_role('admin') %}disabled{% endif %}>
+            <span class="vcf-helper-action-copy"><span class="vcf-helper-action-title">Lab / Non-production Overrides</span><span class="muted">Inspect and edit two domainmanager properties using vcf SSH and separate root elevation. Administrator access required.</span></span>
+          </button>
+        </div>
+      </div>
     </div>
 
   </div>
@@ -138,8 +157,10 @@
 {% include "partials/vcf_target_depot_modal.html" %}
 {% include "partials/vcf_ldap_modal.html" %}
 {% include "partials/vcf_vault_import_modal.html" %}
+{% include "partials/vcf_appliance_certificate_modal.html" %}
 <script id="vcf-vault-credential-options" type="application/json">{{ vcf_vault_credential_options | tojson }}</script>
 <noscript><style>#vcf-fqdn-modal:not([open]) { display: block; position: static; width: min(100%, 70rem); margin: 1rem auto; }</style></noscript>
+<noscript><style>.vcf-helper-subjects > .tab-panel[hidden] { display: grid; } .vcf-helper-tabs { display: none; }</style></noscript>
 
 <dialog id="vcf-fqdn-modal" class="confirm-modal wide-modal vcf-fqdn-modal" aria-labelledby="vcf-fqdn-modal-title"{% if vcf_fqdn_auto_open %} open{% endif %}>
   <form class="confirm-modal-panel form-stack" action="{{ management_ui_root }}/vcf-helper/generated-fqdns" method="post" data-vcf-fqdn-form>
@@ -236,4 +257,6 @@
   </form>
 </dialog>
 <script src="/static/vcf-lab-overrides.js?v=issue-873-6" defer></script>
+<script src="/static/vcf-helper-tabs.js?v=issue-1027-1" defer></script>
+<script src="/static/vcf-appliance-certificates.js?v=issue-1027-1" defer></script>
 {% endblock %}

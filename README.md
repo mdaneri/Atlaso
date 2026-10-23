@@ -64,6 +64,7 @@ or both fixed domainmanager properties in a tile-launched wizard on VCF Installe
 SSH connects as `vcf` and uses separate root credentials through `su`, with verified writes,
 service restart and explicit recovery. These lab-only settings do not certify hardware or establish production support.
 
+VCF Helper groups its workflows into Deployment, Credentials, Certificates, LDAP, and Lab tabs.
 VCF Helper also lets administrators review supported, accessible VCF/ESX credential candidates and import selected
 passwords into encrypted vaults for URI-backed autofill and scripts or Kickstarts. See the
 [Vaults guide](docs/services/vaults.md#vcf-helper-import) for discovery coverage, endpoint mapping, and reimport

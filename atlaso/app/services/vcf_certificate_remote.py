@@ -1,0 +1,525 @@
+"""Native certificate APIs with connection-bound TLS identity confirmation."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import http.client
+import json
+import socket
+import ssl
+import threading
+import time
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
+from typing import Any
+from urllib.parse import quote
+
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+
+_MAX_RESPONSE = 1024 * 1024
+_TIMEOUT = 30
+
+
+class RemoteError(RuntimeError):
+    """Sanitized error from a remote appliance."""
+
+
+@dataclass(frozen=True)
+class Target:
+    host: str
+    port: int
+    fingerprint: str
+    connect_host: str | None = None
+    strict_tls: bool = False
+    ca_pem: str | None = None
+    deadline: float | None = None
+
+    def __post_init__(self) -> None:
+        if not self.host or any(c.isspace() or c in "/@?#" for c in self.host):
+            raise ValueError("Enter a host or IP address without a URL scheme")
+        normalized = self.fingerprint.replace(":", "").lower()
+        if len(normalized) != 64 or any(
+            c not in "0123456789abcdef" for c in normalized
+        ):
+            raise ValueError("Expected a SHA-256 certificate fingerprint")
+        object.__setattr__(self, "fingerprint", normalized)
+        if not 1 <= self.port <= 65535:
+            raise ValueError("Invalid port")
+
+
+@dataclass(frozen=True)
+class Credentials:
+    username: str
+    password: str = field(repr=False)
+
+
+class _PinnedConnection(http.client.HTTPSConnection):
+    def __init__(self, target: Target, context: ssl.SSLContext):
+        super().__init__(target.host, target.port, timeout=_TIMEOUT, context=context)
+        self._connect_host = target.connect_host or target.host
+        self._context = context
+        self.deadline = min(
+            time.monotonic() + _TIMEOUT, target.deadline or float("inf")
+        )
+
+    def connect(self) -> None:
+        raw = socket.create_connection(
+            (self._connect_host, self.port), _remaining(self.deadline)
+        )
+        try:
+            raw.settimeout(_remaining(self.deadline))
+            self.sock = self._context.wrap_socket(raw, server_hostname=self.host)
+        except BaseException:
+            raw.close()
+            raise
+
+
+def _remaining(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("Appliance request deadline exceeded")
+    return min(_TIMEOUT, remaining)
+
+
+class PinnedHTTPS:
+    """One-request HTTPS transport that checks the leaf pin before sending HTTP."""
+
+    def __init__(self, target: Target):
+        self.target = target
+
+    def probe(self) -> dict[str, Any]:
+        """Read the unauthenticated TLS leaf directly; sends no HTTP bytes."""
+        if self.target.strict_tls and not self.target.ca_pem:
+            raise RemoteError("Strict TLS requires the reviewed CA certificate")
+        context = (
+            ssl.create_default_context(cadata=self.target.ca_pem)
+            if self.target.strict_tls
+            else ssl._create_unverified_context()
+        )
+        try:
+            deadline = min(
+                time.monotonic() + _TIMEOUT, self.target.deadline or float("inf")
+            )
+            with socket.create_connection(
+                (self.target.connect_host or self.target.host, self.target.port),
+                timeout=_remaining(deadline),
+            ) as raw:
+                raw.settimeout(_remaining(deadline))
+                with context.wrap_socket(raw, server_hostname=self.target.host) as tls:
+                    der = tls.getpeercert(binary_form=True)
+            if der is None:
+                raise ValueError("missing certificate")
+            cert = x509.load_der_x509_certificate(der)
+            return {
+                "certificate_pem": cert.public_bytes(serialization.Encoding.PEM).decode(
+                    "ascii"
+                ),
+                "sha256": cert.fingerprint(hashes.SHA256()).hex(),
+                "subject": cert.subject.rfc4514_string(),
+                "issuer": cert.issuer.rfc4514_string(),
+            }
+        except (OSError, ssl.SSLError, ValueError) as exc:
+            raise RemoteError(
+                f"Appliance TLS probe failed ({type(exc).__name__})"
+            ) from None
+
+    def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        credentials: Credentials | None = None,
+        session_header: tuple[str, str] | None = None,
+        body: Any = None,
+        xml_body: str | None = None,
+    ) -> tuple[int, Any]:
+        if (
+            not path.startswith("/")
+            or "#" in path
+            or "\r" in path
+            or "\n" in path
+            or "\\" in path
+        ):
+            raise RemoteError("Invalid appliance API path")
+        if session_header and (
+            not session_header[0].isascii()
+            or any(c in session_header[0] + session_header[1] for c in "\r\n")
+        ):
+            raise RemoteError("Invalid appliance session header")
+        if self.target.strict_tls and not self.target.ca_pem:
+            raise RemoteError("Strict TLS requires the reviewed CA certificate")
+        if body is not None and xml_body is not None:
+            raise RemoteError("Choose one request body format")
+        context = (
+            ssl.create_default_context(cadata=self.target.ca_pem)
+            if self.target.strict_tls
+            else ssl._create_unverified_context()
+        )
+        conn = _PinnedConnection(self.target, context)
+
+        def abort() -> None:
+            # Shutdown interrupts a slow response read even if it keeps sending
+            # occasional bytes inside an ordinary socket inactivity timeout.
+            if conn.sock is not None:
+                try:
+                    conn.sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+        deadline = min(
+            time.monotonic() + _TIMEOUT, self.target.deadline or float("inf")
+        )
+        timer = threading.Timer(_remaining(deadline), abort)
+        timer.daemon = True
+        timer.start()
+        try:
+            conn.connect()
+            cert = conn.sock.getpeercert(binary_form=True)
+            if (
+                cert is None
+                or hashlib.sha256(cert).hexdigest() != self.target.fingerprint
+            ):
+                raise RemoteError(
+                    "Appliance certificate fingerprint does not match confirmation"
+                )
+            headers = {"Accept": "application/json"}
+            if credentials:
+                token = base64.b64encode(
+                    f"{credentials.username}:{credentials.password}".encode()
+                ).decode()
+                headers["Authorization"] = f"Basic {token}"
+            if session_header:
+                headers[session_header[0]] = session_header[1]
+            payload = None
+            if body is not None:
+                payload = json.dumps(body).encode()
+                headers["Content-Type"] = "application/json"
+            if xml_body is not None:
+                payload = xml_body.encode("utf-8")
+                headers["Content-Type"] = "text/xml; charset=utf-8"
+                headers["SOAPAction"] = "urn:lookup/2.0"
+            conn.request(method, path, body=payload, headers=headers)
+            response = conn.getresponse()
+            if response.length is not None and response.length > _MAX_RESPONSE:
+                raise RemoteError("Appliance response exceeds size limit")
+            data = response.read(_MAX_RESPONSE + 1)
+            if len(data) > _MAX_RESPONSE:
+                raise RemoteError("Appliance response exceeds size limit")
+            if response.status >= 300:
+                raise RemoteError(f"Appliance API returned HTTP {response.status}")
+            if not data:
+                return response.status, None
+            if xml_body is not None:
+                try:
+                    return response.status, data.decode("utf-8", "strict")
+                except UnicodeDecodeError:
+                    raise RemoteError("Lookup service returned invalid UTF-8") from None
+            try:
+                return response.status, json.loads(data)
+            except ValueError, UnicodeDecodeError:
+                raise RemoteError(
+                    "Appliance returned an invalid JSON response"
+                ) from None
+        except RemoteError:
+            raise
+        except (OSError, http.client.HTTPException, ssl.SSLError) as exc:
+            raise RemoteError(
+                f"Appliance request failed ({type(exc).__name__})"
+            ) from None
+        finally:
+            timer.cancel()
+            conn.close()
+
+
+def _xml_escape(value: str) -> str:
+    return (
+        value.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+    )
+
+
+def _parse_lookup_xml(content: str, expected: str) -> ET.Element:
+    if "<!DOCTYPE" in content.upper() or "<!ENTITY" in content.upper():
+        raise RemoteError("Lookup service XML declarations are not allowed")
+    try:
+        root = ET.fromstring(content)
+    except ET.ParseError:
+        raise RemoteError("Lookup service returned malformed XML") from None
+    if root.find(".//{http://schemas.xmlsoap.org/soap/envelope/}Fault") is not None:
+        raise RemoteError("Lookup service returned a SOAP fault")
+    result = root.find(f".//{{urn:lookup}}{expected}")
+    if result is None:
+        raise RemoteError("Lookup service response is missing required data")
+    return result
+
+
+def _required_text(element: ET.Element, name: str) -> str:
+    child = element.find(name)
+    value = (child.text or "").strip() if child is not None else ""
+    if not value:
+        raise RemoteError("Lookup registration is missing required identity")
+    return value
+
+
+class NativeAdapter:
+    def __init__(self, target: Target, product: str):
+        if product not in {"srm", "vcenter"}:
+            raise ValueError("Unsupported appliance product")
+        self.target, self.product = target, product
+        self.transport = PinnedHTTPS(target)
+        self.session: str | None = None
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        body: Any = None,
+        *,
+        expected_status: int | None = None,
+    ) -> Any:
+        if self.product == "srm" and not path.startswith("/api/rest/configure/v2/"):
+            path = "/api/rest/configure/v2" + path
+        if not self.session:
+            raise RemoteError("Authenticate before requesting appliance state")
+        header = (
+            ("x-dr-session", self.session)
+            if self.product == "srm" and self.session
+            else (("vmware-api-session-id", self.session) if self.session else None)
+        )
+        code, result = self.transport.request(
+            method,
+            path,
+            credentials=None,
+            session_header=header,
+            body=body,
+        )
+        if expected_status is not None and code != expected_status:
+            raise RemoteError(
+                "Appliance returned an unexpected native operation status"
+            )
+        return result
+
+    def login(self, credentials: Credentials) -> str:
+        """Authenticate only after this connection proves its confirmed pin."""
+        path = (
+            "/api/rest/configure/v2/session"
+            if self.product == "srm"
+            else "/api/session"
+        )
+        code, result = self.transport.request("POST", path, credentials=credentials)
+        value = (
+            result.get("session_id")
+            if self.product == "srm" and isinstance(result, dict)
+            else result
+        )
+        if (
+            code != (200 if self.product == "srm" else 201)
+            or not isinstance(value, str)
+            or not 0 < len(value) <= 4096
+            or "\r" in value
+            or "\n" in value
+        ):
+            raise RemoteError("Appliance login returned an invalid session")
+        self.session = value
+        return value
+
+    def logout(self) -> None:
+        if self.session:
+            try:
+                self._request(
+                    "DELETE",
+                    "/api/rest/configure/v2/session"
+                    if self.product == "srm"
+                    else "/api/session",
+                )
+            finally:
+                self.session = None
+
+    def __enter__(self) -> NativeAdapter:
+        return self
+
+    def __exit__(self, *error: Any) -> None:
+        try:
+            self.logout()
+        except RemoteError:
+            if not error or error[0] is None:
+                raise
+
+    def product_info(self) -> Any:
+        return self._request(
+            "GET",
+            "/appliance" if self.product == "srm" else "/api/appliance/system/version",
+        )
+
+    def current_certificate(self) -> Any:
+        return self._request(
+            "GET",
+            "/appliance/certificates/server"
+            if self.product == "srm"
+            else "/api/vcenter/certificate-management/vcenter/tls",
+        )
+
+    def generate_csr(self, spec: dict[str, Any]) -> Any:
+        result = self._request(
+            "POST",
+            "/appliance/certificates/actions/generate-csr"
+            if self.product == "srm"
+            else "/api/vcenter/certificate-management/vcenter/tls-csr",
+            spec,
+            expected_status=200 if self.product == "srm" else 201,
+        )
+        if not isinstance(result, dict):
+            raise RemoteError("Appliance returned an invalid CSR response")
+        pem = result.get("value" if self.product == "srm" else "csr")
+        if not isinstance(pem, str) or len(pem.encode()) > 65536:
+            raise RemoteError("Appliance returned an invalid CSR response")
+        return pem
+
+    def install_csr(self, leaf: str, chain: list[str]) -> Any:
+        if self.product == "srm":
+            return self._request(
+                "POST",
+                "/appliance/certificates/server",
+                {"csr_format": {"certificate": leaf, "ca_chain": chain}},
+                expected_status=204,
+            )
+        return self._request(
+            "PUT",
+            "/api/vcenter/certificate-management/vcenter/tls",
+            {"cert": leaf},
+            expected_status=204,
+        )
+
+    def import_and_verify_root(self, root: str, expected_sha256: str) -> bool:
+        expected = expected_sha256.replace(":", "").lower()
+        if (
+            x509.load_pem_x509_certificate(root.encode())
+            .fingerprint(hashes.SHA256())
+            .hex()
+            != expected
+        ):
+            raise RemoteError("Root certificate differs from the reviewed issuer")
+        if self.trusted_root_present(expected):
+            return True
+        self._request(
+            "POST",
+            "/api/vcenter/certificate-management/vcenter/trusted-root-chains",
+            {"cert_chain": {"cert_chain": [root]}},
+            expected_status=201,
+        )
+        if self.trusted_root_present(expected):
+            return True
+        raise RemoteError(
+            "Imported root certificate was not found on independent readback"
+        )
+
+    def trusted_root_present(self, expected_sha256: str) -> bool:
+        """Compare public DER fingerprints without following inventory URLs."""
+        expected = expected_sha256.replace(":", "").lower()
+        items = self._request(
+            "GET", "/api/vcenter/certificate-management/vcenter/trusted-root-chains"
+        )
+        if not isinstance(items, list) or len(items) > 256:
+            raise RemoteError("Appliance returned an invalid trust inventory")
+        for item in items:
+            if not isinstance(item, dict) or not isinstance(item.get("chain"), str):
+                raise RemoteError("Appliance returned an invalid trust inventory")
+            chain = self._request(
+                "GET",
+                "/api/vcenter/certificate-management/vcenter/trusted-root-chains/"
+                + quote(item["chain"], safe=""),
+            )
+            try:
+                values = chain["cert_chain"]["cert_chain"]
+                if not isinstance(values, list) or len(values) > 16:
+                    raise ValueError
+                for pem in values:
+                    if (
+                        x509.load_pem_x509_certificate(pem.encode())
+                        .fingerprint(hashes.SHA256())
+                        .hex()
+                        == expected
+                    ):
+                        return True
+            except KeyError, TypeError, ValueError, AttributeError:
+                raise RemoteError(
+                    "Appliance returned an invalid public trust chain"
+                ) from None
+        return False
+
+    def health(self) -> Any:
+        if self.product == "vcenter":
+            return self._request("GET", "/api/appliance/health/system")
+        return self._request("GET", "/services")
+
+    def srm_dns_settings(self) -> Any:
+        if self.product != "srm":
+            raise ValueError("DNS settings are available only for SRM")
+        return self._request("GET", "/appliance/settings/network/dns")
+
+    def vcenter_registrations(self) -> list[dict[str, str]]:
+        if self.product != "vcenter":
+            raise ValueError("Lookup registrations are available only for vCenter")
+        envelope = """<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:lookup="urn:lookup"><soapenv:Body><lookup:RetrieveServiceContent><_this type="LookupServiceInstance">ServiceInstance</_this></lookup:RetrieveServiceContent></soapenv:Body></soapenv:Envelope>"""
+        _, content = self.transport.request(
+            "POST",
+            "/lookupservice/sdk",
+            session_header=("vmware-api-session-id", self.session or ""),
+            xml_body=envelope,
+        )
+        if not isinstance(content, str):
+            raise RemoteError("Lookup service returned an invalid service response")
+        service = _parse_lookup_xml(content, "RetrieveServiceContentResponse")
+        reg_ref = service.find(".//{urn:lookup}serviceRegistration")
+        if (
+            reg_ref is None
+            or not reg_ref.attrib.get("type")
+            or not (reg_ref.text or "").strip()
+        ):
+            raise RemoteError("Lookup service registration reference is missing")
+        reg_type, reg_id = reg_ref.attrib["type"], (reg_ref.text or "").strip()
+        list_envelope = f"""<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:lookup="urn:lookup"><soapenv:Body><lookup:List><_this type="{_xml_escape(reg_type)}">{_xml_escape(reg_id)}</_this><filterCriteria><serviceType><product>com.vmware.cis</product><type>vcenterserver</type></serviceType></filterCriteria></lookup:List></soapenv:Body></soapenv:Envelope>"""
+        _, listed = self.transport.request(
+            "POST",
+            "/lookupservice/sdk",
+            session_header=("vmware-api-session-id", self.session or ""),
+            xml_body=list_envelope,
+        )
+        if not isinstance(listed, str):
+            raise RemoteError("Lookup service returned an invalid registration list")
+        root = _parse_lookup_xml(listed, "ListResponse")
+        results: list[dict[str, str]] = []
+        for item in root.findall(".//{urn:lookup}returnval"):
+            service_id = _required_text(item, "{urn:lookup}serviceId")
+            site_id = _required_text(item, "{urn:lookup}siteId")
+            owner_id = _required_text(item, "{urn:lookup}ownerId")
+            node_id = _required_text(item, "{urn:lookup}nodeId")
+            endpoints = item.findall(".//{urn:lookup}serviceEndpoints/{urn:lookup}url")
+            if not endpoints or any(
+                not (endpoint.text or "").strip() for endpoint in endpoints
+            ):
+                raise RemoteError("Lookup registration endpoint is missing")
+            results.append(
+                {
+                    "service_id": service_id,
+                    "site_id": site_id,
+                    "owner_id": owner_id,
+                    "node_id": node_id,
+                    "endpoints": ",".join((e.text or "").strip() for e in endpoints),
+                }
+            )
+        if not results:
+            raise RemoteError("Lookup service returned no vCenter registrations")
+        return results
+
+    def vcenter_ha(self) -> Any:
+        if self.product != "vcenter":
+            raise ValueError("HA status is available only for vCenter")
+        return self._request(
+            "POST", "/api/vcenter/vcha/cluster?action=get", {"partial": True}
+        )
