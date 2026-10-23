@@ -1,5 +1,9 @@
 import hashlib
+import http.client
+import socket
 import ssl
+import threading
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
@@ -315,3 +319,48 @@ def test_expired_target_deadline_fails_before_socket_or_credentials():
                 "POST", "/", credentials=Credentials("admin", "secret")
             )
         connect.assert_not_called()
+
+
+def test_deadline_interrupts_response_after_http_connection_detaches_socket():
+    reader, writer = socket.socketpair()
+    reader.settimeout(2)
+    stopped = threading.Event()
+    cert = b"pinned test certificate"
+    peer = Mock(wraps=reader, getpeercert=Mock(return_value=cert))
+    conn = Mock(sock=peer)
+
+    def response():
+        result = http.client.HTTPResponse(reader)
+        result.begin()
+        # HTTPSConnection does this for Connection: close and HTTP/1.0.
+        conn.sock = None
+        return result
+
+    def stream():
+        try:
+            writer.sendall(b"HTTP/1.0 200 OK\r\nConnection: close\r\n\r\n")
+            for _ in range(100):
+                if stopped.wait(0.02):
+                    return
+                writer.sendall(b" ")
+            writer.sendall(b"{}")
+        except OSError:
+            pass
+        finally:
+            writer.close()
+
+    conn.getresponse.side_effect = response
+    thread = threading.Thread(target=stream, daemon=True)
+    thread.start()
+    started = time.monotonic()
+    target = Target("vc.test", 443, hashlib.sha256(cert).hexdigest(), deadline=started + 0.2)
+    try:
+        with patch("atlaso.app.services.vcf_certificate_remote._PinnedConnection", return_value=conn):
+            with unittest.TestCase().assertRaises(RemoteError):
+                PinnedHTTPS(target).request("GET", "/")
+        assert time.monotonic() - started < 1.5
+        peer.shutdown.assert_called_once_with(socket.SHUT_RDWR)
+    finally:
+        stopped.set()
+        reader.close()
+        thread.join(timeout=2)

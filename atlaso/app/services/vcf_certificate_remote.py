@@ -175,13 +175,15 @@ class PinnedHTTPS:
         )
         context.minimum_version = ssl.TLSVersion.TLSv1_2
         conn = _PinnedConnection(self.target, context)
+        connected_socket: ssl.SSLSocket | None = None
+        response: http.client.HTTPResponse | None = None
 
         def abort() -> None:
             # Shutdown interrupts a slow response read even if it keeps sending
             # occasional bytes inside an ordinary socket inactivity timeout.
-            if conn.sock is not None:
+            if connected_socket is not None:
                 try:
-                    conn.sock.shutdown(socket.SHUT_RDWR)
+                    connected_socket.shutdown(socket.SHUT_RDWR)
                 except OSError:
                     pass
 
@@ -197,7 +199,9 @@ class PinnedHTTPS:
         timer.start()
         try:
             conn.connect()
-            cert = conn.sock.getpeercert(binary_form=True)
+            connected_socket = conn.sock
+            _remaining(deadline)
+            cert = connected_socket.getpeercert(binary_form=True)
             if (
                 cert is None
                 or hashlib.sha256(cert).hexdigest() != self.target.fingerprint
@@ -265,6 +269,7 @@ class PinnedHTTPS:
             if response.length is not None and response.length > _MAX_RESPONSE:
                 raise RemoteError("Appliance response exceeds size limit")
             data = response.read(_MAX_RESPONSE + 1)
+            _remaining(deadline)
             if len(data) > _MAX_RESPONSE:
                 raise RemoteError("Appliance response exceeds size limit")
             if response.status >= 300:
@@ -290,6 +295,8 @@ class PinnedHTTPS:
             ) from None
         finally:
             timer.cancel()
+            if response is not None:
+                response.close()
             conn.close()
 
 
