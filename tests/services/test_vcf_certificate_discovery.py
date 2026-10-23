@@ -16,6 +16,12 @@ from atlaso.app.services.vcf_certificate_discovery import (
 
 
 def _certificate(dns: list[str], ips: list[str]) -> x509.Certificate:
+    """Provide certificate.
+
+    Args:
+        dns: DNS SANs used in the certificate fixture.
+        ips: IP SANs used in the certificate fixture.
+    """
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "vc.example.test")])
     sans: list[x509.GeneralName] = [x509.DNSName(value) for value in dns]
@@ -57,6 +63,12 @@ def _certificate(dns: list[str], ips: list[str]) -> x509.Certificate:
     ],
 )
 def test_supported_version_accepts_native_product_8_and_9(product, info):
+    """Verify supported version accepts native product 8 and 9.
+
+    Args:
+        product: Detected appliance product identifier.
+        info: Public native discovery metadata.
+    """
     assert supported_version(product, info)
 
 
@@ -76,6 +88,12 @@ def test_supported_version_accepts_native_product_8_and_9(product, info):
     ],
 )
 def test_supported_version_rejects_old_invalid_or_wrong_identity(product, info):
+    """Verify supported version rejects old invalid or wrong identity.
+
+    Args:
+        product: Detected appliance product identifier.
+        info: Public native discovery metadata.
+    """
     assert not supported_version(product, info)
 
 
@@ -143,6 +161,11 @@ def test_native_health_shapes_and_srm_service_baseline():
 
 @pytest.mark.parametrize("state", ["NOTCONFIGURED", "notConfigured", "NOT_CONFIGURED"])
 def test_vcenter_topology_accepts_only_explicit_unconfigured_single_registration(state):
+    """Verify vcenter topology accepts only explicit unconfigured single registration.
+
+    Args:
+        state: Public operation checkpoint and reviewed inputs.
+    """
     assert standalone_vcenter(
         {"config_state": state},
         [{"node_id": "n1", "service_id": "s1", "endpoints": ["https://vc"]}],
@@ -166,6 +189,11 @@ def test_vcenter_topology_accepts_only_explicit_unconfigured_single_registration
     ],
 )
 def test_vcenter_topology_rejects_ha_and_unknown_states(info):
+    """Verify vcenter topology rejects ha and unknown states.
+
+    Args:
+        info: Public native discovery metadata.
+    """
     assert not standalone_vcenter(
         info, [{"node_id": "n1", "service_id": "s1", "endpoints": ["https://vc"]}]
     )
@@ -181,6 +209,11 @@ def test_vcenter_topology_rejects_empty_or_incomplete_registration():
 
 @pytest.mark.parametrize("version", ["9.0.0.0", "9.1.1.0100", "9.1"])
 def test_sddc_supported_version_requires_native_manager_role(version):
+    """Verify sddc supported version requires native manager role.
+
+    Args:
+        version: Native product version used by this compatibility case.
+    """
     assert supported_version(
         "sddc",
         {
@@ -204,6 +237,11 @@ def test_sddc_supported_version_requires_native_manager_role(version):
     ],
 )
 def test_sddc_supported_version_rejects_wrong_role_or_version(info):
+    """Verify sddc supported version rejects wrong role or version.
+
+    Args:
+        info: Public native discovery metadata.
+    """
     assert not supported_version("sddc", info)
 
 

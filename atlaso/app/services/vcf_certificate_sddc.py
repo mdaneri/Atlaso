@@ -21,6 +21,11 @@ class SddcAdapter(NativeAdapter):
     """Use the shared pinned transport with SDDC Manager's native API contract."""
 
     def __init__(self, target: Target):
+        """Bind the confirmed target and initialize request-local transport state.
+
+        Args:
+            target: Confirmed appliance endpoint and connection identity.
+        """
         super().__init__(target, "vcenter")
         self.product = "sddc"
         self._access_token: str | None = None
@@ -28,6 +33,11 @@ class SddcAdapter(NativeAdapter):
         self._appliance: dict[str, str] | None = None
 
     def login(self, credentials: Credentials) -> str:
+        """Authenticate through the confirmed native TLS connection.
+
+        Args:
+            credentials: Request-local administrator credentials, never persisted.
+        """
         status, payload = self.transport.request(
             "POST",
             "/v1/tokens",
@@ -49,6 +59,11 @@ class SddcAdapter(NativeAdapter):
         self.session = None
 
     def __exit__(self, *_error: Any) -> None:
+        """Discard temporary native sessions when leaving the adapter context.
+
+        Args:
+            *_error: Context-manager exception details intentionally unused during cleanup.
+        """
         self.logout()
 
     def _request(
@@ -59,6 +74,14 @@ class SddcAdapter(NativeAdapter):
         *,
         expected_status: int | None = 200,
     ) -> Any:
+        """Send one bounded native request over the confirmed TLS connection.
+
+        Args:
+            method: Native API HTTP method.
+            path: Native API path on the already confirmed appliance.
+            body: JSON request body for the native operation.
+            expected_status: Required native success status code.
+        """
         if not self._access_token:
             raise RemoteError("Authenticate before requesting SDDC Manager state")
         status, result = self.transport.request(
@@ -74,6 +97,11 @@ class SddcAdapter(NativeAdapter):
         return result
 
     def _pages(self, path: str) -> list[dict[str, Any]]:
+        """Read a complete bounded inventory while validating pagination metadata.
+
+        Args:
+            path: Native API path on the already confirmed appliance.
+        """
         rows: list[dict[str, Any]] = []
         page, total_pages, total_elements = 0, None, None
         while total_pages is None or page < total_pages:
@@ -222,6 +250,11 @@ class SddcAdapter(NativeAdapter):
         return dict(self._appliance)
 
     def configure_binding(self, public_info: dict[str, str]) -> None:
+        """Bind later requests to the inspected management domain and appliance resource.
+
+        Args:
+            public_info: Previously inspected management-domain and resource identity.
+        """
         required = ("domain_id", "resource_id", "identity")
         if any(not isinstance(public_info.get(key), str) for key in required) or any(
             not _SAFE_ID.fullmatch(public_info[key]) for key in required[:2]
@@ -283,6 +316,11 @@ class SddcAdapter(NativeAdapter):
         return own[0]
 
     def vcenter_permissions(self, credentials: Credentials) -> bool:
+        """Check the native SDDC administrator role through the shared permission interface.
+
+        Args:
+            credentials: Request-local administrator credentials, never persisted.
+        """
         users = self._pages("/v1/users")
         roles = self._pages("/v1/roles")
         matches = [
@@ -348,6 +386,11 @@ class SddcAdapter(NativeAdapter):
         return own
 
     def start_csr(self, spec: dict[str, Any]) -> str:
+        """Submit one management-domain appliance CSR request and retain its task ID.
+
+        Args:
+            spec: Validated product-specific CSR generation request.
+        """
         binding = self._bound()
         resources = spec.get("resources")
         if (
@@ -388,6 +431,12 @@ class SddcAdapter(NativeAdapter):
         return _task_id(result)
 
     def wait_csr(self, task_id: str, deadline: float) -> str:
+        """Read the recorded native CSR task and retrieve its public CSR.
+
+        Args:
+            task_id: Native task identifier returned by the admitted write.
+            deadline: Absolute monotonic deadline bounding remote work.
+        """
         previous = self.transport.target
         self.transport.target = replace(
             previous, deadline=min(deadline, previous.deadline or float("inf"))
@@ -406,6 +455,12 @@ class SddcAdapter(NativeAdapter):
             self.transport.target = previous
 
     def start_validation(self, leaf: str, chain: list[str]) -> str:
+        """Submit the exact leaf and chain for native resource validation.
+
+        Args:
+            leaf: Reviewed public replacement leaf certificate.
+            chain: Reviewed public issuing certificate chain.
+        """
         binding = self._bound()
         if len(chain) != 1:
             raise RemoteError(
@@ -430,6 +485,12 @@ class SddcAdapter(NativeAdapter):
         return _task_id(result, "validationId")
 
     def wait_validation(self, validation_id: str, deadline: float) -> bool:
+        """Require successful native validation for the bound appliance resource.
+
+        Args:
+            validation_id: Native validation identifier returned before polling.
+            deadline: Absolute monotonic deadline bounding remote work.
+        """
         binding = self._bound()
         validation_id = _validate_id(validation_id)
         previous = self.transport.target
@@ -478,6 +539,12 @@ class SddcAdapter(NativeAdapter):
             self.transport.target = previous
 
     def start_install(self, leaf: str, chain: list[str]) -> str:
+        """Submit the reviewed certificate for the bound appliance resource once.
+
+        Args:
+            leaf: Reviewed public replacement leaf certificate.
+            chain: Reviewed public issuing certificate chain.
+        """
         binding = self._bound()
         if len(chain) != 1:
             raise RemoteError(
@@ -502,6 +569,11 @@ class SddcAdapter(NativeAdapter):
         )
 
     def task_complete(self, task_id: str) -> bool:
+        """Check completion of the exact recorded native task.
+
+        Args:
+            task_id: Native task identifier returned by the admitted write.
+        """
         result = self._request("GET", f"/v1/tasks/{_validate_id(task_id)}")
         if (
             not isinstance(result, dict)
@@ -519,6 +591,12 @@ class SddcAdapter(NativeAdapter):
         )
 
     def _poll_task(self, task_id: str, deadline: float) -> None:
+        """Poll the recorded native task within the shared readiness deadline.
+
+        Args:
+            task_id: Native task identifier returned by the admitted write.
+            deadline: Absolute monotonic deadline bounding remote work.
+        """
         task_id = _validate_id(task_id)
         previous = self.transport.target
         self.transport.target = replace(
@@ -536,21 +614,43 @@ class SddcAdapter(NativeAdapter):
             self.transport.target = previous
 
     def generate_csr(self, spec: dict[str, Any]) -> str:
+        """Request a target-owned CSR using the supported native API.
+
+        Args:
+            spec: Validated product-specific CSR generation request.
+        """
         raise RemoteError("Use SDDC Manager's task-based CSR operation")
 
     def install_csr(self, leaf: str, chain: list[str]) -> None:
+        """Install the reviewed public leaf and chain using the native API.
+
+        Args:
+            leaf: Reviewed public replacement leaf certificate.
+            chain: Reviewed public issuing certificate chain.
+        """
         raise RemoteError(
             "Use SDDC Manager's validated certificate installation operation"
         )
 
 
 def _validate_id(value: str) -> str:
+    """Validate a native identifier before embedding it in an API path.
+
+    Args:
+        value: Candidate native value to normalize or validate.
+    """
     if not isinstance(value, str) or not _SAFE_ID.fullmatch(value):
         raise RemoteError("SDDC Manager task identifier is invalid")
     return value
 
 
 def _task_id(result: Any, key: str = "id") -> str:
+    """Extract the native task ID from an accepted write response.
+
+    Args:
+        result: Native result object being checked.
+        key: Required native response field.
+    """
     if not isinstance(result, dict):
         raise RemoteError("SDDC Manager returned an invalid task identifier")
     value = result.get(key)

@@ -75,18 +75,41 @@ class CertificateOperationError(ValueError):
 
 
 class TaskDispatcher(Protocol):
-    def add_task(self, func: Any, *args: Any, **kwargs: Any) -> Any: ...
+    def add_task(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+        """Schedule the admitted callback after its browser response.
+
+        Args:
+            func: Synchronous certificate-operation worker to schedule.
+            *args: Positional callback arguments supplied by the caller.
+            **kwargs: Keyword callback arguments supplied by the caller.
+        """
+        ...
 
 
 def _json(value: Any) -> str:
+    """Serialize public operation values deterministically.
+
+    Args:
+        value: Candidate native value to normalize or validate.
+    """
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
 def _digest(value: Any) -> str:
+    """Hash the canonical public operation representation.
+
+    Args:
+        value: Candidate native value to normalize or validate.
+    """
     return hashlib.sha256(_json(value).encode()).hexdigest()
 
 
 def _metadata(cert: x509.Certificate) -> dict[str, Any]:
+    """Convert parsed certificate metadata to durable public JSON fields.
+
+    Args:
+        cert: Parsed public appliance certificate.
+    """
     return dict(json.loads(_json(asdict(certificate_metadata(cert)))))
 
 
@@ -97,6 +120,11 @@ def _serializer() -> URLSafeTimedSerializer:
 
 
 def _target(values: dict[str, Any]) -> tuple[str, Target]:
+    """Validate the requested product, endpoint, and confirmed TLS fingerprint.
+
+    Args:
+        values: Validated browser workflow input values.
+    """
     product = str(values.get("product", ""))
     host = str(values.get("address", "")).strip().lower().rstrip(".").strip("[]")
     if (
@@ -122,6 +150,12 @@ def _target(values: dict[str, Any]) -> tuple[str, Target]:
 
 
 def _reference(db: Session, values: dict[str, Any]) -> dict[str, Any]:
+    """Resolve a vault selection or a request-local manual credential reference.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        values: Validated browser workflow input values.
+    """
     vault, entry_id = (
         values.get("credential_vault_id"),
         values.get("credential_entry_id"),
@@ -164,6 +198,13 @@ def _reference(db: Session, values: dict[str, Any]) -> dict[str, Any]:
 def _credentials(
     db: Session, values: dict[str, Any], reference: dict[str, Any]
 ) -> Credentials:
+    """Resolve credentials only when the inspected reference still matches.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        values: Validated browser workflow input values.
+        reference: Persisted credential reference without a password.
+    """
     if _reference(db, values) != reference:
         raise CertificateOperationError("Credential selection changed; inspect again.")
     if reference["mode"] == "manual":
@@ -175,6 +216,11 @@ def _credentials(
 
 
 def _profile(profile: CaProfile) -> dict[str, Any]:
+    """Project the product-relevant CA profile properties.
+
+    Args:
+        profile: Existing CA profile whose product requirements are checked.
+    """
     return {
         "id": profile.id,
         "name": profile.name,
@@ -191,6 +237,13 @@ def _profile(profile: CaProfile) -> dict[str, Any]:
 def _ready_ca(
     db: Session, product: str, profile_id: int | None = None
 ) -> tuple[CaSettings, list[CaProfile]]:
+    """Require an existing ready CA and product-compatible certificate profiles.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        product: Detected appliance product identifier.
+        profile_id: Identifier of the existing product-specific CA profile.
+    """
     settings = db.scalar(select(CaSettings).order_by(CaSettings.id))
     if (
         settings is None
@@ -234,6 +287,13 @@ def _ready_ca(
 
 
 def _ca_snapshot(db: Session, product: str, profile_id: int) -> dict[str, Any]:
+    """Capture issuing CA identity for later review revalidation.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        product: Detected appliance product identifier.
+        profile_id: Identifier of the existing product-specific CA profile.
+    """
     settings, profiles = _ready_ca(db, product, profile_id)
     return {
         "root": _metadata(
@@ -244,6 +304,11 @@ def _ca_snapshot(db: Session, product: str, profile_id: int) -> dict[str, Any]:
 
 
 def _probe(target: Target) -> dict[str, Any]:
+    """Read public TLS identity without sending administrator credentials.
+
+    Args:
+        target: Confirmed appliance endpoint and connection identity.
+    """
     public = PinnedHTTPS(target).probe()
     return {
         "fingerprint": public["sha256"],
@@ -254,6 +319,12 @@ def _probe(target: Target) -> dict[str, Any]:
 
 
 def _confirmed(values: dict[str, Any], target: Target) -> None:
+    """Require explicit confirmation of the exact presented certificate.
+
+    Args:
+        values: Validated browser workflow input values.
+        target: Confirmed appliance endpoint and connection identity.
+    """
     if values.get("confirmed") is not True or not values.get(
         "confirmed_tls_fingerprint"
     ):
@@ -269,6 +340,13 @@ def _confirmed(values: dict[str, Any], target: Target) -> None:
 def _state(
     db: Session, operation_id: str, actor: str
 ) -> tuple[Setting, dict[str, Any]]:
+    """Load an operation only for its submitting administrator.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        operation_id: Stable identifier of the actor-bound certificate operation.
+        actor: Submitting administrator username.
+    """
     if not re.fullmatch(r"[a-f0-9]{32}", operation_id):
         raise CertificateOperationError("Certificate operation not found.")
     row = db.scalar(select(Setting).where(Setting.key == PREFIX + operation_id))
@@ -283,6 +361,13 @@ def _state(
 
 
 def _save(db: Session, row: Setting, state: dict[str, Any]) -> None:
+    """Persist a public checkpoint and synchronize its task progress.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        row: Persistent public operation Setting row.
+        state: Public operation checkpoint and reviewed inputs.
+    """
     stages = {
         "queued_preparation": 0,
         "csr_dispatch_pending": 25,
@@ -310,6 +395,12 @@ def _save(db: Session, row: Setting, state: dict[str, Any]) -> None:
 
 
 def _actor(db: Session, actor: str) -> None:
+    """Require the submitting account to remain enabled and administrative.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        actor: Submitting administrator username.
+    """
     user = db.scalar(select(User).where(User.username == actor))
     if user is None or not user.enabled or "admin" not in user_roles(user):
         raise CertificateOperationError(
@@ -318,7 +409,13 @@ def _actor(db: Session, actor: str) -> None:
 
 
 def operation_status(db: Session, actor: str, operation_id: str) -> dict[str, Any]:
-    """Return public progress and independently recorded verification outcomes."""
+    """Return public progress and independently recorded verification outcomes.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        actor: Submitting administrator username.
+        operation_id: Stable identifier of the actor-bound certificate operation.
+    """
     _, state = _state(db, operation_id, actor)
     result: dict[str, Any] = {
         key: state[key]
@@ -361,6 +458,12 @@ def operation_status(db: Session, actor: str, operation_id: str) -> dict[str, An
 
 
 def _names(values: dict[str, Any], expected: dict[str, Any]) -> dict[str, Any]:
+    """Require the native appliance names to match the reviewed SAN set.
+
+    Args:
+        values: Validated browser workflow input values.
+        expected: Expected accepted value or response used by the assertion.
+    """
     names: dict[str, Any] = {"common_name": str(values.get("common_name", "")).strip()}
     for key in ("dns_names", "ip_addresses"):
         items = values.get(key)
@@ -382,6 +485,13 @@ def _names(values: dict[str, Any], expected: dict[str, Any]) -> dict[str, Any]:
 
 
 def _locks(product: str, target: Target, identity: str) -> list[str]:
+    """Build durable reservations for the target address and native identity.
+
+    Args:
+        product: Detected appliance product identifier.
+        target: Confirmed appliance endpoint and connection identity.
+        identity: Authenticated administrator identity supplied by the session dependency.
+    """
     addresses = sorted(
         {
             str(item[4][0])
@@ -402,6 +512,12 @@ def _locks(product: str, target: Target, identity: str) -> list[str]:
 
 
 def _release(db: Session, state: dict[str, Any]) -> None:
+    """Release only reservations still owned by this operation.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        state: Public operation checkpoint and reviewed inputs.
+    """
     db.execute(
         delete(Setting).where(
             Setting.key.in_(state["reservation_keys"]),
@@ -413,6 +529,13 @@ def _release(db: Session, state: dict[str, Any]) -> None:
 def _native(
     target: Target, product: str, info: dict[str, Any] | None = None
 ) -> NativeAdapter:
+    """Construct the product-specific adapter with its reviewed identity binding.
+
+    Args:
+        target: Confirmed appliance endpoint and connection identity.
+        product: Detected appliance product identifier.
+        info: Public native discovery metadata.
+    """
     if product == "sddc":
         native = SddcAdapter(target)
         if info is not None:
@@ -424,6 +547,14 @@ def _native(
 def _inspect(
     db: Session, product: str, target: Target, credentials: Credentials
 ) -> dict[str, Any]:
+    """Discover native identity, topology, permissions, and certificate prerequisites.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        product: Detected appliance product identifier.
+        target: Confirmed appliance endpoint and connection identity.
+        credentials: Request-local administrator credentials, never persisted.
+    """
     settings, profiles = _ready_ca(db, product)
     with _native(target, product) as native:
         if product == "srm" and credentials.username != "admin":
@@ -613,7 +744,11 @@ def _inspect(
 
 
 def _srm_service_rows(health: Any) -> list[dict[str, Any]]:
-    """Normalize the same service variants accepted by the native health check."""
+    """Normalize the same service variants accepted by the native health check.
+
+    Args:
+        health: Native service health response.
+    """
     rows = health.get("list", []) if isinstance(health, dict) else health
     normalized = []
     for item in rows:
@@ -641,6 +776,13 @@ def _srm_service_rows(health: Any) -> list[dict[str, Any]]:
 
 
 def _enqueue(db: Session, state: dict[str, Any], action: str) -> Job:
+    """Create a durable task before scheduling its certificate worker.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        state: Public operation checkpoint and reviewed inputs.
+        action: Checkpoint or audit action being recorded.
+    """
     job = Job(
         id="job_" + uuid4().hex[:12],
         type=JOB_TYPE,
@@ -656,6 +798,11 @@ def _enqueue(db: Session, state: dict[str, Any], action: str) -> Job:
 
 
 def _revision(state: dict[str, Any]) -> str:
+    """Bind approval to the exact reviewed public inputs and identities.
+
+    Args:
+        state: Public operation checkpoint and reviewed inputs.
+    """
     return _digest(
         {
             key: state[key]
@@ -679,7 +826,15 @@ def dispatch(
     values: dict[str, Any],
     background_tasks: TaskDispatcher,
 ) -> dict[str, Any]:
-    """Read native state or queue a single acknowledged mutation attempt."""
+    """Read native state or queue a single acknowledged mutation attempt.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        actor: Submitting administrator username.
+        operation: Requested certificate workflow action.
+        values: Validated browser workflow input values.
+        background_tasks: Request-owned scheduler for admitted certificate jobs.
+    """
     try:
         return _dispatch(db, actor, operation, values, background_tasks)
     except (RemoteError, CertificateMaterialError) as exc:
@@ -699,6 +854,15 @@ def _dispatch(
     values: dict[str, Any],
     background_tasks: TaskDispatcher,
 ) -> dict[str, Any]:
+    """Admit and execute an actor-bound browser workflow action.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        actor: Submitting administrator username.
+        operation: Requested certificate workflow action.
+        values: Validated browser workflow input values.
+        background_tasks: Request-owned scheduler for admitted certificate jobs.
+    """
     _actor(db, actor)
     product, target = _target(values)
     if operation == "probe":
@@ -894,6 +1058,12 @@ def _dispatch(
 
 
 def _manual(values: dict[str, Any], reference: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract manual credentials for this request without retaining them.
+
+    Args:
+        values: Validated browser workflow input values.
+        reference: Persisted credential reference without a password.
+    """
     return (
         {"username": values["username"], "password": values["password"]}
         if reference["mode"] == "manual"
@@ -902,6 +1072,13 @@ def _manual(values: dict[str, Any], reference: dict[str, Any]) -> dict[str, Any]
 
 
 def _revalidate(db: Session, state: dict[str, Any], credentials: Credentials) -> None:
+    """Recheck identity, prerequisites, CA, and reviewed certificate before a write.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        state: Public operation checkpoint and reviewed inputs.
+        credentials: Request-local administrator credentials, never persisted.
+    """
     target = Target(state["address"], state["port"], state["confirmed_tls_fingerprint"])
     latest = _inspect(db, state["product"], target, credentials)
     if (
@@ -930,6 +1107,12 @@ def _revalidate(db: Session, state: dict[str, Any], credentials: Credentials) ->
 
 
 def _material(db: Session, state: dict[str, Any]) -> tuple[str, str]:
+    """Validate the operation certificate against its CSR and issuing CA.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        state: Public operation checkpoint and reviewed inputs.
+    """
     certificate = db.get(CaCertificate, state["certificate_id"])
     settings, _ = _ready_ca(db, state["product"], state["profile_id"])
     if (
@@ -964,6 +1147,12 @@ def _material(db: Session, state: dict[str, Any]) -> tuple[str, str]:
 
 
 def _csr_spec(state: dict[str, Any], settings: CaSettings) -> dict[str, Any]:
+    """Build the native product-specific target-owned CSR request.
+
+    Args:
+        state: Public operation checkpoint and reviewed inputs.
+        settings: Current appliance CA configuration.
+    """
     names = state["names"]
     if state["product"] == "sddc":
         info = state["product_info"]
@@ -1009,7 +1198,12 @@ def _csr_spec(state: dict[str, Any], settings: CaSettings) -> dict[str, Any]:
 
 
 def run_job(job_id: str, manual_values: dict[str, Any] | None = None) -> None:
-    """Dispatch one mutation attempt, retaining unresolved target reservations."""
+    """Dispatch one mutation attempt, retaining unresolved target reservations.
+
+    Args:
+        job_id: Durable task identifier for this certificate operation.
+        manual_values: Request-local manual credentials, never written to task state.
+    """
     with SessionLocal() as db:
         job = db.get(Job, job_id)
         if job is None or job.type != JOB_TYPE or job.status != "pending":
@@ -1163,6 +1357,13 @@ def run_job(job_id: str, manual_values: dict[str, Any] | None = None) -> None:
 
 
 def _issue(db: Session, row: Setting, state: dict[str, Any]) -> None:
+    """Issue the captured CSR through the admitted shared CA writer.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        row: Persistent public operation Setting row.
+        state: Public operation checkpoint and reviewed inputs.
+    """
     csr_pem = state["csr_pem"]
     csr = validate_product_csr(
         csr_pem.encode(),
@@ -1226,7 +1427,15 @@ def _sddc_validation(
     *,
     installing: bool = False,
 ) -> None:
-    """Validate the exact issued material natively without repeating certificate writes."""
+    """Validate the exact issued material natively without repeating certificate writes.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        row: Persistent public operation Setting row.
+        state: Public operation checkpoint and reviewed inputs.
+        credentials: Request-local administrator credentials, never persisted.
+        installing: Whether the worker is performing reviewed replacement.
+    """
     leaf, root = _material(db, state)
     target = Target(state["address"], state["port"], state["confirmed_tls_fingerprint"])
     with _native(target, "sddc", state["product_info"]) as native:
@@ -1255,6 +1464,14 @@ def _verify(
     root: str,
     deadline: float | None = None,
 ) -> bool:
+    """Verify fresh TLS, exact leaf, authentication, and native health separately.
+
+    Args:
+        state: Public operation checkpoint and reviewed inputs.
+        credentials: Request-local administrator credentials, never persisted.
+        root: Reviewed public CA root certificate.
+        deadline: Absolute monotonic deadline bounding remote work.
+    """
     expected = state["replacement_certificate"]["fingerprint_sha256"].lower()
     try:
         target = Target(
@@ -1292,6 +1509,14 @@ def _verify(
 def _reconcile(
     db: Session, row: Setting, state: dict[str, Any], credentials: Credentials
 ) -> dict[str, Any]:
+    """Resolve recorded remote state without blindly repeating uncertain writes.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        row: Persistent public operation Setting row.
+        state: Public operation checkpoint and reviewed inputs.
+        credentials: Request-local administrator credentials, never persisted.
+    """
     checkpoint = state["checkpoint"]
     if state["state"] == "succeeded":
         return operation_status(db, state["actor"], state["operation_id"])
@@ -1353,7 +1578,11 @@ def _reconcile(
 
 
 def recover_interrupted_jobs(db: Session) -> int:
-    """Retain reservations and public checkpoints after an Atlaso restart."""
+    """Retain reservations and public checkpoints after an Atlaso restart.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+    """
     jobs = list(
         db.scalars(
             select(Job).where(

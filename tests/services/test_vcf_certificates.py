@@ -24,6 +24,12 @@ def db():
 
 
 def _record(db, checkpoint="queued_preparation"):
+    """Provide record.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        checkpoint: Public operation checkpoint seeded into the test database.
+    """
     op = "a" * 32
     state = {
         "operation_id": op,
@@ -57,6 +63,11 @@ def _record(db, checkpoint="queued_preparation"):
 
 
 def test_operation_state_is_actor_bound(db):
+    """Verify operation state is actor bound.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+    """
     op, _ = _record(db)
     with pytest.raises(
         service.CertificateOperationError, match="another administrator"
@@ -66,6 +77,11 @@ def test_operation_state_is_actor_bound(db):
 
 
 def test_restart_marks_recovery_and_preserves_reservation(db):
+    """Verify restart marks recovery and preserves reservation.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+    """
     op, _ = _record(db)
     assert service.recover_interrupted_jobs(db) == 1
     state = json.loads(
@@ -93,6 +109,11 @@ def test_manual_credentials_are_request_local_only():
 
 
 def test_settings_restore_preserves_certificate_runtime_state(db):
+    """Verify settings restore preserves certificate runtime state.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+    """
     from atlaso.app.services.settings_archive import _clear_desired_state
 
     op, original = _record(db, checkpoint="installation_dispatch_pending")
@@ -112,6 +133,12 @@ def test_settings_restore_preserves_certificate_runtime_state(db):
 
 @pytest.mark.parametrize("damage", ["missing", "invalid_json", "invalid_actor", "invalid_plan"])
 def test_restart_handles_orphaned_jobs_without_releasing_reservations(db, damage):
+    """Verify restart handles orphaned jobs without releasing reservations.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        damage: Missing or malformed runtime record variant under test.
+    """
     op, _ = _record(db)
     row = db.scalar(select(Setting).where(Setting.key == service.PREFIX + op))
     if damage == "missing":
@@ -153,6 +180,12 @@ def test_names_reject_duplicate_or_unexpected_sans():
 def test_queued_prepare_reconcile_releases_only_not_dispatched_reservation(
     db, monkeypatch
 ):
+    """Verify queued prepare reconcile releases only not dispatched reservation.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+    """
     op, state = _record(db)
     row = db.scalar(select(Setting).where(Setting.key == service.PREFIX + op))
     from atlaso.app.services.vcf_certificate_remote import Credentials
@@ -166,6 +199,11 @@ def test_queued_prepare_reconcile_releases_only_not_dispatched_reservation(
 
 
 def test_uncertain_checkpoint_retains_reservation_and_refuses_retry(db):
+    """Verify uncertain checkpoint retains reservation and refuses retry.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+    """
     op, state = _record(db, "installation_dispatched")
     row = db.scalar(select(Setting).where(Setting.key == service.PREFIX + op))
     from atlaso.app.services.vcf_certificate_remote import Credentials
@@ -182,6 +220,11 @@ def test_uncertain_checkpoint_retains_reservation_and_refuses_retry(db):
 
 
 def _dispatch_mocks(monkeypatch):
+    """Provide dispatch mocks.
+
+    Args:
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+    """
     inspection = {
         "identity": "vc.test",
         "product_info": {"product": "vcenter", "version": "8.0"},
@@ -213,6 +256,11 @@ def _dispatch_mocks(monkeypatch):
 
 
 def _prepare_values(**overrides):
+    """Provide prepare values.
+
+    Args:
+        **overrides: Public fixture fields overridden for this test case.
+    """
     values = {
         "product": "vcenter",
         "address": "vc.test",
@@ -238,12 +286,25 @@ class _Tasks:
         self.calls = []
 
     def add_task(self, func, *args, **kwargs):
+        """Provide add task.
+
+        Args:
+            func: Synchronous callback run through the test background-task adapter.
+            *args: Positional callback arguments supplied by the caller.
+            **kwargs: Keyword callback arguments supplied by the caller.
+        """
         self.calls.append((func, args, kwargs))
 
 
 @pytest.mark.parametrize("wrapped", [False, True])
 @pytest.mark.parametrize("legacy", [False, True])
 def test_srm_health_baseline_preserves_accepted_native_variants(wrapped, legacy):
+    """Verify srm health baseline preserves accepted native variants.
+
+    Args:
+        wrapped: Whether the native health response wraps its service list.
+        legacy: Whether service rows use the supported legacy field names.
+    """
     rows = [
         {
             "service_name" if legacy else "id": "service",
@@ -269,6 +330,12 @@ def test_srm_health_baseline_preserves_accepted_native_variants(wrapped, legacy)
 
 
 def test_prepare_dispatch_persists_checkpoint_without_password(db, monkeypatch):
+    """Verify prepare dispatch persists checkpoint without password.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+    """
     _dispatch_mocks(monkeypatch)
     tasks = _Tasks()
     result = service.dispatch(db, "admin", "prepare", _prepare_values(), tasks)
@@ -287,6 +354,12 @@ def test_prepare_dispatch_persists_checkpoint_without_password(db, monkeypatch):
 
 
 def test_prepare_requires_ack_before_inspection_or_dispatch(db, monkeypatch):
+    """Verify prepare requires ack before inspection or dispatch.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+    """
     inspect = Mock(side_effect=AssertionError("inspection must not happen"))
     monkeypatch.setattr(service, "_inspect", inspect)
     monkeypatch.setattr(service, "_confirmed", lambda *_: None)
@@ -307,6 +380,12 @@ def test_prepare_requires_ack_before_inspection_or_dispatch(db, monkeypatch):
 
 
 def test_concurrent_prepare_reserves_target_once(db, monkeypatch):
+    """Verify concurrent prepare reserves target once.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+    """
     _dispatch_mocks(monkeypatch)
     tasks = _Tasks()
     service.dispatch(db, "admin", "prepare", _prepare_values(), tasks)
@@ -328,6 +407,12 @@ def test_concurrent_prepare_reserves_target_once(db, monkeypatch):
 
 
 def test_review_token_actor_bound_single_use_and_expiry(db, monkeypatch):
+    """Verify review token actor bound single use and expiry.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+    """
     _dispatch_mocks(monkeypatch)
     monkeypatch.setattr(service, "_revalidate", lambda *_: None)
     tasks = _Tasks()
@@ -369,6 +454,12 @@ def test_review_token_actor_bound_single_use_and_expiry(db, monkeypatch):
 
 
 def test_reviewed_profile_or_names_change_rejected(db, monkeypatch):
+    """Verify reviewed profile or names change rejected.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+    """
     _dispatch_mocks(monkeypatch)
     monkeypatch.setattr(service, "_revalidate", lambda *_: None)
     tasks = _Tasks()
@@ -394,6 +485,12 @@ def test_reviewed_profile_or_names_change_rejected(db, monkeypatch):
 
 
 def test_review_expired_token_refused(db, monkeypatch):
+    """Verify review expired token refused.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+    """
     from itsdangerous import SignatureExpired
 
     _dispatch_mocks(monkeypatch)
@@ -437,6 +534,12 @@ def test_review_expired_token_refused(db, monkeypatch):
 
 
 def _worker_state(db, action="prepare"):
+    """Provide worker state.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        action: Checkpoint or audit action being recorded.
+    """
     op, _ = _record(
         db, "queued_preparation" if action == "prepare" else "queued_installation"
     )
@@ -475,6 +578,12 @@ def _worker_state(db, action="prepare"):
 
 
 def test_review_exposes_exact_issuer_fingerprint_and_profile(db, monkeypatch):
+    """Verify review exposes exact issuer fingerprint and profile.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+    """
     _dispatch_mocks(monkeypatch)
     monkeypatch.setattr(service, "_revalidate", lambda *_: None)
     tasks = _Tasks()
@@ -507,6 +616,12 @@ def test_review_exposes_exact_issuer_fingerprint_and_profile(db, monkeypatch):
 
 def test_worker_csr_uncertain_failure_keeps_checkpoint_and_reservation(db, monkeypatch):
 
+    """Verify worker csr uncertain failure keeps checkpoint and reservation.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+    """
     op, _, state, job = _worker_state(db)
     monkeypatch.setattr(service, "SessionLocal", lambda: db)
     monkeypatch.setattr(service, "_actor", lambda *_: None)
@@ -532,12 +647,27 @@ def test_worker_csr_uncertain_failure_keeps_checkpoint_and_reservation(db, monke
             return self
 
         def __exit__(self, *_):
+            """Provide exit.
+
+            Args:
+                *_: Unused positional callback arguments accepted by the test stub.
+            """
             return None
 
         def login(self, *_):
+            """Provide login.
+
+            Args:
+                *_: Unused positional callback arguments accepted by the test stub.
+            """
             return "session"
 
         def generate_csr(self, _):
+            """Provide generate csr.
+
+            Args:
+                _: Unused callback argument accepted by the test stub.
+            """
             db.expire_all()
             persisted = json.loads(
                 db.get(
@@ -570,6 +700,12 @@ def test_worker_csr_uncertain_failure_keeps_checkpoint_and_reservation(db, monke
 
 def test_revoked_admin_cannot_dispatch_csr(db, monkeypatch):
 
+    """Verify revoked admin cannot dispatch csr.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+    """
     op, _, state, job = _worker_state(db)
     monkeypatch.setattr(service, "SessionLocal", lambda: db)
     monkeypatch.setattr(
@@ -602,6 +738,12 @@ def test_revoked_admin_cannot_dispatch_csr(db, monkeypatch):
 
 def test_install_uncertain_response_verifies_without_repeating_write(db, monkeypatch):
 
+    """Verify install uncertain response verifies without repeating write.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+    """
     op, _, state, job = _worker_state(db, "install")
     monkeypatch.setattr(service, "SessionLocal", lambda: db)
     monkeypatch.setattr(service, "_actor", lambda *_: None)
@@ -622,15 +764,35 @@ def test_install_uncertain_response_verifies_without_repeating_write(db, monkeyp
             return self
 
         def __exit__(self, *_):
+            """Provide exit.
+
+            Args:
+                *_: Unused positional callback arguments accepted by the test stub.
+            """
             return None
 
         def login(self, *_):
+            """Provide login.
+
+            Args:
+                *_: Unused positional callback arguments accepted by the test stub.
+            """
             return "session"
 
         def import_and_verify_root(self, *_):
+            """Provide import and verify root.
+
+            Args:
+                *_: Unused positional callback arguments accepted by the test stub.
+            """
             return True
 
         def install_csr(self, *_):
+            """Provide install csr.
+
+            Args:
+                *_: Unused positional callback arguments accepted by the test stub.
+            """
             self.install_calls += 1
             db.expire_all()
             row = db.scalar(select(Setting).where(Setting.key == service.PREFIX + op))
@@ -658,6 +820,13 @@ def test_install_uncertain_response_verifies_without_repeating_write(db, monkeyp
 
 
 def _sddc_worker(db, monkeypatch, action="prepare"):
+    """Provide sddc worker.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+        action: Checkpoint or audit action being recorded.
+    """
     op, row, state, job = _worker_state(db, action)
     state["product"] = "sddc"
     state["product_info"] = {
@@ -697,6 +866,13 @@ def _sddc_worker(db, monkeypatch, action="prepare"):
     monkeypatch.setattr(service, "_native", lambda *_: native)
 
     def issue(db, row, state):
+        """Provide issue.
+
+        Args:
+            db: Database session holding operation records and target reservations.
+            row: Persistent public operation Setting row.
+            state: Public operation checkpoint and reviewed inputs.
+        """
         state.update(
             certificate_id=5,
             replacement_certificate={"fingerprint_sha256": "new"},
@@ -712,15 +888,32 @@ def _sddc_worker(db, monkeypatch, action="prepare"):
 def test_sddc_worker_records_task_ids_before_polling_and_requires_validation(
     db, monkeypatch
 ):
+    """Verify sddc worker records task ids before polling and requires validation.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+    """
     op, row, state, job, native = _sddc_worker(db, monkeypatch)
 
     def started(_):
+        """Provide started.
+
+        Args:
+            _: Unused callback argument accepted by the test stub.
+        """
         assert json.loads(row.value)["checkpoint"] == "csr_dispatch_pending"
         return "native-csr-1"
 
     native.start_csr.side_effect = started
 
     def csr(task_id, _):
+        """Provide csr.
+
+        Args:
+            task_id: Native task identifier returned by the admitted write.
+            _: Unused callback argument accepted by the test stub.
+        """
         persisted = json.loads(row.value)
         assert persisted["native_csr_task_id"] == task_id
         assert persisted["checkpoint"] == "csr_task_submitted"
@@ -729,6 +922,12 @@ def test_sddc_worker_records_task_ids_before_polling_and_requires_validation(
     native.wait_csr.side_effect = csr
 
     def validated(validation_id, _):
+        """Provide validated.
+
+        Args:
+            validation_id: Native validation identifier returned before polling.
+            _: Unused callback argument accepted by the test stub.
+        """
         persisted = json.loads(row.value)
         assert persisted["native_validation_id"] == validation_id
         assert persisted["certificate_id"] == 5
@@ -752,6 +951,12 @@ def test_sddc_worker_records_task_ids_before_polling_and_requires_validation(
 def test_sddc_interrupted_csr_reconciliation_reads_original_task_without_resubmission(
     db, monkeypatch
 ):
+    """Verify sddc interrupted csr reconciliation reads original task without resubmission.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+    """
     op, row, state, job, native = _sddc_worker(db, monkeypatch)
     native.wait_csr.side_effect = RemoteError("request interrupted")
     service.run_job(job.id, {"username": "admin", "password": "private-password"})
@@ -772,6 +977,12 @@ def test_sddc_interrupted_csr_reconciliation_reads_original_task_without_resubmi
 def test_sddc_uncertain_install_is_verified_without_repeating_native_write(
     db, monkeypatch
 ):
+    """Verify sddc uncertain install is verified without repeating native write.
+
+    Args:
+        db: Database session holding operation records and target reservations.
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+    """
     op, row, state, job, native = _sddc_worker(db, monkeypatch, "install")
     monkeypatch.setattr(service, "_revalidate", lambda *_: None)
     monkeypatch.setattr(service, "_verify", lambda *_: True)

@@ -78,7 +78,12 @@ _EKUS = {
 
 
 def validate_profile(profile: ProductProfile, product: str) -> None:
-    """Reject disabled or weakened profiles without modifying shared CA configuration."""
+    """Reject disabled or weakened profiles without modifying shared CA configuration.
+
+    Args:
+        profile: Existing CA profile whose product requirements are checked.
+        product: Detected appliance product identifier.
+    """
     required = _PROFILE_REQUIREMENTS.get(product.lower())
     if required is None:
         raise CertificateMaterialError("Unsupported VCF certificate product.")
@@ -106,6 +111,11 @@ def validate_profile(profile: ProductProfile, product: str) -> None:
 
 
 def _load_csr(pem: bytes) -> x509.CertificateSigningRequest:
+    """Parse a public CSR and validate its embedded signature.
+
+    Args:
+        pem: Public PEM certificate or CSR text to parse.
+    """
     if len(pem) > 65536:
         raise CertificateMaterialError("CSR exceeds the 64 KiB limit.")
     if pem.count(b"-----BEGIN CERTIFICATE REQUEST-----") != 1 or b"PRIVATE KEY" in pem:
@@ -133,7 +143,13 @@ def _load_csr(pem: bytes) -> x509.CertificateSigningRequest:
 def validate_csr(
     pem: bytes, expected_dns: set[str], expected_ips: set[str]
 ) -> x509.CertificateSigningRequest:
-    """Validate CSR signature, strength, and exact requested SAN sets."""
+    """Validate CSR signature, strength, and exact requested SAN sets.
+
+    Args:
+        pem: Public PEM certificate or CSR text to parse.
+        expected_dns: Exact reviewed DNS subject alternative names.
+        expected_ips: Exact reviewed IP subject alternative names.
+    """
     csr = _load_csr(pem)
     try:
         san = csr.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
@@ -168,6 +184,12 @@ def validate_product_csr(
     vCenter's IP PNID must also appear as a DNS SAN on the installed leaf, while
     its native CSR API encodes that numeric request only as an IP SAN. No other
     SAN differences are permitted between the native CSR and reviewed names.
+
+    Args:
+        pem: Public PEM certificate or CSR text to parse.
+        product: Detected appliance product identifier.
+        expected_dns: Exact reviewed DNS subject alternative names.
+        expected_ips: Exact reviewed IP subject alternative names.
     """
     if product == "sddc" and not expected_dns:
         raise CertificateMaterialError(
@@ -178,6 +200,12 @@ def validate_product_csr(
 
 
 def _verify_signature(cert: x509.Certificate, issuer: x509.Certificate) -> None:
+    """Verify a certificate signature against its reviewed issuer.
+
+    Args:
+        cert: Parsed public appliance certificate.
+        issuer: Ready issuing CA certificate.
+    """
     key = issuer.public_key()
     try:
         params = cert.signature_algorithm_parameters
@@ -209,6 +237,11 @@ def _verify_signature(cert: x509.Certificate, issuer: x509.Certificate) -> None:
 
 
 def _ca(cert: x509.Certificate) -> bool:
+    """Require a public CA certificate with certificate-signing usage.
+
+    Args:
+        cert: Parsed public appliance certificate.
+    """
     try:
         return cert.extensions.get_extension_for_class(x509.BasicConstraints).value.ca
     except x509.ExtensionNotFound:
@@ -216,6 +249,11 @@ def _ca(cert: x509.Certificate) -> bool:
 
 
 def _reject_unknown_critical_extensions(cert: x509.Certificate) -> None:
+    """Reject unsupported critical extensions before trusting certificate material.
+
+    Args:
+        cert: Parsed public appliance certificate.
+    """
     known = {
         x509.BasicConstraints,
         x509.KeyUsage,
@@ -239,7 +277,16 @@ def validate_issued_certificate(
     expected_ips: set[str],
     issuer: x509.Certificate,
 ) -> x509.Certificate:
-    """Validate issued leaf key, SANs, validity, usages, and issuer signature."""
+    """Validate issued leaf key, SANs, validity, usages, and issuer signature.
+
+    Args:
+        csr_pem: Target-generated public CSR in PEM format.
+        leaf_pem: Issued public leaf certificate in PEM format.
+        product: Detected appliance product identifier.
+        expected_dns: Exact reviewed DNS subject alternative names.
+        expected_ips: Exact reviewed IP subject alternative names.
+        issuer: Ready issuing CA certificate.
+    """
     csr = validate_product_csr(csr_pem, product, expected_dns, expected_ips)
     if (
         leaf_pem.count(b"-----BEGIN CERTIFICATE-----") != 1
@@ -342,7 +389,12 @@ def validate_issued_certificate(
 
 
 def public_chain_pem(chain_pem: bytes, root: x509.Certificate) -> bytes:
-    """Validate a CA-only issuer-ordered chain terminating at the expected root."""
+    """Validate a CA-only issuer-ordered chain terminating at the expected root.
+
+    Args:
+        chain_pem: Public issuer chain in PEM format.
+        root: Reviewed public CA root certificate.
+    """
     if (
         len(chain_pem) > 262144
         or chain_pem.count(b"-----BEGIN CERTIFICATE-----") > 8
@@ -413,7 +465,11 @@ def public_chain_pem(chain_pem: bytes, root: x509.Certificate) -> bytes:
 
 
 def certificate_metadata(cert: x509.Certificate) -> CertificateMetadata:
-    """Return safe, public certificate fields for review screens."""
+    """Return safe, public certificate fields for review screens.
+
+    Args:
+        cert: Parsed public appliance certificate.
+    """
     try:
         san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
     except x509.ExtensionNotFound:

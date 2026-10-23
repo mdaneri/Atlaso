@@ -32,6 +32,12 @@ class TransportTests(unittest.TestCase):
     @patch("atlaso.app.services.vcf_certificate_remote._PinnedConnection")
     @patch("atlaso.app.services.vcf_certificate_remote.ssl._create_unverified_context")
     def test_pin_checked_before_credentials_or_http(self, _ctx, ctor):
+        """Verify pin checked before credentials or http.
+
+        Args:
+            _ctx: Mock TLS context factory supplied by the patch decorator.
+            ctor: Mock pinned-connection constructor supplied by the patch decorator.
+        """
         conn = ctor.return_value
         conn.sock.getpeercert.return_value = self.cert
         conn.getresponse.return_value = Mock(
@@ -47,6 +53,12 @@ class TransportTests(unittest.TestCase):
     @patch("atlaso.app.services.vcf_certificate_remote._PinnedConnection")
     @patch("atlaso.app.services.vcf_certificate_remote.ssl._create_unverified_context")
     def test_bad_pin_sends_no_http(self, _ctx, ctor):
+        """Verify bad pin sends no http.
+
+        Args:
+            _ctx: Mock TLS context factory supplied by the patch decorator.
+            ctor: Mock pinned-connection constructor supplied by the patch decorator.
+        """
         conn = ctor.return_value
         conn.sock.getpeercert.return_value = b"wrong"
         with self.assertRaises(RemoteError):
@@ -58,6 +70,12 @@ class TransportTests(unittest.TestCase):
     @patch("atlaso.app.services.vcf_certificate_remote._PinnedConnection")
     @patch("atlaso.app.services.vcf_certificate_remote.ssl._create_unverified_context")
     def test_oversized_response_rejected(self, _ctx, ctor):
+        """Verify oversized response rejected.
+
+        Args:
+            _ctx: Mock TLS context factory supplied by the patch decorator.
+            ctor: Mock pinned-connection constructor supplied by the patch decorator.
+        """
         conn = ctor.return_value
         conn.sock.getpeercert.return_value = self.cert
         conn.getresponse.return_value = Mock(status=200, length=2**30)

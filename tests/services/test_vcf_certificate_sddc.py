@@ -20,6 +20,11 @@ def adapter():
 
 
 def test_login_posts_json_and_uses_bearer_only(monkeypatch):
+    """Verify login posts json and uses bearer only.
+
+    Args:
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+    """
     item = SddcAdapter(Target("10.0.0.5", 443, "a" * 64))
     item.transport.request = Mock(return_value=(200, {"accessToken": "opaque-token"}))
     assert item.login(Credentials("admin", "secret")) == "opaque-token"
@@ -39,6 +44,12 @@ def test_login_posts_json_and_uses_bearer_only(monkeypatch):
 def test_discovery_requires_sddc_role9_active_domain_and_bound_resource(
     adapter, monkeypatch
 ):
+    """Verify discovery requires sddc role9 active domain and bound resource.
+
+    Args:
+        adapter: SDDC adapter fixture with bounded synthetic native responses.
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+    """
     adapter.transport.server_time = __import__("time").time()
     adapter._request = Mock(
         side_effect=[
@@ -85,6 +96,12 @@ def test_discovery_requires_sddc_role9_active_domain_and_bound_resource(
     ],
 )
 def test_discovery_rejects_wrong_role_version_or_incomplete_data(adapter, info):
+    """Verify discovery rejects wrong role version or incomplete data.
+
+    Args:
+        adapter: SDDC adapter fixture with bounded synthetic native responses.
+        info: Public native discovery metadata.
+    """
     adapter._request = Mock(return_value=info)
     with pytest.raises(RemoteError):
         adapter.product_info()
@@ -117,6 +134,11 @@ def _public_material():
 
 
 def test_current_certificate_selects_only_bound_installed_leaf(adapter):
+    """Verify current certificate selects only bound installed leaf.
+
+    Args:
+        adapter: SDDC adapter fixture with bounded synthetic native responses.
+    """
     cert, pem, _ = _public_material()
     from dataclasses import replace
 
@@ -150,6 +172,11 @@ def test_current_certificate_selects_only_bound_installed_leaf(adapter):
 
 
 def test_csr_validation_install_payloads_are_bound_to_one_resource(adapter):
+    """Verify csr validation install payloads are bound to one resource.
+
+    Args:
+        adapter: SDDC adapter fixture with bounded synthetic native responses.
+    """
     adapter.configure_binding(
         {"domain_id": "d1", "resource_id": "r1", "identity": "sddc.test"}
     )
@@ -193,6 +220,12 @@ def test_csr_validation_install_payloads_are_bound_to_one_resource(adapter):
 
 @pytest.mark.parametrize("status", ["PENDING", "IN_PROGRESS", "QUEUED"])
 def test_active_native_certificate_task_blocks_preparation(adapter, status):
+    """Verify active native certificate task blocks preparation.
+
+    Args:
+        adapter: SDDC adapter fixture with bounded synthetic native responses.
+        status: Native status value used by the test case.
+    """
     adapter.configure_binding(
         {"domain_id": "d1", "resource_id": "r1", "identity": "sddc.test"}
     )
@@ -213,6 +246,11 @@ def test_active_native_certificate_task_blocks_preparation(adapter, status):
 
 
 def test_validation_must_match_bound_resource_and_success(adapter):
+    """Verify validation must match bound resource and success.
+
+    Args:
+        adapter: SDDC adapter fixture with bounded synthetic native responses.
+    """
     adapter.configure_binding(
         {"domain_id": "d1", "resource_id": "r1", "identity": "sddc.test"}
     )
@@ -246,6 +284,11 @@ def test_validation_must_match_bound_resource_and_success(adapter):
 
 
 def test_task_states_fail_closed(adapter):
+    """Verify task states fail closed.
+
+    Args:
+        adapter: SDDC adapter fixture with bounded synthetic native responses.
+    """
     adapter._request = Mock(
         side_effect=[
             {"id": "task-1", "status": "IN_PROGRESS"},
@@ -261,6 +304,11 @@ def test_task_states_fail_closed(adapter):
 
 
 def test_bad_task_ids_and_unknown_domain_refuse(adapter):
+    """Verify bad task ids and unknown domain refuse.
+
+    Args:
+        adapter: SDDC adapter fixture with bounded synthetic native responses.
+    """
     adapter._request = Mock(return_value={"id": "https://evil.test"})
     adapter.configure_binding(
         {"domain_id": "d1", "resource_id": "r1", "identity": "sddc.test"}
@@ -275,6 +323,11 @@ def test_bad_task_ids_and_unknown_domain_refuse(adapter):
 
 
 def test_permissions_use_documented_name_domain_and_role_fields(adapter):
+    """Verify permissions use documented name domain and role fields.
+
+    Args:
+        adapter: SDDC adapter fixture with bounded synthetic native responses.
+    """
     adapter._pages = Mock(
         side_effect=[
             [
@@ -304,6 +357,13 @@ def test_permissions_use_documented_name_domain_and_role_fields(adapter):
     ],
 )
 def test_native_appliance_role_is_distinct_from_resource_type(adapter, role, version):
+    """Verify native appliance role is distinct from resource type.
+
+    Args:
+        adapter: SDDC adapter fixture with bounded synthetic native responses.
+        role: Native appliance or administrator role used by the test case.
+        version: Native product version used by this compatibility case.
+    """
     adapter.transport.server_time = time.time()
     adapter._request = Mock(return_value={"role": role, "version": version})
     with pytest.raises(RemoteError):
@@ -319,12 +379,24 @@ def test_native_appliance_role_is_distinct_from_resource_type(adapter, role, ver
     ],
 )
 def test_inventory_refuses_truncation_or_wrong_page(adapter, elements, meta):
+    """Verify inventory refuses truncation or wrong page.
+
+    Args:
+        adapter: SDDC adapter fixture with bounded synthetic native responses.
+        elements: Native inventory elements used by the pagination fixture.
+        meta: Native pagination metadata supplied by the test case.
+    """
     adapter._request = Mock(return_value={"elements": elements, "pageMetadata": meta})
     with pytest.raises(RemoteError):
         adapter._pages("/v1/users")
 
 
 def test_empty_csr_inventory_is_valid_and_nested_resource_is_required(adapter):
+    """Verify empty csr inventory is valid and nested resource is required.
+
+    Args:
+        adapter: SDDC adapter fixture with bounded synthetic native responses.
+    """
     adapter.configure_binding(
         {"domain_id": "d1", "resource_id": "r1", "identity": "sddc.test"}
     )
@@ -359,6 +431,11 @@ def test_empty_csr_inventory_is_valid_and_nested_resource_is_required(adapter):
 
 
 def test_csr_never_dispatches_additional_managed_resources(adapter):
+    """Verify csr never dispatches additional managed resources.
+
+    Args:
+        adapter: SDDC adapter fixture with bounded synthetic native responses.
+    """
     adapter.configure_binding(
         {"domain_id": "d1", "resource_id": "r1", "identity": "sddc.test"}
     )
@@ -376,6 +453,11 @@ def test_csr_never_dispatches_additional_managed_resources(adapter):
 
 
 def test_unresolved_native_csr_cannot_be_regenerated(adapter):
+    """Verify unresolved native csr cannot be regenerated.
+
+    Args:
+        adapter: SDDC adapter fixture with bounded synthetic native responses.
+    """
     _, pem, csr = _public_material()
     _, _, other = _public_material()
     adapter.configure_binding(
@@ -397,6 +479,12 @@ def test_unresolved_native_csr_cannot_be_regenerated(adapter):
 def test_validation_polls_documented_validation_status_without_repeating_put(
     adapter, monkeypatch
 ):
+    """Verify validation polls documented validation status without repeating put.
+
+    Args:
+        adapter: SDDC adapter fixture with bounded synthetic native responses.
+        monkeypatch: Pytest patch fixture isolating native and background behavior.
+    """
     adapter.configure_binding(
         {"domain_id": "d1", "resource_id": "r1", "identity": "sddc.test"}
     )
@@ -424,6 +512,11 @@ def test_validation_polls_documented_validation_status_without_repeating_put(
 
 
 def test_operation_polling_obeys_deadline(adapter):
+    """Verify operation polling obeys deadline.
+
+    Args:
+        adapter: SDDC adapter fixture with bounded synthetic native responses.
+    """
     adapter._request = Mock()
     with pytest.raises(RemoteError, match="timed out"):
         adapter.wait_csr("t1", time.monotonic() - 1)

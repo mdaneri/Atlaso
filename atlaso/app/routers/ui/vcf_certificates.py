@@ -15,16 +15,31 @@ from atlaso.app.services import vcf_certificates as cert
 
 
 def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
-    """Register administrator-only browser handlers on the VCF workflow router."""
+    """Register administrator-only browser handlers on the VCF workflow router.
+
+    Args:
+        router: Existing management-plane router receiving the browser handlers.
+        verify_csrf: Shared verifier for the session-bound CSRF header.
+    """
 
     def require_admin(
         identity: Identity = Depends(require_session_identity),
     ) -> Identity:
+        """Require an administrator session before any certificate workflow action.
+
+        Args:
+            identity: Authenticated administrator identity supplied by the session dependency.
+        """
         if not identity.has_role("admin"):
             raise HTTPException(403, "Administrator access is required.")
         return identity
 
     async def payload(request: Request) -> dict[str, Any]:
+        """Read a bounded JSON body after verifying the session CSRF header.
+
+        Args:
+            request: Browser request whose body and CSRF header are validated.
+        """
         verify_csrf(request, request.headers.get("X-CSRF-Token", ""))
         body = bytearray()
         async for chunk in request.stream():
@@ -53,6 +68,15 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
         identity: Identity = Depends(require_admin),
         db: Session = Depends(get_db),
     ) -> dict[str, Any]:
+        """Dispatch an authorized browser certificate action and audit public identifiers.
+
+        Args:
+            operation: Requested certificate workflow action.
+            request: Browser request whose body and CSRF header are validated.
+            background_tasks: Request-owned scheduler for admitted certificate jobs.
+            identity: Authenticated administrator identity supplied by the session dependency.
+            db: Database session holding operation records and target reservations.
+        """
         values = await payload(request)
         if operation not in {
             "probe",
@@ -97,6 +121,13 @@ def register_routes(router: APIRouter, verify_csrf: Callable[..., Any]) -> None:
         identity: Identity = Depends(require_admin),
         db: Session = Depends(get_db),
     ) -> dict[str, Any]:
+        """Return public operation progress only to its submitting administrator.
+
+        Args:
+            operation_id: Stable identifier of the actor-bound certificate operation.
+            identity: Authenticated administrator identity supplied by the session dependency.
+            db: Database session holding operation records and target reservations.
+        """
         try:
             return await run_in_threadpool(
                 cert.operation_status, db, identity.username, operation_id

@@ -19,6 +19,11 @@ from atlaso.app.services.vcf_certificate_material import (
 
 
 def _material(bits: int = 2048):
+    """Provide material.
+
+    Args:
+        bits: RSA key size used by the certificate fixture.
+    """
     key = rsa.generate_private_key(public_exponent=65537, key_size=bits)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "vcf.example.test")])
     now = datetime.now(timezone.utc)
@@ -97,6 +102,12 @@ def test_csr_and_issued_leaf_validate():
     "dns,ips", [({"other.test"}, {"192.0.2.2"}), ({"vcf.example.test"}, {"192.0.2.3"})]
 )
 def test_csr_rejects_san_mismatch(dns, ips):
+    """Verify csr rejects san mismatch.
+
+    Args:
+        dns: DNS SANs used in the certificate fixture.
+        ips: IP SANs used in the certificate fixture.
+    """
     csr, _, _ = _material()
     with pytest.raises(CertificateMaterialError):
         validate_csr(csr.public_bytes(serialization.Encoding.PEM), dns, ips)
@@ -259,6 +270,12 @@ def test_chain_rejects_expired_trust_root():
 
 
 def _csr_with_sans(dns=(), ips=()):
+    """Provide csr with sans.
+
+    Args:
+        dns: DNS SANs used in the certificate fixture.
+        ips: IP SANs used in the certificate fixture.
+    """
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "vc.example.test")])
     names = [x509.DNSName(value) for value in dns] + [

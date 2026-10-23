@@ -60,6 +60,12 @@ class Credentials:
 
 class _PinnedConnection(http.client.HTTPSConnection):
     def __init__(self, target: Target, context: ssl.SSLContext):
+        """Bind the confirmed target and initialize request-local transport state.
+
+        Args:
+            target: Confirmed appliance endpoint and connection identity.
+            context: TLS context for the pinned connection.
+        """
         super().__init__(target.host, target.port, timeout=_TIMEOUT, context=context)
         self._connect_host = target.connect_host or target.host
         self._context = context
@@ -80,6 +86,11 @@ class _PinnedConnection(http.client.HTTPSConnection):
 
 
 def _remaining(deadline: float) -> float:
+    """Return the bounded time remaining or reject an expired deadline.
+
+    Args:
+        deadline: Absolute monotonic deadline bounding remote work.
+    """
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise TimeoutError("Appliance request deadline exceeded")
@@ -90,6 +101,11 @@ class PinnedHTTPS:
     """One-request HTTPS transport that checks the leaf pin before sending HTTP."""
 
     def __init__(self, target: Target):
+        """Bind the confirmed target and initialize request-local transport state.
+
+        Args:
+            target: Confirmed appliance endpoint and connection identity.
+        """
         self.target = target
         self._soap_cookie: str | None = None
         self.server_time: float | None = None
@@ -147,6 +163,18 @@ class PinnedHTTPS:
         soap_namespace: str = "lookup",
         capture_soap_cookie: bool = False,
     ) -> tuple[int, Any]:
+        """Send one bounded native request over the confirmed TLS connection.
+
+        Args:
+            method: Native API HTTP method.
+            path: Native API path on the already confirmed appliance.
+            credentials: Request-local administrator credentials, never persisted.
+            session_header: Request-local native API authentication header.
+            body: JSON request body for the native operation.
+            xml_body: SOAP request document, when required by the native API.
+            soap_namespace: Supported SOAP namespace selecting the native service.
+            capture_soap_cookie: Whether to retain the temporary vCenter SOAP session cookie.
+        """
         if (
             not path.startswith("/")
             or "#" in path
@@ -301,6 +329,11 @@ class PinnedHTTPS:
 
 
 def _xml_escape(value: str) -> str:
+    """Escape native identifiers before embedding them in SOAP XML.
+
+    Args:
+        value: Candidate native value to normalize or validate.
+    """
     return (
         value.replace("&", "&amp;")
         .replace("<", "&lt;")
@@ -311,6 +344,12 @@ def _xml_escape(value: str) -> str:
 
 
 def _parse_lookup_xml(content: str, expected: str) -> ET.Element:
+    """Parse bounded native XML while rejecting entities and SOAP faults.
+
+    Args:
+        content: Bounded native response content.
+        expected: Expected accepted value or response used by the assertion.
+    """
     if "<!DOCTYPE" in content.upper() or "<!ENTITY" in content.upper():
         raise RemoteError("Lookup service XML declarations are not allowed")
     try:
@@ -326,6 +365,12 @@ def _parse_lookup_xml(content: str, expected: str) -> ET.Element:
 
 
 def _required_text(element: ET.Element, name: str) -> str:
+    """Require a nonempty text field from the native response.
+
+    Args:
+        element: Parsed XML element being inspected.
+        name: Requested XML element or response-header name.
+    """
     child = element.find(name)
     value = (child.text or "").strip() if child is not None else ""
     if not value:
@@ -334,7 +379,12 @@ def _required_text(element: ET.Element, name: str) -> str:
 
 
 def _parse_vim25_xml(content: str, response_name: str) -> ET.Element:
-    """Parse bounded vSphere SOAP XML without DTDs, entities, or SOAP faults."""
+    """Parse bounded vSphere SOAP XML without DTDs, entities, or SOAP faults.
+
+    Args:
+        content: Bounded native response content.
+        response_name: Expected native SOAP response element.
+    """
     if (
         len(content.encode("utf-8")) > _MAX_RESPONSE
         or "<!DOCTYPE" in content.upper()
@@ -355,6 +405,12 @@ def _parse_vim25_xml(content: str, response_name: str) -> ET.Element:
 
 class NativeAdapter:
     def __init__(self, target: Target, product: str):
+        """Bind the confirmed target and initialize request-local transport state.
+
+        Args:
+            target: Confirmed appliance endpoint and connection identity.
+            product: Detected appliance product identifier.
+        """
         if product not in {"srm", "vcenter"}:
             raise ValueError("Unsupported appliance product")
         self.target, self.product = target, product
@@ -369,6 +425,14 @@ class NativeAdapter:
         *,
         expected_status: int | None = None,
     ) -> Any:
+        """Send one bounded native request over the confirmed TLS connection.
+
+        Args:
+            method: Native API HTTP method.
+            path: Native API path on the already confirmed appliance.
+            body: JSON request body for the native operation.
+            expected_status: Required native success status code.
+        """
         if self.product == "srm" and not path.startswith("/api/rest/configure/v2/"):
             path = "/api/rest/configure/v2" + path
         if not self.session:
@@ -392,7 +456,11 @@ class NativeAdapter:
         return result
 
     def login(self, credentials: Credentials) -> str:
-        """Authenticate only after this connection proves its confirmed pin."""
+        """Authenticate only after this connection proves its confirmed pin.
+
+        Args:
+            credentials: Request-local administrator credentials, never persisted.
+        """
         path = (
             "/api/rest/configure/v2/session"
             if self.product == "srm"
@@ -431,6 +499,11 @@ class NativeAdapter:
         return self
 
     def __exit__(self, *error: Any) -> None:
+        """Discard temporary native sessions when leaving the adapter context.
+
+        Args:
+            *error: Context-manager exception details; session cleanup still runs.
+        """
         try:
             self.logout()
         except RemoteError:
@@ -452,6 +525,11 @@ class NativeAdapter:
         )
 
     def generate_csr(self, spec: dict[str, Any]) -> Any:
+        """Request a target-owned CSR using the supported native API.
+
+        Args:
+            spec: Validated product-specific CSR generation request.
+        """
         result = self._request(
             "POST",
             "/appliance/certificates/actions/generate-csr"
@@ -468,6 +546,12 @@ class NativeAdapter:
         return pem
 
     def install_csr(self, leaf: str, chain: list[str]) -> Any:
+        """Install the reviewed public leaf and chain using the native API.
+
+        Args:
+            leaf: Reviewed public replacement leaf certificate.
+            chain: Reviewed public issuing certificate chain.
+        """
         if self.product == "srm":
             return self._request(
                 "POST",
@@ -483,6 +567,12 @@ class NativeAdapter:
         )
 
     def import_and_verify_root(self, root: str, expected_sha256: str) -> bool:
+        """Import a missing public CA root once and verify native readback.
+
+        Args:
+            root: Reviewed public CA root certificate.
+            expected_sha256: Exact reviewed public certificate SHA-256 fingerprint.
+        """
         expected = expected_sha256.replace(":", "").lower()
         if (
             x509.load_pem_x509_certificate(root.encode())
@@ -506,7 +596,11 @@ class NativeAdapter:
         )
 
     def trusted_root_present(self, expected_sha256: str) -> bool:
-        """Compare public DER fingerprints without following inventory URLs."""
+        """Compare public DER fingerprints without following inventory URLs.
+
+        Args:
+            expected_sha256: Exact reviewed public certificate SHA-256 fingerprint.
+        """
         expected = expected_sha256.replace(":", "").lower()
         items = self._request(
             "GET", "/api/vcenter/certificate-management/vcenter/trusted-root-chains"
@@ -609,6 +703,9 @@ class NativeAdapter:
 
         The check targets vCenter's root folder because certificate-management privileges
         are global. Native CSR generation remains authoritative and may still reject it.
+
+        Args:
+            credentials: Request-local administrator credentials, never persisted.
         """
         if self.product != "vcenter":
             raise ValueError(

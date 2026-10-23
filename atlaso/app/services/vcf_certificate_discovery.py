@@ -26,6 +26,11 @@ class ApplianceNames:
 
 
 def _product_text(value: Any) -> str:
+    """Normalize a native product description without accepting structured values.
+
+    Args:
+        value: Candidate native value to normalize or validate.
+    """
     if isinstance(value, str):
         return value.casefold()
     if isinstance(value, dict):
@@ -38,7 +43,12 @@ def _product_text(value: Any) -> str:
 
 
 def supported_version(product: str, info: dict[str, Any]) -> bool:
-    """Return whether native identity data identifies a supported product version."""
+    """Return whether native identity data identifies a supported product version.
+
+    Args:
+        product: Detected appliance product identifier.
+        info: Public native discovery metadata.
+    """
     product = product.casefold()
     if product == "sddc":
         if not isinstance(info, dict) or not isinstance(info.get("role"), str):
@@ -89,7 +99,13 @@ def supported_version(product: str, info: dict[str, Any]) -> bool:
 def names_from_certificate(
     cert: x509.Certificate, product: str, identity_hostname: str
 ) -> ApplianceNames:
-    """Preserve certificate DNS/IP SANs and require the native appliance PNID."""
+    """Preserve certificate DNS/IP SANs and require the native appliance PNID.
+
+    Args:
+        cert: Parsed public appliance certificate.
+        product: Detected appliance product identifier.
+        identity_hostname: Native appliance hostname used to validate certificate identity.
+    """
     normalized_product = product.casefold()
     if (
         normalized_product not in {"srm", "vcenter", "sddc"}
@@ -148,7 +164,13 @@ def names_from_certificate(
 def healthy_services(
     product: str, health: Any, baseline: set[str] | dict[str, Any] | None = None
 ) -> bool:
-    """Check native health, automatic services, and any previously running services."""
+    """Check native health, automatic services, and any previously running services.
+
+    Args:
+        product: Detected appliance product identifier.
+        health: Native service health response.
+        baseline: Previously accepted service inventory used for comparison.
+    """
     if product.casefold() == "vcenter":
         if isinstance(health, str):
             return health.casefold() == "green"
@@ -257,6 +279,10 @@ def standalone_vcenter(vcha_info: Any, registrations: Any) -> bool:
 
     Broadcom's vSphere Automation SDK defines ConfigState.NOTCONFIGURED as the
     state for an appliance without a VCHA cluster. Unknown/missing states fail closed.
+
+    Args:
+        vcha_info: Native vCenter High Availability configuration.
+        registrations: Native Lookup Service registration inventory.
     """
     if not isinstance(vcha_info, dict):
         return False

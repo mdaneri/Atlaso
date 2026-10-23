@@ -1787,7 +1787,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=ca-csr-intake-1028-1" in page.text
+    assert "/static/app.css?v=vcf-helper-tabs-1027-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11" in page.text
     assert "/static/app.js?v=ca-csr-intake-1028-1" in page.text
     app_css = client.get("/static/app.css")
