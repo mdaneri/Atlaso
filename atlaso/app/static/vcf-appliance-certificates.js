@@ -12,6 +12,7 @@
   let operationId = null;
   let reviewToken = null;
   let busy = false;
+  let pollTimer = null;
   let revision = 0;
   const operationStorageKey = "atlaso:vcf-helper:certificate-operation";
   const savedOperation = () => { try { return window.localStorage.getItem(operationStorageKey) || ""; } catch { return ""; } };
@@ -82,7 +83,9 @@
     node("new-operation").classList.toggle("hidden", !(result.state === "succeeded" || result.checkpoint === "reconciled_not_dispatched"));
     form.querySelector("[data-cert-prepare]").disabled = Boolean(operationId);
     lockOperationFields(Boolean(operationId));
-    if (["preparing", "installing"].includes(result.state)) window.setTimeout(() => poll(), 1500);
+    window.clearTimeout(pollTimer);
+    pollTimer = null;
+    if (dialog.open && ["preparing", "installing"].includes(result.state)) pollTimer = window.setTimeout(() => poll(), 1500);
   }
   function lockOperationFields(locked) {
     ["product", "address", "port", "common_name", "dns_names", "ip_addresses", "profile_id", "recovery_reference", "credential_vault_id", "credential_entry_id", "username"].forEach((name) => { if (field(name)) field(name).disabled = locked; });
@@ -186,17 +189,21 @@
     operationId = restoredOperation;
     void call(`/operations/${encodeURIComponent(operationId)}`).then((result) => {
       hydrateOperation(result); updateMode();
-      if (explicitOperation) void wizard.open({launcher: opener, reset: false, step: "results", highestStep: "results"});
+      if (explicitOperation) void wizard.open({launcher: opener, reset: false, step: "results", highestStep: "results"}).then(() => poll());
     }).catch((error) => { operationId = null; saveOperation(""); message(error.message, true); });
   }
   opener?.addEventListener("click", (event) => {
-    if (!opener.disabled) { updateMode(); void wizard.open({launcher: event.currentTarget, reset: !operationId, step: operationId ? "results" : "credential", highestStep: operationId ? "results" : 0}); }
+    if (!opener.disabled) {
+      updateMode();
+      void wizard.open({launcher: event.currentTarget, reset: !operationId, step: operationId ? "results" : "credential", highestStep: operationId ? "results" : 0}).then(() => { if (operationId) void poll(); });
+    }
   });
   form.querySelector("[data-atlaso-wizard-cancel]")?.addEventListener("click", () => wizard.requestClose());
   node("continue-review").addEventListener("click", () => { wizard.setHighestStep("review"); wizard.showStep("review"); });
   node("new-operation").addEventListener("click", clearTerminalOperation);
   dialog.addEventListener("cancel", (event) => { event.preventDefault(); void wizard.requestClose(); });
   dialog.addEventListener("close", () => {
+    window.clearTimeout(pollTimer); pollTimer = null;
     field("password").value = ""; reviewToken = null;
     if (!operationId) { form.reset(); probe = null; inspection = null; }
   });

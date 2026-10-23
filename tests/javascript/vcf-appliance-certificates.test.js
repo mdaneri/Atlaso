@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const js = fs.readFileSync(path.join(__dirname, '../../atlaso/app/static/vcf-appliance-certificates.js'), 'utf8');
 const html = fs.readFileSync(path.join(__dirname, '../../atlaso/app/templates/partials/vcf_appliance_certificate_modal.html'), 'utf8');
@@ -80,3 +81,40 @@ test('resumed vault operations preserve both credential references and identify 
   assert.match(js, /node\("operation-target"\)\.textContent/);
   assert.match(html, /data-cert-operation-target/);
 });
+
+for (const initialState of ['preparing', 'installing']) {
+  test(`reopening a restored ${initialState} operation refreshes status and resumes polling`, async () => {
+    const elements = new Map();
+    const makeElement = () => ({value: '', checked: false, disabled: false, options: [],
+      classList: {toggle(_name, hidden) { this.hidden = hidden; }, add() {}, remove() {}, contains() { return false; }},
+      addEventListener() {}, replaceChildren() {}, add(option) { this.options.push(option); }, matches() { return false; }});
+    const get = (name) => { if (!elements.has(name)) elements.set(name, makeElement()); return elements.get(name); };
+    const listeners = {};
+    const dialog = {open: false, addEventListener(name, callback) { listeners[name] = callback; }};
+    const opener = {disabled: false, addEventListener(_name, callback) { this.click = callback; }};
+    const form = {elements: {namedItem: get}, dataset: {endpoint: '/certificates'}, closest: () => dialog,
+      querySelector: get, querySelectorAll: () => [], addEventListener() {}};
+    const timers = new Map(); let nextTimer = 0; let requests = 0;
+    const states = [initialState, initialState, initialState === 'preparing' ? 'prepared' : 'succeeded'];
+    const window = {location: {search: ''}, localStorage: {getItem: () => 'operation'},
+      setTimeout(callback) { const id = ++nextTimer; timers.set(id, callback); return id; }, clearTimeout(id) { timers.delete(id); },
+      AtlasoUiPatterns: {createWizard: () => ({markClean() {}, setSkippedSteps() {},
+        async open() { dialog.open = true; }})}};
+    vm.runInNewContext(js, {window, document: {querySelector: (selector) => selector.includes('-form') ? form : opener},
+      URLSearchParams, Option: function(label, value) { this.value = value; },
+      fetch: async () => ({ok: true, json: async () => ({operation_id: 'operation', state: states[requests++], product: 'srm'})})});
+    const settle = () => new Promise((resolve) => setImmediate(resolve));
+    await settle();
+    assert.equal(requests, 1);
+    assert.equal(timers.size, 0, 'closed restored operations do not poll');
+    opener.click({currentTarget: opener}); await settle();
+    assert.equal(requests, 2);
+    assert.equal(timers.size, 1);
+    dialog.open = false; listeners.close();
+    assert.equal(timers.size, 0, 'closing cancels the pending poll');
+    opener.click({currentTarget: opener}); await settle();
+    assert.equal(requests, 3, 'reopening fetches current status immediately');
+    assert.equal(timers.size, 0, 'terminal or prepared status stops polling');
+    assert.equal(get('[data-cert-continue-review]').classList.hidden, initialState !== 'preparing');
+  });
+}
