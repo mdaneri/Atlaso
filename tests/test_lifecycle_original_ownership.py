@@ -24,6 +24,36 @@ def ps_literal(value):
     return "'" + str(value).replace("'", "''") + "'"
 
 
+@pytest.mark.parametrize("other_mode", [
+    "OidcOnly", "TimeSourceOnly", "RoutingWanOnly", "CertificateOnly", "RoutingOverlapOnly", "FullEsxiPxeInstall",
+])
+def test_runner_reverse_proxy_mode_conflicts_fail_before_vm_preparation(other_mode):
+    """Execute the runner's exclusivity gate without invoking infrastructure code.
+
+    Args:
+        other_mode: Existing focused mode paired with reverse-proxy acceptance.
+    """
+    source = (ROOT / "scripts/windows/vmware/run-lifecycle-test.ps1").read_text(encoding="utf-8")
+    start = source.index("if (@(@($OidcOnly,")
+    end = source.index("if ($RoutingOverlapOnly", start)
+    assert end < source.index('$applianceName = "$LabName-Appliance"', start)
+    modes = ["OidcOnly", "TimeSourceOnly", "RoutingWanOnly", "CertificateOnly",
+             "RoutingOverlapOnly", "FullEsxiPxeInstall", "ReverseProxyOnly"]
+    reset = "; ".join(f"${mode}=$false" for mode in modes) + "; "
+    guard = source[start:end]
+    conflict = subprocess.run(["pwsh", "-NoProfile", "-Command",
+                               reset + f"$ReverseProxyOnly=$true; ${other_mode}=$true; " + guard
+                               + "throw 'VM preparation reached'"], capture_output=True, text=True, timeout=30)
+    assert conflict.returncode != 0
+    assert "mutually exclusive" in conflict.stderr and "-ReverseProxyOnly" in conflict.stderr
+    assert "VM preparation reached" not in conflict.stderr
+    for selected in ["", "ReverseProxyOnly", other_mode]:
+        allowed = subprocess.run(["pwsh", "-NoProfile", "-Command", reset
+                                  + (f"${selected}=$true; " if selected else "") + guard + "'admitted'"],
+                                 capture_output=True, text=True, timeout=30, check=True)
+        assert allowed.stdout.strip() == "admitted"
+
+
 def publish_command(tmp_path, resource, *, require_empty=True):
     """Build a bounded publisher invocation confined to the owned pytest tree.
 

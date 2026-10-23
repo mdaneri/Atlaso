@@ -208,7 +208,15 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
         Raises:
             HTTPException: If the request cannot be fulfilled.
         """
+        from atlaso.app.services.network_objects import (
+            acquire_network_objects_write_lock,
+        )
+        from atlaso.app.services.reverse_proxies import (
+            validate_service_listener_sockets,
+        )
+
         dependencies.verify_csrf(request, csrf)
+        acquire_network_objects_write_lock(db)
         if time_source is not None and time_source not in {
             "ntp_client",
             "vmware_tools",
@@ -218,6 +226,9 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
                 detail="Time source must be ntp_client or vmware_tools.",
             )
         settings = dependencies.get_ntp_settings_row(db)
+        # Default-row readers may commit; reacquire before editing their result.
+        acquire_network_objects_write_lock(db)
+        db.refresh(settings)
         previous_hostname = settings.hostname
         capability_result = (
             dependencies.system_adapter_factory().read_ntpd_capabilities()
@@ -374,6 +385,12 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
             if not ntp_nts_capability_known
             else ntp_nts_supported and nts_server_enabled == "on"
         )
+        settings.nts_ke_port = 4460
+        try:
+            validate_service_listener_sockets(db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         (
             _ntp_nts_cert_path,
             ntp_nts_key_path,
@@ -386,7 +403,6 @@ def build_router(dependencies: NtpUiDependencies) -> NtpUiRouter:
             settings.nts_server_cert_path = ""
             settings.nts_server_key_path = ""
             dependencies.remove_ntp_nts_certificate_rows(db)
-        settings.nts_ke_port = 4460
         settings.minsources = minsources if minsources and minsources > 0 else None
         settings.config_path = NTP_STAGED_CONFIG_PATH
         settings.updated_at = utcnow()

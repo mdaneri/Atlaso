@@ -20771,7 +20771,12 @@ def test_inventory_ipv4_observation_uses_applied_mode(client, monkeypatch, renam
         assert interface.host_ip_cidr == expected
         assert interface.ipv4_method == ("static" if applied == "dhcp" else "dhcp")
         assert interface.ip_cidr == ("192.0.2.99/24" if applied == "dhcp" else None)
-        assert {row["address"] for row in applied_management_bindings(db)} == ({expected.split("/")[0]} if expected else set())
+        # Native static aliases remain real listeners alongside an applied DHCP lease.
+        assert interface.host_ip_cidrs == ["192.0.2.11/24"]
+        expected_addresses = {"192.0.2.11"}
+        if expected:
+            expected_addresses.add(expected.split("/")[0])
+        assert {row["address"] for row in applied_management_bindings(db)} == expected_addresses
         if expected:
             assert ui.request_host_interface_binding(expected.split("/")[0], db)["management_ui"] is True
         pending_binding = ui.request_host_interface_binding("192.0.2.99", db)
@@ -20831,7 +20836,10 @@ interface=eth0
         assert interface.host_ipv6_cidrs == ["2001:db8::7/64", "2001:db8:1::7/64"]
         assert interface.ipv6_enabled is (pending != "disabled")
         assert interface.ipv6_cidr == ("2001:db8:9::7/64" if pending == "static" else None)
-        assert {row["address"] for row in applied_management_bindings(db)} == {"2001:db8::7", "2001:db8:1::7"}
+        expected_addresses = {"2001:db8::7", "2001:db8:1::7"}
+        if interface.host_ip_cidr:
+            expected_addresses.add(interface.host_ip_cidr.split("/")[0])
+        assert {row["address"] for row in applied_management_bindings(db)} == expected_addresses
         for address in ("2001:db8::7", "2001:db8:1::7"):
             assert ui.request_host_interface_binding(address, db)["management_ui"] is True
         pending_binding = ui.request_host_interface_binding("2001:db8:9::7", db)
@@ -20844,7 +20852,9 @@ interface=eth0
         db.commit()
         networking.sync_host_physical_interfaces(db)
         assert interface.host_ipv6_cidrs == [] and interface.host_ipv6_cidr is None
-        assert applied_management_bindings(db) == []
+        assert {row["address"] for row in applied_management_bindings(db)} == (
+            {interface.host_ip_cidr.split("/")[0]} if interface.host_ip_cidr else set()
+        )
 
 
 @pytest.mark.parametrize("transport", ["api", "ui"])
@@ -21449,3 +21459,61 @@ def test_managed_replacement_requires_certificate_workflow_permission(client):
     with SessionLocal() as db:
         leaf = db.get(CaCertificate, identity)
         assert leaf.managed_owner == "appliance:https" and leaf.status == "revoked"
+
+
+@pytest.mark.parametrize("kind", ["dedicated", "flagged"])
+@pytest.mark.parametrize("method", ["static", "dhcp"])
+@pytest.mark.parametrize("scalar", [False, True])
+def test_management_secondary_ipv4_identity_projection_and_withdrawal(client, kind, method, scalar):
+    """Align certificate, DNS and startup identities with complete management observations.
+
+    Args:
+        client: Initialized appliance fixture.
+        kind: Dedicated or flagged access management listener.
+        method: Static or DHCP desired acquisition mode.
+        scalar: Whether a legacy scalar observation accompanies the full list.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import seed, ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings, DnsRecord, PhysicalInterface
+
+    observed = ["192.168.71.10", "192.168.72.10", "192.168.73.10"]
+    replacement = "192.168.81.10"
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == ("eth0" if kind == "dedicated" else "eth2")))
+        interface.role, interface.mode = ("management" if kind == "dedicated" else "access"), "access"
+        interface.access_management_ui_enabled = kind == "flagged"
+        interface.admin_state, interface.oper_state = "up", "up"
+        interface.ipv4_method = method
+        interface.ip_cidr = "192.168.49.1/24" if method == "static" else None
+        interface.host_ip_cidr = observed[0] + "/24" if scalar else None
+        interface.host_ip_cidrs = [observed[0] + "/24", "invalid", *[value + "/24" for value in observed]]
+        settings = db.scalar(select(ApplianceSettings))
+        db.flush()
+        specs = ui.managed_ca_certificate_specs(db, reconcile=False, managed_owners={"appliance:https"})
+        assert set(observed) <= set(specs[0].ip_addresses)
+        assert len(specs[0].ip_addresses) == len(set(specs[0].ip_addresses))
+        ui.ensure_dns_for_appliance_settings(db, settings, previous_fqdn=settings.fqdn, actor=None)
+        seed._ensure_appliance_dns_record(db, settings)
+        db.flush()
+        records = list(db.scalars(select(DnsRecord).where(DnsRecord.hostname == settings.fqdn, DnsRecord.record_type == "A")))
+        assert set(observed) <= {row.address for row in records}
+        operator = DnsRecord(hostname="operator.atlaso.internal", record_type="A", address=observed[-1],
+                             description="Operator-owned", enabled=True)
+        db.add(operator)
+        db.commit()
+        interface.host_ip_cidrs = [replacement + "/24"]
+        interface.host_ip_cidr = replacement + "/24" if scalar else None
+        db.flush()
+        ui.ensure_dns_for_appliance_settings(db, settings, previous_fqdn=settings.fqdn, actor=None)
+        seed._ensure_appliance_dns_record(db, settings)
+        db.flush()
+        specs = ui.managed_ca_certificate_specs(db, reconcile=False, managed_owners={"appliance:https"})
+        assert replacement in specs[0].ip_addresses
+        assert not set(observed) & set(specs[0].ip_addresses)
+        records = list(db.scalars(select(DnsRecord).where(DnsRecord.hostname == settings.fqdn, DnsRecord.record_type == "A")))
+        assert replacement in {row.address for row in records}
+        assert not set(observed) & {row.address for row in records}
+        assert db.get(DnsRecord, operator.id).address == observed[-1]

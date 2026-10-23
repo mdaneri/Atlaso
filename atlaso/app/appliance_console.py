@@ -1345,6 +1345,7 @@ def _verify_settings_native_observation(db: Session, network_job_id: str, observ
             or interface.host_ip_cidr != row["ipv4_cidr"]
             or interface.host_ipv6_cidr != row["ipv6_cidr"]
             or list(interface.host_ipv6_cidrs or []) != row["ipv6_cidrs"]
+            or list(interface.host_ip_cidrs or []) != row.get("ipv4_cidrs", [])
         ):
             raise ConsoleOperationError("Fresh management observation changed before Settings projection.")
 
@@ -1375,7 +1376,9 @@ def _reattest_settings_native_observation(observation: dict[str, Any]) -> None:
             ipv6 = (ipv6s[0] if ipv6s else native_static_ip_cidr(host, row["ipv6_cidr"]) if row["ipv6_cidr"] else None)
             if (host.host_admin_state != "up" or host.oper_state != "up"
                     or ipv4 != row["ipv4_cidr"] or ipv6 != row["ipv6_cidr"]
-                    or list(ipv6s) != row["ipv6_cidrs"]):
+                    or list(ipv6s) != row["ipv6_cidrs"]
+                    or ("ipv4_cidrs" in row and
+                        list(host.host_ip_cidrs or ((host.host_ip_cidr,) if host.host_ip_cidr else ())) != row["ipv4_cidrs"])):
                 raise ValueError("physical link or address changed")
         if time.monotonic() >= deadline or not verify_native_management_vlans(
             paths, timeout=max(0, deadline - time.monotonic()),
@@ -1675,20 +1678,22 @@ def _refresh_management_addresses(
                 if not verified:
                     break
                 verified_rows.append((identity, name, mac, applied, observed_ipv4, observed_ipv6, observed_ipv6_cidrs,
-                                      observed.host_admin_state, observed.oper_state))
+                                      observed.host_admin_state, observed.oper_state,
+                                      list(observed.host_ip_cidrs or ((observed.host_ip_cidr,) if observed.host_ip_cidr else ()))))
             if len(verified_rows) == len(targets) and verify_native_management_vlans(
                 expected_paths or [], timeout=max(0, deadline - time.monotonic()),
             ):
                 # Publish the complete applied observation together, never reconcile unrelated intent.
                 pending = False
                 for (identity, name, mac, applied, observed_ipv4, observed_ipv6, observed_ipv6_cidrs,
-                     observed_admin_state, observed_oper_state) in verified_rows:
+                     observed_admin_state, observed_oper_state, observed_ipv4_cidrs) in verified_rows:
                     interface = db.get(PhysicalInterface, identity)
                     if interface is None or interface.name != name or (interface.mac_address or "").lower() != mac.lower():
                         raise ConsoleOperationError("An applied management interface identity changed; recovery was not started.")
                     interface.host_admin_state = observed_admin_state
                     interface.oper_state = observed_oper_state
                     interface.host_ip_cidr = observed_ipv4
+                    interface.host_ip_cidrs = observed_ipv4_cidrs
                     interface.host_ipv6_cidr = observed_ipv6
                     interface.host_ipv6_cidrs = list(observed_ipv6_cidrs)
                     pending = pending or (interface.ipv4_method, interface.ip_cidr, interface.ipv6_enabled, interface.ipv6_cidr) != applied
@@ -1711,8 +1716,8 @@ def _refresh_management_addresses(
                     "physical_interfaces": [
                         {"id": identity, "name": name, "mac": mac, "ipv4_cidr": ipv4,
                          "host_admin_state": admin_state, "oper_state": oper_state,
-                         "ipv6_cidr": ipv6, "ipv6_cidrs": list(ipv6_cidrs)}
-                        for identity, name, mac, _applied, ipv4, ipv6, ipv6_cidrs, admin_state, oper_state in verified_rows
+                         "ipv6_cidr": ipv6, "ipv6_cidrs": list(ipv6_cidrs), "ipv4_cidrs": ipv4_cidrs}
+                        for identity, name, mac, _applied, ipv4, ipv6, ipv6_cidrs, admin_state, oper_state, ipv4_cidrs in verified_rows
                     ],
                 }
         remaining = deadline - time.monotonic()

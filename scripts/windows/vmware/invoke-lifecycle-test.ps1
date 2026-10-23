@@ -53,7 +53,7 @@ SSH account used for lifecycle client guests.
 .PARAMETER SshPassword
 Secure SSH Password supplied at runtime; no repository default is used.
 .PARAMETER VcfBackupPassword
-Secure VCF Backup Password supplied for the full lifecycle; focused OIDC and WAN-routing runs do not require it.
+Secure VCF Backup Password supplied for the full lifecycle; focused OIDC, time-source, reverse-proxy, and WAN-routing runs do not require it.
 .PARAMETER EsxiPassword
 Secure Esxi Password supplied at runtime; no repository default is used.
 .PARAMETER VlanId
@@ -72,6 +72,16 @@ Run only the same-address IPv4 handoff within RoutingOverlapOnly.
 Run only the OIDC lifecycle scenario.
 .PARAMETER TimeSourceOnly
 Run focused NTP clock-source Apply and host/client UDP acceptance without lifecycle clients.
+.PARAMETER ReverseProxyOnly
+Run the focused public reverse-proxy lifecycle scenario on the appliance's management and host-reachable Site A interfaces.
+.PARAMETER ReverseProxyTlsFixtureDirectory
+Existing protected, creation-receipted directory containing the owned TLS fixture certificate.pem and private-key.pem.
+.PARAMETER ReverseProxyScreenshotNode
+Path to the installed Node.js executable used for optional reverse-proxy browser evidence.
+.PARAMETER ReverseProxyScreenshotPackages
+Read-only installed Node.js package root used for optional reverse-proxy browser evidence.
+.PARAMETER ReverseProxyScreenshotBrowser
+Path to the installed Chrome executable used for optional reverse-proxy browser evidence.
 .PARAMETER CertificateOnly
 Prepare a retained appliance clone for the certificate handoff acceptance scenario.
 .PARAMETER CertificateDhcpPeer
@@ -245,6 +255,26 @@ param(
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
+    [switch]$ReverseProxyOnly,
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [string]$ReverseProxyTlsFixtureDirectory = '',
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [string]$ReverseProxyScreenshotNode = '',
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [string]$ReverseProxyScreenshotPackages = '',
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [string]$ReverseProxyScreenshotBrowser = '',
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
     [switch]$CertificateOnly,
 
     [Parameter(ParameterSetName = 'Run')]
@@ -294,6 +324,37 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($ReverseProxyOnly -and -not $PlanOnly) {
+    if (-not $ReverseProxyTlsFixtureDirectory -or
+        -not (Test-Path -LiteralPath $ReverseProxyTlsFixtureDirectory -PathType Container)) {
+        throw 'Reverse-proxy acceptance requires an existing owned protected TLS fixture directory.'
+    }
+    $fixtureSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $fixtureItems = @((Get-Item -LiteralPath $ReverseProxyTlsFixtureDirectory -Force))
+    foreach ($fixtureName in @('certificate.pem', 'private-key.pem')) {
+        $fixtureItems += Get-Item -LiteralPath (Join-Path $ReverseProxyTlsFixtureDirectory $fixtureName) -Force
+    }
+    foreach ($fixtureItem in $fixtureItems) {
+        if (($fixtureItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'The owned TLS fixture must not contain reparse points.'
+        }
+        $fixtureAcl = Get-Acl -LiteralPath $fixtureItem.FullName
+        if (-not $fixtureAcl.GetOwner([Security.Principal.SecurityIdentifier]).Equals($fixtureSid)) {
+            throw 'The owned TLS fixture requires current-user ownership.'
+        }
+        foreach ($fixtureRule in $fixtureAcl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+            if ($fixtureRule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+                $fixtureRule.IdentityReference.Value -notin @($fixtureSid.Value, 'S-1-5-18')) {
+                throw 'The owned TLS fixture grants access outside the current user and SYSTEM.'
+            }
+        }
+    }
+    if (-not (Get-Acl -LiteralPath $ReverseProxyTlsFixtureDirectory).AreAccessRulesProtected) {
+        throw 'The owned TLS fixture directory requires protected access rules.'
+    }
+}
+
 if ($SameAddressHandoffOnly -and -not $RoutingOverlapOnly) {
     throw '-SameAddressHandoffOnly requires -RoutingOverlapOnly.'
 }
@@ -307,11 +368,34 @@ Import-Module (Join-Path $PSScriptRoot 'Atlaso.OidcSiteNetwork.psm1') -Force
 if (($OidcOnly -or $TimeSourceOnly) -and $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalIgnoreCase)) {
     throw '-OidcOnly and -TimeSourceOnly require a host-reachable SiteANetwork; VMware LAN segments cannot carry the host-side verified probe.'
 }
+if ($ReverseProxyOnly -and $SiteANetwork.StartsWith('lan:', [StringComparison]::OrdinalIgnoreCase)) {
+    throw '-ReverseProxyOnly requires a host-reachable SiteANetwork; VMware LAN segments cannot carry the host upstream fixture.'
+}
 if (($OidcOnly -or $TimeSourceOnly) -and $SiteInterface -ne 'eth1') {
     throw '-OidcOnly and -TimeSourceOnly require SiteInterface eth1 because Site A is attached to the appliance second adapter.'
 }
+if ($ReverseProxyOnly -and $SiteInterface -ne 'eth1') {
+    throw '-ReverseProxyOnly requires SiteInterface eth1 because Site A is attached to the appliance second adapter.'
+}
+if ($ReverseProxyOnly -and @(@($OidcOnly, $TimeSourceOnly, $RoutingWanOnly, $CertificateOnly, $RoutingOverlapOnly, $FullEsxiPxeInstall) | Where-Object { $_ }).Count -gt 0) {
+    throw '-ReverseProxyOnly cannot be combined with another focused lifecycle mode.'
+}
+if (($ReverseProxyScreenshotNode -or $ReverseProxyScreenshotPackages -or $ReverseProxyScreenshotBrowser) -and -not $ReverseProxyOnly) {
+    throw 'Reverse-proxy screenshot tooling is accepted only with -ReverseProxyOnly.'
+}
+if ($ReverseProxyScreenshotNode -or $ReverseProxyScreenshotPackages -or $ReverseProxyScreenshotBrowser) {
+    if (-not ($ReverseProxyScreenshotNode -and $ReverseProxyScreenshotPackages -and $ReverseProxyScreenshotBrowser) -or
+        -not (Test-Path -LiteralPath $ReverseProxyScreenshotNode -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $ReverseProxyScreenshotPackages -PathType Container) -or
+        -not (Test-Path -LiteralPath $ReverseProxyScreenshotBrowser -PathType Leaf)) {
+        throw 'Optional reverse-proxy screenshot evidence requires existing Node.js, package-root, and Chrome paths.'
+    }
+}
 if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $TimeSourceOnly -or $RoutingWanOnly -or $CertificateOnly)) {
     throw '-SignedReleaseRepositoryUrl requires the full lifecycle; it cannot be combined with -OidcOnly, -TimeSourceOnly, -RoutingWanOnly, or -CertificateOnly.'
+}
+if ($SignedReleaseRepositoryUrl -and $ReverseProxyOnly) {
+    throw '-SignedReleaseRepositoryUrl requires the full lifecycle and cannot be combined with -ReverseProxyOnly.'
 }
 if ($SignedReleaseRepositoryUrl) {
     [Uri]$fixtureUri = $null
@@ -427,6 +511,60 @@ function Get-ManagementNetworkPlan {
     return $planText | ConvertFrom-Json
 }
 
+<#
+.SYNOPSIS
+Return the unique Windows host IPv4 address for the focused Site A upstream fixture.
+.PARAMETER NetworkName
+Host-reachable VMware Site A network attached to the appliance's second adapter.
+.PARAMETER SiteCidr
+Appliance IPv4 address and prefix used to select the matching host route.
+.PARAMETER Vmrun
+Optional vmrun executable passed to VMware network discovery.
+.PARAMETER BridgeAlias
+Optional host interface alias used for a bridged network.
+#>
+function Get-AtlasoSiteHostIpv4Address {
+    param(
+        [Parameter(Mandatory = $true)][string]$NetworkName,
+        [Parameter(Mandatory = $true)][string]$SiteCidr,
+        [string]$Vmrun = '',
+        [string]$BridgeAlias = ''
+    )
+
+    if ($SiteCidr -notmatch '^([0-9]{1,3}(?:\.[0-9]{1,3}){3})/([0-9]|[12][0-9]|3[0-2])$') {
+        throw 'Reverse-proxy SiteCidr must be an IPv4 CIDR.'
+    }
+    $siteAddress = [System.Net.IPAddress]::Parse($Matches[1])
+    $prefix = [int]$Matches[2]
+    $networkPlan = Get-ManagementNetworkPlan -NetworkName $NetworkName -Vmrun $Vmrun -BridgeAlias $BridgeAlias
+    $network = @($networkPlan.discovered_networks | Where-Object { $_.Name -eq $NetworkName.ToLowerInvariant() }) | Select-Object -First 1
+    if (-not $network) { throw 'Reverse-proxy Site A network was not present in VMware network discovery.' }
+    $hostAlias = if ($network.PSObject.Properties['InterfaceAlias']) { $network.InterfaceAlias } else { "VMware Network Adapter $NetworkName" }
+    $adapter = Get-NetAdapter -Name $hostAlias -ErrorAction SilentlyContinue
+    if (-not $adapter -or $adapter.Status -ne 'Up') { throw 'Reverse-proxy Site A host adapter must be active for the upstream fixture.' }
+    $expectedMask = if ($prefix -eq 0) { [uint32]0 } else { [uint32]([uint32]::MaxValue -shl (32 - $prefix)) }
+    $siteBytes = $siteAddress.GetAddressBytes()
+    $siteIp = (([uint32]$siteBytes[0] -shl 24) -bor ([uint32]$siteBytes[1] -shl 16) -bor ([uint32]$siteBytes[2] -shl 8) -bor [uint32]$siteBytes[3])
+    $siteNetwork = $siteIp -band $expectedMask
+    $matchingAddresses = @(Get-NetIPAddress -InterfaceAlias $hostAlias -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {
+        if ($_.AddressState -ne 'Preferred' -or $_.PrefixLength -ne $prefix) { return $false }
+        $bytes = ([System.Net.IPAddress]::Parse($_.IPAddress)).GetAddressBytes()
+        $hostIp = (([uint32]$bytes[0] -shl 24) -bor ([uint32]$bytes[1] -shl 16) -bor ([uint32]$bytes[2] -shl 8) -bor [uint32]$bytes[3])
+        ($hostIp -band $expectedMask) -eq $siteNetwork
+    })
+    if ($matchingAddresses.Count -ne 1) {
+        throw 'Reverse-proxy Site A requires exactly one preferred host IPv4 address in the appliance SiteCidr subnet.'
+    }
+    $hostAddress = $matchingAddresses[0].IPAddress
+    $route = @(Find-NetRoute -RemoteIPAddress $siteAddress.IPAddressToString -LocalIPAddress $hostAddress -ErrorAction SilentlyContinue | Where-Object {
+        $_.PSObject.Properties['DestinationPrefix']
+    }) | Select-Object -First 1
+    if (-not $route -or $route.InterfaceIndex -ne $adapter.InterfaceIndex) {
+        throw 'Reverse-proxy Site A host IPv4 address does not select the matching VMware adapter route to the appliance.'
+    }
+    return $hostAddress
+}
+
 if ($PSCmdlet.ParameterSetName -eq 'PrepareNetworks') {
     & (Join-Path $PSScriptRoot 'prepare-networks.ps1') `
         -VmrunPath $VmrunPath `
@@ -467,11 +605,15 @@ if ($PSCmdlet.ParameterSetName -eq 'CleanupVms') {
     return
 }
 
-if ($OidcOnly -or $TimeSourceOnly) {
+if ($OidcOnly -or $TimeSourceOnly -or $ReverseProxyOnly) {
     Assert-AtlasoOidcSiteNetwork -SiteANetwork $SiteANetwork -SiteCidr $SiteCidr `
         -PrepareNetworksPath (Join-Path $PSScriptRoot 'prepare-networks.ps1') `
-        -VmrunPath $VmrunPath -BridgedInterfaceAlias $BridgedInterfaceAlias -BindSiteSource:$TimeSourceOnly
+        -VmrunPath $VmrunPath -BridgedInterfaceAlias $BridgedInterfaceAlias `
+        -BindSiteSource:($TimeSourceOnly -or $ReverseProxyOnly)
 }
+$reverseProxyUpstreamHost = if ($ReverseProxyOnly) {
+    Get-AtlasoSiteHostIpv4Address -NetworkName $SiteANetwork -SiteCidr $SiteCidr -Vmrun $VmrunPath -BridgeAlias $BridgedInterfaceAlias
+} else { '' }
 
 if (-not $PlanOnly) {
     if ($null -eq $AdminPassword) {
@@ -481,7 +623,9 @@ if (-not $PlanOnly) {
         $SshPassword = $AdminPassword
     }
     if (-not ($OidcOnly -or $TimeSourceOnly -or $RoutingWanOnly -or $CertificateOnly -or $RoutingOverlapOnly) -and $null -eq $VcfBackupPassword) {
-        $VcfBackupPassword = Read-Host -Prompt 'VCF Backup lifecycle password' -AsSecureString
+        if (-not $ReverseProxyOnly) {
+            $VcfBackupPassword = Read-Host -Prompt 'VCF Backup lifecycle password' -AsSecureString
+        }
     }
     if ($FullEsxiPxeInstall -and $null -eq $EsxiPassword) {
         $EsxiPassword = Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString
@@ -519,18 +663,24 @@ if (-not $ApplianceVmxPath) {
 if (-not $ClientVmdkPath) {
     $ClientVmdkPath = Join-Path $repoRoot 'image\vmware-workstation\clients\alpine-cloud\atlaso-tiny-linux-client.vmdk'
 }
+if ($ReverseProxyOnly) {
+    $ClientVmdkPath = ''
+    $SkipClientPrepare = $true
+}
 if (-not $applianceIpWasPassed) {
     $networkPlan = Get-ManagementNetworkPlan -NetworkName $ManagementNetwork -Vmrun $VmrunPath -BridgeAlias $BridgedInterfaceAlias
     if ($networkPlan.missing_networks.Count -gt 0) {
         throw "Missing VMware Workstation networks: $($networkPlan.missing_networks -join ', ')."
     }
 }
-if (-not $PlanOnly -and $PSCmdlet.ParameterSetName -eq 'Run' -and -not $RoutingOverlapOnly) {
-    $usesLanSegments = @($SiteANetwork, $SiteBNetwork, $TrunkNetwork) | Where-Object { $_.StartsWith('lan:') }
-    if (-not $usesLanSegments -and -not ($CertificateOnly -or $TimeSourceOnly)) {
-        $lifecycleNetworkPlan = Get-ManagementNetworkPlan -NetworkName $ManagementNetwork -Vmrun $VmrunPath -BridgeAlias $BridgedInterfaceAlias -AllLifecycleNetworks
-        if ($lifecycleNetworkPlan.missing_networks.Count -gt 0) {
-            throw "Missing VMware Workstation lifecycle networks: $($lifecycleNetworkPlan.missing_networks -join ', '). Create them in Virtual Network Editor, pass lan:<segment-name> for isolated Workstation LAN segments, or run -PrepareNetworksOnly after configuring Workstation host-only vmnets."
+if (-not $ReverseProxyOnly) {
+    if (-not $PlanOnly -and $PSCmdlet.ParameterSetName -eq 'Run' -and -not $RoutingOverlapOnly) {
+        $usesLanSegments = @($SiteANetwork, $SiteBNetwork, $TrunkNetwork) | Where-Object { $_.StartsWith('lan:') }
+        if (-not $usesLanSegments -and -not ($CertificateOnly -or $TimeSourceOnly)) {
+            $lifecycleNetworkPlan = Get-ManagementNetworkPlan -NetworkName $ManagementNetwork -Vmrun $VmrunPath -BridgeAlias $BridgedInterfaceAlias -AllLifecycleNetworks
+            if ($lifecycleNetworkPlan.missing_networks.Count -gt 0) {
+                throw "Missing VMware Workstation lifecycle networks: $($lifecycleNetworkPlan.missing_networks -join ', '). Create them in Virtual Network Editor, pass lan:<segment-name> for isolated Workstation LAN segments, or run -PrepareNetworksOnly after configuring Workstation host-only vmnets."
+            }
         }
     }
 }
@@ -544,6 +694,7 @@ if (-not $SkipClientPrepare -and -not ($TimeSourceOnly -or $CertificateOnly) -an
 }
 
 $effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly -or $TimeSourceOnly -or $CertificateOnly -or $RoutingOverlapOnly)
+if ($ReverseProxyOnly) { $effectiveSkipBackupRestoreTest = $true }
 $powerShell7Path = Resolve-PowerShell7Path
 
 $secretBundlePath = ''
@@ -598,6 +749,17 @@ if ($AllowDryRunApply) { $arguments += '-AllowDryRunApply' }
 if ($effectiveSkipBackupRestoreTest) { $arguments += '-SkipBackupRestoreTest' }
 if ($OidcOnly) { $arguments += '-OidcOnly' }
 if ($TimeSourceOnly) { $arguments += '-TimeSourceOnly' }
+if ($ReverseProxyOnly) {
+    $arguments += @('-ReverseProxyOnly', '-ReverseProxyUpstreamHost', $reverseProxyUpstreamHost,
+        '-ReverseProxyTlsFixtureDirectory', $ReverseProxyTlsFixtureDirectory)
+    if ($ReverseProxyScreenshotNode) {
+        $arguments += @(
+            '-ReverseProxyScreenshotNode', $ReverseProxyScreenshotNode,
+            '-ReverseProxyScreenshotPackages', $ReverseProxyScreenshotPackages,
+            '-ReverseProxyScreenshotBrowser', $ReverseProxyScreenshotBrowser
+        )
+    }
+}
 if ($CertificateOnly) { $arguments += '-CertificateOnly' }
 if ($CertificateDhcpPeer) {
     $arguments += @('-CertificateDhcpPeer', '-CertificatePeerCidr', $CertificatePeerCidr,
@@ -622,6 +784,7 @@ Write-Host "Appliance URL: $(if ($effectiveApplianceUrl) { $effectiveApplianceUr
 Write-Host ("Routing/WAN only: {0}" -f ([bool]$RoutingWanOnly))
 Write-Host ("OIDC only: {0}" -f ([bool]$OidcOnly))
 Write-Host ("Time-source only: {0}" -f ([bool]$TimeSourceOnly))
+Write-Host ("Reverse-proxy only: {0}" -f ([bool]$ReverseProxyOnly))
 Write-Host ("Full ESXi PXE install: {0}" -f ([bool]$FullEsxiPxeInstall))
 Write-Host ("Backup/restore validation: {0}" -f (-not $effectiveSkipBackupRestoreTest))
 Write-Host ("Cleanup created VMs: {0}" -f (-not $KeepVms))

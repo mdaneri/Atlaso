@@ -470,7 +470,7 @@ def refresh_interface_dependent_addresses(
     actor: str | None = None,
     dns_refresher: DependentDnsRefresher | None = None,
 ) -> list[str]:
-    """Refresh desired service, DHCP, PXE, and DNS state after an interface change.
+    """Refresh dependencies, rejecting changes that strand enabled proxy listeners.
 
     The caller owns the transaction. This function never commits, so every dependent row can be
     rolled back together with the interface row.
@@ -501,6 +501,19 @@ def refresh_interface_dependent_addresses(
             ).scalars()
             if vlan.name not in affected_interface_names
         )
+
+    from atlaso.app.services.reverse_proxies import (
+        validate_interface_proxy_bindings,
+        validate_service_listener_sockets,
+    )
+
+    try:
+        validate_interface_proxy_bindings(
+            db, set(affected_interface_names),
+            removed_names={old_name} if new_name != old_name else set(),
+        )
+    except ValueError as exc:
+        raise PhysicalInterfaceUpdateError(str(exc)) from exc
 
     def selection_replacements(eligible_names: set[str]) -> dict[str, str]:
         """Return replacements for every directly or transitively affected interface.
@@ -1111,9 +1124,16 @@ def refresh_interface_dependent_addresses(
             )
             mark_changed("ESXi PXE")
 
-    if dns_refresher is not None:
-        for label in dns_refresher(db, actor):
-            mark_changed(label)
+    # Listener rebasing and DNS normalization can introduce claims absent from
+    # the original interface check. Normalize validation failures from either
+    # stage so API and UI edits report a rejected transaction consistently.
+    try:
+        if dns_refresher is not None:
+            for label in dns_refresher(db, actor):
+                mark_changed(label)
+        validate_service_listener_sockets(db)
+    except ValueError as exc:
+        raise PhysicalInterfaceUpdateError(str(exc)) from exc
     return changed
 
 
@@ -1160,6 +1180,7 @@ def _preserve_management_dhcp_dns_on_static_conversion(
         access_management_ui_enabled=new_management_ui_enabled,
         ipv4_method=old_ipv4_method,
         host_ip_cidr=interface.host_ip_cidr,
+        host_ip_cidrs=list(interface.host_ip_cidrs or []),
         ip_cidr=interface.ip_cidr,
         ipv6_enabled=interface.ipv6_enabled,
         ipv6_cidr=interface.ipv6_cidr,

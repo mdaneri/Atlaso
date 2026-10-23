@@ -214,6 +214,7 @@ class PhysicalInterface(Base):
         driver: Persisted driver for the physicalinterface resource.
         speed: Persisted speed for the physicalinterface resource.
         host_ip_cidr: Persisted host ip cidr for the physicalinterface resource.
+        host_ip_cidrs: Complete usable native IPv4 observations, including secondary addresses.
         host_ipv6_cidr: Persisted host ipv6 cidr for the physicalinterface resource.
         host_ipv6_cidrs: All preferred automatic IPv6 observations during prefix renumbering.
         host_mtu: Persisted host mtu for the physicalinterface resource.
@@ -245,6 +246,7 @@ class PhysicalInterface(Base):
     driver: Mapped[str | None] = mapped_column(String(80), nullable=True)
     speed: Mapped[str | None] = mapped_column(String(50), nullable=True)
     host_ip_cidr: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    host_ip_cidrs: Mapped[list[str]] = mapped_column(JSON, default=list)
     host_ipv6_cidr: Mapped[str | None] = mapped_column(String(64), nullable=True)
     host_ipv6_cidrs: Mapped[list[str]] = mapped_column(JSON, default=list)
     host_mtu: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -462,6 +464,61 @@ class PortForward(Base):
     restore_review_required: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ReverseProxy(Base):
+    """Store one named public nginx reverse-proxy virtual host."""
+
+    __tablename__ = "reverse_proxies"
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_reverse_proxy_name"),
+        UniqueConstraint("hostname", name="uq_reverse_proxy_hostname"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    hostname: Mapped[str] = mapped_column(String(253), unique=True, index=True)
+    scheme: Mapped[str] = mapped_column(String(5), default="https")
+    port: Mapped[int] = mapped_column(Integer, default=443)
+    redirect_http: Mapped[bool] = mapped_column(Boolean, default=False)
+    redirect_port: Mapped[int] = mapped_column(Integer, default=80)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    public_listing: Mapped[bool] = mapped_column(Boolean, default=True)
+    managed_dns: Mapped[bool] = mapped_column(Boolean, default=False)
+    listeners: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    connect_timeout: Mapped[int] = mapped_column(Integer, default=5)
+    read_timeout: Mapped[int] = mapped_column(Integer, default=60)
+    send_timeout: Mapped[int] = mapped_column(Integer, default=60)
+    body_limit: Mapped[int] = mapped_column(BigInteger, default=16777216)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    routes: Mapped[list["ReverseProxyRoute"]] = relationship(
+        back_populates="proxy", cascade="all, delete-orphan", order_by="ReverseProxyRoute.position"
+    )
+
+
+class ReverseProxyRoute(Base):
+    """Store one ordered path mapping owned by a reverse-proxy virtual host."""
+
+    __tablename__ = "reverse_proxy_routes"
+    __table_args__ = (
+        UniqueConstraint("proxy_id", "position", name="uq_reverse_proxy_route_position"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    proxy_id: Mapped[int] = mapped_column(
+        ForeignKey("reverse_proxies.id", ondelete="CASCADE"), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    path_prefix: Mapped[str] = mapped_column(String(1024))
+    upstream_scheme: Mapped[str] = mapped_column(String(5), default="http")
+    upstream_host: Mapped[str] = mapped_column(String(253))
+    upstream_port: Mapped[int] = mapped_column(Integer)
+    path_behavior: Mapped[str] = mapped_column(String(8), default="preserve")
+    trust_mode: Mapped[str] = mapped_column(String(16), default="trusted_ca")
+    fingerprint: Mapped[str] = mapped_column(String(95), default="")
+    proxy: Mapped[ReverseProxy] = relationship(back_populates="routes")
 
 
 class ServiceState(Base):

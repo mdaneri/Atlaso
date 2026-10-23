@@ -9,6 +9,10 @@ status: current
 
 # Router architecture
 
+`services/applied_service_dns.py` owns exact applied DNS provenance and shared binding inventory. The UI facade keeps
+compatibility exports; DNS/DHCP transports and reverse-proxy desired-state services call the shared owner directly.
+Its baseline updates retain caller-owned transactions and the network-object writer lock.
+
 Task-value sanitization is shared through `services/task_log_redaction.py`. The UI keeps its established
 `_redact_task_value` facade, while non-UI consumers can reuse the sanitizer without importing route registration
 and orchestration. This recursive value sanitizer does not replace the log reader's stateful cross-line private-key

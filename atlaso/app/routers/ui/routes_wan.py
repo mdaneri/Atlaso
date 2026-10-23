@@ -22,11 +22,16 @@ from atlaso.app.models import (
     VlanInterface,
     WanPolicy,
 )
+from atlaso.app.reverse_proxy_schemas import response_for_proxy
 from atlaso.app.routers.ui.port_forwards import (
     build_router as build_port_forwards_router,
 )
+from atlaso.app.routers.ui.reverse_proxies import (
+    build_router as build_reverse_proxies_router,
+)
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+from atlaso.app.services.reverse_proxies import desired_rows as reverse_proxy_rows
 from atlaso.app.services.routes_wan import (
     DEFAULT_ROUTE_DESTINATIONS,
     WAN_MODES,
@@ -106,9 +111,15 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         """
         if not identity.can("read:firewall"):
             raise HTTPException(status_code=403, detail="Firewall read permission is required")
+        publishing_context = dependencies.traffic_publishing_context(db)
+        publishing_context["reverse_proxies"] = [
+            response_for_proxy(proxy).model_dump(mode="json")
+            for proxy in reverse_proxy_rows(db)
+        ]
         return cast(HTMLResponse, render(request, "traffic_publishing.html", {
-            "identity": identity, **dependencies.traffic_publishing_context(db),
+            "identity": identity, **publishing_context,
             "routes_wan_can_write": identity.can("write:firewall"),
+            "can_write_firewall": identity.can("write:firewall"),
             "appliance_apply_status": appliance_apply_status(db, "nat"),
         }))
 
@@ -1351,6 +1362,10 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
     # admission on every independently owned destination-translation endpoint.
     router.routes.extend(build_port_forwards_router(
         verify_csrf=verify_csrf, context=dependencies.traffic_publishing_context,
+        require_management_ui_request=dependencies.require_management_ui_request,
+    ).routes)
+    router.routes.extend(build_reverse_proxies_router(
+        verify_csrf=verify_csrf,
         require_management_ui_request=dependencies.require_management_ui_request,
     ).routes)
     return RoutesWanUiRouter(router=router, endpoints=endpoints)

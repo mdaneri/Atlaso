@@ -718,6 +718,41 @@ def _disable_service_without_bind(settings: object, label: str, details: list[st
     details.append(f"disabled {label}: removed NIC was the only listen target")
 
 
+def _suspend_inventory_proxy_bindings(db: Session, interface_names: set[str]) -> list[str]:
+    """Disable affected proxy intent instead of silently rebinding inventory changes.
+
+    Args:
+        db: Inventory transaction holding the shared Network Objects writer lock.
+        interface_names: Renamed or unavailable physical and derived VLAN identities.
+
+    Returns:
+        Operator-facing suspension details; saved exact listeners remain unchanged.
+    """
+    from atlaso.app.models import ReverseProxy
+
+    details: list[str] = []
+    for proxy in db.scalars(select(ReverseProxy)):
+        if proxy.enabled and any(listener.get("interface") in interface_names for listener in proxy.listeners):
+            proxy.enabled = False
+            proxy.updated_at = utcnow()
+            details.append(f"disabled reverse proxy {proxy.name}: selected interface changed; review exact listeners")
+    if details:
+        from atlaso.app.services.applied_service_dns import (
+            remember_applied_service_dns_records,
+        )
+        from atlaso.app.services.reverse_proxies import runtime_snapshot
+        from atlaso.app.services.reverse_proxy_publication import reconcile_proxy_dns
+
+        remember_applied_service_dns_records(db)
+        reconcile_proxy_dns(db, runtime_snapshot(db))
+        message = "Host inventory reverse-proxy reconciliation: " + "; ".join(details)
+        LOGGER.warning(message)
+        _set_setting_value(db, NETWORK_INVENTORY_CLEANUP_WARNING_KEY, message)
+        db.add(AuditEvent(actor="system", action="suspend_inventory_reverse_proxy_bindings",
+                          resource_type="network", detail=message))
+    return details
+
+
 def _cleanup_missing_interface_references(db: Session, missing_renames: dict[str, str]) -> list[str]:
     """Remove missing interface references.
 
@@ -770,6 +805,8 @@ def _cleanup_missing_interface_references(db: Session, missing_renames: dict[str
         unavailable_targets.update({old_name, vlan.name})
         if changed:
             details.append(f"disabled VLAN {old_name}: parent {old_parent} is missing")
+
+    details.extend(_suspend_inventory_proxy_bindings(db, unavailable_targets))
 
     for route in db.execute(select(Route)).scalars().all():
         if route.interface_name in unavailable_targets:
@@ -926,6 +963,8 @@ def _retarget_interface_references(db: Session, renames: dict[str, str]) -> dict
         vlan.parent_interface = new_parent
         vlan.name = f"{new_parent}.{vlan.vlan_id}"
         expanded_renames[old_name] = vlan.name
+
+    _suspend_inventory_proxy_bindings(db, set(expanded_renames))
 
     scalar_targets = [
         (Route, "interface_name"),
@@ -1167,6 +1206,7 @@ def reconcile_host_physical_interfaces(
         interface.host_ip_cidr = (
             host.host_dhcp_ip_cidr if normalize_ipv4_method(ipv4_method) == "dhcp" else host.host_ip_cidr
         )
+        interface.host_ip_cidrs = list(host.host_ip_cidrs or ((host.host_ip_cidr,) if host.host_ip_cidr else ()))
         ipv6_enabled, ipv6_cidr = (applied_ipv6_modes or {}).get(
             host_mac, (bool(interface.ipv6_enabled), interface.ipv6_cidr),
         )
@@ -1269,6 +1309,7 @@ def sync_host_physical_interfaces(db: Session) -> tuple[list[PhysicalInterface],
             removed_names = {interface.name for interface in seed_only_missing}
             dependent_vlans = db.execute(select(VlanInterface).where(VlanInterface.parent_interface.in_(removed_names))).scalars().all()
             removed_targets = removed_names | {vlan.name for vlan in dependent_vlans}
+            _suspend_inventory_proxy_bindings(db, removed_targets)
             dependent_routes = db.execute(select(Route).where(Route.interface_name.in_(removed_targets))).scalars().all()
             for route in dependent_routes:
                 db.delete(route)
@@ -1280,6 +1321,21 @@ def sync_host_physical_interfaces(db: Session) -> tuple[list[PhysicalInterface],
     for interface in reconciled:
         db.add(interface)
     _flush_physical_interface_name_changes(db, name_changes)
+    from atlaso.app.services.reverse_proxies import (
+        InventoryProxyConflict,
+        validate_interface_proxy_bindings,
+        validate_inventory_proxy_scopes,
+    )
+
+    try:
+        db.flush()
+        # Retain explicit listener tuples for operator review, but reject upstream
+        # loops against the complete candidate inventory before committing it.
+        validate_interface_proxy_bindings(db, set())
+        validate_inventory_proxy_scopes(db)
+    except ValueError as exc:
+        db.rollback()
+        raise InventoryProxyConflict(str(exc)) from exc
     db.commit()
     return db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all(), len(discovered)
 

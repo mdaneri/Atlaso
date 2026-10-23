@@ -1338,7 +1338,7 @@ def test_automatic_ipv6_observation_schema_upgrade_is_additive_and_idempotent():
         connection.execute(text("INSERT INTO physical_interfaces VALUES (1, '2001:db8::1/64', TRUE)"))
         _reconcile_interface_address_check_columns(connection)
         _reconcile_interface_address_check_columns(connection)
-        assert connection.execute(text("SELECT host_ipv6_cidr, host_ipv6_cidrs FROM physical_interfaces")).one() == ("2001:db8::1/64", "[]")
+        assert connection.execute(text("SELECT host_ipv6_cidr, host_ipv6_cidrs, host_ip_cidrs FROM physical_interfaces")).one() == ("2001:db8::1/64", "[]", "[]")
     engine.dispose()
 
 
@@ -1670,3 +1670,19 @@ def test_vlan_service_bindings_persist_applied_dns_alias_after_parent_rename(mon
         } == {new_vlan}
 
     get_settings.cache_clear()
+
+
+def test_native_ipv4_inventory_retains_and_withdraws_secondary_addresses():
+    """Persist all native IPv4 addresses without replacing configured intent."""
+    row = {"ifname": "eth0", "link_type": "ether", "address": "00:15:5d:aa:bb:01",
+           "addr_info": [{"family": "inet", "local": value, "prefixlen": 24, "scope": "global"}
+                         for value in ("192.168.49.1", "192.168.49.2")]}
+    interface = PhysicalInterface(name="eth0", mac_address=row["address"], ip_cidr="192.168.49.1/24",
+                                  ipv4_method="static", role="management", mode="access", admin_state="up",
+                                  desired_state_source="console")
+    reconcile_host_physical_interfaces([interface], parse_linux_ip_interfaces(json.dumps([row])))
+    assert set(interface.host_ip_cidrs) == {"192.168.49.1/24", "192.168.49.2/24"}
+    row["addr_info"].pop()
+    reconcile_host_physical_interfaces([interface], parse_linux_ip_interfaces(json.dumps([row])))
+    assert interface.host_ip_cidrs == ["192.168.49.1/24"]
+    assert interface.ip_cidr == "192.168.49.1/24"

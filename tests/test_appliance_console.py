@@ -4600,6 +4600,8 @@ def test_console_static_observation_matches_complete_native_candidates(client, m
         target = db.get(appliance_console.PhysicalInterface, identity)
         assert target.host_ip_cidr == ("192.0.2.62/24" if invalid else "192.0.2.63/24")
         assert target.host_ipv6_cidr == ("2001:db8::62/64" if invalid else "2001:db8::63/64")
+        if not invalid:
+            assert target.host_ip_cidrs == ["192.0.2.62/24", "192.0.2.63/24"]
         assert target.ipv4_method == "static" and target.ip_cidr == "192.0.2.63/24"
         assert target.ipv6_cidr == "2001:db8::63/64"
 

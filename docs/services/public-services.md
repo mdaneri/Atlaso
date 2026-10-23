@@ -27,6 +27,10 @@ management root. App-owned public pages use the public root, including `/ui/publ
 `/ui/public/ca/requests`, and `/ui/public/terminal`. Public pages continue to use the compact Public Services shell and
 list only services eligible on the called host/interface.
 
+Managed reverse proxies may also be listed as service cards when **Publish in Public Services** is selected. Their
+exact-host listeners remain independently addressable by hostname even when the card is hidden. See the
+[reverse-proxy guide](reverse-proxies.md) for listener, path, and publication behavior.
+
 The prefixes organize browser presentation; they do not replace authentication, authorization, CSRF, session, listener,
 Nginx, or Firewall enforcement. A request for `/ui/management/login` on a public-only listener returns not found and does
 not reveal the management shell or login behavior. A management listener likewise does not publish `/ui/public`.

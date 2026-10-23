@@ -136,10 +136,14 @@ class NativeNginxHandoffTests(unittest.TestCase):
                       patch.object(helper, "_run", run),
                       patch.object(helper, "_nginx_test_command", lambda: real_run(
                           [NGINX, "-t", "-c", str(main)], capture_output=True, text=True))):
-                    # The original bug: syntax and signal both succeed while bind fails.
+                    # Demonstrate the raw nginx failure that verified reloads guard:
+                    # syntax and signal succeed while the accepting workers stay old.
                     previous = helper._nginx_active_workers()
-                    self.assertEqual(helper._install_nginx_site(
-                        management, site(f"127.0.0.2:{port}", "unactivated")), 0)
+                    management.write_text(site(f"127.0.0.2:{port}", "unactivated"))
+                    syntax = real_run([NGINX, "-t", "-c", str(main)], capture_output=True, text=True)
+                    self.assertEqual(syntax.returncode, 0, syntax.stderr)
+                    signaled = real_run([NGINX, "-s", "reload", "-c", str(main)], capture_output=True, text=True)
+                    self.assertEqual(signaled.returncode, 0, signaled.stderr)
                     wait_for(lambda: "still could not bind" in log.read_text())
                     self.assertEqual(response("127.0.0.2"), "old")
                     self.assertEqual(helper._nginx_active_workers(), previous)

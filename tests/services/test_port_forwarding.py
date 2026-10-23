@@ -620,22 +620,27 @@ def test_overlap_is_global_to_listener_not_source_or_interface_name():
 
 
 @pytest.mark.parametrize("family", [4, 6])
+@pytest.mark.parametrize("owner", ["kms", "pxe"])
 @pytest.mark.parametrize("address,blocked", [
     ("192.0.2.1", {4}), ("2001:0db8:2:0:0:0:0:1", {6}),
     ("192.0.2.1,2001:db8:2::1", {4, 6}), ("192.0.2.9", set()),
     ("0.0.0.0", {4}), ("::", {4, 6}), ("", {4, 6}),
 ])
-def test_service_claims_respect_explicit_listener_address(family, address, blocked):
+def test_service_claims_respect_explicit_listener_address(family, owner, address, blocked):
     """Configured custom service ports reserve only their actual address boundary.
 
     Args:
         family: Forwarding listener family on a dual-stack interface.
+        owner: Native service or address-bound nginx Network Boot publication.
         address: Explicit, multiple, or wildcard service binding.
         blocked: Families that overlap this service binding.
     """
     service = KmsSettings(enabled=True, listen_interface="eth1", listen_address=address, port=12000)
     state = context()
-    state["claims"] = listener_claims_for_settings([service], {"enabled": False})
+    state["claims"] = listener_claims_for_settings(
+        [service] if owner == "kms" else [],
+        {"enabled": owner == "pxe", "listen_interface": "eth1", "listen_address": address, "http_port": 12000},
+    )
     changes = {} if family == 4 else dict(ip_family=6, listener_address="2001:db8:2::1", target_address="2001:db8:3::10")
     errors = validate_port_forward(PortForward(**payload(**changes)), [], state)
     assert bool(errors) is (family in blocked)

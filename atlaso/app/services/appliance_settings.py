@@ -109,7 +109,8 @@ def web_terminal_interface_options(
         role = normalize_interface_role(interface.role)
         mode = normalize_interface_mode(interface.mode)
         ipv4_cidr = interface.host_ip_cidr if normalize_ipv4_method(interface.ipv4_method) == "dhcp" else interface.ip_cidr
-        addresses = _interface_addresses(ipv4_cidr, interface.ipv6_cidr)
+        addresses = _interface_addresses(ipv4_cidr, interface.ipv6_cidr,
+                                         *(interface.host_ip_cidrs or []), *physical_ipv6_cidrs(interface))
         if interface.oper_state == "missing" or interface.admin_state != "up" or role == "unused" or mode == "trunk" or not addresses:
             continue
         options.append(
@@ -196,15 +197,16 @@ def web_terminal_listener_interfaces(
     ]
 
 
-def _interface_addresses(ipv4_cidr: str | None, ipv6_cidr: str | None) -> list[str]:
+def _interface_addresses(ipv4_cidr: str | None, ipv6_cidr: str | None, *observed_cidrs: str) -> list[str]:
     """Return interface addresses.
 
     Args:
         ipv4_cidr: Ipv4 cidr consumed by interface addresses.
         ipv6_cidr: Ipv6 cidr consumed by interface addresses.
+        *observed_cidrs: Complete native address observations for interface-wide listeners.
     """
     result: list[str] = []
-    for value in (ipv4_cidr, ipv6_cidr):
+    for value in (ipv4_cidr, ipv6_cidr, *observed_cidrs):
         if not value:
             continue
         try:

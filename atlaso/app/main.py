@@ -113,10 +113,20 @@ def refresh_startup_host_inventory(db: Session, *, environment: str) -> None:
         # Legacy baselines need the persisted pre-reboot address to prove
         # ownership before host discovery replaces that observation.
         remember_applied_service_dns_records(db)
-        sync_host_physical_interfaces(db)
+        from atlaso.app.services.reverse_proxies import (
+            InventoryProxyConflict,
+            ServiceDnsAliasConflict,
+            ServiceListenerConflict,
+        )
         from atlaso.app.ui import refresh_interface_service_dns_aliases
 
-        refresh_interface_service_dns_aliases(db, actor=None)
+        try:
+            sync_host_physical_interfaces(db)
+            refresh_interface_service_dns_aliases(db, actor=None)
+        except (InventoryProxyConflict, ServiceDnsAliasConflict, ServiceListenerConflict):
+            REQUEST_LOGGER.warning(
+                "Host inventory/service refresh deferred: a saved reverse proxy conflicts with observed state."
+            )
         db.commit()
 
 

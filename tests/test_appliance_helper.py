@@ -23,13 +23,19 @@ import pytest
 HELPER_PATH = Path(__file__).resolve().parents[1] / "scripts" / "appliance" / "atlaso-helper"
 
 
-def load_helper_module():
-    """Return helper module."""
+def load_helper_module(*, observe_nginx=False):
+    """Load the helper without observing the test host's nginx process tree.
+
+    Args:
+        observe_nginx: Retain the real observer for tests of its admitted inputs.
+    """
     loader = importlib.machinery.SourceFileLoader("atlaso_helper", str(HELPER_PATH))
     spec = importlib.util.spec_from_loader("atlaso_helper", loader)
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
+    if not observe_nginx:
+        module._nginx_worker_generation = lambda: None
     return module
 
 
@@ -3027,12 +3033,14 @@ def test_management_handoff_wildcard_migration_preserves_public_ownership(
     assert public.read_text(encoding="utf-8") == public_text
 
 
-def test_management_handoff_wildcard_validation_failure_restores_sites(monkeypatch, tmp_path):
+@pytest.mark.parametrize("failing_stage", [1, 2])
+def test_management_handoff_wildcard_validation_failure_restores_sites(monkeypatch, tmp_path, failing_stage):
     """Failed isolation validates the candidate and restores the exact old site.
 
     Args:
         monkeypatch: Isolate installation dependencies without bypassing the installer.
         tmp_path: Disposable nginx runtime files.
+        failing_stage: Wildcard upgrade or address-scoped validation failure.
     """
     helper = load_helper_module()
     marker = "# Managed by Atlaso. Local changes may be overwritten.\n"
@@ -3053,27 +3061,34 @@ def test_management_handoff_wildcard_validation_failure_restores_sites(monkeypat
     monkeypatch.setattr(helper, "_install_nginx_include", lambda: None)
     monkeypatch.setattr(helper, "_nginx_site_conflict", lambda *_args: None)
     monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
-    monkeypatch.setattr(helper, "_reload_nginx", lambda **_kwargs: pytest.fail("invalid site reloaded"))
+    monkeypatch.setattr(helper, "_reload_nginx", lambda **_kwargs: reloads.append(len(validated)) or 0)
     validated = []
+    reloads = []
 
     def validate():
         """Observe the staged configuration before returning a failed nginx test."""
         validated.append(management.read_text(encoding="utf-8"))
-        return subprocess.CompletedProcess(["nginx", "-t"], 1, "", "configuration test failed\n")
+        failed = len(validated) == failing_stage
+        return subprocess.CompletedProcess(
+            ["nginx", "-t"], int(failed), "", "configuration test failed\n" if failed else "",
+        )
 
     monkeypatch.setattr(helper, "_nginx_test_command", validate)
-    with pytest.raises(ValueError, match="previous wildcard nginx socket could not be prepared"):
+    error = "previous wildcard nginx socket could not be prepared" if failing_stage == 1 else "previous management nginx listener could not be address scoped"
+    with pytest.raises(ValueError, match=error):
         helper._scope_management_handoff_old_listener({
             "previous_https_enabled": True,
             "previous_management_addresses": ["192.0.2.10"],
             "snapshots": [{"path": str(public), "backup": str(backup)}],
         })
-    assert len(validated) == 1
-    assert "listen 192.0.2.10:443 ssl default_server;" not in validated[0]
+    assert len(validated) == failing_stage
+    assert reloads == ([] if failing_stage == 1 else [1])
     assert "listen 443 ssl default_server reuseport;" in validated[0]
-    assert "listen [::]:443 ssl default_server reuseport;" in validated[0]
-    assert "listen 127.0.0.1:443 ssl default_server;" not in validated[0]
-    assert management.read_text(encoding="utf-8") == original
+    if failing_stage == 2:
+        assert "listen 192.0.2.10:443 ssl default_server reuseport;" not in validated[1]
+        assert "listen 127.0.0.1:443 ssl default_server reuseport;" in validated[1]
+    expected = original if failing_stage == 1 else original.replace("default_server;", "default_server reuseport;")
+    assert management.read_text(encoding="utf-8") == expected
     assert public.read_text(encoding="utf-8") == public_text
 
 
@@ -3111,6 +3126,62 @@ def test_management_handoff_scopes_old_http_before_new_address_activation(monkey
     assert "listen [2001:db8::10]:80 default_server reuseport;" in installed[1][0]
     assert "listen 80 default_server;" not in installed[1][0]
     assert "listen [::]:80 default_server;" not in installed[1][0]
+
+
+@pytest.mark.parametrize("https_enabled", [False, True])
+def test_management_handoff_scopes_canonical_ipv4_only_site(monkeypatch, tmp_path, https_enabled):
+    """Accept native IPv4-only listeners without inventing IPv6 exposure.
+
+    Args:
+        monkeypatch: Isolated managed site and installer replacements.
+        tmp_path: Owned disposable configuration root.
+        https_enabled: Whether the canonical site also serves TLS.
+    """
+    helper = load_helper_module()
+    site = tmp_path / "management.conf"
+    site.write_text("# Managed by Atlaso. Local changes may be overwritten.\n"
+                    "server {\n  listen 80 default_server;\n}\n" +
+                    ("server {\n  listen 443 ssl default_server;\n}\n" if https_enabled else ""), encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+    installed = []
+    monkeypatch.setattr(helper, "_write_management_handoff_state", lambda *_args: None)
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda _path, text, **kwargs: installed.append((text, kwargs)) or 0)
+    helper._scope_management_handoff_old_listener({"previous_https_enabled": https_enabled,
+                                                 "previous_management_addresses": ["192.0.2.10"]})
+    assert len(installed) == 2
+    assert all(kwargs == {"verify_activation": True} for _text, kwargs in installed)
+    assert "default_server reuseport;" in installed[0][0]
+    assert "listen 192.0.2.10:80 default_server reuseport;" in installed[1][0]
+    assert "[::]" not in installed[1][0]
+    if https_enabled:
+        assert "listen 192.0.2.10:443 ssl default_server reuseport;" in installed[1][0]
+
+
+
+@pytest.mark.parametrize("addresses,tls_lines", [
+    (["192.0.2.10", "2001:db8::10"], "  listen 443 ssl default_server;\n"),
+    (["192.0.2.10"], ""),
+    (["192.0.2.10"], "  listen 80 default_server;\n"),
+])
+def test_management_handoff_rejects_incomplete_ipv4_only_inventory(monkeypatch, tmp_path, addresses, tls_lines):
+    """Require every previous family and protocol without duplicate wildcards.
+
+    Args:
+        monkeypatch: Isolated configuration path replacement.
+        tmp_path: Owned disposable configuration root.
+        addresses: Previously reachable management addresses.
+        tls_lines: Missing, valid or duplicated candidate wildcard lines.
+    """
+    helper = load_helper_module()
+    site = tmp_path / "management.conf"
+    site.write_text("# Managed by Atlaso. Local changes may be overwritten.\n"
+                    "server {\n  listen 80 default_server;\n" + tls_lines + "}\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_MANAGEMENT_SITE_PATH", site)
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda *_args: pytest.fail("Invalid inventory reached publication"))
+    expected_error = "listener is not canonical" if tls_lines == "  listen 80 default_server;\n" else "listener inventory is incomplete"
+    with pytest.raises(ValueError, match=expected_error):
+        helper._scope_management_handoff_old_listener({"previous_https_enabled": True,
+                                                     "previous_management_addresses": addresses})
 
 
 @pytest.mark.parametrize("http_port,https_port", [(80, 443), (8080, 8443)])

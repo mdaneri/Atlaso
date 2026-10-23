@@ -1,0 +1,437 @@
+"""Verify the upstream transport refuses unsafe destinations and TLS peers."""
+
+import asyncio
+import errno
+import hashlib
+import json
+import socket
+import ssl
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock
+
+import pytest
+
+from atlaso.app.services import reverse_proxy_transport as transport
+from atlaso.app.services.reverse_proxy_observation import MAX_OBSERVATION_AGE
+
+
+def route(**changes):
+    """Return one bounded transport request without credentials.
+
+    Args:
+        **changes: Fixture input for route.
+    """
+    return {"socket_id": "1-1", "probe_host": "portal.example.test", "probe_path": "/app/",
+            "upstream_scheme": "https", "upstream_host": "app.example.test",
+            "upstream_port": 443, "trust_mode": "fingerprint", "fingerprint": hashlib.sha256(b"leaf").hexdigest(),
+            "connect_timeout": 5, "read_timeout": 60, "send_timeout": 60, **changes}
+
+
+@pytest.mark.parametrize("address", ["127.0.0.1", "::1", "169.254.169.254", "fe80::1", "224.0.0.1", "0.0.0.0", "::", "::ffff:192.0.2.1"])
+def test_special_destinations_are_refused(address):
+    """DNS cannot bypass special-address restrictions.
+
+    Args:
+        address: Fixture input for test special destinations are refused.
+    """
+    assert not transport.safe_destination(address, set())
+
+
+def test_actual_peer_pin_and_default_ca_verification():
+    """Pin the established peer, while retaining normal trust by default."""
+    writer = Mock()
+    writer.get_extra_info.return_value.getpeercert.return_value = b"leaf"
+    transport.verify_peer(route(), writer)
+    writer.get_extra_info.assert_called_once_with("ssl_object")
+    writer.get_extra_info.return_value.getpeercert.return_value = b"different leaf"
+    with pytest.raises(ssl.SSLCertVerificationError):
+        transport.verify_peer(route(), writer)
+    trusted = transport.tls_context(route(trust_mode="trusted_ca", fingerprint=""))
+    assert trusted.check_hostname and trusted.verify_mode == ssl.CERT_REQUIRED
+
+
+@pytest.mark.asyncio
+async def test_mixed_dns_answers_refused_before_connect(monkeypatch):
+    """Reject a DNS answer set containing any appliance address.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
+    monkeypatch.setattr(transport, "native_addresses", lambda: {"192.0.2.10"})
+    resolve = AsyncMock(return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", (value, 443))
+                                     for value in ["192.0.2.20", "192.0.2.10"]])
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", resolve)
+    connect = AsyncMock()
+    monkeypatch.setattr(asyncio, "open_connection", connect)
+    with pytest.raises(OSError, match="excluded"):
+        await transport.open_upstream(route(), set())
+    connect.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pin_mismatch_closes_same_connection_before_bytes(monkeypatch):
+    """Reject a wrong certificate on the actual stream without writing a request.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
+    monkeypatch.setattr(transport, "native_addresses", lambda: {"192.0.2.10"})
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", AsyncMock(return_value=[
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.2.20", 443))]))
+    writer = Mock()
+    writer.get_extra_info.return_value.getpeercert.return_value = b"wrong"
+    connect = AsyncMock(return_value=(Mock(), writer))
+    monkeypatch.setattr(asyncio, "open_connection", connect)
+    with pytest.raises(ssl.SSLCertVerificationError):
+        await transport.open_upstream(route(), set())
+    assert connect.await_args.args[0] == "192.0.2.20"
+    assert connect.await_args.kwargs["server_hostname"] == "app.example.test"
+    writer.write.assert_not_called()
+    writer.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_native_observation_failure_refuses_outbound(monkeypatch):
+    """Unknown local-address state cannot silently relax the exclusion set.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
+    def unavailable():
+        raise OSError("no native inventory")
+
+    monkeypatch.setattr(transport, "native_addresses", unavailable)
+    connect = AsyncMock()
+    monkeypatch.setattr(asyncio, "open_connection", connect)
+    with pytest.raises(OSError):
+        await transport.open_upstream(route(), set())
+    connect.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_health_cache_sampling_is_periodic_atomic_and_bounded(tmp_path, monkeypatch):
+    """Bound concurrent probes and publish each batch before starting the next.
+
+    Args:
+        tmp_path: Isolated filesystem root supplied by pytest.
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
+    limit = transport.HEALTH_PROBE_CONCURRENCY
+    routes = [route(socket_id=f"1-{index}", trust_mode="trusted_ca", fingerprint="") for index in range(1, limit + 3)]
+    manifest = {"generation": "a" * 64, "routes": routes, "forbidden_addresses": ["192.0.2.10"]}
+    release = asyncio.Event()
+    batch_started = asyncio.Event()
+    active = 0
+    peak = 0
+    calls = 0
+
+    async def fake_probe(selected, _forbidden):
+        """Simulate fake probe for the focused fixture.
+
+        Args:
+            selected: Fixture input for fake probe.
+            _forbidden: Fixture input for fake probe.
+        """
+        nonlocal active, peak, calls
+        if selected["socket_id"] == routes[limit]["socket_id"]:
+            published = json.loads((tmp_path / "health.json").read_text(encoding="utf-8"))
+            assert len(published["health"]) == limit
+        calls += 1
+        active += 1
+        peak = max(peak, active)
+        if active == limit:
+            batch_started.set()
+        await release.wait()
+        active -= 1
+        return {"status": "healthy", "last_success": None, "failure_class": None,
+                "http_status": 204, "tls_status": "trusted_ca"}
+
+    class StopAfterPublish(Exception):
+        pass
+
+    async def stop_after_interval(seconds):
+        """Simulate stop after interval for the focused fixture.
+
+        Args:
+            seconds: Requested pause between probe cycles.
+        """
+        assert seconds == 30
+        raise StopAfterPublish
+
+    monkeypatch.setattr(transport, "probe", fake_probe)
+    monkeypatch.setattr(transport.asyncio, "sleep", stop_after_interval)
+    task = asyncio.create_task(transport.observe_health(manifest, tmp_path))
+    await asyncio.wait_for(batch_started.wait(), timeout=2)
+    assert calls == limit
+    release.set()
+    with pytest.raises(StopAfterPublish):
+        await asyncio.wait_for(task, timeout=2)
+
+    cache_path = tmp_path / "health.json"
+    cache = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert peak == limit
+    assert calls == len(routes)
+    assert not (tmp_path / "health.pending").exists()
+    assert cache["generation"] == manifest["generation"]
+    assert set(cache["health"]) == {item["socket_id"] for item in routes}
+    assert len(cache_path.read_bytes()) < 262_144
+    assert all(set(item) == {"status", "last_success", "failure_class", "http_status", "tls_status", "observed_at"}
+               for item in cache["health"].values())
+
+
+@pytest.mark.asyncio
+async def test_maximum_outage_cycle_keeps_every_route_fresh(tmp_path, monkeypatch):
+    """Simulate full-deadline batches at capacity without waiting on wall time.
+
+    Args:
+        tmp_path: Isolated filesystem root supplied by pytest.
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
+    clock = datetime(2026, 10, 14, tzinfo=timezone.utc)
+    routes = [route(socket_id=f"1-{index}") for index in range(1, transport.MAX_ROUTES + 1)]
+    manifest = {"generation": "a" * 64, "routes": routes, "forbidden_addresses": []}
+    first_samples = {}
+    pauses = 0
+    gather = asyncio.gather
+
+    class Clock:
+        @staticmethod
+        def now(_zone):
+            """Return the simulated observation time.
+
+            Args:
+                _zone: Requested time zone, already represented by the clock.
+            """
+            return clock
+
+    class StopAfterTwoCycles(Exception):
+        pass
+
+    async def timed_batch(*tasks):
+        """Advance a full batch deadline before collecting probe results.
+
+        Args:
+            *tasks: Probe coroutines submitted in one bounded batch.
+        """
+        nonlocal clock
+        assert len(tasks) <= 64
+        clock += timedelta(seconds=10)
+        return await gather(*tasks)
+
+    async def unavailable(_route, _forbidden):
+        """Model an upstream that consumes its deadline without a response.
+
+        Args:
+            _route: Candidate upstream route under observation.
+            _forbidden: Excluded appliance addresses supplied to the probe.
+        """
+        raise TimeoutError
+
+    async def pause(seconds):
+        """Check the published cycle and advance the simulated pause.
+
+        Args:
+            seconds: Requested delay between full probe cycles.
+        """
+        nonlocal clock, pauses
+        cache = json.loads((tmp_path / "health.json").read_text(encoding="utf-8"))
+        assert len(cache["health"]) == 256
+        for key, item in cache["health"].items():
+            sampled = datetime.fromisoformat(item["observed_at"])
+            assert item["status"] == "degraded" and item["failure_class"] == "unavailable"
+            assert clock - sampled + timedelta(seconds=seconds) < MAX_OBSERVATION_AGE
+            if pauses:
+                assert sampled - first_samples[key] == timedelta(seconds=70)
+            else:
+                first_samples[key] = sampled
+        pauses += 1
+        if pauses == 2:
+            raise StopAfterTwoCycles
+        clock += timedelta(seconds=seconds)
+
+    monkeypatch.setattr(transport, "datetime", Clock)
+    monkeypatch.setattr(transport, "probe", unavailable)
+    monkeypatch.setattr(transport.asyncio, "gather", timed_batch)
+    monkeypatch.setattr(transport.asyncio, "sleep", pause)
+    with pytest.raises(StopAfterTwoCycles):
+        await transport.observe_health(manifest, tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_probe_uses_public_host_and_route_aware_path_without_retaining_body(monkeypatch):
+    """Health requests target the published virtual host and only the bounded HEAD path.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
+    reader = Mock()
+    reader.readuntil = AsyncMock(return_value=b"HTTP/1.1 204 No Content\r\n")
+    writer = Mock()
+    writer.drain = AsyncMock()
+    monkeypatch.setattr(transport, "open_upstream", AsyncMock(return_value=(reader, writer)))
+
+    result = await transport.probe(route(probe_path="/app/a%20b"), set())
+
+    assert writer.write.call_args.args[0] == (
+        b"HEAD /app/a%20b HTTP/1.1\r\nHost: portal.example.test\r\nConnection: close\r\n\r\n"
+    )
+    assert result["status"] == "healthy"
+    assert result["http_status"] == 204
+    assert "body" not in result
+    writer.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_probe_timeout_is_reported_as_bounded_unavailable_health(monkeypatch):
+    """A timed-out HEAD observation degrades status without surfacing exception data.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
+    monkeypatch.setattr(transport, "open_upstream", AsyncMock(side_effect=TimeoutError("private detail")))
+
+    result = await transport.probe(route(), set())
+
+    assert result == {"status": "degraded", "last_success": None,
+                      "failure_class": "unavailable", "http_status": None,
+                      "tls_status": "not_probed"}
+
+
+def test_probe_path_bound_still_rejects_oversized_untrusted_manifest():
+    """The worst-case request allowance remains an independently enforced bound."""
+    manifest = {"schema": 1, "routes": [route(probe_path="/" + "a" * transport.MAX_PROBE_PATH_LENGTH)],
+                "forbidden_addresses": []}
+    manifest["generation"] = transport.manifest_generation(manifest)
+    with pytest.raises(ValueError, match="bounded public route"):
+        transport.validate_manifest(manifest)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_stage", ["open", "write", "replace"])
+async def test_health_cache_publication_recovers_after_storage_errors(tmp_path, monkeypatch, failure_stage):
+    """Retry failed publications without losing sampling or replacing valid cache bytes.
+
+    Args:
+        tmp_path: Isolated filesystem root supplied by pytest.
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+        failure_stage: Atomic publication operation that temporarily fails.
+    """
+    manifest = {"generation": "a" * 64, "routes": [route()], "forbidden_addresses": []}
+    cache_path = tmp_path / "health.json"
+    cache_path.write_text('{"previous":"atomic"}', encoding="utf-8")
+    original = cache_path.read_bytes()
+    samples = 0
+    pauses = 0
+    real_open, real_dump, real_replace = transport.os.open, transport.json.dump, Path.replace
+
+    async def sample(_route, _forbidden):
+        """Return successive probe results while cache storage is unavailable.
+
+        Args:
+            _route: Selected route under observation.
+            _forbidden: Appliance addresses excluded from probes.
+        """
+        nonlocal samples
+        samples += 1
+        return {"status": "healthy" if samples == 1 else "degraded",
+                "last_success": "2026-10-17T16:34:00+00:00" if samples == 1 else None,
+                "failure_class": None if samples == 1 else "unavailable",
+                "http_status": 204 if samples == 1 else None, "tls_status": "trusted_ca"}
+
+    def fail_open(*args, **kwargs):
+        """Inject a temporary open failure before obtaining a descriptor.
+
+        Args:
+            *args: Arguments forwarded to the real filesystem operation.
+            **kwargs: Keyword arguments forwarded to the real operation.
+        """
+        if samples <= 2:
+            raise OSError(errno.ENOSPC, "storage full")
+        return real_open(*args, **kwargs)
+
+    def fail_write(*args, **kwargs):
+        """Inject a partial write failure while the descriptor is owned by its stream.
+
+        Args:
+            *args: Payload and stream passed to the serializer.
+            **kwargs: Serializer options.
+        """
+        if samples <= 2:
+            args[1].write('{"partial":')
+            raise OSError(errno.ENOSPC, "storage full")
+        return real_dump(*args, **kwargs)
+
+    def fail_replace(source, target):
+        """Inject a rename failure without modifying the published cache.
+
+        Args:
+            source: Pending publication path.
+            target: Published observation path.
+        """
+        if samples <= 2:
+            raise OSError(errno.EACCES, "publication unavailable")
+        return real_replace(source, target)
+
+    async def pause(seconds):
+        """Require normal pacing and stop by cancellation after storage recovers.
+
+        Args:
+            seconds: Requested pause between sampling cycles.
+        """
+        nonlocal pauses
+        pauses += 1
+        assert seconds == transport.HEALTH_CYCLE_PAUSE
+        assert samples == pauses
+        if pauses <= 2:
+            assert cache_path.read_bytes() == original
+            return
+        recovered = json.loads(cache_path.read_text(encoding="utf-8"))
+        observation = recovered["health"]["1-1"]
+        assert recovered["generation"] == manifest["generation"]
+        assert observation["last_success"] == "2026-10-17T16:34:00+00:00"
+        assert observation["status"] == "degraded"
+        assert observation["failure_class"] == "unavailable"
+        assert observation["observed_at"]
+        assert not (tmp_path / "health.pending").exists()
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(transport, "probe", sample)
+    monkeypatch.setattr(transport.asyncio, "sleep", pause)
+    if failure_stage == "open":
+        monkeypatch.setattr(transport.os, "open", fail_open)
+    elif failure_stage == "write":
+        monkeypatch.setattr(transport.json, "dump", fail_write)
+    else:
+        monkeypatch.setattr(Path, "replace", fail_replace)
+    with pytest.raises(asyncio.CancelledError):
+        await transport.observe_health(manifest, tmp_path)
+    assert samples == pauses == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("outcome", "failure"), [("connect", "unavailable"), ("timeout", "unavailable"),
+                                                ("invalid", "invalid_http"), ("server", "upstream_http"),
+                                                ("success", "insecure_verification")])
+async def test_insecure_probe_retains_observed_failures(monkeypatch, outcome, failure):
+    """Preserve connectivity/HTTP evidence alongside acknowledged insecure policy.
+
+    Args:
+        monkeypatch: Replace outbound streams without making network connections.
+        outcome: Simulated connectivity or HTTP result.
+        failure: Expected bounded failure evidence.
+    """
+    reader, writer = Mock(), Mock()
+    writer.drain = AsyncMock()
+    reader.readuntil = AsyncMock(return_value={"invalid": b"invalid\r\n", "server": b"HTTP/1.1 503 Down\r\n"}.get(outcome, b"HTTP/1.1 204 OK\r\n"))
+    opening = AsyncMock(return_value=(reader, writer))
+    if outcome in {"connect", "timeout"}:
+        opening.side_effect = OSError("unavailable") if outcome == "connect" else TimeoutError()
+    monkeypatch.setattr(transport, "open_upstream", opening)
+    observed = await transport.probe(route(trust_mode="insecure", fingerprint=""), set())
+    assert observed["status"] == "degraded"
+    assert observed["failure_class"] == failure
+    assert observed["http_status"] == (503 if outcome == "server" else 204 if outcome == "success" else None)
+    assert bool(observed["last_success"]) is (outcome == "success")
+    if outcome not in {"connect", "timeout"}:
+        writer.close.assert_called_once()

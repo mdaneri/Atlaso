@@ -31,6 +31,10 @@ This verified appliance view provides visual orientation before you begin.
 
 Credentials must remain encrypted or transient and must not appear in jobs, audits, logs, or screenshots.
 
+Automatic interface-address refresh validates the backup listener together with other service sockets before saving.
+If a DHCP/SLAAC observation would collide with an enabled reverse proxy, Atlaso retains the prior backup binding;
+resolve the conflicting listener intent before applying again.
+
 ## Verify and recover
 
 Treat a successful task plus a readable backup artifact as completion. Record the target, timestamp, task identifier,

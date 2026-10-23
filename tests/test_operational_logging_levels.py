@@ -430,7 +430,8 @@ def test_oversized_record_is_bounded_after_redaction_consumes_full_source(loggin
     assert "synthetic-long-key-fragment" not in "\n".join(syslog_handler.messages)
 
 
-@pytest.mark.parametrize("group,action", [("network", "status"), ("kms", "listener-status")])
+@pytest.mark.parametrize("group,action", [("network", "status"), ("kms", "listener-status"),
+                                         ("public-services", "reverse-proxy-status")])
 def test_helper_observation_transitions_are_quiet_and_independent(caplog, monkeypatch, group, action):
     """Suppress repeated observations without confusing independent source actions.
 
@@ -448,7 +449,8 @@ def test_helper_observation_transitions_are_quiet_and_independent(caplog, monkey
     failed = system.AdapterResult(command=["ignored"], dry_run=False, returncode=1,
                                   stderr="permission denied password=synthetic-secret")
     system._log_helper_outcome(group, action, healthy)
-    for other_group, other_action in (("logs", "page"), ("network", "address-status"), ("appliance-update", "status-inspect")):
+    for other_group, other_action in (("logs", "page"), ("network", "address-status"),
+                                       ("appliance-update", "status-inspect"), ("public-services", "reverse-proxy-status")):
         for _ in range(3):
             system._log_helper_outcome(other_group, other_action, healthy)
     assert not caplog.records

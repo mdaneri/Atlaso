@@ -179,6 +179,22 @@ def _eligible_factory_hostnames(
     return hostnames
 
 
+def projected_factory_service_hostname(label: str, hostname: str, appliance_fqdn: str) -> str:
+    """Return the hostname factory reconciliation will retain or migrate.
+
+    Args:
+        label: Canonical factory service label.
+        hostname: Archived service hostname before reconciliation.
+        appliance_fqdn: Archived appliance identity defining the target domain.
+    """
+    current = normalize_fqdn(hostname)
+    if not appliance_domain_from_fqdn(appliance_fqdn):
+        return current
+    if current in _eligible_factory_hostnames(label, previous_appliance_fqdn=None):
+        return factory_service_hostname(label, appliance_fqdn)
+    return current
+
+
 def _renamed_service_record_hostname(hostname: str, old_hostname: str, new_hostname: str) -> str | None:
     """Return the migrated service or generated-alias hostname when eligible.
 

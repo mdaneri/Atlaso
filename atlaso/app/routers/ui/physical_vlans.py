@@ -32,6 +32,10 @@ from atlaso.app.services.physical_interfaces import (
     PhysicalInterfaceMutationAudit,
     mutate_physical_interface_desired_state,
 )
+from atlaso.app.services.reverse_proxies import (
+    validate_interface_proxy_bindings,
+    validate_service_listener_sockets,
+)
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
 Endpoint = Callable[..., Any]
@@ -381,6 +385,9 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
         )
         db.add(vlan)
         try:
+            db.flush()
+            validate_interface_proxy_bindings(db, {vlan.name})
+            validate_service_listener_sockets(db)
             db.commit()
         except IntegrityError:
             db.rollback()
@@ -393,6 +400,19 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
                     "identity": identity,
                     **dependencies.network_context(db),
                     "form_error": f"VLAN {vlan.name} already exists.",
+                },
+            )
+        except ValueError as exc:
+            db.rollback()
+            return dependencies.grid_error_response(
+                request,
+                detail=str(exc),
+                status_code=422,
+                template_name="vlan_interfaces.html",
+                context={
+                    "identity": identity,
+                    **dependencies.network_context(db),
+                    "form_error": str(exc),
                 },
             )
         record_audit(

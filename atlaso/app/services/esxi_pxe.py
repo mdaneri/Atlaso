@@ -956,6 +956,10 @@ def save_esxi_pxe_boot_settings(
     Returns:
         The save esxi pxe boot settings result.
     """
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+    from atlaso.app.services.reverse_proxies import validate_service_listener_sockets
+
+    acquire_network_objects_write_lock(db)
     normalized_scopes = _normalize_dhcp_scope_selections(db, dhcp_scope_ids if dhcp_scope_ids is not None else [dhcp_scope_id] if dhcp_scope_id else [])
     if normalized_scopes:
         listen_interface = "\n".join(_ordered_unique(scope.interface_name.strip() for scope in normalized_scopes if scope.interface_name.strip()))
@@ -986,6 +990,7 @@ def save_esxi_pxe_boot_settings(
         else:
             row.value = value
     db.flush()
+    validate_service_listener_sockets(db)
     return esxi_pxe_boot_settings(db)
 
 
@@ -1302,6 +1307,10 @@ def sync_esxi_pxe_host_network_records(db: Session, host: EsxiPxeHost, boot_sett
     Raises:
         ValueError: If an input value is invalid.
     """
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+    from atlaso.app.services.reverse_proxy_publication import proxy_owns_dns_hostname
+
+    acquire_network_objects_write_lock(db)
     if host.id is None:
         db.flush()
     if host.id is None:
@@ -1336,6 +1345,15 @@ def sync_esxi_pxe_host_network_records(db: Session, host: EsxiPxeHost, boot_sett
         if reservation.mac_address.strip().lower() == mac_address and not _is_managed_by_esxi_host(reservation, host.id):
             raise ValueError(f"DHCP reservation already exists for MAC address {host.mac_address}.")
 
+    # Expand the scope-relative name without changing existing owned rows first.
+    candidate = DhcpReservation(hostname=host.hostname.strip(), ip_address=str(reserved_ip))
+    record_values = reservation_dns_record(candidate, selected_scopes)
+    if record_values is None:
+        raise ValueError("ESXi PXE host IP address must map to a selected DHCP zone DNS domain.")
+    hostname, record_type, address = record_values
+    if proxy_owns_dns_hostname(db, hostname):
+        raise ValueError("DNS hostname already exists in Reverse Proxies. Edit it in Reverse Proxies.")
+
     stale_reservations = [
         reservation
         for reservation in db.execute(select(DhcpReservation).where(DhcpReservation.description == marker)).scalars().all()
@@ -1356,10 +1374,6 @@ def sync_esxi_pxe_host_network_records(db: Session, host: EsxiPxeHost, boot_sett
     db.add(reservation)
     db.flush()
 
-    record_values = reservation_dns_record(reservation, selected_scopes)
-    if record_values is None:
-        raise ValueError("ESXi PXE host IP address must map to a selected DHCP zone DNS domain.")
-    hostname, record_type, address = record_values
     reservation.hostname = hostname
 
     for record in db.execute(select(DnsRecord).where(DnsRecord.hostname == hostname, DnsRecord.record_type == record_type)).scalars().all():

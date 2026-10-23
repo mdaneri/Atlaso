@@ -1,0 +1,365 @@
+"""Validate bounded cached observations for managed reverse proxies."""
+
+import json
+from copy import deepcopy
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from atlaso.app.adapters.system import AdapterResult
+from atlaso.app.services import reverse_proxy_observation as observation
+
+
+def _desired():
+    """Return one canonical in-memory proxy snapshot."""
+    return [{
+        "id": 1,
+        "name": "Example",
+        "description": "",
+        "hostname": "example.test",
+        "scheme": "https",
+        "port": 8443,
+        "redirect_http": False,
+        "redirect_port": 80,
+        "enabled": True,
+        "public_listing": True,
+        "managed_dns": False,
+        "listeners": [{"interface": "eth1", "address": "192.0.2.10"}],
+        "connect_timeout": 5,
+        "read_timeout": 60,
+        "send_timeout": 60,
+        "body_limit": 16777216,
+        "routes": [{
+            "id": 2,
+            "position": 0,
+            "path_prefix": "/",
+            "upstream_scheme": "https",
+            "upstream_host": "backend.example.test",
+            "upstream_port": 9443,
+            "path_behavior": "preserve",
+            "trust_mode": "trusted_ca",
+            "fingerprint": "",
+        }],
+    }]
+
+
+def _payload(*, proxies=None, observed_at="2026-10-07T00:00:00+00:00", health=None):
+    """Return a complete helper payload with one body-free status row.
+
+    Args:
+        proxies: Complete bounded proxy desired-state collection.
+        observed_at: UTC completion time of the cached observation.
+        health: Bounded per-route cached health values.
+    """
+    return {
+        "schema": 1,
+        "proxies": _desired() if proxies is None else proxies,
+        "generation": "a" * 64,
+        "health": health if health is not None else {
+            "1-2": {
+                "status": "healthy",
+                "last_success": "2026-10-07T00:00:00+00:00",
+                "failure_class": None,
+                "http_status": 204,
+                "tls_status": "trusted_ca",
+            }
+        },
+        "observed_at": observed_at,
+    }
+
+
+def _configure(monkeypatch, payload, *, dry_run=False, returncode=0):
+    """Replace desired-state and helper boundaries for a focused observation test.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+        payload: Desired-state or cached-observation fixture payload.
+        dry_run: Whether the adapter result represents unexecuted work.
+        returncode: Simulated helper exit status.
+    """
+    observation.invalidate_public_proxy_snapshot()
+    monkeypatch.setattr(observation, "runtime_snapshot", lambda _db: _desired())
+    monkeypatch.setattr(
+        observation.SystemAdapter,
+        "reverse_proxy_status",
+        lambda _self: AdapterResult(command=["atlaso-helper"], dry_run=dry_run,
+                                    stdout=json.dumps(payload), returncode=returncode),
+    )
+
+
+def test_applied_snapshot_projects_cached_healthy_status_without_probing(monkeypatch):
+    """Run test applied snapshot projects cached healthy status without probing for the bounded proxy operation.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    _configure(monkeypatch, _payload())
+
+    result = observation.observe_reverse_proxy_health(object(), now=now)
+
+    assert len(result) == 1
+    assert result[0]["status"] == "healthy"
+    assert result[0]["applied"] is True
+    assert result[0]["pending"] is False
+    assert result[0]["http_status"] == 204
+    assert "body" not in result[0]
+
+
+def test_fresh_batch_does_not_refresh_an_old_route_sample(monkeypatch):
+    """A recently written batch must not restamp a stale successful route.
+
+    Args:
+        monkeypatch: Isolated helper and desired-state boundaries.
+    """
+    payload = _payload(observed_at="2026-10-07T00:02:00+00:00")
+    payload["health"]["1-2"]["observed_at"] = "2026-10-07T00:00:00+00:00"
+    _configure(monkeypatch, payload)
+    result = observation.observe_reverse_proxy_health(object(), now=datetime(2026, 10, 7, 0, 2, tzinfo=timezone.utc))
+    assert result[0]["status"] == "unavailable"
+    assert result[0]["applied"] is True
+    assert result[0]["http_status"] is None
+
+
+def test_changed_snapshot_is_pending_and_does_not_expose_old_health(monkeypatch):
+    """Run test changed snapshot is pending and does not expose old health for the bounded proxy operation.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
+    previous = _desired()
+    previous[0]["name"] = "Old name"
+    _configure(monkeypatch, _payload(proxies=previous))
+
+    result = observation.observe_reverse_proxy_health(object(), now=datetime(2026, 10, 7, tzinfo=timezone.utc))
+
+    assert result[0]["status"] == "pending"
+    assert result[0]["applied"] is False
+    assert result[0]["pending"] is True
+    assert result[0]["http_status"] is None
+
+
+def test_stale_malformed_and_dry_run_snapshots_fail_closed(monkeypatch):
+    """Run test stale malformed and dry run snapshots fail closed for the bounded proxy operation.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    _configure(monkeypatch, _payload(observed_at="2026-10-06T23:58:00+00:00"))
+    stale = observation.observe_reverse_proxy_health(object(), now=now)
+    assert stale[0]["status"] == "unavailable"
+    assert stale[0]["applied"] is False
+
+    _configure(monkeypatch, {"schema": 1, "proxies": [], "generation": "bad", "health": {}, "observed_at": "2026-10-07T00:00:00+00:00"})
+    malformed = observation.observe_reverse_proxy_health(object(), now=now)
+    assert malformed[0]["failure_class"] == "runtime_observer_unavailable"
+
+    _configure(monkeypatch, _payload(), dry_run=True)
+    dry_run = observation.observe_reverse_proxy_health(object(), now=now)
+    assert dry_run[0]["status"] == "unavailable"
+
+
+def test_insecure_upstream_is_always_degraded_even_when_cached_probe_is_healthy(monkeypatch):
+    """Run test insecure upstream is always degraded even when cached probe is healthy for the bounded proxy operation.
+
+    Args:
+        monkeypatch: Scoped dependency replacements supplied by pytest.
+    """
+    desired = _desired()
+    desired[0]["routes"][0]["trust_mode"] = "insecure"
+    desired[0]["routes"][0]["fingerprint"] = ""
+    monkeypatch.setattr(observation, "runtime_snapshot", lambda _db: desired)
+    payload = _payload()
+    payload["proxies"] = desired
+    monkeypatch.setattr(
+        observation.SystemAdapter,
+        "reverse_proxy_status",
+        lambda _self: AdapterResult(command=["atlaso-helper"], dry_run=False, stdout=json.dumps(payload)),
+    )
+
+    result = observation.observe_reverse_proxy_health(object(), now=datetime(2026, 10, 7, tzinfo=timezone.utc))
+
+    assert result[0]["status"] == "degraded"
+    assert result[0]["failure_class"] == "insecure_verification"
+    assert "verification is disabled" in result[0]["warning"]
+
+
+def test_public_snapshot_reads_applied_intent_without_desired_database_state(monkeypatch):
+    """Canonical cached applied intent remains available after desired rows disappear.
+
+    Args:
+        monkeypatch: Scoped replacements for helper and forbidden desired-state reads.
+    """
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    _configure(monkeypatch, _payload())
+    monkeypatch.setattr(observation, "runtime_snapshot", lambda _db: pytest.fail("must not read desired intent"))
+    assert observation.applied_reverse_proxy_snapshot(now=now) == _desired()
+
+
+def test_large_accepted_unicode_publication_keeps_health_and_public_snapshot(monkeypatch):
+    """Observe valid disabled metadata beyond the old output cap.
+
+    Args:
+        monkeypatch: Replace only the helper and desired inventory boundaries.
+    """
+    from atlaso.app.services.reverse_proxy_publication import validate_publication_size
+
+    proxies = _desired()
+    for identity in range(2, 62):
+        proxy = deepcopy(proxies[0])
+        proxy.update(id=identity, name=f"Disabled {identity}", hostname=f"disabled{identity}.example.test",
+                     enabled=False, description="界" * 1000)
+        proxy["routes"][0].update(id=identity + 100, path_prefix="/" + "😀" * 1023)
+        proxies.append(proxy)
+    validate_publication_size(proxies, [])
+    payload = _payload(proxies=proxies)
+    assert len(json.dumps(payload).encode("utf-8")) > 1_048_576
+    _configure(monkeypatch, payload)
+    monkeypatch.setattr(observation, "runtime_snapshot", lambda _db: proxies)
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    health = observation.observe_reverse_proxy_health(object(), now=now)
+    assert health[0]["status"] == "healthy"
+    assert observation.applied_reverse_proxy_snapshot(now=now) == proxies
+
+
+@pytest.mark.parametrize("invalid", ["stale", "future", "missing-generation", "invalid-host", "invalid-path",
+                                     "invalid-listener", "bad-json", "too-large", "dry-run", "helper-failure"])
+def test_public_snapshot_hides_unproven_or_malformed_applied_intent(monkeypatch, invalid):
+    """Public cards fail closed without fresh canonical bounded runtime evidence.
+
+    Args:
+        monkeypatch: Scoped adapter replacement without upstream network probes.
+        invalid: Invalid helper evidence or canonical publication field.
+    """
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    payload = _payload()
+    if invalid == "stale":
+        payload["observed_at"] = "2026-10-06T00:00:00+00:00"
+    elif invalid == "future":
+        payload["observed_at"] = "2026-10-08T00:00:00+00:00"
+    elif invalid == "missing-generation":
+        payload["generation"] = None
+    elif invalid == "invalid-host":
+        payload["proxies"][0]["hostname"] = "wrong/host"
+    elif invalid == "invalid-path":
+        payload["proxies"][0]["routes"][0]["path_prefix"] = "/../unsafe"
+    elif invalid == "invalid-listener":
+        payload["proxies"][0]["listeners"][0]["address"] = "bad-address"
+    _configure(monkeypatch, payload, dry_run=invalid == "dry-run", returncode=int(invalid == "helper-failure"))
+    if invalid in {"bad-json", "too-large"}:
+        monkeypatch.setattr(observation.SystemAdapter, "reverse_proxy_status", lambda _self: AdapterResult(
+            command=["atlaso-helper"], dry_run=False,
+            stdout="{" if invalid == "bad-json" else "x" * (observation.MAX_HELPER_OUTPUT + 1),
+        ))
+    assert observation.applied_reverse_proxy_snapshot(now=now) == []
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_public_snapshot_bounds_success_and_failed_helper_reads(monkeypatch, failure):
+    """Bound public bursts, returned mutation, refresh expiry and invalidation.
+
+    Args:
+        monkeypatch: Controlled helper and monotonic clock.
+        failure: Whether the helper returns failed rather than applied evidence.
+    """
+    _configure(monkeypatch, _payload(), returncode=int(failure))
+    clock = [10.0]
+    monkeypatch.setattr(observation.time, "monotonic", lambda: clock[0])
+    calls = []
+
+    def read(_self):
+        """Return the controlled helper observation.
+
+        Args:
+            _self: Adapter instance whose helper read is counted.
+        """
+        calls.append(True)
+        return AdapterResult(command=["atlaso-helper"], dry_run=False,
+                             stdout=json.dumps(_payload()), returncode=int(failure))
+
+    monkeypatch.setattr(observation.SystemAdapter, "reverse_proxy_status", read)
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    for _ in range(40):
+        result = observation.applied_reverse_proxy_snapshot(now=now)
+        assert bool(result) is not failure
+        if result:
+            assert result == _desired()
+            result[0]["hostname"] = "must-not-poison-cache.test"
+    assert len(calls) == 1
+    assert observation.applied_reverse_proxy_snapshot(now=now + timedelta(seconds=91)) == []
+    assert len(calls) == 1
+    clock[0] += observation.PUBLIC_SNAPSHOT_CACHE_SECONDS + 1
+    observation.applied_reverse_proxy_snapshot(now=now)
+    assert len(calls) == 2
+    observation.invalidate_public_proxy_snapshot()
+    observation.applied_reverse_proxy_snapshot(now=now)
+    assert len(calls) == 3
+
+
+def test_public_snapshot_single_flight_and_invalidated_refresh(monkeypatch):
+    """Do not queue readers or resurrect an invalidated in-flight generation.
+
+    Args:
+        monkeypatch: Controlled bounded helper response.
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    _configure(monkeypatch, _payload())
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def read(_self):
+        """Hold one controlled helper read across cache invalidation.
+
+        Args:
+            _self: Adapter instance supplied to the mocked status method.
+        """
+        calls.append(True)
+        entered.set()
+        assert release.wait(5)
+        return AdapterResult(command=["atlaso-helper"], dry_run=False, stdout=json.dumps(_payload()))
+
+    monkeypatch.setattr(observation.SystemAdapter, "reverse_proxy_status", read)
+    now = datetime(2026, 10, 7, tzinfo=timezone.utc)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(observation.applied_reverse_proxy_snapshot, now=now)
+        try:
+            assert entered.wait(5)
+            for _ in range(40):
+                assert observation.applied_reverse_proxy_snapshot(now=now) == []
+            assert len(calls) == 1
+            observation.invalidate_public_proxy_snapshot()
+        finally:
+            release.set()
+        assert first.result(timeout=5) == []
+    monkeypatch.setattr(observation.SystemAdapter, "reverse_proxy_status", lambda _self: AdapterResult(
+        command=["atlaso-helper"], dry_run=False, stdout=json.dumps(_payload()),
+    ))
+    assert observation.applied_reverse_proxy_snapshot(now=now) == _desired()
+
+
+@pytest.mark.parametrize("failure", ["unavailable", "invalid_http", "upstream_http", "tls_verification", None])
+def test_insecure_observation_preserves_failure_and_policy_warning(monkeypatch, failure):
+    """Keep cached outage evidence visible while retaining insecure degradation.
+
+    Args:
+        monkeypatch: Supply a bounded body-free cached observation.
+        failure: Specific probe failure or successful insecure observation.
+    """
+    desired = _desired()
+    desired[0]["routes"][0].update(trust_mode="insecure", fingerprint="")
+    payload = _payload(proxies=desired)
+    payload["health"]["1-2"].update(status="degraded" if failure else "healthy", failure_class=failure,
+                                  http_status=503 if failure == "upstream_http" else None if failure else 204,
+                                  tls_status="insecure")
+    _configure(monkeypatch, payload)
+    monkeypatch.setattr(observation, "runtime_snapshot", lambda _db: desired)
+    item = observation.observe_reverse_proxy_health(object(), now=datetime(2026, 10, 7, tzinfo=timezone.utc))[0]
+    assert item["status"] == "degraded"
+    assert item["failure_class"] == (failure or "insecure_verification")
+    assert item["http_status"] == payload["health"]["1-2"]["http_status"]
+    assert item["last_success"] == payload["health"]["1-2"]["last_success"]
+    assert "verification is disabled" in item["warning"]

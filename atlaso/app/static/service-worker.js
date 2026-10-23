@@ -11,6 +11,7 @@ const ATLASO_ASSETS = [
   "/static/log-viewer.js?v=full-history-822-17",
   "/static/app.js?v=ca-csr-intake-1028-1",
   "/static/dhcp-pool-health.js?v=819-2",
+  "/static/reverse-proxies.js?v=issue-723-17",
   "/static/diagnostics.js?v=task-cancellation-823-3",
   "/static/chunk-uploads.js?v=issue-779-7",
   "/static/terminal.js?v=issue-287-2",
