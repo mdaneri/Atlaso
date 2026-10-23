@@ -355,6 +355,8 @@
       
         
       
+        
+      
     
     
     
@@ -1670,6 +1672,8 @@
       
         
       
+        
+      
     
     
     
@@ -1890,6 +1894,40 @@
   
   
     <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/reverse-proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reverse proxies (planned)
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
   
 
   
@@ -4213,6 +4251,9 @@ gateway change also selects <strong>Routing &amp; WAN</strong> with Network and 
 DHCP-to-Access sequence without an intermediate Apply, see the
 <a href="../networking/#convert-dhcp-management-to-access">networking guide</a>. A WAN-only change to a mirrored management
 default uses the same handoff. Each WAN unit executes from its captured snapshot.
+Reverse proxies publish with <strong>Public Services</strong>, using <strong>Certificate Authority</strong> for enabled HTTPS, <strong>Firewall</strong> for
+listener admissions and <strong>DNS/DHCP</strong> for managed authoritative records. Select changed dependencies together; see the
+<a href="../../services/reverse-proxies/">reverse-proxy guide</a> for artifacts and recovery checks.
 When effective source NAT or port forwarding depends on changed Network and WAN state, reviewing Network also
 selects and locks <strong>Routing &amp; WAN</strong>. The review validates that WAN candidate before submission, so required changes
 and any blocking errors are visible together.
@@ -4285,23 +4326,25 @@ Firewall, Appliance Settings, and Public Services changes; clear Network to defe
 <p>If another session starts an Apply after the current one, the monitor finishes the current task's refresh first.</p>
 <p>Components run sequentially. On failure, Atlaso marks the rest <strong>skipped</strong>. Writes are locked while a master task
 is pending or running; read-only pages, task inspection, authentication, and safe cancellation remain available.
-A management-path change runs related components as one recoverable handoff. Atlaso retains the previous addresses,
-listeners, firewall policy, and TLS identity until readiness checks prove the candidate ready. On failure it restores
-the previous state and records the failing layer and rollback result on each bundled component. A missing known-good
-Network baseline blocks mutation. Baselines use the submitted snapshots; unrelated or concurrent edits remain pending.
-See the <a href="../../reference/appliance-apply-technical/">technical reference</a> for readiness, durable recovery, and commit contracts.</p>
+Management-path changes bundle Certificate Authority, Network, Firewall, Appliance Settings, and Public Services after
+all dependencies expand. This recoverable handoff retains the previous addresses, listener, firewall and TLS identity
+until bounded Atlaso loopback, candidate nginx, dynamic-address and host-facing <code>/openapi.json</code> checks prove readiness.
+It validates bundled TLS, persists the resolver and source-restricted firewall, then retires the old path. Before the
+Network baseline commits, helper-confirmed DHCP/SLAAC addresses enter observed state, keeping the listener eligible.
+Failure restores all previous state and reports the same actionable failing layer and rollback result on each component.
+Baselines use submitted snapshots, including resolver values; unrelated edits remain pending. Missing known-good Network
+baselines block mutation. Durable state and backups remain until database commit is proven and acknowledged. See the
+<a href="../../reference/appliance-apply-technical/">technical reference</a> for the complete handoff and recovery contract.</p>
 <p>Safe cancellation lets the running component finish. Every helper or adapter command in that component
 completes before remaining components are skipped and the terminal master task releases the mutation lock.</p>
-<p>An ordinary Appliance Settings Apply keeps management access online and restores the previous configuration if
-readiness fails. Retained tasks from older releases can show <strong>Applying management settings; Atlaso is reconnecting
-to task status.</strong> Current Appliance Settings tasks do not create that restart window.</p>
-<p>If that reconnect exceeds the bounded grace window, or a status failure is not part of the planned restart, the dialog
-instead shows <strong>Live task status is temporarily unavailable</strong> with a link-free instruction to open <strong>Tasks</strong> in another
-tab if the problem persists. Atlaso continues retrying and retains the last known task and lock until an authoritative
-response arrives. Use Tasks to inspect the master task and verify appliance connectivity before deciding whether to
-reload the affected page.</p>
+<p>An ordinary Appliance Settings Apply keeps management access online, checks readiness, and restores the previous
+configuration on failure; see the <a href="../../reference/appliance-apply-technical/">technical reference</a>. Retained older tasks
+may show <strong>Applying management settings; Atlaso is reconnecting to task status.</strong> Current tasks do not restart the worker.</p>
+<p>If reconnect exceeds its bounded grace window, or status fails outside a planned restart, the dialog shows
+<strong>Live task status is temporarily unavailable</strong> with a link-free instruction to open <strong>Tasks</strong> in another tab if it
+persists. Atlaso retries and retains the last known task and lock until an authoritative response. Inspect the master
+task and appliance connectivity in Tasks before reloading the affected page.</p>
 <h2 id="verify-the-result">Verify the result<a class="headerlink" href="#verify-the-result" title="Permanent link">&para;</a></h2>
-<p>Do not treat a submitted task as proof that the appliance changed successfully.</p>
 <ol>
 <li>Confirm that the master task is <strong>succeeded</strong>.</li>
 <li>Confirm that every selected component is <strong>succeeded</strong>, not <strong>failed</strong> or <strong>skipped</strong>.</li>
@@ -4332,10 +4375,9 @@ DHCP evidence.</p>
 <li>Review pending units again; successful units keep their baselines, while failed and skipped changes remain pending.</li>
 <li>Submit only the units required for the corrected run.</li>
 </ol>
-<p>Tasks retain bounded Apply stage, component, skip, cancellation, handoff, and recovery events at every log level.
-Correlate their task IDs and timestamps with <a href="../logs/">Operational Logs</a> and the <a href="../audit-log/">Audit log</a>.
-Safe helper stages and return codes may be retained while the cause remains unknown. See
-<a href="../logs/#important-event-coverage">Important-event coverage</a> for retained evidence and limits.</p>
+<p>Tasks retain bounded stage, component, skip, cancellation, handoff and recovery events at every log level. Correlate
+IDs and timestamps with <a href="../logs/">Operational Logs</a> and the <a href="../audit-log/">Audit log</a>. Safe stages and return codes may
+remain while the cause is unknown; see <a href="../logs/#important-event-coverage">Important-event coverage</a> for evidence and limits.</p>
 <p>If Atlaso restarts during ordinary Apply, startup fails the running master and child, skips pending children, and unlocks.
 On interrupted handoff, the helper stops and verifies surviving Apply processes, restores state, and records recovery.
 Startup restores native networking and listeners before serving, retaining the journal and Apply lock. Bounded HTTP
@@ -4352,15 +4394,13 @@ keeps the Apply lock until startup or immediate recovery reconciles it, includin
 Before resubmitting, review the task; a changed selected unit is rejected and requires a new review.</p>
 <h2 id="safety-boundaries">Safety boundaries<a class="headerlink" href="#safety-boundaries" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>/ui/management/appliance-apply</code> is the only ordinary desired-state host-mutation workflow. The confirmed complete
-  factory reset on <strong>Backup and Restore</strong> is a dedicated recovery exception that validates and applies every clean
-  factory unit itself; it does not create a follow-up Apply submission.</li>
+<li><code>/ui/management/appliance-apply</code> alone enforces ordinary desired state. Confirmed complete factory reset on
+  <strong>Backup and Restore</strong> is the recovery exception: it validates and applies every clean unit without a follow-up Apply.</li>
 <li>Only one Appliance Apply master can be pending or running.</li>
 <li>Photon mutations use constrained <code>atlaso-helper</code> actions; the web process does not receive broad root access.</li>
 <li>Previews, diffs, task results, logs, and audit details redact sensitive-looking values.</li>
-<li>Secret-bearing Local Users, Certificate Authority, and Managed LDAP inputs use mode <code>0600</code> only during their helper
-  execution window. Both the control plane and helper remove them on terminal outcomes, and startup removes stale
-  inputs after interruption.</li>
+<li>Secret-bearing Local Users, Certificate Authority and Managed LDAP inputs use mode <code>0600</code> only during helper execution.
+  The control plane and helper remove them on terminal outcomes; startup removes stale inputs after interruption.</li>
 <li>Read-only Local Users status uses an isolated short-lived input and cannot overwrite a pending apply payload.</li>
 <li>A successful component updates only that component's last-applied baseline.</li>
 <li>Fresh-appliance baseline initialization records comparison metadata only; it does not run helper commands.</li>

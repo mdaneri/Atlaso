@@ -18,7 +18,7 @@
         <link rel="prev" href="../ntp/">
       
       
-        <link rel="next" href="../certificate-authority/">
+        <link rel="next" href="../reverse-proxies/">
       
       
         
@@ -315,6 +315,8 @@
       
         
           
+        
+      
         
       
         
@@ -1525,6 +1527,8 @@
       
         
       
+        
+      
     
     
     
@@ -1862,6 +1866,40 @@
   
 </nav>
       
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reverse-proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reverse proxies (planned)
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
+  
+
+  
+
+      </a>
     </li>
   
 
@@ -4071,6 +4109,8 @@
       
         
       
+        
+      
     
     
     
@@ -4151,6 +4191,9 @@ host is entitled to neither.</p>
 management root. App-owned public pages use the public root, including <code>/ui/public/ca</code>,
 <code>/ui/public/ca/requests</code>, and <code>/ui/public/terminal</code>. Public pages continue to use the compact Public Services shell and
 list only services eligible on the called host/interface.</p>
+<p>Managed reverse proxies may also be listed as service cards when <strong>Publish in Public Services</strong> is selected. Their
+exact-host listeners remain independently addressable by hostname even when the card is hidden. See the
+<a href="../reverse-proxies/">reverse-proxy guide</a> for listener, path, and publication behavior.</p>
 <p>The prefixes organize browser presentation; they do not replace authentication, authorization, CSRF, session, listener,
 Nginx, or Firewall enforcement. A request for <code>/ui/management/login</code> on a public-only listener returns not found and does
 not reveal the management shell or login behavior. A management listener likewise does not publish <code>/ui/public</code>.
@@ -4264,13 +4307,13 @@ with a catch-all proxy as a recovery shortcut.</p>
         
         
           
-          <a href="../certificate-authority/" class="md-footer__link md-footer__link--next" aria-label="Next: Certificate Authority">
+          <a href="../reverse-proxies/" class="md-footer__link md-footer__link--next" aria-label="Next: Reverse proxies (planned)">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Certificate Authority
+                Reverse proxies (planned)
               </div>
             </div>
             <div class="md-footer__button md-icon">

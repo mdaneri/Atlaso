@@ -355,6 +355,8 @@
       
         
       
+        
+      
     
     
     
@@ -1525,6 +1527,8 @@
       
         
       
+        
+      
     
     
     
@@ -1748,6 +1752,40 @@
   
   
     <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reverse-proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reverse proxies (planned)
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
   
 
   
@@ -4215,6 +4253,8 @@
       
         
       
+        
+      
     
     
     
@@ -4282,6 +4322,8 @@ appliance apply refreshes this page so formatted UUID, mount, and applied state 
 remains only a desired-state operation in this wizard; blank-disk formatting still requires explicit authorization in
 the global appliance review.</p>
 <h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
+<p>Applied storage DNS ownership follows the saved share interface and exact rendered hostname/address. Equal addresses
+on other interfaces do not transfer ownership; ambiguous or unmatched records do not acquire an inferred source.</p>
 <p>One <code>EsxNfsShare</code> is one datastore name, one backing directory, one selected storage interface or VLAN, and one
 preferred NFS version. A dual-stack share remains one database object and one data directory. Atlaso derives two
 equivalent connection paths when both families are enabled:</p>

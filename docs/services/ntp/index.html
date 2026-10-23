@@ -355,6 +355,8 @@
       
         
       
+        
+      
     
     
     
@@ -1525,6 +1527,8 @@
       
         
       
+        
+      
     
     
     
@@ -1874,6 +1878,40 @@
   
   
     <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reverse-proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reverse proxies (planned)
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
   
 
   
@@ -4105,6 +4143,8 @@
       
         
       
+        
+      
     
     
     
@@ -4175,6 +4215,9 @@ NTPsec.</p>
    hostname through the DNS/DHCP unit after NTP succeeds when its managed record changed. If managed LDAP is active,
    Atlaso also includes any changed CA, DNS/DHCP, Firewall, and Managed LDAP dependency units in the same task.</li>
 </ol>
+<p>Managed NTP/NTS DNS records retain the matching selected interface for each published address, including when
+multiple interfaces are selected. Changing an unselected interface with a duplicate address does not require an
+unrelated NTP or DNS binding change. Ambiguous selected sources are not assigned to an arbitrary interface.</p>
 <h2 id="appliance-clock-source">Appliance clock source<a class="headerlink" href="#appliance-clock-source" title="Permanent link">&para;</a></h2>
 <p>When the NTP service is disabled, <strong>Appliance time source</strong> selects one clock authority:</p>
 <ul>

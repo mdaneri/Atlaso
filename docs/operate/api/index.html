@@ -355,6 +355,8 @@
       
         
       
+        
+      
     
     
     
@@ -1608,6 +1610,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#managed-reverse-proxies" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Managed reverse proxies
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#nat-ingress-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1680,6 +1693,8 @@
       
         
           
+        
+      
         
       
         
@@ -1940,6 +1955,40 @@
   
   
     <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/reverse-proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reverse proxies (planned)
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
   
 
   
@@ -4141,6 +4190,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#managed-reverse-proxies" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Managed reverse proxies
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#nat-ingress-compatibility" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4546,6 +4606,14 @@ boot consoles in tickets, logs, screenshots, or automation output.</p>
 <p>Atlaso preserves existing operation IDs, request and response shapes, authentication behavior, and versioned paths
 within the published compatibility contract. Additive fields may appear. Clients should ignore unknown response fields
 and must not depend on browser pages or non-<code>/api/v1</code> protocol routes as generated REST-client contracts.</p>
+<h2 id="managed-reverse-proxies">Managed reverse proxies<a class="headerlink" href="#managed-reverse-proxies" title="Permanent link">&para;</a></h2>
+<p><code>/api/v1/traffic-publishing/reverse-proxies</code> is the Firewall-scoped desired-state collection. <code>GET</code> and <code>POST</code> list
+and create complete proxies; <code>GET</code> and <code>PUT /{proxy_id}</code> read and replace one complete proxy, including its ordered
+routes; <code>DELETE /{proxy_id}</code> removes it. <code>GET</code> and <code>PUT /{proxy_id}/routes</code> read or replace the complete route list.
+Read operations require <code>read:firewall</code>; mutations require <code>write:firewall</code>. Writes save desired state only and the
+global Appliance Apply workflow owns publication. <code>GET /health</code> returns bounded cached route observations and applied
+or pending state without probing on the request or returning upstream bodies. Refer to the
+<a href="../../services/reverse-proxies/">reverse-proxy operator guide</a> for field behavior, health freshness, and recovery.</p>
 <h2 id="nat-ingress-compatibility">NAT ingress compatibility<a class="headerlink" href="#nat-ingress-compatibility" title="Permanent link">&para;</a></h2>
 <p>Destination translations use the separate <code>/api/v1/traffic-publishing/port-forwards</code> collection. CRUD and status
 require <code>read:firewall</code> or <code>write:firewall</code> as appropriate; legacy WAN scopes do not grant access. Complete create and

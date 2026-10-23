@@ -355,6 +355,8 @@
       
         
       
+        
+      
     
     
     
@@ -1525,6 +1527,8 @@
       
         
       
+        
+      
     
     
     
@@ -1874,6 +1878,40 @@
   
   
     <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reverse-proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reverse proxies (planned)
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
   
 
   
@@ -4105,6 +4143,8 @@
       
         
       
+        
+      
     
     
     
@@ -4179,6 +4219,9 @@ appliance-apply unit.</p>
 <li>Inspect the rendered ruleset and resolve validation errors.</li>
 <li>Submit the Firewall unit through <a href="../../operate/appliance-apply/">Appliance Apply</a>.</li>
 </ol>
+<p>Enabled reverse proxies contribute generated TCP admissions for their exact selected listener addresses and ports,
+including an optional HTTP redirect port. These rows are derived from proxy desired state and should be changed in the
+<a href="../reverse-proxies/">reverse-proxy editor</a>, not as operator rules.</p>
 <p>Atlaso always blocks management-to-lab and lab-to-management forwarding. DHCP bootstrap rules remain interface-bound
 and are not group-filtered.</p>
 <p>Generated management-listener rules admit TCP/22, TCP/80, and TCP/443 on both a dedicated management interface and an

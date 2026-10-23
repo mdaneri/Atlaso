@@ -355,6 +355,8 @@
       
         
       
+        
+      
     
     
     
@@ -1525,6 +1527,8 @@
       
         
       
+        
+      
     
     
     
@@ -1748,6 +1752,40 @@
   
   
     <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reverse-proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reverse proxies (planned)
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
   
 
   
@@ -4083,6 +4121,8 @@
       
         
       
+        
+      
     
     
     
@@ -4145,6 +4185,9 @@
 <li>Start the backup operation and follow it on <a href="../../operate/tasks/">Tasks</a>.</li>
 </ol>
 <p>Credentials must remain encrypted or transient and must not appear in jobs, audits, logs, or screenshots.</p>
+<p>Automatic interface-address refresh validates the backup listener together with other service sockets before saving.
+If a DHCP/SLAAC observation would collide with an enabled reverse proxy, Atlaso retains the prior backup binding;
+resolve the conflicting listener intent before applying again.</p>
 <h2 id="verify-and-recover">Verify and recover<a class="headerlink" href="#verify-and-recover" title="Permanent link">&para;</a></h2>
 <p>Treat a successful task plus a readable backup artifact as completion. Record the target, timestamp, task identifier,
 and artifact identity. Periodically test the documented restore path in an isolated environment; an unverified archive

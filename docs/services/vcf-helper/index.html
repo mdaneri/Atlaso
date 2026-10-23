@@ -355,6 +355,8 @@
       
         
       
+        
+      
     
     
     
@@ -1525,6 +1527,8 @@
       
         
       
+        
+      
     
     
     
@@ -1748,6 +1752,40 @@
   
   
     <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reverse-proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reverse proxies (planned)
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
   
 
   
@@ -4415,6 +4453,8 @@
       
         
       
+        
+      
     
     
     
@@ -4947,6 +4987,9 @@ address and advances sequentially within that network.</p>
 <p>Existing FQDNs are never overwritten. Existing A and AAAA addresses are shown in the preview when available. If the
 remaining network cannot provide an address for every missing FQDN, allocation fails transactionally and creates no
 records.</p>
+<p>Enabled managed-DNS reverse proxies reserve their hostnames even when authoritative DNS is off or does not serve
+their zone. If a generated FQDN claims one of these names, creation rejects the entire collection without adding
+records. Deployment DNS follow-up reports a conflict and preserves that name; the deployed VM is retained.</p>
 <p>IPv4 network and broadcast addresses are not allocatable. The IPv6 network address is treated as the subnet-router
 anycast address and is not allocatable.</p>
 <h2 id="record-ownership-and-deletion">Record Ownership And Deletion<a class="headerlink" href="#record-ownership-and-deletion" title="Permanent link">&para;</a></h2>

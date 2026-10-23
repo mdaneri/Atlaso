@@ -353,6 +353,8 @@
       
         
       
+        
+      
     
     
     
@@ -1523,6 +1525,8 @@
       
         
       
+        
+      
     
     
     
@@ -1743,6 +1747,40 @@
   
   
     <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/reverse-proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reverse proxies (planned)
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
   
 
   
@@ -3719,6 +3757,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#reverse-proxy-acceptance" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reverse proxy acceptance
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4082,6 +4131,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reverse-proxy-acceptance" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reverse proxy acceptance
+      </span>
+    </span>
+  </a>
   
 </li>
       
@@ -4777,6 +4837,11 @@ Local Edge checks cover review invalidation, recoverable submission errors,
 automatic credential-free SSH probing, explicit approval, current-value editing, and automatic task-details
 navigation after successful submission at desktop and narrow viewports. Native VCF acceptance and
 deployed-appliance UI verification remain outstanding.</p>
+<h2 id="reverse-proxy-acceptance">Reverse proxy acceptance<a class="headerlink" href="#reverse-proxy-acceptance" title="Permanent link">&para;</a></h2>
+<p><code>partials/reverse_proxies.html</code> uses the existing Traffic Publishing grid, server-rendered fallback, shared wizard,
+and read-only health grid. <code>reverse-proxy-dialog</code> reuses the step-wizard validation and review interaction.
+Behavioral tests cover wizard payloads and fallback visibility; native desktop and narrow-viewport screenshot acceptance
+remains pending under issue #723. This entry records interaction coverage without claiming deployed acceptance.</p>
 
 
 

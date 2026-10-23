@@ -353,6 +353,8 @@
       
         
       
+        
+      
     
     
     
@@ -1523,6 +1525,8 @@
       
         
       
+        
+      
     
     
     
@@ -1743,6 +1747,40 @@
   
   
     <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/reverse-proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reverse proxies (planned)
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
   
 
   
@@ -4025,6 +4063,8 @@
 
 <h1 id="release-and-publication-policy">Release and publication policy<a class="headerlink" href="#release-and-publication-policy" title="Permanent link">&para;</a></h1>
 <p>Read before changing release, trusted CI, signing, promotion, or Pages workflows, or performing publication.</p>
+<p>The complete Python CI job has a two-hour deadline covering locked dependency setup, the full suite, and runner cleanup.
+Local Python validation remains focused; the canonical CI check must complete successfully.</p>
 <p>Trusted version refresh dispatches CI from protected <code>main</code> with the exact PR number, base SHA, and head SHA. Candidate
 validation jobs remain read-only. Only separate no-checkout jobs may publish the canonical <code>Version policy</code>, <code>Repository
 checks</code>, and <code>Python tests</code> commit statuses after revalidating the open same-repository PR and exact head/base. Preserve

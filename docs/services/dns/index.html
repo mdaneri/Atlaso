@@ -355,6 +355,8 @@
       
         
       
+        
+      
     
     
     
@@ -1525,6 +1527,8 @@
       
         
       
+        
+      
     
     
     
@@ -1952,6 +1956,40 @@
   
   
     <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reverse-proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reverse proxies (planned)
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
   
 
   
@@ -4261,6 +4299,8 @@
       
         
       
+        
+      
     
     
     
@@ -4316,6 +4356,9 @@ unit through Appliance Apply.</p>
 <p><em>Figure: DNS in the verified clean-appliance desktop state.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+<p>Reverse proxies can opt into Atlaso-managed A/AAAA records when their hostname belongs to an enabled authoritative
+zone. Otherwise the <a href="../reverse-proxies/">reverse-proxy guide</a> shows the exact listener records to configure in external
+DNS. Existing operator-owned records are not replaced to satisfy a proxy hostname conflict.</p>
 <p>When DNS is disabled and has no selected bind interface, <code>GET /api/v1/dns/settings</code> returns the saved empty
 <code>listen_interface</code>. The settings update request still requires a nonempty interface; use DNS validation to review bind
 targets before applying desired state. DNS settings changes reach the appliance only through the global Appliance Apply

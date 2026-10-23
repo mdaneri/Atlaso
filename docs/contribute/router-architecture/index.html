@@ -353,6 +353,8 @@
       
         
       
+        
+      
     
     
     
@@ -1523,6 +1525,8 @@
       
         
       
+        
+      
     
     
     
@@ -1743,6 +1747,40 @@
   
   
     <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/reverse-proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reverse proxies (planned)
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
   
 
   
@@ -4464,6 +4502,9 @@
 
 
 <h1 id="router-architecture">Router architecture<a class="headerlink" href="#router-architecture" title="Permanent link">&para;</a></h1>
+<p><code>services/applied_service_dns.py</code> owns exact applied DNS provenance and shared binding inventory. The UI facade keeps
+compatibility exports; DNS/DHCP transports and reverse-proxy desired-state services call the shared owner directly.
+Its baseline updates retain caller-owned transactions and the network-object writer lock.</p>
 <p>Task-value sanitization is shared through <code>services/task_log_redaction.py</code>. The UI keeps its established
 <code>_redact_task_value</code> facade, while non-UI consumers can reuse the sanitizer without importing route registration
 and orchestration. This recursive value sanitizer does not replace the log reader's stateful cross-line private-key

@@ -15,7 +15,7 @@
         <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/services/certificate-authority/">
       
       
-        <link rel="prev" href="../public-services/">
+        <link rel="prev" href="../reverse-proxies/">
       
       
         <link rel="next" href="../appliance-certificates/">
@@ -315,6 +315,8 @@
       
         
           
+        
+      
         
       
         
@@ -1525,6 +1527,8 @@
       
         
       
+        
+      
     
     
     
@@ -1748,6 +1752,40 @@
   
   
     <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reverse-proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reverse proxies (planned)
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
   
 
   
@@ -4171,6 +4209,8 @@
       
         
       
+        
+      
     
     
     
@@ -4238,6 +4278,9 @@ and the public certificate portal to provide approved unauthenticated CA and req
 and never expose private keys in documentation, screenshots, tasks, or logs.</p>
 <p>An enabled CA with no listen interface still writes its root bundle and managed service certificates through global
 appliance apply. It does not add the CA portal to access-interface DNS, firewall, or public-service configuration.</p>
+<p>Enabled HTTPS reverse proxies consume CA-managed certificates for their configured hostnames and selected listener
+addresses. The proxy editor never exposes the generated private key. See the <a href="../reverse-proxies/">reverse-proxy guide</a>
+for the coordinated publication and trust model.</p>
 <p>Managed service certificates retain the complete hostname in their DNS Subject Alternative Name (SAN), including
 valid appliance FQDNs longer than the certificate subject Common Name's 64-byte limit. For those names, Atlaso uses
 <code>Atlaso managed service</code> as the subject Common Name. Hostname verification uses the complete DNS SAN; the appliance
@@ -4372,7 +4415,7 @@ through its audit commit. Disabled services or CA profiles must be enabled befor
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../public-services/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Public Services">
+          <a href="../reverse-proxies/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Reverse proxies (planned)">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -4382,7 +4425,7 @@ through its audit commit. Disabled services or CA profiles must be enabled befor
                 Previous
               </span>
               <div class="md-ellipsis">
-                Public Services
+                Reverse proxies (planned)
               </div>
             </div>
           </a>

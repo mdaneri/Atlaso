@@ -355,6 +355,8 @@
       
         
       
+        
+      
     
     
     
@@ -1693,6 +1695,8 @@
       
         
       
+        
+      
     
     
     
@@ -1913,6 +1917,40 @@
   
   
     <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../services/reverse-proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Reverse proxies (planned)
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
   
 
   
@@ -4241,6 +4279,10 @@ Publishing requires Firewall read permission; changing its browser settings or r
 <p><em>Figure: Traffic Publishing with reviewed IPv4 masquerade and the canonical NAT setting.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+<p>Managed HTTP/HTTPS reverse proxies are tracked by issue #723. The <a href="../../services/reverse-proxies/">reverse-proxy workflow</a>
+describes their desired-state collection, trust choices, cached health, and native acceptance requirements. The branch
+implementation publishes them through global Appliance Apply; native appliance acceptance remains pending, so this
+page makes no claim about a released appliance.</p>
 <h2 id="configure-source-translation">Configure source translation<a class="headerlink" href="#configure-source-translation" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Configure two distinct addressed lab targets in Physical Interfaces or VLAN Interfaces. Use enabled <code>access</code> or
