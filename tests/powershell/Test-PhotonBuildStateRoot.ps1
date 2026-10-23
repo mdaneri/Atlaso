@@ -73,6 +73,20 @@ if ($cleanupFunction.Count -ne 1) {
     throw 'Expected exactly one Photon cleanup completion function.'
 }
 . ([scriptblock]::Create($cleanupFunction[0].Extent.Text))
+$recoveredBuilderProofFunction = @(
+    $ast.FindAll(
+        {
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Save-AtlasoPhotonRecoveredBuilderTerminationProof'
+        },
+        $true
+    )
+)
+if ($recoveredBuilderProofFunction.Count -ne 1) {
+    throw 'Expected exactly one Save-AtlasoPhotonRecoveredBuilderTerminationProof function in the Photon build wrapper.'
+}
+. ([scriptblock]::Create($recoveredBuilderProofFunction[0].Extent.Text))
 $cleanupRecoveryFunction = @(
     $ast.FindAll(
         {
