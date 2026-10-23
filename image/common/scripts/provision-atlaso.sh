@@ -17,6 +17,7 @@ if [ "$ATLASO_MGMT_ADDRESS" = "dhcp" ] || [ "$ATLASO_MGMT_IPV4_METHOD" = "dhcp" 
 fi
 ATLASO_DRY_RUN_SYSTEM_ADAPTERS="${ATLASO_DRY_RUN_SYSTEM_ADAPTERS:-true}"
 ATLASO_GUEST_PLATFORM="${ATLASO_GUEST_PLATFORM:-vmware}"
+ATLASO_INSTALLATION_MEDIA="${ATLASO_INSTALLATION_MEDIA:-}"
 ATLASO_IMAGE_ASSET_DIR="${ATLASO_IMAGE_ASSET_DIR:-image/vmware-workstation}"
 ATLASO_PIP_GLOBAL_INDEX="${ATLASO_PIP_GLOBAL_INDEX:-}"
 ATLASO_PIP_GLOBAL_INDEX_URL="${ATLASO_PIP_GLOBAL_INDEX_URL:-}"
@@ -47,6 +48,7 @@ GUEST_AGENT_STAGING="$ATLASO_STATE/first-boot-packages"
 PYTHON_RUNTIME_STAGING="$ATLASO_STATE/python-runtime-packages"
 QEMU_GUEST_AGENT_OUTPUT=""
 QEMU_GUEST_AGENT_RPM=""
+ATLASO_OFFLINE_PUBLISHED_WHEEL=""
 
 log_step() {
   printf '\n==> Atlaso appliance: %s\n' "$1"
@@ -76,11 +78,158 @@ write_pip_config() {
 run_tdnf() {
   label="$1"
   shift
-  python3 "$TDNF_PROGRESS_RUNNER" \
-    --label "$label" \
-    --cache-dir /var/cache/tdnf \
-    -- \
-    tdnf -y "$@"
+  if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then
+    python3 "$TDNF_PROGRESS_RUNNER" \
+      --label "$label" \
+      --cache-dir /var/cache/tdnf \
+      -- \
+      tdnf -c "$ATLASO_INSTALLATION_MEDIA/tdnf.conf" -y "$@"
+  else
+    python3 "$TDNF_PROGRESS_RUNNER" \
+      --label "$label" \
+      --cache-dir /var/cache/tdnf \
+      -- \
+      tdnf -y "$@"
+  fi
+}
+
+systemctl() {
+  if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then
+    command systemctl "$@"
+    return $?
+  fi
+
+  case "${1:-}" in
+    daemon-reload|daemon-reexec)
+      # This script runs in the installer's chroot. Never operate on its live
+      # system manager; persistent enable/mask changes still target the install.
+      return 0
+      ;;
+    start|stop|restart|reload|try-restart|reload-or-restart)
+      echo "Refusing live systemd action during installation-media provisioning: $1" >&2
+      return 2
+      ;;
+  esac
+  if [ "${2:-}" = "--now" ]; then
+    action="$1"
+    shift 2
+    command systemctl "$action" "$@"
+  else
+    command systemctl "$@"
+  fi
+}
+
+validate_installation_media() {
+  [ -n "$ATLASO_INSTALLATION_MEDIA" ] || return 0
+  case "$ATLASO_INSTALLATION_MEDIA" in
+    /*) ;;
+    *) echo "ATLASO_INSTALLATION_MEDIA must be an absolute media directory." >&2; exit 2 ;;
+  esac
+  [ -d "$ATLASO_INSTALLATION_MEDIA" ] && [ ! -L "$ATLASO_INSTALLATION_MEDIA" ] || {
+    echo "Installation media must be an ordinary mounted directory." >&2
+    exit 2
+  }
+  [ "$ATLASO_GUEST_PLATFORM" = "none" ] || {
+    echo "Installation media requires ATLASO_GUEST_PLATFORM=none." >&2
+    exit 2
+  }
+  [ "$ATLASO_SYSTEM_CONTENT_DISK" = "false" ] || {
+    echo "Installation media cannot prepare a VMware system-content disk." >&2
+    exit 2
+  }
+  [ -n "${ATLASO_SOFTWARE_MANIFEST_SHA256:-}" ] &&
+    printf '%s' "$ATLASO_SOFTWARE_MANIFEST_SHA256" | grep -Eq '^[0-9a-f]{64}$' || {
+      echo "Installation media requires an authenticated software manifest digest." >&2
+      exit 2
+    }
+  [ -n "${ATLASO_SOFTWARE_SOURCE_COMMIT:-}" ] &&
+    printf '%s' "$ATLASO_SOFTWARE_SOURCE_COMMIT" | grep -Eq '^[0-9a-f]{40}$' || {
+      echo "Installation media requires the full software source commit." >&2
+      exit 2
+    }
+  [ -f "$ATLASO_INSTALLATION_MEDIA/tdnf.conf" ] &&
+    [ ! -L "$ATLASO_INSTALLATION_MEDIA/tdnf.conf" ] &&
+    [ -d "$ATLASO_INSTALLATION_MEDIA/rpm-repos" ] &&
+    [ ! -L "$ATLASO_INSTALLATION_MEDIA/rpm-repos" ] &&
+    [ -d "$ATLASO_INSTALLATION_MEDIA/powercli" ] &&
+    [ ! -L "$ATLASO_INSTALLATION_MEDIA/powercli" ] &&
+    [ -d /tmp/atlaso-software ] && [ ! -L /tmp/atlaso-software ] || {
+      echo "Installation media is missing its local RPM repository, PowerCLI bundle, or staged signed software." >&2
+      exit 2
+    }
+  ATLASO_POWERCLI_MODULE_SOURCE="$ATLASO_INSTALLATION_MEDIA/powercli"
+  [ -r "$ATLASO_SRC/scripts/version.py" ] &&
+    [ -r "$ATLASO_SRC/image/common/scripts/verify-template-software.py" ] || {
+      echo "Staged Atlaso source is missing signed software verification assets." >&2
+      exit 2
+    }
+  ATLASO_OFFLINE_RELEASE_VERSION="$(
+    python3 "$ATLASO_SRC/scripts/version.py" project-get --root "$ATLASO_SRC"
+  )" || {
+    echo "Could not determine the signed installation software version." >&2
+    exit 2
+  }
+  ATLASO_OFFLINE_PUBLISHED_WHEEL="$(python3 "$ATLASO_SRC/image/common/scripts/verify-template-software.py" \
+    --root /tmp/atlaso-software --manifest-sha256 "$ATLASO_SOFTWARE_MANIFEST_SHA256" \
+    --version "$ATLASO_OFFLINE_RELEASE_VERSION" --commit "$ATLASO_SOFTWARE_SOURCE_COMMIT")" || {
+      echo "Staged signed installation software failed validation." >&2
+      exit 2
+    }
+  python3 - "$ATLASO_INSTALLATION_MEDIA" "$ATLASO_INSTALLATION_MEDIA/tdnf.conf" <<'PY'
+import configparser
+import os
+import sys
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
+
+media = Path(sys.argv[1]).resolve(strict=True)
+configuration_path = Path(sys.argv[2])
+repository_directory = (media / "rpm-repos").resolve(strict=True)
+configuration = configparser.ConfigParser(interpolation=None, strict=True)
+try:
+    configuration.read(configuration_path, encoding="utf-8")
+    if configuration.sections() != ["main"]:
+        raise ValueError("TDNF config must contain only [main].")
+    configured_directory = configuration["main"].get("reposdir", "").strip()
+    if Path(configured_directory).resolve(strict=True) != repository_directory:
+        raise ValueError("TDNF reposdir must be the installation media RPM repository.")
+    repository_files = sorted(repository_directory.glob("*.repo"))
+    if not repository_files:
+        raise ValueError("Installation media has no local TDNF repository definitions.")
+    enabled_repositories = 0
+    for repository_file in repository_files:
+        if repository_file.is_symlink() or not repository_file.is_file():
+            raise ValueError("TDNF repository definitions must be ordinary files.")
+        parser = configparser.ConfigParser(interpolation=None, strict=True)
+        parser.read(repository_file, encoding="utf-8")
+        if not parser.sections():
+            raise ValueError("TDNF repository definition is empty.")
+        for section_name in parser.sections():
+            section = parser[section_name]
+            if section.get("mirrorlist", "").strip() or section.get("metalink", "").strip():
+                raise ValueError("Installation media RPM repositories cannot use mirrorlists or metalinks.")
+            if section.get("gpgcheck", "").strip() != "1":
+                raise ValueError("Every installation media RPM repository must require GPG checks.")
+            if section.get("enabled", "1").strip() == "1":
+                enabled_repositories += 1
+            baseurls = section.get("baseurl", "").split()
+            if not baseurls:
+                raise ValueError("Every installation media RPM repository needs a local baseurl.")
+            for baseurl in baseurls:
+                parsed = urlsplit(baseurl)
+                if parsed.scheme != "file" or parsed.netloc or parsed.query or parsed.fragment:
+                    raise ValueError("Installation media RPM repositories must use local file URLs.")
+                local_path = Path(unquote(parsed.path)).resolve(strict=True)
+                if os.path.commonpath((str(media), str(local_path))) != str(media):
+                    raise ValueError("Installation media RPM repository points outside its media directory.")
+                if not local_path.is_dir():
+                    raise ValueError("Installation media RPM repository baseurl is not a directory.")
+    if enabled_repositories == 0:
+        raise ValueError("Installation media must provide an enabled local RPM repository.")
+except (OSError, ValueError, configparser.Error) as exc:
+    print(f"Installation media repository validation failed: {exc}", file=sys.stderr)
+    raise SystemExit(2)
+PY
 }
 
 stage_python_runtime_packages() {
@@ -112,6 +261,16 @@ ensure_ntpsec_runtime_packages() {
 }
 
 stage_guest_agent_packages() {
+  if [ "$ATLASO_GUEST_PLATFORM" = "none" ]; then
+    log_step "staging empty guest-agent inventory for physical installation"
+    rm -rf "$GUEST_AGENT_STAGING"
+    install -d -o root -g root -m 0700 "$GUEST_AGENT_STAGING"
+    : >"$GUEST_AGENT_STAGING/SHA256SUMS"
+    chown root:root "$GUEST_AGENT_STAGING/SHA256SUMS"
+    chmod 0600 "$GUEST_AGENT_STAGING/SHA256SUMS"
+    return
+  fi
+
   log_step "staging verified offline guest-agent RPM closures"
   rm -rf "$GUEST_AGENT_STAGING"
   install -d -o root -g root -m 0700 "$GUEST_AGENT_STAGING" \
@@ -338,25 +497,36 @@ if [ ! -r "$BOOTSTRAP_VENV_VALIDATOR" ]; then
   echo "Bootstrap virtualenv identity validator is missing from staged Atlaso sources." >&2
   exit 2
 fi
-if [ ! -r "$QEMU_GUEST_AGENT_BUILDER" ] || [ ! -r "$GUEST_AGENT_SELECTOR_SOURCE" ] ||
+if { [ "$ATLASO_GUEST_PLATFORM" != "none" ] && [ ! -r "$QEMU_GUEST_AGENT_BUILDER" ]; } ||
+  [ ! -r "$GUEST_AGENT_SELECTOR_SOURCE" ] ||
   [ ! -r "$MACHINE_IDENTITY_INITIALIZER_SOURCE" ] || [ ! -r "$IMAGE_BUILD_FINALIZER_SOURCE" ] ||
   [ ! -r "$PHOTON_PACKAGE_STATE_VERIFIER" ] || [ ! -r "$GUEST_AGENT_UNIT_SOURCE" ]; then
   echo "Provider-neutral guest-agent build or first-boot assets are missing from staged Atlaso sources." >&2
   exit 2
 fi
 
+validate_installation_media
+if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then
+  # Offline installation always consumes the authenticated embedded bundle.
+  ATLASO_PIP_GLOBAL_INDEX=""
+  ATLASO_PIP_GLOBAL_INDEX_URL=""
+fi
+
 log_step "system adapter dry-run mode: $ATLASO_DRY_RUN_SYSTEM_ADAPTERS"
 log_step "guest platform: $ATLASO_GUEST_PLATFORM"
 
 log_step "establishing the trusted Photon 5 updates repository"
-python3 "$PHOTON_REPOSITORY_CONFIGURATOR"
-
-log_step "refreshing Photon package metadata"
-tdnf -y clean all || true
-run_tdnf "Photon package metadata refresh" makecache
-
-log_step "applying Photon OS updates"
-run_tdnf "Photon OS update" update
+if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then
+  python3 "$PHOTON_REPOSITORY_CONFIGURATOR"
+  log_step "refreshing Photon package metadata"
+  tdnf -y clean all || true
+  run_tdnf "Photon package metadata refresh" makecache
+  log_step "applying Photon OS updates"
+  run_tdnf "Photon OS update" update
+else
+  log_step "refreshing metadata from the authenticated local Photon repository"
+  run_tdnf "Photon local package metadata refresh" makecache
+fi
 
 # Atlaso owns first-boot customization through its platform-specific services.
 # Photon's minimal install includes cloud-init incidentally, and leaving it in
@@ -393,6 +563,9 @@ case "$ATLASO_GUEST_PLATFORM" in
   vmware)
     GUEST_INTEGRATION_PACKAGES="open-vm-tools"
     ;;
+  none)
+    GUEST_INTEGRATION_PACKAGES=""
+    ;;
   *)
     echo "Unsupported ATLASO_GUEST_PLATFORM: $ATLASO_GUEST_PLATFORM" >&2
     exit 2
@@ -418,16 +591,20 @@ if [ -n "$ATLASO_PIP_GLOBAL_INDEX_URL" ]; then
   export PIP_INDEX_URL="$ATLASO_PIP_GLOBAL_INDEX_URL"
 fi
 
-log_step "building the pinned QEMU guest-agent RPM"
-QEMU_GUEST_AGENT_OUTPUT=/tmp/atlaso-qemu-guest-agent-rpm
-rm -rf "$QEMU_GUEST_AGENT_OUTPUT"
-sh "$QEMU_GUEST_AGENT_BUILDER" "$QEMU_GUEST_AGENT_OUTPUT"
-qemu_rpm_count="$(find "$QEMU_GUEST_AGENT_OUTPUT" -maxdepth 1 -type f -name 'atlaso-qemu-guest-agent-*.rpm' | wc -l)"
-if [ "$qemu_rpm_count" -ne 1 ]; then
-  echo "Expected one built QEMU guest-agent RPM; found $qemu_rpm_count." >&2
-  exit 2
+if [ "$ATLASO_GUEST_PLATFORM" = "none" ]; then
+  log_step "skipping virtual guest-agent build for installation media"
+else
+  log_step "building the pinned QEMU guest-agent RPM"
+  QEMU_GUEST_AGENT_OUTPUT=/tmp/atlaso-qemu-guest-agent-rpm
+  rm -rf "$QEMU_GUEST_AGENT_OUTPUT"
+  sh "$QEMU_GUEST_AGENT_BUILDER" "$QEMU_GUEST_AGENT_OUTPUT"
+  qemu_rpm_count="$(find "$QEMU_GUEST_AGENT_OUTPUT" -maxdepth 1 -type f -name 'atlaso-qemu-guest-agent-*.rpm' | wc -l)"
+  if [ "$qemu_rpm_count" -ne 1 ]; then
+    echo "Expected one built QEMU guest-agent RPM; found $qemu_rpm_count." >&2
+    exit 2
+  fi
+  QEMU_GUEST_AGENT_RPM="$(find "$QEMU_GUEST_AGENT_OUTPUT" -maxdepth 1 -type f -name 'atlaso-qemu-guest-agent-*.rpm')"
 fi
-QEMU_GUEST_AGENT_RPM="$(find "$QEMU_GUEST_AGENT_OUTPUT" -maxdepth 1 -type f -name 'atlaso-qemu-guest-agent-*.rpm')"
 stage_guest_agent_packages
 
 prepare_system_content_disk
@@ -461,7 +638,9 @@ chmod 0755 /var/opt/VMware /var/opt/VMware/PowerCLI
 chmod 0644 /var/opt/VMware/PowerCLI/PowerCLI_Settings.xml
 
 log_step "verifying Photon OS updates after package install"
-run_tdnf "Photon OS update verification" update
+if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then
+  run_tdnf "Photon OS update verification" update
+fi
 
 # Preserve the exact signed Photon packages that own the appliance interpreter.
 # The protected hosted finalizer authenticates these RPMs against Atlaso's
@@ -481,8 +660,10 @@ systemctl disable --now rpcbind.service rpcbind.socket 2>/dev/null || true
 log_step "installing stable virtual-disk identity policy"
 install -d -o root -g root -m 0755 /etc/udev/rules.d
 install -o root -g root -m 0644 "$DISK_IDENTITY_RULE_SOURCE" /etc/udev/rules.d/99-atlaso-disk-identity.rules
-udevadm control --reload-rules
-udevadm trigger --subsystem-match=block --action=add
+if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then
+  udevadm control --reload-rules
+  udevadm trigger --subsystem-match=block --action=add
+fi
 
 install -d -o root -g root -m 0755 /etc/atlaso
 install -o root -g root -m 0644 "$DATA_DISK_POLICY_SOURCE" /etc/atlaso/data-disks.conf
@@ -625,7 +806,11 @@ vcf_sdk=$(
     printf 'not-installed\n'
   fi
 )
-package_update=tdnf -y update completed during image provisioning
+if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then
+  package_update=tdnf -y install completed from authenticated local media
+else
+  package_update=tdnf -y update completed during image provisioning
+fi
 final_mgmt_address=$ATLASO_MGMT_ADDRESS
 final_mgmt_gateway=$ATLASO_MGMT_GATEWAY
 final_mgmt_interface=$ATLASO_MGMT_INTERFACE
@@ -697,7 +882,9 @@ else
 "$ATLASO_HOME/.venv/bin/python" -m pip install --no-compile --no-deps "$ATLASO_HOME"
 fi
 "$ATLASO_HOME/.venv/bin/python" -m pip check
-rm -rf /tmp/atlaso-software
+if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then
+  rm -rf /tmp/atlaso-software
+fi
 ATLASO_LOGICAL_SITE_PACKAGES="$("$ATLASO_HOME/.venv/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
 ATLASO_SITE_PACKAGES="$(
   python3 "$BOOTSTRAP_VENV_VALIDATOR" \
@@ -806,7 +993,10 @@ fi
 visudo -cf /etc/sudoers.d/atlaso-helper
 
 # Capture static ACD failures from the first networkd start on the deployed guest.
-"$ATLASO_HOME/bin/atlaso-helper" network prepare-observation --real
+if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then
+  "$ATLASO_HOME/bin/atlaso-helper" network prepare-observation --real
+fi
+# Installed-host worker/tty1 startup repeats this operation with a live manager.
 
 chown -R root:root "$ATLASO_HOME"
 chmod 0755 /opt "$ATLASO_HOME"
@@ -921,13 +1111,15 @@ systemctl daemon-reexec
 systemctl daemon-reload
 # Run outside the producer startup transaction: queued start jobs are not proof
 # of quiescence. Both units consume the same atomic selection after migration.
-systemctl stop atlaso-worker.service atlaso.service
-systemd-run --quiet --wait --collect --unit=atlaso-app-history-cutover \
-  --property=Type=oneshot --property=EnvironmentFile=/etc/atlaso/atlaso.env \
-  --property=TimeoutStartSec=10min --property=UMask=0077 \
-  --setenv=PYTHONDONTWRITEBYTECODE=1 \
-  "$ATLASO_HOME/.venv/bin/python" -I -m atlaso.app.services.app_history_cutover \
-  --already-stopped --prepare-roots
+if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then
+  systemctl stop atlaso-worker.service atlaso.service
+  systemd-run --quiet --wait --collect --unit=atlaso-app-history-cutover \
+    --property=Type=oneshot --property=EnvironmentFile=/etc/atlaso/atlaso.env \
+    --property=TimeoutStartSec=10min --property=UMask=0077 \
+    --setenv=PYTHONDONTWRITEBYTECODE=1 \
+    "$ATLASO_HOME/.venv/bin/python" -I -m atlaso.app.services.app_history_cutover \
+    --already-stopped --prepare-roots
+fi
 systemctl enable systemd-networkd
 systemctl enable systemd-resolved || true
 systemctl enable sshd
@@ -951,8 +1143,10 @@ install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/nginx-atlaso-
 sed -i 's/\r$//' /etc/systemd/system/nginx.service.d/atlaso-data-disks.conf
 systemctl daemon-reload
 
-log_step "preserving and activating external service log history"
-"$ATLASO_HOME/.venv/bin/python" -I -m atlaso.app.services.external_history_lifecycle install
+if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then
+  log_step "preserving and activating external service log history"
+  "$ATLASO_HOME/.venv/bin/python" -I -m atlaso.app.services.external_history_lifecycle install
+fi
 
 log_step "configuring Atlaso nftables firewall"
 # A DHCP deployment must not inherit the temporary builder's connected subnet.
@@ -1014,7 +1208,7 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable --now atlaso-firewall.service
-if command -v iptables >/dev/null 2>&1; then
+if [ -z "$ATLASO_INSTALLATION_MEDIA" ] && command -v iptables >/dev/null 2>&1; then
   iptables -P INPUT ACCEPT || true
   iptables -P FORWARD ACCEPT || true
   iptables -P OUTPUT ACCEPT || true
@@ -1068,7 +1262,9 @@ python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform "$ATLASO_GUEST_PLATFOR
 
 run_tdnf "Final Photon package cache cleanup" clean all
 run_tdnf "Final Photon repository refresh" makecache
-run_tdnf "Final Photon OS update verification" update
+if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then
+  run_tdnf "Final Photon OS update verification" update
+fi
 ensure_ntpsec_runtime_packages
 stage_guest_agent_packages
 rm -rf "$QEMU_GUEST_AGENT_OUTPUT"
@@ -1094,22 +1290,32 @@ if find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit | grep -q .
   exit 2
 fi
 python3 "$ATLASO_HOME/image/common/scripts/verify-template-state.py"
-rpm -q open-vm-tools >/dev/null
+if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
+  rpm -q open-vm-tools >/dev/null
+fi
 write_build_info
 run_tdnf "Final Photon package cache cleanup" clean all
 rm -rf /var/cache/tdnf/* "$PIP_CACHE_DIR" /root/.cache/pip \
   /root/.cache/powershell /root/.local/share/powershell/PowerShellGet
 rm -rf "$ATLASO_SRC"
-journalctl --rotate 2>/dev/null || true
-journalctl --vacuum-time=1s 2>/dev/null || true
+if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then
+  journalctl --rotate 2>/dev/null || true
+  journalctl --vacuum-time=1s 2>/dev/null || true
+fi
 sync
 
-zero_fill_free_space / "Photon OS filesystem"
-if [ "$ATLASO_SYSTEM_CONTENT_DISK" = "true" ]; then
-  zero_fill_free_space "$ATLASO_SYSTEM_CONTENT_MOUNT" "Atlaso system-content filesystem"
+if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then
+  zero_fill_free_space / "Photon OS filesystem"
+  if [ "$ATLASO_SYSTEM_CONTENT_DISK" = "true" ]; then
+    zero_fill_free_space "$ATLASO_SYSTEM_CONTENT_MOUNT" "Atlaso system-content filesystem"
+  fi
+else
+  log_step "skipping image-compaction zero-fill for installation media"
 fi
-if ! fstrim -av; then
-  echo "Warning: filesystem discard is unavailable; Packer disk compaction will still run." >&2
+if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then
+  if ! fstrim -av; then
+    echo "Warning: filesystem discard is unavailable; Packer disk compaction will still run." >&2
+  fi
 fi
 
 report_image_footprint "post-cleanup"
