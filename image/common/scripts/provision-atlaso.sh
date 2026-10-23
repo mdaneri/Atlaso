@@ -792,6 +792,11 @@ write_build_info() {
     echo "Could not resolve the Photon default boot kernel for build information." >&2
     return 2
   fi
+  if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then
+    package_update="tdnf -y install completed from authenticated local media"
+  else
+    package_update="tdnf -y update completed during image provisioning"
+  fi
   cat >/etc/atlaso/build-info <<EOF
 build_time_utc=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 photon_release=$(cat /etc/photon-release 2>/dev/null || true)
@@ -806,11 +811,7 @@ vcf_sdk=$(
     printf 'not-installed\n'
   fi
 )
-if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then
-  package_update=tdnf -y install completed from authenticated local media
-else
-  package_update=tdnf -y update completed during image provisioning
-fi
+package_update=$package_update
 final_mgmt_address=$ATLASO_MGMT_ADDRESS
 final_mgmt_gateway=$ATLASO_MGMT_GATEWAY
 final_mgmt_interface=$ATLASO_MGMT_INTERFACE

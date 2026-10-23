@@ -1,8 +1,43 @@
 """Source contracts for provisioning from installation media."""
 
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
+
 PROVISIONER = Path("image/common/scripts/provision-atlaso.sh")
+
+
+@pytest.mark.parametrize("offline", [False, True])
+def test_build_information_contains_one_selected_package_provenance(tmp_path, offline):
+    """Execute the real renderer against a task-local destination with tool doubles."""
+    shell = shutil.which("sh") or "C:/Program Files/Git/usr/bin/sh.exe"
+    if not Path(shell).is_file():
+        pytest.skip("POSIX shell is unavailable")
+    source = _provisioner()
+    function = source.split("write_build_info() {", 1)[1].split("\n}\nwrite_build_info", 1)[0]
+    function = "write_build_info() {" + function + "\n}\n"
+    function = function.replace("/etc/atlaso/build-info", '"$TEST_OUTPUT"')
+    output = tmp_path / "build-info"
+    prelude = '''set -eu
+default_boot_kernel() { printf 'fixture-kernel'; }
+date() { printf 'fixture-date'; }
+cat() { if [ "$#" -eq 0 ]; then while IFS= read -r line; do printf '%s\\n' "$line"; done; else printf 'fixture-photon'; fi; }
+python3() { printf 'Python fixture'; }
+pwsh() { printf 'fixture-version'; }
+chmod() { :; }
+ATLASO_MGMT_ADDRESS=dhcp
+ATLASO_MGMT_GATEWAY=
+ATLASO_MGMT_INTERFACE=
+'''
+    subprocess.run([shell], input=prelude + function + "write_build_info\n", text=True, check=True, env={**os.environ, "ATLASO_HOME": str(tmp_path), "TEST_OUTPUT": output.as_posix(), "ATLASO_INSTALLATION_MEDIA": "/media" if offline else ""})
+    lines = output.read_text().splitlines()
+    assert all("=" in line for line in lines)
+    fields = dict(line.split("=", 1) for line in lines)
+    assert len(fields) == len(lines)
+    assert fields["package_update"] == ("tdnf -y install completed from authenticated local media" if offline else "tdnf -y update completed during image provisioning")
 
 
 def _provisioner() -> str:
