@@ -17,7 +17,7 @@
   const operationStorageKey = "atlaso:vcf-helper:certificate-operation";
   const savedOperation = () => { try { return window.localStorage.getItem(operationStorageKey) || ""; } catch { return ""; } };
   const saveOperation = (value) => { try { if (value) window.localStorage.setItem(operationStorageKey, value); else window.localStorage.removeItem(operationStorageKey); } catch { /* The durable task remains available without browser storage. */ } };
-  const manual = () => !field("credential_vault_id").value;
+  const manual = () => !field("credential_vault_id").value || !Array.from(field("credential_entry_id").options).some((option) => option.value);
   function message(text, error = false) {
     const target = node(error ? "error" : "status");
     target.textContent = text;

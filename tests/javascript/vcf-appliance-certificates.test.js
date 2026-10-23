@@ -118,3 +118,26 @@ for (const initialState of ['preparing', 'installing']) {
     assert.equal(get('[data-cert-continue-review]').classList.hidden, initialState !== 'preparing');
   });
 }
+
+test('empty vaults allow manual login while usable vaults require a key selection', () => {
+  for (const [vault, options, entry, manual] of [
+    ['', [''], '', true], ['empty-vault', [''], '', true],
+    ['usable-vault', ['', 'key-1'], '', false], ['usable-vault', ['', 'key-1'], 'key-1', false],
+  ]) {
+    const fields = new Map();
+    const get = (name) => {
+      if (!fields.has(name)) fields.set(name, {value: '', options: [], disabled: false, addEventListener() {}});
+      return fields.get(name);
+    };
+    get('credential_vault_id').value = vault;
+    Object.assign(get('credential_entry_id'), {value: entry, options: options.map((value) => ({value})), disabled: manual});
+    const form = {elements: {namedItem: get}, closest: () => ({addEventListener() {}}), addEventListener() {}, querySelector: get};
+    let contract; let skipped;
+    vm.runInNewContext(js, {document: {querySelector: (selector) => selector.includes('-form') ? form : get('opener')},
+      window: {location: {search: ''}, localStorage: {getItem: () => ''}, AtlasoUiPatterns: {createWizard(config) {
+        contract = config; return {setSkippedSteps(value) { skipped = value; }};
+      }}}, URLSearchParams});
+    assert.equal(contract.validateStep({step: {id: 'credential'}}), manual || Boolean(entry));
+    assert.equal(skipped.includes('login'), !manual);
+  }
+});
