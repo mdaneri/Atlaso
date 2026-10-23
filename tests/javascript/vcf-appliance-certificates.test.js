@@ -174,3 +174,57 @@ test('closing during preparation keeps operation context and clears the password
   assert.equal(get('address').disabled, true);
   assert.equal(get('password').value, '');
 });
+
+for (const persistent of [false, true]) {
+test(`restoration and polling failures retain the operation (${persistent ? 'bounded outage' : 'recovery'})`, async () => {
+  const elements = new Map(); const listeners = {}; const timers = new Map(); let timerId = 0; let requests = 0; let saved = 'operation';
+  const get = (name) => {
+    if (!elements.has(name)) elements.set(name, {value: '', options: [], disabled: false,
+      classList: {toggle(_name, hidden) { this.hidden = hidden; }, add() {}, remove() {}},
+      addEventListener() {}, replaceChildren() {}, add(option) { this.options.push(option); }, matches() { return false; }});
+    return elements.get(name);
+  };
+  const dialog = {open: false, addEventListener(name, callback) { listeners[name] = callback; }};
+  const opener = {disabled: false, addEventListener(_name, callback) { this.click = callback; }};
+  const form = {elements: {namedItem: get}, dataset: {endpoint: '/certificates'}, closest: () => dialog,
+    querySelector: get, querySelectorAll: () => [], addEventListener() {}};
+  const outcomes = [new Error('offline'), 'preparing', ...(persistent ? Array.from({length: 6}, () => new Error('outage')) : [new Error('temporary outage'), 'prepared', new Error('offline again')])];
+  vm.runInNewContext(js, {document: {querySelector: (selector) => selector.includes('-form') ? form : opener},
+    URLSearchParams, Option: function(_label, value) { this.value = value; },
+    window: {location: {search: ''}, localStorage: {getItem: () => saved, setItem(_key, value) { saved = value; }, removeItem() { saved = ''; }},
+      setTimeout(callback, delay) { const id = ++timerId; timers.set(id, {callback, delay}); return id; }, clearTimeout(id) { timers.delete(id); },
+      AtlasoUiPatterns: {createWizard: () => ({markClean() {}, setSkippedSteps() {}, async open() { dialog.open = true; }})}},
+    fetch: async (_url, options) => {
+      assert.equal(options.method, 'GET');
+      const outcome = outcomes[requests++];
+      if (outcome instanceof Error) throw outcome;
+      return {ok: true, json: async () => ({operation_id: 'operation', product: 'srm', address: 'srm.test', state: outcome})};
+    }});
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  const tick = async () => { const [id, timer] = timers.entries().next().value; timers.delete(id); timer.callback(); await settle(); };
+  await settle();
+  assert.equal(saved, 'operation', 'a failed restoration cannot erase durable task context');
+  assert.equal(timers.size, 0);
+  opener.click({currentTarget: opener}); await settle();
+  assert.equal(get('address').value, 'srm.test', 'retry hydrates the accepted operation');
+  assert.equal(timers.size, 1);
+  await tick();
+  assert.equal(timers.size, 1, 'a failed active-operation poll schedules a retry');
+  assert.equal([...timers.values()][0].delay, 3000);
+  if (persistent) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      assert.ok([...timers.values()][0].delay <= 30000);
+      await tick();
+    }
+    assert.equal(timers.size, 0, 'automatic retries stop after five failed retries');
+    assert.equal(saved, 'operation');
+    return;
+  }
+  await tick();
+  assert.equal(get('[data-cert-continue-review]').classList.hidden, false);
+  assert.equal(timers.size, 0, 'prepared status stops polling');
+  dialog.open = false; listeners.close(); opener.click({currentTarget: opener}); await settle();
+  assert.equal(timers.size, 0, 'a known prepared operation does not restart background polling on error');
+  assert.equal(saved, 'operation');
+});
+}

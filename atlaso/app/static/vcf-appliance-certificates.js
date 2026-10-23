@@ -13,6 +13,9 @@
   let reviewToken = null;
   let busy = false;
   let pollTimer = null;
+  let operationLoaded = false;
+  let operationState = null;
+  let pollFailures = 0;
   let revision = 0;
   const operationStorageKey = "atlaso:vcf-helper:certificate-operation";
   const savedOperation = () => { try { return window.localStorage.getItem(operationStorageKey) || ""; } catch { return ""; } };
@@ -45,7 +48,11 @@
   async function call(path, body) {
     const response = await fetch(`${form.dataset.endpoint}${path}`, {method: body ? "POST" : "GET", credentials: "same-origin", cache: "no-store", headers: body ? {"Content-Type": "application/json", "X-CSRF-Token": field("csrf").value} : {}, body: body ? JSON.stringify(body) : undefined});
     const result = await response.json();
-    if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "The certificate operation could not complete.");
+    if (!response.ok) {
+      const error = new Error(typeof result.detail === "string" ? result.detail : "The certificate operation could not complete.");
+      error.status = response.status;
+      throw error;
+    }
     return result;
   }
   async function run(action) {
@@ -69,6 +76,7 @@
     for (const row of rows) { const item = document.createElement("div"); const label = document.createElement("span"); const value = document.createElement("strong"); label.textContent = row[0]; value.textContent = row[1] ?? ""; item.append(label, value); container.append(item); }
   }
   function paintOperation(result) {
+    operationState = result.state;
     const productLabel = result.product === "vcenter" ? "vCenter" : result.product === "sddc" ? "SDDC Manager" : "SRM / Protection and Recovery";
     node("operation-target").textContent = `${productLabel} — ${result.address || ""}:${result.port || 443}${result.domain_id ? ` · Management domain ${result.domain_id}` : ""}`;
     if (operationId) wizard.markClean();
@@ -91,6 +99,7 @@
     ["product", "address", "port", "common_name", "dns_names", "ip_addresses", "profile_id", "recovery_reference", "credential_vault_id", "credential_entry_id", "username"].forEach((name) => { if (field(name)) field(name).disabled = locked; });
   }
   function hydrateOperation(result) {
+    operationLoaded = true;
     operationId = result.operation_id;
     const reference = result.credential_reference || {};
     field("product").value = result.product || "srm"; field("address").value = result.address || ""; field("port").value = result.port || 443;
@@ -114,11 +123,35 @@
   function clearTerminalOperation() {
     if (node("new-operation").classList.contains("hidden")) return;
     saveOperation(""); operationId = null; inspection = null; probe = null; reviewToken = null;
+    operationLoaded = false; operationState = null; pollFailures = 0;
     form.reset(); lockOperationFields(false); wizard.reset(); updateMode(); clearMessage();
     form.querySelector("[data-cert-prepare]").disabled = false;
     node("result").textContent = ""; node("new-operation").classList.add("hidden");
   }
-  async function poll() { if (!operationId || !dialog.open) return; await run(async () => paintOperation(await call(`/operations/${encodeURIComponent(operationId)}`))); }
+  async function loadOperation() {
+    const result = await call(`/operations/${encodeURIComponent(operationId)}`);
+    if (operationLoaded) paintOperation(result);
+    else { hydrateOperation(result); updateMode(); }
+    pollFailures = 0;
+  }
+  function schedulePoll(delay) {
+    window.clearTimeout(pollTimer);
+    pollTimer = operationId && dialog.open ? window.setTimeout(() => poll(), delay) : null;
+  }
+  async function poll() {
+    window.clearTimeout(pollTimer); pollTimer = null;
+    if (!operationId || !dialog.open) return;
+    if (busy) { schedulePoll(1500); return; }
+    await run(async () => {
+      try { await loadOperation(); }
+      catch (error) {
+        pollFailures += 1;
+        const recoverable = !error.status || error.status >= 500 || [408, 429].includes(error.status);
+        if (recoverable && pollFailures <= 5 && (!operationLoaded || ["preparing", "installing"].includes(operationState))) schedulePoll(Math.min(30000, 1500 * (2 ** pollFailures)));
+        throw new Error(`${error.message} The saved operation is retained; reopen the wizard or retry Reconcile status to refresh it.`);
+      }
+    });
+  }
   const stepCopy = {
     credential: ["Choose credentials", "Select saved vault credentials or enter temporary credentials."],
     server: ["Select the appliance", "Choose SRM, vCenter, or SDDC Manager and enter its endpoint."],
@@ -157,6 +190,7 @@
     if (!button) return;
     event.preventDefault();
     run(async () => {
+      if (operationId && !operationLoaded) { await loadOperation(); return; }
       if (button.matches("[data-cert-probe]")) {
         const current = credentials();
         probe = await call("/probe", {product: current.product, address: current.address, port: current.port});
@@ -171,7 +205,7 @@
       } else if (button.matches("[data-cert-prepare]")) {
         if (operationId) throw new Error("An operation already exists. Reconcile it before starting another.");
         const result = await call("/prepare", {...credentials(), ...targetFields(), recovery_ready: field("recovery_ready").checked, acknowledged: field("acknowledged").checked});
-        operationId = result.operation_id; saveOperation(operationId); wizard.setHighestStep("results"); wizard.showStep("results"); paintOperation(result);
+        operationId = result.operation_id; operationLoaded = true; saveOperation(operationId); wizard.setHighestStep("results"); wizard.showStep("results"); paintOperation(result);
       } else if (button.matches("[data-cert-review-action]")) {
         const result = await call("/review", {...credentials(), operation_id: operationId, ...targetFields()}); reviewToken = result.token;
         const r = result.review; paintList(node("review"), [["Target", r.target], ...(r.domain_id ? [["Management domain", r.domain_id], ["SDDC Manager resource", r.resource_id]] : []), ["Current SHA-256", r.current_certificate.fingerprint_sha256], ["Replacement SHA-256", r.replacement_certificate.fingerprint_sha256], ["Issuer", r.issuer], ["Issuer SHA-256", r.issuer_fingerprint_sha256], ["CA profile", r.profile], ["Names", (r.names || []).join(", ")], ["Validity", r.replacement_certificate.not_before + " through " + r.replacement_certificate.not_after], ["Trust changes", (r.trust_changes || []).join(", ")], ["Interruption", r.interruption], ["Recovery", r.recovery_reference]]);
@@ -190,11 +224,15 @@
     void call(`/operations/${encodeURIComponent(operationId)}`).then((result) => {
       hydrateOperation(result); updateMode();
       if (explicitOperation) void wizard.open({launcher: opener, reset: false, step: "results", highestStep: "results"}).then(() => poll());
-    }).catch((error) => { operationId = null; saveOperation(""); message(error.message, true); });
+    }).catch((error) => {
+      message(`${error.message} The saved operation is retained; open the wizard to retry restoration.`, true);
+      if (explicitOperation) void wizard.open({launcher: opener, reset: false, step: "results", highestStep: "results"}).then(() => poll());
+    });
   }
   opener?.addEventListener("click", (event) => {
     if (!opener.disabled) {
       updateMode();
+      pollFailures = 0;
       void wizard.open({launcher: event.currentTarget, reset: !operationId, step: operationId ? "results" : "credential", highestStep: operationId ? "results" : 0}).then(() => { if (operationId) void poll(); });
     }
   });
