@@ -21,6 +21,7 @@ from atlaso.app.models import (
     DnsRecord,
     LdapGroup,
     LdapOrganization,
+    OidcClient,
     OidcGroupMapping,
     OidcSigningKey,
     Role,
@@ -651,6 +652,46 @@ def build_router(dependencies: IdentityUiDependencies) -> IdentityUiRouter:
                 oidc_client_id=row.client_id,
                 oidc_page=True,
             ),
+        )
+
+    @router.post("/authentication/oidc/client-secret-reveal-audit", response_model=None)
+    def audit_oidc_client_secret_reveal_from_ui(
+        request: Request,
+        client_id: str = Form(...),
+        csrf: str = Form(...),
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> JSONResponse:
+        """Audit a one-time browser reveal without receiving or returning a secret.
+
+        Requires an administrator session and CSRF token. This immediate audit-only
+        action neither retrieves credentials nor changes client or appliance state.
+        The browser retains the already-issued value only until its dialog closes.
+
+        Args:
+            request: Browser request carrying the administrator session.
+            client_id: Public client identifier associated with the one-time value.
+            csrf: Validated session token authorizing the audit submission.
+            identity: Authenticated administrator requesting the reveal.
+            db: Active database session used to persist the value-free audit event.
+        """
+        require_admin_identity(identity)
+        verify_csrf(request, csrf)
+        row = db.execute(
+            select(OidcClient).where(OidcClient.client_id == client_id)
+        ).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(status_code=404, detail="OIDC client not found")
+        record_audit(
+            db,
+            actor=identity.username,
+            action="reveal_oidc_client_secret",
+            resource_type="oidc_client",
+            resource_id=str(row.id),
+        )
+        return JSONResponse(
+            {"audited": True},
+            headers={"Cache-Control": "no-store, private", "Pragma": "no-cache"},
         )
 
     @router.post(
@@ -1979,6 +2020,7 @@ def build_router(dependencies: IdentityUiDependencies) -> IdentityUiRouter:
         "authentication_context": authentication_context,
         "update_oidc_provider_from_ui": update_oidc_provider_from_ui,
         "create_oidc_client_from_ui": create_oidc_client_from_ui,
+        "audit_oidc_client_secret_reveal_from_ui": audit_oidc_client_secret_reveal_from_ui,
         "update_oidc_client_from_ui": update_oidc_client_from_ui,
         "export_oidc_client_integration_from_ui": export_oidc_client_integration_from_ui,
         "create_oidc_group_mapping_from_ui": create_oidc_group_mapping_from_ui,

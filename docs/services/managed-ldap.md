@@ -110,6 +110,9 @@ and **Recover missing passwords** generates replacement credentials in one opera
 
 ## vCenter OpenLDAP groups
 
+For the complete vCenter Server LDAPS identity-source setup, user-login verification, bind rotation, and removal
+procedure, see [vCenter OpenLDAP login with Atlaso](vcenter-ldap.md).
+
 Each organization also publishes `ou=vcenter-groups,<organization suffix>` during global LDAP Apply. These separate
 entries use RFC4519 `groupOfUniqueNames` and DN-valued `uniqueMember`, matching the native OpenLDAP schema mapping
 inspected on vCenter Server 9.1.1. [Broadcom KB316480](https://knowledge.broadcom.com/external/article/316480) specifies

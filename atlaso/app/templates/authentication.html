@@ -66,13 +66,6 @@
         <span class="status-pill {{ 'good' if oidc_provider.enabled else 'muted' }}" data-oidc-provider-status>{{ 'enabled' if oidc_provider.enabled else 'disabled' }}</span>
       </div>
       {% if oidc_error %}<div class="alert error"><strong>OIDC configuration was not saved.</strong><p>{{ oidc_error }}</p></div>{% endif %}
-      {% if oidc_client_secret %}
-        <div class="alert success">
-          <strong>Copy the confidential client secret now.</strong>
-          <p class="muted">Client ID: <code>{{ oidc_client_id }}</code>. This plaintext secret is not stored and cannot be shown again.</p>
-          <textarea readonly rows="4" aria-label="Generated OIDC client secret">{{ oidc_client_secret }}</textarea>
-        </div>
-      {% endif %}
     </div>
     <div class="panel">
       <div class="panel-head">
@@ -181,11 +174,7 @@
   <div class="panel-head">
     <div><h2>OIDC Clients</h2><p class="muted">Browse confidential clients here. Use the in-grid add row or open an existing row to start the reviewed wizard; Atlaso never guesses relying-party redirect values.</p></div>
   </div>
-  <div id="oidc-client-secret-result" class="alert success hidden">
-    <strong>Copy this confidential client secret now.</strong>
-    <p class="muted">The plaintext value is not stored and cannot be shown again.</p>
-    <textarea readonly rows="4" aria-label="Generated OIDC client secret"></textarea>
-  </div>
+  <p id="oidc-client-secret-result" class="alert success {{ '' if oidc_client_secret else 'hidden' }}" role="status">Confidential client saved. Store its one-time secret before closing the credential dialog.</p>
   <div id="oidc-clients-table" class="tabulator-shell" data-clients='{{ oidc_clients | tojson }}' data-csrf="{{ csrf_token }}" data-fallback-id="oidc-clients-fallback"></div>
   <p id="oidc-clients-status" class="autosave-status" aria-live="polite">Client lifecycle changes are immediate application state and require no appliance apply.</p>
   <table id="oidc-clients-fallback" class="data-table">
@@ -371,6 +360,26 @@
   </div>
 </aside>
 </section>
+<dialog id="oidc-client-secret-modal" class="confirm-modal" aria-labelledby="oidc-client-secret-title" aria-describedby="oidc-client-secret-description" data-csrf="{{ csrf_token }}" {{ 'data-oidc-secret-auto-open' if oidc_client_secret else '' }}>
+  <div class="confirm-modal-panel form-stack">
+    <div class="confirm-modal-body">
+      <p class="kicker">Confidential client credential</p>
+      <h2 id="oidc-client-secret-title">Copy this credential now</h2>
+      <p id="oidc-client-secret-description" class="muted">This secret is available only now. Store it in your secret manager and configure the relying party before choosing Done. Atlaso cannot display it again; reopening the client editor will not retrieve it.</p>
+      <div class="settings-list compact-list"><div><span>Client ID</span><strong data-oidc-secret-client-id>{{ oidc_client_id or '' }}</strong></div></div>
+      <label for="oidc-client-secret-value">Client secret</label>
+      <span class="secret-value-field">
+        <input id="oidc-client-secret-value" type="password" readonly autocomplete="off" spellcheck="false" value="{{ oidc_client_secret or '' }}" data-oidc-secret-value>
+        <span class="secret-value-actions">
+          <button class="button secondary icon-button" type="button" data-oidc-secret-reveal aria-label="Reveal client secret" title="Reveal client secret" aria-pressed="false"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path class="hidden" d="m3 3 18 18" data-oidc-secret-slash/></svg></button>
+          <button class="button secondary icon-button" type="button" data-oidc-secret-copy aria-label="Copy client secret" title="Copy client secret"><svg class="button-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2 2v1"/></svg></button>
+        </span>
+      </span>
+      <p class="muted" role="status" aria-live="polite" data-oidc-secret-status></p>
+    </div>
+    <div class="confirm-modal-actions"><button class="button primary" type="button" data-oidc-secret-close autofocus>Done</button></div>
+  </div>
+</dialog>
 {% endif %}
 
 {% if not oidc_page %}

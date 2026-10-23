@@ -53,6 +53,7 @@ nav = [
     { "vSphere Key Providers" = "services/vsphere-key-providers.md" },
     { "Local users" = "services/local-users.md" },
     { "Managed LDAP" = "services/managed-ldap.md" },
+    { "vCenter OpenLDAP" = "services/vcenter-ldap.md" },
     { "OpenID Connect provider" = "services/oidc-provider.md" },
     { "VCF backups" = "services/vcf-backups.md" },
     { "VCF Helper" = "services/vcf-helper.md" },

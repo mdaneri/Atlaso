@@ -1,8 +1,17 @@
 """Test extracted identity-management UI transports."""
+import re
+from html import unescape
+
 from sqlalchemy import select
 
 from atlaso.app.database import SessionLocal
-from atlaso.app.models import LdapOrganization, OidcClient, OidcGroupMapping
+from atlaso.app.models import (
+    AuditEvent,
+    LdapOrganization,
+    OidcClient,
+    OidcGroupMapping,
+    User,
+)
 from atlaso.app.services.oidc import (
     create_client,
     create_group_mapping,
@@ -10,6 +19,116 @@ from atlaso.app.services.oidc import (
 )
 from tests.routers.ui.helpers import login, submit_reviewed_appliance_apply
 from tests.test_oidc import _admin_headers, _configure_protocol_client
+
+
+def test_oidc_ui_one_time_credentials_use_masked_dialog_not_inline_banner(client):
+    """Creation and rotation return one dialog; later reads cannot retrieve secrets.
+
+    Args:
+        client: HTTP test client exercising the one-time credential responses.
+    """
+    login(client)
+    page = client.get("/openid-connect")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    created = client.post(
+        "/authentication/oidc/clients",
+        data={
+            "name": "Dialog regression client",
+            "redirect_uris": "https://rp.example.test/callback",
+            "allowed_scopes": "openid",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+    )
+    assert created.status_code == 200
+    with SessionLocal() as db:
+        row = db.execute(
+            select(OidcClient).where(OidcClient.name == "Dialog regression client")
+        ).scalar_one()
+        record_id = row.id
+    rotated = client.post(
+        f"/authentication/oidc/clients/{record_id}/rotate-secret",
+        data={"csrf": csrf},
+    )
+    assert rotated.status_code == 200
+    for response in (created, rotated):
+        before, dialog_and_after = response.text.split(
+            '<dialog id="oidc-client-secret-modal"', 1
+        )
+        dialog, after = dialog_and_after.split("</dialog>", 1)
+        assert "data-oidc-secret-auto-open" in dialog
+        assert 'aria-describedby="oidc-client-secret-description"' in dialog
+        assert 'type="password" readonly autocomplete="off"' in dialog
+        assert "data-oidc-secret-reveal" in dialog
+        assert "data-oidc-secret-copy" in dialog
+        assert "data-oidc-secret-close autofocus" in dialog
+        assert "<textarea" not in dialog
+        match = re.search(r'id="oidc-client-secret-value"[^>]*value="([^"]+)"', dialog)
+        assert match is not None
+        secret = unescape(match.group(1))
+        assert secret not in before + after
+        later = client.get("/openid-connect")
+        assert secret not in later.text
+        assert "data-oidc-secret-auto-open" not in later.text
+        listing = client.get("/api/v1/oidc/clients", headers=_admin_headers(client))
+        assert listing.status_code == 200
+        assert secret not in listing.text
+    assert 'id="oidc-client-secret-result" class="alert success' in created.text
+
+
+def test_oidc_secret_reveal_audit_is_value_free_admin_csrf_protected_and_no_store(client):
+    """Audit every reveal before display, without a credential retrieval operation.
+
+    Args:
+        client: HTTP test client exercising audit authorization and response headers.
+    """
+    login(client)
+    page = client.get("/openid-connect")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    created = client.post(
+        "/authentication/oidc/clients",
+        data={
+            "name": "Audited dialog client",
+            "redirect_uris": "https://rp.example.test/callback",
+            "allowed_scopes": "openid",
+            "enabled": "on",
+            "csrf": csrf,
+        },
+        headers={"X-Atlaso-Grid": "1"},
+    )
+    assert created.status_code == 201
+    payload = created.json()
+    client_id = payload["client"]["client_id"]
+    record_id = payload["client"]["id"]
+    path = "/authentication/oidc/client-secret-reveal-audit"
+    body = {"client_id": client_id, "csrf": csrf}
+    for _ in range(2):
+        audited = client.post(path, data=body)
+        assert audited.status_code == 200
+        assert audited.json() == {"audited": True}
+        assert "no-store" in audited.headers["cache-control"]
+        assert audited.headers["pragma"] == "no-cache"
+        assert payload["client_secret"] not in audited.text
+    assert client.post(path, data={**body, "csrf": "invalid"}).status_code == 403
+    assert client.post(path, data={**body, "client_id": "missing"}).status_code == 404
+    with SessionLocal() as db:
+        events = db.scalars(
+            select(AuditEvent).where(AuditEvent.action == "reveal_oidc_client_secret")
+        ).all()
+        assert len(events) == 2
+        assert all(event.actor == "admin" and event.resource_id == str(record_id) for event in events)
+        assert all(not event.detail for event in events)
+        admin = db.scalar(select(User).where(User.username == "admin"))
+        admin.role = "viewer"
+        admin.roles_json = '["viewer"]'
+        db.commit()
+    assert client.post(path, data=body).status_code == 403
+    client.cookies.clear()
+    anonymous = client.post(path, data=body, follow_redirects=False)
+    assert anonymous.status_code == 303
+    assert "/login" in anonymous.headers["location"]
+    with SessionLocal() as db:
+        assert len(db.scalars(select(AuditEvent).where(AuditEvent.action == "reveal_oidc_client_secret")).all()) == 2
 
 
 def test_identity_ui_router_owns_exact_transport_set():
@@ -31,6 +150,11 @@ def test_identity_ui_router_owns_exact_transport_set():
             "/ui/management/authentication/oidc/clients",
             ("POST",),
             "create_oidc_client_from_ui",
+        ),
+        (
+            "/ui/management/authentication/oidc/client-secret-reveal-audit",
+            ("POST",),
+            "audit_oidc_client_secret_reveal_from_ui",
         ),
         (
             "/ui/management/authentication/oidc/clients/{client_record_id}/edit",

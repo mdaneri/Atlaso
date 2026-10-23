@@ -2758,7 +2758,8 @@ textarea {
 }
 
 #ldap-generate-modal .confirm-modal-panel,
-#ldap-bind-secret-modal .confirm-modal-panel {
+#ldap-bind-secret-modal .confirm-modal-panel,
+#oidc-client-secret-modal .confirm-modal-panel {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
@@ -2776,14 +2777,16 @@ textarea {
 }
 
 #ldap-generate-modal,
-#ldap-bind-secret-modal {
+#ldap-bind-secret-modal,
+#oidc-client-secret-modal {
   overflow-x: hidden;
 }
 
 #ldap-generate-modal .confirm-modal-body,
 #ldap-bind-secret-modal .confirm-modal-body,
 #ldap-generate-modal label,
-#ldap-bind-secret-modal label {
+#ldap-bind-secret-modal label,
+#oidc-client-secret-modal .confirm-modal-body {
   min-width: 0;
 }
 
@@ -2795,22 +2798,31 @@ textarea {
   white-space: nowrap;
 }
 
-#ldap-bind-secret-modal .settings-list > div {
+#ldap-bind-secret-modal .settings-list > div,
+#oidc-client-secret-modal .settings-list > div {
   grid-template-columns: 96px minmax(0, 1fr);
   min-width: 0;
 }
 
-#ldap-bind-secret-modal .settings-list strong {
+#ldap-bind-secret-modal .settings-list strong,
+#oidc-client-secret-modal .settings-list strong {
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
 
 #ldap-bind-secret-modal .secret-value-field,
-#ldap-bind-secret-modal .secret-value-field > input {
+#ldap-bind-secret-modal .secret-value-field > input,
+#oidc-client-secret-modal .secret-value-field,
+#oidc-client-secret-modal .secret-value-field > input {
   width: 100%;
   max-width: 100%;
   min-width: 0;
+}
+
+#oidc-client-secret-modal [data-oidc-secret-reveal] {
+  border: 0;
+  background: transparent;
 }
 
 .zone-create {
