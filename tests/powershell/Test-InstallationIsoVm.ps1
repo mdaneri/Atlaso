@@ -78,6 +78,7 @@ function Get-InstallationVmFunctionText {
 }
 
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'ConvertTo-InstallationVmxString')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Resolve-InstallationVmTool')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'New-InstallationVmConfiguration')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Get-InstallationVmxPathAssignment')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmDiskBindings')))
@@ -121,6 +122,34 @@ try { Assert-InstallationSerialPipePath -Path '\\localhost\pipe\Atlaso-Installat
 catch { $invalidPipeRejected = $true }
 Assert-InstallationVmCondition $invalidPipeRejected 'Remote named pipes must be rejected.'
 
+$previousTestPathFunction = Get-Item Function:\Test-Path -ErrorAction SilentlyContinue
+$previousResolvePathFunction = Get-Item Function:\Resolve-Path -ErrorAction SilentlyContinue
+$originalProgramFiles = $env:ProgramFiles
+$originalProgramFilesX86 = ${env:ProgramFiles(x86)}
+try {
+    $env:ProgramFiles = 'C:\Synthetic VMware'
+    ${env:ProgramFiles(x86)} = 'C:\Synthetic VMware x86'
+    Set-Item Function:\Test-Path -Value {
+        param([string]$LiteralPath, [string]$PathType)
+        return $LiteralPath -ceq 'C:\Synthetic VMware\VMware\VMware Workstation\vmware-vdiskmanager.exe'
+    }
+    Set-Item Function:\Resolve-Path -Value {
+        param([string]$LiteralPath)
+        return [pscustomobject]@{ Path = $LiteralPath }
+    }
+    $singleCandidate = Resolve-InstallationVmTool -FileName 'vmware-vdiskmanager.exe'
+    Assert-InstallationVmCondition ($singleCandidate -ceq 'C:\Synthetic VMware\VMware\VMware Workstation\vmware-vdiskmanager.exe') `
+        'A single installed VMware tool candidate must resolve as a path, not be indexed as a string character.'
+}
+finally {
+    if ($previousTestPathFunction) { Set-Item Function:\Test-Path -Value $previousTestPathFunction.ScriptBlock }
+    else { Remove-Item Function:\Test-Path -ErrorAction SilentlyContinue }
+    if ($previousResolvePathFunction) { Set-Item Function:\Resolve-Path -Value $previousResolvePathFunction.ScriptBlock }
+    else { Remove-Item Function:\Resolve-Path -ErrorAction SilentlyContinue }
+    $env:ProgramFiles = $originalProgramFiles
+    ${env:ProgramFiles(x86)} = $originalProgramFilesX86
+}
+
 $source = [System.IO.File]::ReadAllText($harnessPath)
 $ownershipSource = [System.IO.File]::ReadAllText($ownershipPath)
 $cleanupSource = [System.IO.File]::ReadAllText($cleanupPath)
@@ -144,11 +173,14 @@ Assert-InstallationVmCondition ($freshProcessOutput.Count -eq 0) 'Fresh-process 
 $whatIfGate = $source.IndexOf('$PSCmdlet.ShouldProcess($resolvedOutput', [StringComparison]::Ordinal)
 $intentWrite = $source.IndexOf('Publish-AtlasoTestVmOwnershipRecord -Context $context -Record $intent', [StringComparison]::Ordinal)
 $originalReceipt = $source.IndexOf('Publish-InstallationVmOriginalReceipt -Context $context', [StringComparison]::Ordinal)
+$originalReceiptReport = $source.IndexOf('Original installation VM receipt: path={0} sha256={1}', [StringComparison]::Ordinal)
 $diskMutation = $source.IndexOf("-FileName 'vmware-vdiskmanager.exe'", [StringComparison]::Ordinal)
 $providerStart = $source.IndexOf("'Start isolated installation ISO test VM'", [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($whatIfGate -ge 0 -and $intentWrite -gt $whatIfGate) 'WhatIf must return before any ownership record is published.'
 Assert-InstallationVmCondition ($intentWrite -lt $originalReceipt -and $originalReceipt -lt $diskMutation) 'The task intent and original VM receipt must precede disk mutations.'
 Assert-InstallationVmCondition ($originalReceipt -lt $providerStart) 'The original VM receipt must precede provider startup.'
+Assert-InstallationVmCondition ($originalReceipt -lt $originalReceiptReport -and $originalReceiptReport -lt $diskMutation) `
+    'The original receipt path and digest must be reported before the first disk-tool/provider operation.'
 foreach ($member in @('ReceiptPath', 'ReceiptSha256', 'VmxPath', 'DirectoryIdentity', 'PersistentVmIdentitySha256')) {
     Assert-InstallationVmCondition ($source.Contains("        $member = ")) "Create result must expose structured $member."
 }
@@ -161,8 +193,11 @@ Assert-InstallationVmCondition ($source.Contains("'-c', '-s', '4GB', '-a', 'lsil
 $targetDiskCreate = $source.IndexOf("'-c', '-s', '64GB', '-a', 'lsilogic', '-t', '0', $targetDisk", [StringComparison]::Ordinal)
 $unselectedDiskCreate = $source.IndexOf("'-c', '-s', '4GB', '-a', 'lsilogic', '-t', '0', $unselectedDisk", [StringComparison]::Ordinal)
 $baselineCreate = $source.IndexOf('Publish-InstallationDiskBaseline -Context $context', [StringComparison]::Ordinal)
+$baselineReport = $source.IndexOf('Installation disk baseline receipt: path={0} sha256={1}', [StringComparison]::Ordinal)
 $providerStart = $source.IndexOf("'Start isolated installation ISO test VM'", [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($targetDiskCreate -lt $baselineCreate -and $unselectedDiskCreate -lt $baselineCreate -and $baselineCreate -lt $providerStart) 'Both logical disk baselines must be durably published after disk creation and before any VM start.'
+Assert-InstallationVmCondition ($baselineCreate -lt $baselineReport -and $baselineReport -lt $providerStart) `
+    'The disk baseline receipt path and digest must be reported before VM startup.'
 Assert-InstallationVmCondition ($source.Contains("'compare', '-f', 'vmdk', '-F', 'vmdk'")) 'Disk comparison must use qemu-img logical VMDK comparison.'
 Assert-InstallationVmCondition (-not $source.Contains("'compare', '-s'")) 'Logical comparison must not require sparse allocation layout to match.'
 Assert-InstallationVmCondition ($source.Contains('-Kind installation-baseline')) 'The baseline record must use its dedicated ownership-receipt kind.'

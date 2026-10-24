@@ -90,9 +90,11 @@ function Resolve-InstallationVmTool {
         return (Resolve-Path -LiteralPath $Path).Path
     }
     $candidates = @(
-        (Join-Path $env:ProgramFiles "VMware\VMware Workstation\$FileName"),
-        (Join-Path ${env:ProgramFiles(x86)} "VMware\VMware Workstation\$FileName")
-    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) }
+        @(
+            (Join-Path $env:ProgramFiles "VMware\VMware Workstation\$FileName"),
+            (Join-Path ${env:ProgramFiles(x86)} "VMware\VMware Workstation\$FileName")
+        ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) }
+    )
     if ($candidates.Count) { return (Resolve-Path -LiteralPath $candidates[0]).Path }
     $command = Get-Command $FileName -ErrorAction SilentlyContinue
     if ($command) { return $command.Source }
@@ -603,6 +605,7 @@ try {
         $original = Publish-InstallationVmOriginalReceipt -Context $context -CleanupIdentity $cleanupIdentity -Iso $iso -VmxStream $vmxStream
     }
     finally { $vmxStream.Dispose() }
+    Write-Host ("Original installation VM receipt: path={0} sha256={1}" -f $original.Path, $original.Sha256)
 
     Assert-AtlasoTestVmCheckoutSource -Context $context
     $diskTool = Resolve-InstallationVmTool -Path $VdiskManagerPath -FileName 'vmware-vdiskmanager.exe'
@@ -613,6 +616,7 @@ try {
     $qemuImg = Resolve-InstallationVmTool -Path $QemuImgPath -FileName 'qemu-img.exe'
     $baseline = Publish-InstallationDiskBaseline -Context $context -Original $original -DiskTool $qemuImg `
         -TargetDisk $targetDisk -UnselectedDisk $unselectedDisk
+    Write-Host ("Installation disk baseline receipt: path={0} sha256={1}" -f $baseline.Path, $baseline.Sha256)
     $vmrun = Resolve-InstallationVmTool -Path $VmrunPath -FileName 'vmrun.exe'
     if (-not $NoStart) {
         $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $vmrun -ArgumentList @('-T', 'ws', 'start', $context.VmxPath, 'nogui') `
