@@ -28,6 +28,7 @@ concurrency:
 jobs:
   finalize:
     name: Verify, sign, and publish installation prerelease
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     environment: appliance-release

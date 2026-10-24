@@ -82,9 +82,12 @@ def test_publication_requires_the_exact_signed_asset_set(monkeypatch, tmp_path):
 
 def test_signing_staging_and_publication_use_separate_protected_gates():
     job = _workflow()["jobs"]["finalize"]
+    assert job["if"] == "github.ref == 'refs/heads/main'"
     assert job["runs-on"] == "ubuntu-latest"
     assert job["environment"] == "appliance-release"
     steps = job["steps"]
+    checkout = next(step for step in steps if step.get("uses", "").startswith("actions/checkout@"))
+    assert checkout["with"]["ref"] == "refs/heads/main"
     admission = next(step for step in steps if step.get("id") == "admission")
     key_step = next(step for step in steps if step.get("name") == "Materialize protected signing key")
     stage = next(step for step in steps if step.get("name") == "Stage only the signed prerelease asset set")

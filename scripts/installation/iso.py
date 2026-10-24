@@ -192,6 +192,17 @@ def _identity(info: os.stat_result) -> tuple[int, int, int, int]:
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
 
 
+def _stable_mode(mode: int) -> int:
+    """Exclude Windows filename-derived execute bits from mode comparisons.
+
+    Args:
+        mode: Filesystem mode reported for a path or open descriptor.
+    """
+    # Windows stat infers execute bits from .exe/.bat/.cmd suffixes, whereas
+    # fstat cannot inspect a filename. File type and read-only bits still match.
+    return mode & ~0o111 if os.name == "nt" else mode
+
+
 def _is_reparse(path: Path, info: os.stat_result) -> bool:
     """Check whether a path is a symbolic link or reparse point.
 
@@ -301,11 +312,11 @@ def _verify_pinned(item: _PinnedFile) -> None:
     Args:
         item: Pinned file record whose identity and contents are checked."""
     current = item.path.lstat()
-    if _identity(current) != item.identity or current.st_mode != item.mode:
+    if _identity(current) != item.identity or _stable_mode(current.st_mode) != _stable_mode(item.mode):
         raise ValueError(f"input changed during ISO assembly: {item.path.name}")
     if item.stream is not None:
         opened = os.fstat(item.stream.fileno())
-        if _identity(opened) != item.identity or opened.st_mode != item.mode:
+        if _identity(opened) != item.identity or _stable_mode(opened.st_mode) != _stable_mode(item.mode):
             raise ValueError(f"input changed during ISO assembly: {item.path.name}")
         if _hash_stream(item.stream, item.hash_algorithm) != item.digest:
             raise ValueError(f"input changed during ISO assembly: {item.path.name}")
@@ -316,7 +327,7 @@ def _verify_pinned(item: _PinnedFile) -> None:
             not stat.S_ISREG(opened.st_mode)
             or opened.st_nlink != 1
             or _identity(opened) != item.identity
-            or opened.st_mode != item.mode
+            or _stable_mode(opened.st_mode) != _stable_mode(item.mode)
             or _identity(item.path.lstat()) != item.identity
             or _hash_stream(stream, item.hash_algorithm) != item.digest
         ):

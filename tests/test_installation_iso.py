@@ -16,6 +16,38 @@ import pytest
 from scripts.installation import iso as installation_iso
 
 
+def test_pinned_command_file_matches_path_and_descriptor_modes(tmp_path: Path) -> None:
+    """Keep Windows suffix-derived execute bits from invalidating unchanged files.
+
+    Args:
+        tmp_path: Temporary directory for this test's filesystem fixtures.
+    """
+    path = tmp_path / "GuestDiskExpansion_WindowsGuest.bat"
+    path.write_bytes(b"@echo off\r\n")
+    pinned = installation_iso._open_pinned(path)
+    try:
+        installation_iso._verify_pinned(pinned)
+    finally:
+        pinned.stream.close()
+        pinned.stream = None
+    installation_iso._verify_pinned(pinned)
+
+
+@pytest.mark.parametrize("platform", ["nt", "posix"])
+def test_mode_comparison_preserves_file_type_and_read_only_changes(monkeypatch, platform):
+    """Normalize only synthetic Windows execute bits, keeping real mode changes.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        platform: Operating-system mode semantics exercised by the case.
+    """
+    monkeypatch.setattr(installation_iso, "os", SimpleNamespace(name=platform))
+    mode = installation_iso._stable_mode
+    assert (mode(stat.S_IFREG | 0o777) == mode(stat.S_IFREG | 0o666)) is (platform == "nt")
+    assert mode(stat.S_IFREG | 0o666) != mode(stat.S_IFREG | 0o444)
+    assert mode(stat.S_IFREG | 0o666) != mode(stat.S_IFDIR | 0o666)
+
+
 def _cpio_entry(name: str, data: bytes, mode: int, ino: int) -> bytes:
     """
     Args:

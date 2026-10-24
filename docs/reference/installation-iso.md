@@ -100,7 +100,9 @@ python scripts/build_development_installation_iso.py `
 This builder uses the distinct `atlaso-installation-development-public-test` key identity. Its deterministic Ed25519
 fixture seed is public test data (`bytes(range(32))`, bytes `00` through `1f`); it is not a credential or release
 authority and is never stored as a secret. The production signer and default production verifier continue to require
-the production key identity. The development initrd accepts the test identity only when its explicit development
+the production key identity. Production finalization runs only from `main`, uses its checked-out workflow tools, and
+retains the protected signing environment and main-release admission checks. The development initrd accepts the test
+identity only when its explicit development
 marker is present. The resulting image is for VMware testing only: it uses the serial installer console on `ttyS0`,
 is not publishable as an Atlaso release, and does not establish production or physical-hardware acceptance.
 
