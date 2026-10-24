@@ -3331,23 +3331,26 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     assert "VixHost_UnregisterVM" not in cleanup_module
     assert "'-T', 'ws', 'unregister'" not in cleanup_module
     assert "'-T', 'ws', 'deleteVM', $resolvedVmxPath" in cleanup_module
-    assert cleanup_module.index("Confirm-AtlasoWorkstationVmInactive") < cleanup_module.index(
+    removal_function = cleanup_module.split(
+        "\nfunction Remove-AtlasoWorkstationVmArtifacts", 1
+    )[1].split("\nfunction Remove-AtlasoWorkstationArtifactRoot", 1)[0]
+    assert removal_function.index("Confirm-AtlasoWorkstationVmInactive") < removal_function.index(
         "Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force"
     )
-    snapshot = cleanup_module.rindex("$snapshot = Get-AtlasoRootSnapshot")
-    inactive = cleanup_module.rindex("Confirm-AtlasoWorkstationVmInactive")
-    provider_delete = cleanup_module.rindex("'-T', 'ws', 'deleteVM', $resolvedVmxPath")
-    post_provider_guard = cleanup_module.index(
+    snapshot = removal_function.rindex("$snapshot = Get-AtlasoRootSnapshot")
+    inactive = removal_function.rindex("Confirm-AtlasoWorkstationVmInactive")
+    provider_delete = removal_function.rindex("'-T', 'ws', 'deleteVM', $resolvedVmxPath")
+    post_provider_guard = removal_function.index(
         "Assert-AtlasoRootSnapshotUnreplaced", provider_delete
     )
-    final_running_check = cleanup_module.rindex("Assert-AtlasoWorkstationNoRunningTarget -VmrunPath")
-    assert cleanup_module.count("Assert-AtlasoWorkstationNoRunningTarget -VmrunPath") == 2
-    stale_repair = cleanup_module.rindex("Remove-AtlasoWorkstationStaleRegistrations")
-    final_registration_check = cleanup_module.rindex("Test-AtlasoWorkstationVmxRegistered")
-    final_replacement_guard = cleanup_module.index(
+    final_running_check = removal_function.rindex("Assert-AtlasoWorkstationNoRunningTarget -VmrunPath")
+    assert removal_function.count("Assert-AtlasoWorkstationNoRunningTarget -VmrunPath") == 2
+    stale_repair = removal_function.rindex("Remove-AtlasoWorkstationStaleRegistrations")
+    final_registration_check = removal_function.rindex("Test-AtlasoWorkstationVmxRegistered")
+    final_replacement_guard = removal_function.index(
         "Assert-AtlasoRootSnapshotUnreplaced", final_registration_check
     )
-    recursive_delete = cleanup_module.rindex(
+    recursive_delete = removal_function.rindex(
         "Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop"
     )
     assert (
