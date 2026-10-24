@@ -2835,6 +2835,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#same-interface-gateway-acceptance" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Same-interface gateway acceptance
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#topology" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4251,6 +4262,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#same-interface-gateway-acceptance" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Same-interface gateway acceptance
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#topology" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4861,6 +4883,35 @@ child in PowerShell 7 so the default cleanup path cannot fall back to Windows Po
 installation fails before any lifecycle VM is created.</p>
 <p>Appliance VMX files set <code>disk.EnableUUID = "TRUE"</code> so Photon exposes stable <code>/dev/disk/by-id</code> identities. ESX Storage
 blank-disk claims depend on those identities and reject transient <code>/dev/sdX</code> names.</p>
+<h2 id="same-interface-gateway-acceptance">Same-interface gateway acceptance<a class="headerlink" href="#same-interface-gateway-acceptance" title="Permanent link">&para;</a></h2>
+<p>The focused Python lifecycle mode <code>--same-interface-gateway-only</code> verifies two Atlaso appliances on the same existing
+Workstation NAT network. Create both through <code>create-atlaso-test-vm.ps1</code> with the open PR number, separate purposes
+<code>forwarding-router</code> and <code>forwarding-client</code>, the same confirmed <code>-ManagementNetwork</code>, <code>-SkipLabNetworkAdapters</code>, and
+<code>-SkipNetworkPrepare</code>. Preserve each original receipt and digest outside the VM roots. Do not change the shared VMnet
+subnet or adopt a retained VM. A provenance-admitted powered-off appliance template remains a read-only source;
+deploy the clean PR wheel and helper to each exact owned clone through <code>deploy-wheel.ps1</code>.</p>
+<p>Before running the consumer, prove both receipt bindings, each active <code>eth0</code> NAT attachment, current Tools address ownership,
+and the guest-published Ed25519 fingerprints. Read the actual VMware NAT gateway instead of assuming a production
+address. Pass those values through <code>--appliance-ssh-host</code>, <code>--appliance-ssh-hostkey</code>, <code>--gateway-client-host</code>,
+<code>--gateway-client-hostkey</code>, <code>--gateway-upstream</code>, and <code>--gateway-expected-commit</code> to <code>scripts/interop/lifecycle_test.py</code>.
+Use <code>--secret-stdin</code> with the existing bounded protected lifecycle credential handoff; never pass a password on the
+command line. Keep <code>--result-dir</code> under an originally receipted task output root. <code>--plan-only</code> emits the non-secret
+plan without connecting to either appliance. The ordinary multi-network <code>-RoutingWanOnly</code> wrapper does not select
+this two-Atlaso mode.</p>
+<p>The consumer uses authenticated browser editors and global Appliance Apply, with no API-token creation. It converts
+both fresh clones to verified VMware Tools clock authority through the NTP settings and global Apply, so the client
+negative control does not depend on internet time sources or leave competing clock controllers active. It then converts
+both owned NAT interfaces to static Access with Management UI, retains A's actual upstream default, and sets B's
+default to A. It completes the protected management handoff with Routing off, then enables A's Routing in a separate
+WAN/Firewall Apply. Inert inherited adapters must start down and unaddressed; their desired state is kept unused and down.
+It explicitly disables accepting ICMP redirects on B and flushes learned route state, then checks
+effective routes before each probe. Packet evidence requires a client-to-A Ethernet frame and the matching A-to-gateway
+frame with the same IPv4/TCP tuple and a decremented TTL. The negative control disables the permission and requires
+client ingress without router egress while A still has external IPv4 connectivity. It restores the permission, checks
+DNS separately, and repeats forwarding after rebooting both appliances. It checks deployed source hashes, lab-table
+selection, forwarding sysctls, default-drop Firewall state, and absence of masquerade. Failed steps retain actionable
+native evidence; unit tests and a plan do not establish deployed success. Release both exact clones through their
+receipt-bound normal test-VM removal procedure after terminal task activity.</p>
 <h2 id="topology">Topology<a class="headerlink" href="#topology" title="Permanent link">&para;</a></h2>
 <p>The default lifecycle lab creates isolated VM directories and result/log artifacts under its canonical identity:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>test-results/vmware-workstation-lifecycle/Atlaso-PR-&lt;number&gt;-lifecycle-&lt;collision-safe-suffix&gt;/vms

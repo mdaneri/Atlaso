@@ -4754,7 +4754,11 @@ the same intended interfaces.</p>
 <li>A <strong>Routing Permission</strong> authorizes forwarded traffic from one non-management interface/VLAN network to another.
   Route-role networks allow these paths automatically. Access networks remain blocked until an explicit allow is
   enabled. An explicit deny overrides the generated/default result for only the selected direction and IP family;
-  the reverse direction has its own decision. Management is never an eligible source or destination.</li>
+  the reverse direction has its own decision. Management is never an eligible source or destination. An explicit
+  Routing Permission may also select the same non-management interface for source and destination to authorize that
+  interface as a gateway: packets arriving from its configured source prefix may leave through that same interface
+  toward routed destinations. This is a reviewed forwarding permission, not an automatic route-role permission or a
+  new interface role.</li>
 </ul>
 <p>Use the bottom add row in each tab to open the shared reviewed wizard. Double-click a saved row or use <strong>Edit</strong> in its
 row menu to update it. The standard step rail remains beside the form on wide screens and adapts to the narrow layout.
@@ -4769,6 +4773,21 @@ underlying interface roles or generated topology. <strong>Automatic</strong> fol
 forwarding, while Access networks need an explicit allow. <strong>Allow</strong> requests forwarding, and <strong>Deny</strong> blocks it. If an
 allow and deny cover the same directed pair and family, deny wins. Choose IPv4, IPv6, or both families; a rule for one
 family does not affect the other. The opposite direction is evaluated independently.</p>
+<p>To route clients through an upstream gateway on the same Access interface, create an explicit <strong>Allow</strong> permission and
+select that interface for both <strong>Source interface or VLAN</strong> and <strong>Destination interface or VLAN</strong>. Equal interfaces
+deliberately mean <strong>same-interface gateway</strong> mode; the permission is limited to the selected IP family and the
+interface's configured source prefix, and applies to routed destinations across that interface. It is not limited to
+packets addressed to the upstream gateway itself. <strong>Automatic</strong> never grants this same-interface path, including on a
+Route interface. Atlaso does not infer source NAT for it.</p>
+<p>If you first need to convert a dedicated management interface to Access with <strong>Management UI</strong>, keep Routing off and
+complete that protected Network handoff before enabling Routing. Then review the lab default and permission and apply
+<strong>Routing &amp; WAN</strong> and <strong>Firewall</strong> together. The management conversion cannot be combined with enabling forwarding.</p>
+<p>For example, with an Access interface at <code>192.168.1.254/24</code> and an upstream router at <code>192.168.1.1</code>, add or review an
+IPv4 <strong>Default route</strong> through gateway <code>192.168.1.1</code> on that same interface. Then add an IPv4 <strong>Allow</strong> Routing
+Permission with the interface selected for both endpoints. Configure a client on that subnet to use
+<code>192.168.1.254</code> as its default gateway. The upstream router must have a return path to the client subnet; in this
+same-subnet example it can reply directly, so source NAT is not required. Atlaso's own successful internet access does
+not prove that forwarded client traffic has a route or permission.</p>
 <p>Generated Firewall names for route-role permissions and management isolation use exact, case-sensitive interface
 identities and direction. Punctuation or case differences between interfaces remain distinct, and regenerating the
 same topology retains the same names. These rules continue to cover each shared IPv4 and IPv6 network family.</p>
@@ -4777,6 +4796,10 @@ submit both <strong>Routing &amp; WAN</strong> (<code>wan</code>) and <strong>Fi
 are suspended. To roll an override back, edit its policy to <strong>Automatic</strong> or remove the override; generated defaults
 then apply again after the paired Apply succeeds. The applied baseline changes only after successful apply, so a
 pending or failed apply must not be reported as active forwarding policy.
+Same-interface gateway permissions require Routing to be enabled, Firewall to be enabled, a valid reviewed lab route,
+and a successful paired <strong>Routing &amp; WAN</strong> and <strong>Firewall</strong> apply. Removing or disabling the permission restores the
+generated per-interface deny ahead of established-flow and broad forwarding accepts. Test with a new connection
+after each change; do not use a retained connection to infer whether a permission was removed.
 Browser permission creation, edits, and deletion save the desired-state change and its audit event together. If audit
 persistence fails, the save fails and the previous desired state remains available for retry.
 Disabled permissions can retain an unavailable interface or IP family; re-enabling requires valid current topology.
@@ -4788,7 +4811,23 @@ automatic Access default, requires Firewall to be enabled. Access defaults are e
 accepts, regardless of the forward-chain policy. The API exposes the same desired and effective state at
 <code>GET /api/v1/routing-permissions</code>
 (<code>read:routes</code>); <code>POST</code>, complete <code>PUT /{id}</code>, and <code>DELETE /{id}</code> require <code>write:routes</code>. Generated identifiers
-cannot be changed. These operations save desired state; they do not apply it to Photon.</p>
+cannot be changed. These operations save desired state; they do not apply it to Photon. An explicit API permission
+whose <code>source_interface</code> and <code>destination_interface</code> are equal selects same-interface gateway mode; use policy
+<code>allow</code> and an explicit <code>ip_family</code> of <code>4</code> or <code>6</code> (or <code>0</code> for both configured families). The same-family configured
+source prefix is the ingress boundary, while the applied firewall rule matches the selected family’s routed
+destinations with the same interface as ingress and egress. Route-role generation never creates an equal-interface
+allow. For example, the existing <code>POST /api/v1/routing-permissions</code> request shape selects this mode without an extra
+field:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">{</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Access upstream forwarding&quot;</span><span class="p">,</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">&quot;source_interface&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;eth1&quot;</span><span class="p">,</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nt">&quot;destination_interface&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;eth1&quot;</span><span class="p">,</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="nt">&quot;policy&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;allow&quot;</span><span class="p">,</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="nt">&quot;ip_family&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">4</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>Replace <code>eth1</code> with an enabled, non-management interface or VLAN that has an IPv4 prefix and the reviewed default
+route. Continue to use distinct endpoint values for ordinary inter-network permissions.</p>
 <p>In the Static Route <strong>Path</strong> step, <strong>Default route</strong> and <strong>Destination CIDR</strong> appear as one peer choice row. Enable
 <strong>Default route</strong> and choose the native <strong>IP family</strong> IPv4 or IPv6 radio when this path should match every destination
 in that family. Atlaso disables and de-emphasizes <strong>Destination CIDR</strong> while retaining its unsaved value, excludes that
@@ -4959,6 +4998,26 @@ only the management policy-routing state. A successful global Apply stores that 
 baseline; a later edit remains pending until the next Apply. When the route target is the effective flagged management
 listener, also confirm <code>ip route show default</code> (or <code>ip -6 route show default</code>) names the same gateway and interface, and
 that <code>atlaso-wan.service</code> is enabled for reboot replay.</p>
+<p>For a same-interface gateway, first verify that Atlaso itself reaches an external IPv4 address and that the reviewed
+IPv4 default route in table <code>200</code> names the intended upstream gateway and Access interface. From a controlled client on
+that subnet, confirm it has only the intended default path, <code>ip route get &lt;external-ip&gt;</code> selects Atlaso's address, and
+its neighbor entry for Atlaso resolves to Atlaso's interface MAC. Disable acceptance of IPv4 ICMP redirects on the
+test client and remove any learned redirect route before testing; otherwise it may learn to send directly to the
+upstream gateway and make a broken Atlaso forwarding path appear to work. Clients on the same layer-2 network can
+still choose another gateway themselves; Routing Permissions control packets forwarded by Atlaso and do not enforce
+client gateway selection on the LAN.</p>
+<p>Open a new connection to a known reachable external IP address, then verify its ingress and egress on the selected
+Access interface with a packet capture or the matching generated firewall rule counter. The packet must traverse
+Atlaso with the same interface for ingress and egress. If this fails, inspect the client's route and neighbor entries,
+Atlaso's table <code>200</code>, <code>ip rule</code>, the effective Routing state, forwarding sysctls, and the paired applied Firewall and
+Routing &amp; WAN policy. Test DNS separately after external IP connectivity succeeds. A successful appliance-originated
+request or ping to the upstream gateway alone proves neither forwarding admission nor client return traffic.</p>
+<p>As a negative control, disable or remove the explicit same-interface <strong>Allow</strong>, submit both <strong>Routing &amp; WAN</strong> and
+<strong>Firewall</strong> through global Appliance Apply, and make a new client connection attempt while confirming Atlaso itself
+still reaches the external IP. The client must fail through Atlaso. Restore the permission, apply both units again, and
+prove client recovery. Finally, reboot Atlaso and recheck its table <code>200</code>, service replay, paired applied state, and
+client external IP connectivity. Do not diagnose a production incident from this documented example alone: verify the
+appliance's actual desired and applied state, routes, forwarding policy, and packet path first.</p>
 <p>HTTPS management handoffs check the staged certificate against configured and acquired candidate IPv4/IPv6 addresses
 before publishing the candidate listener. A previous address retained during the transition stays on its snapshotted
 old TLS certificate, including when the candidate uses the same public port. Before new addresses activate, the old
