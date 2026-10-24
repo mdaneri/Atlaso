@@ -692,7 +692,12 @@ def test_reload_nginx_rejects_persistent_accepting_worker_overlap(monkeypatch, v
         return overlapping
 
     def run(command, **_kwargs):
-        """Record reload and fallback commands as successful."""
+        """Record reload and fallback commands as successful.
+
+        Args:
+            command: Systemd command requested by the reload helper.
+            **_kwargs: Process options accepted by the command fixture.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
