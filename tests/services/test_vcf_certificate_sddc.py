@@ -19,14 +19,16 @@ def adapter():
     return item
 
 
-def test_login_posts_json_and_uses_bearer_only(monkeypatch):
+@pytest.mark.parametrize("status", [200, 201])
+def test_login_posts_json_and_uses_bearer_only(monkeypatch, status):
     """Verify login posts json and uses bearer only.
 
     Args:
         monkeypatch: Pytest patch fixture isolating native and background behavior.
+        status: Native token success status, including the documented Created response.
     """
     item = SddcAdapter(Target("10.0.0.5", 443, "a" * 64))
-    item.transport.request = Mock(return_value=(200, {"accessToken": "opaque-token"}))
+    item.transport.request = Mock(return_value=(status, {"accessToken": "opaque-token"}))
     assert item.login(Credentials("admin", "secret")) == "opaque-token"
     assert item.transport.request.call_args.args == ("POST", "/v1/tokens")
     assert item.transport.request.call_args.kwargs["body"] == {
@@ -34,11 +36,36 @@ def test_login_posts_json_and_uses_bearer_only(monkeypatch):
         "password": "secret",
     }
     assert "credentials" not in item.transport.request.call_args.kwargs
+    item.transport.request.return_value = (200, {})
     item._request("GET", "/v1/users")
     assert item.transport.request.call_args.kwargs["session_header"] == (
         "Authorization",
         "Bearer opaque-token",
     )
+
+
+@pytest.mark.parametrize(
+    "status,payload",
+    [
+        (202, {"accessToken": "opaque-token"}),
+        (201, {}),
+        (201, {"accessToken": ""}),
+        (201, {"accessToken": "invalid\r\nheader"}),
+        (201, {"accessToken": "x" * 4097}),
+    ],
+)
+def test_login_rejects_unexpected_status_or_invalid_token(status, payload):
+    """Reject invalid token responses without admitting a native session.
+
+    Args:
+        status: Native token response status under validation.
+        payload: Synthetic native response containing no real credentials.
+    """
+    item = SddcAdapter(Target("10.0.0.5", 443, "a" * 64))
+    item.transport.request = Mock(return_value=(status, payload))
+    with pytest.raises(RemoteError, match="invalid token"):
+        item.login(Credentials("admin", "secret"))
+    assert item._access_token is None
 
 
 def test_discovery_requires_sddc_role9_active_domain_and_bound_resource(

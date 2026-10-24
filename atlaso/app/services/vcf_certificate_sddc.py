@@ -45,7 +45,7 @@ class SddcAdapter(NativeAdapter):
         )
         token = payload.get("accessToken") if isinstance(payload, dict) else None
         if (
-            status != 200
+            status not in {200, 201}
             or not isinstance(token, str)
             or not 1 <= len(token) <= 4096
             or any(c in token for c in "\r\n")
