@@ -317,6 +317,12 @@ function Wait-InstallationConsoleState {
                 if ($kind.Success) {
                     $frames = @([regex]::Matches($plain, 'File "[^"\r\n]*/(bootstrap\.py|manifest\.py|installer\.py|disks\.py|window\.py|menu\.py|readtext\.py|progressbar\.py)", line ([0-9]{1,6}),') |
                         Select-Object -Last 8 | ForEach-Object { $_.Groups[1].Value + ':' + $_.Groups[2].Value })
+                    $capacity = [regex]::Match($plain,
+                        'ValueError: default installation requires a disk of at least 64 GiB; selected (?<disk>/dev/[a-zA-Z0-9_.-]{1,64}) has (?<bytes>[0-9]{1,20}) bytes(?:\r?\n|$)')
+                    if ($capacity.Success) {
+                        Write-Host ('Public capacity refusal: {0}, {1} bytes; requires 68719476736 bytes.' -f
+                            $capacity.Groups['disk'].Value, $capacity.Groups['bytes'].Value)
+                    }
                     throw ('The installer reported a Python failure before the expected console state. Public location: {0}; {1}.' -f $kind.Groups[1].Value, ($frames -join ', '))
                 }
             }

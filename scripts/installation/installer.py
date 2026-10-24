@@ -202,7 +202,10 @@ def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tup
     consent = {path: initial[path] for path in paths}
     revalidate_disks(config, consent, disk_inventory())
     if config.get("autopartition") and consent[config["disk"]]["size"] < MINIMUM_DISK_BYTES:
-        raise ValueError("default installation requires a disk of at least 64 GiB")
+        raise ValueError(
+            f"default installation requires a disk of at least 64 GiB; "
+            f"selected {config['disk']} has {consent[config['disk']]['size']} bytes"
+        )
     for path in paths:
         item = consent[path]
         layout = [

@@ -140,8 +140,11 @@ within its process deadline. To repeat verification afterward:
 
 Verification stops only the identity-checked VM, preserves its artifacts, and compares the unselected disk with its
 pre-boot baseline using `qemu-img compare`. Add `-VerifyTarget` after cancellation to compare the target disk too.
-The `Probe`, `Cancel`, and `Auto` VM scenarios have not yet been executed, so these commands describe the test path,
-not acceptance evidence. A successful VM run alone does not establish physical SATA/NVMe or wired-Ethernet support.
+Development VM runs have reached the native Photon disk menu and passed cancellation, with both target and
+unselected logical contents unchanged. Auto installation acceptance is still outstanding: capacity refusals stopped
+before erasure consent, and both disks were subsequently verified unchanged. These partial results do not establish
+installation, reboot, or persistence acceptance. A successful VM run alone does not establish physical SATA/NVMe or
+wired-Ethernet support.
 
 Publication is a separate, explicit workflow dispatch after the exact ISO has been validated. The maintainer supplies
 `publish=true` and `validated_iso_sha256` for the ISO whose disconnected UEFI installation, reboot, Appliance Update

@@ -611,6 +611,29 @@ finally {
     if ($pipePair) { Close-InstallationTestPipePair -Pair $pipePair }
 }
 
+$pipePair = $null
+$capacityDiagnostics = [Collections.Generic.List[object]]::new()
+try {
+    $pipePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+    $failureSender = [AtlasoInstallationPipeTestWriter]::Start($pipePair.Client, [string[]]@(
+        "Traceback (most recent call last):`n  File `"/PublicSyntheticSensitiveFixture/installer.py`", line 205, in configure_console`n",
+        "ValueError: default installation requires a disk of at least 64 GiB; selected /dev/sda has 4294967296 bytes`nPublicSyntheticSensitiveFixture`n"))
+    $failureObserved = $false
+    try {
+        Wait-InstallationConsoleState -Pipe $pipePair.Server -Pattern 'Review planned partitions' `
+            -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) 6>&1 | ForEach-Object { $capacityDiagnostics.Add($_) }
+    }
+    catch { $failureObserved = $_.Exception.Message -ceq 'The installer reported a Python failure before the expected console state. Public location: ValueError; installer.py:205.' }
+    Assert-InstallationVmCondition $failureObserved 'Capacity refusal must retain the safe failure classification.'
+    Assert-InstallationVmCondition ($capacityDiagnostics.Count -eq 1 -and
+        [string]$capacityDiagnostics[0] -ceq 'Public capacity refusal: /dev/sda, 4294967296 bytes; requires 68719476736 bytes.') `
+        'Capacity diagnostics must expose only the selected device and numeric byte count.'
+    Assert-InstallationVmCondition $failureSender.Wait(5000) 'Capacity fixture writer did not complete.'
+}
+finally {
+    if ($pipePair) { Close-InstallationTestPipePair -Pair $pipePair }
+}
+
 foreach ($publicFailure in @(
     @{ Text = 'Installation cancelled. PublicSyntheticSensitiveFixture'; Expected = 'The installer cancelled before the expected console state.' },
     @{ Text = 'Password must include an uppercase letter. PublicSyntheticSensitiveFixture'; Expected = 'The installer rejected the concealed credential under its account policy.' }

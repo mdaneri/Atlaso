@@ -365,10 +365,12 @@ def test_cancelled_prompt_returns_no_consent(monkeypatch):
         module.prompt(25, 80, "Review", "Confirm disk")
 
 
-def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatch):
+@pytest.mark.parametrize("size_gib", [4, 63, 64, 128])
+def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatch, size_gib):
     """
     Args:
         monkeypatch: Pytest fixture for replacing controlled dependencies.
+        size_gib: Selected disk capacity, including the minimum boundary.
     """
     module = load_installer(monkeypatch)
     calls = []
@@ -415,7 +417,7 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
         ("selectdisk", SimpleNamespace(SelectDisk=SelectDisk)),
     ):
         monkeypatch.setitem(sys.modules, name, value)
-    initial = {"/dev/nvme0n1": {"size": 128 * 1024**3, "model": "Test NVMe", "serial": "serial-root"}}
+    initial = {"/dev/nvme0n1": {"size": size_gib * 1024**3, "model": "Test NVMe", "serial": "serial-root"}}
     monkeypatch.setattr(module, "disk_inventory", lambda: initial)
     monkeypatch.setattr(module, "selected_disks", lambda _config: ["/dev/nvme0n1"])
     monkeypatch.setattr(module, "revalidate_disks", lambda *_args: calls.append("revalidate"))
@@ -450,10 +452,14 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
     monkeypatch.setattr(module.curses, "curs_set", lambda *_args: None, raising=False)
     monkeypatch.setattr(module.curses, "color_pair", lambda *_args: 0, raising=False)
 
-    with pytest.raises(module.Cancelled):
-        module.configure_console(Screen(), initial)
-
-    assert calls == ["revalidate", ("Review planned partitions", False), ("Review Atlaso installation disk", False)]
+    if size_gib < 64:
+        with pytest.raises(ValueError, match=rf"selected /dev/nvme0n1 has {size_gib * 1024**3} bytes$"):
+            module.configure_console(Screen(), initial)
+        assert calls == ["revalidate"]
+    else:
+        with pytest.raises(module.Cancelled):
+            module.configure_console(Screen(), initial)
+        assert calls == ["revalidate", ("Review planned partitions", False), ("Review Atlaso installation disk", False)]
 
 
 def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partition(monkeypatch):
