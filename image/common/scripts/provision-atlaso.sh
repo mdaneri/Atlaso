@@ -976,6 +976,7 @@ write_build_info
 
 write_third_party_notices
 
+log_step "writing appliance runtime configuration"
 SECRET_KEY="$("$ATLASO_HOME/.venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(48))')"
 SECRETS_KEY="$("$ATLASO_HOME/.venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(48))')"
 cat >/etc/atlaso/atlaso.env <<EOF
@@ -995,6 +996,7 @@ EOF
 chmod 0640 /etc/atlaso/atlaso.env
 chown root:atlaso /etc/atlaso/atlaso.env
 
+log_step "installing appliance service definitions"
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso.service" /etc/systemd/system/atlaso.service
 install -d -o root -g root -m 0755 /etc/systemd/system/atlaso.service.d
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-require-data-disks.conf" /etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf
@@ -1040,6 +1042,7 @@ install -o root -g root -m 0755 "$MACHINE_IDENTITY_INITIALIZER_SOURCE" "$ATLASO_
 # directory is assumed or created solely for image construction.
 install -o root -g root -m 0700 "$IMAGE_BUILD_FINALIZER_SOURCE" "$ATLASO_HOME/bin/atlaso-finalize-image-build"
 install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-bootstrap-https" "$ATLASO_HOME/bin/atlaso-bootstrap-https"
+log_step "installing release trust keys"
 trust_source_dir="$ATLASO_HOME/image/common/update-trust"
 if [ ! -d "$trust_source_dir" ]; then
   echo "Atlaso release trust source directory is missing: $trust_source_dir" >&2
@@ -1073,6 +1076,7 @@ if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   install -o root -g root -m 0644 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/systemd/atlaso-vmware-ovf-prepare.service" /etc/systemd/system/atlaso-vmware-ovf-prepare.service
 fi
 install -o root -g root -m 0440 "$ATLASO_HOME/image/common/sudoers.d/atlaso-helper" /etc/sudoers.d/atlaso-helper
+log_step "validating privileged helper policy"
 sed -i 's/\r$//' /etc/systemd/system/atlaso.service /etc/systemd/system/atlaso-worker.service /etc/systemd/system/atlaso-console.service /etc/systemd/system/atlaso-guest-agent-select.service /etc/systemd/system.conf.d/atlaso-console.conf "$ATLASO_HOME/bin/atlaso-helper" "$ATLASO_HOME/bin/atlaso-install-boot-branding" "$ATLASO_HOME/bin/atlaso-mount-data-disks" "$ATLASO_HOME/bin/atlaso-select-guest-agent" "$ATLASO_HOME/bin/atlaso-initialize-machine-identity.py" "$ATLASO_HOME/bin/atlaso-bootstrap-https" /etc/sudoers.d/atlaso-helper
 if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   sed -i 's/\r$//' "$ATLASO_HOME/bin/atlaso-vmware-ovf-customize.py" /etc/systemd/system/atlaso-vmware-ovf-customize.service
@@ -1094,6 +1098,7 @@ find "$ATLASO_RELEASE_DIR/.venv" -type d -exec chmod 0755 {} +
 find "$ATLASO_RELEASE_DIR/.venv" -type f -exec chmod u+rw,go+r {} +
 find "$ATLASO_RELEASE_DIR/.venv/bin" -type f -exec chmod a+rx {} +
 chmod 0755 "$ATLASO_HOME/bin" "$ATLASO_HOME/bin/atlaso-helper" "$ATLASO_HOME/bin/atlaso-install-boot-branding"
+log_step "installing appliance boot branding"
 "$ATLASO_HOME/bin/atlaso-install-boot-branding" \
   "$ATLASO_HOME/image/common/boot/grub/theme.txt" \
   "$ATLASO_HOME/image/common/boot/grub/atlaso.png"

@@ -189,7 +189,10 @@ def test_photon_image_installs_fixed_size_atlaso_grub_branding():
     assert photon_logo[:8] == b"\x89PNG\r\n\x1a\n"
     assert 'desktop-image: "atlaso.png"' in theme
     assert "Powered by Photon OS" not in theme  # Copy is rendered into the fixed background.
-    assert "set theme=/grub2/themes/atlaso/theme.txt" in installer
+    assert "theme_path='/boot/grub2/themes/atlaso/theme.txt'" in installer
+    assert "theme_path='/grub2/themes/atlaso/theme.txt'" in installer
+    assert "kernel_regex='/boot/\\$photon_linux'" in installer
+    assert "kernel_regex='/\\$photon_linux'" in installer
     assert 'menuentry " "' in installer
     assert "atlaso-backup" in installer
     assert 'gfxmode="1280x800"' in installer
@@ -206,27 +209,32 @@ def test_photon_image_installs_fixed_size_atlaso_grub_branding():
 
 @pytest.mark.skipif(os.name == "nt", reason="The GRUB installer requires a POSIX shell.")
 @pytest.mark.parametrize(
-    "framebuffer_config",
+    ("boot_directory", "framebuffer_config"),
     [
-        "",
-        'gfxmode="640x480"\ngfxpayload=text\n',
-        'set gfxmode="auto"\nset gfxpayload=keep\n',
+        pytest.param("/boot/", "", id="root-only-layout-default-grub-directory"),
+        pytest.param("/boot/", 'gfxmode="640x480"\ngfxpayload=text\n', id="root-only-layout-direct-framebuffer"),
+        pytest.param("/boot/", 'set gfxmode="auto"\nset gfxpayload=keep\n', id="root-only-layout-set-framebuffer"),
+        pytest.param("/", "", id="separate-boot-layout-default-grub-directory"),
+        pytest.param("/", 'gfxmode="640x480"\ngfxpayload=text\n', id="separate-boot-layout-direct-framebuffer"),
+        pytest.param("/", 'set gfxmode="auto"\nset gfxpayload=keep\n', id="separate-boot-layout-set-framebuffer"),
     ],
 )
 def test_boot_branding_installer_renders_idempotent_photon_console_config(
-    tmp_path: Path, framebuffer_config: str
+    tmp_path: Path, boot_directory: str, framebuffer_config: str
 ) -> None:
     """Render the supported Photon GRUB structure with a 1280x800 VGA8x16 console.
 
     Args:
         tmp_path: Pytest-provided isolated filesystem root.
+        boot_directory: Pinned Photon boot-directory value for the selected layout.
         framebuffer_config: Photon framebuffer assignments to normalize, or an empty prefix.
     """
+    theme_path = "/boot/grub2/themes/atlaso/theme.txt" if boot_directory == "/boot/" else "/grub2/themes/atlaso/theme.txt"
     grub_config = tmp_path / "grub.cfg"
-    original = framebuffer_config + """set theme=/boot/grub2/themes/photon/theme.txt
-menuentry \"Photon\" {
-    linux /$photon_linux root=$rootpartition $photon_cmdline $systemd_cmdline
-}
+    original = framebuffer_config + f"""set theme=/boot/grub2/themes/photon/theme.txt
+menuentry \"Photon\" {{
+    linux {boot_directory}$photon_linux root=$rootpartition $photon_cmdline $systemd_cmdline
+}}
 """
     grub_config.write_text(original, encoding="utf-8")
     theme_source = tmp_path / "theme.txt"
@@ -279,12 +287,13 @@ fi
     first = subprocess.run(command, check=False, capture_output=True, text=True, env=environment)
     assert first.returncode == 0, first.stderr
     rendered = grub_config.read_text(encoding="utf-8")
+    assert f"set theme={theme_path}\n" in rendered
     assert 'gfxmode="1280x800"\n' in rendered
     assert "gfxpayload=keep\n" in rendered
     assert "set gfxmode" not in rendered
     assert "set gfxpayload" not in rendered
     assert (
-        "linux /$photon_linux root=$rootpartition $photon_cmdline "
+        f"linux {boot_directory}$photon_linux root=$rootpartition $photon_cmdline "
         "$systemd_cmdline fbcon=font:VGA8x16"
     ) in rendered
     assert rendered.count("fbcon=font:VGA8x16") == 1
