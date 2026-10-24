@@ -251,6 +251,7 @@ def test_gateway_guest_inventory_uses_role_specific_pinned_ssh_credentials(monke
     def fake_pinned_ssh(host, username, password, fingerprint, command, **kwargs):
         calls.append((host, username, password, fingerprint, command, kwargs))
         inventory = {
+            "forwarding": "0",
             "addresses": [
                 {"ifname": "lo", "flags": ["UP"], "addr_info": []},
                 {
