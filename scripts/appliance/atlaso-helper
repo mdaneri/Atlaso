@@ -9911,7 +9911,7 @@ def _wait_nginx_reload_generation(previous: tuple[int, set[tuple[int, int]]]) ->
         current = _nginx_worker_generation()
         if current is None or current[0] != previous[0]:
             raise ValueError("nginx master changed during reload confirmation")
-        if current[1] - previous[1]:
+        if current[1] - previous[1] and not current[1] & previous[1]:
             return True
         time.sleep(0.1)
     return False
@@ -9944,7 +9944,7 @@ def _reload_nginx(*, verify_activation: bool = False) -> int:
     """Perform reload nginx.
 
     Args:
-        verify_activation: Require a new accepting generation without restarting.
+        verify_activation: Require replacement acceptance and old-listener retirement without restarting.
     """
     if verify_activation:
         try:
@@ -9959,7 +9959,11 @@ def _reload_nginx(*, verify_activation: bool = False) -> int:
                 observed_master, current = _nginx_active_workers()
                 if observed_master != master:
                     raise ValueError("nginx master changed during graceful reload")
-                if current - previous:
+                # nginx starts replacements before telling old workers to quit.
+                # During that overlap a fresh connection can still use old
+                # virtual hosts. Draining workers have a different process title
+                # and are already excluded, so their connections may stay open.
+                if current - previous and not current & previous:
                     return 0
                 time.sleep(0.1)
             raise ValueError("nginx did not activate a new accepting worker generation")
