@@ -13,13 +13,9 @@ const { chromium } = require("playwright");
     for (const [label, width, height] of [["desktop", 1600, 1000], ["narrow", 900, 1200], ["zoom-equivalent", 800, 500]]) {
       const page = await browser.newPage({ viewport: { width, height } });
       const errors = [];
-      const knownGridErrors = [];
       const submissions = [];
       page.on("pageerror", (error) => {
-        // #1040 is reproduced on unchanged main. Fail on every other error.
-        if (error.message === "Cannot read properties of null (reading 'getBoundingClientRect')"
-          && error.stack.includes("adjustTableSize") && error.stack.includes("at resize (")) knownGridErrors.push(error.message);
-        else errors.push(error.stack);
+        errors.push(error.stack);
       });
       page.on("request", (request) => {
         if (request.method() === "POST" && /\/certificate-authority\/certificates(?:\/\d+\/edit)?$/.test(request.url())) submissions.push(request);
@@ -139,7 +135,6 @@ const { chromium } = require("playwright");
       await csr.locator('[data-atlaso-wizard-step="csr"]').waitFor({ state: "visible" });
       assert.deepEqual(errors, []);
       console.log(`${label}: create/edit, final-submit recheck, feedback recovery, ${label === "desktop" ? "keyboard" : "pointer"} launch, CSR Names passed`);
-      if (knownGridErrors.length) console.log(`${label}: observed ${knownGridErrors.length} existing CA grid resize exception(s), tracked in #1040`);
       await page.close();
     }
   } finally {

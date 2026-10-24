@@ -1,5 +1,15 @@
 # Browser regression fixtures
 
+## Certificate grid tab resizing
+
+Start the isolated loopback fixture described under **Network Boot host reference**, then run
+`node tests/browser/ca-grid-resize.cjs` with `ATLASO_BROWSER_FIXTURE_URL`, `ATLASO_BROWSER_OUTPUT`, `TEMP`, and `TMP`
+pointing at that fixture and originally receipted task-owned output. Playwright and Microsoft Edge are required.
+This checks the actual CA page and vendored Tabulator at desktop, narrow, and 200% zoom-equivalent CSS viewports:
+opening CSR Intake, returning by keyboard, repeated tab transitions, window resizing, and retained filters, sorting,
+and the Add row. Synthetic rows affect browser display only; every browser exception and non-GET request fails,
+apart from the normal session activity heartbeat.
+
 ## Certificate IP SAN validation
 
 Start the isolated loopback fixture described under **Network Boot host reference**, then run
@@ -9,8 +19,7 @@ This exercises the actual CA templates, shared wizard, and local create/edit tra
 200% zoom-equivalent CSS viewports. It checks malformed mixed SANs, submit-time revalidation, adjacent accessible
 feedback, focus, correction, clearing, and CSR Names validation. It stages disabled requests only; no Apply or external
 certificate mutation is performed. Captures are local fixture evidence, not deployed-appliance or native zoom evidence.
-The existing CA grid resize exception tracked in [#1040](https://github.com/mdaneri/Atlaso/issues/1040) is reported
-separately; every other browser exception fails the fixture.
+Every browser exception fails the fixture, including CA grid sizing errors during tab transitions.
 
 ## vSphere grid refresh
 

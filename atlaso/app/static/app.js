@@ -4214,25 +4214,42 @@ function initializeCaCertificatesTable() {
   const table = collection?.table;
   if (table) {
     let resizeFrame = 0;
+    let tableBuilt = false;
+    let needsResize = true;
     const resize = () => {
+      resizeFrame = 0;
+      if (!tableBuilt) return;
+      if (!element.isConnected || element.closest("[hidden], .hidden") || element.getBoundingClientRect().width <= 0) {
+        // Tabulator cannot safely size a hidden grid. Restore its height when visible again.
+        element.style.height = "";
+        needsResize = true;
+        return;
+      }
       const footerHeight = document.querySelector(".management-info-footnote")?.getBoundingClientRect().height || 0;
       const height = dnsRecordsGridHeight(element, window.innerWidth, window.innerHeight - footerHeight);
       const nextHeight = height === null ? "" : `${height}px`;
-      if (element.style.height === nextHeight) return;
+      if (element.style.height === nextHeight && !needsResize) return;
       element.style.height = nextHeight;
       table.setHeight(nextHeight);
       table.redraw(true);
+      needsResize = false;
     };
     const scheduleResize = () => {
       window.cancelAnimationFrame(resizeFrame);
       resizeFrame = window.requestAnimationFrame(resize);
     };
-    table.on("tableBuilt", scheduleResize);
+    table.on("tableBuilt", () => {
+      tableBuilt = true;
+      scheduleResize();
+    });
     window.addEventListener("resize", scheduleResize);
+    const panel = element.closest(".wide-panel") || element;
     if (typeof ResizeObserver !== "undefined") {
-      new ResizeObserver(scheduleResize).observe(element.closest(".wide-panel") || element);
+      const observer = new ResizeObserver(scheduleResize);
+      observer.observe(element);
+      if (panel !== element) observer.observe(panel);
     }
-    document.querySelectorAll('[data-tab-target="ca-certificates-panel"]').forEach((button) => {
+    panel.querySelectorAll("[data-tab-target]").forEach((button) => {
       button.addEventListener("click", scheduleResize);
     });
     scheduleResize();
