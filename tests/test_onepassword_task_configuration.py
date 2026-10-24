@@ -222,18 +222,18 @@ def test_interrupted_release_resumes_from_original_prepared_inventory(owner, mon
     original = WindowsFiles.dispose
     calls = 0
 
-    def interrupted(self, handle):
+    def interrupted(files, handle):
         """Dispose the first object, then simulate an interrupted owning-tool release.
 
         Args:
-            self: Native pinned-files implementation.
+            files: Native pinned-files implementation.
             handle: Already verified exact object selected for disposal.
         """
         nonlocal calls
         calls += 1
         if calls == 2:
             raise FileRefusal("synthetic interruption")
-        original(self, handle)
+        original(files, handle)
 
     with monkeypatch.context() as scoped:
         scoped.setattr(WindowsFiles, "dispose", interrupted)

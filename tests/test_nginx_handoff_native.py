@@ -10,6 +10,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import urllib.request
@@ -104,6 +105,8 @@ class NativeNginxHandoffTests(unittest.TestCase):
                 self.fail("Native nginx did not reach the expected state")
 
             real_run = subprocess.run
+            delay_old_retirement = False
+            retirement_timers = []
 
             def run(command, **kwargs):
                 """Replace only systemd supervision; execute the real nginx signaler.
@@ -117,8 +120,30 @@ class NativeNginxHandoffTests(unittest.TestCase):
                         return subprocess.CompletedProcess(command, 0, f"ActiveState=active\nMainPID={process.pid}\n", "")
                     return subprocess.CompletedProcess(command, 0, str(process.pid), "")
                 if command == ["systemctl", "reload", "nginx"]:
-                    return real_run([NGINX, "-s", "reload", "-c", str(main)],
-                                    capture_output=True, text=True, timeout=kwargs.get("timeout", 5))
+                    if delay_old_retirement:
+                        # Keep the previous workers' accepting titles observable
+                        # even if the master sends graceful shutdown immediately.
+                        for pid, _started in previous_generation[1]:
+                            os.kill(pid, signal.SIGSTOP)
+                    result = real_run([NGINX, "-s", "reload", "-c", str(main)],
+                                      capture_output=True, text=True, timeout=kwargs.get("timeout", 5))
+                    if delay_old_retirement and result.returncode == 0:
+                        # Replacement observation alone must not finish reload.
+                        # Release the old workers on a bounded timer so they can
+                        # acknowledge shutdown and retire their accepting titles.
+                        deadline = time.monotonic() + 2
+                        while time.monotonic() < deadline:
+                            current = helper._nginx_active_workers()[1]
+                            replacements = current - previous_generation[1]
+                            if replacements and current & previous_generation[1]:
+                                timer = threading.Timer(0.5, os.killpg, (process.pid, signal.SIGCONT))
+                                retirement_timers.append(timer)
+                                timer.start()
+                                break
+                            time.sleep(0.001)
+                        else:
+                            self.fail("Native nginx accepting-generation overlap was not observed")
+                    return result
                 if command == ["systemctl", "enable", "--now", "nginx"]:
                     return subprocess.CompletedProcess(command, 0, "", "")
                 self.fail(f"Unexpected native fixture command: {command}")
@@ -217,9 +242,12 @@ class NativeNginxHandoffTests(unittest.TestCase):
 
                     public_candidate = candidate + "\n" + pxe_site
                     previous_generation = helper._nginx_active_workers()
+                    delay_old_retirement = True
                     self.assertEqual(helper._install_nginx_site(
                         public, public_candidate, verify_activation=True,
                     ), 0)
+                    delay_old_retirement = False
+                    self.assertFalse(helper._nginx_active_workers()[1] & previous_generation[1])
                     wait_for(lambda: helper._nginx_active_workers() != previous_generation)
                     self.assertEqual(helper._nginx_active_workers()[0], previous_generation[0])
                     management_owner = sum(
@@ -270,8 +298,14 @@ class NativeNginxHandoffTests(unittest.TestCase):
                     self.assertEqual(response("127.0.0.2"), "old")
                     self.assertIsNone(process.poll())
             finally:
-                if process.poll() is None:
+                for timer in retirement_timers:
+                    timer.cancel()
+                    timer.join()
+                try:
+                    os.killpg(process.pid, signal.SIGCONT)
                     os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
                 process.wait(timeout=10)
 
 
