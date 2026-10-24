@@ -115,6 +115,11 @@ function Wait-InstallationConsoleState {
             if ($count -eq 0) { throw 'The owned VM serial console disconnected before the expected state.' }
             $text += [Text.Encoding]::ASCII.GetString($buffer, 0, $count)
             $plain = [regex]::Replace($text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b[()][A-Z0-9]|\x1b[=>]', '')
+            if ($plain.Contains('Traceback (most recent call last):', [StringComparison]::Ordinal)) {
+                # Report only a fixed public classification, never raw exception
+                # text that could contain credential-bearing subprocess output.
+                throw 'The installer reported a Python failure before the expected console state.'
+            }
             if ($plain.Contains($Pattern, [StringComparison]::Ordinal)) { return }
             if ($text.Length -gt 131072) { $text = $text.Substring($text.Length - 65536) }
         }
@@ -250,7 +255,8 @@ public static class AtlasoInstallationPipePeer {
     Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline
     Write-Host 'Installer reached the native Photon disk selection screen.'
     if ($Scenario -eq 'Cancel') {
-        Send-InstallationConsoleText -Pipe $pipe -Text "`e[D`e[D`n"
+        # The pinned serial getty uses TERM=screen with application cursor keys.
+        Send-InstallationConsoleText -Pipe $pipe -Text "`eOD`eOD`n"
         Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
         Write-Host 'Installer cancellation returned without admitting disk writes.'
     }

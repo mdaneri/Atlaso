@@ -501,6 +501,24 @@ Assert-InstallationVmCondition (-not [AtlasoInstallationPipePeer]::MatchesExpect
 Assert-InstallationVmCondition (-not [AtlasoInstallationPipePeer]::MatchesExpectedProcess($PID, @($ownImage), $ownArgument + '.different')) 'Peer proof accepted an argument substring.'
 Assert-InstallationVmCondition (-not [AtlasoInstallationPipePeer]::MatchesExpectedProcess([uint32]::MaxValue, @($ownImage), $ownArgument)) 'Peer proof accepted an unavailable process.'
 
+$pipePair = $null
+$failureSender = $null
+try {
+    $pipePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+    $failureSender = [AtlasoInstallationPipeTestWriter]::Start($pipePair.Client,
+        [string[]]@("Traceback (most recent call last):`nPublicSyntheticSensitiveFixture"))
+    $failureObserved = $false
+    try {
+        Wait-InstallationConsoleState -Pipe $pipePair.Server -Pattern 'Select a disk' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5))
+    }
+    catch { $failureObserved = $_.Exception.Message -ceq 'The installer reported a Python failure before the expected console state.' }
+    Assert-InstallationVmCondition $failureObserved 'Python console failure did not fail promptly with only its public classification.'
+    Assert-InstallationVmCondition $failureSender.Wait(5000) 'Public failure fixture writer did not complete.'
+}
+finally {
+    if ($pipePair) { Close-InstallationTestPipePair -Pair $pipePair }
+}
+
 Write-Host 'Installation console pipe contract checks passed.'
 
 Write-Host 'Installation ISO VM harness source-contract checks passed.'
