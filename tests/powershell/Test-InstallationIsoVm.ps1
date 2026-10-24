@@ -85,6 +85,7 @@ function Get-InstallationVmFunctionText {
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Get-InstallationVmxPathAssignment')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmDiskBindings')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationSerialPipePath')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationProvisioningStages')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'ConvertFrom-InstallationConsoleFrame')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationConsoleDiskOptions')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Send-InstallationConsoleSecret')))
@@ -400,6 +401,12 @@ function Close-InstallationTestPipePair {
     if ($Pair.Server) { $Pair.Server.Dispose() }
 }
 
+$knownStageFixture = @(Get-InstallationProvisioningStages -Text ([string]::Join("`n", @(
+    'log_step "PublicKnownStage"', 'log_step "PublicKnownStage"',
+    'log_step "Private $SECRET"', 'log_step "Unknown `expression`"'))))
+Assert-InstallationVmCondition ($knownStageFixture.Count -eq 1 -and $knownStageFixture[0] -ceq 'PublicKnownStage') `
+    'Provisioning diagnostics must admit only fixed source labels and reject interpolation.'
+
 $diskRowsTargetFirst = @(
     Get-InstallationConsoleDiskOptions -Text "Select a disk`r`n64 GiB @ /dev/sda`r`n4 GiB @ /dev/sdb"
 )
@@ -623,19 +630,20 @@ $capacityDiagnostics = [Collections.Generic.List[object]]::new()
 try {
     $pipePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
     $failureSender = [AtlasoInstallationPipeTestWriter]::Start($pipePair.Client, [string[]]@(
-        "Error(1011): Failed to synchronize cache PublicSyntheticSensitiveFixture`nTraceback (most recent call last):`n  File `"/PublicSyntheticSensitiveFixture/installer.py`", line 205, in configure_console`n",
+        "==> Atlaso appliance: PublicKnownStage`n==> Atlaso appliance: PublicSyntheticSensitiveFixture`nError(1011): Failed to synchronize cache PublicSyntheticSensitiveFixture`nTraceback (most recent call last):`n  File `"/PublicSyntheticSensitiveFixture/installer.py`", line 205, in configure_console`n",
         "ValueError: default installation requires a disk of at least 64 GiB; selected /dev/sda has 4294967296 bytes`nPublicSyntheticSensitiveFixture`n"))
     $failureObserved = $false
     try {
         Wait-InstallationConsoleState -Pipe $pipePair.Server -Pattern 'Review planned partitions' `
-            -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) 6>&1 | ForEach-Object { $capacityDiagnostics.Add($_) }
+            -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -KnownProvisioningStages $knownStageFixture 6>&1 | ForEach-Object { $capacityDiagnostics.Add($_) }
     }
     catch { $failureObserved = $_.Exception.Message -ceq 'The installer reported a Python failure before the expected console state. Public location: ValueError; installer.py:205.' }
     Assert-InstallationVmCondition $failureObserved 'Capacity refusal must retain the safe failure classification.'
-    Assert-InstallationVmCondition ($capacityDiagnostics.Count -eq 3 -and
-        [string]$capacityDiagnostics[0] -ceq 'Public package-manager error codes: 1011' -and
-        [string]$capacityDiagnostics[1] -ceq 'Public package-manager category: repository-metadata' -and
-        [string]$capacityDiagnostics[2] -ceq 'Public capacity refusal: /dev/sda, 4294967296 bytes; requires 68719476736 bytes.') `
+    Assert-InstallationVmCondition ($capacityDiagnostics.Count -eq 4 -and
+        [string]$capacityDiagnostics[0] -ceq 'Public provisioning stage: PublicKnownStage' -and
+        [string]$capacityDiagnostics[1] -ceq 'Public package-manager error codes: 1011' -and
+        [string]$capacityDiagnostics[2] -ceq 'Public package-manager category: repository-metadata' -and
+        [string]$capacityDiagnostics[3] -ceq 'Public capacity refusal: /dev/sda, 4294967296 bytes; requires 68719476736 bytes.') `
         'Failure diagnostics must expose only fixed categories, numeric codes and the selected device capacity.'
     Assert-InstallationVmCondition $failureSender.Wait(5000) 'Capacity fixture writer did not complete.'
 }

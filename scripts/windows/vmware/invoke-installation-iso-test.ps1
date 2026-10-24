@@ -90,6 +90,22 @@ function Send-InstallationConsoleSecret {
 
 <#
 .SYNOPSIS
+Read only fixed public stage labels from the admitted provisioning source.
+.PARAMETER Text
+Trusted provisioner source text; interpolated labels are excluded.
+#>
+function Get-InstallationProvisioningStages {
+    param([string]$Text)
+    if ($Text.Length -gt 1048576) { throw 'Provisioning source exceeds its bounded stage-label size.' }
+    $stages = foreach ($match in [regex]::Matches($Text,
+        '(?m)^\s*log_step "(?<stage>[A-Za-z][A-Za-z0-9 ()/.,:-]{1,159})"\r?$')) {
+        $match.Groups['stage'].Value
+    }
+    return @($stages | Sort-Object -Unique)
+}
+
+<#
+.SYNOPSIS
 Decode the bounded initial installation menu from a terminal text stream.
 .DESCRIPTION
 Replays the supported terminal controls into a fixed 25-row by 80-column frame.
@@ -280,12 +296,17 @@ Expected public prompt text.
 Absolute test deadline.
 .PARAMETER ReadDiskSelection
 Return the complete fixed-fixture public disk rows instead of returning at its title.
+.PARAMETER KnownProvisioningStages
+Fixed public stage labels from the admitted provisioner; unknown messages are never reported.
 #>
 function Wait-InstallationConsoleState {
-    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection)
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @())
     $buffer = [byte[]]::new(4096)
     $text = ''
     $failureDeadline = $null
+    $lastProvisioningStage = $null
+    $knownStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($stage in $KnownProvisioningStages) { [void]$knownStages.Add($stage) }
     try {
         while ([DateTimeOffset]::UtcNow -lt $Deadline) {
             if ($failureDeadline -and [DateTimeOffset]::UtcNow -ge $failureDeadline) {
@@ -303,6 +324,12 @@ function Wait-InstallationConsoleState {
             if ($count -eq 0) { throw 'The owned VM serial console disconnected before the expected state.' }
             $text += [Text.Encoding]::ASCII.GetString($buffer, 0, $count)
             $plain = [regex]::Replace($text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b[()][A-Z0-9]|\x1b[=>]', '')
+            if ($knownStages.Count -gt 0) {
+                foreach ($observed in [regex]::Matches($plain, '(?m)^==> Atlaso appliance: (?<stage>[^\r\n]{1,160})\r?$')) {
+                    $candidateStage = $observed.Groups['stage'].Value
+                    if ($knownStages.Contains($candidateStage)) { $lastProvisioningStage = $candidateStage }
+                }
+            }
             if ($Pattern -cne 'Installation cancelled' -and $plain.Contains('Installation cancelled', [StringComparison]::Ordinal)) {
                 throw 'The installer cancelled before the expected console state.'
             }
@@ -317,6 +344,7 @@ function Wait-InstallationConsoleState {
                 if ($kind.Success) {
                     $frames = @([regex]::Matches($plain, 'File "[^"\r\n]*/(bootstrap\.py|manifest\.py|installer\.py|disks\.py|window\.py|menu\.py|readtext\.py|progressbar\.py)", line ([0-9]{1,6}),') |
                         Select-Object -Last 8 | ForEach-Object { $_.Groups[1].Value + ':' + $_.Groups[2].Value })
+                    if ($lastProvisioningStage) { Write-Host ('Public provisioning stage: ' + $lastProvisioningStage) }
                     $packageCodes = @([regex]::Matches($plain, '(?m)^Error\(([0-9]{1,6})\)') |
                         ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
                     if ($packageCodes.Count -gt 0) {
@@ -375,6 +403,8 @@ $sourceContext = New-AtlasoTestVmOwnershipContext -Worktree $worktree -OutputDir
     -VmxPath (Join-Path $OutputDirectory "$vmName.vmx") -Name $vmName -SourceCommit $commit `
     -SourceBranch $branch -PullRequestNumber $PullRequestNumber
 Assert-AtlasoTestVmCheckoutSource -Context $sourceContext
+$knownProvisioningStages = @(Get-InstallationProvisioningStages -Text (Get-Content -LiteralPath `
+    (Join-Path $worktree 'image/common/scripts/provision-atlaso.sh') -Raw -Encoding utf8))
 $credentials = $null
 if ($Scenario -eq 'Auto') {
     Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
@@ -512,7 +542,8 @@ public static class AtlasoInstallationPipePeer {
                 Send-InstallationConsoleSecret -Pipe $pipe -Value $value
             }
         }
-        Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Atlaso installation completed.' -Deadline $deadline
+        Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Atlaso installation completed.' -Deadline $deadline `
+            -KnownProvisioningStages $knownProvisioningStages
         Write-Host 'Disconnected Auto installation completed; reboot and persistence acceptance remain separate.'
     }
     # Keep checked provider stop and disk comparison inside this runner's existing
