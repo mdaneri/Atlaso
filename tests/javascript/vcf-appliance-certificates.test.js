@@ -228,3 +228,48 @@ test(`restoration and polling failures retain the operation (${persistent ? 'bou
   assert.equal(saved, 'operation');
 });
 }
+
+for (const status of [403, 404, 422, 503]) {
+  test(`inaccessible-reference reset is explicit and excludes transient HTTP ${status}`, async () => {
+    const elements = new Map(); let saved = 'other-actor-operation'; let requests = 0; let opened; let respond;
+    const get = (name) => {
+      if (!elements.has(name)) elements.set(name, {value: '', options: [], disabled: false,
+        classList: {hidden: true, add() { this.hidden = true; }, remove() { this.hidden = false; }, contains() { return this.hidden; }},
+        addEventListener(_name, callback) { this.click = callback; }});
+      return elements.get(name);
+    };
+    const dialog = {open: false, addEventListener() {}};
+    const form = {elements: {namedItem: get}, dataset: {endpoint: '/certificates'},
+      closest: () => dialog, querySelector: get, querySelectorAll: () => [], addEventListener() {}, reset() {}};
+    vm.runInNewContext(js, {document: {querySelector: (selector) => selector.includes('-form') ? form : get('opener')},
+      URLSearchParams, window: {location: {search: ''}, clearTimeout() {}, localStorage: {
+        getItem: () => saved, removeItem() { saved = ''; }, setItem(_key, value) { saved = value; }},
+      AtlasoUiPatterns: {createWizard: () => ({setSkippedSteps() {}, reset() {}, async open(options) { opened = options; dialog.open = true; }})}},
+      fetch: async (_url, options) => {
+        requests += 1; assert.equal(options.method, 'GET');
+        if (requests > 1) return new Promise((resolve) => { respond = resolve; });
+        return {ok: false, status, json: async () => ({detail: 'Operation unavailable'})};
+      }});
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(saved, 'other-actor-operation', 'failed reads never silently erase the reference');
+    const reset = get('[data-cert-new-operation]');
+    assert.equal(reset.classList.hidden, status === 503);
+    if (status !== 503) {
+      assert.equal(reset.textContent, 'Forget inaccessible reference');
+      if (status === 422) {
+        get('opener').click({currentTarget: get('opener')});
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      reset.click();
+      if (respond) {
+        respond({ok: true, json: async () => ({operation_id: 'other-actor-operation', state: 'prepared'})});
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      assert.equal(saved, '');
+      get('opener').click({currentTarget: get('opener')});
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(opened.step, 'credential');
+      assert.equal(requests, status === 422 ? 2 : 1, 'forgetting a reference performs no remote mutation or repeated status read');
+    }
+  });
+}

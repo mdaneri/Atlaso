@@ -76,6 +76,7 @@
     for (const row of rows) { const item = document.createElement("div"); const label = document.createElement("span"); const value = document.createElement("strong"); label.textContent = row[0]; value.textContent = row[1] ?? ""; item.append(label, value); container.append(item); }
   }
   function paintOperation(result) {
+    node("new-operation").textContent = "Start a new operation";
     operationState = result.state;
     const productLabel = result.product === "vcenter" ? "vCenter" : result.product === "sddc" ? "SDDC Manager" : "SRM / Protection and Recovery";
     node("operation-target").textContent = `${productLabel} — ${result.address || ""}:${result.port || 443}${result.domain_id ? ` · Management domain ${result.domain_id}` : ""}`;
@@ -123,13 +124,34 @@
   function clearTerminalOperation() {
     if (node("new-operation").classList.contains("hidden")) return;
     saveOperation(""); operationId = null; inspection = null; probe = null; reviewToken = null;
+    window.clearTimeout(pollTimer); pollTimer = null;
     operationLoaded = false; operationState = null; pollFailures = 0;
+    if (explicitOperation && window.history?.replaceState) {
+      const url = new URL(window.location.href); url.searchParams.delete("certificate_operation");
+      window.history.replaceState(null, "", url);
+    }
     form.reset(); lockOperationFields(false); wizard.reset(); updateMode(); clearMessage();
     form.querySelector("[data-cert-prepare]").disabled = false;
     node("result").textContent = ""; node("new-operation").classList.add("hidden");
+    node("new-operation").textContent = "Start a new operation";
+  }
+  function restorationError(error) {
+    if (!operationLoaded && [403, 404, 422].includes(error.status)) {
+      node("new-operation").classList.remove("hidden");
+      node("new-operation").textContent = "Forget inaccessible reference";
+      return `${error.message} You can forget this browser reference to start another workflow. The durable task and its target reservations remain unchanged.`;
+    }
+    return `${error.message} The saved operation is retained; reopen the wizard or retry Reconcile status to refresh it.`;
   }
   async function loadOperation() {
-    const result = await call(`/operations/${encodeURIComponent(operationId)}`);
+    const requestedOperation = operationId;
+    let result;
+    try { result = await call(`/operations/${encodeURIComponent(requestedOperation)}`); }
+    catch (error) {
+      if (requestedOperation !== operationId) return;
+      error.message = restorationError(error); throw error;
+    }
+    if (requestedOperation !== operationId) return;
     if (operationLoaded) paintOperation(result);
     else { hydrateOperation(result); updateMode(); }
     pollFailures = 0;
@@ -148,7 +170,7 @@
         pollFailures += 1;
         const recoverable = !error.status || error.status >= 500 || [408, 429].includes(error.status);
         if (recoverable && pollFailures <= 5 && (!operationLoaded || ["preparing", "installing"].includes(operationState))) schedulePoll(Math.min(30000, 1500 * (2 ** pollFailures)));
-        throw new Error(`${error.message} The saved operation is retained; reopen the wizard or retry Reconcile status to refresh it.`);
+        throw error;
       }
     });
   }
@@ -222,10 +244,12 @@
   if (restoredOperation) {
     operationId = restoredOperation;
     void call(`/operations/${encodeURIComponent(operationId)}`).then((result) => {
+      if (operationId !== restoredOperation) return;
       hydrateOperation(result); updateMode();
       if (explicitOperation) void wizard.open({launcher: opener, reset: false, step: "results", highestStep: "results"}).then(() => poll());
     }).catch((error) => {
-      message(`${error.message} The saved operation is retained; open the wizard to retry restoration.`, true);
+      if (operationId !== restoredOperation) return;
+      message(restorationError(error), true);
       if (explicitOperation) void wizard.open({launcher: opener, reset: false, step: "results", highestStep: "results"}).then(() => poll());
     });
   }
