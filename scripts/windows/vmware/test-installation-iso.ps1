@@ -109,7 +109,7 @@ Exact task-owned VM output directory recorded in the original receipt.
 .PARAMETER ExpectedDirectoryIdentity
 Original directory identity from the durable VM receipt.
 .PARAMETER CreationPin
-Strict exclusive-creation pin held while the replacement pin is acquired.
+Original exclusive-creation handle released before replacement pin acquisition.
 #>
 function Switch-InstallationOutputPinToMutationMode {
     param(
@@ -119,11 +119,13 @@ function Switch-InstallationOutputPinToMutationMode {
     )
     $mutationPin = $null
     try {
+        # The original handle requests DELETE but shares only reads, so it cannot coexist with the replacement pin.
+        # Release it, then re-pin and verify the receipt identity before permitting any provider mutation.
+        $CreationPin.Dispose()
         $mutationPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($OutputDirectory, $true)
         if ([Atlaso.WorkstationFileIdentity]::Get($OutputDirectory) -cne $ExpectedDirectoryIdentity) {
             throw 'The prepared installation output directory changed before VM mutation.'
         }
-        $CreationPin.Dispose()
         return $mutationPin
     }
     catch {

@@ -134,28 +134,37 @@ catch { $invalidPipeRejected = $true }
 Assert-InstallationVmCondition $invalidPipeRejected 'Remote named pipes must be rejected.'
 
 Import-Module -Name $cleanupPath -Force
-$pinTestDirectory = $repositoryRoot
+$pinTestDirectory = [string](Join-Path $repositoryRoot 'image')
 if (-not (Test-Path -LiteralPath $pinTestDirectory -PathType Container)) {
-    throw 'The existing repository directory is unavailable for read-only pin-handoff checks.'
+    throw 'The existing repository subdirectory is unavailable for read-only pin-handoff checks.'
 }
 $pinTestIdentity = [Atlaso.WorkstationFileIdentity]::Get($pinTestDirectory)
-$creationPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($pinTestDirectory)
-$creationHandleField = $creationPin.GetType().GetField('Handles', [Reflection.BindingFlags]'Instance,NonPublic')
-if (-not $creationHandleField) { $creationPin.Dispose(); throw 'Could not inspect the strict creation pin in the focused test.' }
-$creationHandle = $creationHandleField.GetValue($creationPin)[0]
+$creationDirectoryOpen = [Atlaso.WorkstationFileIdentity].GetMethod('CreateFileW', [Reflection.BindingFlags]'Static,NonPublic')
+if (-not $creationDirectoryOpen) { throw 'Could not locate the existing native directory-open method for the sharing regression.' }
+$creationPin = $creationDirectoryOpen.Invoke($null, [object[]]@(
+    $pinTestDirectory, [uint32]0x00110081, [uint32]1, [IntPtr]::Zero, [uint32]3, [uint32]0x02200000, [IntPtr]::Zero
+))
+if (-not $creationPin -or $creationPin.IsInvalid) { throw 'Could not open the read-only strict-sharing directory fixture.' }
+$overlapPin = $null
+$overlapRejected = $false
+try { $overlapPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($pinTestDirectory, $true) }
+catch { $overlapRejected = $true }
+finally { if ($overlapPin) { $overlapPin.Dispose() } }
+Assert-InstallationVmCondition $overlapRejected 'The strict creation handle must reject an overlapping mutation pin because it owns delete access without delete sharing.'
 try {
     $mutationPin = Switch-InstallationOutputPinToMutationMode -OutputDirectory $pinTestDirectory `
         -ExpectedDirectoryIdentity $pinTestIdentity -CreationPin $creationPin
-    Assert-InstallationVmCondition $creationHandle.IsClosed 'Successful pin transfer must release the strict creation handle only after replacement admission.'
+    Assert-InstallationVmCondition $creationPin.IsClosed 'Successful pin transfer must release the strict creation handle before acquiring the mutation pin.'
     Assert-InstallationVmCondition ([Atlaso.WorkstationFileIdentity]::Get($pinTestDirectory) -ceq $pinTestIdentity) `
         'The mutation-compatible pin must retain the original directory identity.'
 }
 finally {
     if ($mutationPin) { $mutationPin.Dispose() }
 }
-$creationPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($pinTestDirectory)
-$creationHandleField = $creationPin.GetType().GetField('Handles', [Reflection.BindingFlags]'Instance,NonPublic')
-$creationHandle = $creationHandleField.GetValue($creationPin)[0]
+$creationPin = $creationDirectoryOpen.Invoke($null, [object[]]@(
+    $pinTestDirectory, [uint32]0x00110081, [uint32]1, [IntPtr]::Zero, [uint32]3, [uint32]0x02200000, [IntPtr]::Zero
+))
+if (-not $creationPin -or $creationPin.IsInvalid) { throw 'Could not reopen the strict-sharing directory fixture.' }
 $mismatchRejected = $false
 try {
     $null = Switch-InstallationOutputPinToMutationMode -OutputDirectory $pinTestDirectory `
@@ -163,8 +172,13 @@ try {
 }
 catch { $mismatchRejected = $true }
 Assert-InstallationVmCondition $mismatchRejected 'A changed directory identity must reject pin transfer.'
-Assert-InstallationVmCondition (-not $creationHandle.IsClosed) 'Failed pin admission must preserve the original creation pin.'
-$creationPin.Dispose()
+Assert-InstallationVmCondition $creationPin.IsClosed 'Identity mismatch must leave the strict pin released and fail before provider mutation.'
+$reopenedCreationPin = $creationDirectoryOpen.Invoke($null, [object[]]@(
+    $pinTestDirectory, [uint32]0x00110081, [uint32]1, [IntPtr]::Zero, [uint32]3, [uint32]0x02200000, [IntPtr]::Zero
+))
+Assert-InstallationVmCondition ($reopenedCreationPin -and -not $reopenedCreationPin.IsInvalid) `
+    'Identity mismatch must dispose the replacement pin so the original strict-sharing handle can be reacquired.'
+$reopenedCreationPin.Dispose()
 
 $previousBoundedRunner = Get-Item Function:\Invoke-AtlasoBoundedStreamingProcess -ErrorAction SilentlyContinue
 $script:InstallationStartRunnerFailure = $false
@@ -280,8 +294,10 @@ $pinHelper = $source.Substring($source.IndexOf('function Switch-InstallationOutp
 $pinAcquire = $pinHelper.IndexOf('PinOrdinaryDirectoryPath($OutputDirectory, $true)', [StringComparison]::Ordinal)
 $pinIdentity = $pinHelper.IndexOf('Get($OutputDirectory) -cne $ExpectedDirectoryIdentity', [StringComparison]::Ordinal)
 $pinRelease = $pinHelper.IndexOf('$CreationPin.Dispose()', [StringComparison]::Ordinal)
-Assert-InstallationVmCondition ($pinAcquire -ge 0 -and $pinAcquire -lt $pinIdentity -and $pinIdentity -lt $pinRelease) `
-    'The replacement pin must be acquired and identity-checked before releasing the strict creation pin.'
+Assert-InstallationVmCondition ($pinRelease -ge 0 -and $pinRelease -lt $pinAcquire -and $pinAcquire -lt $pinIdentity) `
+    'The strict creation handle must be released before replacement pin acquisition, with identity checked before return.'
+Assert-InstallationVmCondition ($pinHelper.Contains('if ($mutationPin) { $mutationPin.Dispose() }')) `
+    'A failed identity recheck must dispose the replacement pin before aborting.'
 $startHelper = $source.Substring($source.IndexOf('function Start-InstallationIsoVm', [StringComparison]::Ordinal),
     $source.IndexOf('<#', $source.IndexOf('function ConvertTo-InstallationVmxString', [StringComparison]::Ordinal), [StringComparison]::Ordinal) -
     $source.IndexOf('function Start-InstallationIsoVm', [StringComparison]::Ordinal))
