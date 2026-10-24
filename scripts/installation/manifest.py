@@ -107,7 +107,9 @@ def inventory(root: Path) -> list[dict]:
     Args:
         root: Root directory containing the files being checked."""
     records = []
-    for path in sorted(root.rglob("*")):
+    # Path ordering follows host case rules; the signed order must be identical
+    # when Windows-built media is verified by the Linux boot interpreter.
+    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
         if path.is_symlink() or (not path.is_file() and not path.is_dir()):
             raise ValueError("installation media contains a link or special entry")
         if path.is_dir():

@@ -16,6 +16,18 @@ from scripts.installation import manifest
 from scripts.verify_installation_iso import verify_release
 
 
+def test_inventory_uses_host_independent_posix_path_order(tmp_path):
+    """Match Linux verification order when assembling on case-insensitive Windows.
+
+    Args:
+        tmp_path: Temporary fixture directory for mixed-case media names.
+    """
+    names = ["[Content_Types].xml", "EULA.rtf", "a-file", "Z-file"]
+    for name in names:
+        (tmp_path / name).write_bytes(b"public ordering fixture")
+    assert [record["path"] for record in manifest.inventory(tmp_path)] == sorted(names)
+
+
 @pytest.fixture
 def signed_media(tmp_path, monkeypatch):
     """Create synthetic signed content without an operational signing secret.

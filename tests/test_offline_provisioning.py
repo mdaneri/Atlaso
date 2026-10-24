@@ -130,3 +130,25 @@ def test_offline_chroot_skips_live_host_setup_and_image_compaction() -> None:
     assert 'if [ -z "$ATLASO_INSTALLATION_MEDIA" ] && command -v iptables' in source
     assert 'if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then\n  zero_fill_free_space /' in source
     assert 'if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then\n  python3 "$ATLASO_HOME/image/common/scripts/verify-template-state.py" --installation-media\nelse\n  python3 "$ATLASO_HOME/image/common/scripts/verify-template-state.py"\nfi' in source
+
+
+def test_offline_history_lifecycle_is_deferred_until_nginx_first_boot() -> None:
+    """Run the existing history installer once after first-boot Nginx startup."""
+    source = _provisioner()
+    unit_start = source.index("cat >/etc/systemd/system/atlaso-external-history-install.service <<'EOF'")
+    unit_end = source.index("\nEOF", unit_start)
+    unit = source[unit_start:unit_end]
+    offline_enable = source.index("systemctl enable atlaso-external-history-install.service")
+    nginx_enable = source.index("systemctl enable --now nginx")
+    normal_install = source.rindex('"$ATLASO_HOME/.venv/bin/python" -I -m atlaso.app.services.external_history_lifecycle install')
+
+    assert 'if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then\n  cat >/etc/systemd/system/atlaso-external-history-install.service' in source
+    assert "After=nginx.service atlaso-bootstrap-https.service" in unit
+    assert "Requires=nginx.service" in unit
+    assert "ConditionPathExists=!/var/lib/atlaso-privileged/log-history/installation-complete" in unit
+    assert "ExecStart=/opt/atlaso/.venv/bin/python -I -B -m atlaso.app.services.external_history_lifecycle install" in unit
+    assert "ExecStartPost=/usr/bin/install -o root -g root -m 0600 /dev/null /var/lib/atlaso-privileged/log-history/installation-complete" in unit
+    assert "WantedBy=multi-user.target" in unit
+    assert offline_enable < nginx_enable < normal_install
+    assert 'if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then\n  log_step "preserving and activating external service log history"' in source
+    assert "systemctl enable --now atlaso-external-history-install.service" not in source

@@ -1003,6 +1003,25 @@ install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-worker
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-data-disks.service" /etc/systemd/system/atlaso-data-disks.service
 install -o root -g root -m 0644 "$GUEST_AGENT_UNIT_SOURCE" /etc/systemd/system/atlaso-guest-agent-select.service
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-bootstrap-https.service" /etc/systemd/system/atlaso-bootstrap-https.service
+if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then
+  cat >/etc/systemd/system/atlaso-external-history-install.service <<'EOF'
+[Unit]
+Description=Initialize Atlaso external log history
+After=nginx.service atlaso-bootstrap-https.service
+Requires=nginx.service
+ConditionPathExists=!/var/lib/atlaso-privileged/log-history/installation-complete
+RequiresMountsFor=/var/log/nginx /var/lib/atlaso-privileged
+
+[Service]
+Type=oneshot
+ExecStart=/opt/atlaso/.venv/bin/python -I -B -m atlaso.app.services.external_history_lifecycle install
+ExecStartPost=/usr/bin/install -o root -g root -m 0600 /dev/null /var/lib/atlaso-privileged/log-history/installation-complete
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  chmod 0644 /etc/systemd/system/atlaso-external-history-install.service
+fi
 install -d -o root -g root -m 0755 /etc/systemd/system.conf.d
 install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-console-manager.conf" /etc/systemd/system.conf.d/atlaso-console.conf
 install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-helper" "$ATLASO_HOME/bin/atlaso-helper"
@@ -1195,6 +1214,12 @@ fi
 systemctl enable atlaso-guest-agent-select.service
 systemctl enable atlaso-data-disks.service
 systemctl enable atlaso-bootstrap-https.service
+if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then
+  # The chroot cannot run live services. Defer the existing lifecycle installer
+  # until Nginx is active on the installed host; the success marker is published
+  # by the unit only after the lifecycle has installed and started its timer.
+  systemctl enable atlaso-external-history-install.service
+fi
 systemctl enable atlaso
 systemctl enable atlaso-worker.service
 systemctl mask getty@tty1.service
