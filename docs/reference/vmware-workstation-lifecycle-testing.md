@@ -139,6 +139,12 @@ Repeated setup copies nothing when the destination is already valid. Keep config
 release artifacts, and logs. Record ownership of only the task's copied configuration; later task-worktree cleanup
 must never remove or alter the primary checkout's originals.
 
+For a new task that needs automatic completed-task cleanup, use the
+[creation-receipted configuration owner](../contribute/completed-task-cleanup.md#task-owned-1password-configuration)
+before any other tooling creates its `.atlaso-local` directory. It records the original copy and exposes the supported
+`configuration` resource cleanup operation. Existing unreceipted copies remain preserved; never retrofit ownership
+or use generated-tree deletion for credential configuration.
+
 ### Verify source-snapshot admission
 
 The focused Windows source-snapshot regression runs with PowerShell 7 using

@@ -146,6 +146,7 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
             "atlaso/important_events.py",
             "atlaso/app/services/important_task_events.py",
             "scripts/pytest_git_fixtures.py",
+            "scripts/onepassword_task_configuration.py",
             "scripts/pytest_directory_probes.py",
             "scripts/zensical_cache.py",
             "atlaso/app/services/dhcp_pool_verification.py",
