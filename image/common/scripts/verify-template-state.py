@@ -25,12 +25,17 @@ FORBIDDEN = (
 )
 
 
-def verify_files(files: dict[str, bytes]) -> None:
+def verify_files(files: dict[str, bytes], *, installation_media: bool = False) -> None:
     """Verify exact offline RPM inventory and both unconsumed provider closures.
 
     Args:
         files: Regular file bytes relative to the trusted staging directory.
+        installation_media: Require the intentionally empty physical-install inventory.
     """
+    if installation_media:
+        if files != {"SHA256SUMS": b""}:
+            raise SystemExit("Physical installation guest-tool inventory must be empty")
+        return
     if "SHA256SUMS" not in files:
         raise SystemExit(
             "Template guest-tool checksum manifest is missing; rebuild the template"
@@ -57,11 +62,12 @@ def verify_files(files: dict[str, bytes]) -> None:
             raise SystemExit(f"Template guest-tool package changed: {name}")
 
 
-def verify(root: Path) -> None:
+def verify(root: Path, *, installation_media: bool = False) -> None:
     """Inspect a template filesystem without modifying first-boot state.
 
     Args:
         root: Template filesystem root; defaults to the provisioning guest root.
+        installation_media: Validate physical-install staging without virtual-agent payloads.
     """
     for name in FORBIDDEN:
         path = root / name
@@ -71,15 +77,20 @@ def verify(root: Path) -> None:
             )
     if list((root / "etc/ssh").glob("ssh_host_*")):
         raise SystemExit("Template contains generated SSH host identity")
-    # Provisioning pre-seeds this empty handshake to hold services until deployed
-    # customization finishes. Its presence is required, not evidence of a boot.
+    # Virtual templates require the pre-seeded empty customization handshake.
+    # Physical installations must reach tty1 without a VMware customizer.
     lock = root / INITIALIZATION_LOCK
-    if not lock.is_file() or lock.is_symlink():
-        raise SystemExit("Template initialization lock is missing or unsafe")
-    info = lock.lstat()
-    if (info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o640
-            or info.st_nlink != 1 or info.st_size != 0):
-        raise SystemExit("Template initialization lock is not pristine")
+    if installation_media:
+        # No VMware customizer is installed to release this tty1 handshake.
+        if lock.exists() or lock.is_symlink():
+            raise SystemExit("Physical installation contains a VMware initialization lock")
+    else:
+        if not lock.is_file() or lock.is_symlink():
+            raise SystemExit("Template initialization lock is missing or unsafe")
+        info = lock.lstat()
+        if (info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o640
+                or info.st_nlink != 1 or info.st_size != 0):
+            raise SystemExit("Template initialization lock is not pristine")
     staging = root / STAGING
     if not staging.is_dir() or staging.is_symlink():
         raise SystemExit("Template offline guest-tool staging is missing or unsafe")
@@ -102,9 +113,9 @@ def verify(root: Path) -> None:
             raise SystemExit(
                 "Template guest-tool staging has unsafe permissions or file types"
             )
-    if directories != {"hyperv", "qemu"}:
+    if directories != (set() if installation_media else {"hyperv", "qemu"}):
         raise SystemExit("Template guest-tool staging has unexpected directories")
-    verify_files(files)
+    verify_files(files, installation_media=installation_media)
     environment = (root / "etc/atlaso/atlaso.env").read_text()
     for name in (
         "ATLASO_SECRET_KEY",
@@ -121,4 +132,6 @@ def verify(root: Path) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("/"))
-    verify(parser.parse_args().root)
+    parser.add_argument("--installation-media", action="store_true", help="Require empty physical-install guest-agent staging.")
+    args = parser.parse_args()
+    verify(args.root, installation_media=args.installation_media)

@@ -189,12 +189,21 @@ def test_photon_image_installs_fixed_size_atlaso_grub_branding():
     assert photon_logo[:8] == b"\x89PNG\r\n\x1a\n"
     assert 'desktop-image: "atlaso.png"' in theme
     assert "Powered by Photon OS" not in theme  # Copy is rendered into the fixed background.
-    assert "set theme=/grub2/themes/atlaso/theme.txt" in installer
+    assert "theme_path='/boot/grub2/themes/atlaso/theme.txt'" in installer
+    assert "theme_path='/grub2/themes/atlaso/theme.txt'" in installer
+    assert "kernel_regex='/boot/\\$photon_linux'" in installer
+    assert "kernel_regex='/\\$photon_linux'" in installer
     assert 'menuentry " "' in installer
     assert "atlaso-backup" in installer
     assert 'gfxmode="1280x800"' in installer
     assert "gfxpayload=keep" in installer
     assert "fbcon=font:VGA8x16" in installer
+    assert "--development-serial-console" in installer
+    assert "insmod serial" in installer
+    assert "serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1" in installer
+    assert "terminal_input console serial" in installer
+    assert "terminal_output gfxterm serial" in installer
+    assert "console=tty0 console=ttyS0,115200n8" in installer
     assert "set gfxmode" not in installer
     assert "set gfxpayload" not in installer
     assert '"$ATLASO_HOME/bin/atlaso-install-boot-branding"' in provision
@@ -206,27 +215,41 @@ def test_photon_image_installs_fixed_size_atlaso_grub_branding():
 
 @pytest.mark.skipif(os.name == "nt", reason="The GRUB installer requires a POSIX shell.")
 @pytest.mark.parametrize(
-    "framebuffer_config",
+    ("boot_directory", "framebuffer_config", "serial_mode"),
     [
-        "",
-        'gfxmode="640x480"\ngfxpayload=text\n',
-        'set gfxmode="auto"\nset gfxpayload=keep\n',
+        pytest.param("/boot/", "", "production", id="root-only-production-default-framebuffer"),
+        pytest.param("/boot/", "", "development", id="root-only-development-default-framebuffer"),
+        pytest.param("/boot/", 'gfxmode="640x480"\ngfxpayload=text\n', "production", id="root-only-production-direct-framebuffer"),
+        pytest.param("/boot/", 'gfxmode="640x480"\ngfxpayload=text\n', "development", id="root-only-development-direct-framebuffer"),
+        pytest.param("/boot/", 'set gfxmode="auto"\nset gfxpayload=keep\n', "production", id="root-only-production-set-framebuffer"),
+        pytest.param("/boot/", 'set gfxmode="auto"\nset gfxpayload=keep\n', "development", id="root-only-development-set-framebuffer"),
+        pytest.param("/", "", "production", id="separate-boot-production-default-framebuffer"),
+        pytest.param("/", "", "development", id="separate-boot-development-default-framebuffer"),
+        pytest.param("/", 'gfxmode="640x480"\ngfxpayload=text\n', "production", id="separate-boot-production-direct-framebuffer"),
+        pytest.param("/", 'gfxmode="640x480"\ngfxpayload=text\n', "development", id="separate-boot-development-direct-framebuffer"),
+        pytest.param("/", 'set gfxmode="auto"\nset gfxpayload=keep\n', "production", id="separate-boot-production-set-framebuffer"),
+        pytest.param("/", 'set gfxmode="auto"\nset gfxpayload=keep\n', "development", id="separate-boot-development-set-framebuffer"),
+        pytest.param("/boot/", "", "unknown-option", id="unknown-option-refused-before-writes"),
     ],
 )
 def test_boot_branding_installer_renders_idempotent_photon_console_config(
-    tmp_path: Path, framebuffer_config: str
+    tmp_path: Path, boot_directory: str, framebuffer_config: str, serial_mode: str
 ) -> None:
-    """Render the supported Photon GRUB structure with a 1280x800 VGA8x16 console.
+    """Render supported Photon layouts and optional development serial output.
 
     Args:
         tmp_path: Pytest-provided isolated filesystem root.
+        boot_directory: Pinned Photon boot-directory value for the selected layout.
         framebuffer_config: Photon framebuffer assignments to normalize, or an empty prefix.
+        serial_mode: Production, development serial-console, or rejected-option mode.
     """
+    theme_path = "/boot/grub2/themes/atlaso/theme.txt" if boot_directory == "/boot/" else "/grub2/themes/atlaso/theme.txt"
     grub_config = tmp_path / "grub.cfg"
-    original = framebuffer_config + """set theme=/boot/grub2/themes/photon/theme.txt
-menuentry \"Photon\" {
-    linux /$photon_linux root=$rootpartition $photon_cmdline $systemd_cmdline
-}
+    original = framebuffer_config + f"""set theme=/boot/grub2/themes/photon/theme.txt
+terminal_output gfxterm
+menuentry \"Photon\" {{
+    linux {boot_directory}$photon_linux root=$rootpartition $photon_cmdline $systemd_cmdline
+}}
 """
     grub_config.write_text(original, encoding="utf-8")
     theme_source = tmp_path / "theme.txt"
@@ -275,18 +298,50 @@ fi
         str(theme_source),
         str(background_source),
     ]
+    if serial_mode == "development":
+        command.append("--development-serial-console")
+    elif serial_mode == "unknown-option":
+        command.append("--unknown-option")
 
     first = subprocess.run(command, check=False, capture_output=True, text=True, env=environment)
+    if serial_mode == "unknown-option":
+        assert first.returncode != 0
+        assert grub_config.read_text(encoding="utf-8") == original
+        assert not (tmp_path / "installed-theme").exists()
+        assert not grub_config.with_name("grub.cfg.atlaso-backup").exists()
+        return
+
     assert first.returncode == 0, first.stderr
     rendered = grub_config.read_text(encoding="utf-8")
+    assert f"set theme={theme_path}\n" in rendered
     assert 'gfxmode="1280x800"\n' in rendered
     assert "gfxpayload=keep\n" in rendered
     assert "set gfxmode" not in rendered
     assert "set gfxpayload" not in rendered
-    assert (
-        "linux /$photon_linux root=$rootpartition $photon_cmdline "
-        "$systemd_cmdline fbcon=font:VGA8x16"
-    ) in rendered
+    expected_kernel = f"linux {boot_directory}$photon_linux root=$rootpartition $photon_cmdline $systemd_cmdline"
+    if serial_mode == "development":
+        assert "insmod serial\n" in rendered
+        assert "serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1\n" in rendered
+        assert "terminal_input console serial\n" in rendered
+        assert "terminal_output gfxterm serial\n" in rendered
+        assert (
+            expected_kernel + " fbcon=font:VGA8x16 console=tty0 console=ttyS0,115200n8"
+        ) in rendered
+        for line in (
+            "insmod serial",
+            "serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1",
+            "terminal_input console serial",
+            "terminal_output gfxterm serial",
+        ):
+            assert rendered.splitlines().count(line) == 1
+    else:
+        assert "insmod serial\n" not in rendered
+        assert "serial --unit=0" not in rendered
+        assert "terminal_input console serial" not in rendered
+        assert "terminal_output gfxterm serial" not in rendered
+        assert "terminal_output gfxterm\n" in rendered
+        assert "console=ttyS0,115200n8" not in rendered
+        assert (expected_kernel + " fbcon=font:VGA8x16") in rendered
     assert rendered.count("fbcon=font:VGA8x16") == 1
     assert grub_config.with_name("grub.cfg.atlaso-backup").read_text(encoding="utf-8") == original
 
@@ -3331,23 +3386,26 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     assert "VixHost_UnregisterVM" not in cleanup_module
     assert "'-T', 'ws', 'unregister'" not in cleanup_module
     assert "'-T', 'ws', 'deleteVM', $resolvedVmxPath" in cleanup_module
-    assert cleanup_module.index("Confirm-AtlasoWorkstationVmInactive") < cleanup_module.index(
+    removal_function = cleanup_module.split(
+        "\nfunction Remove-AtlasoWorkstationVmArtifacts", 1
+    )[1].split("\nfunction Remove-AtlasoWorkstationArtifactRoot", 1)[0]
+    assert removal_function.index("Confirm-AtlasoWorkstationVmInactive") < removal_function.index(
         "Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force"
     )
-    snapshot = cleanup_module.rindex("$snapshot = Get-AtlasoRootSnapshot")
-    inactive = cleanup_module.rindex("Confirm-AtlasoWorkstationVmInactive")
-    provider_delete = cleanup_module.rindex("'-T', 'ws', 'deleteVM', $resolvedVmxPath")
-    post_provider_guard = cleanup_module.index(
+    snapshot = removal_function.rindex("$snapshot = Get-AtlasoRootSnapshot")
+    inactive = removal_function.rindex("Confirm-AtlasoWorkstationVmInactive")
+    provider_delete = removal_function.rindex("'-T', 'ws', 'deleteVM', $resolvedVmxPath")
+    post_provider_guard = removal_function.index(
         "Assert-AtlasoRootSnapshotUnreplaced", provider_delete
     )
-    final_running_check = cleanup_module.rindex("Assert-AtlasoWorkstationNoRunningTarget -VmrunPath")
-    assert cleanup_module.count("Assert-AtlasoWorkstationNoRunningTarget -VmrunPath") == 2
-    stale_repair = cleanup_module.rindex("Remove-AtlasoWorkstationStaleRegistrations")
-    final_registration_check = cleanup_module.rindex("Test-AtlasoWorkstationVmxRegistered")
-    final_replacement_guard = cleanup_module.index(
+    final_running_check = removal_function.rindex("Assert-AtlasoWorkstationNoRunningTarget -VmrunPath")
+    assert removal_function.count("Assert-AtlasoWorkstationNoRunningTarget -VmrunPath") == 2
+    stale_repair = removal_function.rindex("Remove-AtlasoWorkstationStaleRegistrations")
+    final_registration_check = removal_function.rindex("Test-AtlasoWorkstationVmxRegistered")
+    final_replacement_guard = removal_function.index(
         "Assert-AtlasoRootSnapshotUnreplaced", final_registration_check
     )
-    recursive_delete = cleanup_module.rindex(
+    recursive_delete = removal_function.rindex(
         "Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop"
     )
     assert (

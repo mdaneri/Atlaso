@@ -137,6 +137,7 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
         "warn_unused_configs": True,
         "follow_imports": "silent",
         "files": [
+            "atlaso/local_user_password_policy.py",
             "atlaso/app/kmip/recovery.py",
             "atlaso/app/kmip/recovery_runtime.py",
             "atlaso/app/kmip/legacy.py",

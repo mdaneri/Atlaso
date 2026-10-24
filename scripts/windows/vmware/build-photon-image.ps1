@@ -92,6 +92,8 @@ Select a deterministic local/test builder identity that requires no pull request
 Optional collision-safe suffix for concurrent pull-request or local/test builders.
 .PARAMETER ReleaseBuilder
 Select the protected version-and-commit-bound release builder identity.
+.PARAMETER CaptureInstallationRpms
+Capture the offline installation RPM closure during this canonical Photon build. This is unavailable to release builders.
 .PARAMETER VirtualizationSourceDirectory
 Prepared signed software directory installed during construction; required for release builders.
 .PARAMETER ReleaseVersion
@@ -248,6 +250,7 @@ param(
     [switch]$LocalBuilder,
     [string]$CollisionSuffix = '',
     [switch]$ReleaseBuilder,
+    [switch]$CaptureInstallationRpms,
     [string]$VirtualizationSourceDirectory = '',
     [string]$ReleaseVersion = '',
     [string]$ReleaseSourceCommit = '',
@@ -1690,6 +1693,9 @@ function Assert-AtlasoPhotonCleanupRepositoryRegistration {
 }
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+if ($CaptureInstallationRpms -and $ReleaseBuilder) {
+    throw '-CaptureInstallationRpms is not allowed for a release builder.'
+}
 if ($CleanupOnly) {
     # Return before lock refresh, artifact downloads, credentials, reservation
     # initialization, source protection, output claims, or any provider work.
@@ -3436,6 +3442,7 @@ $packerVariables = @{
     vmnet_name         = $VmnetName
     service_vmnet_name = $ServiceVmnetName
     headless           = [bool]$Headless
+    capture_installation_rpms = [bool]$CaptureInstallationRpms
     virtualization_source_directory = $VirtualizationSourceDirectory
     software_manifest_sha256 = $softwareManifestSha256
     software_source_commit = $SourceCommit
