@@ -9,10 +9,12 @@ status: roadmap
 
 # Offline installation ISO build and verification
 
-This reference records the planned build and release path for
-[issue #542](https://github.com/mdaneri/Atlaso/issues/542). ISO assembly and native VM acceptance are still in
-progress. Physical SATA/NVMe and wired-Ethernet acceptance remains outstanding. The steps below do not establish that
-an ISO, VM installation, or physical platform has passed acceptance.
+This reference records the build and release path for
+[issue #542](https://github.com/mdaneri/Atlaso/issues/542). A development ISO completed a disconnected Auto
+installation in VMware at source commit
+`960621fdd0e6c1babcc707e2ca0ca2896539876e`; reboot and installed-system acceptance remain in progress. Physical
+SATA/NVMe and wired-Ethernet acceptance remains outstanding. This VM result does not establish physical-platform
+support or complete issue acceptance.
 
 The installation image reuses the pinned Photon 5.0 ISO and Photon installer 2.2. Remastering preserves the source EFI
 boot image and native installer flow. The Atlaso deployment source comes from an immutable Git archive at the
@@ -20,6 +22,11 @@ selected full commit. The signed software release, its exact application wheel, 
 provisioning inputs, PowerCLI modules, trust material, notices, firmware, and a signed offline Photon RPM repository
 are embedded and inventoried. Dependency closure is resolved during authorized ISO preparation; installation does
 not use network package repositories.
+
+The shared boot-branding installer handles both native Photon kernel paths. The root-only Auto layout uses
+`/boot/$photon_linux` and points GRUB at `/boot/grub2/themes/atlaso/theme.txt`; a Custom layout with a separate `/boot`
+uses `/$photon_linux` and `/grub2/themes/atlaso/theme.txt`. Theme files remain under `/boot/grub2/themes/atlaso` in
+both layouts. Custom layouts must use ext4 for the boot filesystem; see [Choose disks and layout](../getting-started/physical-installation.md#choose-disks-and-layout).
 
 Use the existing VMware build and lifecycle process for admitted Photon builders and VM validation. Do not create a
 parallel Hyper-V or KVM image pipeline. Capture RPM dependencies during preparation on the authorized Photon builder;
@@ -141,21 +148,39 @@ within its process deadline. To repeat verification afterward:
   -BaselineReceiptPath <BASELINE-RECEIPT> -BaselineReceiptSha256 <BASELINE-RECEIPT-SHA256>
 ```
 
+Use `-Scenario AutoReboot` in a fresh VM root to install, stop, disconnect the installation CD drive, and boot the
+installed system. This development image enables the standard password-protected `serial-getty@ttyS0` service only
+after verifying the development signing identity, non-production marker, and VMware platform. Production images do
+not enable this test login service. The runner rechecks its private pipe peer before sending either chosen password
+to ordinary Linux login; it records only fixed success checkpoints, never the console stream.
+
+The `BootInstalled` harness mode reuses original VM and disk-baseline admission, stopped-provider checks, logical
+disk comparison, and source pins. It requires the original isolated EFI device configuration, publishes an immutable
+`installation-boot` transition receipt before editing the VMX through its retained writer, disables only the existing
+CD drive, verifies readback, and starts the same VM. It preserves disk paths, network isolation, cleanup identity,
+and private serial endpoint. Retain the reported transition path and creation-time SHA-256 alongside the original
+selectors. After this transition, repeat `-Mode Verify` with `-BootReceiptPath` and `-BootReceiptSha256` as well as
+the original and baseline selectors. Verification refuses disconnected media without the bound transition receipt.
+On interruption, preserve the VM and receipts; do not recreate the VM, reconnect media, or reconstruct ownership
+from current files. A partially written or ambiguous configuration requires maintainer recovery.
+
 Verification stops only the identity-checked VM, preserves its artifacts, and compares the unselected disk with its
 pre-boot baseline using `qemu-img compare`. Add `-VerifyTarget` after cancellation to compare the target disk too.
-Development VM runs have reached the native Photon disk menu and passed cancellation, with both target and
-unselected logical contents unchanged. Auto installation acceptance is still outstanding: capacity refusals stopped
-before erasure consent, and both disks were subsequently verified unchanged. These partial results do not establish
-installation, reboot, or persistence acceptance. A successful VM run alone does not establish physical SATA/NVMe or
-wired-Ethernet support.
+The development `Probe` and `Cancel` scenarios passed earlier. A disconnected `Auto` installation also completed in
+the receipt-bound VM for source commit `960621fdd0e6c1babcc707e2ca0ca2896539876e`. After stopping the VM,
+receipt-bound verification confirmed the unselected disk's logical contents matched its pre-boot baseline. Reboot with
+the installation media removed, login with the chosen installed credentials, fresh machine identities, payload
+equality, the host-facing `/openapi.json`, Appliance Update success and rollback persistence, and physical acceptance
+remain outstanding. Do not infer those results from the completed installation run.
 
 Publication is a separate, explicit workflow dispatch after the exact ISO has been validated. The maintainer supplies
 `publish=true` and `validated_iso_sha256` for the ISO whose disconnected UEFI installation, reboot, Appliance Update
 success and rollback persistence, and unselected-disk preservation were tested. The workflow requires that checksum
-to match the signed draft index before publishing, then downloads and verifies the published assets again. The required
-blank-install-ISO and installer-console VMware smoke test has not yet been recorded, so no ISO checksum currently
-establishes installer acceptance. Do not publish or describe the installer as validated before the acceptance
-evidence exists.
+to match the signed draft index before publishing, then downloads and verifies the published assets again. The
+development ISO has completed its disconnected Auto installation and the unselected-disk comparison. Reboot,
+installed-credential login, and Appliance Update checks have not yet been recorded, so this result does not establish
+full installer acceptance or authorize publication. Do not publish or describe the installer as validated before the
+remaining acceptance evidence exists.
 
 ## Verify a release
 
@@ -186,10 +211,10 @@ intended to use before writing the verified ISO to removable media.
 
 The generated release index reports physical hardware acceptance as pending until SATA/NVMe and wired-Ethernet results
 are recorded. Native VM evidence alone does not establish physical support or complete issue #542. The development
-VMware path supports receipt-bound blank-disk ISO and installer-console tests; their acceptance results and the
-disconnected installation/update/rollback scenarios remain outstanding. Do not describe the installer as
-validated or claim physical support while these gates are outstanding. Secure Boot is disabled for phase one; this
-reference makes no Secure Boot or ARM support claim.
+VMware path supports receipt-bound blank-disk ISO and installer-console tests. Probe, Cancel, and one disconnected
+Auto installation have passed; reboot, installed-credential login, and the disconnected update/rollback scenarios
+remain outstanding. Do not describe the installer as validated or claim physical support while these gates are
+outstanding. Secure Boot is disabled for phase one; this reference makes no Secure Boot or ARM support claim.
 
 For disk selection, concealed initial credentials, first-boot networking, and recovery guidance, see
 [Physical installation](../getting-started/physical-installation.md).

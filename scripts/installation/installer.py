@@ -31,6 +31,7 @@ from scripts.installation.layout import (  # noqa: E402 - boot media path bootst
     record_layout,
 )
 from scripts.installation.manifest import (  # noqa: E402 - boot media path bootstrap.
+    DEVELOPMENT_KEY_ID,
     PHOTON_INSTALLER_SHA256,
     digest,
     installer_key_id,
@@ -250,6 +251,23 @@ def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tup
     return config, consent, (passwords[0], passwords[1])
 
 
+def configure_development_serial_login(target: Path, identity: dict) -> None:
+    """Enable ordinary password-protected serial login only for admitted VM test media.
+
+    Args:
+        target: Installed system root.
+        identity: Signature-verified installation identity.
+    """
+    development = identity.get("development")
+    if identity.get("signing_key_id") != DEVELOPMENT_KEY_ID and development is None:
+        return
+    if (identity.get("signing_key_id") != DEVELOPMENT_KEY_ID
+            or not isinstance(development, dict) or development.get("non_production") is not True
+            or installer_key_id() != DEVELOPMENT_KEY_ID):
+        raise ValueError("serial test login requires admitted development VMware media")
+    subprocess.run(["chroot", str(target), "systemctl", "enable", "serial-getty@ttyS0.service"], check=True)
+
+
 def install(media: Path, identity: dict, config: dict, consent: dict, credentials: tuple[str, str]) -> None:
     """Delegate partitions, base OS, bootloader and fstab to the pinned backend.
 
@@ -378,6 +396,7 @@ def install(media: Path, identity: dict, config: dict, consent: dict, credential
                 ["chroot", str(target), "chpasswd"], input=f"admin:{credentials[0]}\nroot:{credentials[1]}\n",
                 text=True, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
+            configure_development_serial_login(target, identity)
             with (target / "etc/atlaso/installation-profile").open("x") as handle:
                 handle.write(PROFILE)
                 handle.flush()

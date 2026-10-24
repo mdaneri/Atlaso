@@ -275,7 +275,7 @@ $intentWrite = $source.IndexOf('Publish-AtlasoTestVmOwnershipRecord -Context $co
 $originalReceipt = $source.IndexOf('Publish-InstallationVmOriginalReceipt -Context $context', [StringComparison]::Ordinal)
 $originalReceiptReport = $source.IndexOf('Original installation VM receipt: path={0} sha256={1}', [StringComparison]::Ordinal)
 $diskMutation = $source.IndexOf("-FileName 'vmware-vdiskmanager.exe'", [StringComparison]::Ordinal)
-$providerStart = $source.IndexOf('Start-InstallationIsoVm -VmrunPath', [StringComparison]::Ordinal)
+$providerStart = $source.LastIndexOf('Start-InstallationIsoVm -VmrunPath', [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($whatIfGate -ge 0 -and $intentWrite -gt $whatIfGate) 'WhatIf must return before any ownership record is published.'
 Assert-InstallationVmCondition ($intentWrite -lt $originalReceipt -and $originalReceipt -lt $diskMutation) 'The task intent and original VM receipt must precede disk mutations.'
 Assert-InstallationVmCondition ($originalReceipt -lt $providerStart) 'The original VM receipt must precede provider startup.'
@@ -294,7 +294,7 @@ $targetDiskCreate = $source.IndexOf("'-c', '-s', '64GB', '-a', 'lsilogic', '-t',
 $unselectedDiskCreate = $source.IndexOf("'-c', '-s', '4GB', '-a', 'lsilogic', '-t', '0', $unselectedDisk", [StringComparison]::Ordinal)
 $baselineCreate = $source.IndexOf('Publish-InstallationDiskBaseline -Context $context', [StringComparison]::Ordinal)
 $baselineReport = $source.IndexOf('Installation disk baseline receipt: path={0} sha256={1}', [StringComparison]::Ordinal)
-$providerStart = $source.IndexOf('Start-InstallationIsoVm -VmrunPath', [StringComparison]::Ordinal)
+$providerStart = $source.LastIndexOf('Start-InstallationIsoVm -VmrunPath', [StringComparison]::Ordinal)
 $pinSwitch = $source.IndexOf('$outputPin = Switch-InstallationOutputPinToMutationMode', [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($targetDiskCreate -lt $baselineCreate -and $unselectedDiskCreate -lt $baselineCreate -and $baselineCreate -lt $providerStart) 'Both logical disk baselines must be durably published after disk creation and before any VM start.'
 Assert-InstallationVmCondition ($baselineCreate -lt $baselineReport -and $baselineReport -lt $providerStart) `
@@ -320,9 +320,9 @@ Assert-InstallationVmCondition ($startHelper.Contains('[Environment]::CurrentDir
 Assert-InstallationVmCondition ($source.Contains("'compare', '-f', 'vmdk', '-F', 'vmdk'")) 'Disk comparison must use qemu-img logical VMDK comparison.'
 Assert-InstallationVmCondition (-not $source.Contains("'compare', '-s'")) 'Logical comparison must not require sparse allocation layout to match.'
 Assert-InstallationVmCondition ($source.Contains('-Kind installation-baseline')) 'The baseline record must use its dedicated ownership-receipt kind.'
-Assert-InstallationVmCondition ($ownershipSource.Contains("'installation-baseline')")) 'The immutable ownership publisher must admit the baseline record kind.'
+Assert-InstallationVmCondition ($ownershipSource.Contains("'installation-baseline', 'installation-boot')")) 'The immutable ownership publisher must admit the baseline record kind.'
 Assert-InstallationVmCondition ($cleanupSource.Contains("'Confirm-AtlasoWorkstationVmInactive'")) 'The guarded VM stop helper must be available to the verification mode.'
-$verifyMode = $source.IndexOf('if ($Mode -eq ''Verify'')', [StringComparison]::Ordinal)
+$verifyMode = $source.IndexOf('if ($Mode -in @(''Verify'', ''BootInstalled''))', [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($verifyMode -ge 0) 'The harness must expose receipt-bound disk verification.'
 $verifyOriginalRead = $source.IndexOf('Read-AtlasoTestVmSealedRecord -Context $context -Path $OriginalReceiptPath', $verifyMode, [StringComparison]::Ordinal)
 $verifyBaselineRead = $source.IndexOf('Read-AtlasoTestVmSealedRecord -Context $context -Path $BaselineReceiptPath', $verifyMode, [StringComparison]::Ordinal)
@@ -673,3 +673,25 @@ foreach ($publicFailure in @(
 }
 
 Write-Host 'Installation ISO VM harness source-contract checks passed.'
+
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'ConvertTo-InstallationDiskBootConfiguration')))
+$bootSource = ($lines -join "`n") + "`n"
+$bootText = ConvertTo-InstallationDiskBootConfiguration -Text $bootSource
+Assert-InstallationVmCondition ($bootText.Contains('sata0:0.present = "FALSE"') -and $bootText.Contains('sata0:0.startConnected = "FALSE"')) 'Installed boot must disconnect the CD drive.'
+Assert-InstallationVmCondition ($bootText.Replace('sata0:0.present = "FALSE"', 'sata0:0.present = "TRUE"').Replace('sata0:0.startConnected = "FALSE"', 'sata0:0.startConnected = "TRUE"') -ceq $bootSource) 'Installed boot must preserve all other VMX bytes.'
+foreach ($bad in @(
+    $bootSource.Replace('ethernet0.present = "FALSE"', 'ethernet0.present = "TRUE"'),
+    ($bootSource + 'ethernet1.present = "TRUE"'),
+    ($bootSource + 'scsi0:2.present = "TRUE"'),
+    $bootSource.Replace('firmware = "efi"', 'firmware = "bios"'),
+    $bootSource.Replace('serial0.fileType = "pipe"', 'serial0.fileType = "file"'),
+    ($bootSource + 'sata0:0.present = "TRUE"')
+)) {
+    $refused = $false
+    try { $null = ConvertTo-InstallationDiskBootConfiguration -Text $bad } catch { $refused = $true }
+    Assert-InstallationVmCondition $refused 'Installed boot must refuse unsafe or duplicate critical configuration.'
+}
+$bootPublish = $source.IndexOf('-Record $transition -Kind installation-boot', [StringComparison]::Ordinal)
+$bootWrite = $source.IndexOf('$writer.Write($after', $bootPublish, [StringComparison]::Ordinal)
+Assert-InstallationVmCondition ($bootPublish -gt $verifyCompare -and $bootWrite -gt $bootPublish) 'Original/baseline verification and transition publication must precede VMX mutation.'
+Write-Host 'Installation disk-boot transition regression tests passed.'

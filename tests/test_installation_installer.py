@@ -806,3 +806,32 @@ def test_bad_installation_receipt_blocks_identity_changes(monkeypatch):
     monkeypatch.setattr(module, "_replace_environment", lambda value: pytest.fail("unverified identity mutation"))
     with pytest.raises(subprocess.CalledProcessError):
         module.initialize("baremetal")
+
+
+@pytest.mark.parametrize("identity, admitted, expected", [
+    ({"signing_key_id": "atlaso-release-2026-01"}, "atlaso-release-2026-01", "production"),
+    ({"signing_key_id": "atlaso-installation-development-public-test", "development": {"non_production": True}}, "atlaso-installation-development-public-test", "enabled"),
+    ({"signing_key_id": "atlaso-release-2026-01", "development": {"non_production": True}}, "atlaso-installation-development-public-test", "refused"),
+    ({"signing_key_id": "atlaso-installation-development-public-test", "development": {"non_production": 1}}, "atlaso-installation-development-public-test", "refused"),
+    ({"signing_key_id": "atlaso-installation-development-public-test", "development": {"non_production": True}}, "atlaso-release-2026-01", "refused"),
+])
+def test_installed_serial_login_requires_development_trust(monkeypatch, tmp_path, identity, admitted, expected):
+    """Keep standard serial login confined to admitted VMware development media.
+
+    Args:
+        monkeypatch: Controlled trust and subprocess replacements.
+        tmp_path: Synthetic installed root, never a live system.
+        identity: Signature-verified payload identity to exercise.
+        admitted: Initrd trust selected after marker and VMware checks.
+        expected: Production omission, development enablement, or refusal.
+    """
+    module = load_installer(monkeypatch)
+    commands = []
+    monkeypatch.setattr(module, "installer_key_id", lambda: admitted)
+    monkeypatch.setattr(module.subprocess, "run", lambda command, **kwargs: commands.append(command))
+    if expected == "refused":
+        with pytest.raises(ValueError, match="admitted development"):
+            module.configure_development_serial_login(tmp_path, identity)
+    else:
+        module.configure_development_serial_login(tmp_path, identity)
+    assert commands == ([["chroot", str(tmp_path), "systemctl", "enable", "serial-getty@ttyS0.service"]] if expected == "enabled" else [])

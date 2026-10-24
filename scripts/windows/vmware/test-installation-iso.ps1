@@ -7,7 +7,8 @@ no network adapters, and a serial named-pipe endpoint supplied by the caller. Be
 first start it records logical-content baselines for both disks. Verify stops the
 receipt-bound VM if needed and compares selected disk contents against those baselines.
 .PARAMETER Mode
-Select Create, Verify, or Cleanup.
+Select Create, Verify, BootInstalled, or Cleanup. BootInstalled verifies disks, records the stopped-VM transition,
+disconnects the pinned ISO, and starts the installed system with its existing private serial endpoint.
 .PARAMETER Worktree
 Exact clean Atlaso worktree used to bind ownership.
 .PARAMETER OutputDirectory
@@ -34,6 +35,10 @@ Creation-time digest of OriginalReceiptPath.
 Durable disk-baseline receipt path required for verification.
 .PARAMETER BaselineReceiptSha256
 Creation-time digest of BaselineReceiptPath.
+.PARAMETER BootReceiptPath
+Original installed-boot transition receipt when verifying a VM whose media was disconnected.
+.PARAMETER BootReceiptSha256
+Independently preserved creation-time digest of BootReceiptPath.
 .PARAMETER VmrunPath
 Optional exact vmrun executable path.
 .PARAMETER VdiskManagerPath
@@ -47,7 +52,7 @@ Optional exact qemu-img executable path used for logical disk comparisons.
 #>
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('Create', 'Verify', 'Cleanup')][string]$Mode = 'Create',
+    [ValidateSet('Create', 'Verify', 'BootInstalled', 'Cleanup')][string]$Mode = 'Create',
     [string]$Worktree = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path,
     [string]$OutputDirectory = '',
     [ValidateRange(0, 2147483647)][int]$PullRequestNumber = 0,
@@ -61,6 +66,8 @@ param(
     [string]$OriginalReceiptSha256 = '',
     [string]$BaselineReceiptPath = '',
     [string]$BaselineReceiptSha256 = '',
+    [string]$BootReceiptPath = '',
+    [string]$BootReceiptSha256 = '',
     [string]$VmrunPath = '',
     [string]$VdiskManagerPath = '',
     [string]$QemuImgPath = '',
@@ -476,6 +483,38 @@ function Assert-InstallationVmDiskBindings {
     }
 }
 
+<#
+.SYNOPSIS
+Disconnect only the known installation CD drive without changing disks, networking, or the serial endpoint.
+.PARAMETER Text
+Stopped, receipt-bound VMX text read through its exclusive writer.
+#>
+function ConvertTo-InstallationDiskBootConfiguration {
+    param([string]$Text)
+    foreach ($assignment in @(
+        'firmware = "efi"', 'uefi.secureBoot.enabled = "FALSE"',
+        'scsi0:0.present = "TRUE"', 'scsi0:1.present = "TRUE"',
+        'sata0:0.present = "TRUE"', 'sata0:0.startConnected = "TRUE"',
+        'sata0:0.deviceType = "cdrom-image"', 'ethernet0.present = "FALSE"',
+        'serial0.present = "TRUE"', 'serial0.fileType = "pipe"', 'serial0.pipe.endPoint = "client"'
+    )) {
+        $key = $assignment.Split('=')[0].Trim()
+        $matchesForKey = @([regex]::Matches($Text, '(?m)^' + [regex]::Escape($key) + '\s*=.*$'))
+        if ($matchesForKey.Count -ne 1 -or $matchesForKey[0].Value.TrimEnd("`r") -cne $assignment) {
+            throw 'Installed boot requires the exact isolated EFI fixture with connected installation media.'
+        }
+    }
+    if ([regex]::IsMatch($Text, '(?im)^ethernet[1-9][0-9]*\.present\s*=\s*"TRUE"') -or
+        [regex]::IsMatch($Text, '(?im)^(?!scsi0:[01]\.|sata0:0\.)(?:scsi|sata|ide|nvme)[0-9]+:[0-9]+\.present\s*=\s*"TRUE"')) {
+        throw 'Installed boot refuses additional network adapters or storage devices.'
+    }
+    $pipeLines = @([regex]::Matches($Text, '(?m)^serial0\.fileName\s*=\s*"(?<pipe>[^"\r\n]+)"\r?$'))
+    if ($pipeLines.Count -ne 1) { throw 'Installed boot requires one existing private serial endpoint.' }
+    Assert-InstallationSerialPipePath -Path $pipeLines[0].Groups['pipe'].Value
+    $result = [regex]::Replace($Text, '(?m)^sata0:0\.present = "TRUE"(?=\r?$)', 'sata0:0.present = "FALSE"')
+    return [regex]::Replace($result, '(?m)^sata0:0\.startConnected = "TRUE"(?=\r?$)', 'sata0:0.startConnected = "FALSE"')
+}
+
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     throw 'Pass a canonical -OutputDirectory beneath the exact -Worktree.'
 }
@@ -491,7 +530,7 @@ $name = if ($PullRequestNumber -gt 0) {
 }
 $context = New-InstallationVmContext -Root $resolvedWorktree -Destination $resolvedOutput -Name $name
 
-if ($Mode -eq 'Verify') {
+if ($Mode -in @('Verify', 'BootInstalled')) {
     $vmxPin = $null
     $rootPin = $null
     try {
@@ -536,6 +575,18 @@ if ($Mode -eq 'Verify') {
         }
         $vmxLines = @(Get-Content -LiteralPath $context.VmxPath -ErrorAction Stop)
         Assert-InstallationVmDiskBindings -VmxLines $vmxLines -Context $context -IsoPath ([string]$original.installation_iso.path)
+        if ($BootReceiptPath -or @($vmxLines | Where-Object { $_ -ceq 'sata0:0.present = "FALSE"' }).Count -gt 0) {
+            $boot = Read-AtlasoTestVmSealedRecord -Context $context -Path $BootReceiptPath -Sha256 $BootReceiptSha256 `
+                -Phase 'installation-boot-without-media'
+            if ($boot.original_receipt_path -cne $OriginalReceiptPath -or $boot.original_receipt_sha256 -cne $OriginalReceiptSha256 -or
+                $boot.baseline_receipt_path -cne $BaselineReceiptPath -or $boot.baseline_receipt_sha256 -cne $BaselineReceiptSha256 -or
+                $boot.original_directory_identity -cne $original.original_identities.directory -or
+                $boot.persistent_vm_identity_sha256 -cne $original.persistent_vm_identity_sha256 -or
+                @($vmxLines | Where-Object { $_ -ceq 'sata0:0.present = "FALSE"' }).Count -ne 1 -or
+                @($vmxLines | Where-Object { $_ -ceq 'sata0:0.startConnected = "FALSE"' }).Count -ne 1) {
+                throw 'Installed boot recovery is not bound to this original VM and its disconnected media.'
+            }
+        }
         if (-not $PSCmdlet.ShouldProcess($context.VmxPath, 'Stop the receipt-bound installation VM and compare disk contents')) {
             return
         }
@@ -563,11 +614,58 @@ if ($Mode -eq 'Verify') {
             if ($disk.Count -ne 1) { throw "Disk-baseline receipt must contain exactly one $role disk." }
             Assert-InstallationDiskUnchanged -Disk $disk[0] -Role $role -OutputDirectory $context.OutputDirectory -QemuImg $qemuImg
         }
+        if ($Mode -eq 'BootInstalled') {
+            $vmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($context.VmxPath)
+            $vmxPin.Dispose()
+            $vmxPin = $null
+            $writer = [IO.File]::Open($context.VmxPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+            try {
+                if ($writer.Length -gt 1048576 -or [Atlaso.WorkstationFileIdentity]::Get($context.VmxPath) -cne $vmxIdentity) {
+                    throw 'Stopped installation VMX changed before its installed-boot transition.'
+                }
+                $before = [byte[]]::new([int]$writer.Length)
+                $writer.ReadExactly($before)
+                $encoding = [Text.Encoding]::GetEncoding(1252)
+                $text = $encoding.GetString($before)
+                Assert-InstallationVmDiskBindings -VmxLines ($text -split "`r?`n") -Context $context -IsoPath ([string]$original.installation_iso.path)
+                $after = $encoding.GetBytes((ConvertTo-InstallationDiskBootConfiguration -Text $text))
+                Assert-AtlasoTestVmCheckoutSource -Context $context
+                $transition = [ordered]@{
+                    schema = 1; phase = 'installation-boot-without-media'; task_id = $context.TaskId
+                    repository = $context.Repository; source_branch = $context.Branch; source_commit = $context.SourceCommit
+                    worktree = $context.Worktree; pull_request_number = $context.PullRequestNumber; local_builder = $context.LocalBuilder
+                    canonical_name = $context.Name; output_directory = $context.OutputDirectory; vmx_path = $context.VmxPath
+                    original_receipt_path = $OriginalReceiptPath; original_receipt_sha256 = $OriginalReceiptSha256
+                    baseline_receipt_path = $BaselineReceiptPath; baseline_receipt_sha256 = $BaselineReceiptSha256
+                    original_directory_identity = $original.original_identities.directory
+                    persistent_vm_identity_sha256 = $original.persistent_vm_identity_sha256; stopped_vmx_identity = $vmxIdentity
+                    before_sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($before)).ToLowerInvariant()
+                    after_sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($after)).ToLowerInvariant()
+                    created_utc = [DateTimeOffset]::UtcNow.ToString('o')
+                }
+                $published = Publish-AtlasoTestVmOwnershipRecord -Context $context -Record $transition -Kind installation-boot
+                Write-Host ('Installed boot transition receipt: ' + ($published | ConvertTo-Json -Compress))
+                $writer.Position = 0
+                $writer.Write($after, 0, $after.Length)
+                $writer.SetLength($after.Length)
+                $writer.Flush($true)
+                $writer.Position = 0
+                $readback = [byte[]]::new($after.Length)
+                $writer.ReadExactly($readback)
+                if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($readback)).ToLowerInvariant() -cne $transition.after_sha256) {
+                    throw 'Installed boot VMX readback failed; preserve the transition receipt and stopped VM.'
+                }
+            }
+            finally { $writer.Dispose() }
+            Start-InstallationIsoVm -VmrunPath $vmrun -VmxPath $context.VmxPath -OutputDirectory $context.OutputDirectory
+        }
         [pscustomobject]@{
             ReceiptPath = [IO.Path]::GetFullPath($OriginalReceiptPath)
             BaselineReceiptPath = [IO.Path]::GetFullPath($BaselineReceiptPath)
             VerifiedRoles = [string[]]$roles
             LogicalContentsUnchanged = $true
+            BootReceiptPath = if ($Mode -eq 'BootInstalled') { $published.Path } else { $BootReceiptPath }
+            BootReceiptSha256 = if ($Mode -eq 'BootInstalled') { $published.Sha256 } else { $BootReceiptSha256 }
         }
     }
     finally {
