@@ -110,6 +110,68 @@ def test_prompt_masks_secret_and_does_not_invoke_native_confirmation_lookup(monk
     assert calls[0][12] > 1
 
 
+@pytest.mark.parametrize("line_count", [1, 4, 5, 15])
+def test_prompt_layout_fits_pinned_native_validation_error_row(monkeypatch, line_count):
+    """Keep prompt text and ReadText's validation row inside Photon's text area.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing the native reader.
+        line_count: Number of unwrapped prompt lines to lay out at 80x25.
+    """
+    module = load_installer(monkeypatch)
+    message = "\n".join(f"Prompt line {index}" for index in range(line_count))
+
+    class NativeReaderDouble:
+        def __init__(self, *args):
+            """Enforce the pinned Window and ReadText row geometry.
+
+            Args:
+                *args: Positional WindowStringReader arguments from the adapter.
+            """
+            maxy, maxx, height, width = args[:4]
+            display_lines = str(args[11]).splitlines()
+            inputy = args[12]
+            content_height = height - 5
+            assert maxy == 25
+            assert maxx == 80
+            assert height <= maxy
+            assert len(display_lines) == line_count
+            # Photon Window creates textwin at (height - 5, width - 5).
+            # ReadText.init_text writes both the input row and row y + 2.
+            assert width - 5 > 0
+            assert 0 <= inputy < content_height
+            assert 0 <= inputy + 2 < content_height
+            args[13]["value"] = "accepted"
+
+        def get_user_string(self):
+            return SimpleNamespace(success=True)
+
+    monkeypatch.setitem(sys.modules, "windowstringreader", SimpleNamespace(WindowStringReader=NativeReaderDouble))
+    assert module.prompt(25, 80, "Review", message) == "accepted"
+
+
+def test_prompt_rejects_more_than_native_review_page_before_reader_creation(monkeypatch):
+    """Reject a prompt beyond the native 80x25 text page before constructing UI.
+
+    Args:
+        monkeypatch: Fixture for detecting any unexpected native reader creation.
+    """
+    module = load_installer(monkeypatch)
+
+    def unexpected_reader(*_args):
+        """Reject construction after the adapter should have refused the page.
+
+        Args:
+            *_args: Native reader arguments that must never be used.
+        """
+        pytest.fail("out-of-page prompt must be rejected before creating the native reader")
+
+    monkeypatch.setitem(sys.modules, "windowstringreader", SimpleNamespace(WindowStringReader=unexpected_reader))
+    message = "\n".join(f"Prompt line {index}" for index in range(16))
+    with pytest.raises(ValueError, match="console page size"):
+        module.prompt(25, 80, "Review", message)
+
+
 def test_environment_value_round_trips_posix_shell_metacharacters(monkeypatch, tmp_path):
     """
     Args:

@@ -73,7 +73,9 @@ def prompt(maxy: int, maxx: int, title: str, message: str, *, secret: bool = Fal
     if len(lines) > maxy - 10:
         raise ValueError("installer review exceeds the console page size")
     reader = WindowStringReader(
-        maxy, maxx, max(12, len(lines) + 8), width, "value", None,
+        # Native ReadText reserves two rows below input for validation errors;
+        # Window's content area is five rows shorter than its outer height.
+        maxy, maxx, max(12, len(lines) + 9), width, "value", None,
         "*" if secret else None, list(range(32, 127)), validator, None, title,
         "\n".join(lines), len(lines) + 1, state,
     )
