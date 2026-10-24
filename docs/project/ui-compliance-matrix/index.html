@@ -3780,6 +3780,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vcf-helper-certificate-replacement-1023-1027-1038" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        VCF Helper certificate replacement (#1023, #1027, #1038)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vcf-lab-overrides-849-873" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4150,6 +4161,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         vCenter-first enrollment (#171)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vcf-helper-certificate-replacement-1023-1027-1038" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        VCF Helper certificate replacement (#1023, #1027, #1038)
       </span>
     </span>
   </a>
@@ -4814,8 +4836,8 @@ are explicitly inventoried so route/template changes cannot silently escape the 
   <code>routes-wan-policy-dialog</code>, and <code>port-forward-dialog</code> (Traffic Publishing).</li>
 <li>VCF workflows: <code>vcf-fqdn-modal</code>, <code>vcf-ldap-modal</code>, <code>vcf-trust-modal</code>, <code>vcf-lab-modal</code>, <code>vcf-sddc-deploy-modal</code>, <code>vcf-target-depot-modal</code>,
   <code>vcf-vault-import-modal</code>, <code>vcf-depot-profile-dialog</code>, <code>vcf-depot-tool-package-dialog</code>,
-  <code>vcf-depot-configuration-dialog</code>, <code>vcf-depot-tool-reset-modal</code>, <code>vcf-depot-schedule-modal</code>, and
-  <code>vcf-registry-bundle-dialog</code>.</li>
+  <code>vcf-depot-configuration-dialog</code>, <code>vcf-depot-tool-reset-modal</code>, <code>vcf-depot-schedule-modal</code>,
+  <code>vcf-registry-bundle-dialog</code>, and <code>vcf-appliance-certificate-modal</code>.</li>
 <li>Vaults and Monitor: <code>vault-create-modal</code>, <code>vault-entry-modal</code>, and <code>monitor-chart-modal</code>.</li>
 </ul>
 <p>Every wizard identifier above uses <code>createWizard(...)</code>, <code>data-atlaso-wizard-*</code>, an accessible name and description,
@@ -4843,7 +4865,8 @@ non-grid DNS settings reference, and optional schedules reuse the Automation Sch
 <code>partials/port_forwarding.html</code>,
 <code>partials/task_grid.html</code>, <code>partials/task_modals.html</code>, <code>partials/terminal_panel.html</code>, <code>partials/vcf_ldap_modal.html</code>,
 <code>partials/vcf_sddc_deploy_modal.html</code>, <code>partials/vcf_sddc_upload_modal.html</code>, <code>partials/vcf_target_depot_modal.html</code>, <code>partials/vcf_trust_modal.html</code>,
-<code>partials/vcf_vault_credential_picker.html</code>, and <code>partials/vcf_vault_import_modal.html</code>.</p>
+<code>partials/vcf_vault_credential_picker.html</code>, <code>partials/vcf_vault_import_modal.html</code>, and
+<code>partials/vcf_appliance_certificate_modal.html</code>.</p>
 <p>The only non-fallback native tables are the reviewed #115 semantic summaries: backup archive scope, generated DHCP PXE
 options, generated DNS reverse zones, and the VCF Helper FQDN review. Tooltip/membership and compact key/value,
 manifest, configuration, or result summaries remain semantic markup only while they do not gain resource-collection
@@ -4866,6 +4889,17 @@ shared controls. Diagnostics does not invoke Appliance Apply. Desktop and narrow
 <p>The matrix is complete only while E1–E8 pass on the same pull-request head. A future failure must be remediated in the
 same change or tracked by a separately labeled issue linked to #115; a new <code>custom/other</code> interaction also requires
 explicit maintainer approval before implementation.</p>
+<h3 id="vcf-helper-certificate-replacement-1023-1027-1038">VCF Helper certificate replacement (#1023, #1027, #1038)<a class="headerlink" href="#vcf-helper-certificate-replacement-1023-1027-1038" title="Permanent link">&para;</a></h3>
+<p>The maintainer-approved custom/other extension reuses VCF Helper action cards, the ESXi PXE <code>.tool-tabs</code> frame,
+and <code>AtlasoUiPatterns.createWizard</code>. The Deployment, Credentials, Certificates, LDAP, and Lab panels retain headed
+no-JavaScript groups. Explicit workflow and operation links take precedence over the remembered tab; keyboard
+navigation and closing the wizard restore the active category and launcher focus.
+<code>partials/vcf_appliance_certificate_modal.html</code> provides the nine-step <code>vcf-appliance-certificate-modal</code>.
+Administrator and CSRF checks protect its browser-only operations. Fingerprint confirmation precedes credentials;
+passwords clear on close. Results distinguish installation, served certificate, strict TLS, login, and health.
+Desktop and responsive captures and keyboard/browser checks cover the deployed flow. Native certificate replacement
+and health passed independently on SRM and vCenter 9.1.1; SDDC Manager 9.x target selection is captured, while native
+SDDC validation remains pending an admitted lab endpoint.</p>
 <h3 id="vcf-lab-overrides-849-873">VCF lab overrides (#849, #873)<a class="headerlink" href="#vcf-lab-overrides-849-873" title="Permanent link">&para;</a></h3>
 <p><code>partials/vcf_lab_overrides.html</code> uses the approved custom/other VCF Certificate Trust tile/modal reference,
 <code>AtlasoUiPatterns.createWizard</code>, and the generic wizard DOM contract. Administrator-only operations support

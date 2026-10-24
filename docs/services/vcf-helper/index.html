@@ -2231,6 +2231,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#choose-a-helper" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Choose a helper
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Choose a helper">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#appliance-certificate-replacement" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Appliance Certificate Replacement
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#lab-non-production-overrides" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4190,6 +4218,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#choose-a-helper" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Choose a helper
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Choose a helper">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#appliance-certificate-replacement" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Appliance Certificate Replacement
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#lab-non-production-overrides" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4545,10 +4601,64 @@
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
 <p>This verified appliance view provides visual orientation before you begin.</p>
-<p><img alt="Atlaso VCF Helper page in the clean-appliance desktop viewport." src="../../assets/screenshots/vcf-helper-clean-desktop.webp" /></p>
-<p><em>Figure: VCF Helper in the verified clean-appliance desktop state.</em></p>
+<p><img alt="Atlaso VCF Helper Deployment tab in the desktop viewport." src="../../assets/screenshots/vcf-helper-tabs-deployment-desktop.webp" /></p>
+<p><em>Figure: The Deployment tab groups related helpers on the dedicated lab appliance.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+<h2 id="choose-a-helper">Choose a helper<a class="headerlink" href="#choose-a-helper" title="Permanent link">&para;</a></h2>
+<p>Use the tabs inside <strong>VCF Helper</strong> to choose a workflow:</p>
+<table>
+<thead>
+<tr>
+<th>Tab</th>
+<th>Helpers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Deployment</td>
+<td>Generated VCF FQDNs, Add SDDC Manager OVA, Deploy SDDC Manager, Configure VCF Offline Depot</td>
+</tr>
+<tr>
+<td>Credentials</td>
+<td>Import passwords into a vault</td>
+</tr>
+<tr>
+<td>Certificates</td>
+<td>VCF Certificate Trust, Appliance Certificate Replacement</td>
+</tr>
+<tr>
+<td>LDAP</td>
+<td>Managed LDAP for VCF, Generate LDAP Test Directory</td>
+</tr>
+<tr>
+<td>Lab</td>
+<td>Lab / Non-production Overrides</td>
+</tr>
+</tbody>
+</table>
+<p>The page opens Deployment on the first visit and remembers your selected tab. Workflow links and returned results
+open the relevant category. Closing a dialog returns focus to its launch action. Use Left/Right Arrow, Home, and End
+on the tabs to navigate with the keyboard. Without JavaScript, the page displays all helper groups.</p>
+<h3 id="appliance-certificate-replacement">Appliance Certificate Replacement<a class="headerlink" href="#appliance-certificate-replacement" title="Permanent link">&para;</a></h3>
+<p>Administrators can replace the certificate on a standalone vCenter, an unregistered standalone SRM / Protection and
+Recovery appliance, or the SDDC Manager appliance resource in its own initialized VCF 9.x management domain using the
+native CSR and private key. Open <strong>Certificates → Appliance Certificate Replacement</strong>.
+The wizard guides you through <strong>Credential</strong>, <strong>Server</strong>, <strong>TLS fingerprint</strong>, <strong>Login</strong> (manual credentials only),
+<strong>Target and prerequisites</strong>, <strong>Prepare certificate</strong>, <strong>Review</strong>, <strong>Replace</strong>, and <strong>Results</strong>. For SDDC Manager,
+Atlaso targets only its own management-domain appliance resource. VCF Installer, uninitialized appliances, and other
+domain-managed components are excluded. Linked vCenters, vCenter HA, registered SRM, unknown topology, and unsupported
+capabilities require the coordinated native product procedure.</p>
+<p>The current certificate SANs and native hostname determine the read-only reviewed names. Correct native identity and DNS
+before preparation; Atlaso refuses stale/missing target SANs rather than silently substituting names. A ready CA and an
+enabled exact product profile must already exist. The replacement private key remains on the target. Recovery
+acknowledgement, no-pending-operation acknowledgement, and final certificate installation each require explicit
+operator action. Reviews are single-use, actor-bound, and expire after ten minutes. Requests have a 30-second bound and
+readiness checks can continue for up to 15 minutes.</p>
+<p>If a task outcome is uncertain, use <strong>Reconcile status</strong> and follow the displayed recovery guidance. The target
+reservation remains held while remote state is unresolved. Do not create another CSR or repeat an uncertain install.
+For certificate requirements and the verified 9.1 lab coverage, see
+<a href="../appliance-certificates/">Appliance Certificates</a>.</p>
 <h2 id="lab-non-production-overrides">Lab / Non-production Overrides<a class="headerlink" href="#lab-non-production-overrides" title="Permanent link">&para;</a></h2>
 <p>Administrators can manage either or both of these explicit properties on <strong>VCF Installer</strong> and <strong>SDDC Manager</strong>:</p>
 <table>
@@ -5066,8 +5176,10 @@ For an unresolved Atlaso-managed name, verify local DNS and host resolver config
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
 <h3 id="vcf-helper_1">VCF Helper<a class="headerlink" href="#vcf-helper_1" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso VCF Helper page in the clean-appliance responsive viewport." src="../../assets/screenshots/vcf-helper-clean-responsive.webp" /></p>
-<p><em>Figure: VCF Helper in the verified clean-appliance responsive state.</em></p>
+<p><img alt="Atlaso VCF Helper Certificates tab in the desktop viewport." src="../../assets/screenshots/vcf-helper-tabs-certificates-desktop.webp" /></p>
+<p><em>Figure: The Certificates tab groups related helpers on the dedicated lab appliance.</em></p>
+<p><img alt="Atlaso VCF Helper Certificates tab in the responsive viewport." src="../../assets/screenshots/vcf-helper-tabs-certificates-responsive.webp" /></p>
+<p><em>Figure: The Certificates tab groups related helpers on the dedicated lab appliance.</em></p>
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
 
 
