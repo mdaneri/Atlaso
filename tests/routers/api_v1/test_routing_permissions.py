@@ -65,6 +65,29 @@ def _prepare_generated_targets() -> None:
         db.commit()
 
 
+def test_same_interface_gateway_api_preserves_explicit_scope(client):
+    """Gateway intent is stored through the ordinary authorized desired-state API.
+
+    Args:
+        client: Isolated Atlaso HTTP client.
+    """
+    _prepare_targets()
+    writer, _ = create_token(client, scopes=["read:routes", "write:routes"])
+    headers = {"Authorization": f"Bearer {writer}"}
+    payload = _permission_payload(destination_interface="eth2", policy="allow")
+    response = client.post("/api/v1/routing-permissions", json=payload, headers=headers)
+    assert response.status_code == 201, response.text
+    row = response.json()
+    assert row["source_interface"] == row["destination_interface"] == "eth2"
+    assert row["source_networks"] == ["192.0.2.0/24"]
+    assert row["destination_networks"] == ["0.0.0.0/0"]
+    assert row["generated"] is False
+    assert row["apply_state"] == "pending"
+    updated = client.put(f"/api/v1/routing-permissions/{row['id']}", json={**payload, "policy": "automatic"}, headers=headers)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["family_effective_actions"] == {"4": "automatic deny"}
+
+
 def test_routing_permission_crud_requires_routes_scope_and_preserves_policy(client):
     """Save, replace and remove desired state under Routes scopes only.
 

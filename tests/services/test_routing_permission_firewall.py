@@ -10,6 +10,7 @@ from atlaso.app.models import (
     FirewallRule,
     FirewallSettings,
     PhysicalInterface,
+    PortForward,
     RoutingRule,
     VlanInterface,
 )
@@ -18,6 +19,7 @@ from atlaso.app.services.firewall import (
     render_nftables_config,
     validate_firewall_state,
 )
+from atlaso.app.services.port_forwarding import port_forward_firewall_projection
 
 
 def topology():
@@ -38,6 +40,40 @@ def settings():
                             default_input_policy="drop", default_forward_policy="drop", default_output_policy="accept")
 
 
+@pytest.mark.parametrize("role", ["access", "route"])
+def test_gateway_permission_is_explicit_family_scoped_and_default_denied(role):
+    """A gateway rule admits remote destinations only on its exact hairpin path.
+
+    Args:
+        role: Lab role, which must never imply automatic self-pair admission.
+    """
+    interfaces, vlans = topology()
+    interfaces[1].role = role
+    allow = RoutingRule(id=80, name="Gateway", source_interface="a", destination_interface="a",
+                        enabled=True, policy="allow", ip_family=4, priority=100)
+    generated = managed_routing_firewall_rules(interfaces, vlans, [allow])
+    config = render_nftables_config(settings(), [], generated, replace_atlaso_service_rules=True)
+    forward = config.split("chain forward {", 1)[1].split("chain output {", 1)[0]
+    assert 'oifname "a" iifname "a" ip saddr 10.0.0.0/24 ip daddr 0.0.0.0/0 accept comment "routing-80-gateway"' in config
+    assert 'ip6 saddr 2001:db8:a::/64 ip6 daddr ::/0 accept comment "routing-80-gateway"' not in config
+    assert not any(rule.routing_policy_phase == "automatic" and rule.interface_name == rule.routing_destination_interface for rule in generated)
+    ipv6_deny = default_deny_name(generated, "a", "a", 6)
+    assert forward.index(f'comment "{ipv6_deny}"') < forward.index("ct state established,related accept")
+    allow.enabled = False
+    disabled = managed_routing_firewall_rules(interfaces, vlans, [allow])
+    ipv4_deny = default_deny_name(disabled, "a", "a", 4)
+    disabled_config = render_nftables_config(settings(), [], disabled, replace_atlaso_service_rules=True)
+    disabled_forward = disabled_config.split("chain forward {", 1)[1].split("chain output {", 1)[0]
+    assert f'oifname "a" iifname "a" ip saddr 10.0.0.0/24 ip daddr 0.0.0.0/0 drop comment "{ipv4_deny}"' in disabled_config
+    assert disabled_forward.index(f'comment "{ipv4_deny}"') < disabled_forward.index("ct state established,related accept")
+    allow.enabled = True
+    deny = RoutingRule(id=81, name="Block gateway", source_interface="a", destination_interface="a",
+                       enabled=True, policy="deny", ip_family=4, priority=999)
+    denied = render_nftables_config(settings(), [], managed_routing_firewall_rules(interfaces, vlans, [allow, deny]), replace_atlaso_service_rules=True)
+    assert denied.index('comment "routing-81-block-gateway"') < denied.index('comment "routing-80-gateway"')
+    assert not any(rule.name == "routing-80-gateway" for rule in managed_routing_firewall_rules(interfaces, vlans, [allow], routing_enabled=False))
+
+
 def default_deny_name(rules: list[FirewallRule], source: str, destination: str, family: int) -> str:
     """Find one generated default denial by its exact directed family.
 
@@ -55,6 +91,42 @@ def default_deny_name(rules: list[FirewallRule], source: str, destination: str, 
         and rule.routing_destination_interface == destination
         and ip_network(rule.source).version == family
     )
+
+
+@pytest.mark.parametrize("family", [4, 6])
+def test_gateway_default_denial_preserves_owned_dnat_admission(family):
+    """Default gateway isolation defers only owned DNAT to its exact admission.
+
+    Args:
+        family: Address family of the independently reviewed port forward.
+    """
+    interfaces, vlans = topology()
+    generated = managed_routing_firewall_rules(interfaces, vlans)
+    base = render_nftables_config(settings(), [], generated, replace_atlaso_service_rules=True)
+    name = default_deny_name(generated, "a", "a", family)
+    drops = [line.strip() for line in base.splitlines() if f'comment "{name}"' in line]
+    assert len(drops) == 2
+    assert drops[0].startswith('ct status & dnat == 0 oifname "a" iifname "a" ')
+    assert drops[1].startswith('ct mark & 0xff000000 != 0xa7000000 oifname "a" iifname "a" ')
+    assert all(" drop comment " in line for line in drops)
+    mapping = PortForward(
+        id=7, name="Hairpin", enabled=True, priority=100, ip_family=family,
+        ingress_interface="a", listener_address="10.0.0.1" if family == 4 else "2001:db8:a::1",
+        target_address="10.0.0.20" if family == 4 else "2001:db8:a::20",
+        protocol="tcp", external_port_start=12000, external_port_end=12000,
+        target_port_start=13000, target_port_end=13000, source="any", reply_mode="preserve",
+    )
+    composed, _ = port_forward_firewall_projection(base, [mapping], [], routing_enabled=True)
+    assert 'ct mark 0xa7000007 ct status dnat ct direction original iifname "a"' in composed
+    assert 'ct mark 0xa7000007 ct status dnat ct direction reply oifname "a"' in composed
+    assert composed.index(drops[0]) < composed.index("ct state established,related accept", composed.index("chain forward"))
+    assert composed.index(drops[1]) < composed.index("# BEGIN ATLASO PORT FORWARD ADMISSION")
+    deny = RoutingRule(id=88, name="Block hairpin", enabled=True, source_interface="a",
+                       destination_interface="a", policy="deny", ip_family=family, priority=999)
+    denied = render_nftables_config(settings(), [], managed_routing_firewall_rules(interfaces, vlans, [deny]), replace_atlaso_service_rules=True)
+    explicit = [line.strip() for line in denied.splitlines() if 'comment "routing-88-block-hairpin"' in line]
+    assert len(explicit) == 1
+    assert explicit[0].startswith('oifname "a" iifname "a" ')
 
 
 def test_deny_precedes_established_diagnostics_and_overlapping_accepts():
@@ -89,7 +161,7 @@ def test_long_permission_name_has_bounded_unique_nft_comment():
     second = RoutingRule(id=42, name="x" * 119 + "y", enabled=True, source_interface="a",
                          destination_interface="b", policy="deny", ip_family=4, priority=101)
     generated = managed_routing_firewall_rules(interfaces, vlans, [first, second])
-    names = [rule.name for rule in generated if rule.name.startswith("routing-")]
+    names = [rule.name for rule in generated if rule.name.startswith(("routing-41-", "routing-42-"))]
     assert len(names) == 2
     assert len(set(names)) == 2
     assert all(len(name.encode()) <= 128 for name in names)
