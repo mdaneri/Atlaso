@@ -103,6 +103,65 @@ function Resolve-InstallationVmTool {
 
 <#
 .SYNOPSIS
+Transfer the prepared VM output path to a mutation-compatible identity pin.
+.PARAMETER OutputDirectory
+Exact task-owned VM output directory recorded in the original receipt.
+.PARAMETER ExpectedDirectoryIdentity
+Original directory identity from the durable VM receipt.
+.PARAMETER CreationPin
+Strict exclusive-creation pin held while the replacement pin is acquired.
+#>
+function Switch-InstallationOutputPinToMutationMode {
+    param(
+        [Parameter(Mandatory = $true)][string]$OutputDirectory,
+        [Parameter(Mandatory = $true)][string]$ExpectedDirectoryIdentity,
+        [Parameter(Mandatory = $true)][System.IDisposable]$CreationPin
+    )
+    $mutationPin = $null
+    try {
+        $mutationPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($OutputDirectory, $true)
+        if ([Atlaso.WorkstationFileIdentity]::Get($OutputDirectory) -cne $ExpectedDirectoryIdentity) {
+            throw 'The prepared installation output directory changed before VM mutation.'
+        }
+        $CreationPin.Dispose()
+        return $mutationPin
+    }
+    catch {
+        if ($mutationPin) { $mutationPin.Dispose() }
+        throw
+    }
+}
+
+<#
+.SYNOPSIS
+Start the receipt-bound installation VM from its output directory.
+.PARAMETER VmrunPath
+Resolved VMware vmrun executable.
+.PARAMETER VmxPath
+Exact receipt-bound VMX to start.
+.PARAMETER OutputDirectory
+Pinned VM output directory used as the native child working directory.
+#>
+function Start-InstallationIsoVm {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][string]$OutputDirectory
+    )
+    $previousNativeDirectory = [Environment]::CurrentDirectory
+    try {
+        [Environment]::CurrentDirectory = [IO.Path]::GetFullPath($OutputDirectory)
+        $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $VmrunPath `
+            -ArgumentList @('-T', 'ws', 'start', $VmxPath, 'nogui') `
+            -TimeoutSeconds 120 -Action 'Start isolated installation ISO test VM' -DiscardOutput
+    }
+    finally {
+        [Environment]::CurrentDirectory = $previousNativeDirectory
+    }
+}
+
+<#
+.SYNOPSIS
 Quote a value for one VMware VMX assignment.
 .PARAMETER Value
 Text to encode as one VMX string while preserving spaces and path separators.
@@ -137,6 +196,8 @@ Pinned installation ISO path.
 64 GiB target disk path.
 .PARAMETER UnselectedDisk
 4 GiB untouched disk path.
+.PARAMETER WorkingDirectory
+Receipt-bound directory for VMware sidecar state.
 .PARAMETER SerialPipe
 Caller-created local serial named-pipe endpoint.
 .PARAMETER CleanupIdentity
@@ -144,13 +205,14 @@ Persistent non-secret cleanup identity.
 #>
 function New-InstallationVmConfiguration {
     param(
-        [string]$Name, [string]$Iso, [string]$TargetDisk, [string]$UnselectedDisk,
+        [string]$Name, [string]$Iso, [string]$TargetDisk, [string]$UnselectedDisk, [string]$WorkingDirectory,
         [string]$SerialPipe, [string]$CleanupIdentity
     )
     $lines = @(
         '.encoding = "windows-1252"', 'config.version = "8"', 'virtualHW.version = "21"',
         'pciBridge0.present = "TRUE"', 'firmware = "efi"', 'uefi.secureBoot.enabled = "FALSE"',
         "displayName = $(ConvertTo-InstallationVmxString $Name)", 'guestOS = "other5xlinux-64"',
+        "workingDir = $(ConvertTo-InstallationVmxString $WorkingDirectory)",
         'memsize = "4096"', 'numvcpus = "2"',
         'scsi0.present = "TRUE"', 'scsi0.virtualDev = "lsilogic"',
         'scsi0:0.present = "TRUE"', "scsi0:0.fileName = $(ConvertTo-InstallationVmxString $TargetDisk)", 'scsi0:0.deviceType = "scsi-hardDisk"',
@@ -399,6 +461,10 @@ function Assert-InstallationVmDiskBindings {
             throw 'Receipt-bound installation VMX disk or ISO path changed.'
         }
     }
+    $workingDirectory = Get-InstallationVmxPathAssignment -VmxLines $VmxLines -Key 'workingDir'
+    if (-not $workingDirectory.Equals([IO.Path]::GetFullPath([string]$Context.OutputDirectory), [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Receipt-bound installation VMX working directory changed.'
+    }
     $displayName = @($VmxLines | Where-Object { $_ -match '^\s*displayName\s*=' })
     if ($displayName.Count -ne 1 -or $displayName[0] -cne ('displayName = "' + $Context.Name + '"')) {
         throw 'Receipt-bound installation VMX display name changed.'
@@ -596,7 +662,8 @@ try {
     $targetDisk = Join-Path $resolvedOutput 'target-64g.vmdk'
     $unselectedDisk = Join-Path $resolvedOutput 'unselected-4g.vmdk'
     $vmxLines = New-InstallationVmConfiguration -Name $context.Name -Iso $isoResolved -TargetDisk $targetDisk `
-        -UnselectedDisk $unselectedDisk -SerialPipe $SerialPipePath -CleanupIdentity $cleanupIdentity
+        -UnselectedDisk $unselectedDisk -WorkingDirectory $resolvedOutput `
+        -SerialPipe $SerialPipePath -CleanupIdentity $cleanupIdentity
     $vmxBytes = [Text.UTF8Encoding]::new($false).GetBytes(($vmxLines -join "`n") + "`n")
     $vmxStream = [IO.File]::Open($context.VmxPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
     try {
@@ -617,10 +684,15 @@ try {
     $baseline = Publish-InstallationDiskBaseline -Context $context -Original $original -DiskTool $qemuImg `
         -TargetDisk $targetDisk -UnselectedDisk $unselectedDisk
     Write-Host ("Installation disk baseline receipt: path={0} sha256={1}" -f $baseline.Path, $baseline.Sha256)
+    $outputPin = Switch-InstallationOutputPinToMutationMode `
+        -OutputDirectory $resolvedOutput `
+        -ExpectedDirectoryIdentity ([string]$original.Record.original_identities.directory) `
+        -CreationPin $outputPin
     $vmrun = Resolve-InstallationVmTool -Path $VmrunPath -FileName 'vmrun.exe'
+    Assert-InstallationVmDiskBindings -VmxLines @(Get-Content -LiteralPath $context.VmxPath -ErrorAction Stop) `
+        -Context $context -IsoPath $isoResolved
     if (-not $NoStart) {
-        $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $vmrun -ArgumentList @('-T', 'ws', 'start', $context.VmxPath, 'nogui') `
-            -TimeoutSeconds 120 -Action 'Start isolated installation ISO test VM' -DiscardOutput
+        Start-InstallationIsoVm -VmrunPath $vmrun -VmxPath $context.VmxPath -OutputDirectory $resolvedOutput
     }
     [pscustomobject]@{
         ReceiptPath = $original.Path

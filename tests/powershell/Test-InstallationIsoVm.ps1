@@ -79,6 +79,8 @@ function Get-InstallationVmFunctionText {
 
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'ConvertTo-InstallationVmxString')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Resolve-InstallationVmTool')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Switch-InstallationOutputPinToMutationMode')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Start-InstallationIsoVm')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'New-InstallationVmConfiguration')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Get-InstallationVmxPathAssignment')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmDiskBindings')))
@@ -89,10 +91,12 @@ function Get-InstallationVmFunctionText {
 $pipe = '\\.\pipe\Atlaso-Installation-0123456789abcdef0123456789abcdef'
 $lines = @(New-InstallationVmConfiguration -Name 'Atlaso-Test-installation-iso' `
     -Iso 'C:\offline media\atlaso.iso' -TargetDisk 'C:\vm\target-64g.vmdk' `
-    -UnselectedDisk 'C:\vm\unselected-4g.vmdk' -SerialPipe $pipe -CleanupIdentity '0123456789abcdef0123456789abcdef')
+    -UnselectedDisk 'C:\vm\unselected-4g.vmdk' -WorkingDirectory 'C:\vm' `
+    -SerialPipe $pipe -CleanupIdentity '0123456789abcdef0123456789abcdef')
 $configuration = [string]::Join("`n", $lines)
 Assert-InstallationVmCondition ($configuration.Contains('firmware = "efi"')) 'EFI firmware must be enabled.'
 Assert-InstallationVmCondition ($configuration.Contains('uefi.secureBoot.enabled = "FALSE"')) 'Phase-one Secure Boot must be disabled.'
+Assert-InstallationVmCondition ($configuration.Contains('workingDir = "C:\\vm"')) 'The VMX must bind sidecar files to its owned output directory.'
 Assert-InstallationVmCondition ($configuration.Contains('scsi0:0.fileName = "C:\\vm\\target-64g.vmdk"')) 'The install target disk must occupy SCSI 0:0.'
 Assert-InstallationVmCondition ($configuration.Contains('scsi0:1.fileName = "C:\\vm\\unselected-4g.vmdk"')) 'The unselected disk must occupy SCSI 0:1.'
 Assert-InstallationVmCondition ($configuration.Contains('sata0:0.deviceType = "cdrom-image"')) 'The ISO must be attached as a CD-ROM.'
@@ -114,6 +118,13 @@ $changedBindingRejected = $false
 try { Assert-InstallationVmDiskBindings -VmxLines $changedBindings -Context $bindingContext -IsoPath 'C:\offline media\atlaso.iso' }
 catch { $changedBindingRejected = $true }
 Assert-InstallationVmCondition $changedBindingRejected 'A changed unselected-disk VMX binding must fail closed.'
+$changedWorkingDirectory = @($lines | ForEach-Object {
+        if ($_ -ceq 'workingDir = "C:\\vm"') { 'workingDir = "C:\\unexpected"' } else { $_ }
+    })
+$changedWorkingDirectoryRejected = $false
+try { Assert-InstallationVmDiskBindings -VmxLines $changedWorkingDirectory -Context $bindingContext -IsoPath 'C:\offline media\atlaso.iso' }
+catch { $changedWorkingDirectoryRejected = $true }
+Assert-InstallationVmCondition $changedWorkingDirectoryRejected 'A changed VMX working directory must fail closed.'
 $validPipeAccepted = $true
 try { Assert-InstallationSerialPipePath -Path $pipe } catch { $validPipeAccepted = $false }
 Assert-InstallationVmCondition $validPipeAccepted 'A valid task-scoped serial pipe must be accepted.'
@@ -121,6 +132,68 @@ $invalidPipeRejected = $false
 try { Assert-InstallationSerialPipePath -Path '\\localhost\pipe\Atlaso-Installation-0123456789abcdef0123456789abcdef' }
 catch { $invalidPipeRejected = $true }
 Assert-InstallationVmCondition $invalidPipeRejected 'Remote named pipes must be rejected.'
+
+Import-Module -Name $cleanupPath -Force
+$pinTestDirectory = $repositoryRoot
+if (-not (Test-Path -LiteralPath $pinTestDirectory -PathType Container)) {
+    throw 'The existing repository directory is unavailable for read-only pin-handoff checks.'
+}
+$pinTestIdentity = [Atlaso.WorkstationFileIdentity]::Get($pinTestDirectory)
+$creationPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($pinTestDirectory)
+$creationHandleField = $creationPin.GetType().GetField('Handles', [Reflection.BindingFlags]'Instance,NonPublic')
+if (-not $creationHandleField) { $creationPin.Dispose(); throw 'Could not inspect the strict creation pin in the focused test.' }
+$creationHandle = $creationHandleField.GetValue($creationPin)[0]
+try {
+    $mutationPin = Switch-InstallationOutputPinToMutationMode -OutputDirectory $pinTestDirectory `
+        -ExpectedDirectoryIdentity $pinTestIdentity -CreationPin $creationPin
+    Assert-InstallationVmCondition $creationHandle.IsClosed 'Successful pin transfer must release the strict creation handle only after replacement admission.'
+    Assert-InstallationVmCondition ([Atlaso.WorkstationFileIdentity]::Get($pinTestDirectory) -ceq $pinTestIdentity) `
+        'The mutation-compatible pin must retain the original directory identity.'
+}
+finally {
+    if ($mutationPin) { $mutationPin.Dispose() }
+}
+$creationPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($pinTestDirectory)
+$creationHandleField = $creationPin.GetType().GetField('Handles', [Reflection.BindingFlags]'Instance,NonPublic')
+$creationHandle = $creationHandleField.GetValue($creationPin)[0]
+$mismatchRejected = $false
+try {
+    $null = Switch-InstallationOutputPinToMutationMode -OutputDirectory $pinTestDirectory `
+        -ExpectedDirectoryIdentity 'invalid-directory-identity' -CreationPin $creationPin
+}
+catch { $mismatchRejected = $true }
+Assert-InstallationVmCondition $mismatchRejected 'A changed directory identity must reject pin transfer.'
+Assert-InstallationVmCondition (-not $creationHandle.IsClosed) 'Failed pin admission must preserve the original creation pin.'
+$creationPin.Dispose()
+
+$previousBoundedRunner = Get-Item Function:\Invoke-AtlasoBoundedStreamingProcess -ErrorAction SilentlyContinue
+$script:InstallationStartRunnerFailure = $false
+$script:InstallationStartObservedDirectory = ''
+$previousNativeDirectory = [Environment]::CurrentDirectory
+Set-Item Function:\Invoke-AtlasoBoundedStreamingProcess -Value {
+    param([string]$FilePath, [string[]]$ArgumentList, [int]$TimeoutSeconds, [string]$Action, [switch]$DiscardOutput)
+    $script:InstallationStartObservedDirectory = [Environment]::CurrentDirectory
+    if ($script:InstallationStartRunnerFailure) { throw 'Synthetic bounded-runner failure.' }
+}
+try {
+    Start-InstallationIsoVm -VmrunPath 'mock-vmrun.exe' -VmxPath 'C:\vm\installation.vmx' -OutputDirectory $pinTestDirectory
+    Assert-InstallationVmCondition ($script:InstallationStartObservedDirectory -ceq [IO.Path]::GetFullPath($pinTestDirectory)) `
+        'vmrun must inherit the receipt-bound output directory as its native working directory.'
+    Assert-InstallationVmCondition ([Environment]::CurrentDirectory -ceq $previousNativeDirectory) `
+        'The native working directory must be restored after successful vmrun startup.'
+    $script:InstallationStartRunnerFailure = $true
+    $startFailureCaught = $false
+    try { Start-InstallationIsoVm -VmrunPath 'mock-vmrun.exe' -VmxPath 'C:\vm\installation.vmx' -OutputDirectory $pinTestDirectory }
+    catch { $startFailureCaught = $true }
+    Assert-InstallationVmCondition $startFailureCaught 'The mocked startup failure must propagate to the caller.'
+    Assert-InstallationVmCondition ([Environment]::CurrentDirectory -ceq $previousNativeDirectory) `
+        'The native working directory must be restored after failed vmrun startup.'
+}
+finally {
+    [Environment]::CurrentDirectory = $previousNativeDirectory
+    if ($previousBoundedRunner) { Set-Item Function:\Invoke-AtlasoBoundedStreamingProcess -Value $previousBoundedRunner.ScriptBlock }
+    else { Remove-Item Function:\Invoke-AtlasoBoundedStreamingProcess -ErrorAction SilentlyContinue }
+}
 
 $previousTestPathFunction = Get-Item Function:\Test-Path -ErrorAction SilentlyContinue
 $previousResolvePathFunction = Get-Item Function:\Resolve-Path -ErrorAction SilentlyContinue
@@ -175,7 +248,7 @@ $intentWrite = $source.IndexOf('Publish-AtlasoTestVmOwnershipRecord -Context $co
 $originalReceipt = $source.IndexOf('Publish-InstallationVmOriginalReceipt -Context $context', [StringComparison]::Ordinal)
 $originalReceiptReport = $source.IndexOf('Original installation VM receipt: path={0} sha256={1}', [StringComparison]::Ordinal)
 $diskMutation = $source.IndexOf("-FileName 'vmware-vdiskmanager.exe'", [StringComparison]::Ordinal)
-$providerStart = $source.IndexOf("'Start isolated installation ISO test VM'", [StringComparison]::Ordinal)
+$providerStart = $source.IndexOf('Start-InstallationIsoVm -VmrunPath', [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($whatIfGate -ge 0 -and $intentWrite -gt $whatIfGate) 'WhatIf must return before any ownership record is published.'
 Assert-InstallationVmCondition ($intentWrite -lt $originalReceipt -and $originalReceipt -lt $diskMutation) 'The task intent and original VM receipt must precede disk mutations.'
 Assert-InstallationVmCondition ($originalReceipt -lt $providerStart) 'The original VM receipt must precede provider startup.'
@@ -194,10 +267,27 @@ $targetDiskCreate = $source.IndexOf("'-c', '-s', '64GB', '-a', 'lsilogic', '-t',
 $unselectedDiskCreate = $source.IndexOf("'-c', '-s', '4GB', '-a', 'lsilogic', '-t', '0', $unselectedDisk", [StringComparison]::Ordinal)
 $baselineCreate = $source.IndexOf('Publish-InstallationDiskBaseline -Context $context', [StringComparison]::Ordinal)
 $baselineReport = $source.IndexOf('Installation disk baseline receipt: path={0} sha256={1}', [StringComparison]::Ordinal)
-$providerStart = $source.IndexOf("'Start isolated installation ISO test VM'", [StringComparison]::Ordinal)
+$providerStart = $source.IndexOf('Start-InstallationIsoVm -VmrunPath', [StringComparison]::Ordinal)
+$pinSwitch = $source.IndexOf('$outputPin = Switch-InstallationOutputPinToMutationMode', [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($targetDiskCreate -lt $baselineCreate -and $unselectedDiskCreate -lt $baselineCreate -and $baselineCreate -lt $providerStart) 'Both logical disk baselines must be durably published after disk creation and before any VM start.'
 Assert-InstallationVmCondition ($baselineCreate -lt $baselineReport -and $baselineReport -lt $providerStart) `
     'The disk baseline receipt path and digest must be reported before VM startup.'
+Assert-InstallationVmCondition ($baselineReport -lt $pinSwitch -and $pinSwitch -lt $providerStart) `
+    'The strict directory pin must be transferred only after both receipts are durable and before VM startup.'
+$pinHelper = $source.Substring($source.IndexOf('function Switch-InstallationOutputPinToMutationMode', [StringComparison]::Ordinal),
+    $source.IndexOf('<#', $source.IndexOf('function Start-InstallationIsoVm', [StringComparison]::Ordinal), [StringComparison]::Ordinal) -
+    $source.IndexOf('function Switch-InstallationOutputPinToMutationMode', [StringComparison]::Ordinal))
+$pinAcquire = $pinHelper.IndexOf('PinOrdinaryDirectoryPath($OutputDirectory, $true)', [StringComparison]::Ordinal)
+$pinIdentity = $pinHelper.IndexOf('Get($OutputDirectory) -cne $ExpectedDirectoryIdentity', [StringComparison]::Ordinal)
+$pinRelease = $pinHelper.IndexOf('$CreationPin.Dispose()', [StringComparison]::Ordinal)
+Assert-InstallationVmCondition ($pinAcquire -ge 0 -and $pinAcquire -lt $pinIdentity -and $pinIdentity -lt $pinRelease) `
+    'The replacement pin must be acquired and identity-checked before releasing the strict creation pin.'
+$startHelper = $source.Substring($source.IndexOf('function Start-InstallationIsoVm', [StringComparison]::Ordinal),
+    $source.IndexOf('<#', $source.IndexOf('function ConvertTo-InstallationVmxString', [StringComparison]::Ordinal), [StringComparison]::Ordinal) -
+    $source.IndexOf('function Start-InstallationIsoVm', [StringComparison]::Ordinal))
+Assert-InstallationVmCondition ($startHelper.Contains('[Environment]::CurrentDirectory = [IO.Path]::GetFullPath($OutputDirectory)') -and
+    $startHelper.Contains('[Environment]::CurrentDirectory = $previousNativeDirectory')) `
+    'The bounded vmrun start must temporarily use and then restore the native current directory.'
 Assert-InstallationVmCondition ($source.Contains("'compare', '-f', 'vmdk', '-F', 'vmdk'")) 'Disk comparison must use qemu-img logical VMDK comparison.'
 Assert-InstallationVmCondition (-not $source.Contains("'compare', '-s'")) 'Logical comparison must not require sparse allocation layout to match.'
 Assert-InstallationVmCondition ($source.Contains('-Kind installation-baseline')) 'The baseline record must use its dedicated ownership-receipt kind.'
