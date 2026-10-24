@@ -35,10 +35,21 @@ class GatewayLifecycleError(RuntimeError):
 
 class _Rows(HTMLParser):
     def __init__(self, attribute: str) -> None:
+        """Collect matching embedded row data from one HTML attribute.
+
+        Args:
+            attribute: Attribute name containing the serialized row array.
+        """
         super().__init__(convert_charrefs=True)
         self.attribute, self.rows = attribute, []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Decode row data when the requested div attribute appears.
+
+        Args:
+            tag: HTML element tag name from the parser.
+            attrs: Parsed attribute names and optional values for the element.
+        """
         values = dict(attrs)
         if tag == "div" and self.attribute in values:
             self.rows = json.loads(values[self.attribute] or "[]")
@@ -68,6 +79,13 @@ def _gateway_http_client_type(base: type) -> type:
     """
     class GatewayClient(base):
         def request_bytes(self, method: str, path: str, **kwargs: Any) -> tuple:
+            """Retry bounded read-only requests during the management handoff.
+
+            Args:
+                method: HTTP method used for the request.
+                path: Appliance-local request path.
+                **kwargs: Transport options passed through to the canonical client.
+            """
             if method not in {"GET", "HEAD"}:
                 return super().request_bytes(method, path, **kwargs)
             deadline = time.monotonic() + 30
@@ -114,6 +132,14 @@ def run_same_interface_gateway_acceptance(lifecycle: Any, results: list, args: A
     clients: dict[str, Any] = {}
 
     def guest(host: str, program: str, *, timeout: int = 30, on_ready: Any = None) -> bytes:
+        """Run a protected Python program on one fingerprint-pinned fixture.
+
+        Args:
+            host: Fixture IPv4 address identifying the role and host-key pin.
+            program: Python source to send over the protected standard-input channel.
+            timeout: Maximum command duration in seconds.
+            on_ready: Optional callback triggered by the exact guest ready record.
+        """
         role = "appliance" if host == router else "client"
         username = lifecycle.ssh_username(args, role)
         command = ("" if username == "root" else "sudo -n ") + "/opt/atlaso/.venv/bin/python -I -"
@@ -122,6 +148,11 @@ def run_same_interface_gateway_acceptance(lifecycle: Any, results: list, args: A
             timeout=timeout, on_ready=on_ready)
 
     def observe(host: str) -> dict:
+        """Return sanitized guest network and forwarding state.
+
+        Args:
+            host: IPv4 address of the guest to inspect.
+        """
         program = '''import json,subprocess,pathlib
 def read(*args):
  p=subprocess.run(args,capture_output=True,text=True,timeout=10,check=True);return json.loads(p.stdout)
@@ -136,6 +167,13 @@ print(json.dumps({'addresses':read('ip','-j','addr'),'routes':read('ip','-j','ro
         return json.loads(guest(host, program))
 
     def rows(host: str, page: str, attribute: str) -> list:
+        """Read and parse serialized browser rows from one page.
+
+        Args:
+            host: Address key for the authenticated management client.
+            page: Appliance page that renders the row data.
+            attribute: Data attribute name consumed by the HTML parser.
+        """
         status, body, _ = clients[host].request("GET", page)
         if status != 200:
             raise GatewayLifecycleError("The desired-state page is unavailable.")
@@ -144,6 +182,14 @@ print(json.dumps({'addresses':read('ip','-j','addr'),'routes':read('ip','-j','ro
         return parser.rows
 
     def save(host: str, page: str, action: str, values: dict) -> None:
+        """Submit a browser desired-state form with its page CSRF token.
+
+        Args:
+            host: Address key for the authenticated management client.
+            page: Browser page used to obtain the current form token.
+            action: Form submission path.
+            values: Desired form fields to submit.
+        """
         status, body, _ = clients[host].request("GET", page)
         if status != 200:
             raise GatewayLifecycleError("The browser editor is unavailable.")
@@ -153,9 +199,21 @@ print(json.dumps({'addresses':read('ip','-j','addr'),'routes':read('ip','-j','ro
             raise GatewayLifecycleError(f"Browser desired-state save failed (HTTP {status}).")
 
     def apply(host: str, units: list[str]) -> dict:
+        """Apply the selected appliance units through the lifecycle client.
+
+        Args:
+            host: Address key for the authenticated management client.
+            units: Appliance service units included in this Apply transaction.
+        """
         return lifecycle.apply_units(clients[host], units, args)
 
     def step(name: str, operation: Any) -> Any:
+        """Record one operation and sanitize unexpected failure details.
+
+        Args:
+            name: Stable evidence label for the lifecycle operation.
+            operation: Zero-argument callable performing the operation.
+        """
         def safe_operation() -> Any:
             try:
                 return operation()
@@ -187,6 +245,11 @@ print(json.dumps({'addresses':read('ip','-j','addr'),'routes':read('ip','-j','ro
     expected_hashes = source_hashes(Path(__file__).resolve().parents[2])
 
     def deployed_source(host: str) -> dict:
+        """Compare deployed appliance files with the admitted local source hashes.
+
+        Args:
+            host: IPv4 address of the appliance being checked.
+        """
         program = '''import atlaso,pathlib,hashlib,json
 root=pathlib.Path(atlaso.__file__).parent
 paths={'atlaso/app/services/firewall.py':root/'app/services/firewall.py',
@@ -202,6 +265,11 @@ print(json.dumps({p:hashlib.sha256(f.read_text().encode()).hexdigest() for p,f i
     step("gateway-client-deployed-source", lambda: deployed_source(client_ip))
 
     def fixture_clock(host: str) -> dict:
+        """Select VMware Tools time and confirm it is the sole clock authority.
+
+        Args:
+            host: IPv4 address of the appliance fixture.
+        """
         status, body, _ = clients[host].request("GET", "/ntp")
         if status != 200:
             raise GatewayLifecycleError("The appliance clock settings are unavailable.")
@@ -227,6 +295,13 @@ print(json.dumps({'vmware_timesync':tools.stdout.strip(),'clock_services':servic
     step("gateway-client-fixture-clock", lambda: fixture_clock(client_ip))
 
     def configure(host: str, gateway: str, routing: bool) -> dict:
+        """Configure fixture interfaces, lab route, firewall, and optional routing.
+
+        Args:
+            host: IPv4 address of the appliance fixture.
+            gateway: Reviewed on-link next-hop address for its lab route.
+            routing: Whether IP forwarding is enabled in the follow-up Apply.
+        """
         # Protected management handoff requires desired and applied forwarding off.
         # Stage the lab route while off; an Access-management default still serves
         # appliance-local egress. Forwarding is a separate reviewed Apply below.
@@ -273,6 +348,12 @@ subprocess.run(['ip','route','flush','cache'],capture_output=True,check=True)
 print(json.dumps({'redirects_disabled':True}))''')))
 
     def probe_connection(host: str, expected: bool) -> dict:
+        """Check whether the fixture can connect to the IPv4 probe endpoint.
+
+        Args:
+            host: IPv4 address of the fixture running the probe.
+            expected: Whether the TCP connection is expected to succeed.
+        """
         program = f'''import socket,json
 s=socket.socket();s.settimeout(5)
 r=s.connect_ex(({probe!r},443));s.close()
@@ -283,6 +364,11 @@ print(json.dumps({{'connected':r==0}}))'''
         return evidence
 
     def captured(expected: bool) -> dict:
+        """Prove the client route and capture same-interface router forwarding.
+
+        Args:
+            expected: Whether router egress is expected for the client probe.
+        """
         state = observe(client_ip)
         _active_nat_link(state)
         if any(value != "0" for value in state["accept_redirects"].values()):

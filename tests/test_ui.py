@@ -5457,8 +5457,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "enabled": True,
         }
     )
-    enabled_identical_routing_targets = deepcopy(enabled_missing_routing_target)
-    enabled_identical_routing_targets["data"]["routing_rules"][-1]["source_interface"] = "eth1.20"
+    enabled_same_interface_gateway = deepcopy(enabled_missing_routing_target)
+    enabled_same_interface_gateway["data"]["routing_rules"][-1]["source_interface"] = "eth1.20"
     disabled_missing_routing_target = deepcopy(enabled_missing_routing_target)
     disabled_missing_routing_target["data"]["routing_rules"][-1]["enabled"] = False
     enabled_missing_dhcp_target = deepcopy(archive)
@@ -6527,7 +6527,6 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_missing_nat_source_group, "NAT source is invalid"),
         (missing_firewall_source_group, "has an invalid source or destination"),
         (enabled_missing_routing_target, "has an ineligible interface"),
-        (enabled_identical_routing_targets, "has identical source and destination interfaces"),
         (enabled_missing_dhcp_target, "has an ineligible bind interface"),
         (enabled_wrong_family_dhcp_target, "has an ineligible bind interface"),
         (enabled_management_dhcp_target, "has an ineligible bind interface"),
@@ -6656,6 +6655,9 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     ]:
         with pytest.raises(ValueError, match=message):
             archive_summary(candidate)
+    assert archive_summary(enabled_same_interface_gateway)["table_counts"]["routing_rules"] == len(
+        enabled_same_interface_gateway["data"]["routing_rules"]
+    )
     assert archive_summary(disabled_missing_parent_vlan)["table_counts"]["vlan_interfaces"] == len(
         disabled_missing_parent_vlan["data"]["vlan_interfaces"]
     )

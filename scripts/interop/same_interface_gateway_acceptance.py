@@ -24,7 +24,11 @@ class SameInterfaceGatewayAcceptanceError(RuntimeError):
 
 
 def _fingerprint(key: paramiko.PKey) -> str:
-    """Return the SSH host-key SHA-256 fingerprint in OpenSSH notation."""
+    """Return the SSH host-key SHA-256 fingerprint in OpenSSH notation.
+
+    Args:
+        key: Paramiko public key whose encoded bytes identify the host.
+    """
     digest = hashlib.sha256(key.asbytes()).digest()
     return "SHA256:" + base64.b64encode(digest).decode("ascii").rstrip("=")
 
@@ -33,12 +37,25 @@ class PinnedEd25519HostKeyPolicy(paramiko.MissingHostKeyPolicy):
     """Accept one Ed25519 key fingerprint for one exact IPv4 host."""
 
     def __init__(self, host: str, fingerprint: str) -> None:
+        """Pin the address and expected Ed25519 fingerprint.
+
+        Args:
+            host: Exact IPv4 address expected from the SSH connection.
+            fingerprint: OpenSSH SHA-256 fingerprint expected for the host key.
+        """
         self.host = host
         self.fingerprint = fingerprint
         if not fingerprint.startswith("SHA256:") or len(fingerprint) != 50:
             raise SameInterfaceGatewayAcceptanceError("The pinned SSH host-key identity is invalid.")
 
     def missing_host_key(self, client: paramiko.SSHClient, hostname: str, key: paramiko.PKey) -> None:
+        """Accept only the pinned host key for the configured address.
+
+        Args:
+            client: SSH client receiving the verified key in its host-key store.
+            hostname: Address identity presented by Paramiko for this connection.
+            key: Public key presented by the remote SSH server.
+        """
         if hostname != self.host or key.get_name() != "ssh-ed25519" or _fingerprint(key) != self.fingerprint:
             raise paramiko.SSHException("Pinned gateway acceptance host-key verification failed.")
         client.get_host_keys().add(self.host, key.get_name(), key)
@@ -59,6 +76,16 @@ def run_pinned_ssh_command(
 
     The remote command is restricted to Python reading a program from stdin. This
     keeps program data out of shell arguments and bounds output and execution.
+
+    Args:
+        host: Literal IPv4 address of the owned guest.
+        username: SSH account name passed to Paramiko.
+        password: Guest password supplied through the protected lifecycle envelope.
+        fingerprint: Expected Ed25519 host-key SHA-256 fingerprint.
+        command: One fixed Python-from-stdin command, optionally using noninteractive sudo.
+        stdin_data: Bounded UTF-8 guest program bytes.
+        timeout: Maximum seconds allowed for connection, command, and readiness callback.
+        on_ready: Optional callback invoked once after the exact readiness line arrives.
     """
     try:
         host = str(ipaddress.IPv4Address(host))
@@ -139,6 +166,12 @@ def run_pinned_ssh_command(
 
 
 def _canonical_ipv4(value: str, label: str) -> str:
+    """Return a normalized IPv4 literal or report its field label.
+
+    Args:
+        value: Candidate IPv4 address text.
+        label: Human-readable field name for validation errors.
+    """
     try:
         return str(ipaddress.IPv4Address(value))
     except ValueError as exc:
@@ -146,13 +179,24 @@ def _canonical_ipv4(value: str, label: str) -> str:
 
 
 def _canonical_mac(value: str, label: str) -> str:
+    """Return a normalized six-octet Ethernet address.
+
+    Args:
+        value: Candidate colon-separated Ethernet address.
+        label: Human-readable field name for validation errors.
+    """
     if not _MAC_RE.fullmatch(value):
         raise ValueError(f"{label} must be a six-octet Ethernet address.")
     return value.lower()
 
 
 def _decode_ethernet_ipv4_tcp_frame(payload: bytes, packet_type: int) -> dict[str, Any] | None:
-    """Decode one bounded Ethernet IPv4 TCP frame; ignore other traffic."""
+    """Decode one bounded Ethernet IPv4 TCP frame; ignore other traffic.
+
+    Args:
+        payload: Ethernet frame bytes received on the observed interface.
+        packet_type: Linux AF_PACKET direction value from the socket address.
+    """
     if packet_type not in {0, 4} or len(payload) < 14 or int.from_bytes(payload[12:14], "big") != 0x0800:
         return None
     ip_offset = 14
@@ -188,7 +232,14 @@ def _decode_ethernet_ipv4_tcp_frame(payload: bytes, packet_type: int) -> dict[st
 
 
 def guest_capture_program(client_ip: str, probe_ip: str, interface: str, duration: int = 8) -> str:
-    """Build a bounded, payload-free guest program that emits TCP/443 frame records."""
+    """Build a bounded, payload-free guest program that emits TCP/443 frame records.
+
+    Args:
+        client_ip: Expected source IPv4 address assigned to the probe client.
+        probe_ip: External IPv4 address the client probes on TCP port 443.
+        interface: Guest interface on which router ingress and egress are observed.
+        duration: Maximum capture duration in seconds.
+    """
     client = _canonical_ipv4(client_ip, "Client address")
     probe = _canonical_ipv4(probe_ip, "Probe address")
     if client == probe:
@@ -240,7 +291,17 @@ def validate_forward_capture(
     probe_ip: str,
     expected_forwarded: bool,
 ) -> dict[str, Any]:
-    """Require matching ingress and same-interface egress evidence, or its absence."""
+    """Require matching ingress and same-interface egress evidence, or its absence.
+
+    Args:
+        frames: Parsed Ethernet/IPv4/TCP frame metadata from the guest capture.
+        client_mac: MAC address expected on the client-originated ingress frame.
+        router_mac: Router interface MAC expected on ingress and forwarded egress.
+        gateway_mac: On-link next-hop MAC expected on forwarded egress.
+        client_ip: Client source address expected in the captured packet tuple.
+        probe_ip: Destination address expected in the captured packet tuple.
+        expected_forwarded: Whether matching router egress is required.
+    """
     if type(expected_forwarded) is not bool:
         raise ValueError("Expected forwarding state must be a boolean.")
     client_mac = _canonical_mac(client_mac, "Client MAC")

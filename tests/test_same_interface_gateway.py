@@ -15,6 +15,13 @@ from tests.test_appliance_helper import load_helper_module
 
 
 def _gateway_rule(*, interface: str = "eth2", policy: str = "allow", family: int = 4) -> RoutingRule:
+    """Build one enabled same-interface routing permission.
+
+    Args:
+        interface: Interface selected for both permission endpoints.
+        policy: Saved routing permission policy.
+        family: IP family selected by the permission.
+    """
     return RoutingRule(
         name="Reviewed same-interface gateway",
         enabled=True,
@@ -27,6 +34,11 @@ def _gateway_rule(*, interface: str = "eth2", policy: str = "allow", family: int
 
 
 def _lab_target(*, family: int = 4) -> dict[str, str]:
+    """Build one eligible lab interface target for the selected family.
+
+    Args:
+        family: Address family configured on the target.
+    """
     return {
         "name": "eth2",
         "kind": "physical",
@@ -43,7 +55,11 @@ def _lab_target(*, family: int = 4) -> dict[str, str]:
 
 @pytest.mark.parametrize("family", [4, 6])
 def test_wan_state_accepts_explicit_same_interface_permission_for_configured_lab_family(family):
-    """Accept an explicit self-pair when its selected lab interface has that family."""
+    """Accept an explicit self-pair when its selected lab interface has that family.
+
+    Args:
+        family: Configured IP family selected by the permission.
+    """
     interface = "eth2"
     target_cidr = "192.0.2.2/24" if family == 4 else "2001:db8:2::2/64"
     errors = validate_wan_state(
@@ -88,7 +104,15 @@ def test_wan_state_accepts_explicit_same_interface_permission_for_configured_lab
 def test_wan_state_rejects_ineligible_same_interface_permission(
     rule, routing_targets, cidrs, management_targets, error_fragment
 ):
-    """Do not admit management, missing, or wrong-family same-interface scopes."""
+    """Do not admit management, missing, or wrong-family same-interface scopes.
+
+    Args:
+        rule: Same-interface permission candidate under validation.
+        routing_targets: Interface names eligible for lab routing.
+        cidrs: Configured CIDRs indexed by interface name.
+        management_targets: Dedicated management interface names.
+        error_fragment: Expected diagnostic substring for this invalid scope.
+    """
     errors = validate_wan_state(
         routes=[],
         policies=[],
@@ -103,6 +127,12 @@ def test_wan_state_rejects_ineligible_same_interface_permission(
 
 
 def _rendered_gateway_config(*, family: int = 4, routing_enabled: bool = True) -> str:
+    """Render a route and reviewed gateway permission for one lab interface.
+
+    Args:
+        family: IP family configured for the route and permission.
+        routing_enabled: Whether global Routing is active in the rendered config.
+    """
     target = _lab_target(family=family)
     route = Route(
         destination_cidr="203.0.113.0/24" if family == 4 else "2001:db8:99::/64",
@@ -120,6 +150,11 @@ def _rendered_gateway_config(*, family: int = 4, routing_enabled: bool = True) -
 
 
 def _helper_errors(config_text: str) -> list[str]:
+    """Validate an in-memory WAN configuration through the appliance helper.
+
+    Args:
+        config_text: Rendered configuration supplied without filesystem input.
+    """
     helper = _helper_module()
     parsed = helper._parse_wan_config(Path("unused.conf"), content=config_text)
     return helper._wan_config_errors(Path("unused.conf"), parsed=parsed)
@@ -132,7 +167,11 @@ def _helper_module():
 
 @pytest.mark.parametrize("family", [4, 6])
 def test_wan_helper_accepts_same_interface_permission_with_routed_destination(family):
-    """Validate that a selected lab target can both receive and emit routed traffic."""
+    """Validate that a selected lab target can both receive and emit routed traffic.
+
+    Args:
+        family: Address family selected for the lab route and permission.
+    """
     assert _helper_errors(_rendered_gateway_config(family=family)) == []
 
 

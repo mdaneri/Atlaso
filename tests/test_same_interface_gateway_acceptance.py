@@ -32,7 +32,22 @@ def _wire_frame(
     fragment: int = 0,
     ethertype: int = 0x0800,
 ) -> bytes:
-    """Build one Ethernet IPv4 TCP packet for host-side tests."""
+    """Build one Ethernet IPv4 TCP packet for host-side tests.
+
+    Args:
+        source_mac: Ethernet source address in the generated frame.
+        destination_mac: Ethernet destination address in the generated frame.
+        source_ip: IPv4 source address in the generated packet.
+        destination_ip: IPv4 destination address in the generated packet.
+        source_port: TCP source port in the generated packet.
+        destination_port: TCP destination port in the generated packet.
+        ttl: IPv4 hop limit value encoded in the packet.
+        ipv4_id: IPv4 identification value encoded in the packet.
+        packet_type: Included for caller convenience; not encoded in frame bytes.
+        protocol: IPv4 protocol number encoded in the header.
+        fragment: IPv4 fragment flags and offset encoded in the header.
+        ethertype: Ethernet protocol identifier for the generated payload.
+    """
     tcp = struct.pack("!HHIIHHHH", source_port, destination_port, 0, 0, 5 << 12, 0, 0, 0)
     source = ipaddress.IPv4Address(source_ip).packed
     destination = ipaddress.IPv4Address(destination_ip).packed
@@ -43,7 +58,11 @@ def _wire_frame(
 
 
 def _frame(**kwargs: Any) -> dict[str, object]:
-    """Build and decode one valid Ethernet IPv4 TCP packet."""
+    """Build and decode one valid Ethernet IPv4 TCP packet.
+
+    Args:
+        **kwargs: Packet-field overrides passed to the wire-frame builder.
+    """
     packet_type = int(kwargs.get("packet_type", 0))
     decoded = gateway._decode_ethernet_ipv4_tcp_frame(_wire_frame(**kwargs), packet_type)
     assert decoded is not None
@@ -63,6 +82,12 @@ def _forwarded_pair() -> list[dict[str, object]]:
 
 
 def _validate(frames: list[dict[str, object]], *, forwarded: bool) -> dict[str, object]:
+    """Validate packet metadata against the shared test fixture identities.
+
+    Args:
+        frames: Decoded frame records to evaluate.
+        forwarded: Whether matching router egress is expected.
+    """
     return gateway.validate_forward_capture(
         frames,
         client_mac=CLIENT_MAC,
@@ -94,7 +119,11 @@ def test_decoder_extracts_payload_free_ipv4_tcp_identity():
 
 @pytest.mark.parametrize("packet_type", [-1, 1, 3, 5, 7])
 def test_decoder_rejects_unknown_packet_direction(packet_type: int):
-    """Only host AF_PACKET incoming and outgoing packet types are accepted."""
+    """Only host AF_PACKET incoming and outgoing packet types are accepted.
+
+    Args:
+        packet_type: Unsupported packet direction value supplied to the decoder.
+    """
     assert gateway._decode_ethernet_ipv4_tcp_frame(b"\x00" * 64, packet_type) is None
 
 
@@ -108,7 +137,11 @@ def test_decoder_rejects_unknown_packet_direction(packet_type: int):
     ],
 )
 def test_decoder_rejects_short_or_non_ipv4_frames(payload: bytes):
-    """Short frames and wrong Ethernet types are ignored safely."""
+    """Short frames and wrong Ethernet types are ignored safely.
+
+    Args:
+        payload: Ethernet frame bytes that are truncated or use an unsupported type.
+    """
     assert gateway._decode_ethernet_ipv4_tcp_frame(payload, 0) is None
 
 
@@ -123,7 +156,12 @@ def test_decoder_rejects_short_or_non_ipv4_frames(payload: bytes):
     ids=["ipv6", "udp", "fragment", "otherhost"],
 )
 def test_decoder_ignores_non_tcp_fragments_and_bypass_packets(kwargs: dict[str, int], packet_type: int):
-    """Packets that cannot prove a client-originated TCP path are ignored."""
+    """Packets that cannot prove a client-originated TCP path are ignored.
+
+    Args:
+        kwargs: Wire-frame fields that make the packet unsuitable as evidence.
+        packet_type: AF_PACKET direction value for the frame.
+    """
     assert gateway._decode_ethernet_ipv4_tcp_frame(_wire_frame(**kwargs), packet_type) is None
 
 
@@ -169,7 +207,11 @@ def test_allowed_forward_requires_matching_tuple_identity_and_ttl_decrement():
     ids=["wrong-tuple", "wrong-ip-id", "no-hop", "wrong-router-mac", "wrong-gateway-mac", "wrong-target"],
 )
 def test_unrelated_or_bypass_egress_cannot_satisfy_allow_proof(outgoing: dict[str, object]):
-    """An unrelated packet or direct-bypass destination is not router forwarding."""
+    """An unrelated packet or direct-bypass destination is not router forwarding.
+
+    Args:
+        outgoing: One egress packet field changed to invalidate the matching proof.
+    """
     packet = {"source_mac": ROUTER_MAC, "destination_mac": GATEWAY_MAC, "ttl": 63, **outgoing}
     frames = [_frame(), _frame(**packet, packet_type=4)]
 
@@ -236,59 +278,104 @@ def test_forward_validator_rejects_invalid_capture_records_and_bounds():
 
 
 def test_pinned_ssh_helper_invokes_readiness_callback_once(monkeypatch):
-    """A capture can trigger its client probe after the guest confirms readiness."""
+    """A capture can trigger its client probe after the guest confirms readiness.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing the SSH client and socket selector.
+    """
     output = b'{"ready":true}\n{"event":"frame"}\n'
     calls: list[object] = []
 
     class FakeChannel:
         def __init__(self):
+            """Initialize the channel with its bounded standard-output fixture."""
             self.remaining = output
 
         def shutdown_write(self):
+            """Record the end of the guest program input stream."""
             pass
 
         def exit_status_ready(self):
+            """Report completion after all fixture output has been read."""
             return not self.remaining
 
         def recv_ready(self):
+            """Report whether the channel has standard output to read."""
             return bool(self.remaining)
 
         def recv(self, size):
+            """Return at most the requested bytes from the fixture output.
+
+            Args:
+                size: Maximum number of output bytes to return.
+            """
             chunk, self.remaining = self.remaining[:size], self.remaining[size:]
             return chunk
 
         def recv_stderr_ready(self):
+            """Report that the fixture has no standard-error bytes."""
             return False
 
         def recv_exit_status(self):
+            """Return a successful fixture command status."""
             return 0
 
         def close(self):
+            """Close the fake channel without additional effects."""
             pass
 
     class FakeStdin:
         def write(self, data):
+            """Record bytes written to the guest program input.
+
+            Args:
+                data: Guest program bytes sent by the helper.
+            """
             calls.append(("stdin", data))
 
         def flush(self):
+            """Complete the fake input write operation."""
             pass
 
     class FakeStdout:
         def __init__(self, channel):
+            """Expose the fake channel through Paramiko's stdout wrapper.
+
+            Args:
+                channel: Fake channel used by the SSH helper test.
+            """
             self.channel = channel
 
     class FakeClient:
         def set_missing_host_key_policy(self, policy):
+            """Record the host-key policy configured by the SSH helper.
+
+            Args:
+                policy: Pinned host-key policy installed on this fake client.
+            """
             calls.append(("policy", policy))
 
         def connect(self, host, **kwargs):
+            """Record the connection target and authentication options.
+
+            Args:
+                host: IPv4 SSH endpoint supplied by the helper.
+                **kwargs: Connection and authentication options.
+            """
             calls.append(("connect", host, kwargs))
 
         def exec_command(self, command, **kwargs):
+            """Return fake stdin/stdout channels for the requested command.
+
+            Args:
+                command: Fixed Python stdin command selected by the helper.
+                **kwargs: Command transport options supplied to Paramiko.
+            """
             calls.append(("command", command, kwargs))
             return FakeStdin(), FakeStdout(FakeChannel()), object()
 
         def close(self):
+            """Record closure of the fake SSH client."""
             calls.append(("close",))
 
     monkeypatch.setattr(gateway.paramiko, "SSHClient", FakeClient)
@@ -308,53 +395,93 @@ def test_pinned_ssh_helper_invokes_readiness_callback_once(monkeypatch):
 
 
 def test_pinned_ssh_helper_requires_exact_readiness_line_when_callback_is_requested(monkeypatch):
-    """A capture that does not emit the exact readiness event cannot race a probe."""
+    """A capture that does not emit the exact readiness event cannot race a probe.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing the SSH client and socket selector.
+    """
 
     class FakeChannel:
         def __init__(self):
+            """Initialize the channel with an invalid readiness record."""
             self.remaining = b'{"ready":false}\n'
 
         def shutdown_write(self):
+            """Record the end of the guest program input stream."""
             pass
 
         def exit_status_ready(self):
+            """Report completion after the invalid readiness line is read."""
             return not self.remaining
 
         def recv_ready(self):
+            """Report whether the channel has standard output to read."""
             return bool(self.remaining)
 
         def recv(self, size):
+            """Return at most the requested bytes from the invalid readiness line.
+
+            Args:
+                size: Maximum number of output bytes to return.
+            """
             chunk, self.remaining = self.remaining[:size], self.remaining[size:]
             return chunk
 
         def recv_stderr_ready(self):
+            """Report that the fixture has no standard-error bytes."""
             return False
 
         def close(self):
+            """Close the fake channel without additional effects."""
             pass
 
     class FakeStdin:
         def write(self, data):
+            """Accept the guest program bytes sent by the helper.
+
+            Args:
+                data: Guest program bytes sent by the helper.
+            """
             pass
 
         def flush(self):
+            """Complete the fake input write operation."""
             pass
 
     class FakeStdout:
         def __init__(self):
+            """Expose the invalid-readiness channel as stdout."""
             self.channel = FakeChannel()
 
     class FakeClient:
         def set_missing_host_key_policy(self, policy):
+            """Accept the SSH host-key policy installed by the helper.
+
+            Args:
+                policy: Pinned host-key policy installed on this fake client.
+            """
             pass
 
         def connect(self, host, **kwargs):
+            """Accept the validated SSH endpoint and connection options.
+
+            Args:
+                host: IPv4 SSH endpoint supplied by the helper.
+                **kwargs: Connection and authentication options.
+            """
             pass
 
         def exec_command(self, command, **kwargs):
+            """Return fake channels that emit an invalid readiness line.
+
+            Args:
+                command: Fixed Python stdin command selected by the helper.
+                **kwargs: Command transport options supplied to Paramiko.
+            """
             return FakeStdin(), FakeStdout(), object()
 
         def close(self):
+            """Close the fake SSH client without additional effects."""
             pass
 
     monkeypatch.setattr(gateway.paramiko, "SSHClient", FakeClient)
@@ -378,7 +505,15 @@ def test_pinned_ssh_helper_requires_exact_readiness_line_when_callback_is_reques
     ],
 )
 def test_pinned_ssh_helper_rejects_unsafe_inputs_before_connect(host, username, command, stdin_data, timeout):
-    """The helper validates literal hosts and a fixed Python stdin command set."""
+    """The helper validates literal hosts and a fixed Python stdin command set.
+
+    Args:
+        host: Candidate address tested against the IPv4-literal requirement.
+        username: Candidate account name tested against the safe-name requirement.
+        command: Candidate remote command tested against the fixed allowlist.
+        stdin_data: Guest program bytes tested against the input-size bound.
+        timeout: Command timeout tested against the permitted range.
+    """
     with pytest.raises(gateway.SameInterfaceGatewayAcceptanceError):
         gateway.run_pinned_ssh_command(
             host, username, "secret", "SHA256:" + "a" * 43, command,

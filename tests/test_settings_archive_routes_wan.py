@@ -588,7 +588,11 @@ def test_archive_rejects_enabled_permission_on_unused_endpoint(client):
 
 
 def test_same_interface_gateway_permission_archive_round_trip_preserves_scope(client):
-    """Restore explicit same-interface permission intent and its selected family."""
+    """Restore explicit same-interface permission intent and its selected family.
+
+    Args:
+        client: HTTP fixture initializing the archive database.
+    """
     from atlaso.app.models import RoutingRule
 
     with SessionLocal() as db:
@@ -630,7 +634,11 @@ def test_same_interface_gateway_permission_archive_round_trip_preserves_scope(cl
 
 
 def test_same_interface_gateway_archive_cannot_target_management(client):
-    """Archive restore keeps management isolated from same-interface permissions."""
+    """Archive restore keeps management isolated from same-interface permissions.
+
+    Args:
+        client: HTTP fixture initializing the archive database.
+    """
     from atlaso.app.models import RoutingRule
 
     with SessionLocal() as db:

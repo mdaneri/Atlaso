@@ -19,6 +19,11 @@ from scripts.interop import same_interface_gateway_lifecycle as gateway_lifecycl
 
 
 def _gateway_cli_args(*extra: str) -> list[str]:
+    """Return valid required lifecycle flags plus optional additions.
+
+    Args:
+        *extra: Additional lifecycle command-line arguments.
+    """
     return [
         "--same-interface-gateway-only",
         "--appliance-ssh-hostkey",
@@ -75,7 +80,11 @@ def test_gateway_lifecycle_cli_requires_client_identity_upstream_and_exact_commi
     ],
 )
 def test_gateway_lifecycle_cli_rejects_mixed_modes(mode):
-    """The same-interface scenario cannot share a run with another mutation mode."""
+    """The same-interface scenario cannot share a run with another mutation mode.
+
+    Args:
+        mode: Conflicting lifecycle mode or backup option.
+    """
     args = _gateway_cli_args()
     args.extend([mode, "fixture-value"] if mode in {
         "--export-settings-backup", "--restore-settings-backup", "--signed-release-repository-url"
@@ -121,7 +130,11 @@ def test_gateway_rows_parser_decodes_html_escaped_data_json():
 
 
 def test_source_hashes_normalize_newlines_for_admitted_lifecycle_sources(tmp_path):
-    """Hash the same text whether the checked-out source uses LF or CRLF bytes."""
+    """Hash the same text whether the checked-out source uses LF or CRLF bytes.
+
+    Args:
+        tmp_path: Isolated source tree used to provide test content.
+    """
     sources = {
         "atlaso/app/services/firewall.py": b"firewall\r\nsource\r\n",
         "atlaso/app/services/routing_permissions.py": b"permissions\nsource\n",
@@ -142,7 +155,12 @@ def test_source_hashes_normalize_newlines_for_admitted_lifecycle_sources(tmp_pat
 
 
 def test_gateway_secret_envelope_and_dispatch_skip_legacy_api_client(monkeypatch, tmp_path):
-    """Focused stdin credentials work without VCF secrets or the generic API client."""
+    """Focused stdin credentials work without VCF secrets or the generic API client.
+
+    Args:
+        monkeypatch: Replace lifecycle dispatch and stdin with bounded test doubles.
+        tmp_path: Isolated result directory for the lifecycle command.
+    """
     args = lifecycle_test.parse_args(
         _gateway_cli_args("--secret-stdin", "--result-dir", str(tmp_path))
     )
@@ -155,10 +173,27 @@ def test_gateway_secret_envelope_and_dispatch_skip_legacy_api_client(monkeypatch
 
     class FakeLoader:
         def create_module(self, spec):
+            """Use the default module allocator for the synthetic loader.
+
+            Args:
+                spec: Import specification for the mocked acceptance module.
+            """
             return None
 
         def exec_module(self, module):
+            """Attach the mocked acceptance entry point to the module.
+
+            Args:
+                module: Synthetic module receiving the acceptance callback.
+            """
             def accept(lifecycle, results, received_args):
+                """Check focused credential loading and record dispatch.
+
+                Args:
+                    lifecycle: Lifecycle helpers passed to the acceptance module.
+                    results: Mutable lifecycle step collection.
+                    received_args: Parsed options populated from stdin.
+                """
                 assert lifecycle is lifecycle_test
                 assert received_args.password == envelope["password"]
                 assert received_args.appliance_ssh_password == envelope["appliance_ssh_password"]
@@ -187,6 +222,13 @@ def test_gateway_secret_envelope_and_dispatch_skip_legacy_api_client(monkeypatch
 
 
 def _link(name: str, *, flags: list[str], addr_info: list[dict] | None = None) -> dict:
+    """Build one synthetic native address inventory record.
+
+    Args:
+        name: Interface name reported by the native inventory.
+        flags: Link state flags returned by ``ip -j addr``.
+        addr_info: Address records associated with the interface.
+    """
     return {
         "ifname": name,
         "flags": flags,
@@ -196,6 +238,11 @@ def _link(name: str, *, flags: list[str], addr_info: list[dict] | None = None) -
 
 
 def _inventory(*links: dict) -> dict:
+    """Build an address inventory with loopback plus supplied links.
+
+    Args:
+        *links: Non-loopback interface records to include.
+    """
     return {"addresses": [_link("lo", flags=["UP"]), *links]}
 
 
@@ -218,7 +265,11 @@ def test_active_nat_link_accepts_eth0_with_or_without_inert_inherited_adapter():
     ids=["up-without-address", "ipv4-addressed", "ipv6-addressed"],
 )
 def test_active_nat_link_rejects_other_active_or_addressed_adapters(extra_link):
-    """An inherited adapter must be down and have no IPv4 or IPv6 addresses."""
+    """An inherited adapter must be down and have no IPv4 or IPv6 addresses.
+
+    Args:
+        extra_link: Inherited interface state that must fail admission.
+    """
     eth0 = _link("eth0", flags=["BROADCAST", "UP"], addr_info=[{"family": "inet"}])
 
     with pytest.raises(gateway_lifecycle.GatewayLifecycleError, match="Only the NAT eth0 adapter"):
@@ -232,7 +283,11 @@ def test_active_nat_link_rejects_inventory_without_eth0():
 
 
 def test_gateway_guest_inventory_uses_role_specific_pinned_ssh_credentials(monkeypatch):
-    """Initial router/client native reads use their own usernames and SSH passwords."""
+    """Initial router/client native reads use their own usernames and SSH passwords.
+
+    Args:
+        monkeypatch: Replace pinned SSH and the UI login with bounded test doubles.
+    """
     args = lifecycle_test.parse_args(
         _gateway_cli_args(
             "--appliance-ssh-host",
@@ -252,6 +307,16 @@ def test_gateway_guest_inventory_uses_role_specific_pinned_ssh_credentials(monke
     root_ca = "-----BEGIN CERTIFICATE-----\nPublic fixture CA\n-----END CERTIFICATE-----\n"
 
     def fake_pinned_ssh(host, username, password, fingerprint, command, **kwargs):
+        """Return the guest's initial inventory or fixture CA over pinned SSH.
+
+        Args:
+            host: IPv4 address selected for the guest connection.
+            username: Role-specific SSH username used by the lifecycle.
+            password: Role-specific SSH password used by the lifecycle.
+            fingerprint: Pinned public SSH identity for the guest.
+            command: Bounded Python command sent to the guest.
+            **kwargs: Stdin program and other SSH transport options.
+        """
         calls.append((host, username, password, fingerprint, command, kwargs))
         if b"/etc/atlaso/ca/root-ca.pem" in kwargs["stdin_data"]:
             return root_ca.encode()
@@ -274,11 +339,23 @@ def test_gateway_guest_inventory_uses_role_specific_pinned_ssh_credentials(monke
 
     class DummyLifecycleClient:
         def __init__(self, base_url, *, trusted_ca_pem=None):
+            """Capture the client URL and trusted CA passed before browser login.
+
+            Args:
+                base_url: Management URL for the guest.
+                trusted_ca_pem: Public root CA supplied to the HTTPS client.
+            """
             self.base_url = base_url
             self.trusted_ca_pem = trusted_ca_pem
             clients.append(self)
 
         def request_bytes(self, *_args, **_kwargs):
+            """Fail if the inventory test unexpectedly sends an HTTP request.
+
+            Args:
+                *_args: Request method and path that were not expected yet.
+                **_kwargs: Request options that were not expected yet.
+            """
             pytest.fail("The inventory test stops before an HTTP request.")
 
     monkeypatch.setattr(gateway_lifecycle, "run_pinned_ssh_command", fake_pinned_ssh)
@@ -320,7 +397,11 @@ def test_gateway_client_username_default_and_explicit_overrides():
 
 
 def test_gateway_plan_only_runs_with_isolated_python_imports(tmp_path):
-    """The standalone lifecycle entry point loads its exact sibling under python -I."""
+    """The standalone lifecycle entry point loads its exact sibling under python -I.
+
+    Args:
+        tmp_path: Isolated working and result directory for the subprocess.
+    """
     runner = Path(lifecycle_test.__file__).resolve()
     result_dir = tmp_path / "isolated-result"
     command = [
@@ -349,14 +430,32 @@ def test_gateway_plan_only_runs_with_isolated_python_imports(tmp_path):
 
 
 def _gateway_client_with_responses(monkeypatch, responses):
+    """Construct the retry client around a queued-response transport double.
+
+    Args:
+        monkeypatch: Patch module backoff to prevent real sleeps.
+        responses: Ordered response tuples or exceptions for the fake transport.
+    """
     calls = []
     sleeps = []
 
     class BaseClient:
         def __init__(self, base_url):
+            """Store the fake transport base URL.
+
+            Args:
+                base_url: Management origin assigned to the fake client.
+            """
             self.base_url = base_url
 
         def request_bytes(self, method, path, **kwargs):
+            """Return or raise the next queued transport outcome.
+
+            Args:
+                method: HTTP method supplied to the client.
+                path: Request path supplied to the client.
+                **kwargs: Request options supplied to the client.
+            """
             calls.append((method, path, kwargs))
             response = responses.pop(0)
             if isinstance(response, BaseException):
@@ -371,7 +470,13 @@ def _gateway_client_with_responses(monkeypatch, responses):
 @pytest.mark.parametrize("method", ["GET", "HEAD"])
 @pytest.mark.parametrize("status", [502, 503, 504])
 def test_gateway_http_read_retries_transient_handoff_status(monkeypatch, method, status):
-    """GET and HEAD retry only transient gateway statuses and recover on success."""
+    """GET and HEAD retry only transient gateway statuses and recover on success.
+
+    Args:
+        monkeypatch: Patch backoff to avoid real sleeps.
+        method: Read-only HTTP method under test.
+        status: Transient gateway status returned before recovery.
+    """
     client, calls, sleeps = _gateway_client_with_responses(
         monkeypatch,
         [(status, b"handoff", {}), (200, b"ready", {})],
@@ -392,7 +497,13 @@ def test_gateway_http_read_retries_transient_handoff_status(monkeypatch, method,
     ids=["os-error", "http-error"],
 )
 def test_gateway_http_read_retries_transient_connection_errors(monkeypatch, method, error):
-    """GET and HEAD recover from bounded socket and HTTP protocol failures."""
+    """GET and HEAD recover from bounded socket and HTTP protocol failures.
+
+    Args:
+        monkeypatch: Patch backoff to avoid real sleeps.
+        method: Read-only HTTP method under test.
+        error: Transient connection error raised before recovery.
+    """
     client, calls, sleeps = _gateway_client_with_responses(
         monkeypatch,
         [error, (200, b"ready", {})],
@@ -407,7 +518,12 @@ def test_gateway_http_read_retries_transient_connection_errors(monkeypatch, meth
 
 @pytest.mark.parametrize("status", [401, 500])
 def test_gateway_http_read_does_not_retry_auth_or_validation_responses(monkeypatch, status):
-    """Authentication and ordinary application errors are returned unchanged."""
+    """Authentication and ordinary application errors are returned unchanged.
+
+    Args:
+        monkeypatch: Patch backoff to check that no sleep occurs.
+        status: Non-retryable response status to return unchanged.
+    """
     client, calls, sleeps = _gateway_client_with_responses(
         monkeypatch,
         [(status, b"rejected", {})],
@@ -424,7 +540,12 @@ def test_gateway_http_read_does_not_retry_auth_or_validation_responses(monkeypat
     ids=["transient-status", "connection-error"],
 )
 def test_gateway_http_mutation_never_retries(monkeypatch, outcome):
-    """POST keeps the canonical transport's single-attempt mutation semantics."""
+    """POST keeps the canonical transport's single-attempt mutation semantics.
+
+    Args:
+        monkeypatch: Patch backoff to check that no sleep occurs.
+        outcome: Mutation response or connection error from the fake transport.
+    """
     client, calls, sleeps = _gateway_client_with_responses(monkeypatch, [outcome])
 
     if isinstance(outcome, BaseException):
@@ -437,7 +558,11 @@ def test_gateway_http_mutation_never_retries(monkeypatch, outcome):
 
 
 def test_gateway_http_read_retry_limit_is_five_without_real_sleep(monkeypatch):
-    """A sustained handoff gets at most five reads and four patched backoffs."""
+    """A sustained handoff gets at most five reads and four patched backoffs.
+
+    Args:
+        monkeypatch: Patch backoff to count sleeps without waiting.
+    """
     client, calls, sleeps = _gateway_client_with_responses(
         monkeypatch,
         [(503, b"handoff", {})] * 5,
@@ -452,16 +577,32 @@ def test_gateway_http_read_retry_limit_is_five_without_real_sleep(monkeypatch):
 
 
 def test_gateway_http_read_does_not_retry_after_deadline(monkeypatch):
-    """A slow transient response cannot extend read retries beyond 30 seconds."""
+    """A slow transient response cannot extend read retries beyond 30 seconds.
+
+    Args:
+        monkeypatch: Replace the clock and backoff with deterministic test doubles.
+    """
     now = [0.0]
     calls = []
     sleeps = []
 
     class SlowResponseClient:
         def __init__(self, base_url):
+            """Store the fake transport's management URL.
+
+            Args:
+                base_url: Management origin assigned to the fake client.
+            """
             self.base_url = base_url
 
         def request_bytes(self, method, path, **kwargs):
+            """Advance the fake clock by the selected request timeout.
+
+            Args:
+                method: HTTP method supplied to the fake transport.
+                path: Request path supplied to the fake transport.
+                **kwargs: Retry-provided request options, including timeout.
+            """
             calls.append((method, path, kwargs["timeout"]))
             now[0] += kwargs["timeout"]
             return 503, b"handoff", {}
