@@ -463,7 +463,7 @@ def _newc_entry(magic: bytes, name: str, mode: int, ino: int, data: bytes = b"")
     return bytes(result)
 
 
-def _rewrite_newc(archive: bytes, launcher: bytes, trust: bytes, *, bootstrap: bytes = b"", manifest_code: bytes = b"") -> bytes:
+def _rewrite_newc(archive: bytes, launcher: bytes, trust: bytes, *, bootstrap: bytes = b"", manifest_code: bytes = b"", development: bool = False) -> bytes:
     """Replace the initrd launcher and embed the trusted verifier.
 
     Args:
@@ -471,7 +471,8 @@ def _rewrite_newc(archive: bytes, launcher: bytes, trust: bytes, *, bootstrap: b
         launcher: Trusted console launcher bytes embedded in the initrd.
         trust: Public trust key bytes embedded in the initrd.
         bootstrap: Trusted initrd bootstrap source to embed.
-        manifest_code: Trusted manifest verifier source to embed."""
+        manifest_code: Trusted manifest verifier source to embed.
+        development: Embed an explicit public-test trust marker for VMware only."""
     entries, magic, padding = _parse_newc(archive)
     by_name = {entry.name: entry for entry in entries if not entry.is_trailer}
     required_unshare = by_name.get("usr/bin/unshare")
@@ -493,6 +494,10 @@ def _rewrite_newc(archive: bytes, launcher: bytes, trust: bytes, *, bootstrap: b
         BOOT_LAUNCHER_PATH: (stat.S_IFREG | 0o755, launcher),
         TRUST_KEY_PATH: (stat.S_IFREG | 0o644, trust),
     }
+    if development:
+        from scripts.installation.manifest import DEVELOPMENT_KEY_ID
+
+        replacements["etc/atlaso-installer/development"] = (stat.S_IFREG | 0o644, (DEVELOPMENT_KEY_ID + "\n").encode())
     if bootstrap and manifest_code:
         replacements["etc/atlaso-installer/bootstrap.py"] = (stat.S_IFREG | 0o644, bootstrap)
         replacements["etc/atlaso-installer/manifest.py"] = (stat.S_IFREG | 0o644, manifest_code)
@@ -670,14 +675,15 @@ def _remove_owned_output(path: Path, identity: tuple[int, int]) -> None:
         pass
 
 
-def build_iso(source_iso: Path, payload_root: Path, output: Path, *, trust_key: Path) -> None:
+def build_iso(source_iso: Path, payload_root: Path, output: Path, *, trust_key: Path, development: bool = False) -> None:
     """Create a new Atlaso offline installer ISO from the pinned Photon source.
 
     Args:
         source_iso: Pinned Photon installation ISO used as the remaster base.
         payload_root: Prepared signed Atlaso payload directory to embed.
         output: Destination path for the generated output.
-        trust_key: Trusted public key used to verify signed metadata."""
+        trust_key: Trusted public key used to verify signed metadata.
+        development: Build an explicitly marked VMware-only serial-console test ISO."""
     try:
         import pycdlib
     except ImportError as exc:
@@ -740,7 +746,7 @@ def build_iso(source_iso: Path, payload_root: Path, output: Path, *, trust_key: 
             raise ValueError("pinned Photon initrd is not a valid gzip archive") from exc
         script_root = Path(__file__).resolve().parent
         rewritten = gzip.compress(
-            _rewrite_newc(initrd, _LAUNCHER, trust, bootstrap=(script_root / "bootstrap.py").read_bytes(), manifest_code=(script_root / "manifest.py").read_bytes()),
+            _rewrite_newc(initrd, _LAUNCHER, trust, bootstrap=(script_root / "bootstrap.py").read_bytes(), manifest_code=(script_root / "manifest.py").read_bytes(), development=development),
             compresslevel=9, mtime=0,
         )
         remove_file_if_present(iso, iso_path=INITRD_ISO_PATH, rr_name="initrd.img")
@@ -752,7 +758,10 @@ def build_iso(source_iso: Path, payload_root: Path, output: Path, *, trust_key: 
         if not grub_paths:
             raise ValueError("pinned Photon ISO has no supported GRUB configuration path")
         for iso_path, rr_name in grub_paths:
-            replace_text_file(iso, iso_path=iso_path, rr_name=rr_name, text=_GRUB_CONFIG)
+            grub = _GRUB_CONFIG
+            if development:
+                grub = grub.replace("set timeout=-1", "set timeout=1").replace("Install Atlaso offline", "DEVELOPMENT ONLY - Install Atlaso offline").replace("photon.media=cdrom", "photon.media=cdrom console=ttyS0,115200n8")
+            replace_text_file(iso, iso_path=iso_path, rr_name=rr_name, text=grub)
 
         iso.pvd.volume_identifier = VOLUME_IDENTIFIER
         if iso.joliet_vd is not None:

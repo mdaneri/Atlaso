@@ -163,10 +163,68 @@ validate_installation_media() {
       echo "Staged Atlaso source is missing signed software verification assets." >&2
       exit 2
     }
-  ATLASO_OFFLINE_RELEASE_VERSION="$(
+  ATLASO_PROJECT_RELEASE_VERSION="$(
     python3 "$ATLASO_SRC/scripts/version.py" project-get --root "$ATLASO_SRC"
   )" || {
-    echo "Could not determine the signed installation software version." >&2
+    echo "Could not determine the staged Atlaso project version." >&2
+    exit 2
+  }
+  ATLASO_OFFLINE_RELEASE_VERSION="$(
+    python3 - "$ATLASO_INSTALLATION_MEDIA" "$ATLASO_PROJECT_RELEASE_VERSION" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+# ATLASO_OFFLINE_VERSION_RESOLVER_START
+def resolve_offline_release_version(media: Path, project_version: str, system_vendor: str | None = None) -> str:
+    """Resolve authenticated media's software version without a shell override.
+
+    Args:
+        media: Root of the already authenticated installation media.
+        project_version: Version reported by the staged Atlaso source tree.
+        system_vendor: Optional DMI vendor value, supplied by tests or sysfs.
+    """
+    manifest_path = media / "payload-manifest.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ValueError("authenticated installation manifest is missing or linked")
+    value = json.loads(manifest_path.read_bytes())
+    if not isinstance(value, dict):
+        raise ValueError("authenticated installation manifest is invalid")
+    development_key = "atlaso-installation-development-public-test"
+    if value.get("signing_key_id") == development_key:
+        development = value.get("development")
+        if (
+            value.get("schema") != 1
+            or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value.get("version", ""))
+            or not re.fullmatch(r"[0-9a-f]{40}", value.get("source_commit", ""))
+            or not isinstance(development, dict)
+            or set(development) != {"schema", "software_source_commit", "non_production"}
+            or development.get("schema") != 1
+            or not re.fullmatch(r"[0-9a-f]{40}", development.get("software_source_commit", ""))
+            or development.get("non_production") is not True
+        ):
+            raise ValueError("development installation identity is invalid")
+        if system_vendor is None:
+            vendor_path = Path("/sys/class/dmi/id/sys_vendor")
+            if vendor_path.is_symlink() or not vendor_path.is_file():
+                raise ValueError("development installation requires VMware system identity")
+            system_vendor = vendor_path.read_text(encoding="utf-8").strip()
+        if system_vendor != "VMware, Inc.":
+            raise ValueError("development installation is restricted to VMware")
+        return value["version"]
+    if "development" in value or "non_production" in value:
+        raise ValueError("production installation manifest cannot contain development identity")
+    if value.get("version") != project_version:
+        raise ValueError("production installation version differs from staged source")
+    return project_version
+# ATLASO_OFFLINE_VERSION_RESOLVER_END
+
+media = Path(sys.argv[1])
+print(resolve_offline_release_version(media, sys.argv[2]))
+PY
+  )" || {
+    echo "Could not determine the authenticated installation software version." >&2
     exit 2
   }
   ATLASO_OFFLINE_PUBLISHED_WHEEL="$(python3 "$ATLASO_SRC/image/common/scripts/verify-template-software.py" \
@@ -848,11 +906,15 @@ fi
 
 log_step "installing Atlaso Python environment"
 install -d -o root -g root -m 0755 "$ATLASO_HOME/releases"
-if ! ATLASO_RELEASE_VERSION="$(
-  python3 "$ATLASO_HOME/scripts/version.py" project-get --root "$ATLASO_HOME"
-)"; then
-  echo "Could not determine Atlaso release version from staged repository metadata" >&2
-  exit 2
+if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then
+  ATLASO_RELEASE_VERSION="$ATLASO_OFFLINE_RELEASE_VERSION"
+else
+  if ! ATLASO_RELEASE_VERSION="$(
+    python3 "$ATLASO_HOME/scripts/version.py" project-get --root "$ATLASO_HOME"
+  )"; then
+    echo "Could not determine Atlaso release version from staged repository metadata" >&2
+    exit 2
+  fi
 fi
 ATLASO_RELEASE_DIR="$ATLASO_HOME/releases/bootstrap-$ATLASO_RELEASE_VERSION"
 install -d -o root -g root -m 0755 "$ATLASO_RELEASE_DIR"

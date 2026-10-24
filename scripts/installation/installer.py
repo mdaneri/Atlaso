@@ -33,6 +33,7 @@ from scripts.installation.layout import (  # noqa: E402 - boot media path bootst
 from scripts.installation.manifest import (  # noqa: E402 - boot media path bootstrap.
     PHOTON_INSTALLER_SHA256,
     digest,
+    installer_key_id,
     verify_media,
 )
 
@@ -328,7 +329,7 @@ def install(media: Path, identity: dict, config: dict, consent: dict, credential
                     "ATLASO_SYSTEM_CONTENT_DISK": "false", "ATLASO_BOOTSTRAP_ADMIN_USERNAME": "admin",
                     "ATLASO_BOOTSTRAP_ADMIN_PASSWORD": f"A!a1{secrets.token_urlsafe(32)}",
                     "ATLASO_SOFTWARE_MANIFEST_SHA256": digest(media / "software/release-manifest.json"),
-                    "ATLASO_SOFTWARE_SOURCE_COMMIT": identity["source_commit"],
+                    "ATLASO_SOFTWARE_SOURCE_COMMIT": identity.get("development", {}).get("software_source_commit", identity["source_commit"]),
                     "ATLASO_BUILD_SOURCE_COMMIT": identity["source_commit"],
                     "ATLASO_MGMT_ADDRESS": "dhcp", "ATLASO_MGMT_IPV4_METHOD": "dhcp",
                     "ATLASO_DRY_RUN_SYSTEM_ADAPTERS": "true",
@@ -398,7 +399,7 @@ def main() -> int:
         raise ValueError("the native Photon installer differs from the pinned version 2.2")
     sys.path.insert(0, str(NATIVE_PATH))
     with tempfile.TemporaryDirectory(prefix="atlaso-installer-", dir="/run") as temporary:
-        identity = verify_media(args.media, TRUST_KEY, scratch=Path(temporary))
+        identity = verify_media(args.media, TRUST_KEY, scratch=Path(temporary), expected_key_id=installer_key_id())
     config, consent, credentials = curses.wrapper(configure_console, disk_inventory())
     try:
         install(args.media, identity, config, consent, credentials)

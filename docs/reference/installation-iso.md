@@ -63,6 +63,56 @@ separate from software-update and virtualization release assets. The signed rele
 and assets; phase one requires Secure Boot disabled. ARM support is a possible second phase and is not included in
 the x86-64 release contract.
 
+## Development-only VMware test image
+
+For installer work on a pull-request commit, use the explicit development builder. It requires a clean checkout at the
+exact PR `HEAD`; the separately supplied software directory must be a signed main release, with its version and
+main-reachable source commit passed independently. Reuse the already captured Photon RPM directory, validated
+PowerCLI modules, pinned Photon 5.0 source ISO, and verified software release. Put all paths under the configured,
+receipted task roots, and select absent payload and ISO destinations plus an existing empty private scratch directory:
+
+```powershell
+python scripts/build_development_installation_iso.py `
+  --commit <PR-HEAD-SHA> `
+  --software-version <MAIN-RELEASE-VERSION> `
+  --software-commit <MAIN-RELEASE-SHA> `
+  --software <VERIFIED-MAIN-RELEASE-DIRECTORY> `
+  --rpms <CAPTURED-PHOTON-RPM-DIRECTORY> `
+  --powercli <VALIDATED-POWERCLI-DIRECTORY> `
+  --payload <ABSENT-DEVELOPMENT-PAYLOAD-DIRECTORY> `
+  --scratch <EXISTING-EMPTY-PRIVATE-DIRECTORY> `
+  --source-iso <PINNED-PHOTON-5.0-ISO> `
+  --output <ABSENT-DEVELOPMENT-ISO-PATH>
+```
+
+This builder uses the distinct `atlaso-installation-development-public-test` key identity. Its deterministic Ed25519
+fixture seed is public test data (`bytes(range(32))`, bytes `00` through `1f`); it is not a credential or release
+authority and is never stored as a secret. The production signer and default production verifier continue to require
+the production key identity. The development initrd accepts the test identity only when its explicit development
+marker is present. The resulting image is for VMware testing only: it uses the serial installer console on `ttyS0`,
+is not publishable as an Atlaso release, and does not establish production or physical-hardware acceptance.
+
+The VMware harness creates an isolated EFI VM with no network adapters, two blank SCSI disks, and a private serial
+console. Hash the generated ISO and use the exact owning pull request number. `Probe` checks that the native Photon disk
+selection screen appears, and `Cancel` checks cancellation before disk writes. `Auto` exercises the single-disk Auto
+installation path. Reboot, persistence, and Appliance Update checks remain separate follow-up tests:
+
+```powershell
+$isoSha256 = (Get-FileHash -LiteralPath <DEVELOPMENT-ISO-PATH> -Algorithm SHA256).Hash.ToLowerInvariant()
+.\scripts\windows\vmware\invoke-installation-iso-test.ps1 `
+  -IsoPath <DEVELOPMENT-ISO-PATH> `
+  -IsoSha256 $isoSha256 `
+  -OutputDirectory <ABSENT-VM-OUTPUT-DIRECTORY> `
+  -PullRequestNumber <OWNING-PR-NUMBER> `
+  -Scenario Probe
+```
+
+Run `-Scenario Cancel` and `-Scenario Auto` in separate receipt-bound VM roots, following the VMware lifecycle
+procedure for each. `Auto` obtains administrator and root credentials through the existing supported Atlaso
+credential bridge and sends them only to concealed installer prompts; do not put passwords in command lines or logs.
+The `Probe`, `Cancel`, and `Auto` VM scenarios have not yet been executed, so these commands describe the test path,
+not acceptance evidence. A successful VM run alone does not establish physical SATA/NVMe or wired-Ethernet support.
+
 Publication is a separate, explicit workflow dispatch after the exact ISO has been validated. The maintainer supplies
 `publish=true` and `validated_iso_sha256` for the ISO whose disconnected UEFI installation, reboot, Appliance Update
 success and rollback persistence, and unselected-disk preservation were tested. The workflow requires that checksum

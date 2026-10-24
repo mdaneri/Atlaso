@@ -1,5 +1,17 @@
 # Browser regression fixtures
 
+## Certificate IP SAN validation
+
+Start the isolated loopback fixture described under **Network Boot host reference**, then run
+`node tests/browser/ca-ip-sans.cjs` with `ATLASO_BROWSER_FIXTURE_URL`, `ATLASO_BROWSER_OUTPUT`, `TEMP`, and `TMP`
+pointing at that fixture and originally receipted task-owned output. Playwright and Microsoft Edge are required.
+This exercises the actual CA templates, shared wizard, and local create/edit transports at desktop, narrow, and
+200% zoom-equivalent CSS viewports. It checks malformed mixed SANs, submit-time revalidation, adjacent accessible
+feedback, focus, correction, clearing, and CSR Names validation. It stages disabled requests only; no Apply or external
+certificate mutation is performed. Captures are local fixture evidence, not deployed-appliance or native zoom evidence.
+The existing CA grid resize exception tracked in [#1040](https://github.com/mdaneri/Atlaso/issues/1040) is reported
+separately; every other browser exception fails the fixture.
+
 ## vSphere grid refresh
 
 `vsphere-grid-refresh.cjs` runs the production vSphere initializer, resource save/delete callbacks and vendored

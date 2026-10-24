@@ -15,6 +15,8 @@ from pathlib import Path, PurePosixPath
 MANIFEST = "payload-manifest.json"
 SIGNATURE = MANIFEST + ".sig"
 KEY_ID = "atlaso-release-2026-01"
+DEVELOPMENT_KEY_ID = "atlaso-installation-development-public-test"
+DEVELOPMENT_MARKER = Path("/etc/atlaso-installer/development")
 SOURCE_ISO_SHA512 = "6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f"
 PHOTON_INSTALLER_SHA256 = "8e3c361b7f05012d124d04ddf3bba503542b0f955bd8ba39f8a263999c825902"
 HEX = re.compile(r"[0-9a-f]{64}\Z")
@@ -48,20 +50,23 @@ def canonical_json(value: dict) -> bytes:
     return (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n").encode()
 
 
-def verify_signature(document: Path, signature: Path, trust_key: Path, *, scratch: Path) -> dict:
+def verify_signature(document: Path, signature: Path, trust_key: Path, *, scratch: Path, expected_key_id: str = KEY_ID) -> dict:
     """Verify Ed25519 with Photon's OpenSSL instead of bootstrapping Python deps.
 
     Args:
         document: Signed metadata document to verify.
         signature: Detached signature file for the metadata document.
         trust_key: Trusted public key used to verify signed metadata.
-        scratch: Existing private directory for temporary validation data."""
+        scratch: Existing private directory for temporary validation data.
+        expected_key_id: Explicit trust domain; production remains the default."""
+    if expected_key_id not in {KEY_ID, DEVELOPMENT_KEY_ID}:
+        raise ValueError("unsupported installer trust domain")
     for path in (document, signature, trust_key):
         digest(path)
     if document.stat().st_size > 8 * 1024 * 1024 or signature.stat().st_size > 4096:
         raise ValueError("signed installation metadata exceeds its bound")
     raw = json.loads(signature.read_bytes())
-    if not isinstance(raw, dict) or raw.get("schema_version") != 1 or raw.get("key_id") != KEY_ID:
+    if not isinstance(raw, dict) or raw.get("schema_version") != 1 or raw.get("key_id") != expected_key_id:
         raise ValueError("installation signature does not use the pinned Atlaso key")
     binary = base64.b64decode(raw.get("signature", ""), validate=True)
     if len(binary) != 64:
@@ -74,7 +79,7 @@ def verify_signature(document: Path, signature: Path, trust_key: Path, *, scratc
             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     value = json.loads(document.read_bytes())
-    if not isinstance(value, dict) or value.get("signing_key_id") != KEY_ID:
+    if not isinstance(value, dict) or value.get("signing_key_id") != expected_key_id:
         raise ValueError("installation manifest signing identity differs")
     return value
 
@@ -97,14 +102,23 @@ def inventory(root: Path) -> list[dict]:
     return records
 
 
-def verify_media(root: Path, trust_key: Path, *, scratch: Path) -> dict:
+def verify_media(root: Path, trust_key: Path, *, scratch: Path, expected_key_id: str = KEY_ID) -> dict:
     """Authenticate every embedded byte before permitting disk writes.
 
     Args:
         root: Root directory containing the files being checked.
         trust_key: Trusted public key used to verify signed metadata.
-        scratch: Existing private directory for temporary validation data."""
-    value = verify_signature(root / MANIFEST, root / SIGNATURE, trust_key, scratch=scratch)
+        scratch: Existing private directory for temporary validation data.
+        expected_key_id: Explicit initrd trust domain; never selected from media."""
+    value = verify_signature(root / MANIFEST, root / SIGNATURE, trust_key, scratch=scratch, expected_key_id=expected_key_id)
+    software_commit = value.get("source_commit")
+    if expected_key_id == DEVELOPMENT_KEY_ID:
+        development = value.get("development")
+        if not isinstance(development, dict) or set(development) != {"schema", "software_source_commit", "non_production"} or development.get("schema") != 1 or development.get("non_production") is not True or not re.fullmatch(r"[0-9a-f]{40}", development.get("software_source_commit", "")):
+            raise ValueError("development installation identity is invalid")
+        software_commit = development["software_source_commit"]
+    elif "development" in value:
+        raise ValueError("production installer cannot accept development content")
     if value.get("schema") != 1 or value.get("architecture") != "x86_64" or value.get("photon_installer") != "2.2":
         raise ValueError("installation media schema or architecture is unsupported")
     if value.get("photon_iso_sha512") != SOURCE_ISO_SHA512 or value.get("photon_installer_sha256") != PHOTON_INSTALLER_SHA256:
@@ -156,8 +170,20 @@ def verify_media(root: Path, trust_key: Path, *, scratch: Path) -> dict:
     if not set(packages) <= rpm_names or {"rpms/" + name for name in rpm_files} != {name for name in names if name.startswith("rpms/") and name.endswith(".rpm")}:
         raise ValueError("installation RPM inventory is incomplete")
     source = json.loads((root / "software/virtualization-source.json").read_bytes())
-    if source.get("version") != value["version"] or source.get("source_commit") != value["source_commit"]:
+    if source.get("version") != value["version"] or source.get("source_commit") != software_commit:
         raise ValueError("installation and software identities differ")
     if digest(root / "software/release-manifest.json") != source.get("release_manifest_sha256"):
         raise ValueError("embedded software release manifest differs")
     return value
+
+
+def installer_key_id() -> str:
+    """Select development trust only from the assembler-owned initrd on VMware."""
+    if not DEVELOPMENT_MARKER.exists():
+        return KEY_ID
+    if DEVELOPMENT_MARKER.read_bytes() != (DEVELOPMENT_KEY_ID + "\n").encode():
+        raise ValueError("invalid development initrd marker")
+    vendor = Path("/sys/class/dmi/id/sys_vendor").read_text().strip()
+    if vendor != "VMware, Inc.":
+        raise ValueError("development installer is restricted to VMware test guests")
+    return DEVELOPMENT_KEY_ID

@@ -13,6 +13,7 @@ from pathlib import Path
 # Never add the unverified media tree to this interpreter's import search path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from manifest import (  # noqa: E402 - only the initrd-pinned verifier is imported here.
+    installer_key_id,
     verify_media,
 )
 
@@ -24,7 +25,7 @@ def main() -> None:
     args = parser.parse_args()
     os.umask(0o077)
     with tempfile.TemporaryDirectory(prefix="atlaso-installer-verify-", dir="/run") as temporary:
-        verify_media(args.media, Path("/etc/atlaso-installer/trust.pem"), scratch=Path(temporary))
+        verify_media(args.media, Path("/etc/atlaso-installer/trust.pem"), scratch=Path(temporary), expected_key_id=installer_key_id())
     os.execv(sys.executable, [sys.executable, str(args.media / "source/scripts/installation/installer.py"), "--media", str(args.media)])
 
 

@@ -10,6 +10,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from scripts.build_development_installation_iso import sign_test_manifest
 from scripts.build_installation_iso import write_signed
 from scripts.installation import manifest
 from scripts.verify_installation_iso import verify_release
@@ -78,6 +79,58 @@ def test_complete_media_is_verified_with_openssl(signed_media):
     root, trust, scratch, value, _ = signed_media
     assert manifest.verify_media(root, trust, scratch=scratch) == value
     assert not list(scratch.iterdir())
+
+
+def test_development_media_requires_explicit_separate_trust(signed_media):
+    """Production defaults reject public-test signatures and distinct identities.
+
+    Args:
+        signed_media: Synthetic signed media fixture used by the test.
+    """
+    root, trust, scratch, value, _ = signed_media
+    value["signing_key_id"] = manifest.DEVELOPMENT_KEY_ID
+    value["source_commit"] = "b" * 40
+    value["development"] = {"schema": 1, "software_source_commit": "a" * 40, "non_production": True}
+    (root / manifest.MANIFEST).write_bytes(manifest.canonical_json(value))
+    (root / manifest.SIGNATURE).unlink()
+    trust.write_bytes(sign_test_manifest(root))
+    with pytest.raises(ValueError, match="pinned Atlaso key"):
+        manifest.verify_media(root, trust, scratch=scratch)
+    assert manifest.verify_media(root, trust, scratch=scratch, expected_key_id=manifest.DEVELOPMENT_KEY_ID) == value
+    with pytest.raises(ValueError, match="public test signing"):
+        value["signing_key_id"] = manifest.KEY_ID
+        (root / manifest.MANIFEST).write_bytes(manifest.canonical_json(value))
+        sign_test_manifest(root)
+
+
+def test_development_marker_is_vmware_only(monkeypatch, tmp_path):
+    """An absent marker retains production trust; physical systems reject test mode.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Temporary directory for filesystem fixtures.
+    """
+    marker = tmp_path / "development"
+    monkeypatch.setattr(manifest, "DEVELOPMENT_MARKER", marker)
+    assert manifest.installer_key_id() == manifest.KEY_ID
+    marker.write_bytes((manifest.DEVELOPMENT_KEY_ID + "\n").encode())
+    original = Path.read_text
+
+    def read_text(path, *args, **kwargs):
+        """Return a controlled DMI vendor while retaining ordinary file reads.
+
+        Args:
+            path: File path to read.
+            *args: Positional file read options.
+            **kwargs: Named file read options.
+        """
+        if str(path).replace("\\", "/") == "/sys/class/dmi/id/sys_vendor":
+            return "Physical hardware\n"
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    with pytest.raises(ValueError, match="VMware test guests"):
+        manifest.installer_key_id()
 
 
 @pytest.mark.parametrize("mutation", ["file", "extra", "signature", "manifest", "trust"])
