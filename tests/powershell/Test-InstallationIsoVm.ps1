@@ -85,6 +85,7 @@ function Get-InstallationVmFunctionText {
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Get-InstallationVmxPathAssignment')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmDiskBindings')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationSerialPipePath')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'ConvertFrom-InstallationConsoleFrame')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationConsoleDiskOptions')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Send-InstallationConsoleSecret')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Wait-InstallationConsoleState')))
@@ -399,22 +400,33 @@ function Close-InstallationTestPipePair {
 }
 
 $diskRowsTargetFirst = @(
-    Get-InstallationConsoleDiskOptions -Text "Select a disk`n64 GiB @ /dev/sda`n4 GiB @ /dev/sdb"
+    Get-InstallationConsoleDiskOptions -Text "Select a disk`r`n64 GiB @ /dev/sda`r`n4 GiB @ /dev/sdb"
 )
 Assert-InstallationVmCondition ($diskRowsTargetFirst.Count -eq 2) 'The parser must return both native disk rows.'
 Assert-InstallationVmCondition ($diskRowsTargetFirst[0].Index -eq 0 -and $diskRowsTargetFirst[0].SizeGiB -eq 64 -and
     $diskRowsTargetFirst[0].DiskPath -ceq '/dev/sda') 'The first native row must retain its original 64 GiB target identity.'
 Assert-InstallationVmCondition ($diskRowsTargetFirst[1].Index -eq 1 -and $diskRowsTargetFirst[1].SizeGiB -eq 4 -and
     $diskRowsTargetFirst[1].DiskPath -ceq '/dev/sdb') 'The second native row must retain its original 4 GiB unselected identity.'
-$diskRowsUnselectedFirst = @(Get-InstallationConsoleDiskOptions -Text "Select a disk`n4 GiB @ /dev/sda`n64 GiB @ /dev/sdb")
+$diskRowsUnselectedFirst = @(Get-InstallationConsoleDiskOptions -Text "Select a disk`r`n4 GiB @ /dev/sda`r`n64 GiB @ /dev/sdb")
 Assert-InstallationVmCondition ($diskRowsUnselectedFirst.Count -eq 2 -and
     $diskRowsUnselectedFirst[0].SizeGiB -eq 4 -and $diskRowsUnselectedFirst[0].Index -eq 0 -and
     $diskRowsUnselectedFirst[1].SizeGiB -eq 64 -and $diskRowsUnselectedFirst[1].DiskPath -ceq '/dev/sdb' -and
     $diskRowsUnselectedFirst[1].Index -eq 1) 'Disk selection must preserve native order when the 64 GiB target is /dev/sdb.'
-$diskRowsRepainted = @(Get-InstallationConsoleDiskOptions -Text "Select a disk`n64 GiB @ /dev/sdb`n4 GiB @ /dev/sda`n64 GiB @ /dev/sdb`n4 GiB @ /dev/sda")
+$diskRowsRepainted = @(Get-InstallationConsoleDiskOptions -Text "Select a disk`r`n64 GiB @ /dev/sdb`r`n4 GiB @ /dev/sda`r`n64 GiB @ /dev/sdb`r`n4 GiB @ /dev/sda")
 Assert-InstallationVmCondition ($diskRowsRepainted.Count -eq 2 -and
     $diskRowsRepainted[0].DiskPath -ceq '/dev/sdb' -and $diskRowsRepainted[1].DiskPath -ceq '/dev/sda') `
-    'Repainted native rows must be de-duplicated without changing their first-seen order.'
+    'Repainted native rows must be de-duplicated without changing their visible order.'
+
+# Curses can paint the lower row first and subsequently repaint the upper row.
+$cursorRows = @(Get-InstallationConsoleDiskOptions -Text ("`e[2J`e[5;1HSelect a disk" +
+    "`e[12;22HVMware Virtual S - 64 GiB @ /dev/sdb`e[11;22HVMware Virtual S - 4 GiB @ /dev/sda"))
+Assert-InstallationVmCondition ($cursorRows.Count -eq 2 -and $cursorRows[0].DiskPath -ceq '/dev/sda' -and
+    $cursorRows[1].DiskPath -ceq '/dev/sdb' -and $cursorRows[1].Index -eq 1) `
+    'Cursor-addressed native rows must use visible order rather than arrival order.'
+$erasedRows = @(Get-InstallationConsoleDiskOptions -Text ("`e[11;1H32 GiB @ /dev/sdc`r`e[2K" +
+    "4 GiB @ /dev/sda`e[1B`r64 GiB @ /dev/sdb"))
+Assert-InstallationVmCondition ($erasedRows.Count -eq 2 -and $erasedRows[0].DiskPath -ceq '/dev/sda' -and
+    $erasedRows[1].DiskPath -ceq '/dev/sdb') 'Erased stale rows must never remain selectable.'
 
 $pipePair = $null
 $asciiFixture = 'Atlaso-Public-Installer-Fixture-42'
@@ -495,14 +507,14 @@ $diskSelectionSender = $null
 try {
     $pipePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
     $diskSelectionSender = [AtlasoInstallationPipeTestWriter]::Start($pipePair.Client, [string[]]@(
-        "Select a disk`n",
-        '64 GiB @ /dev/sdb', "`n",
-        'Select a disk', "`n4 GiB @ /dev/sda`n"))
+        "`e[2J`e[5;1HSelect a disk",
+        "`e[12;22H64 GiB @ /dev/sdb",
+        "`e[11;22H4 GiB @ /dev/sda"))
     $selectedOptions = @(Wait-InstallationConsoleState -Pipe $pipePair.Server -Pattern 'Select a disk' `
         -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadDiskSelection)
     Assert-InstallationVmCondition ($selectedOptions.Count -eq 2 -and
-        $selectedOptions[0].DiskPath -ceq '/dev/sdb' -and $selectedOptions[0].SizeGiB -eq 64 -and
-        $selectedOptions[1].DiskPath -ceq '/dev/sda' -and $selectedOptions[1].SizeGiB -eq 4) `
+        $selectedOptions[0].DiskPath -ceq '/dev/sda' -and $selectedOptions[0].SizeGiB -eq 4 -and
+        $selectedOptions[1].DiskPath -ceq '/dev/sdb' -and $selectedOptions[1].SizeGiB -eq 64) `
         'Disk-selection wait returned before both fragmented native rows arrived or changed their order.'
     Assert-InstallationVmCondition $diskSelectionSender.Wait(5000) 'Fragmented disk selection fixture did not complete.'
 }
@@ -516,7 +528,7 @@ $mismatchedDiskRejected = $false
 try {
     $pipePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
     $mismatchedDiskSender = [AtlasoInstallationPipeTestWriter]::Start($pipePair.Client, [string[]]@(
-        "Select a disk`n32 GiB @ /dev/sda`n4 GiB @ /dev/sdb`n"))
+        "Select a disk`r`n32 GiB @ /dev/sda`r`n4 GiB @ /dev/sdb`r`n"))
     try {
         $null = Wait-InstallationConsoleState -Pipe $pipePair.Server -Pattern 'Select a disk' `
             -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadDiskSelection

@@ -90,6 +90,167 @@ function Send-InstallationConsoleSecret {
 
 <#
 .SYNOPSIS
+Decode the bounded initial installation menu from a terminal text stream.
+.DESCRIPTION
+Replays the supported terminal controls into a fixed 25-row by 80-column frame.
+This adapter is limited to the public disk-selection screen before credentials.
+.PARAMETER Text
+Public terminal text collected before any credential input.
+#>
+function ConvertFrom-InstallationConsoleFrame {
+    param([string]$Text)
+    if ($null -eq $Text) { throw 'The public installer frame is unavailable.' }
+    if ($Text.Length -gt 131072) { throw 'The public installer frame exceeds its bounded input size.' }
+
+    $rowCount = 25
+    $columnCount = 80
+    $frame = [char[,]]::new($rowCount, $columnCount)
+    for ($rowIndex = 0; $rowIndex -lt $rowCount; $rowIndex++) {
+        for ($columnIndex = 0; $columnIndex -lt $columnCount; $columnIndex++) {
+            $frame[$rowIndex, $columnIndex] = ' '
+        }
+    }
+    $row = 0
+    $column = 0
+    $savedRow = 0
+    $savedColumn = 0
+    $position = 0
+
+    while ($position -lt $Text.Length) {
+        $character = $Text[$position]
+        $code = [int]$character
+        if ($code -eq 27) {
+            $position++
+            if ($position -ge $Text.Length) { break }
+            $escapeKind = $Text[$position]
+            if ($escapeKind -eq '[') {
+                $position++
+                $sequenceStart = $position
+                while ($position -lt $Text.Length -and $position - $sequenceStart -le 64) {
+                    $candidate = [int]$Text[$position]
+                    if ($candidate -ge 0x40 -and $candidate -le 0x7E) { break }
+                    $position++
+                }
+                if ($position -ge $Text.Length) { break }
+                if ($position - $sequenceStart -gt 64) {
+                    while ($position -lt $Text.Length) {
+                        $candidate = [int]$Text[$position]
+                        $position++
+                        if ($candidate -ge 0x40 -and $candidate -le 0x7E) { break }
+                    }
+                    continue
+                }
+                $final = [string]$Text[$position]
+                $parameterText = $Text.Substring($sequenceStart, $position - $sequenceStart)
+                $position++
+                if ($parameterText -notmatch '^[0-9;]*$') { continue }
+                $parameters = @()
+                if ($parameterText.Length -gt 0) {
+                    $parameters = @($parameterText.Split(';') | ForEach-Object {
+                        if ($_ -ceq '') { 0 } else { [int]::Parse($_, [Globalization.CultureInfo]::InvariantCulture) }
+                    })
+                }
+                $first = if ($parameters.Count -gt 0) { [int]$parameters[0] } else { 0 }
+                $second = if ($parameters.Count -gt 1) { [int]$parameters[1] } else { 0 }
+                switch -CaseSensitive ($final) {
+                    { $_ -in 'H', 'f' } {
+                        $row = [Math]::Clamp($(if ($first -le 0) { 0 } else { $first - 1 }), 0, $rowCount - 1)
+                        $column = [Math]::Clamp($(if ($second -le 0) { 0 } else { $second - 1 }), 0, $columnCount - 1)
+                    }
+                    'A' { $row = [Math]::Max(0, $row - $(if ($first -le 0) { 1 } else { $first })) }
+                    'B' { $row = [Math]::Min($rowCount - 1, $row + $(if ($first -le 0) { 1 } else { $first })) }
+                    'C' { $column = [Math]::Min($columnCount - 1, $column + $(if ($first -le 0) { 1 } else { $first })) }
+                    'D' { $column = [Math]::Max(0, $column - $(if ($first -le 0) { 1 } else { $first })) }
+                    'E' {
+                        $row = [Math]::Min($rowCount - 1, $row + $(if ($first -le 0) { 1 } else { $first }))
+                        $column = 0
+                    }
+                    'F' {
+                        $row = [Math]::Max(0, $row - $(if ($first -le 0) { 1 } else { $first }))
+                        $column = 0
+                    }
+                    'G' { $column = [Math]::Clamp($(if ($first -le 0) { 0 } else { $first - 1 }), 0, $columnCount - 1) }
+                    'd' { $row = [Math]::Clamp($(if ($first -le 0) { 0 } else { $first - 1 }), 0, $rowCount - 1) }
+                    'J' {
+                        $mode = if ($parameters.Count -eq 0) { 0 } else { $first }
+                        if ($mode -eq 2 -or $mode -eq 3) {
+                            for ($clearRow = 0; $clearRow -lt $rowCount; $clearRow++) {
+                                for ($clearColumn = 0; $clearColumn -lt $columnCount; $clearColumn++) { $frame[$clearRow, $clearColumn] = ' ' }
+                            }
+                        }
+                        elseif ($mode -eq 0) {
+                            for ($clearColumn = $column; $clearColumn -lt $columnCount; $clearColumn++) { $frame[$row, $clearColumn] = ' ' }
+                            for ($clearRow = $row + 1; $clearRow -lt $rowCount; $clearRow++) {
+                                for ($clearColumn = 0; $clearColumn -lt $columnCount; $clearColumn++) { $frame[$clearRow, $clearColumn] = ' ' }
+                            }
+                        }
+                        elseif ($mode -eq 1) {
+                            for ($clearRow = 0; $clearRow -lt $row; $clearRow++) {
+                                for ($clearColumn = 0; $clearColumn -lt $columnCount; $clearColumn++) { $frame[$clearRow, $clearColumn] = ' ' }
+                            }
+                            for ($clearColumn = 0; $clearColumn -le $column; $clearColumn++) { $frame[$row, $clearColumn] = ' ' }
+                        }
+                    }
+                    'K' {
+                        $mode = if ($parameters.Count -eq 0) { 0 } else { $first }
+                        if ($mode -eq 2) { $startColumn = 0; $endColumn = $columnCount - 1 }
+                        elseif ($mode -eq 1) { $startColumn = 0; $endColumn = $column }
+                        else { $startColumn = $column; $endColumn = $columnCount - 1 }
+                        for ($clearColumn = $startColumn; $clearColumn -le $endColumn; $clearColumn++) { $frame[$row, $clearColumn] = ' ' }
+                    }
+                    'X' {
+                        $count = if ($first -le 0) { 1 } else { $first }
+                        $endColumn = [Math]::Min($columnCount - 1, $column + $count - 1)
+                        for ($clearColumn = $column; $clearColumn -le $endColumn; $clearColumn++) { $frame[$row, $clearColumn] = ' ' }
+                    }
+                    's' { $savedRow = $row; $savedColumn = $column }
+                    'u' { $row = $savedRow; $column = $savedColumn }
+                    default { } # Includes SGR and terminal mode changes, which do not alter visible cells.
+                }
+                continue
+            }
+            if ($escapeKind -in @('(', ')', '*', '+')) {
+                $position += [Math]::Min(2, $Text.Length - $position)
+                continue
+            }
+            $position++
+            switch -CaseSensitive ($escapeKind) {
+                '7' { $savedRow = $row; $savedColumn = $column }
+                '8' { $row = $savedRow; $column = $savedColumn }
+                'D' { $row = [Math]::Min($rowCount - 1, $row + 1) }
+                'E' { $row = [Math]::Min($rowCount - 1, $row + 1); $column = 0 }
+                default { }
+            }
+            continue
+        }
+
+        $position++
+        switch ($code) {
+            8 { $column = [Math]::Max(0, $column - 1); continue }
+            9 { $column = [Math]::Min($columnCount - 1, (($column + 8) -band -8)); continue }
+            10 { $row = [Math]::Min($rowCount - 1, $row + 1); continue }
+            13 { $column = 0; continue }
+            default { }
+        }
+        if ($code -ge 32 -and $code -ne 127) {
+            $frame[$row, $column] = $character
+            $column = [Math]::Min($columnCount - 1, $column + 1)
+        }
+    }
+
+    $visibleRows = [Collections.Generic.List[string]]::new()
+    for ($rowIndex = 0; $rowIndex -lt $rowCount; $rowIndex++) {
+        $builder = [Text.StringBuilder]::new($columnCount)
+        for ($columnIndex = 0; $columnIndex -lt $columnCount; $columnIndex++) {
+            [void]$builder.Append($frame[$rowIndex, $columnIndex])
+        }
+        $visibleRows.Add($builder.ToString().TrimEnd())
+    }
+    return $visibleRows.ToArray()
+}
+
+<#
+.SYNOPSIS
 Parse the public SCSI disk rows rendered by the fixed two-disk test fixture.
 .PARAMETER Text
 Public native disk-menu text, before any credential input.
@@ -98,7 +259,8 @@ function Get-InstallationConsoleDiskOptions {
     param([string]$Text)
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $index = 0
-    foreach ($match in [regex]::Matches($Text, '(?<size>[0-9]+) GiB @ (?<path>/dev/sd[a-z]+)')) {
+    $visibleText = (ConvertFrom-InstallationConsoleFrame -Text $Text) -join "`n"
+    foreach ($match in [regex]::Matches($visibleText, '(?<size>[0-9]+) GiB @ (?<path>/dev/sd[a-z]+)')) {
         $diskPath = $match.Groups['path'].Value
         if ($seen.Add($diskPath)) {
             [pscustomobject]@{ Index = $index; SizeGiB = [long]$match.Groups['size'].Value; DiskPath = $diskPath }
@@ -160,7 +322,7 @@ function Wait-InstallationConsoleState {
             }
             if (-not $failureDeadline -and $plain.Contains($Pattern, [StringComparison]::Ordinal)) {
                 if ($ReadDiskSelection) {
-                    $options = @(Get-InstallationConsoleDiskOptions -Text $plain)
+                    $options = @(Get-InstallationConsoleDiskOptions -Text $text)
                     if ($options.Count -lt 2) { continue }
                     if ($options.Count -ne 2 -or @($options | Where-Object SizeGiB -EQ 64).Count -ne 1 -or
                         @($options | Where-Object SizeGiB -EQ 4).Count -ne 1) {
@@ -313,7 +475,9 @@ public static class AtlasoInstallationPipePeer {
         # Kernel disk enumeration and native menu order can differ from VMX
         # SCSI order. Make the operator selection by the fixture's unique size.
         $target = @($diskOptions | Where-Object SizeGiB -EQ 64)[0]
-        Send-InstallationConsoleText -Pipe $pipe -Text (("`eOB" * $target.Index) + "`n")
+        Write-Host ('Selecting public native disk row {0}: {1} (64 GiB).' -f $target.Index, $target.DiskPath)
+        # Normalize the native menu to its first row before selecting the visual index.
+        Send-InstallationConsoleText -Pipe $pipe -Text ("`eOA`eOA" + ("`eOB" * $target.Index) + "`n")
         Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Review planned partitions' -Deadline $deadline
         Send-InstallationConsoleText -Pipe $pipe -Text "NEXT`n"
         Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Review Atlaso installation disk' -Deadline $deadline
