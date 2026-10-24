@@ -168,26 +168,83 @@ try {
     Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 public static class AtlasoInstallationPipePeer {
     [DllImport("kernel32.dll", SetLastError=true)]
     public static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe, out uint processId);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    private static extern SafeProcessHandle OpenProcess(uint access, bool inherit, uint processId);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    private static extern bool QueryFullProcessImageNameW(SafeProcessHandle process, uint flags, StringBuilder image, ref uint length);
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    private delegate int QueryProcess(SafeProcessHandle process, int informationClass, IntPtr buffer, uint length, out uint returned);
+    [DllImport("shell32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    private static extern IntPtr CommandLineToArgvW(string commandLine, out int count);
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr LocalFree(IntPtr allocation);
+    [StructLayout(LayoutKind.Sequential)]
+    private struct UnicodeString { public ushort Length; public ushort MaximumLength; public IntPtr Buffer; }
+
+    // WMI omits these fields for Workstation's protected process. Query only
+    // limited process metadata, using one live handle for both identity proofs.
+    // Never return or log the command line, and refuse unavailable native APIs.
+    public static bool MatchesExpectedProcess(uint processId, string[] allowedImages, string expectedArgument) {
+        if (allowedImages == null || allowedImages.Length == 0 || String.IsNullOrEmpty(expectedArgument)) return false;
+        using (SafeProcessHandle process = OpenProcess(0x1000, false, processId)) {
+            if (process.IsInvalid) return false;
+            var image = new StringBuilder(32768);
+            uint imageLength = (uint)image.Capacity;
+            if (!QueryFullProcessImageNameW(process, 0, image, ref imageLength)) return false;
+            if (!Array.Exists(allowedImages, path => String.Equals(path, image.ToString(), StringComparison.OrdinalIgnoreCase))) return false;
+            IntPtr library = IntPtr.Zero, buffer = IntPtr.Zero, arguments = IntPtr.Zero;
+            try {
+                // Restrict dynamic loading to the Windows system directory.
+                string nativePath = System.IO.Path.Combine(Environment.SystemDirectory, "ntdll.dll");
+                if (!NativeLibrary.TryLoad(nativePath, out library) ||
+                    !NativeLibrary.TryGetExport(library, "NtQueryInformationProcess", out IntPtr entry)) return false;
+                var query = Marshal.GetDelegateForFunctionPointer<QueryProcess>(entry);
+                uint required;
+                query(process, 60, IntPtr.Zero, 0, out required);
+                int headerSize = Marshal.SizeOf<UnicodeString>();
+                if (required < headerSize || required > 1048576) return false;
+                buffer = Marshal.AllocHGlobal((int)required);
+                if (query(process, 60, buffer, required, out uint returned) != 0 || returned < headerSize || returned > required) return false;
+                var value = Marshal.PtrToStructure<UnicodeString>(buffer);
+                long offset = checked(value.Buffer.ToInt64() - buffer.ToInt64());
+                if ((value.Length & 1) != 0 || value.Length > value.MaximumLength ||
+                    offset < headerSize || offset > returned || value.Length > returned - offset) return false;
+                string commandLine = Marshal.PtrToStringUni(value.Buffer, value.Length / 2);
+                arguments = CommandLineToArgvW(commandLine, out int count);
+                if (arguments == IntPtr.Zero || count < 1 || count > 32768) return false;
+                for (int index = 1; index < count; index++) {
+                    string argument = Marshal.PtrToStringUni(Marshal.ReadIntPtr(arguments, checked(index * IntPtr.Size)));
+                    if (String.Equals(argument, expectedArgument, StringComparison.OrdinalIgnoreCase)) return true;
+                }
+                return false;
+            }
+            catch (Exception exception) when (exception is ArgumentException || exception is OverflowException ||
+                exception is DllNotFoundException || exception is EntryPointNotFoundException) { return false; }
+            finally {
+                if (arguments != IntPtr.Zero) LocalFree(arguments);
+                if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+                if (library != IntPtr.Zero) NativeLibrary.Free(library);
+            }
+        }
+    }
 }
 '@
     $peerId = [uint32]0
     if (-not [AtlasoInstallationPipePeer]::GetNamedPipeClientProcessId($pipe.SafePipeHandle, [ref]$peerId)) {
         throw 'Could not prove the serial console peer process.'
     }
-    $peer = Get-CimInstance Win32_Process -Filter "ProcessId=$peerId"
     $vmxPath = [IO.Path]::GetFullPath([string]$vm.VmxPath)
     $providerImages = @(
         (Join-Path $env:ProgramFiles 'VMware/VMware Workstation/x64/vmware-vmx.exe'),
         (Join-Path $env:ProgramFiles 'VMware/VMware Workstation/vmware-vmx.exe'),
         (Join-Path ${env:ProgramFiles(x86)} 'VMware/VMware Workstation/x64/vmware-vmx.exe')
     ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | ForEach-Object { [IO.Path]::GetFullPath($_) }
-    $vmxArgument = '(?i)(?:^|\s)"?' + [regex]::Escape($vmxPath) + '"?(?=\s|$)'
-    if ($peer.Name -ine 'vmware-vmx.exe' -or $peer.ExecutablePath -notin $providerImages -or
-        -not [regex]::IsMatch([string]$peer.CommandLine, $vmxArgument)) {
+    if (-not [AtlasoInstallationPipePeer]::MatchesExpectedProcess($peerId, [string[]]$providerImages, $vmxPath)) {
         throw 'The private console peer is not the receipt-bound VMware guest.'
     }
     Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline

@@ -485,6 +485,22 @@ finally {
     if ($pipePair) { Close-InstallationTestPipePair -Pair $pipePair }
 }
 
+$peerSources = @($driverAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+        $node.Value.Contains('public static class AtlasoInstallationPipePeer')
+}, $true))
+Assert-InstallationVmCondition ($peerSources.Count -eq 1) 'Expected one native console peer verifier.'
+Add-Type -TypeDefinition $peerSources[0].Value
+$ownImage = [Environment]::ProcessPath
+$ownArguments = [Environment]::GetCommandLineArgs()
+Assert-InstallationVmCondition ($ownArguments.Length -gt 1) 'Run this regression with the documented -File command.'
+$ownArgument = $ownArguments[1]
+Assert-InstallationVmCondition ([AtlasoInstallationPipePeer]::MatchesExpectedProcess($PID, @($ownImage), $ownArgument)) 'Limited-query peer proof rejected the current process and exact argument.'
+Assert-InstallationVmCondition (-not [AtlasoInstallationPipePeer]::MatchesExpectedProcess($PID, @($ownImage + '.different'), $ownArgument)) 'Peer proof accepted a different executable image.'
+Assert-InstallationVmCondition (-not [AtlasoInstallationPipePeer]::MatchesExpectedProcess($PID, @($ownImage), $ownArgument + '.different')) 'Peer proof accepted an argument substring.'
+Assert-InstallationVmCondition (-not [AtlasoInstallationPipePeer]::MatchesExpectedProcess([uint32]::MaxValue, @($ownImage), $ownArgument)) 'Peer proof accepted an unavailable process.'
+
 Write-Host 'Installation console pipe contract checks passed.'
 
 Write-Host 'Installation ISO VM harness source-contract checks passed.'
