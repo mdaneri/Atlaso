@@ -102,9 +102,14 @@ function Wait-InstallationConsoleState {
     param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline)
     $buffer = [byte[]]::new(4096)
     $text = ''
+    $failureDeadline = $null
     try {
         while ([DateTimeOffset]::UtcNow -lt $Deadline) {
-            $remaining = [int][Math]::Min(30000, ($Deadline - [DateTimeOffset]::UtcNow).TotalMilliseconds)
+            if ($failureDeadline -and [DateTimeOffset]::UtcNow -ge $failureDeadline) {
+                throw 'The installer reported a Python failure before the expected console state.'
+            }
+            $readDeadline = if ($failureDeadline -and $failureDeadline -lt $Deadline) { $failureDeadline } else { $Deadline }
+            $remaining = [int][Math]::Min(30000, ($readDeadline - [DateTimeOffset]::UtcNow).TotalMilliseconds)
             if ($remaining -le 0) { break }
             $cancel = [Threading.CancellationTokenSource]::new($remaining)
             try {
@@ -116,11 +121,17 @@ function Wait-InstallationConsoleState {
             $text += [Text.Encoding]::ASCII.GetString($buffer, 0, $count)
             $plain = [regex]::Replace($text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b[()][A-Z0-9]|\x1b[=>]', '')
             if ($plain.Contains('Traceback (most recent call last):', [StringComparison]::Ordinal)) {
-                # Report only a fixed public classification, never raw exception
-                # text that could contain credential-bearing subprocess output.
-                throw 'The installer reported a Python failure before the expected console state.'
+                if (-not $failureDeadline) { $failureDeadline = [DateTimeOffset]::UtcNow.AddSeconds(2) }
+                # Wait briefly for fragmented frames, then emit only allowlisted
+                # public source identifiers. Never emit paths, code or messages.
+                $kind = [regex]::Match($plain, '(?m)^(ValueError|RuntimeError|ImportError|ModuleNotFoundError|FileNotFoundError|AttributeError|TypeError|_curses\.error|subprocess\.CalledProcessError):')
+                if ($kind.Success) {
+                    $frames = @([regex]::Matches($plain, 'File "[^"\r\n]*/(bootstrap\.py|manifest\.py|installer\.py|disks\.py|window\.py|menu\.py|readtext\.py|progressbar\.py)", line ([0-9]{1,6}),') |
+                        Select-Object -Last 8 | ForEach-Object { $_.Groups[1].Value + ':' + $_.Groups[2].Value })
+                    throw ('The installer reported a Python failure before the expected console state. Public location: {0}; {1}.' -f $kind.Groups[1].Value, ($frames -join ', '))
+                }
             }
-            if ($plain.Contains($Pattern, [StringComparison]::Ordinal)) { return }
+            if (-not $failureDeadline -and $plain.Contains($Pattern, [StringComparison]::Ordinal)) { return }
             if ($text.Length -gt 131072) { $text = $text.Substring($text.Length - 65536) }
         }
         throw 'The installer did not reach the expected public console state before its deadline.'

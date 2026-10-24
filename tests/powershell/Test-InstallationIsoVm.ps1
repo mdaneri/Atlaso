@@ -521,4 +521,22 @@ finally {
 
 Write-Host 'Installation console pipe contract checks passed.'
 
+$pipePair = $null
+try {
+    $pipePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+    $failureSender = [AtlasoInstallationPipeTestWriter]::Start($pipePair.Client, [string[]]@(
+        "Traceback (most recent call last):`n  File `"/PublicSyntheticSensitiveFixture/manifest.py`", line 32, in digest`n",
+        "ValueError: PublicSyntheticSensitiveFixture`n"))
+    $failureObserved = $false
+    try {
+        Wait-InstallationConsoleState -Pipe $pipePair.Server -Pattern 'Select a disk' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5))
+    }
+    catch { $failureObserved = $_.Exception.Message -ceq 'The installer reported a Python failure before the expected console state. Public location: ValueError; manifest.py:32.' }
+    Assert-InstallationVmCondition $failureObserved 'Fragmented error classification exposed more than public source identifiers or lost the failure.'
+    Assert-InstallationVmCondition $failureSender.Wait(5000) 'Public classified fixture writer did not complete.'
+}
+finally {
+    if ($pipePair) { Close-InstallationTestPipePair -Pair $pipePair }
+}
+
 Write-Host 'Installation ISO VM harness source-contract checks passed.'
