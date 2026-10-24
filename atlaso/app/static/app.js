@@ -4050,6 +4050,59 @@ function initializeCaProfilesTable() {
   });
 }
 
+function parseCaIpSanEntries(value) {
+  return String(value || "")
+    .split(/[,\r\n\v\f\x1c-\x1e\x85\u2028\u2029]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function isValidCaIpSan(value) {
+  const address = String(value || "").trim();
+  const parts = address.split(".");
+  const parsedIpv4Parts = parseIpv4AddressParts(address);
+  if (parsedIpv4Parts) {
+    return parsedIpv4Parts.every((part, index) => part <= 255 && String(part) === parts[index]);
+  }
+
+  // Python's ipaddress accepts a non-empty zone suffix on IPv6 literals.
+  // The browser URL parser validates the address itself but does not support
+  // that suffix, so validate the bare literal and retain this server behavior.
+  const zoneIndex = address.indexOf("%");
+  const literal = zoneIndex >= 0 ? address.slice(0, zoneIndex) : address;
+  const zone = zoneIndex >= 0 ? address.slice(zoneIndex + 1) : "";
+  if (zoneIndex >= 0 && (!zone || /[%/]/.test(zone))) return false;
+  if (!literal.includes(":") || !/^[0-9A-Fa-f:.]+$/.test(literal)) return false;
+  const ipv4Tail = literal.slice(literal.lastIndexOf(":") + 1);
+  if (literal.includes(".") && !isValidCaIpSan(ipv4Tail)) return false;
+  try {
+    new URL(`http://[${literal}]/`);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function validateCaIpSanField(value) {
+  const invalid = parseCaIpSanEntries(value).find((entry) => !isValidCaIpSan(entry));
+  return invalid ? `Enter a valid IPv4 or IPv6 address: ${invalid}.` : "";
+}
+
+function updateCaIpSanFeedback(form, message) {
+  const field = form.elements.ip_addresses;
+  const feedback = form.querySelector("[data-ca-ip-san-error]");
+  if (feedback instanceof HTMLElement) feedback.textContent = message;
+  if (field instanceof HTMLElement) {
+    if (message) field.setAttribute("aria-invalid", "true");
+    else field.removeAttribute("aria-invalid");
+  }
+}
+
+function clearCaIpSanErrorSummary(form, wizard) {
+  const summary = form.querySelector("[data-atlaso-wizard-error]");
+  if (summary?.textContent?.startsWith("Enter a valid IPv4 or IPv6 address:")) wizard?.clearError?.();
+}
+
 function initializeCaCertificatesTable() {
   const element = document.getElementById("ca-certificates-table");
   if (!(element instanceof HTMLElement)) return;
@@ -4081,7 +4134,14 @@ function initializeCaCertificatesTable() {
       { id: "enablement", title: "Choose request availability", description: "Control whether the request participates in rendered CA desired state." },
       { id: "review", title: "Review certificate desired state", description: "Confirm the request and global appliance-apply boundary." },
     ],
+    onOpen: ({ form }) => updateCaIpSanFeedback(form, ""),
     validateStep: ({ form, step }) => {
+      if (step.id !== "names" && step.id !== "review") return { valid: true };
+      const ipSanError = validateCaIpSanField(form.elements.ip_addresses.value);
+      updateCaIpSanFeedback(form, ipSanError);
+      if (ipSanError) {
+        return { valid: false, field: "ip_addresses", message: ipSanError, step: "names" };
+      }
       if (step.id !== "names") return { valid: true };
       const profile = form.elements.profile_id;
       const requiresSan = profile instanceof HTMLSelectElement
@@ -4177,6 +4237,12 @@ function initializeCaCertificatesTable() {
     });
     scheduleResize();
   }
+  const certificateForm = document.querySelector("[data-ca-certificate-form]");
+  certificateForm?.elements?.ip_addresses?.addEventListener("input", () => {
+    const error = validateCaIpSanField(certificateForm.elements.ip_addresses.value);
+    if (!error) clearCaIpSanErrorSummary(certificateForm, element.atlasoWizard);
+    updateCaIpSanFeedback(certificateForm, error);
+  });
 }
 
 function caRequestStatusFormatter(cell) {
@@ -5981,6 +6047,11 @@ function initializeCaCsrWizard() {
     discardMessage: "The request metadata and CSR entered in this wizard will be lost.",
     validateStep: ({ form: activeForm, step }) => {
       if (fileReadPending) return { valid: false, field: fileInput, message: "Wait for the CSR file to finish loading before continuing." };
+      if (step.id === "names" || step.id === "review") {
+        const ipSanError = validateCaIpSanField(activeForm.elements.ip_addresses.value);
+        updateCaIpSanFeedback(activeForm, ipSanError);
+        if (ipSanError) return { valid: false, field: "ip_addresses", message: ipSanError, step: "names" };
+      }
       if (step.id !== "csr") return { valid: true };
       const error = validateCaCsrPem(activeForm.elements.csr_text.value);
       return error ? { valid: false, field: "csr_text", message: error } : { valid: true };
@@ -5988,10 +6059,13 @@ function initializeCaCsrWizard() {
     onOpen: () => {
       invalidatePendingFileRead();
       clearFileStatus();
+      clearCaIpSanErrorSummary(form, wizard);
+      updateCaIpSanFeedback(form, "");
     },
     onClose: () => {
       invalidatePendingFileRead();
       clearFileStatus();
+      updateCaIpSanFeedback(form, "");
     },
     prepareReview: () => renderAtlasoWizardReview(form, [
       { label: "Common name", field: "common_name" },
@@ -6001,6 +6075,10 @@ function initializeCaCsrWizard() {
       { label: "IP SANs", field: "ip_addresses" },
       { label: "CSR", value: () => form.elements.csr_text.value.trim() ? "PEM supplied" : "Missing" },
     ]),
+  });
+  form.addEventListener("reset", () => {
+    clearCaIpSanErrorSummary(form, wizard);
+    updateCaIpSanFeedback(form, "");
   });
   if (fileInput instanceof HTMLInputElement && csrField instanceof HTMLTextAreaElement) {
     form.addEventListener("reset", () => {
@@ -6046,6 +6124,12 @@ function initializeCaCsrWizard() {
       clearFileStatus();
     });
   }
+  const ipSanField = form.elements.ip_addresses;
+  ipSanField?.addEventListener("input", () => {
+    const error = validateCaIpSanField(ipSanField.value);
+    if (!error) clearCaIpSanErrorSummary(form, wizard);
+    updateCaIpSanFeedback(form, error);
+  });
   launcher.addEventListener("click", () => wizard.open({ launcher }));
 }
 

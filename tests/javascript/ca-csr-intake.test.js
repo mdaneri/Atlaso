@@ -7,6 +7,8 @@ const app = fs.readFileSync("atlaso/app/static/app.js", "utf8");
 const helperStart = app.indexOf("const CA_CSR_MAX_BYTES =");
 const helperEnd = app.indexOf("function serviceBindSelection", helperStart);
 const helpers = app.slice(helperStart, helperEnd);
+const ipParser = app.slice(app.indexOf("function parseIpv4AddressParts("), app.indexOf("function parseCompactIpv4RangeEnd("));
+const ipHelpers = app.slice(app.indexOf("function parseCaIpSanEntries("), app.indexOf("function initializeCaCertificatesTable("));
 const context = vm.createContext({ TextEncoder, TextDecoder, Error, Number, String, RegExp });
 vm.runInContext(`${helpers}\nglobalThis.caCsr = { validateCaCsrPem, readCaCsrFile };`, context);
 
@@ -81,6 +83,7 @@ function wizardHarness() {
     }
     focus() {}
     setAttribute() {}
+    removeAttribute() {}
     addEventListener(name, listener, options) {
       this.listeners ||= {};
       this.listeners[name] ||= [];
@@ -100,7 +103,8 @@ function wizardHarness() {
       this.csr = new Textarea();
       this.file = new Input();
       this.status = new Element();
-      this.elements = { csr_text: this.csr, namedItem: name => name === "csr_text" ? this.csr : null };
+      this.ip = new Textarea();
+      this.elements = { ip_addresses: this.ip, csr_text: this.csr, namedItem: name => name === "csr_text" ? this.csr : null };
     }
     querySelector(selector) {
       if (selector === "[data-ca-csr-file]") return this.file;
@@ -116,7 +120,7 @@ function wizardHarness() {
     setError: (message) => errors.push(message),
   };
   const context = vm.createContext({
-    TextEncoder, TextDecoder, Error, Number, String, RegExp, Event,
+    TextEncoder, TextDecoder, Error, Number, String, RegExp, Event, URL,
     HTMLElement: Element, HTMLDialogElement: Dialog, HTMLFormElement: Form,
     HTMLButtonElement: Button, HTMLInputElement: Input, HTMLTextAreaElement: Textarea,
     document: {
@@ -130,7 +134,7 @@ function wizardHarness() {
     },
     renderAtlasoWizardReview: () => {},
   });
-  vm.runInContext(`${helpers}\ninitializeCaCsrWizard();`, context);
+  vm.runInContext(`${ipParser}\n${ipHelpers}\n${helpers}\ninitializeCaCsrWizard();`, context);
   return { form, wizardConfig, errors, clearCount };
 }
 
