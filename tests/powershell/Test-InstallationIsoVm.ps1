@@ -96,13 +96,22 @@ $lines = @(New-InstallationVmConfiguration -Name 'Atlaso-Test-installation-iso' 
 $configuration = [string]::Join("`n", $lines)
 Assert-InstallationVmCondition ($configuration.Contains('firmware = "efi"')) 'EFI firmware must be enabled.'
 Assert-InstallationVmCondition ($configuration.Contains('uefi.secureBoot.enabled = "FALSE"')) 'Phase-one Secure Boot must be disabled.'
-Assert-InstallationVmCondition ($configuration.Contains('workingDir = "C:\\vm"')) 'The VMX must bind sidecar files to its owned output directory.'
-Assert-InstallationVmCondition ($configuration.Contains('scsi0:0.fileName = "C:\\vm\\target-64g.vmdk"')) 'The install target disk must occupy SCSI 0:0.'
-Assert-InstallationVmCondition ($configuration.Contains('scsi0:1.fileName = "C:\\vm\\unselected-4g.vmdk"')) 'The unselected disk must occupy SCSI 0:1.'
+Assert-InstallationVmCondition ($configuration.Contains('workingDir = "C:\vm"')) 'The VMX must bind sidecar files to its owned output directory.'
+Assert-InstallationVmCondition ($configuration.Contains('scsi0:0.fileName = "C:\vm\target-64g.vmdk"')) 'The install target disk must occupy SCSI 0:0.'
+Assert-InstallationVmCondition ($configuration.Contains('scsi0:1.fileName = "C:\vm\unselected-4g.vmdk"')) 'The unselected disk must occupy SCSI 0:1.'
 Assert-InstallationVmCondition ($configuration.Contains('sata0:0.deviceType = "cdrom-image"')) 'The ISO must be attached as a CD-ROM.'
 Assert-InstallationVmCondition ($configuration.Contains('serial0.pipe.endPoint = "client"')) 'The serial pipe must use client mode.'
-$expectedPipeAssignment = 'serial0.fileName = ' + (ConvertTo-InstallationVmxString -Value $pipe)
-Assert-InstallationVmCondition ($lines -contains $expectedPipeAssignment) 'The named pipe must be preserved in the VMX.'
+$expectedPipeAssignment = 'serial0.fileName = "\\.\pipe\Atlaso-Installation-0123456789abcdef0123456789abcdef"'
+Assert-InstallationVmCondition ($lines -contains $expectedPipeAssignment) 'The VMX serial assignment must contain the literal local named-pipe path.'
+$parsedPipe = Get-InstallationVmxPathAssignment -VmxLines $lines -Key 'serial0.fileName'
+Assert-InstallationVmCondition ($parsedPipe -ceq $pipe) 'The VMX path parser must preserve literal UNC/device-path backslashes.'
+$rejectedVmxValue = foreach ($value in @('bad"quote', "bad`rcontrol", "bad`ncontrol", 'bad|pipe')) {
+    $rejected = $false
+    try { $null = ConvertTo-InstallationVmxString -Value $value } catch { $rejected = $true }
+    -not $rejected
+}
+Assert-InstallationVmCondition (@($rejectedVmxValue | Where-Object { $_ }).Count -eq 0) `
+    'VMX serialization must reject embedded quotes, control characters, and pipe characters.'
 Assert-InstallationVmCondition ($configuration.Contains('ethernet0.present = "FALSE"')) 'The VM must have no network adapter.'
 Assert-InstallationVmCondition (-not $configuration.Contains('ethernet1.present')) 'The VM must not contain additional network adapters.'
 Assert-InstallationVmCondition (-not $configuration.Contains('ethernet0.connectionType = "nat"')) 'The VM must not configure a network connection.'
@@ -112,14 +121,14 @@ try { Assert-InstallationVmDiskBindings -VmxLines $lines -Context $bindingContex
 catch { $validBindings = $false }
 Assert-InstallationVmCondition $validBindings 'Exact target, unselected, and pinned ISO bindings must pass layout validation.'
 $changedBindings = @($lines | ForEach-Object {
-        if ($_ -ceq 'scsi0:1.fileName = "C:\\vm\\unselected-4g.vmdk"') { 'scsi0:1.fileName = "C:\\vm\\target-64g.vmdk"' } else { $_ }
+        if ($_ -ceq 'scsi0:1.fileName = "C:\vm\unselected-4g.vmdk"') { 'scsi0:1.fileName = "C:\vm\target-64g.vmdk"' } else { $_ }
     })
 $changedBindingRejected = $false
 try { Assert-InstallationVmDiskBindings -VmxLines $changedBindings -Context $bindingContext -IsoPath 'C:\offline media\atlaso.iso' }
 catch { $changedBindingRejected = $true }
 Assert-InstallationVmCondition $changedBindingRejected 'A changed unselected-disk VMX binding must fail closed.'
 $changedWorkingDirectory = @($lines | ForEach-Object {
-        if ($_ -ceq 'workingDir = "C:\\vm"') { 'workingDir = "C:\\unexpected"' } else { $_ }
+        if ($_ -ceq 'workingDir = "C:\vm"') { 'workingDir = "C:\unexpected"' } else { $_ }
     })
 $changedWorkingDirectoryRejected = $false
 try { Assert-InstallationVmDiskBindings -VmxLines $changedWorkingDirectory -Context $bindingContext -IsoPath 'C:\offline media\atlaso.iso' }

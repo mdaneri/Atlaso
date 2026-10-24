@@ -215,11 +215,12 @@ public static class AtlasoInstallationPipePeer {
     }
     # Keep checked provider stop and disk comparison inside this runner's existing
     # whole-process-tree deadline, including the shared vmrun inactivity checks.
-    & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Verify -Worktree $worktree `
+    $verification = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Verify -Worktree $worktree `
         -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber `
         -OriginalReceiptPath $vm.ReceiptPath -OriginalReceiptSha256 $vm.ReceiptSha256 `
         -BaselineReceiptPath $vm.BaselineReceiptPath -BaselineReceiptSha256 $vm.BaselineReceiptSha256 `
         -VerifyTarget:($Scenario -ne 'Auto') -Confirm:$false
+    Write-Host ('Installation disk verification: ' + ($verification | ConvertTo-Json -Depth 4 -Compress))
 }
 finally {
     $pipe.Dispose()

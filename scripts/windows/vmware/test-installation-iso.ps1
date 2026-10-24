@@ -170,8 +170,11 @@ Text to encode as one VMX string while preserving spaces and path separators.
 #>
 function ConvertTo-InstallationVmxString {
     param([Parameter(Mandatory = $true)][string]$Value)
-    $escaped = $Value.Replace('\', '\\').Replace('"', '\"')
-    '"' + $escaped + '"'
+    if ([string]::IsNullOrWhiteSpace($Value) -or $Value -match '[\x00-\x1F\x7F"|]') {
+        throw 'VMX string values must be nonempty and cannot contain quotes, control characters, or pipe characters.'
+    }
+    # VMX paths use literal backslashes; doubling them changes the Win32 pipe name.
+    '"' + $Value + '"'
 }
 
 <#
@@ -430,10 +433,10 @@ Unique storage-device filename key to read.
 function Get-InstallationVmxPathAssignment {
     param([string[]]$VmxLines, [string]$Key)
     $lines = @($VmxLines | Where-Object { $_ -match ('^\s*' + [regex]::Escape($Key) + '\s*=') })
-    if ($lines.Count -ne 1 -or $lines[0] -notmatch ('^\s*' + [regex]::Escape($Key) + '\s*=\s*"(?<path>(?:[^"\\]|\\.)+)"\s*$')) {
+    if ($lines.Count -ne 1 -or $lines[0] -notmatch ('^\s*' + [regex]::Escape($Key) + '\s*=\s*"(?<path>[^"\x00-\x1F\x7F|]+)"\s*$')) {
         throw 'Receipt-bound installation VMX has a missing, duplicated, or malformed storage path.'
     }
-    $value = $Matches.path.Replace('\\', '\').Replace('\"', '"')
+    $value = $Matches.path
     if (-not [IO.Path]::IsPathFullyQualified($value)) { throw 'Receipt-bound installation VMX contains a non-absolute storage path.' }
     [IO.Path]::GetFullPath($value)
 }
