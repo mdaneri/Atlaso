@@ -2819,10 +2819,6 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             selected = {"ipv4", "ipv6"} if family == 0 else {f"ipv{family}"}
             if not common & selected:
                 raise ValueError(f"Settings archive routing permission row {row_index} has no common selected IP family.")
-        if archive_routes_wan_settings.routing_enabled and enabled and source == destination:
-            raise ValueError(
-                f"The settings archive row {row_index} in 'routing_rules' has identical source and destination interfaces."
-            )
 
     policy_ids = {
         str(row["name"]): row_index

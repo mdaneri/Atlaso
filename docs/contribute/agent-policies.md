@@ -2308,12 +2308,31 @@ preserved with their affected subsystem below. Keep new requirements at their to
   All four remain wizard-backed Tabulator collections using the ESX
   Storage reference. Add launches from the bottom row; edit launches from row double-click or its context action;
   generated route-role permissions remain read-only; and ordinary persisted Enabled state remains directly editable.
+- An explicit same-interface Routing Permission is the reviewed gateway mode for a non-management Access or Route
+  target: equal `source_interface` and `destination_interface` values intentionally select that mode. Only an explicit
+  `allow` may admit forwarding through this path; `automatic` never generates a same-interface allow, including for
+  Route-role targets. The allow firewall rule must match the configured ingress source prefix and chosen IP family,
+  and require the exact selected interface as both
+  `iifname` and `oifname` while allowing routed destinations for that family (`0.0.0.0/0` or `::/0`). Do not scope
+  destination matching only to the next-hop address or local subnet; forwarded packets retain their remote
+  destination. The per-interface default deny must precede established-flow and broad forwarding accepts so disabling
+  or removing the permission blocks new traffic through that interface. Routing off suspends the permission and
+  forwarding. Automatic same-interface denial preserves independently reviewed managed DNAT admission, whose private
+  connection mark and exact tuple are checked by the earlier port-forward guard. Explicit denies and management
+  isolation still precede that admission. Preserve dedicated-management isolation, the default forward drop policy,
+  and explicit NAT intent; do
+  not infer a WAN role, fallback to management routing, or require NAT when the upstream router already has a return
+  path to the client prefix. Internet forwarding through that permission requires a reviewed same-family lab default
+  route with an on-link upstream gateway on the selected target; destination-specific routes remain valid for other
+  routed destinations.
 - Keep **Default route** mutually exclusive with **Destination CIDR** in the Static Route wizard. Default mode requires
   an explicit IPv4 or IPv6 family and a same-family next-hop gateway that is on-link for the selected target (or IPv6
   link-local), persists canonical `0.0.0.0/0` or `::/0`, and
   permits only one default per family. Destination-specific routes require a CIDR and may omit the gateway when directly
-  connected. Preserve `/api/v1/routes` compatibility for callers that submit canonical `/0` CIDRs, and enforce the
-  contract in browser validation, UI/API transports, desired-state validation, settings restore, and the WAN helper.
+  connected. Internet forwarding through a same-interface gateway permission requires the reviewed lab default route
+  to use a same-family, on-link upstream gateway on that selected target. Preserve `/api/v1/routes` compatibility for
+  callers that submit canonical `/0` CIDRs, and enforce the route contract in browser validation, UI/API transports,
+  desired-state validation, settings restore, and the WAN helper.
 - Routing/WAN host mutation uses global `/ui/management/appliance-apply` `wan`; source NAT uses its separate `nat` unit.
   Do not add route-specific,
   NAT-specific, or WAN-policy-specific apply routes or direct helper calls from edit forms.
