@@ -88,6 +88,13 @@ def _mock_build_tools(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     validation_scratch: list[Path] = []
 
     def verify_rpms(_rpms: Path, _source: Path, scratch: Path) -> list[dict[str, str]]:
+        """Stub RPM verification and record its private scratch directory.
+
+        Args:
+            _rpms: RPM repository supplied to the verifier.
+            _source: Trusted source checkout supplied to the verifier.
+            scratch: Existing directory for RPM validation state.
+        """
         (scratch / "rpmdb").mkdir()
         validation_scratch.append(scratch)
         return [{
@@ -101,6 +108,12 @@ def _mock_build_tools(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     monkeypatch.setattr(build, "verify_rpms", verify_rpms)
 
     def rebuild(rpms: Path, _scratch: Path) -> None:
+        """Stub replacement of RPM repository metadata.
+
+        Args:
+            rpms: RPM repository whose metadata is rebuilt.
+            _scratch: Existing directory for temporary validation state.
+        """
         metadata = rpms / "repodata"
         metadata.mkdir()
         (metadata / "repomd.xml").write_text("generated metadata", encoding="utf-8")
@@ -224,6 +237,12 @@ def test_prepare_payload_rejects_non_main_software_commit_before_staging(
     calls: list[list[str]] = []
 
     def run(command: list[str], **_kwargs: object) -> None:
+        """Record the Git command and emulate an unrelated-ancestry result.
+
+        Args:
+            command: Git argument vector passed by the payload builder.
+            **_kwargs: Additional subprocess options supplied by the builder.
+        """
         calls.append(command)
         if "merge-base" in command:
             raise subprocess.CalledProcessError(1, command)

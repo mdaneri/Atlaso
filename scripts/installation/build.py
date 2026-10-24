@@ -374,6 +374,7 @@ def rebuild_repository(rpms: Path, scratch: Path) -> None:
 
     if metadata.exists():
         os.rename(metadata, untrusted)
+    generated.mkdir()
     subprocess.run(
         ["createrepo_c", "--checksum", "sha256", "--outputdir", str(generated), str(repository)],
         check=True,

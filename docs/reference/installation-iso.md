@@ -174,9 +174,9 @@ intended to use before writing the verified ISO to removable media.
 ## Acceptance status
 
 The generated release index reports physical hardware acceptance as pending until SATA/NVMe and wired-Ethernet results
-are recorded. Native VM evidence alone does not establish physical support or complete issue #542. The supported
-VMware path still lacks a blank-disk install-ISO boot and installer-console smoke test; native installer acceptance
-and the disconnected installation/update/rollback scenarios remain outstanding. Do not describe the installer as
+are recorded. Native VM evidence alone does not establish physical support or complete issue #542. The development
+VMware path supports receipt-bound blank-disk ISO and installer-console tests; their acceptance results and the
+disconnected installation/update/rollback scenarios remain outstanding. Do not describe the installer as
 validated or claim physical support while these gates are outstanding. Secure Boot is disabled for phase one; this
 reference makes no Secure Boot or ARM support claim.
 

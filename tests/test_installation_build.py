@@ -289,7 +289,8 @@ def _mock_createrepo(monkeypatch: pytest.MonkeyPatch, *, metadata: bytes = b"fre
         assert check is True
         calls.append(command)
         output = Path(command[command.index("--outputdir") + 1])
-        assert not output.exists()
+        assert output.is_dir()
+        assert not any(output.iterdir())
         generated_metadata = output / "repodata"
         generated_metadata.mkdir(parents=True)
         (generated_metadata / "repomd.xml").write_bytes(metadata)
@@ -500,6 +501,11 @@ def _mock_rpm_verification(
     commands: list[list[str]] = []
 
     def run_runtime_tool(command: list[str]) -> str:
+        """Record and emulate the RPM tooling boundary.
+
+        Args:
+            command: Argument vector passed to the shared runtime tool helper.
+        """
         commands.append(command)
         if command[0] == "rpm" and "--import" in command:
             if Path(command[-1]).name in unsupported_keys:
