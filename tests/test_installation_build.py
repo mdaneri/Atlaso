@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts import verify_virtualization_guest_wheel
 from scripts.installation import build
 from scripts.installation.manifest import MANIFEST
 
@@ -464,3 +465,104 @@ def test_rebuild_repository_rejects_symlinked_input_before_moving_metadata(
 
     assert (old / "repomd.xml").read_bytes() == b"preserve"
     assert not (scratch / "untrusted-rpm-metadata").exists()
+
+
+def _mock_rpm_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, summary: str
+) -> tuple[Path, Path, Path, list[list[str]]]:
+    """Create a minimal signed-RPM fixture and stub the shared runtime boundary.
+
+    Args:
+        tmp_path: Pytest-owned fixture directory.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        summary: Text returned from the mocked non-verbose rpmkeys command.
+    """
+    root = tmp_path / "rpms"
+    root.mkdir()
+    package = root / "python3-3.14.1-1.x86_64.rpm"
+    package.write_bytes(b"fixture RPM bytes")
+    source = tmp_path / "source"
+    key = source / "image/common/photon-rpm-gpg/VMWARE-RPM-GPG-KEY-test"
+    key.parent.mkdir(parents=True)
+    key.write_text("public test key", encoding="utf-8")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    commands: list[list[str]] = []
+
+    def run_runtime_tool(command: list[str]) -> str:
+        commands.append(command)
+        if command[0] == "rpmkeys":
+            return summary
+        if command[0] == "rpm" and "-qp" in command:
+            return "python3\t3.14.1-1\tx86_64"
+        return ""
+
+    monkeypatch.setattr(verify_virtualization_guest_wheel, "_run_runtime_tool", run_runtime_tool)
+    monkeypatch.setattr(verify_virtualization_guest_wheel, "_photon_repository_inventory", lambda: {})
+    monkeypatch.setattr(
+        verify_virtualization_guest_wheel,
+        "_require_admitted_runtime_package",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(build, "package_selection", lambda _source: ["python3"])
+    return root, source, scratch, commands
+
+
+def test_verify_rpms_accepts_signed_summary_without_verbose_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Require rpmkeys' signed summary format without the unstable verbose flag.
+
+    Args:
+        tmp_path: Pytest-owned fixture directory.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
+    root, source, scratch, commands = _mock_rpm_verification(
+        tmp_path, monkeypatch, "python3-3.14.1-1.x86_64.rpm: digests signatures OK"
+    )
+
+    records = build.verify_rpms(root, source, scratch)
+
+    signature_commands = [command for command in commands if command[0] == "rpmkeys"]
+    assert len(signature_commands) == 1
+    assert signature_commands[0][3:] == [
+        "--checksig",
+        str(root / "python3-3.14.1-1.x86_64.rpm"),
+    ]
+    assert "--verbose" not in signature_commands[0]
+    assert records == [{
+        "file": "python3-3.14.1-1.x86_64.rpm",
+        "name": "python3",
+        "version": "3.14.1-1",
+        "architecture": "x86_64",
+        "sha256": build.digest(root / "python3-3.14.1-1.x86_64.rpm"),
+    }]
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        "python3-3.14.1-1.x86_64.rpm: digests OK",
+        "python3-3.14.1-1.x86_64.rpm: NOKEY",
+    ],
+    ids=["digest-only", "missing-key"],
+)
+def test_verify_rpms_rejects_missing_signature_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, summary: str
+) -> None:
+    """Digest integrity without RPM signature success is not admitted.
+
+    Args:
+        tmp_path: Pytest-owned fixture directory.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        summary: Text returned from the mocked non-verbose rpmkeys command.
+    """
+    root, source, scratch, commands = _mock_rpm_verification(tmp_path, monkeypatch, summary)
+
+    with pytest.raises(ValueError, match="not signed"):
+        build.verify_rpms(root, source, scratch)
+
+    signature_commands = [command for command in commands if command[0] == "rpmkeys"]
+    assert len(signature_commands) == 1
+    assert "--verbose" not in signature_commands[0]
+    assert not any(command[0] == "rpm" and "-qp" in command for command in commands)

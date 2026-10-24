@@ -389,7 +389,8 @@ build {
       "set -eu",
       "test ! -e /tmp/atlaso-installation-rpms",
       "PYTHONPATH=/tmp/atlaso-src python3 -c 'from pathlib import Path; from scripts.installation.build import capture_packages; capture_packages(Path(\"/tmp/atlaso-src\"), Path(\"/tmp/atlaso-installation-rpms\"))'",
-      "tar -C /tmp -cf /tmp/atlaso-installation-rpms.tar atlaso-installation-rpms"
+      "tar -C /tmp -cf /tmp/atlaso-installation-rpms.tar atlaso-installation-rpms",
+      "chmod 0644 /tmp/atlaso-installation-rpms.tar"
     ]
     execute_command = "printf '%s' '${local.ssh_password_stdin_base64}' | base64 -d | sudo -S -E sh -c '{{ .Vars }} {{ .Path }}'"
     only            = var.capture_installation_rpms ? ["vmware-iso.photon"] : ["vmware-iso.disabled"]
@@ -436,7 +437,8 @@ build {
     inline = [
       "set -eu",
       "test -d /usr/local/share/powershell/Modules",
-      "tar -C /usr/local/share/powershell -cf /tmp/atlaso-installation-powercli.tar Modules"
+      "tar -C /usr/local/share/powershell -cf /tmp/atlaso-installation-powercli.tar Modules",
+      "chmod 0644 /tmp/atlaso-installation-powercli.tar"
     ]
     execute_command = "printf '%s' '${local.ssh_password_stdin_base64}' | base64 -d | sudo -S -E sh -c '{{ .Vars }} {{ .Path }}'"
     only            = var.capture_installation_rpms ? ["vmware-iso.photon"] : ["vmware-iso.disabled"]

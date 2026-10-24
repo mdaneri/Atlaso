@@ -113,7 +113,9 @@ def verify_rpms(root: Path, source: Path, scratch: Path) -> list[dict]:
     admitted = _photon_repository_inventory()
     for package in packages:
         checksum = digest(package)
-        result = _run_runtime_tool(["rpmkeys", "--dbpath", str(database), "--checksig", "--verbose", str(package)])
+        # The summary format is stable across RPM versions; verbose output uses
+        # separate signature lines on newer builders and has no summary marker.
+        result = _run_runtime_tool(["rpmkeys", "--dbpath", str(database), "--checksig", str(package)])
         if "signatures OK" not in result:
             raise ValueError("installation RPM is not signed by an admitted Photon key")
         _require_admitted_runtime_package(package, "rpm", admitted)
