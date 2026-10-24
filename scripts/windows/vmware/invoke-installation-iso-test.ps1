@@ -90,6 +90,25 @@ function Send-InstallationConsoleSecret {
 
 <#
 .SYNOPSIS
+Parse the public SCSI disk rows rendered by the fixed two-disk test fixture.
+.PARAMETER Text
+Public native disk-menu text, before any credential input.
+#>
+function Get-InstallationConsoleDiskOptions {
+    param([string]$Text)
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $index = 0
+    foreach ($match in [regex]::Matches($Text, '(?<size>[0-9]+) GiB @ (?<path>/dev/sd[a-z]+)')) {
+        $diskPath = $match.Groups['path'].Value
+        if ($seen.Add($diskPath)) {
+            [pscustomobject]@{ Index = $index; SizeGiB = [long]$match.Groups['size'].Value; DiskPath = $diskPath }
+            $index++
+        }
+    }
+}
+
+<#
+.SYNOPSIS
 Wait for a known public installer state while retaining console bytes only in memory.
 .PARAMETER Pipe
 Connected private serial pipe.
@@ -97,9 +116,11 @@ Connected private serial pipe.
 Expected public prompt text.
 .PARAMETER Deadline
 Absolute test deadline.
+.PARAMETER ReadDiskSelection
+Return the complete fixed-fixture public disk rows instead of returning at its title.
 #>
 function Wait-InstallationConsoleState {
-    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline)
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection)
     $buffer = [byte[]]::new(4096)
     $text = ''
     $failureDeadline = $null
@@ -120,6 +141,12 @@ function Wait-InstallationConsoleState {
             if ($count -eq 0) { throw 'The owned VM serial console disconnected before the expected state.' }
             $text += [Text.Encoding]::ASCII.GetString($buffer, 0, $count)
             $plain = [regex]::Replace($text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b[()][A-Z0-9]|\x1b[=>]', '')
+            if ($Pattern -cne 'Installation cancelled' -and $plain.Contains('Installation cancelled', [StringComparison]::Ordinal)) {
+                throw 'The installer cancelled before the expected console state.'
+            }
+            if ($plain.Contains('Password must ', [StringComparison]::Ordinal)) {
+                throw 'The installer rejected the concealed credential under its account policy.'
+            }
             if ($plain.Contains('Traceback (most recent call last):', [StringComparison]::Ordinal)) {
                 if (-not $failureDeadline) { $failureDeadline = [DateTimeOffset]::UtcNow.AddSeconds(2) }
                 # Wait briefly for fragmented frames, then emit only allowlisted
@@ -131,7 +158,18 @@ function Wait-InstallationConsoleState {
                     throw ('The installer reported a Python failure before the expected console state. Public location: {0}; {1}.' -f $kind.Groups[1].Value, ($frames -join ', '))
                 }
             }
-            if (-not $failureDeadline -and $plain.Contains($Pattern, [StringComparison]::Ordinal)) { return }
+            if (-not $failureDeadline -and $plain.Contains($Pattern, [StringComparison]::Ordinal)) {
+                if ($ReadDiskSelection) {
+                    $options = @(Get-InstallationConsoleDiskOptions -Text $plain)
+                    if ($options.Count -lt 2) { continue }
+                    if ($options.Count -ne 2 -or @($options | Where-Object SizeGiB -EQ 64).Count -ne 1 -or
+                        @($options | Where-Object SizeGiB -EQ 4).Count -ne 1) {
+                        throw 'Native disk menu does not match the receipt-bound 64 GiB target and 4 GiB unselected fixture.'
+                    }
+                    return $options
+                }
+                return
+            }
             if ($text.Length -gt 131072) { $text = $text.Substring($text.Length - 65536) }
         }
         throw 'The installer did not reach the expected public console state before its deadline.'
@@ -263,7 +301,7 @@ public static class AtlasoInstallationPipePeer {
     if (-not [AtlasoInstallationPipePeer]::MatchesExpectedProcess($peerId, [string[]]$providerImages, $vmxPath)) {
         throw 'The private console peer is not the receipt-bound VMware guest.'
     }
-    Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline
+    $diskOptions = @(Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline -ReadDiskSelection:($Scenario -eq 'Auto'))
     Write-Host 'Installer reached the native Photon disk selection screen.'
     if ($Scenario -eq 'Cancel') {
         # The pinned serial getty uses TERM=screen with application cursor keys.
@@ -272,11 +310,14 @@ public static class AtlasoInstallationPipePeer {
         Write-Host 'Installer cancellation returned without admitting disk writes.'
     }
     elseif ($Scenario -eq 'Auto') {
-        Send-InstallationConsoleText -Pipe $pipe -Text "`n"
+        # Kernel disk enumeration and native menu order can differ from VMX
+        # SCSI order. Make the operator selection by the fixture's unique size.
+        $target = @($diskOptions | Where-Object SizeGiB -EQ 64)[0]
+        Send-InstallationConsoleText -Pipe $pipe -Text (("`eOB" * $target.Index) + "`n")
         Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Review planned partitions' -Deadline $deadline
         Send-InstallationConsoleText -Pipe $pipe -Text "NEXT`n"
         Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Review Atlaso installation disk' -Deadline $deadline
-        Send-InstallationConsoleText -Pipe $pipe -Text "ERASE /dev/sda`n"
+        Send-InstallationConsoleText -Pipe $pipe -Text ("ERASE {0}`n" -f $target.DiskPath)
         foreach ($account in @('admin', 'root')) {
             $value = if ($account -eq 'admin') { $credentials.AdminPassword } else { $credentials.RootPassword }
             foreach ($verb in @('Set', 'Confirm')) {

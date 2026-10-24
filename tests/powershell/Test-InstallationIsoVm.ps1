@@ -85,6 +85,7 @@ function Get-InstallationVmFunctionText {
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Get-InstallationVmxPathAssignment')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmDiskBindings')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationSerialPipePath')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationConsoleDiskOptions')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Send-InstallationConsoleSecret')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Wait-InstallationConsoleState')))
 
@@ -397,6 +398,24 @@ function Close-InstallationTestPipePair {
     if ($Pair.Server) { $Pair.Server.Dispose() }
 }
 
+$diskRowsTargetFirst = @(
+    Get-InstallationConsoleDiskOptions -Text "Select a disk`n64 GiB @ /dev/sda`n4 GiB @ /dev/sdb"
+)
+Assert-InstallationVmCondition ($diskRowsTargetFirst.Count -eq 2) 'The parser must return both native disk rows.'
+Assert-InstallationVmCondition ($diskRowsTargetFirst[0].Index -eq 0 -and $diskRowsTargetFirst[0].SizeGiB -eq 64 -and
+    $diskRowsTargetFirst[0].DiskPath -ceq '/dev/sda') 'The first native row must retain its original 64 GiB target identity.'
+Assert-InstallationVmCondition ($diskRowsTargetFirst[1].Index -eq 1 -and $diskRowsTargetFirst[1].SizeGiB -eq 4 -and
+    $diskRowsTargetFirst[1].DiskPath -ceq '/dev/sdb') 'The second native row must retain its original 4 GiB unselected identity.'
+$diskRowsUnselectedFirst = @(Get-InstallationConsoleDiskOptions -Text "Select a disk`n4 GiB @ /dev/sda`n64 GiB @ /dev/sdb")
+Assert-InstallationVmCondition ($diskRowsUnselectedFirst.Count -eq 2 -and
+    $diskRowsUnselectedFirst[0].SizeGiB -eq 4 -and $diskRowsUnselectedFirst[0].Index -eq 0 -and
+    $diskRowsUnselectedFirst[1].SizeGiB -eq 64 -and $diskRowsUnselectedFirst[1].DiskPath -ceq '/dev/sdb' -and
+    $diskRowsUnselectedFirst[1].Index -eq 1) 'Disk selection must preserve native order when the 64 GiB target is /dev/sdb.'
+$diskRowsRepainted = @(Get-InstallationConsoleDiskOptions -Text "Select a disk`n64 GiB @ /dev/sdb`n4 GiB @ /dev/sda`n64 GiB @ /dev/sdb`n4 GiB @ /dev/sda")
+Assert-InstallationVmCondition ($diskRowsRepainted.Count -eq 2 -and
+    $diskRowsRepainted[0].DiskPath -ceq '/dev/sdb' -and $diskRowsRepainted[1].DiskPath -ceq '/dev/sda') `
+    'Repainted native rows must be de-duplicated without changing their first-seen order.'
+
 $pipePair = $null
 $asciiFixture = 'Atlaso-Public-Installer-Fixture-42'
 $fixtureBytes = [Text.Encoding]::ASCII.GetBytes($asciiFixture)
@@ -472,6 +491,47 @@ finally {
 }
 
 $pipePair = $null
+$diskSelectionSender = $null
+try {
+    $pipePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+    $diskSelectionSender = [AtlasoInstallationPipeTestWriter]::Start($pipePair.Client, [string[]]@(
+        "Select a disk`n",
+        '64 GiB @ /dev/sdb', "`n",
+        'Select a disk', "`n4 GiB @ /dev/sda`n"))
+    $selectedOptions = @(Wait-InstallationConsoleState -Pipe $pipePair.Server -Pattern 'Select a disk' `
+        -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadDiskSelection)
+    Assert-InstallationVmCondition ($selectedOptions.Count -eq 2 -and
+        $selectedOptions[0].DiskPath -ceq '/dev/sdb' -and $selectedOptions[0].SizeGiB -eq 64 -and
+        $selectedOptions[1].DiskPath -ceq '/dev/sda' -and $selectedOptions[1].SizeGiB -eq 4) `
+        'Disk-selection wait returned before both fragmented native rows arrived or changed their order.'
+    Assert-InstallationVmCondition $diskSelectionSender.Wait(5000) 'Fragmented disk selection fixture did not complete.'
+}
+finally {
+    if ($pipePair) { Close-InstallationTestPipePair -Pair $pipePair }
+}
+
+$pipePair = $null
+$mismatchedDiskSender = $null
+$mismatchedDiskRejected = $false
+try {
+    $pipePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+    $mismatchedDiskSender = [AtlasoInstallationPipeTestWriter]::Start($pipePair.Client, [string[]]@(
+        "Select a disk`n32 GiB @ /dev/sda`n4 GiB @ /dev/sdb`n"))
+    try {
+        $null = Wait-InstallationConsoleState -Pipe $pipePair.Server -Pattern 'Select a disk' `
+            -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadDiskSelection
+    }
+    catch {
+        $mismatchedDiskRejected = $_.Exception.Message -ceq 'Native disk menu does not match the receipt-bound 64 GiB target and 4 GiB unselected fixture.'
+    }
+    Assert-InstallationVmCondition $mismatchedDiskRejected 'Mismatched fixture capacities must fail closed.'
+    Assert-InstallationVmCondition $mismatchedDiskSender.Wait(5000) 'Mismatched disk fixture writer did not complete.'
+}
+finally {
+    if ($pipePair) { Close-InstallationTestPipePair -Pair $pipePair }
+}
+
+$pipePair = $null
 $timeoutObserved = $false
 try {
     $pipePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
@@ -537,6 +597,27 @@ try {
 }
 finally {
     if ($pipePair) { Close-InstallationTestPipePair -Pair $pipePair }
+}
+
+foreach ($publicFailure in @(
+    @{ Text = 'Installation cancelled. PublicSyntheticSensitiveFixture'; Expected = 'The installer cancelled before the expected console state.' },
+    @{ Text = 'Password must include an uppercase letter. PublicSyntheticSensitiveFixture'; Expected = 'The installer rejected the concealed credential under its account policy.' }
+)) {
+    $pipePair = $null
+    try {
+        $pipePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+        $failureSender = [AtlasoInstallationPipeTestWriter]::Start($pipePair.Client, [string[]]@($publicFailure.Text))
+        $failureObserved = $false
+        try {
+            Wait-InstallationConsoleState -Pipe $pipePair.Server -Pattern 'Confirm admin password' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5))
+        }
+        catch { $failureObserved = $_.Exception.Message -ceq $publicFailure.Expected }
+        Assert-InstallationVmCondition $failureObserved 'A native refusal must fail promptly without exposing console content.'
+        Assert-InstallationVmCondition $failureSender.Wait(5000) 'Public refusal fixture writer did not complete.'
+    }
+    finally {
+        if ($pipePair) { Close-InstallationTestPipePair -Pair $pipePair }
+    }
 }
 
 Write-Host 'Installation ISO VM harness source-contract checks passed.'
