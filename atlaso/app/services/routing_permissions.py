@@ -131,8 +131,6 @@ def validate_routing_permission(rule: RoutingRule, targets: list[dict[str, Any]]
             errors.append(f"Routing permission {label} must be a non-management Access or Route interface/VLAN.")
         elif rule.enabled is not False and family in {0, 4, 6} and target and not target_networks(target, family):
             errors.append(f"Routing permission {label} has no configured prefix for the selected IP family.")
-    if rule.source_interface == rule.destination_interface:
-        errors.append("Routing permission source and destination must be different.")
     source, destination = by_name.get(rule.source_interface), by_name.get(rule.destination_interface)
     if rule.enabled is not False and source and destination and family in {0, 4, 6}:
         common = {ip_network(n).version for n in target_networks(source, family)} & {ip_network(n).version for n in target_networks(destination, family)}
@@ -168,13 +166,20 @@ def routing_permission_rows(targets: list[dict[str, Any]], rules: list[RoutingRu
         family = row["ip_family"]
         row["source_networks"] = target_networks(source, family)
         row["destination_networks"] = target_networks(destination, family)
+        same_interface = row["source_interface"] == row["destination_interface"]
+        if same_interface:
+            # The egress interface chooses the gateway, not the IP destination.
+            row["destination_networks"] = [
+                "0.0.0.0/0" if ip_network(network).version == 4 else "::/0"
+                for network in row["source_networks"]
+            ]
         common = {ip_network(n).version for n in row["source_networks"]} & {ip_network(n).version for n in row["destination_networks"]}
         actions: dict[str, str] = {}
         for version in sorted(common):
             policies = active_policies.get((row["source_interface"], row["destination_interface"], version), set())
-            action = "explicit deny" if "deny" in policies else "explicit allow" if "allow" in policies else "automatic allow" if source.get("role") == destination.get("role") == "route" else "automatic deny"
+            action = "explicit deny" if "deny" in policies else "explicit allow" if "allow" in policies else "automatic allow" if not same_interface and source.get("role") == destination.get("role") == "route" else "automatic deny"
             actions[str(version)] = action
-        valid_scope = source.get("role") in {"route", "access"} and destination.get("role") in {"route", "access"} and row["source_interface"] != row["destination_interface"] and family in {0, 4, 6} and row["policy"] in ROUTING_POLICIES
+        valid_scope = source.get("role") in {"route", "access"} and destination.get("role") in {"route", "access"} and family in {0, 4, 6} and row["policy"] in ROUTING_POLICIES
         row["effective_action"] = ("suspended" if not routing_enabled or not row["enabled"] else
                                    "conflict" if not common or not valid_scope else
                                    next(iter(actions.values())) if len(set(actions.values())) == 1 else

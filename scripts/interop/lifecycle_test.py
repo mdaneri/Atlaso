@@ -196,6 +196,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--certificate-baseline-result", default="", help="Compare restored CA certificate evidence with a previous lifecycle result.json.")
     parser.add_argument("--restored-state-run", action="store_true", help="Run restored-state checks instead of configuring desired state from scratch.")
     parser.add_argument("--routing-wan-only", action="store_true", help="Run only network, routing, NAT, WAN, and client forwarding checks.")
+    parser.add_argument("--same-interface-gateway-only", action="store_true", help="Verify two receipt-bound Atlaso VMs on the same existing NAT network; the controller owns creation and address/SSH identity admission.")
+    parser.add_argument("--gateway-client-host", default="")
+    parser.add_argument("--gateway-client-hostkey", default="")
+    parser.add_argument("--gateway-upstream", default="")
+    parser.add_argument("--gateway-probe-ip", default="1.1.1.1")
+    parser.add_argument("--gateway-expected-commit", default="")
     parser.add_argument("--time-source-only", action="store_true", help="Verify all clock sources, ingress behavior, controller conflicts, and reboot persistence on one owned VMware appliance.")
     parser.add_argument("--time-source-site-network", default="", help="Host VMware adapter used by the owned time-source fixture.")
     parser.add_argument(
@@ -210,6 +216,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     for option in ("dir", "node", "packages", "browser"):
         parser.add_argument(f"--reverse-proxy-screenshot-{option}", default="")
     args = parser.parse_args(argv)
+    if args.same_interface_gateway_only and (args.reverse_proxy_only or args.time_source_only or args.oidc_only or args.routing_wan_only or args.restored_state_run or args.restore_settings_backup or args.export_settings_backup or args.signed_release_repository_url):
+        parser.error("--same-interface-gateway-only cannot be combined with other lifecycle modes.")
+    if args.same_interface_gateway_only and (not args.gateway_client_host or not args.gateway_client_hostkey or not args.appliance_ssh_hostkey or not args.gateway_upstream or re.fullmatch(r"[0-9a-f]{40}", args.gateway_expected_commit) is None):
+        parser.error("Same-interface acceptance requires both guest identities, upstream, and the exact source commit.")
     if args.reverse_proxy_only and (args.time_source_only or args.oidc_only or args.routing_wan_only or args.restored_state_run or args.restore_settings_backup or args.export_settings_backup or args.signed_release_repository_url):
         parser.error("--reverse-proxy-only cannot be combined with another lifecycle mode, backup, or signed release scenario.")
     if args.time_source_only and (args.oidc_only or args.routing_wan_only or args.restored_state_run or args.restore_settings_backup or args.export_settings_backup or args.signed_release_repository_url):
@@ -251,7 +261,7 @@ def load_lifecycle_secrets(args: argparse.Namespace, stream: TextIO) -> None:
     esxi_password = payload.get("esxi_password", "")
     if not isinstance(vcf_backup_password, str):
         raise LifecycleError("Lifecycle secret input contains an invalid VCF Backup password.")
-    if not (args.oidc_only or args.routing_wan_only or args.time_source_only or args.reverse_proxy_only) and not vcf_backup_password:
+    if not (args.oidc_only or args.routing_wan_only or args.time_source_only or args.reverse_proxy_only or args.same_interface_gateway_only) and not vcf_backup_password:
         raise LifecycleError("Lifecycle secret input requires a VCF Backup password for the full lifecycle.")
     if not isinstance(esxi_password, str):
         raise LifecycleError("Lifecycle secret input contains an invalid ESXi password.")
@@ -771,6 +781,11 @@ def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
     Args:
         args: Parsed command-line options consumed by the operation.
     """
+    if args.same_interface_gateway_only:
+        return {"appliance_url": args.appliance_url, "same_interface_gateway_only": True,
+                "client_host": args.gateway_client_host, "upstream": args.gateway_upstream,
+                "source_commit": args.gateway_expected_commit, "apply_units": ["network", "wan", "firewall"],
+                "checks": ["two sole-NIC Atlaso guests on the same existing NAT network", "client redirect bypass prevention", "same-tuple ingress/egress MAC and TTL evidence", "negative permission control with router internet preserved", "recovery and reboot persistence", "external IP separate from DNS"]}
     if args.reverse_proxy_only:
         return {
             "appliance_url": args.appliance_url,
@@ -5929,7 +5944,15 @@ def main() -> int:
         if args.pxe_test_mode == "esxi":
             if not args.esxi_password:
                 raise LifecycleError("The lifecycle secret input must include an ESXi password for an ESXi PXE run.")
-        if args.time_source_only:
+        if args.same_interface_gateway_only:
+            module_path = Path(__file__).with_name("same_interface_gateway_lifecycle.py")
+            spec = importlib.util.spec_from_file_location("atlaso_gateway_lifecycle", module_path)
+            if spec is None or spec.loader is None:
+                raise LifecycleError("The gateway lifecycle module is unavailable.")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            module.run_same_interface_gateway_acceptance(sys.modules[__name__], results, args)
+        elif args.time_source_only:
             module_path = Path(__file__).with_name("time_source_acceptance.py")
             spec = importlib.util.spec_from_file_location("atlaso_time_source_acceptance", module_path)
             if spec is None or spec.loader is None:

@@ -385,6 +385,35 @@ installation fails before any lifecycle VM is created.
 Appliance VMX files set `disk.EnableUUID = "TRUE"` so Photon exposes stable `/dev/disk/by-id` identities. ESX Storage
 blank-disk claims depend on those identities and reject transient `/dev/sdX` names.
 
+## Same-interface gateway acceptance
+
+The focused Python lifecycle mode `--same-interface-gateway-only` verifies two Atlaso appliances on the same existing
+Workstation NAT network. Create both through `create-atlaso-test-vm.ps1` with the open PR number, separate purposes
+`forwarding-router` and `forwarding-client`, the same confirmed `-ManagementNetwork`, `-SkipLabNetworkAdapters`, and
+`-SkipNetworkPrepare`. Preserve each original receipt and digest outside the VM roots. Do not change the shared VMnet
+subnet or adopt a retained VM. A provenance-admitted powered-off appliance template remains a read-only source;
+deploy the clean PR wheel and helper to each exact owned clone through `deploy-wheel.ps1`.
+
+Before running the consumer, prove both receipt bindings, each sole `eth0` attachment, current Tools address ownership,
+and the guest-published Ed25519 fingerprints. Read the actual VMware NAT gateway instead of assuming a production
+address. Pass those values through `--appliance-ssh-host`, `--appliance-ssh-hostkey`, `--gateway-client-host`,
+`--gateway-client-hostkey`, `--gateway-upstream`, and `--gateway-expected-commit` to `scripts/interop/lifecycle_test.py`.
+Use `--secret-stdin` with the existing bounded protected lifecycle credential handoff; never pass a password on the
+command line. Keep `--result-dir` under an originally receipted task output root. `--plan-only` emits the non-secret
+plan without connecting to either appliance. The ordinary multi-network `-RoutingWanOnly` wrapper does not select
+this two-Atlaso mode.
+
+The consumer uses authenticated browser editors and global Appliance Apply, with no API-token creation. It converts
+both owned NAT interfaces to static Access with Management UI, retains A's actual upstream default, and sets B's
+default to A. It explicitly disables accepting ICMP redirects on B and flushes learned route state, then checks
+effective routes before each probe. Packet evidence requires a client-to-A Ethernet frame and the matching A-to-gateway
+frame with the same IPv4/TCP tuple and a decremented TTL. The negative control disables the permission and requires
+client ingress without router egress while A still has external IPv4 connectivity. It restores the permission, checks
+DNS separately, and repeats forwarding after rebooting both appliances. It checks deployed source hashes, lab-table
+selection, forwarding sysctls, default-drop Firewall state, and absence of masquerade. Failed steps retain actionable
+native evidence; unit tests and a plan do not establish deployed success. Release both exact clones through their
+receipt-bound normal test-VM removal procedure after terminal task activity.
+
 ## Topology
 
 The default lifecycle lab creates isolated VM directories and result/log artifacts under its canonical identity:

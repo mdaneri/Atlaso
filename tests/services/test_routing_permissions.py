@@ -165,10 +165,9 @@ def test_generated_dual_stack_pair_explains_different_family_results():
         ({"policy": "permit"}, "policy must be automatic, allow, or deny"),
         ({"ip_family": 5}, "IP family must be 0 (both), 4, or 6"),
         ({"source_interface": "management"}, "protected management rules cannot be overridden"),
-        ({"destination_interface": "access-a"}, "source and destination must be different"),
     ],
 )
-def test_invalid_policy_family_management_and_self_target_are_rejected(changes, fragment):
+def test_invalid_policy_family_and_management_are_rejected(changes, fragment):
     """Reject unsupported values and protected or degenerate scopes.
 
     Args:
@@ -180,6 +179,29 @@ def test_invalid_policy_family_management_and_self_target_are_rejected(changes, 
     candidate = rule("Candidate", "access-a", "route-a", **changes)
 
     assert any(fragment in error for error in validate_routing_permission(candidate, targets))
+
+
+@pytest.mark.parametrize("role", ["access", "route"])
+@pytest.mark.parametrize("family", [0, 4, 6])
+def test_same_interface_gateway_requires_explicit_allow_and_projects_routed_destinations(role, family):
+    """A self-pair scopes routed destinations without creating automatic transit.
+
+    Args:
+        role: Eligible lab role, neither of which implies gateway forwarding.
+        family: Selected permission address family.
+    """
+    targets = [target("lab", role)]
+    permission = rule("Gateway", "lab", "lab", "automatic", family)
+    assert validate_routing_permission(permission, targets) == []
+    assert routing_permission_rows(targets, []) == []
+    row = routing_permission_rows(targets, [permission])[0]
+    assert row["effective_action"] == "automatic deny"
+    assert row["destination_networks"] == (["0.0.0.0/0", "::/0"] if family == 0 else ["0.0.0.0/0"] if family == 4 else ["::/0"])
+    permission.policy = "allow"
+    assert routing_permission_rows(targets, [permission])[0]["effective_action"] == "explicit allow"
+    deny = rule("Block gateway", "lab", "lab", "deny", family)
+    assert all(row["effective_action"] == "explicit deny" for row in routing_permission_rows(targets, [permission, deny]))
+    assert routing_permission_rows(targets, [permission], routing_enabled=False)[0]["effective_action"] == "suspended"
 
 
 def test_family_without_common_prefix_is_rejected():

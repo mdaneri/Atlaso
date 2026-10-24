@@ -587,6 +587,81 @@ def test_archive_rejects_enabled_permission_on_unused_endpoint(client):
         restore_settings_archive(db, archive)
 
 
+def test_same_interface_gateway_permission_archive_round_trip_preserves_scope(client):
+    """Restore explicit same-interface permission intent and its selected family."""
+    from atlaso.app.models import RoutingRule
+
+    with SessionLocal() as db:
+        db.add(
+            RoutingRule(
+                name="Reviewed same-interface gateway",
+                enabled=True,
+                source_interface="eth2",
+                destination_interface="eth2",
+                policy="allow",
+                ip_family=4,
+            )
+        )
+        db.commit()
+        archive = export_settings_archive(db, actor="test")
+    _set_routes_wan_setting(archive, key=ROUTING_ENABLED_SETTING_KEY, value=True)
+    row = next(
+        row for row in archive["data"]["routing_rules"] if row["name"] == "Reviewed same-interface gateway"
+    )
+    assert (row["source_interface"], row["destination_interface"], row["policy"], row["ip_family"]) == (
+        "eth2",
+        "eth2",
+        "allow",
+        4,
+    )
+
+    with SessionLocal() as db:
+        restore_settings_archive(db, archive)
+        restored = db.scalar(
+            select(RoutingRule).where(RoutingRule.name == "Reviewed same-interface gateway")
+        )
+
+    assert (
+        restored.source_interface,
+        restored.destination_interface,
+        restored.policy,
+        restored.ip_family,
+    ) == ("eth2", "eth2", "allow", 4)
+
+
+def test_same_interface_gateway_archive_cannot_target_management(client):
+    """Archive restore keeps management isolated from same-interface permissions."""
+    from atlaso.app.models import RoutingRule
+
+    with SessionLocal() as db:
+        db.add(
+            RoutingRule(
+                name="Reviewed same-interface gateway",
+                enabled=True,
+                source_interface="eth2",
+                destination_interface="eth2",
+                policy="allow",
+                ip_family=4,
+            )
+        )
+        db.commit()
+        archive = export_settings_archive(db, actor="test")
+    _set_routes_wan_setting(archive, key=ROUTING_ENABLED_SETTING_KEY, value=True)
+    row = next(
+        row for row in archive["data"]["routing_rules"] if row["name"] == "Reviewed same-interface gateway"
+    )
+    row["source_interface"] = "eth0"
+    row["destination_interface"] = "eth0"
+
+    with SessionLocal() as db, pytest.raises(ValueError, match="(?i)(management|ineligible interface)"):
+        restore_settings_archive(db, archive)
+    with SessionLocal() as db:
+        retained = db.scalar(
+            select(RoutingRule).where(RoutingRule.name == "Reviewed same-interface gateway")
+        )
+        assert (retained.source_interface, retained.destination_interface) == ("eth2", "eth2")
+
+
 def test_archive_rejects_malformed_dormant_routing_interfaces(client):
     """Dormancy may preserve absent targets, but never malformed names.
 

@@ -570,8 +570,6 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             return Response("Choose a non-management source interface or VLAN with an IP CIDR.", status_code=422, media_type="text/plain")
         if not destination_value or (enabled and destination_value not in target_names):
             return Response("Choose a non-management destination interface or VLAN with an IP CIDR.", status_code=422, media_type="text/plain")
-        if source_value == destination_value:
-            return Response("Routing source and destination must be different.", status_code=422, media_type="text/plain")
         priority_value = parse_int_form_value(priority.strip(), "Priority", default=100, minimum=0)
         if isinstance(priority_value, Response):
             return priority_value

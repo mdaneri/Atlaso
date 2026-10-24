@@ -597,10 +597,13 @@ def managed_routing_firewall_rules(
             continue
         if source["role"] not in {"route", "access"} or destination["role"] not in {"route", "access"}:
             continue
-        if source["name"] == destination["name"]:
-            continue
         source_networks = [network for network in source["networks"] if not family or ip_network(network).version == family]
         destination_networks = [network for network in destination["networks"] if not family or ip_network(network).version == family]
+        if source["name"] == destination["name"]:
+            destination_networks = [
+                "0.0.0.0/0" if ip_network(network).version == 4 else "::/0"
+                for network in source_networks
+            ]
         if not _common_routing_networks(source_networks, destination_networks):
             continue
         if policy == "automatic":
@@ -625,13 +628,16 @@ def managed_routing_firewall_rules(
     permission_targets = [target for target in lab_targets if target["role"] in {"route", "access"}]
     for source in permission_targets:
         for destination in permission_targets:
-            if source["name"] == destination["name"] or source["role"] == destination["role"] == "route":
+            same_interface = source["name"] == destination["name"]
+            if not same_interface and source["role"] == destination["role"] == "route":
                 continue
             for version in (4, 6):
                 if (source["name"], destination["name"], version) in allowed_pairs:
                     continue
                 source_networks = [network for network in source["networks"] if ip_network(network).version == version]
                 destination_networks = [network for network in destination["networks"] if ip_network(network).version == version]
+                if same_interface:
+                    destination_networks = ["0.0.0.0/0" if version == 4 else "::/0"]
                 if not source_networks or not destination_networks:
                     continue
                 rules.append(_routing_firewall_rule(

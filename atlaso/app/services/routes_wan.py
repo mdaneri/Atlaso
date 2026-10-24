@@ -729,8 +729,6 @@ def validate_wan_state(
                 errors.append(f"Routing rule {rule.name} source must be a non-management access or route interface.")
             if rule.enabled and rule.destination_interface not in routing_target_names:
                 errors.append(f"Routing rule {rule.name} destination must be a non-management access or route interface.")
-            if rule.enabled and rule.source_interface == rule.destination_interface:
-                errors.append(f"Routing rule {rule.name} must use different source and destination interfaces.")
             if rule.enabled and route_target_cidrs and rule.source_interface in route_target_cidrs and rule.destination_interface in route_target_cidrs:
                 family = rule.ip_family if rule.ip_family is not None else 0
                 source_families = {ip_network(value, strict=False).version for value in route_target_cidrs[rule.source_interface] if value}

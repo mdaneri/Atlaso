@@ -9372,7 +9372,10 @@ function initializeRoutesWanRoutingTable() {
             if (data.is_new) {
               return '<span class="status-pill warn">new explicit</span>';
             }
-            return '<span class="status-pill muted">explicit policy</span>';
+            const sameInterfaceGateway = data.source_interface && data.source_interface === data.destination_interface;
+            return sameInterfaceGateway
+              ? '<span class="status-pill warn">same-interface gateway</span>'
+              : '<span class="status-pill muted">explicit policy</span>';
           },
           width: 140,
           headerSort: false,
@@ -9395,6 +9398,9 @@ function initializeRoutesWanRoutingTable() {
             const data = cell.getRow().getData();
             if (data.is_new) return "";
             const networks = Array.isArray(cell.getValue()) ? cell.getValue().join(", ") : cell.getValue();
+            if (data.source_interface && data.source_interface === data.destination_interface) {
+              return escapeHtml(`Any routed destination via ${targetValues[data.destination_interface] || data.destination_interface}`);
+            }
             return escapeHtml(networks ? `${data.destination_interface}: ${networks}` : targetValues[data.destination_interface] || data.destination_interface || "Unavailable");
           },
           minWidth: 220,
@@ -9958,7 +9964,7 @@ function initializeRoutesWanWizards() {
       tab: "routes-wan-routing-panel",
       steps: [
         { id: "identity", title: "Name the permission", description: "Describe the forwarding policy for this directed network path." },
-        { id: "direction", title: "Choose forwarding direction and policy", description: "Select different non-management networks, the permission, and its IP family." },
+        { id: "direction", title: "Choose forwarding direction and policy", description: "Select two non-management networks, or select one interface at both ends for same-interface gateway forwarding." },
         { id: "state", title: "Choose permission state", description: "Enable the forwarding permission now or retain it disabled." },
         { id: "review", title: "Review the permission", description: "Confirm direction, priority, and management isolation." },
       ],
@@ -10098,7 +10104,12 @@ function initializeRoutesWanWizards() {
         const source = routesWanField(form, "source_interface");
         const destination = routesWanField(form, "destination_interface");
         setRoutesWanReview(form, "routing-name", routesWanField(form, "name")?.value);
-        setRoutesWanReview(form, "routing-path", `${source?.selectedOptions?.[0]?.textContent?.trim() || source?.value} → ${destination?.selectedOptions?.[0]?.textContent?.trim() || destination?.value}`);
+        const sourceLabel = source?.selectedOptions?.[0]?.textContent?.trim() || source?.value;
+        const destinationLabel = destination?.selectedOptions?.[0]?.textContent?.trim() || destination?.value;
+        const sameInterfaceGateway = source?.value && source.value === destination?.value;
+        setRoutesWanReview(form, "routing-path", sameInterfaceGateway
+          ? `Same-interface gateway · ${sourceLabel} source prefix → any routed destination via ${destinationLabel}`
+          : `${sourceLabel} → ${destinationLabel}`);
         const policy = routesWanField(form, "policy");
         const family = routesWanField(form, "ip_family");
         setRoutesWanReview(form, "routing-policy", `${policy?.selectedOptions?.[0]?.textContent?.trim() || "Allow"} · ${family?.selectedOptions?.[0]?.textContent?.trim() || "IPv4 and IPv6"}`);
@@ -10142,13 +10153,6 @@ function initializeRoutesWanWizards() {
             message: pathError.message,
             field: routesWanField(form, pathError.fieldName),
           };
-        }
-      }
-      if (kind === "routing" && step.id === "direction") {
-        const source = routesWanField(form, "source_interface");
-        const destination = routesWanField(form, "destination_interface");
-        if (source?.value === destination?.value) {
-          return { valid: false, message: "Routing source and destination must be different.", field: destination };
         }
       }
       if (kind === "nat" && ["translation", "state"].includes(step.id)) {
