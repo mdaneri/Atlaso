@@ -36,7 +36,7 @@ def test_active_workers_reports_master_and_worker_start_identity(monkeypatch, tm
     proc_root = tmp_path / "proc"
     worker_dir = proc_root / "431"
     (worker_dir / "task" / "431").mkdir(parents=True)
-    (worker_dir / "task" / "431" / "children").write_text("432 433\n", encoding="utf-8")
+    (worker_dir / "task" / "431" / "children").write_text("432 433 434\n", encoding="utf-8")
     (proc_root / "432").mkdir()
     (proc_root / "432" / "cmdline").write_bytes(b"nginx: worker process\0")
     worker_fields = ["S", *(str(value) for value in range(1, 20))]
@@ -44,8 +44,11 @@ def test_active_workers_reports_master_and_worker_start_identity(monkeypatch, tm
         "432 (nginx) " + " ".join(worker_fields), encoding="utf-8",
     )
     (proc_root / "433").mkdir()
-    (proc_root / "433" / "cmdline").write_bytes(b"nginx: cache manager process\0")
+    (proc_root / "433" / "cmdline").write_bytes(b"nginx: worker process is shutting down\0")
     (proc_root / "433" / "stat").write_text("433 (nginx) S " + " ".join("1" for _ in range(20)), encoding="utf-8")
+    (proc_root / "434").mkdir()
+    (proc_root / "434" / "cmdline").write_bytes(b"nginx: cache manager process\0")
+    (proc_root / "434" / "stat").write_text("434 (nginx) S " + " ".join("1" for _ in range(20)), encoding="utf-8")
 
     monkeypatch.setattr(
         helper, "Path",
@@ -626,37 +629,97 @@ def test_nginx_bridge_timeout_is_recorded_while_recovery_continues(
 
 
 @pytest.mark.parametrize("verify_activation", [False, True])
-@pytest.mark.parametrize("replacement", [False, True])
-def test_reload_nginx_preserves_draining_workers_when_replacement_accepts(monkeypatch, verify_activation, replacement):
-    """A new worker confirms reload even while previous workers drain connections.
+@pytest.mark.parametrize(
+    "generations",
+    [
+        [{(432, 19), (433, 20), (434, 21)}, {(433, 20), (434, 21)}, {(434, 21)}],
+        [{(432, 19), (433, 20), (434, 21)}, {(433, 20), (434, 21)}, {(434, 21), (435, 22)}],
+    ],
+)
+def test_reload_nginx_waits_until_previous_workers_stop_accepting(
+    monkeypatch, verify_activation, generations,
+):
+    """Wait through overlapping and partial worker retirement before accepting reload.
 
     Args:
         monkeypatch: Substitute bounded process observations and command execution.
-        verify_activation: Protected activation or ordinary reload fallback contract.
-        replacement: Observe a new worker or only a subset of the old workers.
+        verify_activation: Whether a failed activation may use the ordinary restart fallback.
+        generations: Successive worker sets from a multiworker reload.
     """
     helper = load_helper_module()
     previous = (431, {(432, 19), (433, 20)})
-    current = (431, {(432, 19), (434, 21)} if replacement else {(432, 19)})
     calls = []
-    observations = 0
+    expected_generations = [previous[1], *generations]
+    observed = iter(expected_generations)
+    seen = []
+    now = [0]
 
     def generation():
-        """Return the admitted old identity once, then the observed mixed set."""
-        nonlocal observations
-        observations += 1
-        return previous if observations == 1 else current
+        """Return successive accepting sets, then retain the final set."""
+        workers = next(observed, generations[-1])
+        seen.append(workers)
+        return 431, workers
 
-    ticks = iter(range(20))
     monkeypatch.setattr(helper, "_nginx_active_workers", generation)
     monkeypatch.setattr(helper, "_nginx_worker_generation", generation)
-    monkeypatch.setattr(helper.time, "monotonic", lambda: next(ticks))
-    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(helper.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(helper.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
     monkeypatch.setattr(helper, "_run", lambda command, **_kwargs: calls.append(command) or subprocess.CompletedProcess(command, 0, "", ""))
-    assert helper._reload_nginx(verify_activation=verify_activation) == (1 if verify_activation and not replacement else 0)
+    assert helper._reload_nginx(verify_activation=verify_activation) == 0
     expected = [["systemctl", "reload", "nginx"]]
     if not verify_activation:
         expected.append(["systemctl", "enable", "--now", "nginx"])
-        if not replacement:
-            expected.append(["systemctl", "restart", "nginx"])
     assert calls == expected
+    assert seen == expected_generations
+
+
+@pytest.mark.parametrize("verify_activation", [False, True])
+def test_reload_nginx_rejects_persistent_accepting_worker_overlap(monkeypatch, verify_activation):
+    """Do not accept an incomplete multiworker generation or skip ordinary fallback.
+
+    Args:
+        monkeypatch: Substitute bounded process observations and command execution.
+        verify_activation: Whether a failed activation may use the ordinary restart fallback.
+    """
+    helper = load_helper_module()
+    previous = (431, {(432, 19), (433, 20)})
+    overlapping = (431, {(432, 19), (433, 20), (434, 21)})
+    now = [0]
+    commands = []
+
+    def generation():
+        """Return one candidate worker while every prior worker still accepts."""
+        return overlapping
+
+    def run(command, **_kwargs):
+        """Record reload and fallback commands as successful.
+
+        Args:
+            command: Systemd command requested by the reload helper.
+            **_kwargs: Process options accepted by the command fixture.
+        """
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(helper.time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
+    monkeypatch.setattr(helper, "_run", run)
+
+    # The initial worker inventory must be the old accepting generation.
+    first_observation = True
+
+    def old_then_overlap():
+        """Return the pre-reload set once before persistent worker overlap."""
+        nonlocal first_observation
+        if first_observation:
+            first_observation = False
+            return previous
+        return generation()
+
+    monkeypatch.setattr(helper, "_nginx_active_workers", old_then_overlap)
+    monkeypatch.setattr(helper, "_nginx_worker_generation", old_then_overlap)
+    assert helper._reload_nginx(verify_activation=verify_activation) == (1 if verify_activation else 0)
+    expected = [["systemctl", "reload", "nginx"]]
+    if not verify_activation:
+        expected.extend([["systemctl", "enable", "--now", "nginx"], ["systemctl", "restart", "nginx"]])
+    assert commands == expected
