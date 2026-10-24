@@ -394,7 +394,7 @@ Workstation NAT network. Create both through `create-atlaso-test-vm.ps1` with th
 subnet or adopt a retained VM. A provenance-admitted powered-off appliance template remains a read-only source;
 deploy the clean PR wheel and helper to each exact owned clone through `deploy-wheel.ps1`.
 
-Before running the consumer, prove both receipt bindings, each sole `eth0` attachment, current Tools address ownership,
+Before running the consumer, prove both receipt bindings, each active `eth0` NAT attachment, current Tools address ownership,
 and the guest-published Ed25519 fingerprints. Read the actual VMware NAT gateway instead of assuming a production
 address. Pass those values through `--appliance-ssh-host`, `--appliance-ssh-hostkey`, `--gateway-client-host`,
 `--gateway-client-hostkey`, `--gateway-upstream`, and `--gateway-expected-commit` to `scripts/interop/lifecycle_test.py`.
@@ -405,7 +405,8 @@ this two-Atlaso mode.
 
 The consumer uses authenticated browser editors and global Appliance Apply, with no API-token creation. It converts
 both owned NAT interfaces to static Access with Management UI, retains A's actual upstream default, and sets B's
-default to A. It explicitly disables accepting ICMP redirects on B and flushes learned route state, then checks
+default to A. Inert inherited adapters must start down and unaddressed; their desired state is kept unused and down.
+It explicitly disables accepting ICMP redirects on B and flushes learned route state, then checks
 effective routes before each probe. Packet evidence requires a client-to-A Ethernet frame and the matching A-to-gateway
 frame with the same IPv4/TCP tuple and a decremented TTL. The negative control disables the permission and requires
 client ingress without router egress while A still has external IPv4 connectivity. It restores the permission, checks

@@ -43,6 +43,22 @@ class _Rows(HTMLParser):
             self.rows = json.loads(values[self.attribute] or "[]")
 
 
+def _active_nat_link(state: dict) -> dict:
+    """Require eth0 as the only usable adapter, allowing inert inherited NICs.
+
+    Args:
+        state: Native address inventory from the exact owned guest.
+    """
+    links = [link for link in state["addresses"] if link["ifname"] != "lo"]
+    primary = next((link for link in links if link["ifname"] == "eth0"), None)
+    if primary is None or any(
+        link["ifname"] != "eth0" and (link.get("addr_info") or "UP" in link.get("flags", []))
+        for link in links
+    ):
+        raise GatewayLifecycleError("Only the NAT eth0 adapter may be active or addressed.")
+    return primary
+
+
 def run_same_interface_gateway_acceptance(lifecycle: Any, results: list, args: Any) -> None:
     """Use ordinary browser desired-state and global Apply on receipt-bound clones.
 
@@ -117,15 +133,13 @@ print(json.dumps({'addresses':read('ip','-j','addr'),'routes':read('ip','-j','ro
     macs: dict[str, str] = {}
     cidrs: dict[str, str] = {}
     for host, state in initial.items():
-        links = [link for link in state["addresses"] if link["ifname"] != "lo"]
-        if len(links) != 1 or links[0]["ifname"] != interface:
-            raise GatewayLifecycleError("Each appliance must have only its NAT eth0 adapter.")
-        address = next(item for item in links[0]["addr_info"] if item["family"] == "inet" and item["local"] == host)
+        primary = _active_nat_link(state)
+        address = next(item for item in primary["addr_info"] if item["family"] == "inet" and item["local"] == host)
         cidrs[host] = f"{host}/{address['prefixlen']}"
         network = ipaddress.ip_interface(cidrs[host]).network
         if any(ipaddress.ip_address(value) not in network for value in (router, client_ip, upstream)):
             raise GatewayLifecycleError("The two appliances and upstream must share the actual NAT subnet.")
-        macs[host] = links[0]["address"]
+        macs[host] = primary["address"]
         client = lifecycle.HttpClient("https://" + host)
         lifecycle.ui_login(client, args)
         clients[host] = client
@@ -148,7 +162,14 @@ print(json.dumps({p:hashlib.sha256(f.read_text().encode()).hexdigest() for p,f i
     step("gateway-client-deployed-source", lambda: deployed_source(client_ip))
 
     def configure(host: str, gateway: str, routing: bool) -> dict:
-        physical = next(row for row in rows(host, "/physical-interfaces", "data-interfaces") if row["name"] == interface)
+        physical_rows = rows(host, "/physical-interfaces", "data-interfaces")
+        physical = next(row for row in physical_rows if row["name"] == interface)
+        for other in physical_rows:
+            if other["name"] != interface and other.get("oper_state") != "missing":
+                save(host, "/physical-interfaces", f"/physical-interfaces/{other['id']}/edit", {
+                    "role": "unused", "mode": "unused", "ipv4_method": "static", "ip_cidr": "",
+                    "gateway": "", "mtu": "1500", "admin_state": "down", "access_management_ui_enabled": "",
+                })
         # Capture the current DHCP gateway in the first transition so the existing
         # management-to-Access service can preserve a reviewed local egress path.
         save(host, "/physical-interfaces", f"/physical-interfaces/{physical['id']}/edit", {
@@ -190,6 +211,7 @@ print(json.dumps({{'connected':r==0}}))'''
 
     def captured(expected: bool) -> dict:
         state = observe(client_ip)
+        _active_nat_link(state)
         if any(value != "0" for value in state["accept_redirects"].values()):
             raise GatewayLifecycleError("The client can accept ICMP redirects.")
         defaults = [route for route in state["routes"] if route.get("dst") == "default"]
@@ -200,6 +222,7 @@ print(json.dumps({{'connected':r==0}}))'''
             raise GatewayLifecycleError("The client probe would bypass the router.")
         probe_connection(router, True)
         router_state = observe(router)
+        _active_nat_link(router_state)
         if router_state["forwarding"] != "1" or "policy drop;" not in router_state["forward_chain"] or router_state["translations"]:
             raise GatewayLifecycleError("The router must forward with the default drop firewall and no masquerade.")
         router_path = json.loads(guest(router,

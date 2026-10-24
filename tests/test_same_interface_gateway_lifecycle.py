@@ -179,3 +179,48 @@ def test_gateway_secret_envelope_and_dispatch_skip_legacy_api_client(monkeypatch
     result_text = (tmp_path / "result.json").read_text(encoding="utf-8")
     assert json.loads(result_text)["status"] == "passed"
     assert all(secret not in result_text for secret in envelope.values())
+
+
+def _link(name: str, *, flags: list[str], addr_info: list[dict] | None = None) -> dict:
+    return {
+        "ifname": name,
+        "flags": flags,
+        "addr_info": addr_info or [],
+        "address": "02:00:00:00:00:01",
+    }
+
+
+def _inventory(*links: dict) -> dict:
+    return {"addresses": [_link("lo", flags=["UP"]), *links]}
+
+
+def test_active_nat_link_accepts_eth0_with_or_without_inert_inherited_adapter():
+    """Keep the active NAT identity while tolerating only an inert extra NIC."""
+    eth0 = _link("eth0", flags=["BROADCAST", "UP"], addr_info=[{"family": "inet"}])
+    assert gateway_lifecycle._active_nat_link(_inventory(eth0)) is eth0
+
+    down = _link("eth1", flags=["BROADCAST"])
+    assert gateway_lifecycle._active_nat_link(_inventory(eth0, down)) is eth0
+
+
+@pytest.mark.parametrize(
+    "extra_link",
+    [
+        _link("eth1", flags=["BROADCAST", "UP"]),
+        _link("eth1", flags=["BROADCAST"], addr_info=[{"family": "inet", "local": "192.0.2.30"}]),
+        _link("eth1", flags=["BROADCAST"], addr_info=[{"family": "inet6", "local": "2001:db8::30"}]),
+    ],
+    ids=["up-without-address", "ipv4-addressed", "ipv6-addressed"],
+)
+def test_active_nat_link_rejects_other_active_or_addressed_adapters(extra_link):
+    """An inherited adapter must be down and have no IPv4 or IPv6 addresses."""
+    eth0 = _link("eth0", flags=["BROADCAST", "UP"], addr_info=[{"family": "inet"}])
+
+    with pytest.raises(gateway_lifecycle.GatewayLifecycleError, match="Only the NAT eth0 adapter"):
+        gateway_lifecycle._active_nat_link(_inventory(eth0, extra_link))
+
+
+def test_active_nat_link_rejects_inventory_without_eth0():
+    """A passive inherited NIC cannot replace the receipt-bound NAT adapter."""
+    with pytest.raises(gateway_lifecycle.GatewayLifecycleError, match="Only the NAT eth0 adapter"):
+        gateway_lifecycle._active_nat_link(_inventory(_link("eth1", flags=["BROADCAST"])))
