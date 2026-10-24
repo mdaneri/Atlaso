@@ -285,6 +285,10 @@ interface's configured source prefix, and applies to routed destinations across 
 packets addressed to the upstream gateway itself. **Automatic** never grants this same-interface path, including on a
 Route interface. Atlaso does not infer source NAT for it.
 
+If you first need to convert a dedicated management interface to Access with **Management UI**, keep Routing off and
+complete that protected Network handoff before enabling Routing. Then review the lab default and permission and apply
+**Routing & WAN** and **Firewall** together. The management conversion cannot be combined with enabling forwarding.
+
 For example, with an Access interface at `192.168.1.254/24` and an upstream router at `192.168.1.1`, add or review an
 IPv4 **Default route** through gateway `192.168.1.1` on that same interface. Then add an IPv4 **Allow** Routing
 Permission with the interface selected for both endpoints. Configure a client on that subnet to use

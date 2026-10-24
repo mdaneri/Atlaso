@@ -127,6 +127,8 @@ print(json.dumps({'addresses':read('ip','-j','addr'),'routes':read('ip','-j','ro
         def safe_operation() -> Any:
             try:
                 return operation()
+            except GatewayLifecycleError:
+                raise
             except Exception:  # noqa: BLE001 - the public lifecycle result must never include credential-bearing transport diagnostics.
                 raise GatewayLifecycleError(f"Same-interface acceptance failed at {name}.") from None
         return lifecycle.run_step(results, name, safe_operation)
@@ -136,6 +138,8 @@ print(json.dumps({'addresses':read('ip','-j','addr'),'routes':read('ip','-j','ro
     macs: dict[str, str] = {}
     cidrs: dict[str, str] = {}
     for host, state in initial.items():
+        if state["forwarding"] != "0":
+            raise GatewayLifecycleError("Fresh gateway fixtures must start with forwarding disabled.")
         primary = _active_nat_link(state)
         address = next(item for item in primary["addr_info"] if item["family"] == "inet" and item["local"] == host)
         cidrs[host] = f"{host}/{address['prefixlen']}"
@@ -190,6 +194,10 @@ print(json.dumps({'vmware_timesync':tools.stdout.strip(),'clock_services':servic
     step("gateway-client-fixture-clock", lambda: fixture_clock(client_ip))
 
     def configure(host: str, gateway: str, routing: bool) -> dict:
+        # Protected management handoff requires desired and applied forwarding off.
+        # Stage the lab route while off; an Access-management default still serves
+        # appliance-local egress. Forwarding is a separate reviewed Apply below.
+        save(host, "/routes-wan", "/routes-wan/settings", {"routing_enabled": ""})
         physical_rows = rows(host, "/physical-interfaces", "data-interfaces")
         physical = next(row for row in physical_rows if row["name"] == interface)
         for other in physical_rows:
@@ -208,11 +216,14 @@ print(json.dumps({'vmware_timesync':tools.stdout.strip(),'clock_services':servic
         action = f"/routes-wan/routes/{defaults[0]['id']}/edit" if defaults else "/routes-wan/routes"
         save(host, "/routes-wan", action, {"default_route": "on", "default_route_family": "4",
              "gateway": gateway, "interface_name": interface, "metric": "100", "enabled": "on", "wan_mode": "interface"})
-        save(host, "/routes-wan", "/routes-wan/settings", {"routing_enabled": "on" if routing else ""})
         save(host, "/firewall", "/firewall/settings", {"enabled": "on", "default_input_policy": "drop",
             "default_forward_policy": "drop", "default_output_policy": "accept", "allow_established": "on",
             "allow_loopback": "on", "allow_icmp": "on"})
-        return apply(host, ["network", "wan", "firewall"])
+        network_result = apply(host, ["network", "wan", "firewall"])
+        if routing:
+            save(host, "/routes-wan", "/routes-wan/settings", {"routing_enabled": "on"})
+            return {"network": network_result, "routing": apply(host, ["wan", "firewall"])}
+        return {"network": network_result}
 
     step("gateway-configure-router", lambda: configure(router, upstream, True))
     step("gateway-configure-client", lambda: configure(client_ip, router, False))

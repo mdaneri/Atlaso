@@ -407,7 +407,8 @@ The consumer uses authenticated browser editors and global Appliance Apply, with
 both fresh clones to verified VMware Tools clock authority through the NTP settings and global Apply, so the client
 negative control does not depend on internet time sources or leave competing clock controllers active. It then converts
 both owned NAT interfaces to static Access with Management UI, retains A's actual upstream default, and sets B's
-default to A. Inert inherited adapters must start down and unaddressed; their desired state is kept unused and down.
+default to A. It completes the protected management handoff with Routing off, then enables A's Routing in a separate
+WAN/Firewall Apply. Inert inherited adapters must start down and unaddressed; their desired state is kept unused and down.
 It explicitly disables accepting ICMP redirects on B and flushes learned route state, then checks
 effective routes before each probe. Packet evidence requires a client-to-A Ethernet frame and the matching A-to-gateway
 frame with the same IPv4/TCP tuple and a decremented TTL. The negative control disables the permission and requires
