@@ -14,7 +14,7 @@ Absent task-owned VM output directory.
 .PARAMETER PullRequestNumber
 Exact owning pull request.
 .PARAMETER Scenario
-Probe the native UI, cancel before writes, run Auto installation, or install and boot without media with AutoReboot.
+Probe the native UI, cancel at disk/layout review, reject insufficient capacity, run Auto, or install and boot without media.
 .PARAMETER TimeoutSeconds
 Whole test and console deadline.
 .PARAMETER Child
@@ -26,7 +26,7 @@ param(
     [Parameter(Mandatory = $true)][string]$IsoSha256,
     [Parameter(Mandatory = $true)][string]$OutputDirectory,
     [Parameter(Mandatory = $true)][ValidateRange(1, 2147483647)][int]$PullRequestNumber,
-    [ValidateSet('Probe', 'Cancel', 'Auto', 'AutoReboot')][string]$Scenario = 'Probe',
+    [ValidateSet('Probe', 'Cancel', 'CancelReview', 'Insufficient', 'Auto', 'AutoReboot')][string]$Scenario = 'Probe',
     [ValidateRange(60, 14400)][int]$TimeoutSeconds = 3600,
     [switch]$Child
 )
@@ -300,9 +300,11 @@ Return the complete fixed-fixture public disk rows instead of returning at its t
 Fixed public stage labels from the admitted provisioner; unknown messages are never reported.
 .PARAMETER ReadBootProgress
 Report only fixed boot-stage categories while waiting before installed credential entry.
+.PARAMETER ExpectedCapacityDisk
+Exact public fixture disk whose four-GiB capacity refusal is expected before consent.
 #>
 function Wait-InstallationConsoleState {
-    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress)
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [string]$ExpectedCapacityDisk = '')
     $buffer = [byte[]]::new(4096)
     $text = ''
     $failureDeadline = $null
@@ -388,10 +390,19 @@ function Wait-InstallationConsoleState {
                         Write-Host ('Public capacity refusal: {0}, {1} bytes; requires 68719476736 bytes.' -f
                             $capacity.Groups['disk'].Value, $capacity.Groups['bytes'].Value)
                     }
+                    if ($ExpectedCapacityDisk -and $kind.Groups[1].Value -ceq 'ValueError' -and -not $capacity.Success -and
+                        [DateTimeOffset]::UtcNow -lt $failureDeadline) {
+                        continue
+                    }
+                    if ($ExpectedCapacityDisk -and $kind.Groups[1].Value -ceq 'ValueError' -and $capacity.Success -and
+                        $capacity.Groups['disk'].Value -ceq $ExpectedCapacityDisk -and $capacity.Groups['bytes'].Value -ceq '4294967296') {
+                        Write-Host 'The selected four-GiB disk was refused before erasure consent.'
+                        return
+                    }
                     throw ('The installer reported a Python failure before the expected console state. Public location: {0}; {1}.' -f $kind.Groups[1].Value, ($frames -join ', '))
                 }
             }
-            if (-not $failureDeadline -and $plain.Contains($Pattern, [StringComparison]::Ordinal)) {
+            if (-not $ExpectedCapacityDisk -and -not $failureDeadline -and $plain.Contains($Pattern, [StringComparison]::Ordinal)) {
                 if ($ReadDiskSelection) {
                     $options = @(Get-InstallationConsoleDiskOptions -Text $text)
                     if ($options.Count -lt 2) { continue }
@@ -559,7 +570,7 @@ public static class AtlasoInstallationPipePeer {
     if (-not [AtlasoInstallationPipePeer]::MatchesExpectedProcess($peerId, [string[]]$providerImages, $vmxPath)) {
         throw 'The private console peer is not the receipt-bound VMware guest.'
     }
-    $diskOptions = @(Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline -ReadDiskSelection:($Scenario -in @('Auto', 'AutoReboot')))
+    $diskOptions = @(Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline -ReadDiskSelection:($Scenario -in @('Auto', 'AutoReboot', 'CancelReview', 'Insufficient')))
     Write-Host 'Installer reached the native Photon disk selection screen.'
     if ($Scenario -eq 'Cancel') {
         # The pinned serial getty uses TERM=screen with application cursor keys.
@@ -567,27 +578,37 @@ public static class AtlasoInstallationPipePeer {
         Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
         Write-Host 'Installer cancellation returned without admitting disk writes.'
     }
-    elseif ($Scenario -in @('Auto', 'AutoReboot')) {
-        # Kernel disk enumeration and native menu order can differ from VMX
-        # SCSI order. Make the operator selection by the fixture's unique size.
-        $target = @($diskOptions | Where-Object SizeGiB -EQ 64)[0]
-        Write-Host ('Selecting public native disk row {0}: {1} (64 GiB).' -f $target.Index, $target.DiskPath)
-        # Normalize the native menu to its first row before selecting the visual index.
+    elseif ($Scenario -in @('Auto', 'AutoReboot', 'CancelReview', 'Insufficient')) {
+        # Native visual row order can differ from VMX SCSI order.
+        $selectedGiB = if ($Scenario -eq 'Insufficient') { 4 } else { 64 }
+        $target = @($diskOptions | Where-Object SizeGiB -EQ $selectedGiB)[0]
+        Write-Host ('Selecting public native disk row {0}: {1} ({2} GiB).' -f $target.Index, $target.DiskPath, $selectedGiB)
         Send-InstallationConsoleText -Pipe $pipe -Text ("`eOA`eOA" + ("`eOB" * $target.Index) + "`n")
-        Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Review planned partitions' -Deadline $deadline
-        Send-InstallationConsoleText -Pipe $pipe -Text "NEXT`n"
-        Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Review Atlaso installation disk' -Deadline $deadline
-        Send-InstallationConsoleText -Pipe $pipe -Text ("ERASE {0}`n" -f $target.DiskPath)
-        foreach ($account in @('admin', 'root')) {
-            $value = if ($account -eq 'admin') { $credentials.AdminPassword } else { $credentials.RootPassword }
-            foreach ($verb in @('Set', 'Confirm')) {
-                Wait-InstallationConsoleState -Pipe $pipe -Pattern "$verb $account password" -Deadline $deadline
-                Send-InstallationConsoleSecret -Pipe $pipe -Value $value
+        if ($Scenario -eq 'Insufficient') {
+            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'default installation requires a disk of at least 64 GiB' `
+                -Deadline $deadline -ExpectedCapacityDisk $target.DiskPath
+        } else {
+            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Review planned partitions' -Deadline $deadline
+            if ($Scenario -eq 'CancelReview') {
+                Send-InstallationConsoleText -Pipe $pipe -Text "CANCEL`n"
+                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
+                Write-Host 'Planned-layout review cancelled before erasure consent.'
+            } else {
+                Send-InstallationConsoleText -Pipe $pipe -Text "NEXT`n"
+                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Review Atlaso installation disk' -Deadline $deadline
+                Send-InstallationConsoleText -Pipe $pipe -Text ("ERASE {0}`n" -f $target.DiskPath)
+                foreach ($account in @('admin', 'root')) {
+                    $value = if ($account -eq 'admin') { $credentials.AdminPassword } else { $credentials.RootPassword }
+                    foreach ($verb in @('Set', 'Confirm')) {
+                        Wait-InstallationConsoleState -Pipe $pipe -Pattern "$verb $account password" -Deadline $deadline
+                        Send-InstallationConsoleSecret -Pipe $pipe -Value $value
+                    }
+                }
+                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Atlaso installation completed.' -Deadline $deadline `
+                    -KnownProvisioningStages $knownProvisioningStages
+                Write-Host 'Disconnected Auto installation completed; reboot and persistence acceptance remain separate.'
             }
         }
-        Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Atlaso installation completed.' -Deadline $deadline `
-            -KnownProvisioningStages $knownProvisioningStages
-        Write-Host 'Disconnected Auto installation completed; reboot and persistence acceptance remain separate.'
     }
     # Keep checked provider stop and disk comparison inside this runner's existing
     # whole-process-tree deadline, including the shared vmrun inactivity checks.

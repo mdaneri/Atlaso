@@ -137,6 +137,9 @@ $isoSha256 = (Get-FileHash -LiteralPath <DEVELOPMENT-ISO-PATH> -Algorithm SHA256
 Run `-Scenario Cancel` and `-Scenario Auto` in separate receipt-bound VM roots, following the VMware lifecycle
 procedure for each. `Auto` obtains administrator and root credentials through the existing supported Atlaso
 credential bridge and sends them only to concealed installer prompts; do not put passwords in command lines or logs.
+`CancelReview` selects the target but cancels at the planned-layout review before erasure consent. `Insufficient`
+selects the fixture's four-GiB disk and requires the exact capacity refusal for that disk before consent. Both
+scenarios use no credentials and compare both disks with their pre-boot baselines after stopping the VM.
 Creation records a separate disk-baseline receipt before first boot. Retain both original receipt paths and their
 creation-time hashes from the console driver's ownership output. The console runner automatically verifies disks
 within its process deadline. To repeat verification afterward:

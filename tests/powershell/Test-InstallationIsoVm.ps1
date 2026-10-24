@@ -733,3 +733,29 @@ foreach ($fixtureIdentity in @('admin', 'root')) {
         Assert-InstallationVmCondition ($probeResult.Count -eq 0) 'A different account must never satisfy the administrator checkpoint.'
     }
 }
+
+foreach ($capacityFixture in @(
+    @{ Disk = '/dev/sda'; Bytes = '4294967296'; Pass = $true },
+    @{ Disk = '/dev/sdb'; Bytes = '4294967296'; Pass = $false },
+    @{ Disk = '/dev/sda'; Bytes = '4096'; Pass = $false }
+)) {
+    $capacityPair = $null
+    try {
+        $capacityPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+        $capacityLine = 'ValueError: default installation requires a disk of at least 64 GiB; selected {0} has {1} bytes' -f $capacityFixture.Disk, $capacityFixture.Bytes
+        $capacitySender = [AtlasoInstallationPipeTestWriter]::Start($capacityPair.Client, [string[]]@(
+            "Traceback (most recent call last):`n    raise ValueError('default installation requires a disk of at least 64 GiB')`n",
+            $capacityLine.Substring(0, 30), ($capacityLine.Substring(30) + "`n")))
+        $capacityAccepted = $false
+        try {
+            $null = @(Wait-InstallationConsoleState -Pipe $capacityPair.Server -Pattern 'default installation requires a disk of at least 64 GiB' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ExpectedCapacityDisk '/dev/sda' 6>&1)
+            $capacityAccepted = $true
+        } catch {
+            if (-not $_.Exception.Message.StartsWith('The installer reported a Python failure', [StringComparison]::Ordinal)) { throw }
+            $capacityAccepted = $false
+        }
+        Assert-InstallationVmCondition ($capacityAccepted -eq $capacityFixture.Pass) 'Capacity acceptance must require the final refusal for the exact selected four-GiB disk, never echoed source or another disk.'
+        Assert-InstallationVmCondition ($capacitySender.Wait(5000)) 'The capacity fixture writer did not finish.'
+    }
+    finally { if ($capacityPair) { Close-InstallationTestPipePair -Pair $capacityPair } }
+}
