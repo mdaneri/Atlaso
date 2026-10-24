@@ -107,8 +107,18 @@ def verify_rpms(root: Path, source: Path, scratch: Path) -> list[dict]:
     keys = sorted((source / "image/common/photon-rpm-gpg").glob("VMWARE-RPM-GPG-KEY*"))
     if not keys:
         raise ValueError("admitted Photon RPM keys are missing")
+    imported_keys = 0
     for key in keys:
-        _run_runtime_tool(["rpm", "--dbpath", str(database), "--import", str(key)])
+        try:
+            _run_runtime_tool(["rpm", "--dbpath", str(database), "--import", str(key)])
+        except SystemExit:
+            # Some host crypto policies reject the admitted legacy certificate.
+            # Retain the host policy: every package must still authenticate with
+            # a successfully imported admitted key below, or the build fails.
+            continue
+        imported_keys += 1
+    if not imported_keys:
+        raise ValueError("no admitted Photon RPM key is supported by the builder")
     records = []
     admitted = _photon_repository_inventory()
     for package in packages:
@@ -119,9 +129,13 @@ def verify_rpms(root: Path, source: Path, scratch: Path) -> list[dict]:
         if "signatures OK" not in result:
             raise ValueError("installation RPM is not signed by an admitted Photon key")
         _require_admitted_runtime_package(package, "rpm", admitted)
-        fields = _run_runtime_tool(["rpm", "-qp", "--qf", "%{NAME}\\t%{VERSION}-%{RELEASE}\\t%{ARCH}", str(package)]).split("\t")
-        if len(fields) != 3 or fields[2] not in {"x86_64", "noarch"}:
+        query = _run_runtime_tool(["rpm", "--dbpath", str(database), "-qp", "--qf", "ATLASO\\t%{NAME}\\t%{VERSION}-%{RELEASE}\\t%{ARCH}\\n", str(package)])
+        # Shared tool diagnostics may accompany successful stdout. Parse only
+        # one explicitly marked metadata row, as the repository verifier does.
+        rows = [line.split("\t")[1:] for line in query.splitlines() if line.startswith("ATLASO\t")]
+        if len(rows) != 1 or len(rows[0]) != 3 or rows[0][2] not in {"x86_64", "noarch"}:
             raise ValueError("installation RPM architecture is unsupported")
+        fields = rows[0]
         records.append({"file": package.name, "name": fields[0], "version": fields[1], "architecture": fields[2], "sha256": checksum})
     names = [item["name"] for item in records]
     if len(names) != len(set(names)) or not set(package_selection(source)) <= set(names):

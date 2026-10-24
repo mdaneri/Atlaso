@@ -8,9 +8,9 @@ status: current
 
 # Verified interface gallery
 
-These images were captured from the dedicated `Atlaso-Docs` VMware Workstation VM. The frozen baseline
-runs Atlaso 0.9.21; individually recaptured images record their exact later version and source revision in
-the screenshot manifest alongside viewport, capture method, brand variant, and sensitive-data review status.
+The baseline images were captured from the dedicated `Atlaso-Docs` VMware Workstation VM. That baseline
+runs Atlaso 0.9.21. Later captures use dedicated documentation or validation appliances and record their
+exact version and source revision in the manifest with viewport, capture method, and sensitive-data review.
 
 The clean, configured, pending, failed, and applied labels describe observed appliance states. A
 successful state is shown only where the corresponding task completed successfully.
@@ -647,13 +647,49 @@ Figure: VCF Backups in the verified clean-appliance responsive state.
 
 Route: `/ui/management/vcf-helper`
 
-![Atlaso VCF Helper page in the clean-appliance desktop viewport.](../assets/screenshots/vcf-helper-clean-desktop.webp)
+![Atlaso certificate wizard selecting SDDC Manager in the desktop viewport.](../assets/screenshots/vcf-appliance-certificate-sddc-server-desktop.webp)
 
-Figure: VCF Helper in the verified clean-appliance desktop state.
+Figure: Select SDDC Manager 9.x for its own appliance resource. Native SDDC validation remains pending.
 
-![Atlaso VCF Helper page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-helper-clean-responsive.webp)
+![Atlaso certificate wizard selecting SDDC Manager in the responsive viewport.](../assets/screenshots/vcf-appliance-certificate-sddc-server-responsive.webp)
 
-Figure: VCF Helper in the verified clean-appliance responsive state.
+Figure: Select SDDC Manager 9.x for its own appliance resource. Native SDDC validation remains pending.
+
+![Atlaso certificate replacement results for SRM showing five separately verified outcomes in the desktop viewport.](../assets/screenshots/vcf-appliance-certificate-srm-results-desktop.webp)
+
+Figure: SRM 9.1.1 passed all five lab checks. Integration workflows remain untested.
+
+![Atlaso certificate replacement results for SRM showing five separately verified outcomes in the responsive viewport.](../assets/screenshots/vcf-appliance-certificate-srm-results-responsive.webp)
+
+Figure: SRM 9.1.1 passed all five lab checks. Integration workflows remain untested.
+
+![Atlaso certificate replacement results for vCenter showing five separately verified outcomes in the desktop viewport.](../assets/screenshots/vcf-appliance-certificate-vcenter-results-desktop.webp)
+
+Figure: vCenter 9.1.1 passed all five lab checks. Integration workflows remain untested.
+
+![Atlaso certificate replacement results for vCenter showing five separately verified outcomes in the responsive viewport.](../assets/screenshots/vcf-appliance-certificate-vcenter-results-responsive.webp)
+
+Figure: vCenter 9.1.1 passed all five lab checks. Integration workflows remain untested.
+
+![Atlaso Appliance Certificate Replacement credential step in the desktop viewport.](../assets/screenshots/vcf-appliance-certificate-wizard-desktop.webp)
+
+Figure: Choose a saved vault credential or request-local manual login before confirming target TLS identity.
+
+![Atlaso Appliance Certificate Replacement credential step in the responsive viewport.](../assets/screenshots/vcf-appliance-certificate-wizard-responsive.webp)
+
+Figure: Choose a saved vault credential or request-local manual login before confirming target TLS identity.
+
+![Atlaso VCF Helper Certificates tab in the desktop viewport.](../assets/screenshots/vcf-helper-tabs-certificates-desktop.webp)
+
+Figure: The Certificates tab groups related helpers on the dedicated lab appliance.
+
+![Atlaso VCF Helper Certificates tab in the responsive viewport.](../assets/screenshots/vcf-helper-tabs-certificates-responsive.webp)
+
+Figure: The Certificates tab groups related helpers on the dedicated lab appliance.
+
+![Atlaso VCF Helper Deployment tab in the desktop viewport.](../assets/screenshots/vcf-helper-tabs-deployment-desktop.webp)
+
+Figure: The Deployment tab groups related helpers on the dedicated lab appliance.
 
 ## Vcf Offline Depot
 

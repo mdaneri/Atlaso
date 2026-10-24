@@ -695,7 +695,7 @@ function Publish-AtlasoTestVmOwnershipRecord {
     param(
         [Parameter(Mandatory = $true)][psobject]$Context,
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Record,
-        [Parameter(Mandatory = $true)][ValidateSet('intent', 'original', 'directory', 'clone-process', 'ca-marker', 'restored-directory')][string]$Kind
+        [Parameter(Mandatory = $true)][ValidateSet('intent', 'original', 'directory', 'clone-process', 'ca-marker', 'restored-directory', 'installation-baseline')][string]$Kind
     )
 
     if (-not $Context.Enabled) { throw 'Cannot publish ownership for a disabled task context.' }

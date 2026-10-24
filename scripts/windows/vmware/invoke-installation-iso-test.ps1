@@ -161,6 +161,7 @@ try {
     $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Create -Worktree $worktree `
         -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -IsoPath $IsoPath -IsoSha256 $IsoSha256 `
         -SerialPipePath "\\.\pipe\$pipeName" -Confirm:$false
+    Write-Host ('Installation VM ownership: ' + ($vm | ConvertTo-Json -Compress))
     if (-not $connection.Wait(120000)) { throw 'The owned VM did not connect its private serial console.' }
 
     Add-Type -TypeDefinition @'
@@ -190,27 +191,34 @@ public static class AtlasoInstallationPipePeer {
     }
     Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline
     Write-Host 'Installer reached the native Photon disk selection screen.'
-    if ($Scenario -eq 'Probe') { return }
     if ($Scenario -eq 'Cancel') {
         Send-InstallationConsoleText -Pipe $pipe -Text "`e[D`e[D`n"
         Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
         Write-Host 'Installer cancellation returned without admitting disk writes.'
-        return
     }
-    Send-InstallationConsoleText -Pipe $pipe -Text "`n"
-    Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Review planned partitions' -Deadline $deadline
-    Send-InstallationConsoleText -Pipe $pipe -Text "NEXT`n"
-    Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Review Atlaso installation disk' -Deadline $deadline
-    Send-InstallationConsoleText -Pipe $pipe -Text "ERASE /dev/sda`n"
-    foreach ($account in @('admin', 'root')) {
-        $value = if ($account -eq 'admin') { $credentials.AdminPassword } else { $credentials.RootPassword }
-        foreach ($verb in @('Set', 'Confirm')) {
-            Wait-InstallationConsoleState -Pipe $pipe -Pattern "$verb $account password" -Deadline $deadline
-            Send-InstallationConsoleSecret -Pipe $pipe -Value $value
+    elseif ($Scenario -eq 'Auto') {
+        Send-InstallationConsoleText -Pipe $pipe -Text "`n"
+        Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Review planned partitions' -Deadline $deadline
+        Send-InstallationConsoleText -Pipe $pipe -Text "NEXT`n"
+        Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Review Atlaso installation disk' -Deadline $deadline
+        Send-InstallationConsoleText -Pipe $pipe -Text "ERASE /dev/sda`n"
+        foreach ($account in @('admin', 'root')) {
+            $value = if ($account -eq 'admin') { $credentials.AdminPassword } else { $credentials.RootPassword }
+            foreach ($verb in @('Set', 'Confirm')) {
+                Wait-InstallationConsoleState -Pipe $pipe -Pattern "$verb $account password" -Deadline $deadline
+                Send-InstallationConsoleSecret -Pipe $pipe -Value $value
+            }
         }
+        Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Atlaso installation completed.' -Deadline $deadline
+        Write-Host 'Disconnected Auto installation completed; reboot and persistence acceptance remain separate.'
     }
-    Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Atlaso installation completed.' -Deadline $deadline
-    Write-Host 'Disconnected Auto installation completed; reboot and persistence acceptance remain separate.'
+    # Keep checked provider stop and disk comparison inside this runner's existing
+    # whole-process-tree deadline, including the shared vmrun inactivity checks.
+    & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Verify -Worktree $worktree `
+        -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber `
+        -OriginalReceiptPath $vm.ReceiptPath -OriginalReceiptSha256 $vm.ReceiptSha256 `
+        -BaselineReceiptPath $vm.BaselineReceiptPath -BaselineReceiptSha256 $vm.BaselineReceiptSha256 `
+        -VerifyTarget:($Scenario -ne 'Auto') -Confirm:$false
 }
 finally {
     $pipe.Dispose()

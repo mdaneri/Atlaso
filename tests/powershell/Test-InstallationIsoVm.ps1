@@ -10,6 +10,8 @@ param()
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $harnessPath = Join-Path $repositoryRoot 'scripts\windows\vmware\test-installation-iso.ps1'
+$ownershipPath = Join-Path $repositoryRoot 'scripts\windows\vmware\Atlaso.TestVmOwnership.ps1'
+$cleanupPath = Join-Path $repositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationCleanup.psm1'
 $consoleDriverPath = Join-Path $repositoryRoot 'scripts\windows\vmware\invoke-installation-iso-test.ps1'
 $tokens = $null
 $parseErrors = $null
@@ -77,6 +79,8 @@ function Get-InstallationVmFunctionText {
 
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'ConvertTo-InstallationVmxString')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'New-InstallationVmConfiguration')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Get-InstallationVmxPathAssignment')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmDiskBindings')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationSerialPipePath')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Send-InstallationConsoleSecret')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Wait-InstallationConsoleState')))
@@ -97,6 +101,18 @@ Assert-InstallationVmCondition ($lines -contains $expectedPipeAssignment) 'The n
 Assert-InstallationVmCondition ($configuration.Contains('ethernet0.present = "FALSE"')) 'The VM must have no network adapter.'
 Assert-InstallationVmCondition (-not $configuration.Contains('ethernet1.present')) 'The VM must not contain additional network adapters.'
 Assert-InstallationVmCondition (-not $configuration.Contains('ethernet0.connectionType = "nat"')) 'The VM must not configure a network connection.'
+$bindingContext = [pscustomobject]@{ Name = 'Atlaso-Test-installation-iso'; OutputDirectory = 'C:\vm' }
+$validBindings = $true
+try { Assert-InstallationVmDiskBindings -VmxLines $lines -Context $bindingContext -IsoPath 'C:\offline media\atlaso.iso' }
+catch { $validBindings = $false }
+Assert-InstallationVmCondition $validBindings 'Exact target, unselected, and pinned ISO bindings must pass layout validation.'
+$changedBindings = @($lines | ForEach-Object {
+        if ($_ -ceq 'scsi0:1.fileName = "C:\\vm\\unselected-4g.vmdk"') { 'scsi0:1.fileName = "C:\\vm\\target-64g.vmdk"' } else { $_ }
+    })
+$changedBindingRejected = $false
+try { Assert-InstallationVmDiskBindings -VmxLines $changedBindings -Context $bindingContext -IsoPath 'C:\offline media\atlaso.iso' }
+catch { $changedBindingRejected = $true }
+Assert-InstallationVmCondition $changedBindingRejected 'A changed unselected-disk VMX binding must fail closed.'
 $validPipeAccepted = $true
 try { Assert-InstallationSerialPipePath -Path $pipe } catch { $validPipeAccepted = $false }
 Assert-InstallationVmCondition $validPipeAccepted 'A valid task-scoped serial pipe must be accepted.'
@@ -106,11 +122,13 @@ catch { $invalidPipeRejected = $true }
 Assert-InstallationVmCondition $invalidPipeRejected 'Remote named pipes must be rejected.'
 
 $source = [System.IO.File]::ReadAllText($harnessPath)
+$ownershipSource = [System.IO.File]::ReadAllText($ownershipPath)
+$cleanupSource = [System.IO.File]::ReadAllText($cleanupPath)
 $whatIfGate = $source.IndexOf('$PSCmdlet.ShouldProcess($resolvedOutput', [StringComparison]::Ordinal)
 $intentWrite = $source.IndexOf('Publish-AtlasoTestVmOwnershipRecord -Context $context -Record $intent', [StringComparison]::Ordinal)
 $originalReceipt = $source.IndexOf('Publish-InstallationVmOriginalReceipt -Context $context', [StringComparison]::Ordinal)
 $diskMutation = $source.IndexOf("-FileName 'vmware-vdiskmanager.exe'", [StringComparison]::Ordinal)
-$providerStart = $source.IndexOf("-FileName 'vmrun.exe'", [StringComparison]::Ordinal)
+$providerStart = $source.IndexOf("'Start isolated installation ISO test VM'", [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($whatIfGate -ge 0 -and $intentWrite -gt $whatIfGate) 'WhatIf must return before any ownership record is published.'
 Assert-InstallationVmCondition ($intentWrite -lt $originalReceipt -and $originalReceipt -lt $diskMutation) 'The task intent and original VM receipt must precede disk mutations.'
 Assert-InstallationVmCondition ($originalReceipt -lt $providerStart) 'The original VM receipt must precede provider startup.'
@@ -123,6 +141,25 @@ Assert-InstallationVmCondition ($source.Contains('-ExpectedPersistentVmIdentityS
 Assert-InstallationVmCondition (-not $source.Contains('Remove-Item -Recurse')) 'Harness cleanup must delegate to the owning receipt-aware remover.'
 Assert-InstallationVmCondition ($source.Contains("'-c', '-s', '64GB', '-a', 'lsilogic', '-t', '0', $targetDisk")) 'The target disk must be created at the assigned capacity.'
 Assert-InstallationVmCondition ($source.Contains("'-c', '-s', '4GB', '-a', 'lsilogic', '-t', '0', $unselectedDisk")) 'The second disk must be the small unselected disk.'
+$targetDiskCreate = $source.IndexOf("'-c', '-s', '64GB', '-a', 'lsilogic', '-t', '0', $targetDisk", [StringComparison]::Ordinal)
+$unselectedDiskCreate = $source.IndexOf("'-c', '-s', '4GB', '-a', 'lsilogic', '-t', '0', $unselectedDisk", [StringComparison]::Ordinal)
+$baselineCreate = $source.IndexOf('Publish-InstallationDiskBaseline -Context $context', [StringComparison]::Ordinal)
+$providerStart = $source.IndexOf("'Start isolated installation ISO test VM'", [StringComparison]::Ordinal)
+Assert-InstallationVmCondition ($targetDiskCreate -lt $baselineCreate -and $unselectedDiskCreate -lt $baselineCreate -and $baselineCreate -lt $providerStart) 'Both logical disk baselines must be durably published after disk creation and before any VM start.'
+Assert-InstallationVmCondition ($source.Contains("'compare', '-f', 'vmdk', '-F', 'vmdk'")) 'Disk comparison must use qemu-img logical VMDK comparison.'
+Assert-InstallationVmCondition (-not $source.Contains("'compare', '-s'")) 'Logical comparison must not require sparse allocation layout to match.'
+Assert-InstallationVmCondition ($source.Contains('-Kind installation-baseline')) 'The baseline record must use its dedicated ownership-receipt kind.'
+Assert-InstallationVmCondition ($ownershipSource.Contains("'installation-baseline')")) 'The immutable ownership publisher must admit the baseline record kind.'
+Assert-InstallationVmCondition ($cleanupSource.Contains("'Confirm-AtlasoWorkstationVmInactive'")) 'The guarded VM stop helper must be available to the verification mode.'
+$verifyMode = $source.IndexOf('if ($Mode -eq ''Verify'')', [StringComparison]::Ordinal)
+Assert-InstallationVmCondition ($verifyMode -ge 0) 'The harness must expose receipt-bound disk verification.'
+$verifyOriginalRead = $source.IndexOf('Read-AtlasoTestVmSealedRecord -Context $context -Path $OriginalReceiptPath', $verifyMode, [StringComparison]::Ordinal)
+$verifyBaselineRead = $source.IndexOf('Read-AtlasoTestVmSealedRecord -Context $context -Path $BaselineReceiptPath', $verifyMode, [StringComparison]::Ordinal)
+$verifyStop = $source.IndexOf('Confirm-AtlasoWorkstationVmInactive -VmrunPath', $verifyMode, [StringComparison]::Ordinal)
+$verifyCompare = $source.IndexOf('Assert-InstallationDiskUnchanged -Disk', $verifyMode, [StringComparison]::Ordinal)
+Assert-InstallationVmCondition ($verifyOriginalRead -gt $verifyMode -and $verifyBaselineRead -gt $verifyOriginalRead -and $verifyStop -gt $verifyBaselineRead -and $verifyCompare -gt $verifyStop) 'Verification must validate both bound receipts before stopping the VM and compare only after stop.'
+Assert-InstallationVmCondition ($source.Contains("`$roles = @('unselected')") -and $source.Contains('if ($VerifyTarget) { $roles += ''target'' }')) 'Verification must always check the unselected disk and optionally check the target for cancellation.'
+Assert-InstallationVmCondition ($source.Contains("Invoke-AtlasoBoundedProcess -FilePath `$QemuImg -ArgumentList @('info', '--output=json', `$Path)")) 'qemu-img metadata inspection must use the existing bounded process helper.'
 
 <#
 .SYNOPSIS

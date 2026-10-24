@@ -468,7 +468,13 @@ def test_rebuild_repository_rejects_symlinked_input_before_moving_metadata(
 
 
 def _mock_rpm_verification(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, summary: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    summary: str,
+    *,
+    key_names: tuple[str, ...] = ("VMWARE-RPM-GPG-KEY-test",),
+    unsupported_keys: frozenset[str] = frozenset(),
+    metadata_output: str = "ATLASO\tpython3\t3.14.1-1\tx86_64\n",
 ) -> tuple[Path, Path, Path, list[list[str]]]:
     """Create a minimal signed-RPM fixture and stub the shared runtime boundary.
 
@@ -476,25 +482,33 @@ def _mock_rpm_verification(
         tmp_path: Pytest-owned fixture directory.
         monkeypatch: Pytest fixture for replacing controlled dependencies.
         summary: Text returned from the mocked non-verbose rpmkeys command.
+        key_names: Admitted Photon key basenames available to the verifier.
+        unsupported_keys: Key basenames rejected by the host RPM import command.
+        metadata_output: Text returned from the mocked RPM metadata query.
     """
     root = tmp_path / "rpms"
     root.mkdir()
     package = root / "python3-3.14.1-1.x86_64.rpm"
     package.write_bytes(b"fixture RPM bytes")
     source = tmp_path / "source"
-    key = source / "image/common/photon-rpm-gpg/VMWARE-RPM-GPG-KEY-test"
-    key.parent.mkdir(parents=True)
-    key.write_text("public test key", encoding="utf-8")
+    key_dir = source / "image/common/photon-rpm-gpg"
+    key_dir.mkdir(parents=True)
+    for key_name in key_names:
+        (key_dir / key_name).write_text("public test key", encoding="utf-8")
     scratch = tmp_path / "scratch"
     scratch.mkdir()
     commands: list[list[str]] = []
 
     def run_runtime_tool(command: list[str]) -> str:
         commands.append(command)
+        if command[0] == "rpm" and "--import" in command:
+            if Path(command[-1]).name in unsupported_keys:
+                raise SystemExit("unsupported RPM public key")
+            return ""
         if command[0] == "rpmkeys":
             return summary
         if command[0] == "rpm" and "-qp" in command:
-            return "python3\t3.14.1-1\tx86_64"
+            return metadata_output
         return ""
 
     monkeypatch.setattr(verify_virtualization_guest_wheel, "_run_runtime_tool", run_runtime_tool)
@@ -530,6 +544,9 @@ def test_verify_rpms_accepts_signed_summary_without_verbose_flag(
         str(root / "python3-3.14.1-1.x86_64.rpm"),
     ]
     assert "--verbose" not in signature_commands[0]
+    metadata_commands = [command for command in commands if command[0] == "rpm" and "-qp" in command]
+    assert len(metadata_commands) == 1
+    assert metadata_commands[0][metadata_commands[0].index("--dbpath") + 1] == signature_commands[0][2]
     assert records == [{
         "file": "python3-3.14.1-1.x86_64.rpm",
         "name": "python3",
@@ -537,6 +554,57 @@ def test_verify_rpms_accepts_signed_summary_without_verbose_flag(
         "architecture": "x86_64",
         "sha256": build.digest(root / "python3-3.14.1-1.x86_64.rpm"),
     }]
+
+
+def test_verify_rpms_parses_tagged_metadata_after_diagnostic_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ignore benign RPM diagnostics while parsing the explicit metadata row.
+
+    Args:
+        tmp_path: Pytest-owned fixture directory.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
+    root, source, scratch, _commands = _mock_rpm_verification(
+        tmp_path,
+        monkeypatch,
+        "python3-3.14.1-1.x86_64.rpm: digests signatures OK",
+        metadata_output="warning: host RPM database warning\nATLASO\tpython3\t3.14.1-1\tx86_64\n",
+    )
+
+    records = build.verify_rpms(root, source, scratch)
+
+    assert records[0]["name"] == "python3"
+    assert records[0]["architecture"] == "x86_64"
+
+
+@pytest.mark.parametrize(
+    "metadata_output",
+    [
+        "warning: RPM query returned no package row\n",
+        "ATLASO\tpython3\t3.14.1-1\tx86_64\nATLASO\tpython3\t3.14.1-1\tx86_64\n",
+    ],
+    ids=["missing-row", "duplicate-rows"],
+)
+def test_verify_rpms_rejects_missing_or_duplicate_tagged_metadata_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, metadata_output: str
+) -> None:
+    """RPM metadata parsing requires exactly one explicitly tagged row.
+
+    Args:
+        tmp_path: Pytest-owned fixture directory.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        metadata_output: Text returned from the mocked RPM metadata query.
+    """
+    root, source, scratch, _commands = _mock_rpm_verification(
+        tmp_path,
+        monkeypatch,
+        "python3-3.14.1-1.x86_64.rpm: digests signatures OK",
+        metadata_output=metadata_output,
+    )
+
+    with pytest.raises(ValueError, match="architecture is unsupported"):
+        build.verify_rpms(root, source, scratch)
 
 
 @pytest.mark.parametrize(
@@ -565,4 +633,82 @@ def test_verify_rpms_rejects_missing_signature_summary(
     signature_commands = [command for command in commands if command[0] == "rpmkeys"]
     assert len(signature_commands) == 1
     assert "--verbose" not in signature_commands[0]
+    assert not any(command[0] == "rpm" and "-qp" in command for command in commands)
+
+
+def test_verify_rpms_skips_unsupported_legacy_key_when_current_key_imports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A host may reject a legacy key while accepting the current admitted key.
+
+    Args:
+        tmp_path: Pytest-owned fixture directory.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
+    names = ("VMWARE-RPM-GPG-KEY-legacy", "VMWARE-RPM-GPG-KEY-current")
+    root, source, scratch, commands = _mock_rpm_verification(
+        tmp_path,
+        monkeypatch,
+        "python3-3.14.1-1.x86_64.rpm: digests signatures OK",
+        key_names=names,
+        unsupported_keys=frozenset({names[0]}),
+    )
+
+    records = build.verify_rpms(root, source, scratch)
+
+    imports = [command[-1] for command in commands if command[0] == "rpm" and "--import" in command]
+    assert [Path(path).name for path in imports] == sorted(names)
+    assert len(records) == 1
+    assert len([command for command in commands if command[0] == "rpmkeys"]) == 1
+
+
+def test_verify_rpms_rejects_when_no_admitted_key_imports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verification stops before package checks when every key is unsupported.
+
+    Args:
+        tmp_path: Pytest-owned fixture directory.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
+    names = ("VMWARE-RPM-GPG-KEY-legacy", "VMWARE-RPM-GPG-KEY-current")
+    root, source, scratch, commands = _mock_rpm_verification(
+        tmp_path,
+        monkeypatch,
+        "python3-3.14.1-1.x86_64.rpm: digests signatures OK",
+        key_names=names,
+        unsupported_keys=frozenset(names),
+    )
+
+    with pytest.raises(ValueError, match="no admitted Photon RPM key is supported"):
+        build.verify_rpms(root, source, scratch)
+
+    assert len([command for command in commands if command[0] == "rpm" and "--import" in command]) == 2
+    assert not any(command[0] == "rpmkeys" for command in commands)
+    assert not any(command[0] == "rpm" and "-qp" in command for command in commands)
+
+
+def test_verify_rpms_still_rejects_unsigned_package_with_supported_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A supported key does not weaken per-package signature verification.
+
+    Args:
+        tmp_path: Pytest-owned fixture directory.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
+    names = ("VMWARE-RPM-GPG-KEY-legacy", "VMWARE-RPM-GPG-KEY-current")
+    root, source, scratch, commands = _mock_rpm_verification(
+        tmp_path,
+        monkeypatch,
+        "python3-3.14.1-1.x86_64.rpm: digests OK",
+        key_names=names,
+        unsupported_keys=frozenset({names[0]}),
+    )
+
+    with pytest.raises(ValueError, match="not signed"):
+        build.verify_rpms(root, source, scratch)
+
+    assert len([command for command in commands if command[0] == "rpm" and "--import" in command]) == 2
+    assert len([command for command in commands if command[0] == "rpmkeys"]) == 1
     assert not any(command[0] == "rpm" and "-qp" in command for command in commands)

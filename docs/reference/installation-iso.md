@@ -65,6 +65,18 @@ the x86-64 release contract.
 
 ## Development-only VMware test image
 
+The existing PR builder accepts `-CaptureInstallationRpms` to download the resolved Photon RPM closure and installed
+PowerCLI modules alongside its output. This option is rejected for release builders. Capture staging uses `/var/tmp`
+so it does not consume the guest's `/tmp` memory filesystem during shared provisioning. Independently validate all
+captured inputs before assembly; capturing files alone does not establish a successful appliance build.
+
+PowerCLI input can also be prepared with the existing locked module installer in a receipted task directory:
+
+```powershell
+pwsh -NoProfile -File image/common/powershell/provision-powercli.ps1 `
+  -Mode Install -ModuleRoot <TASK-OWNED-POWERCLI-DIRECTORY>
+```
+
 For installer work on a pull-request commit, use the explicit development builder. It requires a clean checkout at the
 exact PR `HEAD`; the separately supplied software directory must be a signed main release, with its version and
 main-reachable source commit passed independently. Reuse the already captured Photon RPM directory, validated
@@ -110,6 +122,19 @@ $isoSha256 = (Get-FileHash -LiteralPath <DEVELOPMENT-ISO-PATH> -Algorithm SHA256
 Run `-Scenario Cancel` and `-Scenario Auto` in separate receipt-bound VM roots, following the VMware lifecycle
 procedure for each. `Auto` obtains administrator and root credentials through the existing supported Atlaso
 credential bridge and sends them only to concealed installer prompts; do not put passwords in command lines or logs.
+Creation records a separate disk-baseline receipt before first boot. Retain both original receipt paths and their
+creation-time hashes from the console driver's ownership output. The console runner automatically verifies disks
+within its process deadline. To repeat verification afterward:
+
+```powershell
+.\scripts\windows\vmware\test-installation-iso.ps1 -Mode Verify `
+  -OutputDirectory <EXACT-VM-OUTPUT-DIRECTORY> -PullRequestNumber <OWNING-PR-NUMBER> `
+  -OriginalReceiptPath <ORIGINAL-RECEIPT> -OriginalReceiptSha256 <ORIGINAL-RECEIPT-SHA256> `
+  -BaselineReceiptPath <BASELINE-RECEIPT> -BaselineReceiptSha256 <BASELINE-RECEIPT-SHA256>
+```
+
+Verification stops only the identity-checked VM, preserves its artifacts, and compares the unselected disk with its
+pre-boot baseline using `qemu-img compare`. Add `-VerifyTarget` after cancellation to compare the target disk too.
 The `Probe`, `Cancel`, and `Auto` VM scenarios have not yet been executed, so these commands describe the test path,
 not acceptance evidence. A successful VM run alone does not establish physical SATA/NVMe or wired-Ethernet support.
 

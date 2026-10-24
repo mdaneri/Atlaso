@@ -66,16 +66,16 @@ def _capture_archive_commands() -> list[tuple[str, str, str, str, str, str]]:
     cases = (
         (
             "atlaso-installation-rpms",
-            "/tmp/atlaso-installation-rpms.tar",
+            "/var/tmp/atlaso-installation-rpms.tar",
             "atlaso-installation-rpms",
-            "/tmp/atlaso-installation-rpms.tar",
+            "/var/tmp/atlaso-installation-rpms.tar",
             "installation-rpms.tar",
         ),
         (
             "atlaso-installation-powercli",
-            "/tmp/atlaso-installation-powercli.tar",
+            "/var/tmp/atlaso-installation-powercli.tar",
             "Modules",
-            "/tmp/atlaso-installation-powercli.tar",
+            "/var/tmp/atlaso-installation-powercli.tar",
             "installation-powercli.tar",
         ),
     )
@@ -106,6 +106,15 @@ def _capture_archive_commands() -> list[tuple[str, str, str, str, str, str]]:
         chmod_command = f"chmod 0644 {guest_archive}"
         assert commands.index(tar_command) < commands.index(chmod_command)
         assert "only            = var.capture_installation_rpms ?" in capture[1]
+        assert all(
+            re.search(r"(?<![A-Za-z])/tmp/atlaso-installation-", command) is None
+            for command in commands
+        )
+        if name.endswith("rpms"):
+            assert any(
+                'Path("/var/tmp/atlaso-installation-rpms")' in command
+                for command in commands
+            )
 
         download_start = template.find('direction   = "download"', capture[0])
         source_line = f'source      = "{guest_archive}"'
@@ -171,7 +180,7 @@ def test_capture_permission_commands_handle_restrictive_umask(tmp_path: Path) ->
             )
         else:
             tar_command = tar_command.replace(
-                "-C /tmp", f"-C {shlex.quote(bash_source_root)}"
+                "-C /var/tmp", f"-C {shlex.quote(bash_source_root)}"
             )
         subprocess.run(
             [bash, "-c", f"umask 077; {tar_command}; {chmod_command}"], check=True
