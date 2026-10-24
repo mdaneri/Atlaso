@@ -298,14 +298,17 @@ Absolute test deadline.
 Return the complete fixed-fixture public disk rows instead of returning at its title.
 .PARAMETER KnownProvisioningStages
 Fixed public stage labels from the admitted provisioner; unknown messages are never reported.
+.PARAMETER ReadBootProgress
+Report only fixed boot-stage categories while waiting before installed credential entry.
 #>
 function Wait-InstallationConsoleState {
-    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @())
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress)
     $buffer = [byte[]]::new(4096)
     $text = ''
     $failureDeadline = $null
     $lastProvisioningStage = $null
     $knownStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $seenBootStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($stage in $KnownProvisioningStages) { [void]$knownStages.Add($stage) }
     try {
         while ([DateTimeOffset]::UtcNow -lt $Deadline) {
@@ -324,6 +327,21 @@ function Wait-InstallationConsoleState {
             if ($count -eq 0) { throw 'The owned VM serial console disconnected before the expected state.' }
             $text += [Text.Encoding]::ASCII.GetString($buffer, 0, $count)
             $plain = [regex]::Replace($text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b[()][A-Z0-9]|\x1b[=>]', '')
+            if ($ReadBootProgress) {
+                foreach ($stage in @(
+                    @{ Token = 'GNU GRUB'; Name = 'grub-console' },
+                    @{ Token = 'Linux version '; Name = 'linux-kernel' },
+                    @{ Token = 'Welcome to '; Name = 'systemd-startup' },
+                    @{ Token = 'You are in emergency mode'; Name = 'emergency-mode' },
+                    @{ Token = 'Kernel panic'; Name = 'kernel-panic' },
+                    @{ Token = 'grub rescue>'; Name = 'grub-rescue' },
+                    @{ Token = 'grub>'; Name = 'grub-command-line' }
+                )) {
+                    if ($plain.Contains($stage.Token, [StringComparison]::Ordinal) -and $seenBootStages.Add($stage.Name)) {
+                        Write-Host ('Public installed boot stage: ' + $stage.Name)
+                    }
+                }
+            }
             if ($knownStages.Count -gt 0) {
                 foreach ($observed in [regex]::Matches($plain, '(?m)^==> Atlaso appliance: (?<stage>[^\r\n]{1,160})\r?$')) {
                     $candidateStage = $observed.Groups['stage'].Value
@@ -574,7 +592,7 @@ public static class AtlasoInstallationPipePeer {
             $loginDeadline = [DateTimeOffset]::UtcNow.AddSeconds(180)
             if ($loginDeadline -gt $deadline) { $loginDeadline = $deadline }
             Write-Host ('Installed console: awaiting {0} login prompt.' -f $account)
-            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'login:' -Deadline $loginDeadline
+            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'login:' -Deadline $loginDeadline -ReadBootProgress:($account -eq 'root')
             Send-InstallationConsoleText -Pipe $pipe -Text "$account`n"
             Write-Host ('Installed console: awaiting {0} password prompt.' -f $account)
             Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Password:' -Deadline $loginDeadline

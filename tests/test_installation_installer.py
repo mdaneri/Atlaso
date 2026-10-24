@@ -834,4 +834,9 @@ def test_installed_serial_login_requires_development_trust(monkeypatch, tmp_path
             module.configure_development_serial_login(tmp_path, identity)
     else:
         module.configure_development_serial_login(tmp_path, identity)
-    assert commands == ([["chroot", str(tmp_path), "systemctl", "enable", "serial-getty@ttyS0.service"]] if expected == "enabled" else [])
+    assert commands == ([
+        ["chroot", str(tmp_path), "/opt/atlaso/bin/atlaso-install-boot-branding",
+         "/opt/atlaso/image/common/boot/grub/theme.txt", "/opt/atlaso/image/common/boot/grub/atlaso.png",
+         "--development-serial-console"],
+        ["chroot", str(tmp_path), "systemctl", "enable", "serial-getty@ttyS0.service"],
+    ] if expected == "enabled" else [])

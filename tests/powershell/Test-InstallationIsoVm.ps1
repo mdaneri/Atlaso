@@ -700,3 +700,16 @@ $installedLogin = $driverSource.IndexOf("foreach (`$account in @('root', 'admin'
 $shellWait = $driverSource.IndexOf('-Pattern "$account@atlaso"', $installedLogin, [StringComparison]::Ordinal)
 $probeSend = $driverSource.IndexOf("Send-InstallationConsoleText -Pipe `$pipe -Text (`$condition", $installedLogin, [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($installedLogin -ge 0 -and $shellWait -gt $installedLogin -and $probeSend -gt $shellWait) 'Installed shell probes must wait for login to finish before sending commands.'
+
+$bootPair = $null
+try {
+    $bootPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+    $bootFragmentSender = [AtlasoInstallationPipeTestWriter]::Start($bootPair.Client, [string[]]@(
+        "GNU GRUB`nLinux version private-fixture-details`n", "unknown-runtime-fixture`natlaso login:"))
+    $bootStageEvents = @(Wait-InstallationConsoleState -Pipe $bootPair.Server -Pattern 'login:' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadBootProgress 6>&1)
+    $reported = $bootStageEvents | Out-String
+    Assert-InstallationVmCondition ($reported.Contains('Public installed boot stage: grub-console') -and $reported.Contains('Public installed boot stage: linux-kernel')) 'Boot diagnostics must recognize fixed public stages.'
+    Assert-InstallationVmCondition (-not $reported.Contains('private-fixture-details') -and -not $reported.Contains('unknown-runtime-fixture')) 'Boot diagnostics must never report unknown console content.'
+    Assert-InstallationVmCondition ($bootFragmentSender.Wait(5000)) 'The boot-stage fixture writer did not finish.'
+}
+finally { if ($bootPair) { Close-InstallationTestPipePair -Pair $bootPair } }

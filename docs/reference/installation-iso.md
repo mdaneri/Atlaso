@@ -150,8 +150,10 @@ within its process deadline. To repeat verification afterward:
 
 Use `-Scenario AutoReboot` in a fresh VM root to install, stop, disconnect the installation CD drive, and boot the
 installed system. This development image enables the standard password-protected `serial-getty@ttyS0` service only
-after verifying the development signing identity, non-production marker, and VMware platform. Production images do
-not enable this test login service. The runner rechecks its private pipe peer before sending either chosen password
+after verifying the development signing identity, non-production marker, and VMware platform. It also invokes the
+shared boot-branding helper's explicit development option to add GRUB serial output and the `ttyS0` kernel console.
+Production images keep their existing boot console and do not enable this test login service. The runner rechecks
+its private pipe peer before sending either chosen password
 to ordinary Linux login; it records only fixed success checkpoints, never the console stream.
 
 The `BootInstalled` harness mode reuses original VM and disk-baseline admission, stopped-provider checks, logical

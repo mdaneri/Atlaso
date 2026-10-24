@@ -3,6 +3,11 @@ set -eu
 
 theme_source="${1:?GRUB theme source path required}"
 background_source="${2:?GRUB background source path required}"
+serial_option="${3:-}"
+case "$serial_option" in
+    ''|--development-serial-console) ;;
+    *) echo "Unknown Atlaso boot branding option." >&2; exit 2 ;;
+esac
 grub_config="${ATLASO_GRUB_CONFIG:-/boot/grub2/grub.cfg}"
 theme_dir="${ATLASO_GRUB_THEME_DIR:-/boot/grub2/themes/atlaso}"
 
@@ -56,6 +61,22 @@ sed -i '/^[[:space:]]*linux \/\(boot\/\)\?\$photon_linux\([[:space:]]\|$\)/ {
     s/\([[:space:]]\)fbcon=font:[^[:space:]]*/\1fbcon=font:VGA8x16/g
     /[[:space:]]fbcon=font:VGA8x16\([[:space:]]\|$\)/! s/$/ fbcon=font:VGA8x16/
 }' "$grub_config"
+
+if [ "$serial_option" = '--development-serial-console' ]; then
+    # Only the admitted development installer requests this console; ordinary
+    # image provisioning keeps the existing VGA configuration and kernel args.
+    if ! grep -Fqx 'insmod serial' "$grub_config"; then
+        sed -i '/^terminal_output gfxterm/i insmod serial\nserial --unit=0 --speed=115200 --word=8 --parity=no --stop=1\nterminal_input console serial' "$grub_config"
+    fi
+    sed -i 's/^terminal_output gfxterm$/terminal_output gfxterm serial/' "$grub_config"
+    sed -i '/^[[:space:]]*linux \/\(boot\/\)\?\$photon_linux\([[:space:]]\|$\)/ {
+        s/[[:space:]]console=[^[:space:]]*//g
+        s/$/ console=tty0 console=ttyS0,115200n8/
+    }' "$grub_config"
+    grep -Fqx 'terminal_output gfxterm serial' "$grub_config"
+    grep -Fqx 'terminal_input console serial' "$grub_config"
+    grep -Fqx 'serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1' "$grub_config"
+fi
 
 grep -Fqx "set theme=$theme_path" "$grub_config"
 grep -q '^menuentry " " {$' "$grub_config"

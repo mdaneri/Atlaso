@@ -265,6 +265,11 @@ def configure_development_serial_login(target: Path, identity: dict) -> None:
             or not isinstance(development, dict) or development.get("non_production") is not True
             or installer_key_id() != DEVELOPMENT_KEY_ID):
         raise ValueError("serial test login requires admitted development VMware media")
+    subprocess.run([
+        "chroot", str(target), "/opt/atlaso/bin/atlaso-install-boot-branding",
+        "/opt/atlaso/image/common/boot/grub/theme.txt", "/opt/atlaso/image/common/boot/grub/atlaso.png",
+        "--development-serial-console",
+    ], check=True)
     subprocess.run(["chroot", str(target), "systemctl", "enable", "serial-getty@ttyS0.service"], check=True)
 
 
