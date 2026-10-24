@@ -163,6 +163,10 @@ def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tup
                 values: Partition fields collected from the operator."""
             if values and values[2] == "/boot/efi":
                 return False, "Photon creates the EFI boot partition on the selected boot disk."
+            if values and values[2] == "/boot" and values[1] != "ext4":
+                return False, "The Photon EFI loader requires ext4 for /boot."
+            if values and values[2] == "/" and values[1] not in {"ext4", "xfs", "btrfs"}:
+                return False, "The root filesystem must be ext4, xfs, or btrfs."
             if values and values[1] not in {"ext4", "xfs", "btrfs", "swap"}:
                 return False, "Use ext4, xfs, btrfs, or swap."
             selected = self.devices[self.device_index].path

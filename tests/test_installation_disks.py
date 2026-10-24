@@ -132,6 +132,66 @@ def test_revalidate_accepts_unchanged_consent_for_root_efi_and_custom_mounts() -
 
 
 @pytest.mark.parametrize(
+    ("root_filesystem", "boot_filesystem", "accepted"),
+    [
+        pytest.param("ext4", None, True, id="ext4-root-is-boot-filesystem"),
+        pytest.param("xfs", None, False, id="xfs-root-without-separate-boot"),
+        pytest.param("btrfs", None, False, id="btrfs-root-without-separate-boot"),
+        pytest.param("xfs", "ext4", True, id="xfs-root-with-ext4-boot"),
+        pytest.param("btrfs", "ext4", True, id="btrfs-root-with-ext4-boot"),
+        pytest.param("ext4", "xfs", False, id="xfs-boot"),
+        pytest.param("ext4", "btrfs", False, id="btrfs-boot"),
+        pytest.param("ext4", "vfat", False, id="vfat-boot"),
+        pytest.param("vfat", "ext4", False, id="vfat-root"),
+        pytest.param("swap", "ext4", False, id="swap-root"),
+    ],
+)
+def test_revalidate_requires_ext4_effective_boot_filesystem(
+    monkeypatch: pytest.MonkeyPatch, root_filesystem: str, boot_filesystem: str | None, accepted: bool
+) -> None:
+    """Require an ext4 boot filesystem before confirmation.
+
+    Args:
+        monkeypatch: Detect any unexpected native command during validation.
+        root_filesystem: Root filesystem used by the candidate layout.
+        boot_filesystem: Optional separate boot filesystem.
+        accepted: Whether the boot-readable layout should pass validation.
+    """
+    config = _config()
+    config["partitions"][0]["filesystem"] = root_filesystem
+    if boot_filesystem is not None:
+        config["partitions"].append(
+            {"disk": "/dev/nvme0n1", "mountpoint": "/boot", "filesystem": boot_filesystem}
+        )
+    consent = {path: _identity(path) for path in disks.selected_disks(config)}
+
+    if not accepted:
+        monkeypatch.setattr(disks.subprocess, "run", lambda *args, **kwargs: pytest.fail("layout validation must not start native work"))
+        monkeypatch.setattr(disks.subprocess, "check_output", lambda *args, **kwargs: pytest.fail("layout validation must not probe or mutate devices"))
+        with pytest.raises(ValueError, match="root filesystem|boot filesystem"):
+            disks.revalidate_disks(config, consent, dict(consent))
+    else:
+        assert disks.revalidate_disks(config, consent, dict(consent)) is None
+
+
+@pytest.mark.parametrize("data_filesystem", ["ext4", "xfs", "btrfs", "vfat", "swap"])
+def test_revalidate_preserves_supported_nonboot_filesystems(data_filesystem: str) -> None:
+    """Keep supported data filesystems when root supplies ext4 boot files.
+
+    Args:
+        data_filesystem: Filesystem selected for a separate nonboot partition.
+    """
+    config = _config()
+    data_partition = config["partitions"][2]
+    data_partition["filesystem"] = data_filesystem
+    if data_filesystem == "swap":
+        data_partition["mountpoint"] = None
+    consent = {path: _identity(path) for path in disks.selected_disks(config)}
+
+    assert disks.revalidate_disks(config, consent, dict(consent)) is None
+
+
+@pytest.mark.parametrize(
     ("consent_change", "inventory_change"),
     [
         pytest.param("none", "identity", id="device-identity-changed"),

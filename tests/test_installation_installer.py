@@ -559,6 +559,13 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
             return SimpleNamespace(success=True)
 
         def display(self):
+            for filesystem in ("xfs", "btrfs", "vfat"):
+                assert self.validate_partition(("", filesystem, "/boot", "512")) == (
+                    False, "The Photon EFI loader requires ext4 for /boot.",
+                )
+            assert self.validate_partition(("", "vfat", "/", "0")) == (
+                False, "The root filesystem must be ext4, xfs, or btrfs.",
+            )
             self.create_function()
             self.cp_config.update({"partitionsnumber": 0, "0partition_info0": "existing"})
             self.validate_partition(("", "ext4", "/", "0"))

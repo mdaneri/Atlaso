@@ -36,7 +36,8 @@ identity and proposed layout for every selected disk before confirming.
   backups use space on that disk’s root filesystem.
 - **Custom** uses Photon’s native partition editor for ext4, xfs, btrfs, and swap partitions. It lets you define a
   layout across multiple disks and place Atlaso paths on separate filesystems when desired. Only the disks you
-  explicitly select for the layout are replaced.
+  explicitly select for the layout are replaced. The boot filesystem must be ext4: use ext4 for `/`, or create a
+  separate ext4 `/boot` when `/` uses xfs or btrfs. Root filesystems must be ext4, xfs, or btrfs.
 
 Every selected disk is erased. Disks you do not select, including disks with existing Atlaso labels, must remain
 untouched. Do not continue if a disk identity or proposed layout differs from what you intend. Cancel before

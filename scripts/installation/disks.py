@@ -111,3 +111,12 @@ def revalidate_disks(config: dict, consent: dict[str, dict], current: dict[str, 
                 raise ValueError("custom mountpoint is reserved")
     if "/" not in mountpoints or len(mountpoints) != len(set(mountpoints)):
         raise ValueError("custom installation requires one root and unique mountpoints")
+    root_filesystem = next(partition["filesystem"] for partition in config["partitions"]
+                           if partition.get("mountpoint") == "/")
+    if root_filesystem not in {"ext4", "xfs", "btrfs"}:
+        raise ValueError("installation root filesystem must be ext4, xfs, or btrfs")
+    boot_partition = next((partition for partition in config["partitions"]
+                           if partition.get("mountpoint") == "/boot"), None)
+    boot_filesystem = boot_partition["filesystem"] if boot_partition else root_filesystem
+    if boot_filesystem != "ext4":
+        raise ValueError("UEFI boot filesystem must be ext4; use a separate ext4 /boot for xfs or btrfs root")
