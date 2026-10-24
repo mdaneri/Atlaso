@@ -251,7 +251,7 @@ function ConvertFrom-InstallationConsoleFrame {
 
 <#
 .SYNOPSIS
-Parse the public SCSI disk rows rendered by the fixed two-disk test fixture.
+Parse every public disk row before admitting the fixed two-disk test fixture.
 .PARAMETER Text
 Public native disk-menu text, before any credential input.
 #>
@@ -260,7 +260,7 @@ function Get-InstallationConsoleDiskOptions {
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $index = 0
     $visibleText = (ConvertFrom-InstallationConsoleFrame -Text $Text) -join "`n"
-    foreach ($match in [regex]::Matches($visibleText, '(?<size>[0-9]+) GiB @ (?<path>/dev/sd[a-z]+)')) {
+    foreach ($match in [regex]::Matches($visibleText, '(?<size>[0-9]+) GiB @ (?<path>/dev/[a-zA-Z0-9_./-]+)(?=\s|$)')) {
         $diskPath = $match.Groups['path'].Value
         if ($seen.Add($diskPath)) {
             [pscustomobject]@{ Index = $index; SizeGiB = [long]$match.Groups['size'].Value; DiskPath = $diskPath }
@@ -331,7 +331,8 @@ function Wait-InstallationConsoleState {
                     $options = @(Get-InstallationConsoleDiskOptions -Text $text)
                     if ($options.Count -lt 2) { continue }
                     if ($options.Count -ne 2 -or @($options | Where-Object SizeGiB -EQ 64).Count -ne 1 -or
-                        @($options | Where-Object SizeGiB -EQ 4).Count -ne 1) {
+                        @($options | Where-Object SizeGiB -EQ 4).Count -ne 1 -or
+                        @($options | Where-Object DiskPath -CNotMatch '^/dev/sd[a-z]+$').Count -ne 0) {
                         throw 'Native disk menu does not match the receipt-bound 64 GiB target and 4 GiB unselected fixture.'
                     }
                     return $options

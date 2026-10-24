@@ -13,6 +13,7 @@ def _device(
     size: int = 128 * 1024**3,
     device_type: str = "disk",
     read_only: bool = False,
+    major_minor: str = "8:0",
     mountpoints: list[str | None] | None = None,
     children: list[dict] | None = None,
 ) -> dict:
@@ -23,6 +24,7 @@ Args:
     size: Disk capacity recorded in the inventory fixture.
     device_type: Block-device type recorded in the inventory fixture.
     read_only: Whether the fixture device is marked read-only.
+    major_minor: Linux major and minor device identity reported by lsblk.
     mountpoints: Mount points reported for the fixture device.
     children: Child block devices reported by the fixture.
 """
@@ -34,7 +36,7 @@ Args:
         "model": "Test storage",
         "serial": f"serial-{path.rsplit('/', 1)[-1]}",
         "wwn": None,
-        "maj:min": "8:0",
+        "maj:min": major_minor,
         "mountpoints": mountpoints or [],
         "children": children or [],
     }
@@ -94,6 +96,24 @@ def test_eligible_disks_excludes_boot_media_and_every_busy_device() -> None:
     )
 
     assert set(eligible) == {"/dev/nvme0n1"}
+
+
+def test_eligible_disks_reuses_photon_supported_device_majors() -> None:
+    """Exclude major-2 floppies while admitting supported small, SCSI and NVMe disks."""
+    inventory = {
+        "blockdevices": [
+            _device("/dev/fd0", size=1_474_560, major_minor="2:0"),
+            _device("/dev/unusual-block", size=1_474_560, major_minor="2:1"),
+            _device("/dev/sda", major_minor="8:0"),
+            _device("/dev/sdb", size=4 * 1024**3, major_minor="8:16"),
+            _device("/dev/nvme0n1", major_minor="259:0"),
+        ]
+    }
+
+    eligible = disks.eligible_disks(inventory, swaps=set(), held=set())
+
+    assert set(eligible) == {"/dev/sda", "/dev/sdb", "/dev/nvme0n1"}
+    assert eligible["/dev/sdb"]["size"] == 4 * 1024**3
 
 
 def test_selected_disks_includes_default_boot_disk_and_custom_data_disk() -> None:

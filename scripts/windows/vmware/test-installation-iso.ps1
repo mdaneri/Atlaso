@@ -218,7 +218,7 @@ function New-InstallationVmConfiguration {
         'pciBridge0.present = "TRUE"', 'firmware = "efi"', 'uefi.secureBoot.enabled = "FALSE"',
         "displayName = $(ConvertTo-InstallationVmxString $Name)", 'guestOS = "other5xlinux-64"',
         "workingDir = $(ConvertTo-InstallationVmxString $WorkingDirectory)",
-        'memsize = "4096"', 'numvcpus = "2"',
+        'memsize = "4096"', 'numvcpus = "2"', 'floppy0.present = "FALSE"',
         'scsi0.present = "TRUE"', 'scsi0.virtualDev = "lsilogic"',
         'scsi0:0.present = "TRUE"', "scsi0:0.fileName = $(ConvertTo-InstallationVmxString $TargetDisk)", 'scsi0:0.deviceType = "scsi-hardDisk"',
         'scsi0:1.present = "TRUE"', "scsi0:1.fileName = $(ConvertTo-InstallationVmxString $UnselectedDisk)", 'scsi0:1.deviceType = "scsi-hardDisk"',

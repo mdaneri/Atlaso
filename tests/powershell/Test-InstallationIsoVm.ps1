@@ -96,6 +96,7 @@ $lines = @(New-InstallationVmConfiguration -Name 'Atlaso-Test-installation-iso' 
     -UnselectedDisk 'C:\vm\unselected-4g.vmdk' -WorkingDirectory 'C:\vm' `
     -SerialPipe $pipe -CleanupIdentity '0123456789abcdef0123456789abcdef')
 $configuration = [string]::Join("`n", $lines)
+Assert-InstallationVmCondition ($configuration.Contains('floppy0.present = "FALSE"')) 'The fixed test VM must disable the implicit virtual floppy.'
 Assert-InstallationVmCondition ($configuration.Contains('firmware = "efi"')) 'EFI firmware must be enabled.'
 Assert-InstallationVmCondition ($configuration.Contains('uefi.secureBoot.enabled = "FALSE"')) 'Phase-one Secure Boot must be disabled.'
 Assert-InstallationVmCondition ($configuration.Contains('workingDir = "C:\vm"')) 'The VMX must bind sidecar files to its owned output directory.'
@@ -428,6 +429,12 @@ $erasedRows = @(Get-InstallationConsoleDiskOptions -Text ("`e[11;1H32 GiB @ /dev
 Assert-InstallationVmCondition ($erasedRows.Count -eq 2 -and $erasedRows[0].DiskPath -ceq '/dev/sda' -and
     $erasedRows[1].DiskPath -ceq '/dev/sdb') 'Erased stale rows must never remain selectable.'
 
+$unexpectedDiskRows = @(Get-InstallationConsoleDiskOptions -Text (
+    "`e[11;1H0 GiB @ /dev/fd0`e[12;1H64 GiB @ /dev/sda`e[13;1H4 GiB @ /dev/sdb"))
+Assert-InstallationVmCondition ($unexpectedDiskRows.Count -eq 3 -and
+    $unexpectedDiskRows[0].DiskPath -ceq '/dev/fd0' -and $unexpectedDiskRows[1].Index -eq 1) `
+    'Unexpected native devices must retain their menu index and never be silently skipped.'
+
 $pipePair = $null
 $asciiFixture = 'Atlaso-Public-Installer-Fixture-42'
 $fixtureBytes = [Text.Encoding]::ASCII.GetBytes($asciiFixture)
@@ -528,7 +535,7 @@ $mismatchedDiskRejected = $false
 try {
     $pipePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
     $mismatchedDiskSender = [AtlasoInstallationPipeTestWriter]::Start($pipePair.Client, [string[]]@(
-        "Select a disk`r`n32 GiB @ /dev/sda`r`n4 GiB @ /dev/sdb`r`n"))
+        "Select a disk`r`n0 GiB @ /dev/fd0`r`n64 GiB @ /dev/sda`r`n4 GiB @ /dev/sdb`r`n"))
     try {
         $null = Wait-InstallationConsoleState -Pipe $pipePair.Server -Pattern 'Select a disk' `
             -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadDiskSelection
@@ -536,7 +543,7 @@ try {
     catch {
         $mismatchedDiskRejected = $_.Exception.Message -ceq 'Native disk menu does not match the receipt-bound 64 GiB target and 4 GiB unselected fixture.'
     }
-    Assert-InstallationVmCondition $mismatchedDiskRejected 'Mismatched fixture capacities must fail closed.'
+    Assert-InstallationVmCondition $mismatchedDiskRejected 'Unexpected native disk rows must fail closed before selection.'
     Assert-InstallationVmCondition $mismatchedDiskSender.Wait(5000) 'Mismatched disk fixture writer did not complete.'
 }
 finally {

@@ -34,6 +34,12 @@ def eligible_disks(inventory: dict, *, swaps: set[str], held: set[str]) -> dict[
     for device in inventory.get("blockdevices", []):
         if device.get("type") != "disk" or device.get("ro") or busy(device):
             continue
+        # Photon 2.2's Device.refresh_devices uses lsblk's supported major
+        # allowlist (7, 8, 179, 202, 254, 259), which excludes floppy major 2.
+        # Reuse that boundary by device identity rather than guessing from names.
+        major = device.get("maj:min")
+        if isinstance(major, str) and major.partition(":")[0] == "2":
+            continue
         if not isinstance(device.get("size"), int) or device["size"] <= 0:
             continue
         path = device.get("path", "")
