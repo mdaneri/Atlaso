@@ -24,6 +24,10 @@ This verified appliance view provides visual orientation before you begin.
 
 ## Manage the authority
 
+The **Certificates** grid adapts to the available desktop height. Switching to **CSR Intake** or another tab preserves
+the collection; returning to **Certificates** recalculates its height without resetting filters or sorting. Narrow
+layouts use the compact grid height.
+
 1. Confirm the appliance FQDN and management HTTPS settings are correct.
 2. Review root and leaf validity, subject, and key settings.
 3. Leave **Listen interfaces** empty when the CA is needed only for appliance trust and managed service certificates.
