@@ -143,10 +143,19 @@ def test_offline_history_lifecycle_is_deferred_until_nginx_first_boot() -> None:
     normal_install = source.rindex('"$ATLASO_HOME/.venv/bin/python" -I -m atlaso.app.services.external_history_lifecycle install')
 
     assert 'if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then\n  cat >/etc/systemd/system/atlaso-external-history-install.service' in source
-    assert "After=nginx.service atlaso-bootstrap-https.service" in unit
+    assert "After=nginx.service atlaso-bootstrap-https.service atlaso.service atlaso-worker.service" in unit
+    assert "Wants=atlaso.service atlaso-worker.service" in unit
     assert "Requires=nginx.service" in unit
+    assert "Requires=atlaso.service" not in unit and "Requires=atlaso-worker.service" not in unit
     assert "ConditionPathExists=!/var/lib/atlaso-privileged/log-history/installation-complete" in unit
-    assert "ExecStart=/opt/atlaso/.venv/bin/python -I -B -m atlaso.app.services.external_history_lifecycle install" in unit
+    assert "EnvironmentFile=/etc/atlaso/atlaso.env" in unit
+    assert "Environment=PYTHONDONTWRITEBYTECODE=1" in unit
+    assert "TimeoutStartSec=10min" in unit
+    assert "UMask=0077" in unit
+    prepare_command = "ExecStart=/opt/atlaso/.venv/bin/python -I -B -m atlaso.app.services.app_history_cutover --prepare-roots"
+    install_command = "ExecStart=/opt/atlaso/.venv/bin/python -I -B -m atlaso.app.services.external_history_lifecycle install"
+    assert unit.index(prepare_command) < unit.index(install_command)
+    assert "--already-stopped" not in unit
     assert "ExecStartPost=/usr/bin/install -o root -g root -m 0600 /dev/null /var/lib/atlaso-privileged/log-history/installation-complete" in unit
     assert "WantedBy=multi-user.target" in unit
     assert offline_enable < nginx_enable < normal_install

@@ -1006,14 +1006,20 @@ install -o root -g root -m 0644 "$ATLASO_HOME/image/common/systemd/atlaso-bootst
 if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then
   cat >/etc/systemd/system/atlaso-external-history-install.service <<'EOF'
 [Unit]
-Description=Initialize Atlaso external log history
-After=nginx.service atlaso-bootstrap-https.service
+Description=Prepare Atlaso application and external log history
+After=nginx.service atlaso-bootstrap-https.service atlaso.service atlaso-worker.service
+Wants=atlaso.service atlaso-worker.service
 Requires=nginx.service
 ConditionPathExists=!/var/lib/atlaso-privileged/log-history/installation-complete
 RequiresMountsFor=/var/log/nginx /var/lib/atlaso-privileged
 
 [Service]
 Type=oneshot
+EnvironmentFile=/etc/atlaso/atlaso.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+TimeoutStartSec=10min
+UMask=0077
+ExecStart=/opt/atlaso/.venv/bin/python -I -B -m atlaso.app.services.app_history_cutover --prepare-roots
 ExecStart=/opt/atlaso/.venv/bin/python -I -B -m atlaso.app.services.external_history_lifecycle install
 ExecStartPost=/usr/bin/install -o root -g root -m 0600 /dev/null /var/lib/atlaso-privileged/log-history/installation-complete
 
@@ -1215,9 +1221,9 @@ systemctl enable atlaso-guest-agent-select.service
 systemctl enable atlaso-data-disks.service
 systemctl enable atlaso-bootstrap-https.service
 if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then
-  # The chroot cannot run live services. Defer the existing lifecycle installer
-  # until Nginx is active on the installed host; the success marker is published
-  # by the unit only after the lifecycle has installed and started its timer.
+  # The chroot cannot prepare running App producers or Nginx. At first boot,
+  # prepare App history with its lifecycle controller before installing the
+  # existing external-history collector; publish success only after both pass.
   systemctl enable atlaso-external-history-install.service
 fi
 systemctl enable atlaso
