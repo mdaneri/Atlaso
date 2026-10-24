@@ -1025,7 +1025,20 @@ def render_nftables_config(
         prelude = [item for item in chain_rules if item.routing_policy_phase in {"deny", "isolation"}]
         for rule in sorted(prelude, key=lambda item: item.priority):
             for rendered_rule in _rule_family_variants(rule, source_groups_by_id):
-                lines.append(f"    {_render_rule(rendered_rule, source_groups_by_id)}")
+                rendered = _render_rule(rendered_rule, source_groups_by_id)
+                if (
+                    rule.routing_policy_phase == "deny"
+                    and rule.interface_name == rule.routing_destination_interface
+                    and rule.name.startswith("routing-default-deny-ipv")
+                ):
+                    # Managed DNAT has its own exact tuple guard at priority -10
+                    # and admission below. Preserve that independent permission;
+                    # unmarked DNAT and ordinary gateway traffic still drop here.
+                    # Explicit denies and management isolation stay unconditional.
+                    lines.append(f"    ct status & dnat == 0 {rendered}")
+                    lines.append(f"    ct mark & 0xff000000 != 0xa7000000 {rendered}")
+                else:
+                    lines.append(f"    {rendered}")
         if settings.allow_established:
             lines.append('    ct state established,related accept comment "Atlaso established traffic"')
         if chain_name == "input" and not replace_atlaso_service_rules:

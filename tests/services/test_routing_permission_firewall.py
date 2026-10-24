@@ -10,6 +10,7 @@ from atlaso.app.models import (
     FirewallRule,
     FirewallSettings,
     PhysicalInterface,
+    PortForward,
     RoutingRule,
     VlanInterface,
 )
@@ -18,6 +19,7 @@ from atlaso.app.services.firewall import (
     render_nftables_config,
     validate_firewall_state,
 )
+from atlaso.app.services.port_forwarding import port_forward_firewall_projection
 
 
 def topology():
@@ -89,6 +91,42 @@ def default_deny_name(rules: list[FirewallRule], source: str, destination: str, 
         and rule.routing_destination_interface == destination
         and ip_network(rule.source).version == family
     )
+
+
+@pytest.mark.parametrize("family", [4, 6])
+def test_gateway_default_denial_preserves_owned_dnat_admission(family):
+    """Default gateway isolation defers only owned DNAT to its exact admission.
+
+    Args:
+        family: Address family of the independently reviewed port forward.
+    """
+    interfaces, vlans = topology()
+    generated = managed_routing_firewall_rules(interfaces, vlans)
+    base = render_nftables_config(settings(), [], generated, replace_atlaso_service_rules=True)
+    name = default_deny_name(generated, "a", "a", family)
+    drops = [line.strip() for line in base.splitlines() if f'comment "{name}"' in line]
+    assert len(drops) == 2
+    assert drops[0].startswith('ct status & dnat == 0 oifname "a" iifname "a" ')
+    assert drops[1].startswith('ct mark & 0xff000000 != 0xa7000000 oifname "a" iifname "a" ')
+    assert all(" drop comment " in line for line in drops)
+    mapping = PortForward(
+        id=7, name="Hairpin", enabled=True, priority=100, ip_family=family,
+        ingress_interface="a", listener_address="10.0.0.1" if family == 4 else "2001:db8:a::1",
+        target_address="10.0.0.20" if family == 4 else "2001:db8:a::20",
+        protocol="tcp", external_port_start=12000, external_port_end=12000,
+        target_port_start=13000, target_port_end=13000, source="any", reply_mode="preserve",
+    )
+    composed, _ = port_forward_firewall_projection(base, [mapping], [], routing_enabled=True)
+    assert 'ct mark 0xa7000007 ct status dnat ct direction original iifname "a"' in composed
+    assert 'ct mark 0xa7000007 ct status dnat ct direction reply oifname "a"' in composed
+    assert composed.index(drops[0]) < composed.index("ct state established,related accept", composed.index("chain forward"))
+    assert composed.index(drops[1]) < composed.index("# BEGIN ATLASO PORT FORWARD ADMISSION")
+    deny = RoutingRule(id=88, name="Block hairpin", enabled=True, source_interface="a",
+                       destination_interface="a", policy="deny", ip_family=family, priority=999)
+    denied = render_nftables_config(settings(), [], managed_routing_firewall_rules(interfaces, vlans, [deny]), replace_atlaso_service_rules=True)
+    explicit = [line.strip() for line in denied.splitlines() if 'comment "routing-88-block-hairpin"' in line]
+    assert len(explicit) == 1
+    assert explicit[0].startswith('oifname "a" iifname "a" ')
 
 
 def test_deny_precedes_established_diagnostics_and_overlapping_accepts():

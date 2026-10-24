@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import importlib.util
 import ipaddress
 import json
@@ -57,6 +58,37 @@ def _active_nat_link(state: dict) -> dict:
     ):
         raise GatewayLifecycleError("Only the NAT eth0 adapter may be active or addressed.")
     return primary
+
+
+def _gateway_http_client_type(base: type) -> type:
+    """Bound read-only reconnects during the protected nginx handoff.
+
+    Args:
+        base: Canonical lifecycle transport; mutation requests keep its single attempt.
+    """
+    class GatewayClient(base):
+        def request_bytes(self, method: str, path: str, **kwargs: Any) -> tuple:
+            if method not in {"GET", "HEAD"}:
+                return super().request_bytes(method, path, **kwargs)
+            deadline = time.monotonic() + 30
+            for attempt in range(5):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise GatewayLifecycleError("The read-only management request did not recover within 30 seconds.")
+                options = {**kwargs, "timeout": min(kwargs.get("timeout", 30), remaining)}
+                try:
+                    response = super().request_bytes(method, path, **options)
+                    if response[0] not in {502, 503, 504} or attempt == 4:
+                        return response
+                except (OSError, http.client.HTTPException):
+                    if attempt == 4 or time.monotonic() >= deadline:
+                        raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise GatewayLifecycleError("The read-only management request did not recover within 30 seconds.")
+                time.sleep(min(2, remaining))
+            raise GatewayLifecycleError("The read-only management request did not recover.")
+    return GatewayClient
 
 
 def run_same_interface_gateway_acceptance(lifecycle: Any, results: list, args: Any) -> None:
@@ -129,8 +161,8 @@ print(json.dumps({'addresses':read('ip','-j','addr'),'routes':read('ip','-j','ro
                 return operation()
             except GatewayLifecycleError:
                 raise
-            except Exception:  # noqa: BLE001 - the public lifecycle result must never include credential-bearing transport diagnostics.
-                raise GatewayLifecycleError(f"Same-interface acceptance failed at {name}.") from None
+            except Exception as exc:  # noqa: BLE001 - publish only the exception type, never credential-bearing transport diagnostics.
+                raise GatewayLifecycleError(f"Same-interface acceptance failed at {name} ({type(exc).__name__}).") from None
         return lifecycle.run_step(results, name, safe_operation)
 
     initial = {host: step("gateway-inventory-" + role, lambda host=host: observe(host))
@@ -147,7 +179,8 @@ print(json.dumps({'addresses':read('ip','-j','addr'),'routes':read('ip','-j','ro
         if any(ipaddress.ip_address(value) not in network for value in (router, client_ip, upstream)):
             raise GatewayLifecycleError("The two appliances and upstream must share the actual NAT subnet.")
         macs[host] = primary["address"]
-        client = lifecycle.HttpClient("https://" + host)
+        root_ca = guest(host, "import pathlib;print(pathlib.Path('/etc/atlaso/ca/root-ca.pem').read_text())").decode()
+        client = _gateway_http_client_type(lifecycle.HttpClient)("https://" + host, trusted_ca_pem=root_ca)
         lifecycle.ui_login(client, args)
         clients[host] = client
 
@@ -210,7 +243,8 @@ print(json.dumps({'vmware_timesync':tools.stdout.strip(),'clock_services':servic
         # management-to-Access service can preserve a reviewed local egress path.
         save(host, "/physical-interfaces", f"/physical-interfaces/{physical['id']}/edit", {
             "role": "access", "mode": "access", "ipv4_method": "static", "ip_cidr": cidrs[host],
-            "gateway": upstream, "mtu": "1500", "admin_state": "up", "access_management_ui_enabled": "on",
+            "gateway": upstream if physical.get("role") == "management" else "",
+            "mtu": "1500", "admin_state": "up", "access_management_ui_enabled": "on",
         })
         defaults = [row for row in rows(host, "/routes-wan", "data-routes") if row["destination_cidr"] == "0.0.0.0/0"]
         action = f"/routes-wan/routes/{defaults[0]['id']}/edit" if defaults else "/routes-wan/routes"

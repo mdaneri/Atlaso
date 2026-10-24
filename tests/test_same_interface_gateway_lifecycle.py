@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import http.client
 import importlib.machinery
 import io
 import json
@@ -247,9 +248,13 @@ def test_gateway_guest_inventory_uses_role_specific_pinned_ssh_credentials(monke
     args.ssh_password = "client-ssh-fixture-secret"
     calls = []
     results = []
+    clients = []
+    root_ca = "-----BEGIN CERTIFICATE-----\nPublic fixture CA\n-----END CERTIFICATE-----\n"
 
     def fake_pinned_ssh(host, username, password, fingerprint, command, **kwargs):
         calls.append((host, username, password, fingerprint, command, kwargs))
+        if b"/etc/atlaso/ca/root-ca.pem" in kwargs["stdin_data"]:
+            return root_ca.encode()
         inventory = {
             "forwarding": "0",
             "addresses": [
@@ -267,8 +272,17 @@ def test_gateway_guest_inventory_uses_role_specific_pinned_ssh_credentials(monke
     class StopAtUiLogin(Exception):
         pass
 
+    class DummyLifecycleClient:
+        def __init__(self, base_url, *, trusted_ca_pem=None):
+            self.base_url = base_url
+            self.trusted_ca_pem = trusted_ca_pem
+            clients.append(self)
+
+        def request_bytes(self, *_args, **_kwargs):
+            pytest.fail("The inventory test stops before an HTTP request.")
+
     monkeypatch.setattr(gateway_lifecycle, "run_pinned_ssh_command", fake_pinned_ssh)
-    monkeypatch.setattr(lifecycle_test, "HttpClient", lambda *_args: object())
+    monkeypatch.setattr(lifecycle_test, "HttpClient", DummyLifecycleClient)
     monkeypatch.setattr(lifecycle_test, "ui_login", lambda *_args: (_ for _ in ()).throw(StopAtUiLogin()))
 
     with pytest.raises(StopAtUiLogin):
@@ -277,9 +291,14 @@ def test_gateway_guest_inventory_uses_role_specific_pinned_ssh_credentials(monke
     assert [(call[0], call[1], call[2], call[3]) for call in calls] == [
         ("192.0.2.10", "router-operator", "router-ssh-fixture-secret", "SHA256:router-host-key"),
         ("192.0.2.20", "client-operator", "client-ssh-fixture-secret", "SHA256:client-host-key"),
+        ("192.0.2.10", "router-operator", "router-ssh-fixture-secret", "SHA256:router-host-key"),
     ]
     assert all(call[2] != args.password for call in calls)
     assert all(call[4].endswith("/opt/atlaso/.venv/bin/python -I -") for call in calls)
+    assert b"/etc/atlaso/ca/root-ca.pem" in calls[2][5]["stdin_data"]
+    assert len(clients) == 1
+    assert clients[0].base_url == "https://192.0.2.10"
+    assert clients[0].trusted_ca_pem == root_ca
     assert [step.name for step in results] == ["gateway-inventory-router", "gateway-inventory-client"]
     assert all(step.status == "passed" for step in results)
 
@@ -327,3 +346,131 @@ def test_gateway_plan_only_runs_with_isolated_python_imports(tmp_path):
     assert result["status"] == "planned"
     assert result["plan"]["same_interface_gateway_only"] is True
     assert result["plan"]["apply_units"] == ["ntpd", "network", "wan", "firewall"]
+
+
+def _gateway_client_with_responses(monkeypatch, responses):
+    calls = []
+    sleeps = []
+
+    class BaseClient:
+        def __init__(self, base_url):
+            self.base_url = base_url
+
+        def request_bytes(self, method, path, **kwargs):
+            calls.append((method, path, kwargs))
+            response = responses.pop(0)
+            if isinstance(response, BaseException):
+                raise response
+            return response
+
+    monkeypatch.setattr(gateway_lifecycle.time, "sleep", sleeps.append)
+    client_type = gateway_lifecycle._gateway_http_client_type(BaseClient)
+    return client_type("https://192.0.2.10"), calls, sleeps
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+@pytest.mark.parametrize("status", [502, 503, 504])
+def test_gateway_http_read_retries_transient_handoff_status(monkeypatch, method, status):
+    """GET and HEAD retry only transient gateway statuses and recover on success."""
+    client, calls, sleeps = _gateway_client_with_responses(
+        monkeypatch,
+        [(status, b"handoff", {}), (200, b"ready", {})],
+    )
+
+    response = client.request_bytes(method, "/dashboard")
+
+    assert response == (200, b"ready", {})
+    assert [call[0] for call in calls] == [method, method]
+    assert sleeps == [2]
+    assert all(call[2]["timeout"] <= 30 for call in calls)
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+@pytest.mark.parametrize(
+    "error",
+    [OSError("connection reset"), http.client.RemoteDisconnected("connection closed")],
+    ids=["os-error", "http-error"],
+)
+def test_gateway_http_read_retries_transient_connection_errors(monkeypatch, method, error):
+    """GET and HEAD recover from bounded socket and HTTP protocol failures."""
+    client, calls, sleeps = _gateway_client_with_responses(
+        monkeypatch,
+        [error, (200, b"ready", {})],
+    )
+
+    response = client.request_bytes(method, "/routes-wan")
+
+    assert response == (200, b"ready", {})
+    assert [call[0] for call in calls] == [method, method]
+    assert sleeps == [2]
+
+
+@pytest.mark.parametrize("status", [401, 500])
+def test_gateway_http_read_does_not_retry_auth_or_validation_responses(monkeypatch, status):
+    """Authentication and ordinary application errors are returned unchanged."""
+    client, calls, sleeps = _gateway_client_with_responses(
+        monkeypatch,
+        [(status, b"rejected", {})],
+    )
+
+    assert client.request_bytes("GET", "/routes-wan") == (status, b"rejected", {})
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [(503, b"handoff", {}), OSError("connection reset")],
+    ids=["transient-status", "connection-error"],
+)
+def test_gateway_http_mutation_never_retries(monkeypatch, outcome):
+    """POST keeps the canonical transport's single-attempt mutation semantics."""
+    client, calls, sleeps = _gateway_client_with_responses(monkeypatch, [outcome])
+
+    if isinstance(outcome, BaseException):
+        with pytest.raises(OSError, match="connection reset"):
+            client.request_bytes("POST", "/routes-wan/routing-rules", form={"enabled": "on"})
+    else:
+        assert client.request_bytes("POST", "/routes-wan/routing-rules", form={"enabled": "on"}) == outcome
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_gateway_http_read_retry_limit_is_five_without_real_sleep(monkeypatch):
+    """A sustained handoff gets at most five reads and four patched backoffs."""
+    client, calls, sleeps = _gateway_client_with_responses(
+        monkeypatch,
+        [(503, b"handoff", {})] * 5,
+    )
+
+    response = client.request_bytes("GET", "/tasks/status")
+
+    assert response == (503, b"handoff", {})
+    assert len(calls) == 5
+    assert sleeps == [2, 2, 2, 2]
+    assert all(call[2]["timeout"] <= 30 for call in calls)
+
+
+def test_gateway_http_read_does_not_retry_after_deadline(monkeypatch):
+    """A slow transient response cannot extend read retries beyond 30 seconds."""
+    now = [0.0]
+    calls = []
+    sleeps = []
+
+    class SlowResponseClient:
+        def __init__(self, base_url):
+            self.base_url = base_url
+
+        def request_bytes(self, method, path, **kwargs):
+            calls.append((method, path, kwargs["timeout"]))
+            now[0] += kwargs["timeout"]
+            return 503, b"handoff", {}
+
+    monkeypatch.setattr(gateway_lifecycle.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(gateway_lifecycle.time, "sleep", lambda seconds: (sleeps.append(seconds), now.__setitem__(0, now[0] + seconds)))
+    client = gateway_lifecycle._gateway_http_client_type(SlowResponseClient)("https://192.0.2.10")
+
+    with pytest.raises(gateway_lifecycle.GatewayLifecycleError, match="within 30 seconds"):
+        client.request_bytes("GET", "/tasks/status")
+    assert calls == [("GET", "/tasks/status", 30)]
+    assert sleeps == []

@@ -2317,7 +2317,10 @@ preserved with their affected subsystem below. Keep new requirements at their to
   destination matching only to the next-hop address or local subnet; forwarded packets retain their remote
   destination. The per-interface default deny must precede established-flow and broad forwarding accepts so disabling
   or removing the permission blocks new traffic through that interface. Routing off suspends the permission and
-  forwarding. Preserve dedicated-management isolation, the default forward drop policy, and explicit NAT intent; do
+  forwarding. Automatic same-interface denial preserves independently reviewed managed DNAT admission, whose private
+  connection mark and exact tuple are checked by the earlier port-forward guard. Explicit denies and management
+  isolation still precede that admission. Preserve dedicated-management isolation, the default forward drop policy,
+  and explicit NAT intent; do
   not infer a WAN role, fallback to management routing, or require NAT when the upstream router already has a return
   path to the client prefix. Internet forwarding through that permission requires a reviewed same-family lab default
   route with an on-link upstream gateway on the selected target; destination-specific routes remain valid for other
