@@ -605,26 +605,40 @@ def test_nginx_generation_observer_rejects_unavailable_service_identity(monkeypa
     assert calls == [(["systemctl", "show", "nginx", "--property=MainPID", "--value"], 5)]
 
 
-@pytest.mark.parametrize("observations,accepted", [
-    ([(100, {(101, 1)}), (100, {(102, 2)})], True),
-    ([(100, {(101, 1)}), (100, {(101, 2)})], True),
-    ([(100, {(101, 1)})], False),
-    ([(100, {(101, 1), (102, 2)})], True),
+@pytest.mark.parametrize("previous,observations,accepted", [
+    ({(101, 1)}, [(100, {(101, 1)}), (100, {(102, 2)})], True),
+    ({(101, 1)}, [(100, {(101, 1)}), (100, {(101, 2)})], True),
+    ({(101, 1), (102, 2)},
+     [(100, {(101, 1), (102, 2)}), (100, {(101, 1), (102, 2), (103, 3)}),
+      (100, {(102, 2), (103, 3)}), (100, {(103, 3)})], True),
+    ({(101, 1)}, [(100, {(101, 1)})], False),
+    ({(101, 1)}, [(100, {(101, 1), (102, 2)})], False),
 ])
-def test_nginx_reload_generation_requires_new_master_children(monkeypatch, observations, accepted):
-    """Bound reload confirmation and reject the unchanged old generation.
+def test_nginx_reload_generation_requires_new_master_children(monkeypatch, previous, observations, accepted):
+    """Wait for old accepting workers to retire, not only the first new worker.
     Args:
         monkeypatch: Scoped replacements for helper dependencies.
+        previous: Master and accepting workers observed before reload.
         observations: Bound sequence of master and worker observations.
         accepted: Whether nginx reports the candidate reload accepted.
     """
     helper = load_helper_module()
     generations = iter(observations)
-    clock = iter([0, 1, 2] if accepted else [0, 1, 11])
-    monkeypatch.setattr(helper, "_nginx_worker_generation", lambda: next(generations))
+    seen = []
+    clock = iter([0, 1, 2, 3, 4, 11] if accepted else [0, 1, 11])
+
+    def observe():
+        """Return and retain each worker-set sample from the reload wait."""
+        generation = next(generations)
+        seen.append(generation)
+        return generation
+
+    monkeypatch.setattr(helper, "_nginx_worker_generation", observe)
     monkeypatch.setattr(helper.time, "monotonic", lambda: next(clock))
     monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
-    assert helper._wait_nginx_reload_generation((100, {(101, 1)})) is accepted
+    assert helper._wait_nginx_reload_generation((100, previous)) is accepted
+    if accepted:
+        assert seen == observations
 
 
 def test_nginx_reload_generation_preserves_unexpected_master_change(monkeypatch):
