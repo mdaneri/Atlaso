@@ -3557,6 +3557,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#task-owned-1password-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Task-owned 1Password configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#disposable-pytest-git-fixtures" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4152,6 +4163,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#task-owned-1password-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Task-owned 1Password configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#disposable-pytest-git-fixtures" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4624,6 +4646,63 @@ If deletion finishes before the final absence receipt is published, verified cre
 fresh namespace absence still establish preserved evidence. The enclosing controller can finalize its resource gate
 from those independent reads; inspection never writes a missing receipt, and unprepared absence remains a refusal.
 Receipt-backed absence readback also works after checkout removal; any recreated checkout must match its original identity.</p>
+<h3 id="task-owned-1password-configuration">Task-owned 1Password configuration<a class="headerlink" href="#task-owned-1password-configuration" title="Permanent link">&para;</a></h3>
+<p><code>scripts.onepassword_task_configuration.OnePasswordTaskConfiguration</code> owns only a task-created copy of the two
+supported Windows 1Password configuration files. Use <code>kind: "configuration"</code> and
+<code>cleanup_tool: "OnePasswordTaskConfiguration"</code>. Generic generated-tree cleanup continues to exclude credential and
+recovery roots. This operation never decrypts configuration or retrieves credentials.</p>
+<p>Prepare this copy <strong>before</strong> other task tooling creates <code>.atlaso-local</code>. First independently establish task ownership,
+the exact registered worktree beneath the active Codex root, its creation commit, and its primary checkout. Load the
+<a href="../../reference/vmware-workstation-lifecycle-testing/#reuse-primary-checkout-configuration-in-a-task-worktree">credential reuse procedure</a>
+and validate the source configuration. Then run the following from the task checkout, using verified variables:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">scripts.onepassword_task_configuration</span><span class="w"> </span><span class="kn">import</span> <span class="n">OnePasswordTaskConfiguration</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">binding</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;onepassword-configuration&quot;</span><span class="p">,</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="s2">&quot;task_id&quot;</span><span class="p">:</span> <span class="n">task_id</span><span class="p">,</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="s2">&quot;repository&quot;</span><span class="p">:</span> <span class="s2">&quot;mdaneri/Atlaso&quot;</span><span class="p">,</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="s2">&quot;source_commit&quot;</span><span class="p">:</span> <span class="n">source_commit</span><span class="p">,</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    <span class="s2">&quot;path&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">worktree</span> <span class="o">/</span> <span class="s2">&quot;.atlaso-local&quot;</span><span class="p">),</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="p">}</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="n">owner</span> <span class="o">=</span> <span class="n">OnePasswordTaskConfiguration</span><span class="p">(</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    <span class="n">config</span><span class="o">=</span><span class="n">Path</span><span class="p">(</span><span class="n">active_codex_config</span><span class="p">),</span>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>    <span class="n">receipt</span><span class="o">=</span><span class="n">durable_evidence</span> <span class="o">/</span> <span class="s2">&quot;onepassword-copy.json&quot;</span><span class="p">,</span>
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>    <span class="n">binding</span><span class="o">=</span><span class="n">binding</span><span class="p">,</span>
+</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="p">)</span>
+</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="n">ownership_manifest</span> <span class="o">=</span> <span class="n">owner</span><span class="o">.</span><span class="n">copy_from_primary</span><span class="p">()</span>
+</span></code></pre></div>
+<p>The owner independently verifies the Git common directory, primary/task registrations, canonical HTTPS repository
+remote, source ancestry, and Git-ignore/tracking state. It requires a new destination directory and receipt; an existing
+directory or configuration is preserved without adoption, permission repair, or replacement. The primary directory
+and both source files must already have protected ACLs allowing only the current user and SYSTEM. Source and destination
+paths must be ordinary and single-link, with no reparse ancestors. The selector must identify the pinned Atlaso
+Environment. The owner copies bytes without decryption, records original identities through creation handles, and
+publishes durable creation and sealed receipts outside the worktree before the copy is available for use.</p>
+<p>Keep both receipts and their returned <code>ownership_manifest</code> path/hash in the resource inventory, adding the verified PR
+number once available. Reconstruct the owner with the same original binding for each fresh <code>resource.inspect</code> or
+<code>resource.release</code>; invoke <code>owner.controller_call(operation, payload, approved_resource)</code> from the live cleanup
+controller. As with other specialized owners, the controller must first independently verify task/PR/source and
+manifest provenance, exclusive ownership, inactivity of every credential consumer, retention/downstream needs, and
+absence of credential recovery obligations. Owner filesystem checks and open-handle refusals do not replace those
+live process and task checks. Do not call release while a consumer may retain credentials in memory.</p>
+<p>The receipt directory must already exist separately from both checkouts and their ancestors. A receipt directly under
+the configured worktree root is refused before configuration creation: ancestor handles held during copying would
+prevent write-through evidence publication there. Use a dedicated sibling evidence directory as in the example.</p>
+<p>The sole removal scope is the exact task <code>.atlaso-local</code> directory. Release other task outputs through their own tools
+first: any child other than <code>onepassword-environment-id</code> and <code>onepassword-service-account-token.dpapi</code>, including caches,
+locks, and cleanup/recovery markers, blocks this operation. The owner rechecks protected current-user/SYSTEM ACLs,
+original directory/file identities, single hard links, bounded sizes, and sealed byte hashes. It pins all remaining
+objects before deletion and uses ordinary Windows handle disposition; active handles or newly added children refuse
+release. Primary configuration is never a removal scope.</p>
+<p>Keep separately inventoried validation roots outside this directory so their removal scopes stay disjoint. An existing
+nested resource requires controller inventory reconciliation; this owner never waives the overlapping-scope refusal.</p>
+<p>A prepared-release receipt precedes deletion. Retry an interrupted release with the same original receipts and binding;
+only already removed entries and the unchanged original survivors are accepted. After success, independently inspect
+again and require absence; a recreated directory is preserved. Pending receipt publication, an incomplete copy without
+a sealed receipt, changed identity/content/ACL, missing original provenance, or ambiguous ownership keeps cleanup
+blocked for explicit reconciliation. Existing copies made without this original creation evidence remain unsupported;
+retain them and report the missing provenance rather than generating a new receipt at cleanup time.</p>
 <h3 id="disposable-pytest-git-fixtures">Disposable pytest Git fixtures<a class="headerlink" href="#disposable-pytest-git-fixtures" title="Permanent link">&para;</a></h3>
 <p><code>scripts.pytest_git_fixtures.PytestGitFixtures</code> owns Windows disposable pytest Git artifact roots. Use
 <code>kind: "artifact"</code> and <code>cleanup_tool: "PytestGitFixtures"</code>; generic generated-tree removal continues to reject
