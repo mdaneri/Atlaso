@@ -623,7 +623,7 @@ $capacityDiagnostics = [Collections.Generic.List[object]]::new()
 try {
     $pipePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
     $failureSender = [AtlasoInstallationPipeTestWriter]::Start($pipePair.Client, [string[]]@(
-        "Traceback (most recent call last):`n  File `"/PublicSyntheticSensitiveFixture/installer.py`", line 205, in configure_console`n",
+        "Error(1011): Failed to synchronize cache PublicSyntheticSensitiveFixture`nTraceback (most recent call last):`n  File `"/PublicSyntheticSensitiveFixture/installer.py`", line 205, in configure_console`n",
         "ValueError: default installation requires a disk of at least 64 GiB; selected /dev/sda has 4294967296 bytes`nPublicSyntheticSensitiveFixture`n"))
     $failureObserved = $false
     try {
@@ -632,9 +632,11 @@ try {
     }
     catch { $failureObserved = $_.Exception.Message -ceq 'The installer reported a Python failure before the expected console state. Public location: ValueError; installer.py:205.' }
     Assert-InstallationVmCondition $failureObserved 'Capacity refusal must retain the safe failure classification.'
-    Assert-InstallationVmCondition ($capacityDiagnostics.Count -eq 1 -and
-        [string]$capacityDiagnostics[0] -ceq 'Public capacity refusal: /dev/sda, 4294967296 bytes; requires 68719476736 bytes.') `
-        'Capacity diagnostics must expose only the selected device and numeric byte count.'
+    Assert-InstallationVmCondition ($capacityDiagnostics.Count -eq 3 -and
+        [string]$capacityDiagnostics[0] -ceq 'Public package-manager error codes: 1011' -and
+        [string]$capacityDiagnostics[1] -ceq 'Public package-manager category: repository-metadata' -and
+        [string]$capacityDiagnostics[2] -ceq 'Public capacity refusal: /dev/sda, 4294967296 bytes; requires 68719476736 bytes.') `
+        'Failure diagnostics must expose only fixed categories, numeric codes and the selected device capacity.'
     Assert-InstallationVmCondition $failureSender.Wait(5000) 'Capacity fixture writer did not complete.'
 }
 finally {

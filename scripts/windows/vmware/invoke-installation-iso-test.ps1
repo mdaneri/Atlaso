@@ -317,6 +317,22 @@ function Wait-InstallationConsoleState {
                 if ($kind.Success) {
                     $frames = @([regex]::Matches($plain, 'File "[^"\r\n]*/(bootstrap\.py|manifest\.py|installer\.py|disks\.py|window\.py|menu\.py|readtext\.py|progressbar\.py)", line ([0-9]{1,6}),') |
                         Select-Object -Last 8 | ForEach-Object { $_.Groups[1].Value + ':' + $_.Groups[2].Value })
+                    $packageCodes = @([regex]::Matches($plain, '(?m)^Error\(([0-9]{1,6})\)') |
+                        ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+                    if ($packageCodes.Count -gt 0) {
+                        Write-Host ('Public package-manager error codes: ' + ($packageCodes -join ', '))
+                    }
+                    foreach ($category in @(
+                        @{ Token = 'No matching packages'; Name = 'package-not-found' },
+                        @{ Token = 'nothing provides'; Name = 'dependency-unavailable' },
+                        @{ Token = 'GPG signature'; Name = 'package-signature' },
+                        @{ Token = 'No such file or directory'; Name = 'local-input-unavailable' },
+                        @{ Token = 'Failed to synchronize cache'; Name = 'repository-metadata' }
+                    )) {
+                        if ($plain.Contains($category.Token, [StringComparison]::OrdinalIgnoreCase)) {
+                            Write-Host ('Public package-manager category: ' + $category.Name)
+                        }
+                    }
                     $capacity = [regex]::Match($plain,
                         'ValueError: default installation requires a disk of at least 64 GiB; selected (?<disk>/dev/[a-zA-Z0-9_.-]{1,64}) has (?<bytes>[0-9]{1,20}) bytes(?:\r?\n|$)')
                     if ($capacity.Success) {
