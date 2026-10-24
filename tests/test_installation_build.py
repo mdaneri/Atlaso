@@ -104,6 +104,62 @@ def test_pack_and_unpack_inputs_roundtrip_manifest_and_payload(tmp_path: Path) -
     assert (destination / "ordinary.txt").read_bytes() == b"payload bytes\x00\n"
 
 
+def test_prepare_payload_requests_gzip_for_general_repository_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Request gzip for every XML metadata stream used by the Photon solver.
+
+    Args:
+        tmp_path: Isolated payload and admitted input fixture paths.
+        monkeypatch: Replace external archive and repository-tool operations.
+    """
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    software = tmp_path / "software"
+    rpms = tmp_path / "rpms"
+    powercli = tmp_path / "powercli"
+    for root in (software, rpms, powercli):
+        root.mkdir()
+        (root / "input.txt").write_text("fixture\n", encoding="utf-8")
+    output = tmp_path / "payload"
+    source_script = (
+        'run_tdnf "Photon appliance package installation" \\\n'
+        "  install python3 linux-api-headers linux-firmware\n"
+    ).encode()
+    monkeypatch.setattr(build, "source_archive", lambda *_args: {"image/common/scripts/provision-atlaso.sh": source_script})
+    monkeypatch.setattr(build, "repository_configuration", lambda *_args: ("[main]\n", "[atlaso]\n"))
+    commands: list[list[str]] = []
+
+    def run(command: list[str], *, check: bool) -> None:
+        """Record the repository command and supply a minimal repository index.
+
+        Args:
+            command: Subprocess argument vector received by the test double.
+            check: Whether the caller requested subprocess failure checking.
+        """
+        assert check is True
+        commands.append(command)
+        metadata = Path(command[-1]) / "repodata"
+        metadata.mkdir()
+        (metadata / "repomd.xml").write_text("<repomd/>\n", encoding="utf-8")
+
+    monkeypatch.setattr(build.subprocess, "run", run)
+
+    build.prepare_payload(
+        repository=repository,
+        commit="1" * 40,
+        version="1.2.3",
+        software=software,
+        rpms=rpms,
+        powercli=powercli,
+        output=output,
+    )
+
+    assert commands == [[
+        "createrepo_c", "--checksum", "sha256", "--general-compress-type", "gz", str((output / "rpms").absolute())
+    ]]
+
+
 @pytest.mark.parametrize(
     "entries",
     [
@@ -316,7 +372,8 @@ def test_rebuild_repository_replaces_candidate_metadata_and_keeps_rpmdb(
     build.rebuild_repository(rpms, scratch)
 
     assert calls == [[
-        "createrepo_c", "--checksum", "sha256", "--outputdir", str((scratch / "rpm-metadata").absolute()),
+        "createrepo_c", "--checksum", "sha256", "--general-compress-type", "gz",
+        "--outputdir", str((scratch / "rpm-metadata").absolute()),
         str(rpms.absolute()),
     ]]
     assert (scratch / "untrusted-rpm-metadata/repomd.xml").read_bytes() == b"untrusted metadata"

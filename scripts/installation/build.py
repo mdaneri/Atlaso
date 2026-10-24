@@ -299,7 +299,9 @@ def prepare_payload(*, repository: Path, commit: str, version: str, software: Pa
         target.write_bytes(content)
     for name, source in (("software", software), ("rpms", rpms), ("powercli", powercli)):
         shutil.copytree(source, output / name)
-    subprocess.run(["createrepo_c", "--checksum", "sha256", str(output / "rpms")], check=True)
+    subprocess.run([
+        "createrepo_c", "--checksum", "sha256", "--general-compress-type", "gz", str(output / "rpms")
+    ], check=True)
     (output / "rpm-repos").mkdir()
     configuration, repository_text = repository_configuration(output / "source")
     (output / "tdnf.conf").write_text(configuration)
@@ -376,7 +378,8 @@ def rebuild_repository(rpms: Path, scratch: Path) -> None:
         os.rename(metadata, untrusted)
     generated.mkdir()
     subprocess.run(
-        ["createrepo_c", "--checksum", "sha256", "--outputdir", str(generated), str(repository)],
+        ["createrepo_c", "--checksum", "sha256", "--general-compress-type", "gz",
+         "--outputdir", str(generated), str(repository)],
         check=True,
     )
     _validate_ordinary_tree(generated)

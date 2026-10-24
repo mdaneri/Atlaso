@@ -109,6 +109,9 @@ is not publishable as an Atlaso release, and does not establish production or ph
 Boot-time signature verification reuses the `cryptography` package already included in the pinned Photon initrd;
 that initrd removes the OpenSSL command-line executable. The downloadable verifier retains its existing OpenSSL path.
 
+RPM repository generation explicitly uses gzip metadata so the pinned Photon initrd can read it, regardless of the
+build host’s default compression format.
+
 The VMware harness creates an isolated EFI VM with no network adapters, two blank SCSI disks, and a private serial
 console. Hash the generated ISO and use the exact owning pull request number. `Probe` checks that the native Photon disk
 selection screen appears, and `Cancel` checks cancellation before disk writes. `Auto` exercises the single-disk Auto
