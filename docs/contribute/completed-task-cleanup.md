@@ -298,6 +298,70 @@ fresh namespace absence still establish preserved evidence. The enclosing contro
 from those independent reads; inspection never writes a missing receipt, and unprepared absence remains a refusal.
 Receipt-backed absence readback also works after checkout removal; any recreated checkout must match its original identity.
 
+### Task-owned 1Password configuration
+
+`scripts.onepassword_task_configuration.OnePasswordTaskConfiguration` owns only a task-created copy of the two
+supported Windows 1Password configuration files. Use `kind: "configuration"` and
+`cleanup_tool: "OnePasswordTaskConfiguration"`. Generic generated-tree cleanup continues to exclude credential and
+recovery roots. This operation never decrypts configuration or retrieves credentials.
+
+Prepare this copy **before** other task tooling creates `.atlaso-local`. First independently establish task ownership,
+the exact registered worktree beneath the active Codex root, its creation commit, and its primary checkout. Load the
+[credential reuse procedure](../reference/vmware-workstation-lifecycle-testing.md#reuse-primary-checkout-configuration-in-a-task-worktree)
+and validate the source configuration. Then run the following from the task checkout, using verified variables:
+
+```python
+from pathlib import Path
+from scripts.onepassword_task_configuration import OnePasswordTaskConfiguration
+
+binding = {
+    "id": "onepassword-configuration",
+    "task_id": task_id,
+    "repository": "mdaneri/Atlaso",
+    "source_commit": source_commit,
+    "path": str(worktree / ".atlaso-local"),
+}
+owner = OnePasswordTaskConfiguration(
+    config=Path(active_codex_config),
+    receipt=durable_evidence / "onepassword-copy.json",
+    binding=binding,
+)
+ownership_manifest = owner.copy_from_primary()
+```
+
+The owner independently verifies the Git common directory, primary/task registrations, canonical HTTPS repository
+remote, source ancestry, and Git-ignore/tracking state. It requires a new destination directory and receipt; an existing
+directory or configuration is preserved without adoption, permission repair, or replacement. The primary directory
+and both source files must already have protected ACLs allowing only the current user and SYSTEM. Source and destination
+paths must be ordinary and single-link, with no reparse ancestors. The selector must identify the pinned Atlaso
+Environment. The owner copies bytes without decryption, records original identities through creation handles, and
+publishes durable creation and sealed receipts outside the worktree before the copy is available for use.
+
+Keep both receipts and their returned `ownership_manifest` path/hash in the resource inventory, adding the verified PR
+number once available. Reconstruct the owner with the same original binding for each fresh `resource.inspect` or
+`resource.release`; invoke `owner.controller_call(operation, payload, approved_resource)` from the live cleanup
+controller. As with other specialized owners, the controller must first independently verify task/PR/source and
+manifest provenance, exclusive ownership, inactivity of every credential consumer, retention/downstream needs, and
+absence of credential recovery obligations. Owner filesystem checks and open-handle refusals do not replace those
+live process and task checks. Do not call release while a consumer may retain credentials in memory.
+
+The sole removal scope is the exact task `.atlaso-local` directory. Release other task outputs through their own tools
+first: any child other than `onepassword-environment-id` and `onepassword-service-account-token.dpapi`, including caches,
+locks, and cleanup/recovery markers, blocks this operation. The owner rechecks protected current-user/SYSTEM ACLs,
+original directory/file identities, single hard links, bounded sizes, and sealed byte hashes. It pins all remaining
+objects before deletion and uses ordinary Windows handle disposition; active handles or newly added children refuse
+release. Primary configuration is never a removal scope.
+
+Keep separately inventoried validation roots outside this directory so their removal scopes stay disjoint. An existing
+nested resource requires controller inventory reconciliation; this owner never waives the overlapping-scope refusal.
+
+A prepared-release receipt precedes deletion. Retry an interrupted release with the same original receipts and binding;
+only already removed entries and the unchanged original survivors are accepted. After success, independently inspect
+again and require absence; a recreated directory is preserved. Pending receipt publication, an incomplete copy without
+a sealed receipt, changed identity/content/ACL, missing original provenance, or ambiguous ownership keeps cleanup
+blocked for explicit reconciliation. Existing copies made without this original creation evidence remain unsupported;
+retain them and report the missing provenance rather than generating a new receipt at cleanup time.
+
 ### Disposable pytest Git fixtures
 
 `scripts.pytest_git_fixtures.PytestGitFixtures` owns Windows disposable pytest Git artifact roots. Use
