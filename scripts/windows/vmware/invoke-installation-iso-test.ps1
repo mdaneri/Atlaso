@@ -124,6 +124,7 @@ function Wait-InstallationConsoleState {
 }
 
 $worktree = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 . (Join-Path $PSScriptRoot 'Atlaso.TestVmOwnership.ps1')
 $commit = ([string](& git -C $worktree rev-parse HEAD)).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Could not admit the installer console source commit.' }

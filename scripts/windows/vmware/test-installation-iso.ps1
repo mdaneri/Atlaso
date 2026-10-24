@@ -69,6 +69,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 . (Join-Path $PSScriptRoot 'Atlaso.TestVmOwnership.ps1')
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
@@ -470,7 +471,6 @@ if ($Mode -eq 'Verify') {
         $vmxPin.Dispose()
         $vmxPin = $null
         $vmrun = Resolve-InstallationVmTool -Path $VmrunPath -FileName 'vmrun.exe'
-        Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
         Confirm-AtlasoWorkstationVmInactive -VmrunPath $vmrun -VmxPath $context.VmxPath -ExpectedIdentity $vmxIdentity
         $vmxPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($context.VmxPath, $true)
         if ([Atlaso.WorkstationFileIdentity]::Get($context.OutputDirectory) -cne [string]$original.original_identities.directory) {

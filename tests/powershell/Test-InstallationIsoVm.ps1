@@ -124,6 +124,23 @@ Assert-InstallationVmCondition $invalidPipeRejected 'Remote named pipes must be 
 $source = [System.IO.File]::ReadAllText($harnessPath)
 $ownershipSource = [System.IO.File]::ReadAllText($ownershipPath)
 $cleanupSource = [System.IO.File]::ReadAllText($cleanupPath)
+$driverSource = [System.IO.File]::ReadAllText($consoleDriverPath)
+$cleanupImport = "Import-Module (Join-Path `$PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force"
+$ownershipDotSource = ". (Join-Path `$PSScriptRoot 'Atlaso.TestVmOwnership.ps1')"
+foreach ($entryPoint in @(
+        [pscustomobject]@{ Name = 'VM harness'; Text = $source; Context = 'New-AtlasoTestVmOwnershipContext' },
+        [pscustomobject]@{ Name = 'console driver'; Text = $driverSource; Context = 'New-AtlasoTestVmOwnershipContext' }
+    )) {
+    $moduleImportIndex = $entryPoint.Text.IndexOf($cleanupImport, [StringComparison]::Ordinal)
+    $ownershipSourceIndex = $entryPoint.Text.IndexOf($ownershipDotSource, [StringComparison]::Ordinal)
+    $contextCreationIndex = $entryPoint.Text.IndexOf($entryPoint.Context, [StringComparison]::Ordinal)
+    Assert-InstallationVmCondition ($moduleImportIndex -ge 0 -and $moduleImportIndex -lt $ownershipSourceIndex -and $ownershipSourceIndex -lt $contextCreationIndex) `
+        "$($entryPoint.Name) must load the cleanup module before ownership initialization and context creation."
+}
+$freshProcessScript = "Import-Module '$($cleanupPath.Replace("'", "''"))' -Force; if (-not ('Atlaso.WorkstationFileIdentity' -as [type])) { exit 17 }"
+$freshProcessOutput = @(& (Get-Process -Id $PID).Path -NoProfile -Command $freshProcessScript 2>&1)
+Assert-InstallationVmCondition ($LASTEXITCODE -eq 0) 'A fresh PowerShell process must initialize the file-identity type from the cleanup module.'
+Assert-InstallationVmCondition ($freshProcessOutput.Count -eq 0) 'Fresh-process identity initialization must not emit unexpected output.'
 $whatIfGate = $source.IndexOf('$PSCmdlet.ShouldProcess($resolvedOutput', [StringComparison]::Ordinal)
 $intentWrite = $source.IndexOf('Publish-AtlasoTestVmOwnershipRecord -Context $context -Record $intent', [StringComparison]::Ordinal)
 $originalReceipt = $source.IndexOf('Publish-InstallationVmOriginalReceipt -Context $context', [StringComparison]::Ordinal)
