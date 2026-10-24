@@ -16,11 +16,50 @@ VCF Helper prepares deployment DNS desired state. It is available under `VCF Wor
 
 This verified appliance view provides visual orientation before you begin.
 
-![Atlaso VCF Helper page in the clean-appliance desktop viewport.](../assets/screenshots/vcf-helper-clean-desktop.webp)
+![Atlaso VCF Helper Deployment tab in the desktop viewport.](../assets/screenshots/vcf-helper-tabs-deployment-desktop.webp)
 
-*Figure: VCF Helper in the verified clean-appliance desktop state.*
+*Figure: The Deployment tab groups related helpers on the dedicated lab appliance.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+## Choose a helper
+
+Use the tabs inside **VCF Helper** to choose a workflow:
+
+| Tab | Helpers |
+| --- | --- |
+| Deployment | Generated VCF FQDNs, Add SDDC Manager OVA, Deploy SDDC Manager, Configure VCF Offline Depot |
+| Credentials | Import passwords into a vault |
+| Certificates | VCF Certificate Trust, Appliance Certificate Replacement |
+| LDAP | Managed LDAP for VCF, Generate LDAP Test Directory |
+| Lab | Lab / Non-production Overrides |
+
+The page opens Deployment on the first visit and remembers your selected tab. Workflow links and returned results
+open the relevant category. Closing a dialog returns focus to its launch action. Use Left/Right Arrow, Home, and End
+on the tabs to navigate with the keyboard. Without JavaScript, the page displays all helper groups.
+
+### Appliance Certificate Replacement
+
+Administrators can replace the certificate on a standalone vCenter, an unregistered standalone SRM / Protection and
+Recovery appliance, or the SDDC Manager appliance resource in its own initialized VCF 9.x management domain using the
+native CSR and private key. Open **Certificates → Appliance Certificate Replacement**.
+The wizard guides you through **Credential**, **Server**, **TLS fingerprint**, **Login** (manual credentials only),
+**Target and prerequisites**, **Prepare certificate**, **Review**, **Replace**, and **Results**. For SDDC Manager,
+Atlaso targets only its own management-domain appliance resource. VCF Installer, uninitialized appliances, and other
+domain-managed components are excluded. Linked vCenters, vCenter HA, registered SRM, unknown topology, and unsupported
+capabilities require the coordinated native product procedure.
+
+The current certificate SANs and native hostname determine the read-only reviewed names. Correct native identity and DNS
+before preparation; Atlaso refuses stale/missing target SANs rather than silently substituting names. A ready CA and an
+enabled exact product profile must already exist. The replacement private key remains on the target. Recovery
+acknowledgement, no-pending-operation acknowledgement, and final certificate installation each require explicit
+operator action. Reviews are single-use, actor-bound, and expire after ten minutes. Requests have a 30-second bound and
+readiness checks can continue for up to 15 minutes.
+
+If a task outcome is uncertain, use **Reconcile status** and follow the displayed recovery guidance. The target
+reservation remains held while remote state is unresolved. Do not create another CSR or repeat an uncertain install.
+For certificate requirements and the verified 9.1 lab coverage, see
+[Appliance Certificates](appliance-certificates.md).
 
 ## Lab / Non-production Overrides
 
@@ -475,8 +514,12 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### VCF Helper
 
-![Atlaso VCF Helper page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-helper-clean-responsive.webp)
+![Atlaso VCF Helper Certificates tab in the desktop viewport.](../assets/screenshots/vcf-helper-tabs-certificates-desktop.webp)
 
-*Figure: VCF Helper in the verified clean-appliance responsive state.*
+*Figure: The Certificates tab groups related helpers on the dedicated lab appliance.*
+
+![Atlaso VCF Helper Certificates tab in the responsive viewport.](../assets/screenshots/vcf-helper-tabs-certificates-responsive.webp)
+
+*Figure: The Certificates tab groups related helpers on the dedicated lab appliance.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

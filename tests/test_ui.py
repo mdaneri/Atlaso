@@ -1787,7 +1787,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=ca-csr-intake-1028-1" in page.text
+    assert "/static/app.css?v=vcf-helper-tabs-1027-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11" in page.text
     assert "/static/app.js?v=ca-ip-sans-1039-1" in page.text
     app_css = client.get("/static/app.css")
@@ -18417,6 +18417,12 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     response = client.get("/vcf-helper")
 
     assert response.status_code == 200
+    assert 'data-tab-storage-key="atlaso:vcf-helper:active-tab"' in response.text
+    for tab_id in ("deployment", "credentials", "certificates", "ldap", "lab"):
+        assert f'data-tab-target="vcf-helper-{tab_id}"' in response.text
+        assert f'id="vcf-helper-{tab_id}" role="tabpanel"' in response.text
+    assert 'aria-selected="true">Deployment</button>' in response.text
+    assert 'src="/static/vcf-helper-tabs.js?v=issue-1027-1"' in response.text
     assert "Generated VCF FQDNs" in response.text
     assert "DNS Boundary" not in response.text
     assert 'href="/ui/management/vcf-helper"' in response.text
@@ -18427,11 +18433,15 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert "Lab / Non-production Overrides requires JavaScript." in fallback
     assert "No changes are made by opening this page." in fallback
     assert "Review DNS" not in visible_workspace
-    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 9
+    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 10
     assert "Import passwords into a vault" in visible_workspace
-    assert 'id="vcf-helper-platform-title">SDDC Manager / VCF Installer</h3>' in visible_workspace
-    assert 'id="vcf-helper-ldap-title">LDAP</h3>' in visible_workspace
-    assert visible_workspace.count('class="vcf-helper-action-bands"') == 2
+    assert visible_workspace.count('class="vcf-helper-action-bands"') == 5
+    groups = {key: visible_workspace.split(f'id="vcf-helper-{key}" role="tabpanel"', 1)[1].split('class="tab-panel', 1)[0] for key in ("deployment", "credentials", "certificates", "ldap", "lab")}
+    assert "Import passwords into a vault" in groups["credentials"]
+    assert "VCF Certificate Trust" in groups["certificates"]
+    assert "Generate LDAP Test Directory" in groups["ldap"]
+    assert "Lab / Non-production Overrides" in groups["lab"]
+    assert "Import passwords into a vault" not in groups["deployment"]
     assert "vcf-helper-action-arrow" not in visible_workspace
     assert "service-summary-grid" not in visible_workspace
     assert "Generated names" not in visible_workspace

@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.454"
+version = "0.9.455"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -112,6 +112,11 @@ files = [
   "scripts/interop/routing_overlap_guest.py",
   "atlaso/app/services/vcf_lab_remote.py",
   "atlaso/app/services/vcf_lab_overrides.py",
+  "atlaso/app/services/vcf_certificates.py",
+  "atlaso/app/services/vcf_certificate_remote.py",
+  "atlaso/app/services/vcf_certificate_sddc.py",
+  "atlaso/app/services/vcf_certificate_material.py",
+  "atlaso/app/services/vcf_certificate_discovery.py",
   "atlaso/app/services/remote_ssh.py",
   "atlaso/app/services/log_viewer.py",
   "atlaso/app/services/producer_log_history.py",

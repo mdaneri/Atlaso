@@ -50,6 +50,9 @@ from atlaso.app.models import (
 )
 from atlaso.app.operational_logging import log_audit_event
 from atlaso.app.routers.chunk_uploads import ChunkedUploadRoute
+from atlaso.app.routers.ui.vcf_certificates import (
+    register_routes as register_certificate_routes,
+)
 from atlaso.app.routers.ui.vcf_lab_overrides import (
     register_routes as register_lab_routes,
 )
@@ -462,6 +465,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
     vcf_trust_context = dependencies.vcf_trust_context
     verify_csrf = dependencies.verify_csrf
     register_lab_routes(router, verify_csrf)
+    register_certificate_routes(router, verify_csrf)
 
     @router.get("/https-repository", response_model=None)
     def legacy_https_repository_redirect(
