@@ -77,6 +77,8 @@ def _initrd(*, unshare: bool = True) -> tuple[bytes, bytes]:
         ("usr/bin", b"", stat.S_IFDIR | 0o755),
         ("usr/lib", b"", stat.S_IFDIR | 0o755),
         ("usr/lib/python3.11", b"", stat.S_IFDIR | 0o755),
+        ("usr/lib/python3.11/site-packages/cryptography/__init__.py", b"", stat.S_IFREG | 0o644),
+        ("usr/lib/python3.11/site-packages/cryptography/hazmat/primitives/asymmetric/ed25519.py", b"", stat.S_IFREG | 0o644),
         (
             "usr/lib/python3.11/site-packages/photon_installer/installer.py",
             photon_installer,

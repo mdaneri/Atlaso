@@ -25,7 +25,7 @@ def main() -> None:
     args = parser.parse_args()
     os.umask(0o077)
     with tempfile.TemporaryDirectory(prefix="atlaso-installer-verify-", dir="/run") as temporary:
-        verify_media(args.media, Path("/etc/atlaso-installer/trust.pem"), scratch=Path(temporary), expected_key_id=installer_key_id())
+        verify_media(args.media, Path("/etc/atlaso-installer/trust.pem"), scratch=Path(temporary), expected_key_id=installer_key_id(), boot_crypto=True)
     os.execv(sys.executable, [sys.executable, str(args.media / "source/scripts/installation/installer.py"), "--media", str(args.media)])
 
 

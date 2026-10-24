@@ -489,6 +489,11 @@ def _rewrite_newc(archive: bytes, launcher: bytes, trust: bytes, *, bootstrap: b
     required_unshare = by_name.get("usr/bin/unshare")
     if required_unshare is None or not stat.S_ISREG(required_unshare.mode) or not required_unshare.mode & 0o111:
         raise ValueError("pinned Photon initrd does not contain executable /usr/bin/unshare")
+    if bootstrap:
+        for name in ("cryptography/__init__.py", "cryptography/hazmat/primitives/asymmetric/ed25519.py"):
+            dependency = by_name.get("usr/lib/python3.11/site-packages/" + name)
+            if dependency is None or not stat.S_ISREG(dependency.mode):
+                raise ValueError("pinned Photon initrd is missing its cryptography verifier")
     installer = by_name.get(PHOTON_INSTALLER_PATH)
     if installer is None or not stat.S_ISREG(installer.mode):
         raise ValueError("pinned Photon initrd installer is missing")

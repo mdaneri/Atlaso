@@ -106,6 +106,9 @@ identity only when its explicit development
 marker is present. The resulting image is for VMware testing only: it uses the serial installer console on `ttyS0`,
 is not publishable as an Atlaso release, and does not establish production or physical-hardware acceptance.
 
+Boot-time signature verification reuses the `cryptography` package already included in the pinned Photon initrd;
+that initrd removes the OpenSSL command-line executable. The downloadable verifier retains its existing OpenSSL path.
+
 The VMware harness creates an isolated EFI VM with no network adapters, two blank SCSI disks, and a private serial
 console. Hash the generated ISO and use the exact owning pull request number. `Probe` checks that the native Photon disk
 selection screen appears, and `Cancel` checks cancellation before disk writes. `Auto` exercises the single-disk Auto

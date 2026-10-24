@@ -71,13 +71,27 @@ Args:
     return root, trust, scratch, value, key
 
 
-def test_complete_media_is_verified_with_openssl(signed_media):
+@pytest.mark.parametrize("boot_crypto", [False, True])
+def test_complete_media_is_verified_with_existing_crypto(signed_media, monkeypatch, boot_crypto):
     """
     Args:
         signed_media: Synthetic signed media fixture used by the test.
+        monkeypatch: Fixture for rejecting external commands in boot mode.
+        boot_crypto: Whether to use the existing initrd Python verifier.
     """
     root, trust, scratch, value, _ = signed_media
-    assert manifest.verify_media(root, trust, scratch=scratch) == value
+    if boot_crypto:
+        def reject_command(*_args, **_kwargs):
+            """Reject external executables in the boot verification regression.
+
+            Args:
+                *_args: Positional subprocess options.
+                **_kwargs: Named subprocess options.
+            """
+            raise AssertionError("Boot verification must not require an OpenSSL executable")
+
+        monkeypatch.setattr(manifest.subprocess, "run", reject_command)
+    assert manifest.verify_media(root, trust, scratch=scratch, boot_crypto=boot_crypto) == value
     assert not list(scratch.iterdir())
 
 
@@ -134,11 +148,13 @@ def test_development_marker_is_vmware_only(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("mutation", ["file", "extra", "signature", "manifest", "trust"])
-def test_changed_media_is_rejected(signed_media, mutation):
+@pytest.mark.parametrize("boot_crypto", [False, True])
+def test_changed_media_is_rejected(signed_media, mutation, boot_crypto):
     """
     Args:
         signed_media: Synthetic signed media fixture used by the test.
         mutation: Callback that changes one signed fixture input.
+        boot_crypto: Existing host or initrd verifier being exercised.
     """
     root, trust, scratch, _, _ = signed_media
     if mutation == "file":
@@ -155,7 +171,7 @@ def test_changed_media_is_rejected(signed_media, mutation):
         other = Ed25519PrivateKey.generate()
         trust.write_bytes(other.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo))
     with pytest.raises((ValueError, subprocess.CalledProcessError)):
-        manifest.verify_media(root, trust, scratch=scratch)
+        manifest.verify_media(root, trust, scratch=scratch, boot_crypto=boot_crypto)
 
 
 @pytest.mark.parametrize("field,value", [("architecture", "aarch64"), ("schema", 2), ("packages", ["linux;echo injected"]), ("packages", [["linux"]]), ("photon_installer", "2.3"), ("rpm_inventory", []), ("source_commit", "b" * 40)])

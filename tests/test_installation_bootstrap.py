@@ -59,16 +59,18 @@ def test_bootstrap_uses_initrd_pinned_verifier_and_executes_only_after_verificat
     trusted_manifest = Path(module.verify_media.__globals__["__file__"]).resolve()
     events = []
 
-    def verify(candidate: Path, trust_key: Path, *, scratch: Path, expected_key_id: str) -> dict:
+    def verify(candidate: Path, trust_key: Path, *, scratch: Path, expected_key_id: str, boot_crypto: bool) -> dict:
         """
         Args:
             candidate: Untrusted candidate media path supplied to the verifier.
             trust_key: Public trust key used by the verification fixture.
             scratch: Task-local scratch directory for verification.
             expected_key_id: Trust domain selected by the trusted initrd.
+            boot_crypto: Selection of existing pinned initrd cryptography.
         """
         events.append(("verify", candidate, trust_key, scratch))
         assert expected_key_id == "atlaso-release-2026-01"
+        assert boot_crypto is True
         assert str(candidate) not in module.sys.path
         return {"schema": 1}
 

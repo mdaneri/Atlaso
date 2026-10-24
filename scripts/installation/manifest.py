@@ -50,15 +50,16 @@ def canonical_json(value: dict) -> bytes:
     return (json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n").encode()
 
 
-def verify_signature(document: Path, signature: Path, trust_key: Path, *, scratch: Path, expected_key_id: str = KEY_ID) -> dict:
-    """Verify Ed25519 with Photon's OpenSSL instead of bootstrapping Python deps.
+def verify_signature(document: Path, signature: Path, trust_key: Path, *, scratch: Path, expected_key_id: str = KEY_ID, boot_crypto: bool = False) -> dict:
+    """Verify Ed25519 using existing host or pinned initrd cryptography tooling.
 
     Args:
         document: Signed metadata document to verify.
         signature: Detached signature file for the metadata document.
         trust_key: Trusted public key used to verify signed metadata.
         scratch: Existing private directory for temporary validation data.
-        expected_key_id: Explicit trust domain; production remains the default."""
+        expected_key_id: Explicit trust domain; production remains the default.
+        boot_crypto: Reuse the pinned Photon initrd Python cryptography package."""
     if expected_key_id not in {KEY_ID, DEVELOPMENT_KEY_ID}:
         raise ValueError("unsupported installer trust domain")
     for path in (document, signature, trust_key):
@@ -71,13 +72,29 @@ def verify_signature(document: Path, signature: Path, trust_key: Path, *, scratc
     binary = base64.b64decode(raw.get("signature", ""), validate=True)
     if len(binary) != 64:
         raise ValueError("installation signature has an invalid size")
-    with tempfile.TemporaryDirectory(prefix="signature-", dir=scratch) as temporary:
-        signature_file = Path(temporary) / "signature.bin"
-        signature_file.write_bytes(binary)
-        subprocess.run(
-            ["openssl", "pkeyutl", "-verify", "-pubin", "-inkey", str(trust_key), "-rawin", "-in", str(document), "-sigfile", str(signature_file)],
-            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+    if boot_crypto:
+        # Photon removes the OpenSSL CLI from its initrd, but already includes
+        # cryptography for the native installer. Match Atlaso release verification
+        # without downloading dependencies or executing unverified media code.
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+        public_key = serialization.load_pem_public_key(trust_key.read_bytes())
+        if not isinstance(public_key, Ed25519PublicKey):
+            raise ValueError("installation signing key is not Ed25519")
+        try:
+            public_key.verify(binary, document.read_bytes())
+        except InvalidSignature as exc:
+            raise ValueError("installation manifest signature is invalid") from exc
+    else:
+        with tempfile.TemporaryDirectory(prefix="signature-", dir=scratch) as temporary:
+            signature_file = Path(temporary) / "signature.bin"
+            signature_file.write_bytes(binary)
+            subprocess.run(
+                ["openssl", "pkeyutl", "-verify", "-pubin", "-inkey", str(trust_key), "-rawin", "-in", str(document), "-sigfile", str(signature_file)],
+                check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
     value = json.loads(document.read_bytes())
     if not isinstance(value, dict) or value.get("signing_key_id") != expected_key_id:
         raise ValueError("installation manifest signing identity differs")
@@ -102,15 +119,16 @@ def inventory(root: Path) -> list[dict]:
     return records
 
 
-def verify_media(root: Path, trust_key: Path, *, scratch: Path, expected_key_id: str = KEY_ID) -> dict:
+def verify_media(root: Path, trust_key: Path, *, scratch: Path, expected_key_id: str = KEY_ID, boot_crypto: bool = False) -> dict:
     """Authenticate every embedded byte before permitting disk writes.
 
     Args:
         root: Root directory containing the files being checked.
         trust_key: Trusted public key used to verify signed metadata.
         scratch: Existing private directory for temporary validation data.
-        expected_key_id: Explicit initrd trust domain; never selected from media."""
-    value = verify_signature(root / MANIFEST, root / SIGNATURE, trust_key, scratch=scratch, expected_key_id=expected_key_id)
+        expected_key_id: Explicit initrd trust domain; never selected from media.
+        boot_crypto: Reuse cryptography from the pinned initrd, not the media."""
+    value = verify_signature(root / MANIFEST, root / SIGNATURE, trust_key, scratch=scratch, expected_key_id=expected_key_id, boot_crypto=boot_crypto)
     software_commit = value.get("source_commit")
     if expected_key_id == DEVELOPMENT_KEY_ID:
         development = value.get("development")

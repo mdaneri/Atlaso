@@ -399,7 +399,7 @@ def main() -> int:
         raise ValueError("the native Photon installer differs from the pinned version 2.2")
     sys.path.insert(0, str(NATIVE_PATH))
     with tempfile.TemporaryDirectory(prefix="atlaso-installer-", dir="/run") as temporary:
-        identity = verify_media(args.media, TRUST_KEY, scratch=Path(temporary), expected_key_id=installer_key_id())
+        identity = verify_media(args.media, TRUST_KEY, scratch=Path(temporary), expected_key_id=installer_key_id(), boot_crypto=True)
     config, consent, credentials = curses.wrapper(configure_console, disk_inventory())
     try:
         install(args.media, identity, config, consent, credentials)
