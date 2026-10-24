@@ -5376,8 +5376,11 @@ inherited sockets in a graceful reload, then activates address-specific replacem
 Shared virtual hosts declare <code>reuseport</code> only once for each address and port across all published nginx sites,
 including management redirects and PXE HTTP. Publication preserves an unchanged site's existing declaration and
 coordinates paired final sites before validation so nginx does not reject duplicate socket options.
-Both steps require a new accepting worker generation under the same master; a successful reload signal alone does
-not prove activation. Candidate listeners retain socket reuse through application acknowledgement so rollback can
+Both steps require a new accepting worker generation under the same master and every previous worker to stop accepting
+new connections. A replacement can coexist briefly with old accepting workers that still serve the previous virtual
+hosts; neither that overlap nor a successful reload signal proves activation. Workers already draining requests or
+WebSockets may remain alive without delaying reload confirmation. Candidate listeners retain socket reuse through
+application acknowledgement so rollback can
 restore a previous wildcard without a bind collision. Recovery activates that temporary bridge before reloading the
 exact snapshotted configuration. These transitions do not restart nginx or retire the old management path before
 strict candidate readiness. For reload diagnosis, inspect retained nginx error history as well as the current error
