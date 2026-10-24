@@ -573,11 +573,17 @@ public static class AtlasoInstallationPipePeer {
         foreach ($account in @('root', 'admin')) {
             $loginDeadline = [DateTimeOffset]::UtcNow.AddSeconds(180)
             if ($loginDeadline -gt $deadline) { $loginDeadline = $deadline }
+            Write-Host ('Installed console: awaiting {0} login prompt.' -f $account)
             Wait-InstallationConsoleState -Pipe $pipe -Pattern 'login:' -Deadline $loginDeadline
             Send-InstallationConsoleText -Pipe $pipe -Text "$account`n"
+            Write-Host ('Installed console: awaiting {0} password prompt.' -f $account)
             Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Password:' -Deadline $loginDeadline
             $value = if ($account -eq 'root') { $credentials.RootPassword } else { $credentials.AdminPassword }
             Send-InstallationConsoleSecret -Pipe $pipe -Value $value
+            # PAM/login may flush queued input before starting the shell. Never
+            # send the checkpoint command until the ordinary shell prompt appears.
+            Write-Host ('Installed console: awaiting {0} shell prompt.' -f $account)
+            Wait-InstallationConsoleState -Pipe $pipe -Pattern "$account@atlaso" -Deadline $loginDeadline
             # Split the marker so terminal echo cannot satisfy the shell checkpoint.
             $condition = if ($account -eq 'root') { '[ "$(id -u)" = 0 ]' } else { '[ "$(id -un)" = admin ]' }
             Send-InstallationConsoleText -Pipe $pipe -Text ($condition + " && printf 'ATLASO-%s\n' 'LOGIN-OK'`n")

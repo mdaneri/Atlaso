@@ -695,3 +695,8 @@ $bootPublish = $source.IndexOf('-Record $transition -Kind installation-boot', [S
 $bootWrite = $source.IndexOf('$writer.Write($after', $bootPublish, [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($bootPublish -gt $verifyCompare -and $bootWrite -gt $bootPublish) 'Original/baseline verification and transition publication must precede VMX mutation.'
 Write-Host 'Installation disk-boot transition regression tests passed.'
+
+$installedLogin = $driverSource.IndexOf("foreach (`$account in @('root', 'admin'))", [StringComparison]::Ordinal)
+$shellWait = $driverSource.IndexOf('-Pattern "$account@atlaso"', $installedLogin, [StringComparison]::Ordinal)
+$probeSend = $driverSource.IndexOf("Send-InstallationConsoleText -Pipe `$pipe -Text (`$condition", $installedLogin, [StringComparison]::Ordinal)
+Assert-InstallationVmCondition ($installedLogin -ge 0 -and $shellWait -gt $installedLogin -and $probeSend -gt $shellWait) 'Installed shell probes must wait for login to finish before sending commands.'
