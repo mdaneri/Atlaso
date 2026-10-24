@@ -71,7 +71,7 @@ def run_pinned_ssh_command(
         or not password
         or "\n" in password
         or "\r" in password
-        or command not in {"python3 -", "/usr/bin/python3 -", "sudo -n python3 -", "sudo -n /usr/bin/python3 -", "sudo -n /opt/atlaso/.venv/bin/python -I -"}
+        or command not in {"python3 -", "/usr/bin/python3 -", "sudo -n python3 -", "sudo -n /usr/bin/python3 -", "sudo -n /opt/atlaso/.venv/bin/python -I -", "/opt/atlaso/.venv/bin/python -I -"}
         or len(stdin_data) > _MAX_GUEST_PROGRAM
         or timeout <= 0
         or timeout > 60

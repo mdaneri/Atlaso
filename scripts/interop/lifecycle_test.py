@@ -41,9 +41,22 @@ except ImportError:  # pragma: no cover - Photon image should include cryptograp
 
 
 try:
-    from scripts.interop.time_source_guest import apply_review_fields, apply_review_path
-except ModuleNotFoundError:  # Standalone checked-in runner executed from its interop directory.
-    from time_source_guest import apply_review_fields, apply_review_path
+    from scripts.interop.time_source_guest import (
+        FormParser as NtpFormParser,
+    )
+    from scripts.interop.time_source_guest import (
+        apply_review_fields,
+        apply_review_path,
+    )
+except ModuleNotFoundError:  # Isolated execution admits only this exact checked-in sibling.
+    _time_spec = importlib.util.spec_from_file_location("atlaso_lifecycle_time_guest", Path(__file__).with_name("time_source_guest.py"))
+    if _time_spec is None or _time_spec.loader is None:
+        raise RuntimeError("Lifecycle Apply support is unavailable.") from None
+    _time_module = importlib.util.module_from_spec(_time_spec)
+    _time_spec.loader.exec_module(_time_module)
+    NtpFormParser = _time_module.FormParser
+    apply_review_fields = _time_module.apply_review_fields
+    apply_review_path = _time_module.apply_review_path
 
 
 ALL_SCOPES = [
@@ -173,7 +186,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--confirm-esx-storage-format", action="store_true", help="Authorize the selected lifecycle blank disk to be formatted as ext4.")
     parser.add_argument("--ssh-user", default="", help="Compatibility override for both appliance and client SSH users.")
     parser.add_argument("--appliance-ssh-user", default="admin")
-    parser.add_argument("--client-ssh-user", default="alpine")
+    parser.add_argument("--client-ssh-user", default=None)
     parser.add_argument("--ssh-key", default="")
     parser.add_argument("--ssh-password", default="")
     parser.add_argument("--appliance-ssh-password", default="")
@@ -216,6 +229,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     for option in ("dir", "node", "packages", "browser"):
         parser.add_argument(f"--reverse-proxy-screenshot-{option}", default="")
     args = parser.parse_args(argv)
+    if args.client_ssh_user is None:
+        args.client_ssh_user = "admin" if args.same_interface_gateway_only else "alpine"
     if args.same_interface_gateway_only and (args.reverse_proxy_only or args.time_source_only or args.oidc_only or args.routing_wan_only or args.restored_state_run or args.restore_settings_backup or args.export_settings_backup or args.signed_release_repository_url):
         parser.error("--same-interface-gateway-only cannot be combined with other lifecycle modes.")
     if args.same_interface_gateway_only and (not args.gateway_client_host or not args.gateway_client_hostkey or not args.appliance_ssh_hostkey or not args.gateway_upstream or re.fullmatch(r"[0-9a-f]{40}", args.gateway_expected_commit) is None):
@@ -784,8 +799,8 @@ def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
     if args.same_interface_gateway_only:
         return {"appliance_url": args.appliance_url, "same_interface_gateway_only": True,
                 "client_host": args.gateway_client_host, "upstream": args.gateway_upstream,
-                "source_commit": args.gateway_expected_commit, "apply_units": ["network", "wan", "firewall"],
-                "checks": ["two sole-NIC Atlaso guests on the same existing NAT network", "client redirect bypass prevention", "same-tuple ingress/egress MAC and TTL evidence", "negative permission control with router internet preserved", "recovery and reboot persistence", "external IP separate from DNS"]}
+                "source_commit": args.gateway_expected_commit, "apply_units": ["ntpd", "network", "wan", "firewall"],
+                "checks": ["two Atlaso guests with only their NAT interface active", "exclusive fixture clock authority", "client redirect bypass prevention", "same-tuple ingress/egress MAC and TTL evidence", "negative permission control with router internet preserved", "recovery and reboot persistence", "external IP separate from DNS"]}
     if args.reverse_proxy_only:
         return {
             "appliance_url": args.appliance_url,

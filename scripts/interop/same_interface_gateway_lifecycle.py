@@ -82,8 +82,11 @@ def run_same_interface_gateway_acceptance(lifecycle: Any, results: list, args: A
     clients: dict[str, Any] = {}
 
     def guest(host: str, program: str, *, timeout: int = 30, on_ready: Any = None) -> bytes:
-        return run_pinned_ssh_command(host, "admin", args.password, fingerprints[host],
-            "sudo -n /opt/atlaso/.venv/bin/python -I -", stdin_data=program.encode(),
+        role = "appliance" if host == router else "client"
+        username = lifecycle.ssh_username(args, role)
+        command = ("" if username == "root" else "sudo -n ") + "/opt/atlaso/.venv/bin/python -I -"
+        return run_pinned_ssh_command(host, username, lifecycle.ssh_password(args, role), fingerprints[host],
+            command, stdin_data=program.encode(),
             timeout=timeout, on_ready=on_ready)
 
     def observe(host: str) -> dict:
@@ -160,6 +163,31 @@ print(json.dumps({p:hashlib.sha256(f.read_text().encode()).hexdigest() for p,f i
 
     step("gateway-router-deployed-source", lambda: deployed_source(router))
     step("gateway-client-deployed-source", lambda: deployed_source(client_ip))
+
+    def fixture_clock(host: str) -> dict:
+        status, body, _ = clients[host].request("GET", "/ntp")
+        if status != 200:
+            raise GatewayLifecycleError("The appliance clock settings are unavailable.")
+        parser = lifecycle.NtpFormParser()
+        parser.feed(body)
+        fields = [(name, value) for name, value in parser.fields if name not in {"enabled", "nts_server_enabled", "time_source"}]
+        if not any(name == "csrf" for name, _ in fields):
+            raise GatewayLifecycleError("The clock settings form is incomplete.")
+        fields.append(("time_source", "vmware_tools"))
+        status, _, _ = clients[host].request("POST", parser.form_action, form=fields, follow_redirects=False)
+        if status not in {200, 303}:
+            raise GatewayLifecycleError("The fixture clock selection was rejected.")
+        applied = apply(host, ["ntpd"])
+        state = json.loads(guest(host, '''import subprocess,json
+tools=subprocess.run(['vmware-toolbox-cmd','timesync','status'],capture_output=True,text=True,timeout=10)
+services=subprocess.run(['systemctl','is-active','ntpd.service','chronyd.service','systemd-timesyncd.service'],capture_output=True,text=True,timeout=10)
+print(json.dumps({'vmware_timesync':tools.stdout.strip(),'clock_services':services.stdout.splitlines()}))'''))
+        if state["vmware_timesync"].lower() != "enabled" or "active" in state["clock_services"]:
+            raise GatewayLifecycleError("The fixture must have one verified clock authority.")
+        return {"apply": applied, "clock": state}
+
+    step("gateway-router-fixture-clock", lambda: fixture_clock(router))
+    step("gateway-client-fixture-clock", lambda: fixture_clock(client_ip))
 
     def configure(host: str, gateway: str, routing: bool) -> dict:
         physical_rows = rows(host, "/physical-interfaces", "data-interfaces")

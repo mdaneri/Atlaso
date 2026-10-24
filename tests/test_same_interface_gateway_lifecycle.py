@@ -7,6 +7,9 @@ import html
 import importlib.machinery
 import io
 import json
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -90,10 +93,11 @@ def test_gateway_lifecycle_plan_keeps_secrets_out_and_lists_native_path_checks()
     plan = lifecycle_test.lifecycle_plan(args)
     rendered = json.dumps(plan)
 
-    assert plan["apply_units"] == ["network", "wan", "firewall"]
+    assert plan["apply_units"] == ["ntpd", "network", "wan", "firewall"]
     assert plan["client_host"] == args.gateway_client_host
     assert plan["upstream"] == args.gateway_upstream
     assert plan["source_commit"] == args.gateway_expected_commit
+    assert "exclusive fixture clock authority" in plan["checks"]
     assert any("MAC and TTL evidence" in check for check in plan["checks"])
     assert any("negative permission control" in check for check in plan["checks"])
     assert any("recovery and reboot persistence" in check for check in plan["checks"])
@@ -224,3 +228,101 @@ def test_active_nat_link_rejects_inventory_without_eth0():
     """A passive inherited NIC cannot replace the receipt-bound NAT adapter."""
     with pytest.raises(gateway_lifecycle.GatewayLifecycleError, match="Only the NAT eth0 adapter"):
         gateway_lifecycle._active_nat_link(_inventory(_link("eth1", flags=["BROADCAST"])))
+
+
+def test_gateway_guest_inventory_uses_role_specific_pinned_ssh_credentials(monkeypatch):
+    """Initial router/client native reads use their own usernames and SSH passwords."""
+    args = lifecycle_test.parse_args(
+        _gateway_cli_args(
+            "--appliance-ssh-host",
+            "192.0.2.10",
+            "--appliance-ssh-user",
+            "router-operator",
+            "--client-ssh-user",
+            "client-operator",
+        )
+    )
+    args.password = "browser-login-fixture-secret"
+    args.appliance_ssh_password = "router-ssh-fixture-secret"
+    args.ssh_password = "client-ssh-fixture-secret"
+    calls = []
+    results = []
+
+    def fake_pinned_ssh(host, username, password, fingerprint, command, **kwargs):
+        calls.append((host, username, password, fingerprint, command, kwargs))
+        inventory = {
+            "addresses": [
+                {"ifname": "lo", "flags": ["UP"], "addr_info": []},
+                {
+                    "ifname": "eth0",
+                    "flags": ["BROADCAST", "UP"],
+                    "addr_info": [{"family": "inet", "local": host, "prefixlen": 24}],
+                    "address": "02:00:00:00:00:01" if host == "192.0.2.10" else "02:00:00:00:00:02",
+                },
+            ]
+        }
+        return json.dumps(inventory).encode()
+
+    class StopAtUiLogin(Exception):
+        pass
+
+    monkeypatch.setattr(gateway_lifecycle, "run_pinned_ssh_command", fake_pinned_ssh)
+    monkeypatch.setattr(lifecycle_test, "HttpClient", lambda *_args: object())
+    monkeypatch.setattr(lifecycle_test, "ui_login", lambda *_args: (_ for _ in ()).throw(StopAtUiLogin()))
+
+    with pytest.raises(StopAtUiLogin):
+        gateway_lifecycle.run_same_interface_gateway_acceptance(lifecycle_test, results, args)
+
+    assert [(call[0], call[1], call[2], call[3]) for call in calls] == [
+        ("192.0.2.10", "router-operator", "router-ssh-fixture-secret", "SHA256:router-host-key"),
+        ("192.0.2.20", "client-operator", "client-ssh-fixture-secret", "SHA256:client-host-key"),
+    ]
+    assert all(call[2] != args.password for call in calls)
+    assert all(call[4].endswith("/opt/atlaso/.venv/bin/python -I -") for call in calls)
+    assert [step.name for step in results] == ["gateway-inventory-router", "gateway-inventory-client"]
+    assert all(step.status == "passed" for step in results)
+
+
+def test_gateway_client_username_default_and_explicit_overrides():
+    """Use admin in focused gateway mode and retain ordinary or explicit user choices."""
+    gateway_args = lifecycle_test.parse_args(_gateway_cli_args())
+    ordinary_args = lifecycle_test.parse_args([])
+    client_override = lifecycle_test.parse_args(_gateway_cli_args("--client-ssh-user", "gateway-client"))
+    shared_override = lifecycle_test.parse_args(_gateway_cli_args("--ssh-user", "compat-user"))
+
+    assert gateway_args.client_ssh_user == "admin"
+    assert lifecycle_test.ssh_username(gateway_args, "client") == "admin"
+    assert ordinary_args.client_ssh_user == "alpine"
+    assert lifecycle_test.ssh_username(ordinary_args, "client") == "alpine"
+    assert lifecycle_test.ssh_username(client_override, "client") == "gateway-client"
+    assert lifecycle_test.ssh_username(shared_override, "appliance") == "compat-user"
+    assert lifecycle_test.ssh_username(shared_override, "client") == "compat-user"
+
+
+def test_gateway_plan_only_runs_with_isolated_python_imports(tmp_path):
+    """The standalone lifecycle entry point loads its exact sibling under python -I."""
+    runner = Path(lifecycle_test.__file__).resolve()
+    result_dir = tmp_path / "isolated-result"
+    command = [
+        sys.executable,
+        "-B",
+        "-I",
+        "-X",
+        f"pycache_prefix={tmp_path / 'bytecode'}",
+        str(runner),
+        *_gateway_cli_args("--plan-only", "--result-dir", str(result_dir)),
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads((result_dir / "result.json").read_text(encoding="utf-8"))
+    assert result["status"] == "planned"
+    assert result["plan"]["same_interface_gateway_only"] is True
+    assert result["plan"]["apply_units"] == ["ntpd", "network", "wan", "firewall"]
