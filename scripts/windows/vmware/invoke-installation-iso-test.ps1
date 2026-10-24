@@ -411,6 +411,28 @@ function Wait-InstallationConsoleState {
     finally { [Array]::Clear($buffer, 0, $buffer.Length); $text = ''; $plain = '' }
 }
 
+<#
+.SYNOPSIS
+Select readiness and identity probes for the installer's standard account shells.
+.PARAMETER Account
+Fixed installed account whose chosen password is being tested.
+#>
+function Get-InstallationAccountProbe {
+    param([ValidateSet('root', 'admin')][string]$Account)
+    if ($Account -eq 'root') {
+        return [pscustomobject]@{
+            Prompt = 'root@atlaso'
+            Command = '[ "$(id -u)" = 0 ] && printf ''ATLASO-%s\n'' ''LOGIN-OK'''
+        }
+    }
+    # Shared provisioning selects /usr/bin/pwsh for the administrator. Keep
+    # marker fragments separate so terminal echo cannot satisfy the checkpoint.
+    [pscustomobject]@{
+        Prompt = 'PS '
+        Command = 'if ((id -un) -ceq ''admin'') { Write-Output (''ATLASO-'' + ''LOGIN-OK'') }'
+    }
+}
+
 $worktree = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 . (Join-Path $PSScriptRoot 'Atlaso.TestVmOwnership.ps1')
@@ -589,6 +611,7 @@ public static class AtlasoInstallationPipePeer {
             throw 'The installed console peer is not the receipt-bound VMware guest.'
         }
         foreach ($account in @('root', 'admin')) {
+            $accountProbe = Get-InstallationAccountProbe -Account $account
             $loginDeadline = [DateTimeOffset]::UtcNow.AddSeconds(180)
             if ($loginDeadline -gt $deadline) { $loginDeadline = $deadline }
             Write-Host ('Installed console: awaiting {0} login prompt.' -f $account)
@@ -601,10 +624,8 @@ public static class AtlasoInstallationPipePeer {
             # PAM/login may flush queued input before starting the shell. Never
             # send the checkpoint command until the ordinary shell prompt appears.
             Write-Host ('Installed console: awaiting {0} shell prompt.' -f $account)
-            Wait-InstallationConsoleState -Pipe $pipe -Pattern "$account@atlaso" -Deadline $loginDeadline
-            # Split the marker so terminal echo cannot satisfy the shell checkpoint.
-            $condition = if ($account -eq 'root') { '[ "$(id -u)" = 0 ]' } else { '[ "$(id -un)" = admin ]' }
-            Send-InstallationConsoleText -Pipe $pipe -Text ($condition + " && printf 'ATLASO-%s\n' 'LOGIN-OK'`n")
+            Wait-InstallationConsoleState -Pipe $pipe -Pattern $accountProbe.Prompt -Deadline $loginDeadline
+            Send-InstallationConsoleText -Pipe $pipe -Text ($accountProbe.Command + "`n")
             Wait-InstallationConsoleState -Pipe $pipe -Pattern 'ATLASO-LOGIN-OK' -Deadline $loginDeadline
             Write-Host ("Installed password authentication passed for {0}." -f $account)
             Send-InstallationConsoleText -Pipe $pipe -Text "exit`n"

@@ -697,8 +697,8 @@ Assert-InstallationVmCondition ($bootPublish -gt $verifyCompare -and $bootWrite 
 Write-Host 'Installation disk-boot transition regression tests passed.'
 
 $installedLogin = $driverSource.IndexOf("foreach (`$account in @('root', 'admin'))", [StringComparison]::Ordinal)
-$shellWait = $driverSource.IndexOf('-Pattern "$account@atlaso"', $installedLogin, [StringComparison]::Ordinal)
-$probeSend = $driverSource.IndexOf("Send-InstallationConsoleText -Pipe `$pipe -Text (`$condition", $installedLogin, [StringComparison]::Ordinal)
+$shellWait = $driverSource.IndexOf('-Pattern $accountProbe.Prompt', $installedLogin, [StringComparison]::Ordinal)
+$probeSend = $driverSource.IndexOf('Send-InstallationConsoleText -Pipe $pipe -Text ($accountProbe.Command', $installedLogin, [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($installedLogin -ge 0 -and $shellWait -gt $installedLogin -and $probeSend -gt $shellWait) 'Installed shell probes must wait for login to finish before sending commands.'
 
 $bootPair = $null
@@ -713,3 +713,23 @@ try {
     Assert-InstallationVmCondition ($bootFragmentSender.Wait(5000)) 'The boot-stage fixture writer did not finish.'
 }
 finally { if ($bootPair) { Close-InstallationTestPipePair -Pair $bootPair } }
+
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationAccountProbe')))
+$adminShellProbe = Get-InstallationAccountProbe -Account admin
+Assert-InstallationVmCondition ($adminShellProbe.Prompt -ceq 'PS ' -and -not $adminShellProbe.Command.Contains('ATLASO-LOGIN-OK')) 'Administrator readiness must use PowerShell and avoid a contiguous echoed marker.'
+foreach ($fixtureIdentity in @('admin', 'root')) {
+    $probeResult = @(& {
+        param([string]$ObservedIdentity, [string]$Command)
+        <#
+        .SYNOPSIS
+        Return only the controlled account identity for the shell-probe fixture.
+        #>
+        function id { if ($args.Count -ne 1 -or $args[0] -cne '-un') { throw 'Unexpected identity argument.' }; $ObservedIdentity }
+        & ([scriptblock]::Create($Command))
+    } $fixtureIdentity $adminShellProbe.Command)
+    if ($fixtureIdentity -ceq 'admin') {
+        Assert-InstallationVmCondition ($probeResult.Count -eq 1 -and $probeResult[0] -ceq 'ATLASO-LOGIN-OK') 'The administrator checkpoint must execute in PowerShell after matching its real account.'
+    } else {
+        Assert-InstallationVmCondition ($probeResult.Count -eq 0) 'A different account must never satisfy the administrator checkpoint.'
+    }
+}
