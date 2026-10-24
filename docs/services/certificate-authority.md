@@ -85,6 +85,9 @@ long names, operator notes, and multi-value SAN lists remain readable before rev
 identity, while enablement has a
 dedicated step for both certificate profiles and requests. **CSR Intake** uses the same guided pattern to separate
 metadata, SANs, PEM content, and final review.
+On **Names**, enter optional **IP SANs** as IPv4 or IPv6 literals, one per line (comma-separated entries also work).
+Atlaso checks every entry before advancing and again before submission. An invalid entry keeps the wizard open,
+returns focus to **IP SANs**, and shows an adjacent message; correct or clear it to continue. Entered values are retained.
 In its CSR step, paste the request or select **Upload a CSR file** to load a PEM-encoded `.csr` or `.pem` file up to
 64 KiB, including surrounding whitespace. Inspect the populated **CSR PEM** field before review. Private keys,
 certificate-only files, invalid text,
