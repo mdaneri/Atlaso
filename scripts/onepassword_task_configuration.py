@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -18,6 +19,7 @@ from typing import Any
 
 from scripts.completed_task_cleanup import beneath, configured_root, ordinary, require
 from scripts.completed_task_files import (
+    FileRefusal,
     WindowsFiles,
     cleanup_lock,
     read_bounded_regular,
@@ -32,8 +34,13 @@ ENVIRONMENT_SHA256 = "fe14b62fb2d23460202299784cb1080b9e0fcf202ed5d75b4843202cd6
 class ConfigurationFiles(FixtureFiles):
     """Check restrictive ACLs on pinned objects and never read plaintext credentials."""
 
+    security: Any
+    sid: str
+
     def __init__(self) -> None:
         """Bind the Windows security APIs used only by this configuration owner."""
+        if sys.platform != "win32":
+            raise FileRefusal("Task configuration ownership requires Windows security and handle APIs.")
         super().__init__()
         self.security = ctypes.WinDLL("advapi32", use_last_error=True)
         pointer = ctypes.c_void_p
@@ -108,6 +115,8 @@ class ConfigurationFiles(FixtureFiles):
             descriptor: Descriptor opened exclusively for this new ciphertext copy.
             data: Selector or ciphertext bytes just flushed, used only for their digest.
         """
+        if sys.platform != "win32":
+            raise FileRefusal("Configuration creation identity requires Windows file handles.")
         import msvcrt
 
         information = (ctypes.c_uint32 * 13)()
@@ -232,6 +241,9 @@ class OnePasswordTaskConfiguration:
         require(self.root.name == ".atlaso-local" and beneath(self.worktree, self.permitted)
                 and beneath(receipt, self.permitted) and not receipt.is_relative_to(self.worktree),
                 "Configuration/evidence containment is unproven.")
+        require(not self.worktree.is_relative_to(self.receipt.parent),
+                "Configuration receipts must use a separate evidence directory outside checkout ancestors.")
+        require(self.receipt.parent.is_dir(), "Configuration receipt directory must already exist.")
         require(not {".git", ".atlaso-local"} & {
             part.casefold() for path in (self.worktree, self.receipt) for part in path.relative_to(self.permitted).parts
         }, "Configuration worktree and evidence must not be nested in Git or credential/recovery state.")
@@ -290,6 +302,8 @@ class OnePasswordTaskConfiguration:
         """Exclusively create the supported pair and receipt original identities before use."""
         with cleanup_lock(self.permitted, self.lock_id):
             primary = self.git_identity()
+            require(not primary.is_relative_to(self.receipt.parent),
+                    "Configuration receipts must use a separate evidence directory outside primary checkout ancestors.")
             require(not os.path.lexists(self.root) and not any(
                 path.name.casefold().startswith(self.receipt.name.casefold()) for path in self.receipt.parent.iterdir()),
                     "Copy requires new configuration and receipt paths; never adopt or replace existing state.")

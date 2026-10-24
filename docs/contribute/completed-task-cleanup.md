@@ -345,6 +345,10 @@ manifest provenance, exclusive ownership, inactivity of every credential consume
 absence of credential recovery obligations. Owner filesystem checks and open-handle refusals do not replace those
 live process and task checks. Do not call release while a consumer may retain credentials in memory.
 
+The receipt directory must already exist separately from both checkouts and their ancestors. A receipt directly under
+the configured worktree root is refused before configuration creation: ancestor handles held during copying would
+prevent write-through evidence publication there. Use a dedicated sibling evidence directory as in the example.
+
 The sole removal scope is the exact task `.atlaso-local` directory. Release other task outputs through their own tools
 first: any child other than `onepassword-environment-id` and `onepassword-service-account-token.dpapi`, including caches,
 locks, and cleanup/recovery markers, blocks this operation. The owner rechecks protected current-user/SYSTEM ACLs,

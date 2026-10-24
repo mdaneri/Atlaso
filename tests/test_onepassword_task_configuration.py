@@ -328,6 +328,29 @@ def test_pending_receipt_refuses_without_mutation(owner):
         pending.unlink()
 
 
+@pytest.mark.parametrize("location", ["configured-root", "checkout-ancestor", "missing-directory"])
+def test_unsafe_receipt_parent_refuses_before_configuration_creation(owner, location):
+    """Reject pinned or unavailable receipt parents without creating partial configuration.
+
+    Args:
+        owner: Native fixture providing a permitted root and original safe source.
+        location: Unsafe evidence location rejected before creating configuration state.
+    """
+    tool, _resource, _source = owner
+    worktree = tool.permitted / "nested" / "newtask"
+    worktree.mkdir(parents=True)
+    directory = {"configured-root": tool.permitted, "checkout-ancestor": worktree.parent,
+                 "missing-directory": tool.permitted / "missing-evidence"}[location]
+    receipt = directory / "new-config.json"
+    config = Path(os.environ["CODEX_HOME"]) / "config.toml"
+    binding = {**tool.binding, "id": "unsafe-receipt", "path": str(worktree / ".atlaso-local")}
+    with pytest.raises(Refusal, match="separate evidence directory|must already exist"):
+        configuration.OnePasswordTaskConfiguration(config, receipt, binding)
+    assert not (worktree / ".atlaso-local").exists()
+    assert not receipt.exists()
+    assert not receipt.with_name(receipt.name + ".pending").exists()
+
+
 @pytest.mark.parametrize("directory", [False, True])
 def test_reparse_file_or_root_is_preserved(owner, directory):
     """Refuse both linked configuration leaves and a linked configuration root.
@@ -390,6 +413,13 @@ def test_real_git_primary_registration_and_repository_binding(owner, monkeypatch
             actual.copy_from_primary()
             assert actual.release([str(actual.root)]) == {"success": True}
             assert all((fixture_source / name).exists() for name in configuration.NAMES)
+            blocked = configuration.OnePasswordTaskConfiguration(
+                config, primary / "blocked-source.json", actual.binding)
+            with pytest.raises(Refusal, match="outside primary checkout ancestors"):
+                blocked.copy_from_primary()
+            assert not blocked.root.exists()
+            assert not blocked.receipt.exists()
+            assert not blocked.stage(".pending").exists()
         finally:
             fixture_source.rename(source)
         runner.git("-C", str(primary), "remote", "set-url", "origin", "https://github.com/other/Atlaso.git")
