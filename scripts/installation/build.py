@@ -247,7 +247,8 @@ def validate_candidate(root: Path, *, repository: Path, commit: str, version: st
         raise ValueError("candidate contains unexpected top-level content")
     verify_source(source, source_archive(repository, commit))
     configuration, repository_text = repository_configuration(source)
-    if (root / "tdnf.conf").read_text() != configuration or (root / "rpm-repos/atlaso-installation.repo").read_text() != repository_text:
+    if ((root / "tdnf.conf").read_bytes() != configuration.encode("utf-8") or
+            (root / "rpm-repos/atlaso-installation.repo").read_bytes() != repository_text.encode("utf-8")):
         raise ValueError("candidate RPM repository configuration differs from its local-only contract")
     if {path.name for path in (root / "rpm-repos").iterdir()} != {"atlaso-installation.repo"}:
         raise ValueError("candidate contains an unexpected RPM repository definition")
@@ -269,6 +270,26 @@ def repository_configuration(source: Path) -> tuple[str, str]:
     configuration = f"[main]\nreposdir={MEDIA}/rpm-repos\ngpgcheck=1\nkeepcache=0\n"
     repository = f"[atlaso-installation]\nname=Atlaso offline installation\nbaseurl=file://{MEDIA}/rpms\nenabled=1\ngpgcheck=1\ngpgkey={keys}\n"
     return configuration, repository
+
+
+def write_repository_configuration(output: Path, source: Path) -> None:
+    """Write shared local-only TDNF configuration with stable LF bytes.
+
+    Args:
+        output: Existing payload directory receiving the configuration files.
+        source: Trusted staged source tree used to resolve admitted RPM keys.
+    """
+    configuration, repository = repository_configuration(source)
+    configuration_path = output / "tdnf.conf"
+    repositories = output / "rpm-repos"
+    repository_path = repositories / "atlaso-installation.repo"
+    if any(path.exists() or path.is_symlink() for path in (configuration_path, repositories)):
+        raise FileExistsError("installation repository configuration paths must be absent")
+    repositories.mkdir()
+    with configuration_path.open("xb") as stream:
+        stream.write(configuration.encode("utf-8"))
+    with repository_path.open("xb") as stream:
+        stream.write(repository.encode("utf-8"))
 
 
 def prepare_payload(*, repository: Path, commit: str, version: str, software: Path, rpms: Path, powercli: Path, output: Path) -> None:
@@ -302,10 +323,7 @@ def prepare_payload(*, repository: Path, commit: str, version: str, software: Pa
     subprocess.run([
         "createrepo_c", "--checksum", "sha256", "--general-compress-type", "gz", str(output / "rpms")
     ], check=True)
-    (output / "rpm-repos").mkdir()
-    configuration, repository_text = repository_configuration(output / "source")
-    (output / "tdnf.conf").write_text(configuration)
-    (output / "rpm-repos/atlaso-installation.repo").write_text(repository_text)
+    write_repository_configuration(output, output / "source")
     # The finalizer regenerates this inventory after independent input validation.
     value = {
         "schema": 1, "architecture": "x86_64", "version": version, "source_commit": commit,

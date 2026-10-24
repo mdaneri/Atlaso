@@ -110,7 +110,7 @@ Boot-time signature verification reuses the `cryptography` package already inclu
 that initrd removes the OpenSSL command-line executable. The downloadable verifier retains its existing OpenSSL path.
 
 RPM repository generation explicitly uses gzip metadata so the pinned Photon initrd can read it, regardless of the
-build host’s default compression format.
+build host’s default compression format. Repository configuration uses UTF-8 with LF line endings for Photon TDNF.
 
 The VMware harness creates an isolated EFI VM with no network adapters, two blank SCSI disks, and a private serial
 console. Hash the generated ISO and use the exact owning pull request number. `Probe` checks that the native Photon disk

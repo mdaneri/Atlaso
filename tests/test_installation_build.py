@@ -127,7 +127,10 @@ def test_prepare_payload_requests_gzip_for_general_repository_metadata(
         "  install python3 linux-api-headers linux-firmware\n"
     ).encode()
     monkeypatch.setattr(build, "source_archive", lambda *_args: {"image/common/scripts/provision-atlaso.sh": source_script})
-    monkeypatch.setattr(build, "repository_configuration", lambda *_args: ("[main]\n", "[atlaso]\n"))
+    expected_configuration, expected_repository = "[main]\n", "[atlaso]\n"
+    monkeypatch.setattr(
+        build, "repository_configuration", lambda *_args: (expected_configuration, expected_repository)
+    )
     commands: list[list[str]] = []
 
     def run(command: list[str], *, check: bool) -> None:
@@ -158,6 +161,76 @@ def test_prepare_payload_requests_gzip_for_general_repository_metadata(
     assert commands == [[
         "createrepo_c", "--checksum", "sha256", "--general-compress-type", "gz", str((output / "rpms").absolute())
     ]]
+    assert (output / "tdnf.conf").read_bytes() == expected_configuration.encode("utf-8")
+    assert (output / "rpm-repos/atlaso-installation.repo").read_bytes() == expected_repository.encode("utf-8")
+    assert b"\r" not in (output / "tdnf.conf").read_bytes()
+    assert b"\r" not in (output / "rpm-repos/atlaso-installation.repo").read_bytes()
+
+
+@pytest.mark.parametrize("configuration_path", [None, "tdnf.conf", "rpm-repos/atlaso-installation.repo"])
+def test_candidate_admission_requires_exact_lf_repository_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configuration_path: str | None
+) -> None:
+    """Reject CRLF before package verification and admit exact UTF-8/LF bytes.
+
+    Args:
+        tmp_path: Isolated candidate and source fixture root.
+        monkeypatch: Replace trusted-source and package-verification operations.
+        configuration_path: Repository file to corrupt, or None for the valid candidate.
+    """
+    root = tmp_path / "candidate"
+    for directory in ("source", "software", "rpms", "powercli", "rpm-repos"):
+        (root / directory).mkdir(parents=True, exist_ok=True)
+    expected_configuration, expected_repository = "[main]\n", "[atlaso]\n"
+    (root / "tdnf.conf").write_bytes(expected_configuration.encode("utf-8"))
+    (root / "rpm-repos/atlaso-installation.repo").write_bytes(expected_repository.encode("utf-8"))
+    if configuration_path:
+        target = root / configuration_path
+        target.write_bytes(target.read_bytes().replace(b"\n", b"\r\n"))
+    software_identity = {"version": "1.2.3", "source_commit": "a" * 40}
+    rpm_records = [{"file": "package.rpm"}]
+    verified = []
+    monkeypatch.setattr(build, "source_archive", lambda *_args: {})
+    monkeypatch.setattr(build, "verify_source", lambda *_args: None)
+    monkeypatch.setattr(build, "repository_configuration", lambda *_args: (expected_configuration, expected_repository))
+    monkeypatch.setattr("scripts.prepare_virtualization_source.verify_directory",
+                        lambda *_args: verified.append("software") or software_identity)
+    monkeypatch.setattr(build, "verify_rpms", lambda *_args: verified.append("rpms") or rpm_records)
+    monkeypatch.setattr(build.subprocess, "run", lambda *_args, **_kwargs: verified.append("powercli"))
+    arguments = {"repository": tmp_path / "repository", "commit": "a" * 40, "version": "1.2.3",
+                 "trust_key": tmp_path / "trust.pem", "scratch": tmp_path}
+    if configuration_path:
+        with pytest.raises(ValueError, match="configuration differs from its local-only contract"):
+            build.validate_candidate(root, **arguments)
+        assert verified == []
+    else:
+        assert build.validate_candidate(root, **arguments) == {"software": software_identity, "rpms": rpm_records}
+        assert verified == ["software", "rpms", "powercli"]
+
+
+@pytest.mark.parametrize("existing", ["tdnf.conf", "rpm-repos"])
+def test_repository_writer_refuses_existing_configuration(tmp_path: Path, existing: str) -> None:
+    """Keep pre-existing repository configuration unchanged on a refused write.
+
+    Args:
+        tmp_path: Owned source and output fixture root.
+        existing: File or directory whose existing identity must be preserved.
+    """
+    source = _source(tmp_path)
+    output = tmp_path / "payload"
+    output.mkdir()
+    target = output / existing
+    if existing == "rpm-repos":
+        target.mkdir()
+        preserved = target / "retained.repo"
+    else:
+        preserved = target
+    preserved.write_bytes(b"retained configuration")
+    original = preserved.stat()
+    with pytest.raises(FileExistsError, match="configuration paths must be absent"):
+        build.write_repository_configuration(output, source)
+    assert preserved.read_bytes() == b"retained configuration"
+    assert preserved.stat().st_ino == original.st_ino
 
 
 @pytest.mark.parametrize(

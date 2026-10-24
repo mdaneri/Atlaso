@@ -170,6 +170,12 @@ def test_prepare_payload_separates_pr_source_from_main_software_identity(
     assert manifest["signing_key_id"] == DEVELOPMENT_KEY_ID
     assert (output / "source/scripts/installation/installer.py").read_text(encoding="utf-8") == "print('fixture')\n"
     assert (output / "rpms/repodata/repomd.xml").exists()
+    expected_configuration, expected_repository = build.repository_configuration(output / "source")
+    configuration_bytes = (output / "tdnf.conf").read_bytes()
+    repository_bytes = (output / "rpm-repos/atlaso-installation.repo").read_bytes()
+    assert configuration_bytes == expected_configuration.encode("utf-8")
+    assert repository_bytes == expected_repository.encode("utf-8")
+    assert b"\r" not in configuration_bytes and b"\r" not in repository_bytes
     assert len(rpm_scratch) == 2
     assert rpm_scratch[0] != rpm_scratch[1]
     assert all((path / "rpmdb").is_dir() for path in rpm_scratch)

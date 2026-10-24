@@ -211,10 +211,7 @@ def prepare_payload(
     build.rebuild_repository(output / "rpms", scratch_paths["repository"])
     _validate_checkout(repository, commit, source_files)
 
-    (output / "rpm-repos").mkdir()
-    configuration, repository_text = build.repository_configuration(source_root)
-    (output / "tdnf.conf").write_text(configuration, encoding="utf-8")
-    (output / "rpm-repos/atlaso-installation.repo").write_text(repository_text, encoding="utf-8")
+    build.write_repository_configuration(output, source_root)
     manifest = {
         "schema": 1,
         "architecture": "x86_64",
