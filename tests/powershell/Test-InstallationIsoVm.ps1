@@ -502,7 +502,7 @@ public static class AtlasoInstallationPipeTestWriter
         return Task.Run(async () =>
         {
             using var cancel = new CancellationTokenSource(5000);
-            var replies = new byte[8 * 8];
+            var replies = new byte[64 * 8];
             try
             {
                 await Start(pipe, new[] { probes });
@@ -944,7 +944,7 @@ foreach ($probeRepetitions in @(1, 2)) {
         $nativeProbeEvents = @(Wait-InstallationConsoleState -Pipe $nativeProbePair.Server -Pattern $rootShellProbe.Prompt `
             -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadLoginProgress -ShellAccount root 6>&1)
         Assert-InstallationVmCondition ($nativeProbeTask.Wait(5000)) 'The native profile must receive each reply before emitting its shell prompt.'
-        $nativeReplies = @($nativeProbeEvents | Where-Object { $_.ToString() -ceq 'Answered the known Photon serial terminal-size probe.' })
+        $nativeReplies = @($nativeProbeEvents | Where-Object { $_.ToString() -ceq 'Answered a proven cursor-position query.' })
         Assert-InstallationVmCondition ($nativeReplies.Count -eq $probeRepetitions) 'Fragmented native probes must receive exactly one reply each.'
     }
     finally { if ($nativeProbePair) { Close-InstallationTestPipePair -Pair $nativeProbePair } }
@@ -952,7 +952,7 @@ foreach ($probeRepetitions in @(1, 2)) {
 $probeFloodPair = $null
 try {
     $probeFloodPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
-    $probeFloodSender = [AtlasoInstallationPipeTestWriter]::NativeProbeFlood($probeFloodPair.Client, ("`es`e[999;999H`e[6n`eu" * 9))
+    $probeFloodSender = [AtlasoInstallationPipeTestWriter]::NativeProbeFlood($probeFloodPair.Client, ("`es`e[999;999H`e[6n`eu" * 65))
     $probeFloodRefused = $false
     $null = @(& {
         try { Wait-InstallationConsoleState -Pipe $probeFloodPair.Server -Pattern 'NeverSentPublicPrompt' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadLoginProgress }
@@ -1035,9 +1035,9 @@ Assert-InstallationVmCondition ($oscState.ParserMode -eq 'String' -and -not $osc
     'Split OSC payloads must be discarded while only terminator bookkeeping persists.'
 $null = ConvertFrom-InstallationConsoleFrame -Text "`a" -CursorState $oscState -CursorOnly
 $queryBoundState = @{}
-$null = ConvertFrom-InstallationConsoleFrame -Text ("`e[6n" * 8) -CursorState $queryBoundState -CursorOnly
+$null = ConvertFrom-InstallationConsoleFrame -Text ("`e[6n" * 64) -CursorState $queryBoundState -CursorOnly
 $overLimitQuery = @(ConvertFrom-InstallationConsoleFrame -Text "`e[6n" -CursorState $queryBoundState -CursorOnly)
-Assert-InstallationVmCondition ($overLimitQuery[0].Exceeded -and $queryBoundState.QueryCount -eq 9) `
+Assert-InstallationVmCondition ($overLimitQuery[0].Exceeded -and $queryBoundState.QueryCount -eq 65) `
     'Cursor-query limits must persist across parser calls without storing terminal text.'
 $crossWaitPair = $null
 Write-Host 'Installation cursor-state fixtures passed; starting cross-wait pipe fixture.'

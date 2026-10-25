@@ -176,7 +176,8 @@ The serial adapter reuses the installer console parser to track its 25-row, 80-c
 It answers supported cursor-position requests only when the observed controls establish the position, including
 Photon's full-screen login-profile probe. Fragmented controls and save/restore sequences retain their ordering.
 Unknown positions or unsupported cursor modes receive no invented coordinates. Persistent state contains only
-cursor and control-parser metadata, with bounded requests; console contents remain private and temporary.
+cursor and control-parser metadata, with a 64-query session ceiling and absolute deadlines; console contents remain
+private and temporary.
 The fixed `cursor-position-query` diagnostic identifies requests without proving authentication; a shell can display
 its prompt before finishing terminal initialization. The separate account-identity challenge must still pass.
 

@@ -299,12 +299,15 @@ function ConvertFrom-InstallationConsoleFrame {
                     switch -CaseSensitive ([string]$ch) {
                         'n' {
                             if (-not $private -and $parts.Count -eq 1 -and $parts[0] -ceq '6') {
-                                $state.QueryCount = [Math]::Min(9, $state.QueryCount + 1)
+                                # Boot, both login profiles and interactive shells share
+                                # this connection. Keep a session-wide ceiling as well
+                                # as the existing absolute console deadlines.
+                                $state.QueryCount = [Math]::Min(65, $state.QueryCount + 1)
                                 $known = $state.ModesKnown -and $state.MarginsKnown -and -not $state.OriginMode -and
                                     $state.RangeKnown -and $state.RowMin -eq $state.RowMax -and $state.ColumnKnown
                                 # Snapshot now: the following bytes can restore a different cursor.
                                 $queries.Add([pscustomobject]@{
-                                    Known = $known; Exceeded = $state.QueryCount -gt 8
+                                    Known = $known; Exceeded = $state.QueryCount -gt 64
                                     Row = if ($known) { $state.RowMin + 1 } else { $null }
                                     Column = if ($known) { $state.Column + 1 } else { $null }
                                 })
@@ -586,9 +589,7 @@ function Wait-InstallationConsoleState {
                     }
                     if ($cursorQuery.Known) {
                         Send-InstallationConsoleText -Pipe $pipe -Text ("`e[{0};{1}R" -f $cursorQuery.Row, $cursorQuery.Column)
-                        if ($cursorQuery.Row -eq 25 -and $cursorQuery.Column -eq 80) {
-                            Write-Host 'Answered the known Photon serial terminal-size probe.'
-                        } else { Write-Host 'Answered a proven cursor-position query.' }
+                        Write-Host 'Answered a proven cursor-position query.'
                     }
                 }
             }
