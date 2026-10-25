@@ -161,6 +161,8 @@ shared boot-branding helper's explicit development option to add GRUB serial out
 Production images keep their existing boot console and do not enable this test login service. The runner rechecks
 its private pipe peer before sending either chosen password
 to ordinary Linux login; it records only fixed success checkpoints, never the console stream.
+Login troubleshooting reports only fixed PAM and shell-stage categories. These diagnostics neither expose console
+contents nor establish successful authentication; the account-identity challenge must still pass.
 
 The `BootInstalled` harness mode reuses original VM and disk-baseline admission, stopped-provider checks, logical
 disk comparison, and source pins. It requires the original isolated EFI device configuration, publishes an immutable

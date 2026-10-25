@@ -300,11 +300,13 @@ Return the complete fixed-fixture public disk rows instead of returning at its t
 Fixed public stage labels from the admitted provisioner; unknown messages are never reported.
 .PARAMETER ReadBootProgress
 Report only fixed boot-stage categories while waiting before installed credential entry.
+.PARAMETER ReadLoginProgress
+Report only fixed PAM and shell categories; never print login-console contents.
 .PARAMETER ExpectedCapacityDisk
 Exact public fixture disk whose four-GiB capacity refusal is expected before consent.
 #>
 function Wait-InstallationConsoleState {
-    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [string]$ExpectedCapacityDisk = '')
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [switch]$ReadLoginProgress, [string]$ExpectedCapacityDisk = '')
     $buffer = [byte[]]::new(4096)
     $text = ''
     $failureDeadline = $null
@@ -312,6 +314,7 @@ function Wait-InstallationConsoleState {
     $lastProvisioningStage = $null
     $knownStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $seenBootStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $seenLoginStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($stage in $KnownProvisioningStages) { [void]$knownStages.Add($stage) }
     try {
         while ([DateTimeOffset]::UtcNow -lt $Deadline) {
@@ -334,6 +337,30 @@ function Wait-InstallationConsoleState {
             if ($count -eq 0) { throw 'The owned VM serial console disconnected before the expected state.' }
             $text += [Text.Encoding]::ASCII.GetString($buffer, 0, $count)
             $plain = [regex]::Replace($text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b[()][A-Z0-9]|\x1b[=>]', '')
+            if ($ReadLoginProgress) {
+                # Match only fixed diagnostics, including fragmented messages.
+                # Console bytes may contain credentials, hostnames or history;
+                # none of those bytes become log output or authentication proof.
+                foreach ($stage in @(
+                    @{ Token = 'Last login:'; Name = 'session-last-login' },
+                    @{ Token = 'You are required to change your password'; Name = 'password-change-required' },
+                    @{ Token = 'Your password has expired'; Name = 'password-expired' },
+                    @{ Token = 'Current password:'; Name = 'current-password-request' },
+                    @{ Token = '(current) UNIX password:'; Name = 'current-password-request' },
+                    @{ Token = 'New password:'; Name = 'new-password-request' },
+                    @{ Token = 'Retype new password:'; Name = 'password-confirmation-request' },
+                    @{ Token = 'Authentication failure'; Name = 'authentication-failure' },
+                    @{ Token = 'Your account has expired'; Name = 'account-expired' },
+                    @{ Token = 'This account is currently not available'; Name = 'shell-unavailable' },
+                    @{ Token = 'PowerShell 7.'; Name = 'powershell-startup' },
+                    @{ Token = 'PS '; Name = 'powershell-prompt' },
+                    @{ Token = ']#'; Name = 'bracketed-root-prompt' }
+                )) {
+                    if ($plain.Contains($stage.Token, [StringComparison]::Ordinal) -and $seenLoginStages.Add($stage.Name)) {
+                        Write-Host ('Public installed login stage: ' + $stage.Name)
+                    }
+                }
+            }
             if ($ReadBootProgress) {
                 foreach ($stage in @(
                     @{ Token = 'GNU GRUB'; Name = 'grub-console' },
@@ -653,18 +680,18 @@ public static class AtlasoInstallationPipePeer {
             $loginDeadline = [DateTimeOffset]::UtcNow.AddSeconds(180)
             if ($loginDeadline -gt $deadline) { $loginDeadline = $deadline }
             Write-Host ('Installed console: awaiting {0} login prompt.' -f $account)
-            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'login:' -Deadline $loginDeadline -ReadBootProgress:($account -eq 'root')
+            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'login:' -Deadline $loginDeadline -ReadBootProgress:($account -eq 'root') -ReadLoginProgress
             Send-InstallationConsoleText -Pipe $pipe -Text "$account`n"
             Write-Host ('Installed console: awaiting {0} password prompt.' -f $account)
-            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Password:' -Deadline $loginDeadline
+            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Password:' -Deadline $loginDeadline -ReadLoginProgress
             $value = if ($account -eq 'root') { $credentials.RootPassword } else { $credentials.AdminPassword }
             Send-InstallationConsoleSecret -Pipe $pipe -Value $value
             # PAM/login may flush queued input before starting the shell. Never
             # send the checkpoint command until the ordinary shell prompt appears.
             Write-Host ('Installed console: awaiting {0} shell prompt.' -f $account)
-            Wait-InstallationConsoleState -Pipe $pipe -Pattern $accountProbe.Prompt -Deadline $loginDeadline
+            Wait-InstallationConsoleState -Pipe $pipe -Pattern $accountProbe.Prompt -Deadline $loginDeadline -ReadLoginProgress
             Send-InstallationConsoleText -Pipe $pipe -Text ($accountProbe.Command + "`n")
-            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'ATLASO-LOGIN-OK' -Deadline $loginDeadline
+            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'ATLASO-LOGIN-OK' -Deadline $loginDeadline -ReadLoginProgress
             Write-Host ("Installed password authentication passed for {0}." -f $account)
             Send-InstallationConsoleText -Pipe $pipe -Text "exit`n"
         }

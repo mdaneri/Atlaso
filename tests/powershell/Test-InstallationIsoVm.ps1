@@ -783,6 +783,21 @@ try {
 finally { if ($bootPair) { Close-InstallationTestPipePair -Pair $bootPair } }
 
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationAccountProbe')))
+$loginStagePair = $null
+try {
+    $loginStagePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+    $loginStageSender = [AtlasoInstallationPipeTestWriter]::Start($loginStagePair.Client, [string[]]@(
+        "Last login: private-fixture-host private-fixture-secret`nYou are required to change your pass",
+        "word immediately private-fixture-secret`nCurrent password:`nPowerShell 7.5`nPS /private-fixture-path> FixtureDone"))
+    $loginEvents = @(Wait-InstallationConsoleState -Pipe $loginStagePair.Server -Pattern 'FixtureDone' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadLoginProgress 6>&1)
+    $loginReported = $loginEvents | Out-String
+    foreach ($expectedCategory in @('session-last-login', 'password-change-required', 'current-password-request', 'powershell-startup', 'powershell-prompt')) {
+        Assert-InstallationVmCondition ($loginReported.Contains('Public installed login stage: ' + $expectedCategory)) 'Login diagnostics must recognize fixed fragmented PAM and shell categories.'
+    }
+    Assert-InstallationVmCondition (-not $loginReported.Contains('private-fixture')) 'Login diagnostics must never expose console credentials, paths, or host details.'
+    Assert-InstallationVmCondition ($loginStageSender.Wait(5000)) 'The fixed login-stage fixture writer did not finish.'
+}
+finally { if ($loginStagePair) { Close-InstallationTestPipePair -Pair $loginStagePair } }
 $rootShellProbe = Get-InstallationAccountProbe -Account root
 Assert-InstallationVmCondition ($rootShellProbe.Prompt -ceq ' ]# ' -and $rootShellProbe.Command.Contains('id -u') -and -not $rootShellProbe.Command.Contains('ATLASO-LOGIN-OK')) 'Root readiness must accept the native Photon prompt while retaining a separate identity challenge.'
 foreach ($promptPrefix in @('root', 'root@atlaso')) {
