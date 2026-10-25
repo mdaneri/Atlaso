@@ -16,6 +16,7 @@ status: current
 - [Local console technical reference](appliance-console-technical.md)
 - [vSphere Key Provider protocol contract](vsphere-key-provider-protocol.md)
 - [vSphere Key Provider security architecture](vsphere-key-provider-security.md)
+- [VCF Microsoft CA compatibility investigation](vcf-msca-compatibility.md)
 - [Full technical reference](full-technical-reference.md)
 - [Portable virtualization artifacts](virtualization-artifacts.md)
 - [VMware Workstation lifecycle testing](vmware-workstation-lifecycle-testing.md)

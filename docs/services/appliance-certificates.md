@@ -8,6 +8,10 @@ status: current
 
 # Appliance certificates with Atlaso
 
+For the research-only status of VCF-native renewal through a possible Microsoft CA compatibility adapter, see the
+[VCF Microsoft CA compatibility investigation](../reference/vcf-msca-compatibility.md). Native enrollment and a complete
+second renewal remain untested; this does not add automatic renewal to the replacement workflows below.
+
 ## Atlaso Appliance Certificate Replacement
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
