@@ -309,6 +309,38 @@ function Get-InstallationConsoleDiskOptions {
 
 <#
 .SYNOPSIS
+Recognize standard installed shell prompts without exposing console contents.
+.PARAMETER Text
+Bounded in-memory console text with terminal color sequences removed.
+.PARAMETER Account
+Fixed installed account whose shell is expected.
+#>
+function Test-InstallationShellPrompt {
+    [OutputType([bool])]
+    param([string]$Text, [ValidateSet('root', 'admin')][string]$Account)
+    if ($Text.Length -gt 262144) { throw 'Installed shell prompt input exceeds its bound.' }
+    foreach ($changePrompt in @('You are required to change your password', 'Your password has expired',
+            'Current password:', '(current) UNIX password:', 'New password:', 'Retype new password:', 'Changing password for')) {
+        if ($Text.Contains($changePrompt, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Installed login requested a password change before shell verification.'
+        }
+    }
+    if ($Account -eq 'admin') { return $Text.Contains('PS ', [StringComparison]::Ordinal) }
+    # Photon profiles use bracketed prompts. Also recognize standard colon-path
+    # root prompts and Bash's compiled fallback. This is
+    # readiness only: the separate UID challenge remains authentication proof.
+    $tail = $Text.Substring([Math]::Max(0, $Text.Length - 1024))
+    $pattern = '(?:^|[\r\n])(?:root(?:@[A-Za-z0-9][A-Za-z0-9._-]{0,62})?(?:[ ]*\[[^\r\n\]\x00-\x1f]{0,256}\]|:[^\r\n\x00-\x1f]{0,256})?|-?bash-[0-9]+(?:\.[0-9]+){1,2})#[ \t]*(?:\r?\n)?\z'
+    try {
+        return [regex]::IsMatch($tail, $pattern, [Text.RegularExpressions.RegexOptions]::CultureInvariant, [TimeSpan]::FromMilliseconds(100))
+    }
+    catch [Text.RegularExpressions.RegexMatchTimeoutException] {
+        throw 'Installed shell prompt recognition exceeded its bounded deadline.'
+    }
+}
+
+<#
+.SYNOPSIS
 Wait for a known public installer state while retaining console bytes only in memory.
 .PARAMETER Pipe
 Connected private serial pipe.
@@ -324,11 +356,13 @@ Fixed public stage labels from the admitted provisioner; unknown messages are ne
 Report only fixed boot-stage categories while waiting before installed credential entry.
 .PARAMETER ReadLoginProgress
 Report only fixed PAM and shell categories; never print login-console contents.
+.PARAMETER ShellAccount
+Require a known installed shell prompt for this account and refuse password-change conversations.
 .PARAMETER ExpectedCapacityDisk
 Exact public fixture disk whose four-GiB capacity refusal is expected before consent.
 #>
 function Wait-InstallationConsoleState {
-    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [switch]$ReadLoginProgress, [string]$ExpectedCapacityDisk = '')
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [switch]$ReadLoginProgress, [ValidateSet('', 'root', 'admin')][string]$ShellAccount = '', [string]$ExpectedCapacityDisk = '')
     $buffer = [byte[]]::new(4096)
     $text = ''
     $failureDeadline = $null
@@ -359,7 +393,7 @@ function Wait-InstallationConsoleState {
             finally { $cancel.Dispose() }
             if ($count -eq 0) { throw 'The owned VM serial console disconnected before the expected state.' }
             $text += [Text.Encoding]::ASCII.GetString($buffer, 0, $count)
-            $plain = [regex]::Replace($text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b[()][A-Z0-9]|\x1b[=>]', '')
+            $plain = [regex]::Replace($text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>]', '')
             if ($ReadLoginProgress) {
                 $loginActivity = $true
                 # Match only fixed diagnostics, including fragmented messages.
@@ -478,7 +512,9 @@ function Wait-InstallationConsoleState {
                     throw ('The installer reported a Python failure before the expected console state. Public location: {0}; {1}.' -f $kind.Groups[1].Value, ($frames -join ', '))
                 }
             }
-            if (-not $ExpectedCapacityDisk -and -not $failureDeadline -and $plain.Contains($Pattern, [StringComparison]::Ordinal)) {
+            $matched = if ($ShellAccount) { Test-InstallationShellPrompt -Text $plain -Account $ShellAccount }
+                else { $plain.Contains($Pattern, [StringComparison]::Ordinal) }
+            if (-not $ExpectedCapacityDisk -and -not $failureDeadline -and $matched) {
                 if ($ReadDiskSelection) {
                     $options = @(Get-InstallationConsoleDiskOptions -Text $text)
                     if ($options.Count -lt 2) { continue }
@@ -773,7 +809,7 @@ public static class AtlasoInstallationPipePeer {
             # PAM/login may flush queued input before starting the shell. Never
             # send the checkpoint command until the ordinary shell prompt appears.
             Write-Host ('Installed console: awaiting {0} shell prompt.' -f $account)
-            Wait-InstallationConsoleState -Pipe $pipe -Pattern $accountProbe.Prompt -Deadline $loginDeadline -ReadLoginProgress
+            Wait-InstallationConsoleState -Pipe $pipe -Pattern $accountProbe.Prompt -Deadline $loginDeadline -ReadLoginProgress -ShellAccount $account
             Send-InstallationConsoleText -Pipe $pipe -Text ($accountProbe.Command + "`n")
             Wait-InstallationConsoleState -Pipe $pipe -Pattern 'ATLASO-LOGIN-OK' -Deadline $loginDeadline -ReadLoginProgress
             Write-Host ("Installed password authentication passed for {0}." -f $account)

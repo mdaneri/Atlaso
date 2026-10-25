@@ -91,6 +91,7 @@ function Get-InstallationVmFunctionText {
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationProvisioningStages')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'ConvertFrom-InstallationConsoleFrame')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationConsoleDiskOptions')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Test-InstallationShellPrompt')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Send-InstallationConsoleSecret')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Wait-InstallationConsoleState')))
 
@@ -843,6 +844,28 @@ foreach ($activityFixture in @(
 }
 $rootShellProbe = Get-InstallationAccountProbe -Account root
 Assert-InstallationVmCondition ($rootShellProbe.Prompt -ceq ' ]# ' -and $rootShellProbe.Command.Contains('id -u') -and -not $rootShellProbe.Command.Contains('ATLASO-LOGIN-OK')) 'Root readiness must accept the native Photon prompt while retaining a separate identity challenge.'
+foreach ($rootPromptFixture in @('root [ ~ ]# ', 'root@atlaso [ /root ]# ', 'root:~# ', 'root@atlaso:/root# ', 'root# ', 'bash-5.3# ', '-bash-5.3# ')) {
+    Assert-InstallationVmCondition (Test-InstallationShellPrompt -Text ("Public startup`n" + $rootPromptFixture) -Account root) 'Known native Bash prompt shapes must admit the separate identity challenge.'
+}
+foreach ($notRootPrompt in @('admin [ ~ ]# ', 'root login:', 'Password: # ', 'root [ ~ ]$ ', 'echo root [ ~ ]# ', 'root [ ~ ]# private-tail', "root [`n~ ]# ")) {
+    Assert-InstallationVmCondition (-not (Test-InstallationShellPrompt -Text $notRootPrompt -Account root)) 'A login field, another account, echoed text, or malformed prompt must not admit a root challenge.'
+}
+foreach ($changeField in @('You are required to change your password', 'Your password has expired', 'Current password:', '(current) UNIX password:', 'New password:', 'Retype new password:')) {
+    $changeRefused = $false
+    try { $null = Test-InstallationShellPrompt -Text ($changeField + "`nroot [ ~ ]# ") -Account root }
+    catch { $changeRefused = $_.Exception.Message -ceq 'Installed login requested a password change before shell verification.' }
+    Assert-InstallationVmCondition $changeRefused 'Password-change conversations must fail before any shell command can be submitted.'
+}
+$oscPromptPair = $null
+try {
+    $oscPromptPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+    $oscPromptSender = [AtlasoInstallationPipeTestWriter]::Start($oscPromptPair.Client, [string[]]@(
+        "`e]0;private-fixture-title", "`aroot@atlaso:~# "))
+    $oscPromptOutput = @(Wait-InstallationConsoleState -Pipe $oscPromptPair.Server -Pattern $rootShellProbe.Prompt -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ShellAccount root 6>&1) | Out-String
+    Assert-InstallationVmCondition (-not $oscPromptOutput.Contains('private-fixture-title')) 'Shell readiness must remove fragmented terminal titles without exposing their contents.'
+    Assert-InstallationVmCondition ($oscPromptSender.Wait(5000)) 'The terminal-title prompt fixture writer did not finish.'
+}
+finally { if ($oscPromptPair) { Close-InstallationTestPipePair -Pair $oscPromptPair } }
 foreach ($promptPrefix in @('root', 'root@atlaso')) {
     $rootPromptPair = $null
     try {

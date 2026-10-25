@@ -198,7 +198,9 @@ remain outstanding. A serial-enabled boot attempt exposed a missing initramfs pa
 closure, the corrected development image completed disconnected installation and booted without media through systemd
 to the root login/password prompts. Shell-identity verification timed out, so installed-credential acceptance remains
 open. The receipt-bound post-reboot comparison confirmed the unselected disk was unchanged. The console runner accepts
-Photon's root prompt with or without a hostname and still requires a separate account-identity challenge.
+Photon's bracketed root prompts, colon-path prompts, and Bash fallback prompts after removing terminal colors/titles.
+It refuses password-change conversations before submitting a shell command and still requires a separate
+account-identity challenge.
 The capacity-refusal and planned-layout cancellation scenarios passed with both fixture disks unchanged.
 Do not infer reboot or persistence results from a completed installation run.
 
