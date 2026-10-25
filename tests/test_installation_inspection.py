@@ -376,7 +376,7 @@ def test_guest_refuses_missing_staged_software_without_detail(tmp_path: Path) ->
     result = subprocess.run([sys.executable, "-B", "-I", "-c", runner], capture_output=True, check=False, timeout=15)
 
     assert result.returncode == 0
-    assert result.stdout.decode("ascii").strip() == "ATLASO-INSPECTION-FAILED"
+    assert result.stdout.decode("ascii").strip() == "ATLASO-INSPECTION-FAILED:software-staging"
     assert result.stderr == b""
 
 
@@ -406,5 +406,7 @@ def test_guest_rejects_changed_payload_helpers_and_invalid_public_identity(tmp_p
     runner = "import os,sys;os.O_NOFOLLOW=getattr(os,'O_NOFOLLOW',0);sys.path.insert(0," + repr(str(site)) + ");exec(" + repr(program.decode()) + ")"
     result = subprocess.run([sys.executable, "-B", "-I", "-c", runner], capture_output=True, check=False, timeout=15)
     assert result.returncode == 0
-    assert result.stdout.strip() == b"ATLASO-INSPECTION-FAILED"
+    phase = {"helper": "source-helpers", "payload": "application-payload",
+             "machine-id": "public-identities", "host-key": "public-identities"}[corruption]
+    assert result.stdout.strip() == ("ATLASO-INSPECTION-FAILED:" + phase).encode()
     assert result.stderr == b""

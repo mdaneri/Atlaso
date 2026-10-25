@@ -230,15 +230,21 @@ def load(p,h,n):
  if not stat.S_ISREG(z.st_mode) or z.st_nlink!=1 or len(b)>1048576 or hashlib.sha256(b).hexdigest()!=h: raise ValueError()
  m=types.ModuleType(n);exec(compile(b,p,"exec"),m.__dict__);return m
 from pathlib import Path
+phase="source-helpers"
 v=load({source_root_json}+"/image/common/scripts/verify-template-software.py",e["software_verifier_sha256"],"_atlaso_verified_software")
 i=load({source_root_json}+"/scripts/interop/routing_deployment_inspection.py",e["payload_inspector_sha256"],"_atlaso_verified_payload")
+phase="software-staging"
+if not Path({software_root_json}).is_dir(): raise ValueError()
+phase="software-verification"
 s=v.verify(Path({software_root_json}),e["release_manifest_sha256"],e["version"],e["source_commit"])
 w=Path({software_root_json},s["application_wheel"])
+phase="application-payload"
 p=i.installed_payload(w,Path(importlib.metadata.distribution("atlaso").locate_file("")))
 def read(p,n):
  fd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW);s=os.fdopen(fd,"rb");z=os.fstat(fd);b=s.read(n+1);s.close()
  if not stat.S_ISREG(z.st_mode) or z.st_nlink!=1 or len(b)>n: raise ValueError()
  return b
+phase="public-identities"
 mid=read(str(Path({identity_root_json})/"etc/machine-id"),128).strip()
 k=read(str(Path({identity_root_json})/"etc/ssh/ssh_host_ed25519_key.pub"),4096).split(None,2)
 if not re.fullmatch(b"[0-9a-f]{{32}}",mid) or mid==b"0"*32 or len(k)<2 or k[0]!=b"ssh-ed25519": raise ValueError()
@@ -248,7 +254,7 @@ r={{"schema":1,"machine_id_sha256":hashlib.sha256(mid).hexdigest(),"host_key_sha
 x=json.dumps(r,sort_keys=True,separators=(",",":")).encode()
 if len(x)>2048: raise ValueError()
 print("ATLASO-INSPECTION:"+base64.b64encode(x).decode()+":END")'''
-    program = "try:\n" + textwrap.indent(body, " ") + "\nexcept BaseException:\n print(\"ATLASO-INSPECTION-FAILED\")"
+    program = 'phase="initialization"\ntry:\n' + textwrap.indent(body, " ") + '\nexcept BaseException:\n print("ATLASO-INSPECTION-FAILED:"+phase)'
     command = "/opt/atlaso/.venv/bin/python -B -I -c 'exec(__import__(\"zlib\").decompress(__import__(\"base64\").b64decode(\"" + base64.b64encode(zlib.compress(program.encode(), 9)).decode() + "\")))'"
     if len(command) > _MAX_PROGRAM or not command.isascii():
         raise ValueError("read-only inspection command exceeds the console bound")
