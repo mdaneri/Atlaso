@@ -39,6 +39,26 @@ function Assert-InstallationVmCondition {
     if (-not $Condition) { throw $Message }
 }
 
+Import-Module (Join-Path $repositoryRoot 'scripts/windows/vmware/Atlaso.VmwareTestIdentity.psm1') -Force
+$identityA = New-AtlasoVmwareTestIdentity -PullRequestNumber 1036 -Purpose installation-iso -CollisionSuffix inspection-a
+$identityB = New-AtlasoVmwareTestIdentity -PullRequestNumber 1036 -Purpose installation-iso -CollisionSuffix inspection-b
+Assert-InstallationVmCondition ($identityA.Name -cne $identityB.Name -and
+    $identityA.Name -ceq 'Atlaso-PR-1036-installation-iso-inspection-a' -and
+    $identityB.Name -ceq 'Atlaso-PR-1036-installation-iso-inspection-b') `
+    'Independent ISO fixtures must retain the owning PR and distinct canonical names.'
+$phaseCalls = @($driverAst.FindAll({ param($node)
+    $node -is [System.Management.Automation.Language.CommandAst] -and
+    $node.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Ampersand -and
+    $node.Extent.Text.Contains("'test-installation-iso.ps1'")
+}, $true))
+Assert-InstallationVmCondition ($phaseCalls.Count -ge 4) 'The console driver must retain its owning lifecycle phases.'
+foreach ($phaseCall in $phaseCalls) {
+    $suffixParameters = @($phaseCall.CommandElements | Where-Object {
+        $_ -is [System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -ceq 'CollisionSuffix'
+    })
+    Assert-InstallationVmCondition ($suffixParameters.Count -eq 1) 'Every ISO lifecycle phase must carry the same canonical identity suffix.'
+}
+
 <#
 .SYNOPSIS
 Create a SecureString from a synthetic test fixture without the plaintext conversion helper.

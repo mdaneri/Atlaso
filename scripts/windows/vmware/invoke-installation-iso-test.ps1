@@ -13,6 +13,8 @@ Independently retained ISO digest.
 Absent task-owned VM output directory.
 .PARAMETER PullRequestNumber
 Exact owning pull request.
+.PARAMETER CollisionSuffix
+Existing canonical identity suffix distinguishing independently installed test VMs.
 .PARAMETER Scenario
 Probe the native UI, cancel at disk/layout review, reject insufficient capacity, run Auto, or install and boot without media.
 LoginInstalled resumes an already installed, receipt-bound VM without repeating installation.
@@ -43,6 +45,7 @@ param(
     [Parameter(Mandatory = $true)][string]$IsoSha256,
     [Parameter(Mandatory = $true)][string]$OutputDirectory,
     [Parameter(Mandatory = $true)][ValidateRange(1, 2147483647)][int]$PullRequestNumber,
+    [string]$CollisionSuffix = '',
     [ValidateSet('Probe', 'Cancel', 'CancelReview', 'Insufficient', 'Auto', 'AutoReboot', 'LoginInstalled')][string]$Scenario = 'Probe',
     [string]$OriginalReceiptPath = '',
     [string]$OriginalReceiptSha256 = '',
@@ -62,7 +65,7 @@ if (-not $Child) {
     $childArguments = @(
         '-NoProfile', '-File', $PSCommandPath, '-Child', '-IsoPath', $IsoPath,
         '-IsoSha256', $IsoSha256, '-OutputDirectory', $OutputDirectory,
-        '-PullRequestNumber', [string]$PullRequestNumber, '-Scenario', $Scenario,
+        '-PullRequestNumber', [string]$PullRequestNumber, '-CollisionSuffix', $CollisionSuffix, '-Scenario', $Scenario,
         '-TimeoutSeconds', [string]$TimeoutSeconds,
         '-OriginalReceiptPath', $OriginalReceiptPath, '-OriginalReceiptSha256', $OriginalReceiptSha256,
         '-BaselineReceiptPath', $BaselineReceiptPath, '-BaselineReceiptSha256', $BaselineReceiptSha256,
@@ -824,7 +827,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not admit the installer console source c
 $branch = ([string](& git -C $worktree branch --show-current)).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Could not admit the installer console source branch.' }
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
-$vmName = (New-AtlasoVmwareTestIdentity -PullRequestNumber $PullRequestNumber -Purpose installation-iso).Name
+$vmName = (New-AtlasoVmwareTestIdentity -PullRequestNumber $PullRequestNumber -Purpose installation-iso -CollisionSuffix $CollisionSuffix).Name
 $sourceContext = New-AtlasoTestVmOwnershipContext -Worktree $worktree -OutputDirectory $OutputDirectory `
     -VmxPath (Join-Path $OutputDirectory "$vmName.vmx") -Name $vmName -SourceCommit $commit `
     -SourceBranch $branch -PullRequestNumber $PullRequestNumber
@@ -892,7 +895,7 @@ if ($Scenario -in @('Auto', 'AutoReboot', 'LoginInstalled')) {
 $pipeName = 'Atlaso-Installation-' + [guid]::NewGuid().ToString('N')
 if ($Scenario -eq 'LoginInstalled') {
     $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Verify -Worktree $worktree `
-        -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber @resumeSelectors -Confirm:$false
+        -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix @resumeSelectors -Confirm:$false
     if (-not [IO.Path]::GetFullPath($IsoPath).Equals([string]$vm.IsoPath, [StringComparison]::OrdinalIgnoreCase) -or
         $IsoSha256 -cne [string]$vm.IsoSha256) {
         throw 'LoginInstalled ISO identity differs from the original VM creation receipt.'
@@ -918,10 +921,10 @@ try {
     $connection = $pipe.WaitForConnectionAsync()
     if ($Scenario -eq 'LoginInstalled') {
         $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode ResumeInstalled -Worktree $worktree `
-            -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber @resumeSelectors -Confirm:$false
+            -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix @resumeSelectors -Confirm:$false
     } else {
         $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Create -Worktree $worktree `
-        -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -IsoPath $IsoPath -IsoSha256 $IsoSha256 `
+        -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix -IsoPath $IsoPath -IsoSha256 $IsoSha256 `
         -SerialPipePath "\\.\pipe\$pipeName" -Confirm:$false
     }
     Write-Host ('Installation VM ownership: ' + ($vm | ConvertTo-Json -Compress))
@@ -1054,7 +1057,7 @@ public static class AtlasoInstallationPipePeer {
         # Keep checked provider stop and disk comparison inside this runner's existing
         # whole-process-tree deadline, including the shared vmrun inactivity checks.
         $verification = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Verify -Worktree $worktree `
-            -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber `
+            -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix `
             -OriginalReceiptPath $vm.ReceiptPath -OriginalReceiptSha256 $vm.ReceiptSha256 `
             -BaselineReceiptPath $vm.BaselineReceiptPath -BaselineReceiptSha256 $vm.BaselineReceiptSha256 `
             -VerifyTarget:($Scenario -notin @('Auto', 'AutoReboot')) -Confirm:$false
@@ -1064,7 +1067,7 @@ public static class AtlasoInstallationPipePeer {
         $pipe.Disconnect()
         $connection = $pipe.WaitForConnectionAsync()
         $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode BootInstalled -Worktree $worktree `
-            -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber `
+            -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix `
             -OriginalReceiptPath $vm.ReceiptPath -OriginalReceiptSha256 $vm.ReceiptSha256 `
             -BaselineReceiptPath $vm.BaselineReceiptPath -BaselineReceiptSha256 $vm.BaselineReceiptSha256 -Confirm:$false
         if (-not $connection.Wait(120000)) { throw 'The installed VM did not reconnect its private console.' }
@@ -1109,7 +1112,7 @@ public static class AtlasoInstallationPipePeer {
             Send-InstallationConsoleText -Pipe $pipe -Text ('exit' + $accountProbe.EnterKey)
         }
         $verification = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Verify -Worktree $worktree `
-            -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber `
+            -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix `
             -OriginalReceiptPath $vm.ReceiptPath -OriginalReceiptSha256 $vm.ReceiptSha256 `
             -BaselineReceiptPath $vm.BaselineReceiptPath -BaselineReceiptSha256 $vm.BaselineReceiptSha256 `
             -BootReceiptPath $boot.BootReceiptPath -BootReceiptSha256 $boot.BootReceiptSha256 -Confirm:$false

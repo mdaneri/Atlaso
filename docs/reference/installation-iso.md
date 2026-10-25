@@ -211,6 +211,11 @@ machine ID and Ed25519 public host key; they do not read private keys or applian
 does not establish equality of all installed RPMs, PowerShell modules, trust material, or notices. Network isolation
 remains in effect, so this option does not establish host-facing API or Appliance Update acceptance.
 
+Use `-CollisionSuffix inspection-a` and `-CollisionSuffix inspection-b` for two fresh installations in separate
+canonical VM directories. The wrappers reuse the shared identity helper to preserve the PR number while giving each
+VM a distinct name. Supply the same suffix with that VM's original receipt selectors for every subsequent login,
+verification, boot, or cleanup operation; omit it only for an original VM created without a suffix.
+
 The `BootInstalled` harness mode reuses original VM and disk-baseline admission, stopped-provider checks, logical
 disk comparison, and source pins. It requires the original isolated EFI device configuration, publishes an immutable
 `installation-boot` transition receipt before editing the VMX through its retained writer, disables only the existing

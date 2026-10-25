@@ -16,6 +16,8 @@ Exact clean Atlaso worktree used to bind ownership.
 Canonical VM artifact directory beneath Worktree.
 .PARAMETER PullRequestNumber
 Owning pull request number for this test VM.
+.PARAMETER CollisionSuffix
+Existing canonical identity suffix distinguishing independently installed test VMs.
 .PARAMETER LocalBuilder
 Bind ownership as a local development VM instead of a pull-request VM.
 .PARAMETER OwnershipRoot
@@ -57,6 +59,7 @@ param(
     [string]$Worktree = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path,
     [string]$OutputDirectory = '',
     [ValidateRange(0, 2147483647)][int]$PullRequestNumber = 0,
+    [string]$CollisionSuffix = '',
     [switch]$LocalBuilder,
     [string]$OwnershipRoot = '',
     [string]$OwnershipTaskId = '',
@@ -569,12 +572,12 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 $resolvedWorktree = (Resolve-Path -LiteralPath $Worktree).Path
 $resolvedOutput = [System.IO.Path]::GetFullPath($OutputDirectory)
 $name = if ($PullRequestNumber -gt 0) {
-    (New-AtlasoVmwareTestIdentity -PullRequestNumber $PullRequestNumber -Purpose installation-iso).Name
+    (New-AtlasoVmwareTestIdentity -PullRequestNumber $PullRequestNumber -Purpose installation-iso -CollisionSuffix $CollisionSuffix).Name
 } else {
     $localCommit = ([string](& git -C $resolvedWorktree rev-parse --short=12 HEAD 2>$null)).Trim()
     if ($LASTEXITCODE -ne 0 -or $localCommit -notmatch '^[0-9a-f]{12}$') { throw 'Could not resolve the local VM name source commit.' }
     $fullLocalCommit = ([string](& git -C $resolvedWorktree rev-parse HEAD 2>$null)).Trim()
-    (New-AtlasoVmwareTestIdentity -LocalBuilder -SourceCommit $fullLocalCommit -Purpose installation-iso).Name
+    (New-AtlasoVmwareTestIdentity -LocalBuilder -SourceCommit $fullLocalCommit -Purpose installation-iso -CollisionSuffix $CollisionSuffix).Name
 }
 $context = New-InstallationVmContext -Root $resolvedWorktree -Destination $resolvedOutput -Name $name
 
