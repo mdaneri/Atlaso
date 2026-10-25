@@ -130,8 +130,8 @@ build host’s default compression format. Repository configuration uses UTF-8 w
 The VMware harness creates an isolated EFI VM with no network adapters, two blank SCSI disks, and a private serial
 console. Its VMX configuration uses UTF-8 to preserve non-ASCII worktree, ISO, and output paths.
 Hash the generated ISO and use the exact owning pull request number. `Probe` checks that the native Photon disk
-selection screen appears, and `Cancel` checks cancellation before disk writes. `Auto` exercises the single-disk Auto
-installation path. Reboot, persistence, and Appliance Update checks remain separate follow-up tests:
+selection screen exposes both blank fixture disks, and `Cancel` checks cancellation before disk writes. `Auto` exercises
+the single-disk Auto installation path. Reboot, persistence, and Appliance Update checks remain separate follow-up tests:
 
 ```powershell
 $isoSha256 = (Get-FileHash -LiteralPath <DEVELOPMENT-ISO-PATH> -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -169,6 +169,11 @@ its private pipe peer before sending either chosen password
 to ordinary Linux login; it records only fixed success checkpoints, never the console stream.
 Login troubleshooting reports only fixed PAM and shell-stage categories. These diagnostics neither expose console
 contents nor establish successful authentication; the account-identity challenge must still pass.
+Initial installation also reports fixed disk-selection/completion phases and known boot categories. During
+provisioning, only stage labels admitted from the checked-in provisioner are forwarded, once per recognized stage;
+raw console messages remain private. A launcher failure stops the wait instead of consuming the whole test deadline.
+Startup uses the same bounded cursor-only parser as login, answering a terminal-position query only after observed
+controls establish its position. This permits a startup profile to finish its terminal sizing before disk selection.
 At a login deadline, fixed categories distinguish no activity, control-only activity, and unrecognized activity without
 printing the bytes or their length. Login timeout, session failure, and shell-prompt candidates are diagnostic categories;
 they do not satisfy the account-identity challenge.

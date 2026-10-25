@@ -833,6 +833,7 @@ finally {
 
 foreach ($publicFailure in @(
     @{ Text = 'Installation cancelled. PublicSyntheticSensitiveFixture'; Expected = 'The installer cancelled before the expected console state.' },
+    @{ Text = 'Atlaso installation cancelled or failed (status 1). PublicSyntheticSensitiveFixture'; Expected = 'The installation launcher reported failure before the expected console state.' },
     @{ Text = 'Password must include an uppercase letter. PublicSyntheticSensitiveFixture'; Expected = 'The installer rejected the concealed credential under its account policy.' }
 )) {
     $pipePair = $null
@@ -853,6 +854,22 @@ foreach ($publicFailure in @(
 }
 
 Write-Host 'Installation ISO VM harness source-contract checks passed.'
+
+$stagePair = $null
+try {
+    $stagePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+    $stageSender = [AtlasoInstallationPipeTestWriter]::Start($stagePair.Client, [string[]]@(
+        "==> Atlaso appliance: KnownA`r`n", "private-console-fixture`r`n",
+        "==> Atlaso appliance: KnownB`r`n", "==> Atlaso appliance: KnownA`r`nFixtureDone"))
+    $stageReports = @(Wait-InstallationConsoleState -Pipe $stagePair.Server -Pattern 'FixtureDone' `
+        -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -KnownProvisioningStages @('KnownA', 'KnownB') 6>&1)
+    Assert-InstallationVmCondition ($stageReports.Count -eq 2 -and
+        [string]$stageReports[0] -ceq 'Public provisioning stage: KnownA' -and
+        [string]$stageReports[1] -ceq 'Public provisioning stage: KnownB') `
+        'Provisioning progress must expose only admitted labels, once each, without private console text.'
+    Assert-InstallationVmCondition ($stageSender.Wait(5000)) 'Provisioning-stage fixture writer did not finish.'
+}
+finally { if ($stagePair) { Close-InstallationTestPipePair -Pair $stagePair } }
 
 $bootSource = ($lines -join "`n") + "`n"
 $bootText = ConvertTo-InstallationDiskBootConfiguration -Text $bootSource
@@ -971,6 +988,19 @@ foreach ($probeRepetitions in @(1, 2)) {
     finally { if ($nativeProbePair) { Close-InstallationTestPipePair -Pair $nativeProbePair } }
 }
 $probeFloodPair = $null
+$bootProbePair = $null
+try {
+    $bootProbePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+    $bootProbeTask = [AtlasoInstallationPipeTestWriter]::NativeSizeProbe($bootProbePair.Client,
+        [string[]]@("`es`e[999;", "999H`e[", "6n`eu"), 1, 'Select a disk')
+    $bootProbeEvents = @(Wait-InstallationConsoleState -Pipe $bootProbePair.Server -Pattern 'Select a disk' `
+        -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadBootProgress 6>&1)
+    Assert-InstallationVmCondition ($bootProbeTask.Wait(5000)) 'A startup profile must receive its proven reply before displaying disk selection.'
+    Assert-InstallationVmCondition (@($bootProbeEvents | Where-Object {
+        $_.ToString() -ceq 'Answered a proven cursor-position query.'
+    }).Count -eq 1) 'Boot-time cursor queries must reuse the same proven-coordinate response boundary.'
+}
+finally { if ($bootProbePair) { Close-InstallationTestPipePair -Pair $bootProbePair } }
 try {
     $probeFloodPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
     $probeFloodSender = [AtlasoInstallationPipeTestWriter]::NativeProbeFlood($probeFloodPair.Client, ("`es`e[999;999H`e[6n`eu" * 65))

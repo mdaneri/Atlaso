@@ -548,7 +548,7 @@ Return the complete fixed-fixture public disk rows instead of returning at its t
 .PARAMETER KnownProvisioningStages
 Fixed public stage labels from the admitted provisioner; unknown messages are never reported.
 .PARAMETER ReadBootProgress
-Report only fixed boot-stage categories while waiting before installed credential entry.
+Report only fixed boot categories and answer proven cursor queries during startup.
 .PARAMETER ReadLoginProgress
 Report only fixed PAM and shell categories; never print login-console contents.
 .PARAMETER CursorState
@@ -568,12 +568,13 @@ function Wait-InstallationConsoleState {
     $bootFailureDeadline = $null
     $lastProvisioningStage = $null
     $knownStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $seenProvisioningStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $seenBootStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $seenLoginStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $loginActivity = $false
     $adminPromptSeen = $false
     $adminCursorReady = $false
-    if ($ReadLoginProgress -and -not $CursorState) { $CursorState = @{} }
+    if (($ReadLoginProgress -or $ReadBootProgress) -and -not $CursorState) { $CursorState = @{} }
     foreach ($stage in $KnownProvisioningStages) { [void]$knownStages.Add($stage) }
     try {
         while ([DateTimeOffset]::UtcNow -lt $Deadline) {
@@ -596,7 +597,7 @@ function Wait-InstallationConsoleState {
             if ($count -eq 0) { throw 'The owned VM serial console disconnected before the expected state.' }
             $chunk = [Text.Encoding]::ASCII.GetString($buffer, 0, $count)
             $text += $chunk
-            if ($ReadLoginProgress) {
+            if ($ReadLoginProgress -or $ReadBootProgress) {
                 # Preserve high-bit bytes as non-ASCII markers instead of replacing
                 # them with printable question marks of an invented display width.
                 $cursorChunk = [Text.Encoding]::Latin1.GetString($buffer, 0, $count)
@@ -604,7 +605,8 @@ function Wait-InstallationConsoleState {
                 foreach ($cursorQuery in $cursorQueries) {
                     if ($cursorQuery.Exceeded) { throw 'Installed console exceeded its bounded cursor-position queries.' }
                     if ($seenLoginStages.Add('cursor-position-query')) {
-                        Write-Host 'Public installed login stage: cursor-position-query'
+                        if ($ReadLoginProgress) { Write-Host 'Public installed login stage: cursor-position-query' }
+                        else { Write-Host 'Public boot stage: cursor-position-query' }
                     }
                     if ($cursorQuery.Known) {
                         Send-InstallationConsoleText -Pipe $pipe -Text ("`e[{0};{1}R" -f $cursorQuery.Row, $cursorQuery.Column)
@@ -700,8 +702,16 @@ function Wait-InstallationConsoleState {
             if ($knownStages.Count -gt 0) {
                 foreach ($observed in [regex]::Matches($plain, '(?m)^==> Atlaso appliance: (?<stage>[^\r\n]{1,160})\r?$')) {
                     $candidateStage = $observed.Groups['stage'].Value
-                    if ($knownStages.Contains($candidateStage)) { $lastProvisioningStage = $candidateStage }
+                    if ($knownStages.Contains($candidateStage)) {
+                        $lastProvisioningStage = $candidateStage
+                        if ($seenProvisioningStages.Add($candidateStage)) {
+                            Write-Host ('Public provisioning stage: ' + $lastProvisioningStage)
+                        }
+                    }
                 }
+            }
+            if ($plain.Contains('Atlaso installation cancelled or failed (status ', [StringComparison]::Ordinal)) {
+                throw 'The installation launcher reported failure before the expected console state.'
             }
             if ($Pattern -cne 'Installation cancelled' -and $plain.Contains('Installation cancelled', [StringComparison]::Ordinal)) {
                 throw 'The installer cancelled before the expected console state.'
@@ -720,7 +730,6 @@ function Wait-InstallationConsoleState {
                 if ($kind.Success) {
                     $frames = @([regex]::Matches($plain, 'File "[^"\r\n]*/(bootstrap\.py|manifest\.py|installer\.py|disks\.py|window\.py|menu\.py|readtext\.py|progressbar\.py)", line ([0-9]{1,6}),') |
                         Select-Object -Last 8 | ForEach-Object { $_.Groups[1].Value + ':' + $_.Groups[2].Value })
-                    if ($lastProvisioningStage) { Write-Host ('Public provisioning stage: ' + $lastProvisioningStage) }
                     $packageCodes = @([regex]::Matches($plain, '(?m)^Error\(([0-9]{1,6})\)') |
                         ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
                     if ($packageCodes.Count -gt 0) {
@@ -1014,7 +1023,9 @@ public static class AtlasoInstallationPipePeer {
     }
     $cursorState = @{}
     if ($Scenario -ne 'LoginInstalled') {
-        $diskOptions = @(Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline -ReadDiskSelection:($Scenario -in @('Auto', 'AutoReboot', 'CancelReview', 'Insufficient')))
+        Write-Host 'Public installer phase: awaiting-disk-selection'
+        $diskOptions = @(Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline -ReadBootProgress -CursorState $cursorState -ReadDiskSelection:($Scenario -in @('Probe', 'Auto', 'AutoReboot', 'CancelReview', 'Insufficient')))
+        Write-Host 'Public installer phase: disk-selection-ready'
         Write-Host 'Installer reached the native Photon disk selection screen.'
         if ($Scenario -eq 'Cancel') {
             # The pinned serial getty uses TERM=screen with application cursor keys.
@@ -1048,6 +1059,7 @@ public static class AtlasoInstallationPipePeer {
                             Send-InstallationConsoleSecret -Pipe $pipe -Value $value
                         }
                     }
+                    Write-Host 'Public installer phase: awaiting-installation-completion'
                     Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Atlaso installation completed.' -Deadline $deadline `
                         -KnownProvisioningStages $knownProvisioningStages
                     Write-Host 'Disconnected Auto installation completed; reboot and persistence acceptance remain separate.'
