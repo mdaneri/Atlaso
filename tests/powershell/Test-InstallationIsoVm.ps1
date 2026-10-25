@@ -935,6 +935,7 @@ foreach ($activityFixture in @(
 $rootShellProbe = Get-InstallationAccountProbe -Account root
 Write-Host 'Starting installation terminal-protocol pipe fixtures.'
 Assert-InstallationVmCondition ($rootShellProbe.Prompt -ceq ' ]# ' -and $rootShellProbe.Command.Contains('id -u') -and -not $rootShellProbe.Command.Contains('ATLASO-LOGIN-OK')) 'Root readiness must accept the native Photon prompt while retaining a separate identity challenge.'
+Assert-InstallationVmCondition ($rootShellProbe.EnterKey -ceq "`n") 'Bash command submission must retain its existing line-feed handling.'
 foreach ($probeRepetitions in @(1, 2)) {
     $nativeProbePair = $null
     try {
@@ -1052,6 +1053,23 @@ try {
     Assert-InstallationVmCondition ($queryWriter.Wait(5000)) 'Cursor state must persist across login Wait calls and answer an accurate position.'
 }
 finally { if ($crossWaitPair) { Close-InstallationTestPipePair -Pair $crossWaitPair } }
+foreach ($fragmentPrompt in @($false, $true)) {
+    $adminReadyPair = $null
+    try {
+        $adminReadyPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+        $adminReadyState = @{}
+        $readyFragments = if ($fragmentPrompt) {
+            [string[]]@("`e[7;11HP", "S /fixture> `e[6", 'n')
+        } else { [string[]]@("`e[7;11HPS /fixture> `e[6n") }
+        $adminReadyWriter = [AtlasoInstallationPipeTestWriter]::CursorProbe(
+            $adminReadyPair.Client, $readyFragments, "`e[7;24R", '')
+        Wait-InstallationConsoleState -Pipe $adminReadyPair.Server -Pattern 'PS ' `
+            -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadLoginProgress -ShellAccount admin -CursorState $adminReadyState
+        Assert-InstallationVmCondition ($adminReadyWriter.Wait(5000)) `
+            'Administrator readiness must answer the post-prompt cursor request before permitting a queued challenge.'
+    }
+    finally { if ($adminReadyPair) { Close-InstallationTestPipePair -Pair $adminReadyPair } }
+}
 Write-Host 'Installation cross-wait pipe fixture passed; starting non-ASCII pipe fixture.'
 $highBytePair = $null
 try {
@@ -1111,6 +1129,8 @@ foreach ($promptPrefix in @('root', 'root@atlaso')) {
 }
 $adminShellProbe = Get-InstallationAccountProbe -Account admin
 Assert-InstallationVmCondition ($adminShellProbe.Prompt -ceq 'PS ' -and -not $adminShellProbe.Command.Contains('ATLASO-LOGIN-OK')) 'Administrator readiness must use PowerShell and avoid a contiguous echoed marker.'
+Assert-InstallationVmCondition ($adminShellProbe.EnterKey -ceq "`r" -and $adminShellProbe.EnterKey.Length -eq 1) `
+    'PowerShell command submission must send ordinary Enter, not the Unix console Ctrl+Enter line feed.'
 foreach ($fixtureIdentity in @('admin', 'root')) {
     $probeResult = @(& {
         param([string]$ObservedIdentity, [string]$Command)

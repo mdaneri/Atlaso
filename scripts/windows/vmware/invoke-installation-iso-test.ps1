@@ -213,7 +213,8 @@ function ConvertFrom-InstallationConsoleFrame {
         }
     }
     try {
-        foreach ($ch in $Text.ToCharArray()) {
+        for ($inputOffset = 0; $inputOffset -lt $Text.Length; $inputOffset++) {
+            $ch = $Text[$inputOffset]
             $code = [int]$ch
             if ($state.ParserMode -eq 'String') {
                 if (($state.StringBell -and $code -eq 7) -or ($state.StringEscape -and $ch -ceq '\')) {
@@ -308,6 +309,7 @@ function ConvertFrom-InstallationConsoleFrame {
                                 # Snapshot now: the following bytes can restore a different cursor.
                                 $queries.Add([pscustomobject]@{
                                     Known = $known; Exceeded = $state.QueryCount -gt 64
+                                    Offset = $inputOffset
                                     Row = if ($known) { $state.RowMin + 1 } else { $null }
                                     Column = if ($known) { $state.Column + 1 } else { $null }
                                 })
@@ -554,6 +556,8 @@ function Wait-InstallationConsoleState {
     $seenBootStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $seenLoginStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $loginActivity = $false
+    $adminPromptSeen = $false
+    $adminCursorReady = $false
     if ($ReadLoginProgress -and -not $CursorState) { $CursorState = @{} }
     foreach ($stage in $KnownProvisioningStages) { [void]$knownStages.Add($stage) }
     try {
@@ -590,6 +594,15 @@ function Wait-InstallationConsoleState {
                     if ($cursorQuery.Known) {
                         Send-InstallationConsoleText -Pipe $pipe -Text ("`e[{0};{1}R" -f $cursorQuery.Row, $cursorQuery.Column)
                         Write-Host 'Answered a proven cursor-position query.'
+                        # PowerShell can print its prompt before obtaining the cursor.
+                        # Require the observed post-prompt handshake before queuing
+                        # application input; prompt bytes alone are not readiness.
+                        $promptOffset = $text.LastIndexOf('PS ', [StringComparison]::Ordinal)
+                        $queryOffset = $text.Length - $cursorChunk.Length + $cursorQuery.Offset
+                        if ($ShellAccount -eq 'admin' -and ($adminPromptSeen -or
+                            ($promptOffset -ge 0 -and $queryOffset -ge $promptOffset + 3))) {
+                            $adminCursorReady = $true
+                        }
                     }
                 }
             }
@@ -715,6 +728,10 @@ function Wait-InstallationConsoleState {
             }
             $matched = if ($ShellAccount) { Test-InstallationShellPrompt -Text $plain -Account $ShellAccount }
                 else { $plain.Contains($Pattern, [StringComparison]::Ordinal) }
+            if ($ShellAccount -eq 'admin' -and $matched) {
+                $adminPromptSeen = $true
+                if (-not $adminCursorReady) { $matched = $false }
+            }
             if (-not $ExpectedCapacityDisk -and -not $failureDeadline -and $matched) {
                 if ($ReadDiskSelection) {
                     $options = @(Get-InstallationConsoleDiskOptions -Text $text)
@@ -760,6 +777,7 @@ function Get-InstallationAccountProbe {
             # suffix; the separate id -u challenge still proves the account.
             Prompt = ' ]# '
             Command = '[ "$(id -u)" = 0 ] && printf ''ATLASO-%s\n'' ''LOGIN-OK'''
+            EnterKey = "`n"
         }
     }
     # Shared provisioning selects /usr/bin/pwsh for the administrator. Keep
@@ -767,6 +785,8 @@ function Get-InstallationAccountProbe {
     [pscustomobject]@{
         Prompt = 'PS '
         Command = 'if ((id -un) -ceq ''admin'') { Write-Output (''ATLASO-'' + ''LOGIN-OK'') }'
+        # .NET's Unix console maps LF to Ctrl+Enter. CR is ordinary Enter.
+        EnterKey = "`r"
     }
 }
 
@@ -1016,10 +1036,10 @@ public static class AtlasoInstallationPipePeer {
             # send the checkpoint command until the ordinary shell prompt appears.
             Write-Host ('Installed console: awaiting {0} shell prompt.' -f $account)
             Wait-InstallationConsoleState -Pipe $pipe -Pattern $accountProbe.Prompt -Deadline $loginDeadline -ReadLoginProgress -ShellAccount $account -CursorState $cursorState
-            Send-InstallationConsoleText -Pipe $pipe -Text ($accountProbe.Command + "`n")
+            Send-InstallationConsoleText -Pipe $pipe -Text ($accountProbe.Command + $accountProbe.EnterKey)
             Wait-InstallationConsoleState -Pipe $pipe -Pattern 'ATLASO-LOGIN-OK' -Deadline $loginDeadline -ReadLoginProgress -CursorState $cursorState
             Write-Host ("Installed password authentication passed for {0}." -f $account)
-            Send-InstallationConsoleText -Pipe $pipe -Text "exit`n"
+            Send-InstallationConsoleText -Pipe $pipe -Text ('exit' + $accountProbe.EnterKey)
         }
         $verification = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Verify -Worktree $worktree `
             -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber `

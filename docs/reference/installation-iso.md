@@ -180,6 +180,9 @@ cursor and control-parser metadata, with a 64-query session ceiling and absolute
 private and temporary.
 The fixed `cursor-position-query` diagnostic identifies requests without proving authentication; a shell can display
 its prompt before finishing terminal initialization. The separate account-identity challenge must still pass.
+For the administrator's PowerShell shell, the adapter waits for the cursor handshake after the prompt before sending
+that challenge. Prompt bytes alone do not establish terminal readiness.
+PowerShell commands use carriage return for ordinary Enter; the Unix .NET console treats line feed as Ctrl+Enter.
 
 To retry login diagnostics on a retained installed VM, use `-Scenario LoginInstalled` with the same ISO identity and
 existing VM directory. Supply `-OriginalReceiptPath`, `-OriginalReceiptSha256`, `-BaselineReceiptPath`,
