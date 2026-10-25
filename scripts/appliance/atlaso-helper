@@ -16403,8 +16403,6 @@ def _wan_config_errors(
             fields = ("ip_cidr", "ipv6_cidr") if family == "0" else ("ip_cidr",) if family == "4" else ("ipv6_cidr",)
             if not any(targets[source].get(field) and targets[destination].get(field) for field in fields):
                 errors.append(f"Routing rule {name} has no common selected IP family.")
-        if enabled and source and destination and source == destination:
-            errors.append(f"Routing rule {name or '<missing>'} must use different source and destination interfaces.")
         try:
             priority = int(rule.get("priority", "100"))
         except ValueError:

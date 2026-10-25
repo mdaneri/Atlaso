@@ -8738,7 +8738,7 @@
             "type": "string"
           },
           "destination_interface": {
-            "description": "Eligible destination interface or VLAN name; management targets are prohibited.",
+            "description": "Eligible egress interface or VLAN; management is prohibited. Selecting the source interface explicitly scopes a same-interface gateway permission to any routed destination through that interface, with the configured source prefixes and selected IP family.",
             "maxLength": 80,
             "minLength": 1,
             "title": "Destination Interface",
@@ -8770,7 +8770,7 @@
           },
           "policy": {
             "default": "allow",
-            "description": "Traffic decision: allow, deny, or automatic route-role behavior.",
+            "description": "Traffic decision: allow, deny, or automatic route-role behavior. Same-interface gateway forwarding requires explicit allow even for a route-role target.",
             "enum": [
               "automatic",
               "allow",
@@ -8826,7 +8826,7 @@
             "type": "string"
           },
           "destination_interface": {
-            "description": "Destination interface or VLAN identity.",
+            "description": "Egress interface or VLAN identity; equality with source_interface identifies an explicit same-interface gateway permission.",
             "title": "Destination Interface",
             "type": "string"
           },

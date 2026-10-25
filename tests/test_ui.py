@@ -1039,7 +1039,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}385`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}386`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
@@ -1059,7 +1059,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=ca-grid-resize-1040-1" in service_worker.text
+    assert "/static/app.js?v=same-interface-gateway-1045-2" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1113,8 +1113,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=ca-grid-resize-1040-1"),
-        (public_base, "/static/app.js?v=ca-grid-resize-1040-1"),
+        (base, "/static/app.js?v=same-interface-gateway-1045-2"),
+        (public_base, "/static/app.js?v=same-interface-gateway-1045-2"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1789,7 +1789,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vcf-helper-tabs-1027-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11" in page.text
-    assert "/static/app.js?v=ca-grid-resize-1040-1" in page.text
+    assert "/static/app.js?v=same-interface-gateway-1045-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -5457,8 +5457,8 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
             "enabled": True,
         }
     )
-    enabled_identical_routing_targets = deepcopy(enabled_missing_routing_target)
-    enabled_identical_routing_targets["data"]["routing_rules"][-1]["source_interface"] = "eth1.20"
+    enabled_same_interface_gateway = deepcopy(enabled_missing_routing_target)
+    enabled_same_interface_gateway["data"]["routing_rules"][-1]["source_interface"] = "eth1.20"
     disabled_missing_routing_target = deepcopy(enabled_missing_routing_target)
     disabled_missing_routing_target["data"]["routing_rules"][-1]["enabled"] = False
     enabled_missing_dhcp_target = deepcopy(archive)
@@ -6527,7 +6527,6 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_missing_nat_source_group, "NAT source is invalid"),
         (missing_firewall_source_group, "has an invalid source or destination"),
         (enabled_missing_routing_target, "has an ineligible interface"),
-        (enabled_identical_routing_targets, "has identical source and destination interfaces"),
         (enabled_missing_dhcp_target, "has an ineligible bind interface"),
         (enabled_wrong_family_dhcp_target, "has an ineligible bind interface"),
         (enabled_management_dhcp_target, "has an ineligible bind interface"),
@@ -6656,6 +6655,9 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     ]:
         with pytest.raises(ValueError, match=message):
             archive_summary(candidate)
+    assert archive_summary(enabled_same_interface_gateway)["table_counts"]["routing_rules"] == len(
+        enabled_same_interface_gateway["data"]["routing_rules"]
+    )
     assert archive_summary(disabled_missing_parent_vlan)["table_counts"]["vlan_interfaces"] == len(
         disabled_missing_parent_vlan["data"]["vlan_interfaces"]
     )

@@ -196,7 +196,8 @@ class WindowsFiles:
             self.kernel.CloseHandle(handle)
 
     @contextmanager
-    def opened(self, path: Path, *, delete: bool = False, directory: bool = False, reparse: bool = False):
+    def opened(self, path: Path, *, delete: bool = False, directory: bool = False, reparse: bool = False,
+               read_security: bool = False):
         """Deny replacement/writers while reading attributes or setting exact-object disposition.
 
         Args:
@@ -204,10 +205,11 @@ class WindowsFiles:
             delete: Request deletion access while retaining the checked object handle.
             directory: Whether the handle must refer to a directory.
             reparse: Admit a symbolic link object only in the explicit pytest mode.
+            read_security: Request READ_CONTROL for an owning tool's pinned ACL verification.
         """
         # READ_DATA/LIST_DIRECTORY makes the share restriction effective. OPEN_REPARSE_POINT
         # inspects the entry itself; BACKUP_SEMANTICS permits ordinary directory handles.
-        handle = self.kernel.CreateFileW(str(path), 0x81 | (0x10000 if delete else 0),
+        handle = self.kernel.CreateFileW(str(path), 0x81 | (0x10000 if delete else 0) | (0x20000 if read_security else 0),
                                          1, None, 3, 0x02200000, None)
         if handle == ctypes.c_void_p(-1).value:
             raise FileRefusal("Cannot pin an ordinary inactive output entry; preserve it and retry after quiescence.")
