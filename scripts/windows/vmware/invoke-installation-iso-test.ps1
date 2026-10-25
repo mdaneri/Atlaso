@@ -446,7 +446,10 @@ function Get-InstallationAccountProbe {
     param([ValidateSet('root', 'admin')][string]$Account)
     if ($Account -eq 'root') {
         return [pscustomobject]@{
-            Prompt = 'root@atlaso'
+            # Photon's login and interactive Bash profiles differ in whether
+            # they include the hostname. Both end the root prompt with this
+            # suffix; the separate id -u challenge still proves the account.
+            Prompt = ' ]# '
             Command = '[ "$(id -u)" = 0 ] && printf ''ATLASO-%s\n'' ''LOGIN-OK'''
         }
     }

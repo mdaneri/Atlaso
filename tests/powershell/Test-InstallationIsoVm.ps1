@@ -783,6 +783,19 @@ try {
 finally { if ($bootPair) { Close-InstallationTestPipePair -Pair $bootPair } }
 
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationAccountProbe')))
+$rootShellProbe = Get-InstallationAccountProbe -Account root
+Assert-InstallationVmCondition ($rootShellProbe.Prompt -ceq ' ]# ' -and $rootShellProbe.Command.Contains('id -u') -and -not $rootShellProbe.Command.Contains('ATLASO-LOGIN-OK')) 'Root readiness must accept the native Photon prompt while retaining a separate identity challenge.'
+foreach ($promptPrefix in @('root', 'root@atlaso')) {
+    $rootPromptPair = $null
+    try {
+        $rootPromptPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+        $rootPromptSender = [AtlasoInstallationPipeTestWriter]::Start($rootPromptPair.Client, [string[]]@(
+            ($promptPrefix + " [ `e[0m~`e[1;31m ]"), "# `e[0m"))
+        Wait-InstallationConsoleState -Pipe $rootPromptPair.Server -Pattern $rootShellProbe.Prompt -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5))
+        Assert-InstallationVmCondition ($rootPromptSender.Wait(5000)) 'The native root-prompt fixture writer did not finish.'
+    }
+    finally { if ($rootPromptPair) { Close-InstallationTestPipePair -Pair $rootPromptPair } }
+}
 $adminShellProbe = Get-InstallationAccountProbe -Account admin
 Assert-InstallationVmCondition ($adminShellProbe.Prompt -ceq 'PS ' -and -not $adminShellProbe.Command.Contains('ATLASO-LOGIN-OK')) 'Administrator readiness must use PowerShell and avoid a contiguous echoed marker.'
 foreach ($fixtureIdentity in @('admin', 'root')) {

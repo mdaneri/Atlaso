@@ -179,8 +179,12 @@ the receipt-bound VM for source commit `960621fdd0e6c1babcc707e2ca0ca2896539876e
 receipt-bound verification confirmed the unselected disk's logical contents matched its pre-boot baseline. Reboot with
 the installation media removed, login with the chosen installed credentials, fresh machine identities, payload
 equality, the host-facing `/openapi.json`, Appliance Update success and rollback persistence, and physical acceptance
-remain outstanding. A later serial-enabled boot attempt exposed a kernel panic before login; boot acceptance remains
-open. The capacity-refusal and planned-layout cancellation scenarios passed with both fixture disks unchanged.
+remain outstanding. A serial-enabled boot attempt exposed a missing initramfs package. After adding its resolved RPM
+closure, the corrected development image completed disconnected installation and booted without media through systemd
+to the root login/password prompts. Shell-identity verification timed out, so installed-credential acceptance remains
+open. The receipt-bound post-reboot comparison confirmed the unselected disk was unchanged. The console runner accepts
+Photon's root prompt with or without a hostname and still requires a separate account-identity challenge.
+The capacity-refusal and planned-layout cancellation scenarios passed with both fixture disks unchanged.
 Do not infer reboot or persistence results from a completed installation run.
 
 Publication is a separate, explicit workflow dispatch after the exact ISO has been validated. The maintainer supplies
