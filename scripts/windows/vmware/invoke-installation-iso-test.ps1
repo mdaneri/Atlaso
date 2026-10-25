@@ -308,6 +308,7 @@ function Wait-InstallationConsoleState {
     $buffer = [byte[]]::new(4096)
     $text = ''
     $failureDeadline = $null
+    $bootFailureDeadline = $null
     $lastProvisioningStage = $null
     $knownStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $seenBootStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -317,7 +318,11 @@ function Wait-InstallationConsoleState {
             if ($failureDeadline -and [DateTimeOffset]::UtcNow -ge $failureDeadline) {
                 throw 'The installer reported a Python failure before the expected console state.'
             }
+            if ($bootFailureDeadline -and [DateTimeOffset]::UtcNow -ge $bootFailureDeadline) {
+                throw 'The installed system reported a kernel panic before login.'
+            }
             $readDeadline = if ($failureDeadline -and $failureDeadline -lt $Deadline) { $failureDeadline } else { $Deadline }
+            if ($bootFailureDeadline -and $bootFailureDeadline -lt $readDeadline) { $readDeadline = $bootFailureDeadline }
             $remaining = [int][Math]::Min(30000, ($readDeadline - [DateTimeOffset]::UtcNow).TotalMilliseconds)
             if ($remaining -le 0) { break }
             $cancel = [Threading.CancellationTokenSource]::new($remaining)
@@ -336,12 +341,20 @@ function Wait-InstallationConsoleState {
                     @{ Token = 'Welcome to '; Name = 'systemd-startup' },
                     @{ Token = 'You are in emergency mode'; Name = 'emergency-mode' },
                     @{ Token = 'Kernel panic'; Name = 'kernel-panic' },
+                    @{ Token = 'Unable to mount root fs'; Name = 'root-filesystem-unmountable' },
+                    @{ Token = 'Cannot open root device'; Name = 'root-device-unavailable' },
+                    @{ Token = 'unknown-block(0,0)'; Name = 'root-device-unresolved' },
+                    @{ Token = 'No working init found'; Name = 'init-unavailable' },
+                    @{ Token = 'Attempted to kill init!'; Name = 'init-failed' },
                     @{ Token = 'grub rescue>'; Name = 'grub-rescue' },
                     @{ Token = 'grub>'; Name = 'grub-command-line' }
                 )) {
                     if ($plain.Contains($stage.Token, [StringComparison]::Ordinal) -and $seenBootStages.Add($stage.Name)) {
                         Write-Host ('Public installed boot stage: ' + $stage.Name)
                     }
+                }
+                if (-not $bootFailureDeadline -and $seenBootStages.Contains('kernel-panic')) {
+                    $bootFailureDeadline = [DateTimeOffset]::UtcNow.AddSeconds(2)
                 }
             }
             if ($knownStages.Count -gt 0) {
@@ -417,6 +430,7 @@ function Wait-InstallationConsoleState {
             }
             if ($text.Length -gt 131072) { $text = $text.Substring($text.Length - 65536) }
         }
+        if ($bootFailureDeadline) { throw 'The installed system reported a kernel panic before login.' }
         throw 'The installer did not reach the expected public console state before its deadline.'
     }
     finally { [Array]::Clear($buffer, 0, $buffer.Length); $text = ''; $plain = '' }

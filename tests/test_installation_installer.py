@@ -216,6 +216,11 @@ Args:
     fail_at: Backend stage that should raise an error.
 """
     module = load_installer(monkeypatch)
+    boot = target / "boot"
+    boot.mkdir(parents=True, exist_ok=True)
+    (boot / "vmlinuz-test").write_bytes(b"native kernel")
+    (boot / "initrd.img-test").write_bytes(b"native initrd")
+    monkeypatch.setattr(module.subprocess, "check_output", lambda *args, **kwargs: "photon_linux=vmlinuz-test\nphoton_initrd=initrd.img-test\n")
 
     class Backend:
         def __init__(self, **_kwargs):
@@ -840,3 +845,72 @@ def test_installed_serial_login_requires_development_trust(monkeypatch, tmp_path
          "--development-serial-console"],
         ["chroot", str(tmp_path), "systemctl", "enable", "serial-getty@ttyS0.service"],
     ] if expected == "enabled" else [])
+
+
+@pytest.mark.parametrize("failure", [None, "missing-initrd", "empty-initrd", "missing-selection", "duplicate-selection", "escaping-selection"])
+def test_installed_boot_artifacts_require_native_kernel_and_initrd(monkeypatch, tmp_path, failure):
+    """Refuse incomplete native boot setup before credentials or completion.
+
+    Args:
+        monkeypatch: Controlled native metadata command replacement.
+        tmp_path: Synthetic installed filesystem, never a block device.
+        failure: Missing, empty, ambiguous, or unsafe native artifact to exercise.
+    """
+    module = load_installer(monkeypatch)
+    boot = tmp_path / "boot"
+    boot.mkdir()
+    (boot / "vmlinuz-test").write_bytes(b"native kernel")
+    (boot / "initrd.img-test").write_bytes(b"native initrd")
+    metadata = "photon_linux=vmlinuz-test\nphoton_initrd=initrd.img-test\n"
+    if failure == "missing-initrd":
+        (boot / "initrd.img-test").unlink()
+    elif failure == "empty-initrd":
+        (boot / "initrd.img-test").write_bytes(b"")
+    elif failure == "missing-selection":
+        metadata = "photon_linux=vmlinuz-test\n"
+    elif failure == "duplicate-selection":
+        metadata += "photon_initrd=initrd.img-test\n"
+    elif failure == "escaping-selection":
+        metadata = "photon_linux=vmlinuz-test\nphoton_initrd=../outside\n"
+
+    def native_metadata(command, **kwargs):
+        """Emulate only the installed GRUB environment read.
+
+        Args:
+            command: Native metadata command argument vector.
+            **kwargs: Bounded subprocess settings under test.
+        """
+        assert command == ["chroot", str(tmp_path), "/usr/bin/grub2-editenv", "/boot/photon.cfg", "list"]
+        assert kwargs == {"text": True, "stderr": subprocess.DEVNULL, "timeout": 30}
+        return metadata
+
+    monkeypatch.setattr(module.subprocess, "check_output", native_metadata)
+    if failure:
+        with pytest.raises(RuntimeError, match="installed Photon"):
+            module.verify_installed_boot_artifacts(tmp_path)
+    else:
+        module.verify_installed_boot_artifacts(tmp_path)
+
+
+def test_missing_native_initrd_blocks_chosen_credentials_and_completion(monkeypatch, tmp_path):
+    """An incomplete native boot environment must fail before account updates.
+
+    Args:
+        monkeypatch: Controlled native backend and credential-command replacements.
+        tmp_path: Synthetic installed system root.
+    """
+    target = tmp_path / "target"
+    atlaso = target / "etc/atlaso"
+    atlaso.mkdir(parents=True)
+    env_path = atlaso / "atlaso.env"
+    original = 'ATLASO_BOOTSTRAP_ADMIN_PASSWORD="generated-placeholder"\n'
+    env_path.write_text(original, encoding="utf-8")
+    events = []
+    module = _install_fake_native_backend(monkeypatch, target, events)
+    (target / "boot/initrd.img-test").unlink()
+    monkeypatch.setattr(module.subprocess, "run", lambda *args, **kwargs: pytest.fail("credentials must not be applied"))
+    with pytest.raises(RuntimeError, match="kernel or initrd image is missing"):
+        module.install(tmp_path / "media", {"packages": ["linux"]}, {"partitions": []}, {}, ("fixture admin", "fixture root"))
+    assert env_path.read_text(encoding="utf-8") == original
+    assert not (atlaso / "installation-profile").exists()
+    assert events == ["post-install-root-default", "grub", "fstab", "unmount"]

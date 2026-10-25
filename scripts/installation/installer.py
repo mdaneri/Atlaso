@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import curses
 import os
+import re
 import secrets
 import shutil
 import subprocess
@@ -251,6 +252,35 @@ def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tup
     return config, consent, (passwords[0], passwords[1])
 
 
+def verify_installed_boot_artifacts(target: Path) -> None:
+    """Require the native kernel and initrd selected by Photon's GRUB environment.
+
+    Args:
+        target: Installed system root after native bootloader and fstab setup.
+    """
+    try:
+        environment = subprocess.check_output(
+            ["chroot", str(target), "/usr/bin/grub2-editenv", "/boot/photon.cfg", "list"],
+            text=True, stderr=subprocess.DEVNULL, timeout=30,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, UnicodeError):
+        raise RuntimeError("installed Photon boot metadata could not be verified") from None
+    if len(environment) > 65536:
+        raise RuntimeError("installed Photon boot metadata exceeds its bounded size")
+    boot = (target / "boot").resolve(strict=True)
+    names = []
+    for key in ("photon_linux", "photon_initrd"):
+        values = [line.partition("=")[2] for line in environment.splitlines() if line.startswith(key + "=")]
+        if len(values) != 1 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,254}", values[0]):
+            raise RuntimeError("installed Photon kernel or initrd selection is missing or ambiguous")
+        path = boot / values[0]
+        if not path.is_file() or path.stat().st_size == 0 or not path.resolve(strict=True).is_relative_to(boot):
+            raise RuntimeError("installed Photon kernel or initrd image is missing")
+        names.append(values[0])
+    if names[0] == names[1]:
+        raise RuntimeError("installed Photon kernel and initrd selections must differ")
+
+
 def configure_development_serial_login(target: Path, identity: dict) -> None:
     """Enable ordinary password-protected serial login only for admitted VM test media.
 
@@ -385,6 +415,7 @@ def install(media: Path, identity: dict, config: dict, consent: dict, credential
             if not getattr(self, "atlaso_provisioned", False):
                 raise RuntimeError("Atlaso provisioning did not complete")
             target = Path(self.photon_root)
+            verify_installed_boot_artifacts(target)
             env_path = target / "etc/atlaso/atlaso.env"
             lines = env_path.read_text().splitlines()
             admin_value = environment_value(credentials[0])

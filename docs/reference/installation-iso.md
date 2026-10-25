@@ -21,7 +21,9 @@ boot image and native installer flow. The Atlaso deployment source comes from an
 selected full commit. The signed software release, its exact application wheel, locked CPython wheelhouse, shared
 provisioning inputs, PowerCLI modules, trust material, notices, firmware, and a signed offline Photon RPM repository
 are embedded and inventoried. Dependency closure is resolved during authorized ISO preparation; installation does
-not use network package repositories.
+not use network package repositories. The boot package selection includes Photon’s native `initramfs` package and
+its resolved dependencies. Installation requires the kernel and initrd selected by Photon’s GRUB environment to
+exist before applying chosen credentials or reporting completion.
 
 The shared boot-branding installer handles both native Photon kernel paths. The root-only Auto layout uses
 `/boot/$photon_linux` and points GRUB at `/boot/grub2/themes/atlaso/theme.txt`; a Custom layout with a separate `/boot`
@@ -177,7 +179,9 @@ the receipt-bound VM for source commit `960621fdd0e6c1babcc707e2ca0ca2896539876e
 receipt-bound verification confirmed the unselected disk's logical contents matched its pre-boot baseline. Reboot with
 the installation media removed, login with the chosen installed credentials, fresh machine identities, payload
 equality, the host-facing `/openapi.json`, Appliance Update success and rollback persistence, and physical acceptance
-remain outstanding. Do not infer those results from the completed installation run.
+remain outstanding. A later serial-enabled boot attempt exposed a kernel panic before login; boot acceptance remains
+open. The capacity-refusal and planned-layout cancellation scenarios passed with both fixture disks unchanged.
+Do not infer reboot or persistence results from a completed installation run.
 
 Publication is a separate, explicit workflow dispatch after the exact ISO has been validated. The maintainer supplies
 `publish=true` and `validated_iso_sha256` for the ISO whose disconnected UEFI installation, reboot, Appliance Update

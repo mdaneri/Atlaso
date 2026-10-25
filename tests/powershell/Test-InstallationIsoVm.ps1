@@ -827,3 +827,22 @@ foreach ($capacityFixture in @(
     }
     finally { if ($capacityPair) { Close-InstallationTestPipePair -Pair $capacityPair } }
 }
+
+$panicPair = $null
+try {
+    $panicPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+    $panicSender = [AtlasoInstallationPipeTestWriter]::Start($panicPair.Client, [string[]]@(
+        'Kernel pan', 'ic - not syncing: VFS: Unable to mount root fs on unknown-block(0,0) private-fixture-details'))
+    $panicReports = [Collections.Generic.List[string]]::new()
+    $panicRefused = $false
+    try {
+        Wait-InstallationConsoleState -Pipe $panicPair.Server -Pattern 'login:' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadBootProgress 6>&1 |
+            ForEach-Object { $panicReports.Add([string]$_) }
+    } catch { $panicRefused = $_.Exception.Message -ceq 'The installed system reported a kernel panic before login.' }
+    Assert-InstallationVmCondition $panicRefused 'A fragmented kernel panic must stop the login wait with a fixed public failure.'
+    $panicText = $panicReports -join "`n"
+    Assert-InstallationVmCondition ($panicText.Contains('root-filesystem-unmountable') -and $panicText.Contains('root-device-unresolved')) 'Kernel diagnostics must retain only known root-boot failure categories.'
+    Assert-InstallationVmCondition (-not $panicText.Contains('private-fixture-details') -and -not $panicText.Contains('not syncing:')) 'Kernel diagnostics must never emit raw panic text.'
+    Assert-InstallationVmCondition ($panicSender.Wait(5000)) 'The kernel-panic fixture writer did not finish.'
+}
+finally { if ($panicPair) { Close-InstallationTestPipePair -Pair $panicPair } }

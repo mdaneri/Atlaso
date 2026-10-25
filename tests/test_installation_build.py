@@ -60,7 +60,15 @@ def test_package_selection_reuses_shared_packages_and_adds_offline_boot_assets(t
 
     packages = build.package_selection(source)
 
-    assert {"python3", "linux-api-headers", "linux-firmware", "linux", "filesystem"} <= set(packages)
+    assert {
+        "python3",
+        "linux-api-headers",
+        "linux-firmware",
+        "linux",
+        "initramfs",
+        "filesystem",
+        "grub2-efi-image",
+    } <= set(packages)
     assert "open-vm-tools" not in packages
     assert packages == sorted(set(packages))
 
