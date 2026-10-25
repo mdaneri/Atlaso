@@ -72,6 +72,7 @@ nav = [
     { "Local console technical reference" = "reference/appliance-console-technical.md" },
     { "vSphere Key Provider protocol" = "reference/vsphere-key-provider-protocol.md" },
     { "vSphere Key Provider security" = "reference/vsphere-key-provider-security.md" },
+    { "VCF Microsoft CA investigation" = "reference/vcf-msca-compatibility.md" },
     { "Full technical reference" = "reference/full-technical-reference.md" },
     { "Portable virtualization artifacts" = "reference/virtualization-artifacts.md" },
     { "VMware lifecycle testing" = "reference/vmware-workstation-lifecycle-testing.md" },
