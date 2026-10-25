@@ -1192,3 +1192,36 @@ try {
     Assert-InstallationVmCondition ($panicSender.Wait(5000)) 'The kernel-panic fixture writer did not finish.'
 }
 finally { if ($panicPair) { Close-InstallationTestPipePair -Pair $panicPair } }
+
+# Inspection may return a bounded encoded record, never surrounding terminal data.
+$inspectionPair = $null
+try {
+    $inspectionPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+    $inspectionSender = [AtlasoInstallationPipeTestWriter]::Start($inspectionPair.Client, [string[]]@(
+        "private-console-fixture`r`nATLASO-INSPEC", 'TION:eyJzY2hlbWEiOjF9', ":END`r`n"))
+    $inspectionRecord = Wait-InstallationConsoleState -Pipe $inspectionPair.Server -Pattern '' `
+        -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadInspectionReport
+    Assert-InstallationVmCondition ($inspectionRecord -ceq 'eyJzY2hlbWEiOjF9') 'Inspection must return only the fragmented encoded record.'
+    Assert-InstallationVmCondition ($inspectionSender.Wait(5000)) 'Inspection fixture writer did not finish.'
+}
+finally { if ($inspectionPair) { Close-InstallationTestPipePair -Pair $inspectionPair } }
+
+foreach ($fixture in @(
+    @{ Text = "ATLASO-INSPECTION-FAILED private-error-details`r`n"; Error = 'Installed identity or application payload inspection failed.' },
+    @{ Text = "ATLASO-INSPECTION:e30=:END`r`nATLASO-INSPECTION:e30=:END`r`n"; Error = 'Installed inspection returned duplicate records.' },
+    @{ Text = ('x' * 17000); Error = 'Installed inspection console output exceeded its bound.' }
+)) {
+    $inspectionPair = $null
+    try {
+        $inspectionPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+        $inspectionSender = [AtlasoInstallationPipeTestWriter]::Start($inspectionPair.Client, [string[]]@($fixture.Text))
+        $inspectionRefused = $false
+        try {
+            $null = Wait-InstallationConsoleState -Pipe $inspectionPair.Server -Pattern '' `
+                -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadInspectionReport
+        } catch { $inspectionRefused = $_.Exception.Message -ceq $fixture.Error }
+        Assert-InstallationVmCondition $inspectionRefused 'Invalid inspection output must fail with a fixed public error.'
+        Assert-InstallationVmCondition ($inspectionSender.Wait(5000)) 'Inspection refusal writer did not finish.'
+    }
+    finally { if ($inspectionPair) { Close-InstallationTestPipePair -Pair $inspectionPair } }
+}

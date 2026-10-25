@@ -30,6 +30,10 @@ Original installed-boot transition receipt for LoginInstalled.
 Independently preserved installed-boot receipt digest.
 .PARAMETER TimeoutSeconds
 Whole test and console deadline.
+.PARAMETER InspectInstalled
+Measure public machine identity and installed application bytes after root authentication.
+.PARAMETER InspectionPythonPath
+Existing absolute Python executable with the locked ISO inspection dependencies installed.
 .PARAMETER Child
 Internal bounded-child selector.
 #>
@@ -47,21 +51,27 @@ param(
     [string]$BootReceiptPath = '',
     [string]$BootReceiptSha256 = '',
     [ValidateRange(60, 14400)][int]$TimeoutSeconds = 3600,
+    [switch]$InspectInstalled,
+    [string]$InspectionPythonPath = '',
     [switch]$Child
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 if (-not $Child) {
-    Invoke-AtlasoBoundedStreamingProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList @(
+    $childArguments = @(
         '-NoProfile', '-File', $PSCommandPath, '-Child', '-IsoPath', $IsoPath,
         '-IsoSha256', $IsoSha256, '-OutputDirectory', $OutputDirectory,
         '-PullRequestNumber', [string]$PullRequestNumber, '-Scenario', $Scenario,
         '-TimeoutSeconds', [string]$TimeoutSeconds,
         '-OriginalReceiptPath', $OriginalReceiptPath, '-OriginalReceiptSha256', $OriginalReceiptSha256,
         '-BaselineReceiptPath', $BaselineReceiptPath, '-BaselineReceiptSha256', $BaselineReceiptSha256,
-        '-BootReceiptPath', $BootReceiptPath, '-BootReceiptSha256', $BootReceiptSha256
-    ) -TimeoutSeconds $TimeoutSeconds -Action 'Private installation serial-console test'
+        '-BootReceiptPath', $BootReceiptPath, '-BootReceiptSha256', $BootReceiptSha256,
+        '-InspectionPythonPath', $InspectionPythonPath
+    )
+    if ($InspectInstalled) { $childArguments += '-InspectInstalled' }
+    Invoke-AtlasoBoundedStreamingProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList $childArguments `
+        -TimeoutSeconds $TimeoutSeconds -Action 'Private installation serial-console test'
     return
 }
 
@@ -544,9 +554,11 @@ Cursor-only parser state for this admitted private pipe, shared across login wai
 Require a known installed shell prompt for this account and refuse password-change conversations.
 .PARAMETER ExpectedCapacityDisk
 Exact public fixture disk whose four-GiB capacity refusal is expected before consent.
+.PARAMETER ReadInspectionReport
+Return only one bounded encoded inspection record for independent schema validation.
 #>
 function Wait-InstallationConsoleState {
-    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [switch]$ReadLoginProgress, [ValidateSet('', 'root', 'admin')][string]$ShellAccount = '', [string]$ExpectedCapacityDisk = '', [hashtable]$CursorState)
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [switch]$ReadLoginProgress, [ValidateSet('', 'root', 'admin')][string]$ShellAccount = '', [string]$ExpectedCapacityDisk = '', [hashtable]$CursorState, [switch]$ReadInspectionReport)
     $buffer = [byte[]]::new(4096)
     $text = ''
     $failureDeadline = $null
@@ -608,6 +620,17 @@ function Wait-InstallationConsoleState {
             }
             $plain = [regex]::Replace($text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>su]', '')
             $plain = [regex]::Replace($plain, '\^?\[\[[0-9]{1,2};[0-9]{1,2}R', '')
+            if ($ReadInspectionReport) {
+                if ($plain.Contains('ATLASO-INSPECTION-FAILED', [StringComparison]::Ordinal)) {
+                    throw 'Installed identity or application payload inspection failed.'
+                }
+                # Admit only a complete output line. The encoded command sent to
+                # the shell contains no contiguous marker and cannot echo proof.
+                $records = [regex]::Matches($plain, '(?m)^ATLASO-INSPECTION:([A-Za-z0-9+/=]{1,4096}):END\r?$')
+                if ($records.Count -gt 1) { throw 'Installed inspection returned duplicate records.' }
+                if ($records.Count -eq 1) { return $records[0].Groups[1].Value }
+                if ($plain.Length -gt 16384) { throw 'Installed inspection console output exceeded its bound.' }
+            }
             if ($ReadLoginProgress) {
                 $loginActivity = $true
                 # Match only fixed diagnostics, including fragmented messages.
@@ -732,7 +755,7 @@ function Wait-InstallationConsoleState {
                 $adminPromptSeen = $true
                 if (-not $adminCursorReady) { $matched = $false }
             }
-            if (-not $ExpectedCapacityDisk -and -not $failureDeadline -and $matched) {
+            if (-not $ReadInspectionReport -and -not $ExpectedCapacityDisk -and -not $failureDeadline -and $matched) {
                 if ($ReadDiskSelection) {
                     $options = @(Get-InstallationConsoleDiskOptions -Text $text)
                     if ($options.Count -lt 2) { continue }
@@ -824,6 +847,35 @@ if ($Scenario -eq 'LoginInstalled') {
     }
 } elseif ($OriginalReceiptPath -or $OriginalReceiptSha256 -or $BaselineReceiptPath -or $BaselineReceiptSha256 -or $BootReceiptPath -or $BootReceiptSha256) {
     throw 'Existing VM receipt selectors are supported only by LoginInstalled.'
+}
+$inspection = $null
+$inspectionArguments = @()
+$encodedExpectations = ''
+if ($InspectInstalled) {
+    if ($Scenario -notin @('AutoReboot', 'LoginInstalled')) {
+        throw 'Installed inspection requires AutoReboot or LoginInstalled.'
+    }
+    if (-not [IO.Path]::IsPathFullyQualified($InspectionPythonPath) -or
+        -not (Test-Path -LiteralPath $InspectionPythonPath -PathType Leaf)) {
+        throw 'Installed inspection requires an existing absolute Python executable.'
+    }
+    # Reuse the bounded process runner and the admitted source tree. Resolve ISO
+    # expectations before obtaining credentials or starting the owned VM.
+    $inspectionArguments = @('-I', '-B', '-c',
+        'import sys;sys.path.insert(0,sys.argv.pop(1));from scripts.installation.inspection import main;raise SystemExit(main())', $worktree)
+    $prepared = Invoke-AtlasoBoundedProcess -FilePath $InspectionPythonPath `
+        -ArgumentList ($inspectionArguments + @('prepare', '--iso', $IsoPath, '--iso-sha256', $IsoSha256)) `
+        -TimeoutSeconds 120 -Action 'Installation inspection ISO admission'
+    if ($prepared.Length -gt 16384) { throw 'Installation inspection preparation exceeded its bound.' }
+    $inspection = $prepared | ConvertFrom-Json -AsHashtable
+    if ($inspection.command -isnot [string] -or $inspection.command.Length -gt 3500 -or
+        $inspection.command -cmatch '[^\x20-\x7e]' -or $inspection.command.Contains('ATLASO-INSPECTION')) {
+        throw 'Installation inspection command failed its console boundary.'
+    }
+    $encodedExpectations = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(
+        ($inspection.expected | ConvertTo-Json -Compress -Depth 8)))
+} elseif ($InspectionPythonPath) {
+    throw 'InspectionPythonPath requires InspectInstalled.'
 }
 if ($Scenario -in @('Auto', 'AutoReboot', 'LoginInstalled')) {
     Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
@@ -1039,6 +1091,18 @@ public static class AtlasoInstallationPipePeer {
             Send-InstallationConsoleText -Pipe $pipe -Text ($accountProbe.Command + $accountProbe.EnterKey)
             Wait-InstallationConsoleState -Pipe $pipe -Pattern 'ATLASO-LOGIN-OK' -Deadline $loginDeadline -ReadLoginProgress -CursorState $cursorState
             Write-Host ("Installed password authentication passed for {0}." -f $account)
+            if ($InspectInstalled -and $account -eq 'root') {
+                Send-InstallationConsoleText -Pipe $pipe -Text ($inspection.command + "`n")
+                $inspectionDeadline = [DateTimeOffset]::UtcNow.AddSeconds(180)
+                if ($inspectionDeadline -gt $deadline) { $inspectionDeadline = $deadline }
+                $encodedReport = Wait-InstallationConsoleState -Pipe $pipe -Pattern '' -Deadline $inspectionDeadline `
+                    -ReadInspectionReport -ReadLoginProgress -CursorState $cursorState
+                $publicReport = Invoke-AtlasoBoundedProcess -FilePath $InspectionPythonPath `
+                    -ArgumentList ($inspectionArguments + @('validate', '--expected', $encodedExpectations, '--report', $encodedReport)) `
+                    -TimeoutSeconds 30 -Action 'Installed inspection record validation'
+                if ($publicReport.Length -gt 8192) { throw 'Validated installation inspection exceeded its bound.' }
+                Write-Host ('Installed public identity and application payload: ' + $publicReport.Trim())
+            }
             Send-InstallationConsoleText -Pipe $pipe -Text ('exit' + $accountProbe.EnterKey)
         }
         $verification = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Verify -Worktree $worktree `

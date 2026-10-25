@@ -194,6 +194,19 @@ preserves the VMX and disks. It uses the existing concealed credential consumer 
 reported resume receipt with the original selectors, and use the ordinary receipt-bound `Verify` mode after a failed
 or interrupted attempt. This path does not repeat installation or grant authority to adopt another VM.
 
+Add `-InspectInstalled -InspectionPythonPath <ABSOLUTE-PYTHON-EXECUTABLE>` to `AutoReboot` or `LoginInstalled`
+to measure public machine identities and application wheel equality. Use an existing Python environment with the
+locked ISO build dependencies. Before retrieving credentials or starting the VM, the adapter authenticates the original
+ISO checksum and derives its software and helper expectations. After the root account challenge, it reuses the staged
+software verifier and installed wheel inspector, returning only a bounded public report. Missing staged software,
+changed helpers, unexpected report fields, or different application bytes fail the check.
+
+Keep each report with that VM's original creation and resume receipts. Compare two resumes of the same VM for identity
+stability, and compare separately installed, receipt-owned VMs for identity uniqueness. These checks read the public
+machine ID and Ed25519 public host key; they do not read private keys or appliance secrets. Application wheel equality
+does not establish equality of all installed RPMs, PowerShell modules, trust material, or notices. Network isolation
+remains in effect, so this option does not establish host-facing API or Appliance Update acceptance.
+
 The `BootInstalled` harness mode reuses original VM and disk-baseline admission, stopped-provider checks, logical
 disk comparison, and source pins. It requires the original isolated EFI device configuration, publishes an immutable
 `installation-boot` transition receipt before editing the VMX through its retained writer, disables only the existing
@@ -208,13 +221,14 @@ Verification stops only the identity-checked VM, preserves its artifacts, and co
 pre-boot baseline using `qemu-img compare`. Add `-VerifyTarget` after cancellation to compare the target disk too.
 The development `Probe` and `Cancel` scenarios passed earlier. A disconnected `Auto` installation also completed in
 the receipt-bound VM for source commit `960621fdd0e6c1babcc707e2ca0ca2896539876e`. After stopping the VM,
-receipt-bound verification confirmed the unselected disk's logical contents matched its pre-boot baseline. Reboot with
-the installation media removed, login with the chosen installed credentials, fresh machine identities, payload
+receipt-bound verification confirmed the unselected disk's logical contents matched its pre-boot baseline. Fresh
+machine identity uniqueness, payload
 equality, the host-facing `/openapi.json`, Appliance Update success and rollback persistence, and physical acceptance
 remain outstanding. A serial-enabled boot attempt exposed a missing initramfs package. After adding its resolved RPM
 closure, the corrected development image completed disconnected installation and booted without media through systemd
-to the root login/password prompts. Shell-identity verification timed out, so installed-credential acceptance remains
-open. The receipt-bound post-reboot comparison confirmed the unselected disk was unchanged. The console runner accepts
+to the root login/password prompts. After correcting shell readiness and PowerShell Enter handling, the retained
+installation passed both chosen-password login and separate root/admin identity challenges. The receipt-bound
+post-reboot comparison confirmed the unselected disk was unchanged. The console runner accepts
 Photon's bracketed root prompts, colon-path prompts, and Bash fallback prompts after removing terminal colors/titles.
 It refuses password-change conversations before submitting a shell command and still requires a separate
 account-identity challenge.
@@ -225,8 +239,9 @@ Publication is a separate, explicit workflow dispatch after the exact ISO has be
 `publish=true` and `validated_iso_sha256` for the ISO whose disconnected UEFI installation, reboot, Appliance Update
 success and rollback persistence, and unselected-disk preservation were tested. The workflow requires that checksum
 to match the signed draft index before publishing, then downloads and verifies the published assets again. The
-development ISO has completed its disconnected Auto installation and the unselected-disk comparison. Reboot,
-installed-credential login, and Appliance Update checks have not yet been recorded, so this result does not establish
+development ISO has completed disconnected Auto installation, boot without media, chosen-account login challenges,
+and the unselected-disk comparison. Identity uniqueness, full payload equality, and Appliance Update checks remain
+unrecorded, so this result does not establish
 full installer acceptance or authorize publication. Do not publish or describe the installer as validated before the
 remaining acceptance evidence exists.
 
@@ -260,8 +275,10 @@ intended to use before writing the verified ISO to removable media.
 The generated release index reports physical hardware acceptance as pending until SATA/NVMe and wired-Ethernet results
 are recorded. Native VM evidence alone does not establish physical support or complete issue #542. The development
 VMware path supports receipt-bound blank-disk ISO and installer-console tests. Probe, Cancel, and one disconnected
-Auto installation have passed; reboot, installed-credential login, and the disconnected update/rollback scenarios
-remain outstanding. Do not describe the installer as validated or claim physical support while these gates are
+Auto installation have passed. A retained development installation also booted without media, authenticated both
+chosen account passwords, passed the separate root/admin identity challenges, and preserved its unselected disk.
+Public identity uniqueness, installed payload equality, and the disconnected update/rollback scenarios remain
+outstanding. Do not describe the installer as validated or claim physical support while these gates are
 outstanding. Secure Boot is disabled for phase one; this reference makes no Secure Boot or ARM support claim.
 
 For disk selection, concealed initial credentials, first-boot networking, and recovery guidance, see
