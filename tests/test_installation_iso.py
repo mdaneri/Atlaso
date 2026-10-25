@@ -7,12 +7,15 @@ import hashlib
 import io
 import os
 import stat
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pycdlib
 import pytest
 
+from scripts import build_installation_iso
+from scripts.installation import build as installation_build
 from scripts.installation import iso as installation_iso
 
 
@@ -429,3 +432,258 @@ def test_accepts_original_cpio_root_directory_entry() -> None:
     assert magic == b"070701"
     assert entries[0].name == "."
     assert stat.S_ISDIR(entries[0].mode)
+
+
+def _mock_installation_rpm_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    filenames: tuple[str, ...] = (
+        "dracut-109-2.ph5.x86_64.rpm",
+        "initramfs-2.0-9.ph5.x86_64.rpm",
+        "linux-6.12.113-5.ph5.x86_64.rpm",
+        "python3-3.14.8-1.ph5.x86_64.rpm",
+    ),
+) -> tuple[Path, Path, Path, list[tuple[list[str], Path | None]]]:
+    """Create a synthetic signed-RPM verification boundary for transaction checks.
+
+    Args:
+        tmp_path: Pytest-owned fixture directory.
+        monkeypatch: Pytest fixture for replacing external RPM verification.
+        filenames: RPM basenames and identities included in the synthetic transaction.
+
+    Returns:
+        RPM, source, and scratch directories plus recorded RPM-tool calls.
+    """
+    from scripts import verify_virtualization_guest_wheel
+
+    root = tmp_path / "rpms with spaces"
+    root.mkdir()
+    source = tmp_path / "source"
+    key_directory = source / "image/common/photon-rpm-gpg"
+    key_directory.mkdir(parents=True)
+    (key_directory / "VMWARE-RPM-GPG-KEY-current").write_text("public fixture key", encoding="ascii")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    identities = {}
+    for filename in filenames:
+        package = root / filename
+        package.write_bytes(filename.encode("ascii"))
+        name = filename.split("-", 1)[0]
+        version = "3.14.8-1" if name == "python3" else "1-1"
+        identities[filename] = (name, version, "x86_64")
+
+    commands: list[tuple[list[str], Path | None]] = []
+
+    def run_runtime_tool(arguments: list[str], *, cwd: Path | None = None) -> str:
+        """Record and emulate RPM verification without invoking host tools.
+
+        Args:
+            arguments: RPM tool argument vector supplied by the build validator.
+            cwd: Optional working directory passed to the bounded runtime tool.
+
+        Returns:
+            Synthetic RPM output for the requested operation.
+        """
+        commands.append((arguments, cwd))
+        if arguments[0] == "rpmkeys":
+            return f"{Path(arguments[-1]).name}: digests signatures OK"
+        if arguments[0] == "rpm" and "-qp" in arguments:
+            name, version, architecture = identities[Path(arguments[-1]).name]
+            return f"ATLASO\t{name}\t{version}\t{architecture}\n"
+        if arguments[0] == "rpm" and "--test" in arguments:
+            manifest = Path(arguments[-1])
+            if not any(name.startswith("dracut-") for name in manifest.read_text(encoding="ascii").splitlines()):
+                raise SystemExit("transaction has missing dependency dracut >= 059-3 required by initramfs")
+        return ""
+
+    monkeypatch.setattr(verify_virtualization_guest_wheel, "_run_runtime_tool", run_runtime_tool)
+    monkeypatch.setattr(verify_virtualization_guest_wheel, "_photon_repository_inventory", lambda: set())
+    monkeypatch.setattr(
+        verify_virtualization_guest_wheel,
+        "_require_admitted_runtime_package",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        installation_build,
+        "package_selection",
+        lambda _source: ["initramfs", "linux", "python3"],
+    )
+    return root, source, scratch, commands
+
+
+def test_rpm_validation_checks_full_signed_transaction_in_isolated_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Validate the complete candidate transaction without consulting the host RPM database.
+
+    Args:
+        tmp_path: Pytest-owned fixture directory.
+        monkeypatch: Pytest fixture for replacing external RPM verification.
+    """
+    root, source, scratch, commands = _mock_installation_rpm_transaction(tmp_path, monkeypatch)
+
+    records = installation_build.verify_rpms(root, source, scratch)
+
+    transaction_calls = [(arguments, cwd) for arguments, cwd in commands if "--test" in arguments]
+    assert len(transaction_calls) == 1
+    arguments, cwd = transaction_calls[0]
+    database = (scratch / "rpmdb").resolve()
+    manifest = (scratch / "rpm-transaction.manifest").resolve()
+    assert arguments == [
+        "rpm",
+        "--dbpath",
+        str(database),
+        "--test",
+        "--noscripts",
+        "--notriggers",
+        "--noplugins",
+        "-U",
+        str(manifest),
+    ]
+    assert cwd == root.resolve()
+    assert "--nodeps" not in arguments
+    assert manifest.read_text(encoding="ascii") == "".join(
+        f"{name}\n" for name in sorted(path.name for path in root.glob("*.rpm"))
+    )
+    assert {record["name"] for record in records} == {"dracut", "initramfs", "linux", "python3"}
+    assert commands.index(transaction_calls[0]) == len(commands) - 1
+
+
+def test_rpm_validation_rejects_missing_transitive_dependency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fail when a signed candidate omits a dependency of an explicitly selected RPM.
+
+    Args:
+        tmp_path: Pytest-owned fixture directory.
+        monkeypatch: Pytest fixture for replacing external RPM verification.
+    """
+    root, source, scratch, commands = _mock_installation_rpm_transaction(
+        tmp_path,
+        monkeypatch,
+        filenames=(
+            "initramfs-2.0-9.ph5.x86_64.rpm",
+            "linux-6.12.113-5.ph5.x86_64.rpm",
+            "python3-3.14.8-1.ph5.x86_64.rpm",
+        ),
+    )
+    assert {path.name.split("-", 1)[0] for path in root.glob("*.rpm")} == {
+        "initramfs",
+        "linux",
+        "python3",
+    }
+
+    with pytest.raises(SystemExit, match="missing dependency dracut"):
+        installation_build.verify_rpms(root, source, scratch)
+
+    transaction_calls = [arguments for arguments, _cwd in commands if "--test" in arguments]
+    assert len(transaction_calls) == 1
+    assert (scratch / "rpm-transaction.manifest").read_text(encoding="ascii").splitlines() == sorted(
+        path.name for path in root.glob("*.rpm")
+    )
+
+
+def test_finalizer_rejects_missing_transaction_dependency_before_signer_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep a missing RPM dependency from reaching the finalizer signing-key loader.
+
+    Args:
+        tmp_path: Pytest-owned fixture directory.
+        monkeypatch: Pytest fixture for replacing the candidate validator and signer loader.
+    """
+    root, source, rpm_scratch, _commands = _mock_installation_rpm_transaction(
+        tmp_path,
+        monkeypatch,
+        filenames=(
+            "initramfs-2.0-9.ph5.x86_64.rpm",
+            "linux-6.12.113-5.ph5.x86_64.rpm",
+            "python3-3.14.8-1.ph5.x86_64.rpm",
+        ),
+    )
+    output = tmp_path / "final-output"
+    output.mkdir()
+    scratch = tmp_path / "final-scratch"
+    scratch.mkdir()
+    signer_calls: list[Path] = []
+
+    def reject_candidate(
+        _candidate: Path,
+        *,
+        repository: Path,
+        commit: str,
+        version: str,
+        trust_key: Path,
+        scratch: Path,
+    ):
+        """Run RPM validation at the finalizer candidate boundary.
+
+        Args:
+            _candidate: Candidate path supplied to the validator.
+            repository: Trusted repository checkout supplied to the validator.
+            commit: Source commit supplied to the validator.
+            version: Software version supplied to the validator.
+            trust_key: Public trust key supplied to the validator.
+            scratch: Candidate validation scratch path.
+        """
+        return installation_build.verify_rpms(root, source, rpm_scratch)
+
+    def load_signing_key(path: Path):
+        """Record unexpected signing-key access without loading a real key.
+
+        Args:
+            path: Signing-key path supplied by the finalizer.
+        """
+        signer_calls.append(path)
+        raise AssertionError("signing-key loader must not run after transaction failure")
+
+    monkeypatch.setattr(build_installation_iso, "validate_candidate", reject_candidate)
+    monkeypatch.setattr("scripts.build_virtualization_artifact_index._load_signing_key", load_signing_key)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "build_installation_iso.py",
+            "finalize",
+            "--commit",
+            "a" * 40,
+            "--version",
+            "0.9.453",
+            "--payload",
+            str(tmp_path / "candidate"),
+            "--source-iso",
+            str(tmp_path / "missing-photon.iso"),
+            "--output",
+            str(output),
+            "--scratch",
+            str(scratch),
+            "--signing-key",
+            str(tmp_path / "missing-signing-key.pem"),
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="missing dependency dracut"):
+        build_installation_iso.main()
+
+    assert signer_calls == []
+
+
+def test_rpm_validation_rejects_unsafe_transaction_manifest_basename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject an unsafe RPM filename before initializing or invoking RPM tooling.
+
+    Args:
+        tmp_path: Pytest-owned fixture directory.
+        monkeypatch: Pytest fixture for replacing external RPM verification.
+    """
+    root, source, scratch, commands = _mock_installation_rpm_transaction(
+        tmp_path, monkeypatch, filenames=("python3 unsafe.rpm",)
+    )
+
+    with pytest.raises(ValueError):
+        installation_build.verify_rpms(root, source, scratch)
+
+    assert commands == []
+    assert not (scratch / "rpmdb").exists()

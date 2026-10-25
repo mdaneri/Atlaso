@@ -66,7 +66,13 @@ python scripts/build_installation_iso.py split-inputs --archive <input-archive.t
 ```
 
 Input packaging does not grant signing authority. The protected `installation-prerelease.yml` workflow independently
-validates the candidate, signs it, assembles the ISO, and stages the signed installation assets in the existing hidden
+validates the candidate before loading signing material. Besides authenticating every RPM, validation tests the entire
+candidate as an RPM transaction against a fresh database containing only the admitted trust keys. All requirements,
+RPM capability requirements, and conflicts must pass with scripts, triggers, and plugins disabled. No host-installed
+package database or network repository can supply a missing dependency. An unsupported host RPM capability or
+incomplete closure stops validation. This check does not replace disconnected installation and reboot acceptance.
+
+The workflow then signs the candidate, assembles the ISO, and stages the signed installation assets in the existing hidden
 `installation-vX.Y.Z-rc.N` draft. This staging run leaves the release as a draft. Installation artifacts remain
 separate from software-update and virtualization release assets. The signed release index covers the ISO manifest
 and assets; phase one requires Secure Boot disabled. ARM support is a possible second phase and is not included in

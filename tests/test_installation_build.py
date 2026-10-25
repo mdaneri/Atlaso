@@ -638,13 +638,16 @@ def _mock_rpm_verification(
     scratch.mkdir()
     commands: list[list[str]] = []
 
-    def run_runtime_tool(command: list[str]) -> str:
+    def run_runtime_tool(command: list[str], *, cwd: Path | None = None) -> str:
         """Record and emulate the RPM tooling boundary.
 
         Args:
             command: Argument vector passed to the shared runtime tool helper.
+            cwd: Optional isolated RPM-directory working directory for transaction checks.
         """
         commands.append(command)
+        if "--test" in command:
+            assert cwd == root.resolve()
         if command[0] == "rpm" and "--import" in command:
             if Path(command[-1]).name in unsupported_keys:
                 raise SystemExit("unsupported RPM public key")

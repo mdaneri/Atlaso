@@ -101,7 +101,9 @@ def verify_rpms(root: Path, source: Path, scratch: Path) -> list[dict]:
     packages = sorted(root.glob("*.rpm"))
     if not packages or any(path.name != "repodata" and path.suffix != ".rpm" for path in root.iterdir()):
         raise ValueError("installation RPM repository is empty or contains unexpected entries")
-    database = scratch / "rpmdb"
+    if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+._-]*\.rpm", path.name) for path in packages):
+        raise ValueError("installation RPM filename is unsafe for an offline transaction")
+    database = scratch.resolve(strict=True) / "rpmdb"
     database.mkdir()
     _run_runtime_tool(["rpm", "--dbpath", str(database), "--initdb"])
     keys = sorted((source / "image/common/photon-rpm-gpg").glob("VMWARE-RPM-GPG-KEY*"))
@@ -142,6 +144,20 @@ def verify_rpms(root: Path, source: Path, scratch: Path) -> list[dict]:
         raise ValueError("installation RPM closure is incomplete or contains multiple package versions")
     if not next(item["version"] for item in records if item["name"] == "python3").startswith("3.14."):
         raise ValueError("installation requires the exact CPython 3.14 appliance ABI")
+    # Capture-time resolution is not proof of the staged candidate's closure.
+    # Test the complete coinstallable set against this fresh, key-only database:
+    # dependencies (including rpmlib capabilities) and conflicts must be satisfied
+    # without host packages, scripts, plugins, or any repository/network fallback.
+    # RPM's standard manifest avoids Windows argument-length limits. Canonical
+    # basenames above cannot introduce manifest globs, whitespace or URLs, and
+    # cwd keeps parent paths with spaces outside the manifest grammar.
+    transaction = database.parent / "rpm-transaction.manifest"
+    with transaction.open("x", encoding="ascii", newline="\n") as handle:
+        handle.write("\n".join(path.name for path in packages) + "\n")
+    _run_runtime_tool([
+        "rpm", "--dbpath", str(database), "--test", "--noscripts", "--notriggers", "--noplugins",
+        "-U", str(transaction),
+    ], cwd=root.resolve(strict=True))
     return records
 
 
