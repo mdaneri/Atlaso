@@ -82,6 +82,9 @@ function Get-InstallationVmFunctionText {
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Switch-InstallationOutputPinToMutationMode')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Start-InstallationIsoVm')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'New-InstallationVmConfiguration')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Get-InstallationVmxEncoding')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Read-InstallationVmxText')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'ConvertTo-InstallationDiskBootConfiguration')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Get-InstallationVmxPathAssignment')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmDiskBindings')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationSerialPipePath')))
@@ -99,6 +102,7 @@ $lines = @(New-InstallationVmConfiguration -Name 'Atlaso-Test-installation-iso' 
 $configuration = [string]::Join("`n", $lines)
 Assert-InstallationVmCondition ($configuration.Contains('floppy0.present = "FALSE"')) 'The fixed test VM must disable the implicit virtual floppy.'
 Assert-InstallationVmCondition ($configuration.Contains('firmware = "efi"')) 'EFI firmware must be enabled.'
+Assert-InstallationVmCondition ($configuration.Contains('.encoding = "UTF-8"')) 'New VMX files must declare UTF-8.'
 Assert-InstallationVmCondition ($configuration.Contains('uefi.secureBoot.enabled = "FALSE"')) 'Phase-one Secure Boot must be disabled.'
 Assert-InstallationVmCondition ($configuration.Contains('workingDir = "C:\vm"')) 'The VMX must bind sidecar files to its owned output directory.'
 Assert-InstallationVmCondition ($configuration.Contains('scsi0:0.fileName = "C:\vm\target-64g.vmdk"')) 'The install target disk must occupy SCSI 0:0.'
@@ -124,6 +128,65 @@ $validBindings = $true
 try { Assert-InstallationVmDiskBindings -VmxLines $lines -Context $bindingContext -IsoPath 'C:\offline media\atlaso.iso' }
 catch { $validBindings = $false }
 Assert-InstallationVmCondition $validBindings 'Exact target, unselected, and pinned ISO bindings must pass layout validation.'
+
+$unicodeSegment = [string][char]0x00E9 + 'preuve-' + [string][char]0x65E5 + [string][char]0x672C
+$unicodeDirectory = "C:\vm\$unicodeSegment"
+$unicodeIso = "C:\offline media\$unicodeSegment.iso"
+$unicodeName = "Atlaso Test $unicodeSegment"
+$unicodeLines = @(New-InstallationVmConfiguration -Name $unicodeName `
+    -Iso $unicodeIso -TargetDisk (Join-Path $unicodeDirectory 'target-64g.vmdk') `
+    -UnselectedDisk (Join-Path $unicodeDirectory 'unselected-4g.vmdk') -WorkingDirectory $unicodeDirectory `
+    -SerialPipe $pipe -CleanupIdentity '0123456789abcdef0123456789abcdef')
+$strictUtf8 = [Text.UTF8Encoding]::new($false, $true)
+$unicodeSource = [string]::Join("`r`n", $unicodeLines) + "`r`n"
+$unicodeBytes = $strictUtf8.GetBytes($unicodeSource)
+$unicodeEncoding = Get-InstallationVmxEncoding -Bytes $unicodeBytes
+$unicodeText = $unicodeEncoding.GetString($unicodeBytes)
+Assert-InstallationVmCondition ($unicodeText.Contains($unicodeIso) -and $unicodeText.Contains($unicodeDirectory)) `
+    'New VMX UTF-8 serialization must preserve French and Japanese paths.'
+$unicodeContext = [pscustomobject]@{ Name = $unicodeName; OutputDirectory = $unicodeDirectory }
+$unicodeBindingsAccepted = $true
+try {
+    Assert-InstallationVmDiskBindings -VmxLines ($unicodeText -split "`r?`n") -Context $unicodeContext -IsoPath $unicodeIso
+}
+catch { $unicodeBindingsAccepted = $false }
+Assert-InstallationVmCondition $unicodeBindingsAccepted 'UTF-8 VMX disk bindings must preserve the exact Unicode paths.'
+$unicodeBootText = ConvertTo-InstallationDiskBootConfiguration -Text $unicodeText
+$unicodeBootRestored = $unicodeBootText.Replace('sata0:0.present = "FALSE"', 'sata0:0.present = "TRUE"').Replace(
+    'sata0:0.startConnected = "FALSE"', 'sata0:0.startConnected = "TRUE"')
+Assert-InstallationVmCondition ($unicodeBootRestored -ceq $unicodeText) `
+    'The installed-boot transform must preserve all UTF-8 VMX text except its two CD assignments.'
+
+$legacyValue = [string][char]0x00E9
+$legacyText = '.encoding = "windows-1252"' + "`r`n" + "displayName = `"Caf$legacyValue`"`r`n"
+$legacyBytes = [Text.Encoding]::GetEncoding(1252).GetBytes($legacyText)
+$legacyEncoding = Get-InstallationVmxEncoding -Bytes $legacyBytes
+$legacyDecoded = $legacyEncoding.GetString($legacyBytes)
+Assert-InstallationVmCondition ($legacyDecoded -ceq $legacyText -and
+    [Convert]::ToBase64String($legacyEncoding.GetBytes($legacyDecoded)) -ceq [Convert]::ToBase64String($legacyBytes)) `
+    'Legacy Windows-1252 VMX must decode and re-encode representable text without changing bytes.'
+
+$invalidUtf8 = [Collections.Generic.List[byte]]::new()
+$invalidUtf8.AddRange($strictUtf8.GetBytes('.encoding = "UTF-8"' + "`r`n" + 'displayName = "invalid-'))
+$invalidUtf8.Add([byte]0xFF)
+$invalidUtf8.AddRange($strictUtf8.GetBytes('"' + "`r`n"))
+$invalidUtf8Rejected = $false
+try { (Get-InstallationVmxEncoding -Bytes $invalidUtf8.ToArray()).GetString($invalidUtf8.ToArray()) | Out-Null }
+catch { $invalidUtf8Rejected = $true }
+Assert-InstallationVmCondition $invalidUtf8Rejected 'Malformed UTF-8 VMX bytes must fail strict decoding.'
+
+$unsupportedBytes = $strictUtf8.GetBytes('.encoding = "latin-1"' + "`r`n")
+$duplicateBytes = $strictUtf8.GetBytes('.encoding = "UTF-8"' + "`r`n" + '.encoding = "windows-1252"' + "`r`n")
+$missingBytes = $strictUtf8.GetBytes('displayName = "missing declaration"' + "`r`n")
+$bomLegacyBytes = [Collections.Generic.List[byte]]::new()
+$bomLegacyBytes.AddRange(([Text.UTF8Encoding]::new($true)).GetPreamble())
+$bomLegacyBytes.AddRange($legacyBytes)
+foreach ($malformedBytes in @($unsupportedBytes, $duplicateBytes, $missingBytes, $bomLegacyBytes.ToArray())) {
+    $malformedRejected = $false
+    try { $null = Get-InstallationVmxEncoding -Bytes $malformedBytes } catch { $malformedRejected = $true }
+    Assert-InstallationVmCondition $malformedRejected 'Unsupported, duplicate, missing, or contradictory VMX encoding declarations must fail closed.'
+}
+
 $changedBindings = @($lines | ForEach-Object {
         if ($_ -ceq 'scsi0:1.fileName = "C:\vm\unselected-4g.vmdk"') { 'scsi0:1.fileName = "C:\vm\target-64g.vmdk"' } else { $_ }
     })
@@ -251,6 +314,12 @@ finally {
 }
 
 $source = [System.IO.File]::ReadAllText($harnessPath)
+$readHelperStart = $source.IndexOf('function Read-InstallationVmxText', [StringComparison]::Ordinal)
+$readHelperEnd = $source.IndexOf('function Assert-InstallationVmDiskBindings', $readHelperStart, [StringComparison]::Ordinal)
+$readHelper = $source.Substring($readHelperStart, $readHelperEnd - $readHelperStart)
+Assert-InstallationVmCondition ($readHelper.Contains('Get-InstallationVmxEncoding -Bytes $bytes') -and
+    $source.Contains('Read-InstallationVmxText -Path $context.VmxPath')) `
+    'VMX verification must decode the retained file bytes using its declared encoding.'
 $ownershipSource = [System.IO.File]::ReadAllText($ownershipPath)
 $cleanupSource = [System.IO.File]::ReadAllText($cleanupPath)
 $driverSource = [System.IO.File]::ReadAllText($consoleDriverPath)
@@ -674,7 +743,6 @@ foreach ($publicFailure in @(
 
 Write-Host 'Installation ISO VM harness source-contract checks passed.'
 
-. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'ConvertTo-InstallationDiskBootConfiguration')))
 $bootSource = ($lines -join "`n") + "`n"
 $bootText = ConvertTo-InstallationDiskBootConfiguration -Text $bootSource
 Assert-InstallationVmCondition ($bootText.Contains('sata0:0.present = "FALSE"') -and $bootText.Contains('sata0:0.startConnected = "FALSE"')) 'Installed boot must disconnect the CD drive.'

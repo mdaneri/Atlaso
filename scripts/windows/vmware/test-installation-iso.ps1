@@ -221,7 +221,7 @@ function New-InstallationVmConfiguration {
         [string]$SerialPipe, [string]$CleanupIdentity
     )
     $lines = @(
-        '.encoding = "windows-1252"', 'config.version = "8"', 'virtualHW.version = "21"',
+        '.encoding = "UTF-8"', 'config.version = "8"', 'virtualHW.version = "21"',
         'pciBridge0.present = "TRUE"', 'firmware = "efi"', 'uefi.secureBoot.enabled = "FALSE"',
         "displayName = $(ConvertTo-InstallationVmxString $Name)", 'guestOS = "other5xlinux-64"',
         "workingDir = $(ConvertTo-InstallationVmxString $WorkingDirectory)",
@@ -450,6 +450,53 @@ function Get-InstallationVmxPathAssignment {
 
 <#
 .SYNOPSIS
+Select a strict VMX codec from its single explicit supported encoding declaration.
+.PARAMETER Bytes
+Bounded VMX bytes read through the caller's retained file handle.
+#>
+function Get-InstallationVmxEncoding {
+    param([byte[]]$Bytes)
+    if ($null -eq $Bytes -or $Bytes.Length -gt 1048576) { throw 'Installation VMX exceeds its bounded size.' }
+    $hasBom = $Bytes.Length -ge 3 -and $Bytes[0] -eq 239 -and $Bytes[1] -eq 187 -and $Bytes[2] -eq 191
+    $offset = if ($hasBom) { 3 } else { 0 }
+    # Only the ASCII declaration is inspected before the full text is decoded.
+    # Guessing a codec from path contents would silently change device bindings.
+    $declarations = [Text.Encoding]::ASCII.GetString($Bytes, $offset, $Bytes.Length - $offset)
+    $keys = @([regex]::Matches($declarations, '(?mi)^[\t ]*\.encoding[\t ]*='))
+    $declaration = [regex]::Match($declarations, '(?mi)^[\t ]*\.encoding[\t ]*=[\t ]*"(?<name>[^"\r\n]+)"[\t ]*\r?$')
+    if ($keys.Count -ne 1 -or -not $declaration.Success) { throw 'Installation VMX must declare exactly one supported encoding.' }
+    switch ($declaration.Groups['name'].Value.ToLowerInvariant()) {
+        'utf-8' { return [Text.UTF8Encoding]::new($false, $true) }
+        'windows-1252' {
+            if ($hasBom) { throw 'Installation VMX encoding conflicts with its UTF-8 byte-order marker.' }
+            return [Text.Encoding]::GetEncoding(1252, [Text.EncoderFallback]::ExceptionFallback, [Text.DecoderFallback]::ExceptionFallback)
+        }
+        default { throw 'Installation VMX encoding is unsupported.' }
+    }
+}
+
+<#
+.SYNOPSIS
+Read bounded VMX text using its declared encoding while retaining ordinary-file identity.
+.PARAMETER Path
+Exact receipt-bound VMX pathname.
+#>
+function Read-InstallationVmxText {
+    param([string]$Path)
+    $pin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($Path, $true)
+    $reader = $null
+    try {
+        $reader = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        if ($reader.Length -gt 1048576) { throw 'Installation VMX exceeds its bounded size.' }
+        $bytes = [byte[]]::new([int]$reader.Length)
+        $reader.ReadExactly($bytes)
+        return (Get-InstallationVmxEncoding -Bytes $bytes).GetString($bytes)
+    }
+    finally { if ($reader) { $reader.Dispose() }; $pin.Dispose() }
+}
+
+<#
+.SYNOPSIS
 Require the original VMX to attach only its two receipt-bound test disks and pinned ISO.
 .PARAMETER VmxLines
 Previously read lines from the exact original installation VMX.
@@ -573,7 +620,7 @@ if ($Mode -in @('Verify', 'BootInstalled')) {
         if ((Get-AtlasoTestVmOwnershipCleanupIdentityHash -Value $cleanupIdentity) -cne [string]$original.persistent_vm_identity_sha256) {
             throw 'Installation VM persistent ownership identity differs from its creation receipt.'
         }
-        $vmxLines = @(Get-Content -LiteralPath $context.VmxPath -ErrorAction Stop)
+        $vmxLines = @((Read-InstallationVmxText -Path $context.VmxPath) -split "`r?`n")
         Assert-InstallationVmDiskBindings -VmxLines $vmxLines -Context $context -IsoPath ([string]$original.installation_iso.path)
         if ($BootReceiptPath -or @($vmxLines | Where-Object { $_ -ceq 'sata0:0.present = "FALSE"' }).Count -gt 0) {
             $boot = Read-AtlasoTestVmSealedRecord -Context $context -Path $BootReceiptPath -Sha256 $BootReceiptSha256 `
@@ -604,7 +651,7 @@ if ($Mode -in @('Verify', 'BootInstalled')) {
         if ((Get-AtlasoTestVmOwnershipCleanupIdentityHash -Value $cleanupIdentity) -cne [string]$original.persistent_vm_identity_sha256) {
             throw 'Installation VM persistent ownership identity changed while the VM was stopped.'
         }
-        $vmxLines = @(Get-Content -LiteralPath $context.VmxPath -ErrorAction Stop)
+        $vmxLines = @((Read-InstallationVmxText -Path $context.VmxPath) -split "`r?`n")
         Assert-InstallationVmDiskBindings -VmxLines $vmxLines -Context $context -IsoPath ([string]$original.installation_iso.path)
         $qemuImg = Resolve-InstallationVmTool -Path $QemuImgPath -FileName 'qemu-img.exe'
         $roles = @('unselected')
@@ -625,7 +672,7 @@ if ($Mode -in @('Verify', 'BootInstalled')) {
                 }
                 $before = [byte[]]::new([int]$writer.Length)
                 $writer.ReadExactly($before)
-                $encoding = [Text.Encoding]::GetEncoding(1252)
+                $encoding = Get-InstallationVmxEncoding -Bytes $before
                 $text = $encoding.GetString($before)
                 Assert-InstallationVmDiskBindings -VmxLines ($text -split "`r?`n") -Context $context -IsoPath ([string]$original.installation_iso.path)
                 $after = $encoding.GetBytes((ConvertTo-InstallationDiskBootConfiguration -Text $text))
@@ -767,7 +814,7 @@ try {
     $vmxLines = New-InstallationVmConfiguration -Name $context.Name -Iso $isoResolved -TargetDisk $targetDisk `
         -UnselectedDisk $unselectedDisk -WorkingDirectory $resolvedOutput `
         -SerialPipe $SerialPipePath -CleanupIdentity $cleanupIdentity
-    $vmxBytes = [Text.UTF8Encoding]::new($false).GetBytes(($vmxLines -join "`n") + "`n")
+    $vmxBytes = [Text.UTF8Encoding]::new($false, $true).GetBytes(($vmxLines -join "`n") + "`n")
     $vmxStream = [IO.File]::Open($context.VmxPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
     try {
         $vmxStream.Write($vmxBytes, 0, $vmxBytes.Length)
@@ -792,7 +839,7 @@ try {
         -ExpectedDirectoryIdentity ([string]$original.Record.original_identities.directory) `
         -CreationPin $outputPin
     $vmrun = Resolve-InstallationVmTool -Path $VmrunPath -FileName 'vmrun.exe'
-    Assert-InstallationVmDiskBindings -VmxLines @(Get-Content -LiteralPath $context.VmxPath -ErrorAction Stop) `
+    Assert-InstallationVmDiskBindings -VmxLines @((Read-InstallationVmxText -Path $context.VmxPath) -split "`r?`n") `
         -Context $context -IsoPath $isoResolved
     if (-not $NoStart) {
         Start-InstallationIsoVm -VmrunPath $vmrun -VmxPath $context.VmxPath -OutputDirectory $resolvedOutput
