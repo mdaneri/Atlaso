@@ -372,6 +372,13 @@ function Wait-InstallationConsoleState {
     $seenBootStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $seenLoginStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $loginActivity = $false
+    # The admitted Photon serial-console.sh profile moves to the screen edge,
+    # requests its position, then blocks reading the terminal's reply. Our
+    # existing console model is 25 rows by 80 columns. Answer only that exact
+    # full-screen probe, after the installed VM's private peer is admitted.
+    $nativeSizeProbe = "`es`e[999;999H`e[6n`eu"
+    $terminalProbeTail = ''
+    $answeredSizeProbes = 0
     foreach ($stage in $KnownProvisioningStages) { [void]$knownStages.Add($stage) }
     try {
         while ([DateTimeOffset]::UtcNow -lt $Deadline) {
@@ -392,8 +399,25 @@ function Wait-InstallationConsoleState {
             catch [OperationCanceledException] { continue }
             finally { $cancel.Dispose() }
             if ($count -eq 0) { throw 'The owned VM serial console disconnected before the expected state.' }
-            $text += [Text.Encoding]::ASCII.GetString($buffer, 0, $count)
-            $plain = [regex]::Replace($text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>]', '')
+            $chunk = [Text.Encoding]::ASCII.GetString($buffer, 0, $count)
+            $text += $chunk
+            if ($ReadLoginProgress) {
+                $terminalProbePending = $terminalProbeTail + $chunk
+                $queries = [regex]::Matches($terminalProbePending, [regex]::Escape($nativeSizeProbe)).Count
+                for ($queryIndex = 0; $queryIndex -lt $queries; $queryIndex++) {
+                    if ($answeredSizeProbes -ge 8) { throw 'Installed console exceeded its bounded native terminal-size queries.' }
+                    Send-InstallationConsoleText -Pipe $pipe -Text "`e[25;80R"
+                    $answeredSizeProbes++
+                    Write-Host 'Answered the known Photon serial terminal-size probe.'
+                }
+                $terminalProbeTail = $terminalProbePending.Substring([Math]::Max(0, $terminalProbePending.Length - $nativeSizeProbe.Length + 1))
+            }
+            $plain = [regex]::Replace($text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>su]', '')
+            if ($answeredSizeProbes) {
+                # Photon documents that its read may echo the public reply.
+                # Remove only our fixed reply artifact before prompt matching.
+                $plain = $plain.Replace('^[[25;80R', '').Replace('[25;80R', '')
+            }
             if ($ReadLoginProgress) {
                 $loginActivity = $true
                 # Match only fixed diagnostics, including fragmented messages.
@@ -538,7 +562,10 @@ function Wait-InstallationConsoleState {
         }
         throw 'The installer did not reach the expected public console state before its deadline.'
     }
-    finally { [Array]::Clear($buffer, 0, $buffer.Length); $text = ''; $plain = '' }
+    finally {
+        [Array]::Clear($buffer, 0, $buffer.Length)
+        $text = ''; $plain = ''; $chunk = ''; $terminalProbeTail = ''; $terminalProbePending = ''
+    }
 }
 
 <#

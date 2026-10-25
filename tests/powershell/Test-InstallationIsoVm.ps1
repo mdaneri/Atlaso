@@ -93,6 +93,7 @@ function Get-InstallationVmFunctionText {
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationConsoleDiskOptions')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Test-InstallationShellPrompt')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Send-InstallationConsoleSecret')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Send-InstallationConsoleText')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Wait-InstallationConsoleState')))
 
 $pipe = '\\.\pipe\Atlaso-Installation-0123456789abcdef0123456789abcdef'
@@ -436,6 +437,46 @@ using System.Threading.Tasks;
 
 public static class AtlasoInstallationPipeTestWriter
 {
+    public static Task NativeSizeProbe(NamedPipeClientStream pipe, string[] fragments, int repetitions, string prompt)
+    {
+        return Task.Run(async () =>
+        {
+            using var cancel = new CancellationTokenSource(5000);
+            var reply = new byte[8];
+            try
+            {
+                for (int count = 0; count < repetitions; count++)
+                {
+                    await Start(pipe, fragments);
+                    await pipe.ReadExactlyAsync(reply, cancel.Token);
+                    if (Encoding.ASCII.GetString(reply) != "\x1b[25;80R")
+                        throw new InvalidOperationException("The fixed native terminal-size reply differs.");
+                }
+                var bytes = Encoding.ASCII.GetBytes(prompt);
+                try { await pipe.WriteAsync(bytes, 0, bytes.Length, cancel.Token); await pipe.FlushAsync(cancel.Token); }
+                finally { Array.Clear(bytes, 0, bytes.Length); }
+            }
+            catch { pipe.Dispose(); throw; }
+            finally { Array.Clear(reply, 0, reply.Length); }
+        });
+    }
+
+    public static Task NativeProbeFlood(NamedPipeClientStream pipe, string probes)
+    {
+        return Task.Run(async () =>
+        {
+            using var cancel = new CancellationTokenSource(5000);
+            var replies = new byte[8 * 8];
+            try
+            {
+                await Start(pipe, new[] { probes });
+                await pipe.ReadExactlyAsync(replies, cancel.Token);
+            }
+            catch { pipe.Dispose(); throw; }
+            finally { Array.Clear(replies, 0, replies.Length); }
+        });
+    }
+
     public static Task Start(NamedPipeClientStream pipe, string[] fragments)
     {
         return Task.Run(() =>
@@ -844,6 +885,48 @@ foreach ($activityFixture in @(
 }
 $rootShellProbe = Get-InstallationAccountProbe -Account root
 Assert-InstallationVmCondition ($rootShellProbe.Prompt -ceq ' ]# ' -and $rootShellProbe.Command.Contains('id -u') -and -not $rootShellProbe.Command.Contains('ATLASO-LOGIN-OK')) 'Root readiness must accept the native Photon prompt while retaining a separate identity challenge.'
+foreach ($probeRepetitions in @(1, 2)) {
+    $nativeProbePair = $null
+    try {
+        $nativeProbePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+        $nativeProbeTask = [AtlasoInstallationPipeTestWriter]::NativeSizeProbe($nativeProbePair.Client,
+            [string[]]@("`es`e[999;", "999H`e[", "6n`eu"), $probeRepetitions, '^[[25;80Rroot [ ~ ]# ')
+        $nativeProbeEvents = @(Wait-InstallationConsoleState -Pipe $nativeProbePair.Server -Pattern $rootShellProbe.Prompt `
+            -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadLoginProgress -ShellAccount root 6>&1)
+        Assert-InstallationVmCondition ($nativeProbeTask.Wait(5000)) 'The native profile must receive each reply before emitting its shell prompt.'
+        $nativeReplies = @($nativeProbeEvents | Where-Object { $_.ToString() -ceq 'Answered the known Photon serial terminal-size probe.' })
+        Assert-InstallationVmCondition ($nativeReplies.Count -eq $probeRepetitions) 'Fragmented native probes must receive exactly one reply each.'
+    }
+    finally { if ($nativeProbePair) { Close-InstallationTestPipePair -Pair $nativeProbePair } }
+}
+$probeFloodPair = $null
+try {
+    $probeFloodPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+    $probeFloodSender = [AtlasoInstallationPipeTestWriter]::NativeProbeFlood($probeFloodPair.Client, ("`es`e[999;999H`e[6n`eu" * 9))
+    $probeFloodRefused = $false
+    $null = @(& {
+        try { Wait-InstallationConsoleState -Pipe $probeFloodPair.Server -Pattern 'NeverSentPublicPrompt' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadLoginProgress }
+        catch { $script:probeFloodRefused = $_.Exception.Message -ceq 'Installed console exceeded its bounded native terminal-size queries.' }
+    } 6>&1)
+    Assert-InstallationVmCondition $probeFloodRefused 'Excessive terminal probes must fail within the existing console deadline.'
+    Assert-InstallationVmCondition ($probeFloodSender.Wait(5000)) 'The bounded probe-flood fixture writer did not finish.'
+}
+finally { if ($probeFloodPair) { Close-InstallationTestPipePair -Pair $probeFloodPair } }
+$unrelatedQueryPair = $null
+try {
+    $unrelatedQueryPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+    $unrelatedQuerySender = [AtlasoInstallationPipeTestWriter]::Start($unrelatedQueryPair.Client, [string[]]@("`e[6nFixtureDone"))
+    Wait-InstallationConsoleState -Pipe $unrelatedQueryPair.Server -Pattern 'FixtureDone' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadLoginProgress
+    Assert-InstallationVmCondition ($unrelatedQuerySender.Wait(5000)) 'The unrelated query fixture writer did not finish.'
+    $unexpectedReply = [byte[]]::new(8)
+    $replyDeadline = [Threading.CancellationTokenSource]::new(250)
+    $noInventedReply = $false
+    try { $null = $unrelatedQueryPair.Client.ReadAsync($unexpectedReply, 0, $unexpectedReply.Length, $replyDeadline.Token).GetAwaiter().GetResult() }
+    catch [OperationCanceledException] { $noInventedReply = $true }
+    finally { $replyDeadline.Dispose(); [Array]::Clear($unexpectedReply, 0, $unexpectedReply.Length) }
+    Assert-InstallationVmCondition $noInventedReply 'An unrelated cursor query must not receive an invented screen position.'
+}
+finally { if ($unrelatedQueryPair) { Close-InstallationTestPipePair -Pair $unrelatedQueryPair } }
 foreach ($rootPromptFixture in @('root [ ~ ]# ', 'root@atlaso [ /root ]# ', 'root:~# ', 'root@atlaso:/root# ', 'root# ', 'bash-5.3# ', '-bash-5.3# ')) {
     Assert-InstallationVmCondition (Test-InstallationShellPrompt -Text ("Public startup`n" + $rootPromptFixture) -Account root) 'Known native Bash prompt shapes must admit the separate identity challenge.'
 }

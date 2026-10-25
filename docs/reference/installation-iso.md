@@ -166,6 +166,9 @@ contents nor establish successful authentication; the account-identity challenge
 At a login deadline, fixed categories distinguish no activity, control-only activity, and unrecognized activity without
 printing the bytes or their length. Login timeout, session failure, and shell-prompt candidates are diagnostic categories;
 they do not satisfy the account-identity challenge.
+The serial adapter answers the exact full-screen cursor-position probe from Photon's signed `serial-console.sh`
+login profile using its existing 25-row, 80-column console size. That profile waits for a reply before showing the
+shell prompt. Fragmented probes are supported; unrelated terminal queries do not receive invented positions.
 
 To retry login diagnostics on a retained installed VM, use `-Scenario LoginInstalled` with the same ISO identity and
 existing VM directory. Supply `-OriginalReceiptPath`, `-OriginalReceiptSha256`, `-BaselineReceiptPath`,
