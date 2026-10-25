@@ -163,6 +163,18 @@ its private pipe peer before sending either chosen password
 to ordinary Linux login; it records only fixed success checkpoints, never the console stream.
 Login troubleshooting reports only fixed PAM and shell-stage categories. These diagnostics neither expose console
 contents nor establish successful authentication; the account-identity challenge must still pass.
+At a login deadline, a fixed category distinguishes no console activity from unrecognized activity without printing
+the bytes or their length.
+
+To retry login diagnostics on a retained installed VM, use `-Scenario LoginInstalled` with the same ISO identity and
+existing VM directory. Supply `-OriginalReceiptPath`, `-OriginalReceiptSha256`, `-BaselineReceiptPath`,
+`-BaselineReceiptSha256`, `-BootReceiptPath`, and `-BootReceiptSha256` from the original live creation/boot output.
+The runner verifies and stops that exact VM, checks the unselected disk, and recreates its private pipe server with
+the existing restrictive ACL and provider-peer proof. The owning harness's `ResumeInstalled` mode repeats admission,
+requires the original disconnected-media boot receipt, publishes an immutable resume receipt before starting, and
+preserves the VMX and disks. It uses the existing concealed credential consumer and login challenges. Retain the
+reported resume receipt with the original selectors, and use the ordinary receipt-bound `Verify` mode after a failed
+or interrupted attempt. This path does not repeat installation or grant authority to adopt another VM.
 
 The `BootInstalled` harness mode reuses original VM and disk-baseline admission, stopped-provider checks, logical
 disk comparison, and source pins. It requires the original isolated EFI device configuration, publishes an immutable

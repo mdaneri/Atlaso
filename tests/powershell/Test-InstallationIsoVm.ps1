@@ -389,9 +389,9 @@ Assert-InstallationVmCondition ($startHelper.Contains('[Environment]::CurrentDir
 Assert-InstallationVmCondition ($source.Contains("'compare', '-f', 'vmdk', '-F', 'vmdk'")) 'Disk comparison must use qemu-img logical VMDK comparison.'
 Assert-InstallationVmCondition (-not $source.Contains("'compare', '-s'")) 'Logical comparison must not require sparse allocation layout to match.'
 Assert-InstallationVmCondition ($source.Contains('-Kind installation-baseline')) 'The baseline record must use its dedicated ownership-receipt kind.'
-Assert-InstallationVmCondition ($ownershipSource.Contains("'installation-baseline', 'installation-boot')")) 'The immutable ownership publisher must admit the baseline record kind.'
+Assert-InstallationVmCondition ($ownershipSource.Contains("'installation-baseline', 'installation-boot', 'installation-resume')")) 'The immutable ownership publisher must admit the baseline record kind.'
 Assert-InstallationVmCondition ($cleanupSource.Contains("'Confirm-AtlasoWorkstationVmInactive'")) 'The guarded VM stop helper must be available to the verification mode.'
-$verifyMode = $source.IndexOf('if ($Mode -in @(''Verify'', ''BootInstalled''))', [StringComparison]::Ordinal)
+$verifyMode = $source.IndexOf('if ($Mode -in @(''Verify'', ''BootInstalled'', ''ResumeInstalled''))', [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($verifyMode -ge 0) 'The harness must expose receipt-bound disk verification.'
 $verifyOriginalRead = $source.IndexOf('Read-AtlasoTestVmSealedRecord -Context $context -Path $OriginalReceiptPath', $verifyMode, [StringComparison]::Ordinal)
 $verifyBaselineRead = $source.IndexOf('Read-AtlasoTestVmSealedRecord -Context $context -Path $BaselineReceiptPath', $verifyMode, [StringComparison]::Ordinal)
@@ -763,6 +763,28 @@ $bootPublish = $source.IndexOf('-Record $transition -Kind installation-boot', [S
 $bootWrite = $source.IndexOf('$writer.Write($after', $bootPublish, [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($bootPublish -gt $verifyCompare -and $bootWrite -gt $bootPublish) 'Original/baseline verification and transition publication must precede VMX mutation.'
 Write-Host 'Installation disk-boot transition regression tests passed.'
+$resumePublish = $source.IndexOf('-Record $resume -Kind installation-resume', [StringComparison]::Ordinal)
+$resumeStart = $source.IndexOf('Start-InstallationIsoVm -VmrunPath', $resumePublish, [StringComparison]::Ordinal)
+Assert-InstallationVmCondition ($resumePublish -gt $verifyCompare -and $resumeStart -gt $resumePublish) 'Installed resume must compare disks and publish its immutable operation receipt before starting the VM.'
+$resumeBranches = @($ast.FindAll({
+    param($node)
+    $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith("if (`$Mode -in @('Verify', 'BootInstalled', 'ResumeInstalled'))", [StringComparison]::Ordinal)
+}, $true))
+Assert-InstallationVmCondition ($resumeBranches.Count -eq 1) 'Expected exactly one shared installed-VM admission branch.'
+$missingResumeReceiptRefused = $false
+try {
+    & {
+        param([string]$Branch)
+        $Mode = 'ResumeInstalled'
+        $BootReceiptPath = ''
+        $BootReceiptSha256 = ''
+        $context = [pscustomobject]@{}
+        & ([scriptblock]::Create($Branch))
+    } $resumeBranches[0].Extent.Text
+} catch {
+    $missingResumeReceiptRefused = $_.Exception.Message -ceq 'ResumeInstalled requires the independently preserved installed-boot receipt and SHA-256.'
+}
+Assert-InstallationVmCondition $missingResumeReceiptRefused 'Resume must refuse a missing original boot receipt before ownership reads or provider mutation.'
 
 $installedLogin = $driverSource.IndexOf("foreach (`$account in @('root', 'admin'))", [StringComparison]::Ordinal)
 $shellWait = $driverSource.IndexOf('-Pattern $accountProbe.Prompt', $installedLogin, [StringComparison]::Ordinal)
@@ -798,6 +820,23 @@ try {
     Assert-InstallationVmCondition ($loginStageSender.Wait(5000)) 'The fixed login-stage fixture writer did not finish.'
 }
 finally { if ($loginStagePair) { Close-InstallationTestPipePair -Pair $loginStagePair } }
+foreach ($hasActivity in @($false, $true)) {
+    $activityPair = $null
+    try {
+        $activityPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+        if ($hasActivity) {
+            $activitySender = [AtlasoInstallationPipeTestWriter]::Start($activityPair.Client, [string[]]@('private-unclassified-fixture'))
+        }
+        $activityEvents = @(& {
+            try { Wait-InstallationConsoleState -Pipe $activityPair.Server -Pattern 'NeverSentPublicPrompt' -Deadline ([DateTimeOffset]::UtcNow.AddMilliseconds(500)) -ReadLoginProgress }
+            catch { if ($_.Exception.Message -cne 'The installer did not reach the expected public console state before its deadline.') { throw } }
+        } 6>&1) | Out-String
+        $category = if ($hasActivity) { 'unmatched-console-activity' } else { 'no-console-activity' }
+        Assert-InstallationVmCondition ($activityEvents.Contains('Public installed login deadline: ' + $category) -and -not $activityEvents.Contains('private-unclassified-fixture')) 'Login deadline diagnostics must distinguish activity without revealing any console contents.'
+        if ($hasActivity) { Assert-InstallationVmCondition ($activitySender.Wait(5000)) 'The activity fixture writer did not finish.' }
+    }
+    finally { if ($activityPair) { Close-InstallationTestPipePair -Pair $activityPair } }
+}
 $rootShellProbe = Get-InstallationAccountProbe -Account root
 Assert-InstallationVmCondition ($rootShellProbe.Prompt -ceq ' ]# ' -and $rootShellProbe.Command.Contains('id -u') -and -not $rootShellProbe.Command.Contains('ATLASO-LOGIN-OK')) 'Root readiness must accept the native Photon prompt while retaining a separate identity challenge.'
 foreach ($promptPrefix in @('root', 'root@atlaso')) {

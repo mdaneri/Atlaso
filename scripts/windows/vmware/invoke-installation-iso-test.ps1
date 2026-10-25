@@ -15,6 +15,19 @@ Absent task-owned VM output directory.
 Exact owning pull request.
 .PARAMETER Scenario
 Probe the native UI, cancel at disk/layout review, reject insufficient capacity, run Auto, or install and boot without media.
+LoginInstalled resumes an already installed, receipt-bound VM without repeating installation.
+.PARAMETER OriginalReceiptPath
+Original VM creation receipt for LoginInstalled.
+.PARAMETER OriginalReceiptSha256
+Independently preserved original receipt digest.
+.PARAMETER BaselineReceiptPath
+Original disk-baseline receipt for LoginInstalled.
+.PARAMETER BaselineReceiptSha256
+Independently preserved baseline receipt digest.
+.PARAMETER BootReceiptPath
+Original installed-boot transition receipt for LoginInstalled.
+.PARAMETER BootReceiptSha256
+Independently preserved installed-boot receipt digest.
 .PARAMETER TimeoutSeconds
 Whole test and console deadline.
 .PARAMETER Child
@@ -26,7 +39,13 @@ param(
     [Parameter(Mandatory = $true)][string]$IsoSha256,
     [Parameter(Mandatory = $true)][string]$OutputDirectory,
     [Parameter(Mandatory = $true)][ValidateRange(1, 2147483647)][int]$PullRequestNumber,
-    [ValidateSet('Probe', 'Cancel', 'CancelReview', 'Insufficient', 'Auto', 'AutoReboot')][string]$Scenario = 'Probe',
+    [ValidateSet('Probe', 'Cancel', 'CancelReview', 'Insufficient', 'Auto', 'AutoReboot', 'LoginInstalled')][string]$Scenario = 'Probe',
+    [string]$OriginalReceiptPath = '',
+    [string]$OriginalReceiptSha256 = '',
+    [string]$BaselineReceiptPath = '',
+    [string]$BaselineReceiptSha256 = '',
+    [string]$BootReceiptPath = '',
+    [string]$BootReceiptSha256 = '',
     [ValidateRange(60, 14400)][int]$TimeoutSeconds = 3600,
     [switch]$Child
 )
@@ -38,7 +57,10 @@ if (-not $Child) {
         '-NoProfile', '-File', $PSCommandPath, '-Child', '-IsoPath', $IsoPath,
         '-IsoSha256', $IsoSha256, '-OutputDirectory', $OutputDirectory,
         '-PullRequestNumber', [string]$PullRequestNumber, '-Scenario', $Scenario,
-        '-TimeoutSeconds', [string]$TimeoutSeconds
+        '-TimeoutSeconds', [string]$TimeoutSeconds,
+        '-OriginalReceiptPath', $OriginalReceiptPath, '-OriginalReceiptSha256', $OriginalReceiptSha256,
+        '-BaselineReceiptPath', $BaselineReceiptPath, '-BaselineReceiptSha256', $BaselineReceiptSha256,
+        '-BootReceiptPath', $BootReceiptPath, '-BootReceiptSha256', $BootReceiptSha256
     ) -TimeoutSeconds $TimeoutSeconds -Action 'Private installation serial-console test'
     return
 }
@@ -315,6 +337,7 @@ function Wait-InstallationConsoleState {
     $knownStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $seenBootStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $seenLoginStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $loginActivity = $false
     foreach ($stage in $KnownProvisioningStages) { [void]$knownStages.Add($stage) }
     try {
         while ([DateTimeOffset]::UtcNow -lt $Deadline) {
@@ -338,6 +361,7 @@ function Wait-InstallationConsoleState {
             $text += [Text.Encoding]::ASCII.GetString($buffer, 0, $count)
             $plain = [regex]::Replace($text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b[()][A-Z0-9]|\x1b[=>]', '')
             if ($ReadLoginProgress) {
+                $loginActivity = $true
                 # Match only fixed diagnostics, including fragmented messages.
                 # Console bytes may contain credentials, hostnames or history;
                 # none of those bytes become log output or authentication proof.
@@ -458,6 +482,10 @@ function Wait-InstallationConsoleState {
             if ($text.Length -gt 131072) { $text = $text.Substring($text.Length - 65536) }
         }
         if ($bootFailureDeadline) { throw 'The installed system reported a kernel panic before login.' }
+        if ($ReadLoginProgress) {
+            $activity = if ($loginActivity) { 'unmatched-console-activity' } else { 'no-console-activity' }
+            Write-Host ('Public installed login deadline: ' + $activity)
+        }
         throw 'The installer did not reach the expected public console state before its deadline.'
     }
     finally { [Array]::Clear($buffer, 0, $buffer.Length); $text = ''; $plain = '' }
@@ -504,7 +532,26 @@ Assert-AtlasoTestVmCheckoutSource -Context $sourceContext
 $knownProvisioningStages = @(Get-InstallationProvisioningStages -Text (Get-Content -LiteralPath `
     (Join-Path $worktree 'image/common/scripts/provision-atlaso.sh') -Raw -Encoding utf8))
 $credentials = $null
-if ($Scenario -in @('Auto', 'AutoReboot')) {
+$resumeSelectors = @{}
+if ($Scenario -eq 'LoginInstalled') {
+    foreach ($pair in @(
+        @($OriginalReceiptPath, $OriginalReceiptSha256),
+        @($BaselineReceiptPath, $BaselineReceiptSha256),
+        @($BootReceiptPath, $BootReceiptSha256)
+    )) {
+        if (-not [IO.Path]::IsPathFullyQualified($pair[0]) -or $pair[1] -cnotmatch '^[0-9a-f]{64}$') {
+            throw 'LoginInstalled requires original, baseline, and boot receipt paths with independently preserved digests.'
+        }
+    }
+    $resumeSelectors = @{
+        OriginalReceiptPath = $OriginalReceiptPath; OriginalReceiptSha256 = $OriginalReceiptSha256
+        BaselineReceiptPath = $BaselineReceiptPath; BaselineReceiptSha256 = $BaselineReceiptSha256
+        BootReceiptPath = $BootReceiptPath; BootReceiptSha256 = $BootReceiptSha256
+    }
+} elseif ($OriginalReceiptPath -or $OriginalReceiptSha256 -or $BaselineReceiptPath -or $BaselineReceiptSha256 -or $BootReceiptPath -or $BootReceiptSha256) {
+    throw 'Existing VM receipt selectors are supported only by LoginInstalled.'
+}
+if ($Scenario -in @('Auto', 'AutoReboot', 'LoginInstalled')) {
     Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
     $selector = Resolve-AtlasoOnePasswordEnvironmentId -RepositoryRoot $worktree
     $token = Resolve-AtlasoOnePasswordServiceAccountTokenFile -RepositoryRoot $worktree `
@@ -514,6 +561,20 @@ if ($Scenario -in @('Auto', 'AutoReboot')) {
 }
 
 $pipeName = 'Atlaso-Installation-' + [guid]::NewGuid().ToString('N')
+if ($Scenario -eq 'LoginInstalled') {
+    $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Verify -Worktree $worktree `
+        -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber @resumeSelectors -Confirm:$false
+    if (-not [IO.Path]::GetFullPath($IsoPath).Equals([string]$vm.IsoPath, [StringComparison]::OrdinalIgnoreCase) -or
+        $IsoSha256 -cne [string]$vm.IsoSha256) {
+        throw 'LoginInstalled ISO identity differs from the original VM creation receipt.'
+    }
+    # The owning verifier returns only the admitted local serial endpoint.
+    # Reuse it with a newly created restrictive server; never edit the VMX.
+    if ([string]$vm.SerialPipePath -cnotmatch '^\\\\\.\\pipe\\(?<name>Atlaso-Installation-[0-9a-f]{32})$') {
+        throw 'The admitted installed VM serial endpoint is invalid.'
+    }
+    $pipeName = $Matches['name']
+}
 $security = [IO.Pipes.PipeSecurity]::new()
 $user = [Security.Principal.WindowsIdentity]::GetCurrent().User
 $security.SetOwner($user)
@@ -526,9 +587,14 @@ $pipe = [IO.Pipes.NamedPipeServerStreamAcl]::Create($pipeName, [IO.Pipes.PipeDir
 $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
 try {
     $connection = $pipe.WaitForConnectionAsync()
-    $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Create -Worktree $worktree `
+    if ($Scenario -eq 'LoginInstalled') {
+        $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode ResumeInstalled -Worktree $worktree `
+            -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber @resumeSelectors -Confirm:$false
+    } else {
+        $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Create -Worktree $worktree `
         -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -IsoPath $IsoPath -IsoSha256 $IsoSha256 `
         -SerialPipePath "\\.\pipe\$pipeName" -Confirm:$false
+    }
     Write-Host ('Installation VM ownership: ' + ($vm | ConvertTo-Json -Compress))
     if (-not $connection.Wait(120000)) { throw 'The owned VM did not connect its private serial console.' }
 
@@ -614,54 +680,56 @@ public static class AtlasoInstallationPipePeer {
     if (-not [AtlasoInstallationPipePeer]::MatchesExpectedProcess($peerId, [string[]]$providerImages, $vmxPath)) {
         throw 'The private console peer is not the receipt-bound VMware guest.'
     }
-    $diskOptions = @(Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline -ReadDiskSelection:($Scenario -in @('Auto', 'AutoReboot', 'CancelReview', 'Insufficient')))
-    Write-Host 'Installer reached the native Photon disk selection screen.'
-    if ($Scenario -eq 'Cancel') {
-        # The pinned serial getty uses TERM=screen with application cursor keys.
-        Send-InstallationConsoleText -Pipe $pipe -Text "`eOD`eOD`n"
-        Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
-        Write-Host 'Installer cancellation returned without admitting disk writes.'
-    }
-    elseif ($Scenario -in @('Auto', 'AutoReboot', 'CancelReview', 'Insufficient')) {
-        # Native visual row order can differ from VMX SCSI order.
-        $selectedGiB = if ($Scenario -eq 'Insufficient') { 4 } else { 64 }
-        $target = @($diskOptions | Where-Object SizeGiB -EQ $selectedGiB)[0]
-        Write-Host ('Selecting public native disk row {0}: {1} ({2} GiB).' -f $target.Index, $target.DiskPath, $selectedGiB)
-        Send-InstallationConsoleText -Pipe $pipe -Text ("`eOA`eOA" + ("`eOB" * $target.Index) + "`n")
-        if ($Scenario -eq 'Insufficient') {
-            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'default installation requires a disk of at least 64 GiB' `
-                -Deadline $deadline -ExpectedCapacityDisk $target.DiskPath
-        } else {
-            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Review planned partitions' -Deadline $deadline
-            if ($Scenario -eq 'CancelReview') {
-                Send-InstallationConsoleText -Pipe $pipe -Text "CANCEL`n"
-                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
-                Write-Host 'Planned-layout review cancelled before erasure consent.'
+    if ($Scenario -ne 'LoginInstalled') {
+        $diskOptions = @(Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline -ReadDiskSelection:($Scenario -in @('Auto', 'AutoReboot', 'CancelReview', 'Insufficient')))
+        Write-Host 'Installer reached the native Photon disk selection screen.'
+        if ($Scenario -eq 'Cancel') {
+            # The pinned serial getty uses TERM=screen with application cursor keys.
+            Send-InstallationConsoleText -Pipe $pipe -Text "`eOD`eOD`n"
+            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
+            Write-Host 'Installer cancellation returned without admitting disk writes.'
+        }
+        elseif ($Scenario -in @('Auto', 'AutoReboot', 'CancelReview', 'Insufficient')) {
+            # Native visual row order can differ from VMX SCSI order.
+            $selectedGiB = if ($Scenario -eq 'Insufficient') { 4 } else { 64 }
+            $target = @($diskOptions | Where-Object SizeGiB -EQ $selectedGiB)[0]
+            Write-Host ('Selecting public native disk row {0}: {1} ({2} GiB).' -f $target.Index, $target.DiskPath, $selectedGiB)
+            Send-InstallationConsoleText -Pipe $pipe -Text ("`eOA`eOA" + ("`eOB" * $target.Index) + "`n")
+            if ($Scenario -eq 'Insufficient') {
+                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'default installation requires a disk of at least 64 GiB' `
+                    -Deadline $deadline -ExpectedCapacityDisk $target.DiskPath
             } else {
-                Send-InstallationConsoleText -Pipe $pipe -Text "NEXT`n"
-                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Review Atlaso installation disk' -Deadline $deadline
-                Send-InstallationConsoleText -Pipe $pipe -Text ("ERASE {0}`n" -f $target.DiskPath)
-                foreach ($account in @('admin', 'root')) {
-                    $value = if ($account -eq 'admin') { $credentials.AdminPassword } else { $credentials.RootPassword }
-                    foreach ($verb in @('Set', 'Confirm')) {
-                        Wait-InstallationConsoleState -Pipe $pipe -Pattern "$verb $account password" -Deadline $deadline
-                        Send-InstallationConsoleSecret -Pipe $pipe -Value $value
+                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Review planned partitions' -Deadline $deadline
+                if ($Scenario -eq 'CancelReview') {
+                    Send-InstallationConsoleText -Pipe $pipe -Text "CANCEL`n"
+                    Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
+                    Write-Host 'Planned-layout review cancelled before erasure consent.'
+                } else {
+                    Send-InstallationConsoleText -Pipe $pipe -Text "NEXT`n"
+                    Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Review Atlaso installation disk' -Deadline $deadline
+                    Send-InstallationConsoleText -Pipe $pipe -Text ("ERASE {0}`n" -f $target.DiskPath)
+                    foreach ($account in @('admin', 'root')) {
+                        $value = if ($account -eq 'admin') { $credentials.AdminPassword } else { $credentials.RootPassword }
+                        foreach ($verb in @('Set', 'Confirm')) {
+                            Wait-InstallationConsoleState -Pipe $pipe -Pattern "$verb $account password" -Deadline $deadline
+                            Send-InstallationConsoleSecret -Pipe $pipe -Value $value
+                        }
                     }
+                    Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Atlaso installation completed.' -Deadline $deadline `
+                        -KnownProvisioningStages $knownProvisioningStages
+                    Write-Host 'Disconnected Auto installation completed; reboot and persistence acceptance remain separate.'
                 }
-                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Atlaso installation completed.' -Deadline $deadline `
-                    -KnownProvisioningStages $knownProvisioningStages
-                Write-Host 'Disconnected Auto installation completed; reboot and persistence acceptance remain separate.'
             }
         }
+        # Keep checked provider stop and disk comparison inside this runner's existing
+        # whole-process-tree deadline, including the shared vmrun inactivity checks.
+        $verification = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Verify -Worktree $worktree `
+            -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber `
+            -OriginalReceiptPath $vm.ReceiptPath -OriginalReceiptSha256 $vm.ReceiptSha256 `
+            -BaselineReceiptPath $vm.BaselineReceiptPath -BaselineReceiptSha256 $vm.BaselineReceiptSha256 `
+            -VerifyTarget:($Scenario -notin @('Auto', 'AutoReboot')) -Confirm:$false
+        Write-Host ('Installation disk verification: ' + ($verification | ConvertTo-Json -Depth 4 -Compress))
     }
-    # Keep checked provider stop and disk comparison inside this runner's existing
-    # whole-process-tree deadline, including the shared vmrun inactivity checks.
-    $verification = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Verify -Worktree $worktree `
-        -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber `
-        -OriginalReceiptPath $vm.ReceiptPath -OriginalReceiptSha256 $vm.ReceiptSha256 `
-        -BaselineReceiptPath $vm.BaselineReceiptPath -BaselineReceiptSha256 $vm.BaselineReceiptSha256 `
-        -VerifyTarget:($Scenario -notin @('Auto', 'AutoReboot')) -Confirm:$false
-    Write-Host ('Installation disk verification: ' + ($verification | ConvertTo-Json -Depth 4 -Compress))
     if ($Scenario -eq 'AutoReboot') {
         $pipe.Disconnect()
         $connection = $pipe.WaitForConnectionAsync()
@@ -675,6 +743,8 @@ public static class AtlasoInstallationPipePeer {
             -not [AtlasoInstallationPipePeer]::MatchesExpectedProcess($peerId, [string[]]$providerImages, $vmxPath)) {
             throw 'The installed console peer is not the receipt-bound VMware guest.'
         }
+    }
+    if ($Scenario -in @('AutoReboot', 'LoginInstalled')) {
         foreach ($account in @('root', 'admin')) {
             $accountProbe = Get-InstallationAccountProbe -Account $account
             $loginDeadline = [DateTimeOffset]::UtcNow.AddSeconds(180)

@@ -7,8 +7,9 @@ no network adapters, and a serial named-pipe endpoint supplied by the caller. Be
 first start it records logical-content baselines for both disks. Verify stops the
 receipt-bound VM if needed and compares selected disk contents against those baselines.
 .PARAMETER Mode
-Select Create, Verify, BootInstalled, or Cleanup. BootInstalled verifies disks, records the stopped-VM transition,
+Select Create, Verify, BootInstalled, ResumeInstalled, or Cleanup. BootInstalled verifies disks, records the stopped-VM transition,
 disconnects the pinned ISO, and starts the installed system with its existing private serial endpoint.
+ResumeInstalled reuses the original boot receipt and verified disconnected configuration without editing the VMX.
 .PARAMETER Worktree
 Exact clean Atlaso worktree used to bind ownership.
 .PARAMETER OutputDirectory
@@ -52,7 +53,7 @@ Optional exact qemu-img executable path used for logical disk comparisons.
 #>
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('Create', 'Verify', 'BootInstalled', 'Cleanup')][string]$Mode = 'Create',
+    [ValidateSet('Create', 'Verify', 'BootInstalled', 'ResumeInstalled', 'Cleanup')][string]$Mode = 'Create',
     [string]$Worktree = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path,
     [string]$OutputDirectory = '',
     [ValidateRange(0, 2147483647)][int]$PullRequestNumber = 0,
@@ -577,10 +578,13 @@ $name = if ($PullRequestNumber -gt 0) {
 }
 $context = New-InstallationVmContext -Root $resolvedWorktree -Destination $resolvedOutput -Name $name
 
-if ($Mode -in @('Verify', 'BootInstalled')) {
+if ($Mode -in @('Verify', 'BootInstalled', 'ResumeInstalled')) {
     $vmxPin = $null
     $rootPin = $null
     try {
+        if ($Mode -eq 'ResumeInstalled' -and (-not $BootReceiptPath -or $BootReceiptSha256 -cnotmatch '^[0-9a-f]{64}$')) {
+            throw 'ResumeInstalled requires the independently preserved installed-boot receipt and SHA-256.'
+        }
         if (-not $OriginalReceiptPath -or $OriginalReceiptSha256 -notmatch '^[0-9a-f]{64}$' -or
             -not $BaselineReceiptPath -or $BaselineReceiptSha256 -notmatch '^[0-9a-f]{64}$') {
             throw 'Verify requires the independently preserved original and disk-baseline receipt paths and SHA-256 digests.'
@@ -653,6 +657,12 @@ if ($Mode -in @('Verify', 'BootInstalled')) {
         }
         $vmxLines = @((Read-InstallationVmxText -Path $context.VmxPath) -split "`r?`n")
         Assert-InstallationVmDiskBindings -VmxLines $vmxLines -Context $context -IsoPath ([string]$original.installation_iso.path)
+        # Disk binding admission above validates exactly one local pipe endpoint.
+        # Return only that public endpoint, never arbitrary VMX contents.
+        $serialLine = @($vmxLines | Where-Object { $_ -cmatch '^serial0\.fileName\s*=\s*"(?<pipe>[^"\r\n]+)"$' })
+        if ($serialLine.Count -ne 1) { throw 'The verified installation serial endpoint is unavailable.' }
+        $serialPath = [regex]::Match($serialLine[0], '^serial0\.fileName\s*=\s*"(?<pipe>[^"\r\n]+)"$').Groups['pipe'].Value
+        Assert-InstallationSerialPipePath -Path $serialPath
         $qemuImg = Resolve-InstallationVmTool -Path $QemuImgPath -FileName 'qemu-img.exe'
         $roles = @('unselected')
         if ($VerifyTarget) { $roles += 'target' }
@@ -706,9 +716,36 @@ if ($Mode -in @('Verify', 'BootInstalled')) {
             finally { $writer.Dispose() }
             Start-InstallationIsoVm -VmrunPath $vmrun -VmxPath $context.VmxPath -OutputDirectory $context.OutputDirectory
         }
+        elseif ($Mode -eq 'ResumeInstalled') {
+            Assert-AtlasoTestVmCheckoutSource -Context $context
+            $resume = [ordered]@{
+                schema = 1; phase = 'installation-resume-without-media'; task_id = $context.TaskId
+                repository = $context.Repository; source_branch = $context.Branch; source_commit = $context.SourceCommit
+                worktree = $context.Worktree; pull_request_number = $context.PullRequestNumber; local_builder = $context.LocalBuilder
+                canonical_name = $context.Name; output_directory = $context.OutputDirectory; vmx_path = $context.VmxPath
+                original_receipt_path = $OriginalReceiptPath; original_receipt_sha256 = $OriginalReceiptSha256
+                baseline_receipt_path = $BaselineReceiptPath; baseline_receipt_sha256 = $BaselineReceiptSha256
+                boot_receipt_path = $BootReceiptPath; boot_receipt_sha256 = $BootReceiptSha256
+                original_directory_identity = $original.original_identities.directory
+                persistent_vm_identity_sha256 = $original.persistent_vm_identity_sha256
+                stopped_vmx_identity = [Atlaso.WorkstationFileIdentity]::Get($context.VmxPath)
+                created_utc = [DateTimeOffset]::UtcNow.ToString('o')
+            }
+            $resumed = Publish-AtlasoTestVmOwnershipRecord -Context $context -Record $resume -Kind installation-resume
+            Write-Host ('Installed resume receipt: ' + ($resumed | ConvertTo-Json -Compress))
+            $vmxPin.Dispose()
+            $vmxPin = $null
+            Start-InstallationIsoVm -VmrunPath $vmrun -VmxPath $context.VmxPath -OutputDirectory $context.OutputDirectory
+        }
         [pscustomobject]@{
             ReceiptPath = [IO.Path]::GetFullPath($OriginalReceiptPath)
+            ReceiptSha256 = $OriginalReceiptSha256
             BaselineReceiptPath = [IO.Path]::GetFullPath($BaselineReceiptPath)
+            BaselineReceiptSha256 = $BaselineReceiptSha256
+            VmxPath = $context.VmxPath
+            SerialPipePath = $serialPath
+            IsoPath = [string]$original.installation_iso.path
+            IsoSha256 = [string]$original.installation_iso.sha256
             VerifiedRoles = [string[]]$roles
             LogicalContentsUnchanged = $true
             BootReceiptPath = if ($Mode -eq 'BootInstalled') { $published.Path } else { $BootReceiptPath }
