@@ -175,6 +175,8 @@ they do not satisfy the account-identity challenge.
 The serial adapter answers the exact full-screen cursor-position probe from Photon's signed `serial-console.sh`
 login profile using its existing 25-row, 80-column console size. That profile waits for a reply before showing the
 shell prompt. Fragmented probes are supported; unrelated terminal queries do not receive invented positions.
+The fixed `cursor-position-query` diagnostic identifies such requests without logging console contents or proving
+authentication; a shell can display its prompt before finishing terminal initialization.
 
 To retry login diagnostics on a retained installed VM, use `-Scenario LoginInstalled` with the same ISO identity and
 existing VM directory. Supply `-OriginalReceiptPath`, `-OriginalReceiptSha256`, `-BaselineReceiptPath`,

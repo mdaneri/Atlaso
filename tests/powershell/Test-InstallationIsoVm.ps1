@@ -915,9 +915,19 @@ finally { if ($probeFloodPair) { Close-InstallationTestPipePair -Pair $probeFloo
 $unrelatedQueryPair = $null
 try {
     $unrelatedQueryPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
-    $unrelatedQuerySender = [AtlasoInstallationPipeTestWriter]::Start($unrelatedQueryPair.Client, [string[]]@("`e[6nFixtureDone"))
-    Wait-InstallationConsoleState -Pipe $unrelatedQueryPair.Server -Pattern 'FixtureDone' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadLoginProgress
+    $privateQueryFixture = 'private-fixture-cursor-query-content'
+    $unrelatedQuerySender = [AtlasoInstallationPipeTestWriter]::Start($unrelatedQueryPair.Client, [string[]]@(
+        "`e[", "6", "n$privateQueryFixture`e[", "6nFixtureDone"
+    ))
+    $unrelatedQueryEvents = @(Wait-InstallationConsoleState -Pipe $unrelatedQueryPair.Server -Pattern 'FixtureDone' `
+        -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadLoginProgress 6>&1)
     Assert-InstallationVmCondition ($unrelatedQuerySender.Wait(5000)) 'The unrelated query fixture writer did not finish.'
+    $cursorQueryCategory = @($unrelatedQueryEvents | Where-Object {
+        $_.ToString() -ceq 'Public installed login stage: cursor-position-query'
+    })
+    Assert-InstallationVmCondition ($cursorQueryCategory.Count -eq 1) 'Repeated fragmented cursor queries must report one fixed diagnostic category.'
+    $unrelatedQueryOutput = $unrelatedQueryEvents | Out-String
+    Assert-InstallationVmCondition (-not $unrelatedQueryOutput.Contains($privateQueryFixture)) 'Cursor-query diagnostics must never report private console content.'
     $unexpectedReply = [byte[]]::new(8)
     $replyDeadline = [Threading.CancellationTokenSource]::new(250)
     $noInventedReply = $false

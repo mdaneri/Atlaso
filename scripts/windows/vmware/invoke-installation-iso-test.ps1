@@ -403,6 +403,13 @@ function Wait-InstallationConsoleState {
             $text += $chunk
             if ($ReadLoginProgress) {
                 $terminalProbePending = $terminalProbeTail + $chunk
+                # A shell may block awaiting a cursor report after displaying
+                # its prompt. Record only the fixed protocol category; this
+                # adapter must not fabricate an unknown cursor position.
+                if ($terminalProbePending.Contains("`e[6n", [StringComparison]::Ordinal) -and
+                    $seenLoginStages.Add('cursor-position-query')) {
+                    Write-Host 'Public installed login stage: cursor-position-query'
+                }
                 $queries = [regex]::Matches($terminalProbePending, [regex]::Escape($nativeSizeProbe)).Count
                 for ($queryIndex = 0; $queryIndex -lt $queries; $queryIndex++) {
                     if ($answeredSizeProbes -ge 8) { throw 'Installed console exceeded its bounded native terminal-size queries.' }
