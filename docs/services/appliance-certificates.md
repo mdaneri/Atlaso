@@ -12,8 +12,6 @@ For the research-only status of VCF-native renewal through a possible Microsoft 
 [VCF Microsoft CA compatibility investigation](../reference/vcf-msca-compatibility.md). Native enrollment and a complete
 second renewal remain untested; this does not add automatic renewal to the replacement workflows below.
 
-## Atlaso Appliance Certificate Replacement
-
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
@@ -24,6 +22,8 @@ This verified appliance view provides visual orientation before you begin.
 *Figure: Choose a saved vault credential or request-local manual login before confirming target TLS identity.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+## Atlaso Appliance Certificate Replacement
 
 VCF Helper automates the native CSR, Atlaso issuance, and replacement path for standalone vCenter and unregistered
 standalone SRM / Protection and Recovery appliances running 8.x or later, subject to native capability checks.
