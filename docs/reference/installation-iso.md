@@ -163,8 +163,9 @@ its private pipe peer before sending either chosen password
 to ordinary Linux login; it records only fixed success checkpoints, never the console stream.
 Login troubleshooting reports only fixed PAM and shell-stage categories. These diagnostics neither expose console
 contents nor establish successful authentication; the account-identity challenge must still pass.
-At a login deadline, a fixed category distinguishes no console activity from unrecognized activity without printing
-the bytes or their length.
+At a login deadline, fixed categories distinguish no activity, control-only activity, and unrecognized activity without
+printing the bytes or their length. Login timeout, session failure, and shell-prompt candidates are diagnostic categories;
+they do not satisfy the account-identity challenge.
 
 To retry login diagnostics on a retained installed VM, use `-Scenario LoginInstalled` with the same ISO identity and
 existing VM directory. Supply `-OriginalReceiptPath`, `-OriginalReceiptSha256`, `-BaselineReceiptPath`,

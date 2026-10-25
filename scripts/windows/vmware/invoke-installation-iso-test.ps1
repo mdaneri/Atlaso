@@ -376,6 +376,18 @@ function Wait-InstallationConsoleState {
                     @{ Token = 'Authentication failure'; Name = 'authentication-failure' },
                     @{ Token = 'Your account has expired'; Name = 'account-expired' },
                     @{ Token = 'This account is currently not available'; Name = 'shell-unavailable' },
+                    @{ Token = 'login:'; Name = 'login-prompt' },
+                    @{ Token = 'timed out'; Name = 'login-timeout' },
+                    @{ Token = 'PAM failure'; Name = 'pam-failure' },
+                    @{ Token = 'Critical error - immediate abort'; Name = 'pam-critical-error' },
+                    @{ Token = 'Authentication token manipulation error'; Name = 'password-token-error' },
+                    @{ Token = 'Permission denied'; Name = 'access-denied' },
+                    @{ Token = 'Cannot execute'; Name = 'shell-execution-failed' },
+                    @{ Token = 'No shell'; Name = 'shell-unavailable' },
+                    @{ Token = 'Cannot make/remove an entry for the specified session'; Name = 'session-creation-failed' },
+                    @{ Token = 'cannot open session'; Name = 'session-open-failed' },
+                    @{ Token = 'Maximum number of tries exceeded'; Name = 'authentication-attempt-limit' },
+                    @{ Token = 'bash-'; Name = 'bash-fallback-prompt-candidate' },
                     @{ Token = 'PowerShell 7.'; Name = 'powershell-startup' },
                     @{ Token = 'PS '; Name = 'powershell-prompt' },
                     @{ Token = ']#'; Name = 'bracketed-root-prompt' }
@@ -483,7 +495,9 @@ function Wait-InstallationConsoleState {
         }
         if ($bootFailureDeadline) { throw 'The installed system reported a kernel panic before login.' }
         if ($ReadLoginProgress) {
-            $activity = if ($loginActivity) { 'unmatched-console-activity' } else { 'no-console-activity' }
+            $activity = if (-not $loginActivity) { 'no-console-activity' }
+                elseif ([regex]::Replace($plain, '[\x00-\x20\x7f]', '').Length -eq 0) { 'control-only-console-activity' }
+                else { 'unmatched-console-activity' }
             Write-Host ('Public installed login deadline: ' + $activity)
         }
         throw 'The installer did not reach the expected public console state before its deadline.'

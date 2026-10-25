@@ -810,30 +810,34 @@ try {
     $loginStagePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
     $loginStageSender = [AtlasoInstallationPipeTestWriter]::Start($loginStagePair.Client, [string[]]@(
         "Last login: private-fixture-host private-fixture-secret`nYou are required to change your pass",
-        "word immediately private-fixture-secret`nCurrent password:`nPowerShell 7.5`nPS /private-fixture-path> FixtureDone"))
+        "word immediately private-fixture-secret`nCurrent password:`nPowerShell 7.5`nPS /private-fixture-path> `nlogin: timed out after 60 seconds`nPAM failure: Critical error - immediate abort`nbash-5.3# FixtureDone"))
     $loginEvents = @(Wait-InstallationConsoleState -Pipe $loginStagePair.Server -Pattern 'FixtureDone' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadLoginProgress 6>&1)
     $loginReported = $loginEvents | Out-String
-    foreach ($expectedCategory in @('session-last-login', 'password-change-required', 'current-password-request', 'powershell-startup', 'powershell-prompt')) {
+    foreach ($expectedCategory in @('session-last-login', 'password-change-required', 'current-password-request', 'powershell-startup', 'powershell-prompt', 'login-prompt', 'login-timeout', 'pam-failure', 'pam-critical-error', 'bash-fallback-prompt-candidate')) {
         Assert-InstallationVmCondition ($loginReported.Contains('Public installed login stage: ' + $expectedCategory)) 'Login diagnostics must recognize fixed fragmented PAM and shell categories.'
     }
     Assert-InstallationVmCondition (-not $loginReported.Contains('private-fixture')) 'Login diagnostics must never expose console credentials, paths, or host details.'
     Assert-InstallationVmCondition ($loginStageSender.Wait(5000)) 'The fixed login-stage fixture writer did not finish.'
 }
 finally { if ($loginStagePair) { Close-InstallationTestPipePair -Pair $loginStagePair } }
-foreach ($hasActivity in @($false, $true)) {
+foreach ($activityFixture in @(
+    @{ Text = ''; Category = 'no-console-activity' },
+    @{ Text = 'private-unclassified-fixture'; Category = 'unmatched-console-activity' },
+    @{ Text = "`r`n`t `r`n"; Category = 'control-only-console-activity' }
+)) {
     $activityPair = $null
     try {
         $activityPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
-        if ($hasActivity) {
-            $activitySender = [AtlasoInstallationPipeTestWriter]::Start($activityPair.Client, [string[]]@('private-unclassified-fixture'))
+        if ($activityFixture.Text) {
+            $activitySender = [AtlasoInstallationPipeTestWriter]::Start($activityPair.Client, [string[]]@($activityFixture.Text))
         }
         $activityEvents = @(& {
             try { Wait-InstallationConsoleState -Pipe $activityPair.Server -Pattern 'NeverSentPublicPrompt' -Deadline ([DateTimeOffset]::UtcNow.AddMilliseconds(500)) -ReadLoginProgress }
             catch { if ($_.Exception.Message -cne 'The installer did not reach the expected public console state before its deadline.') { throw } }
         } 6>&1) | Out-String
-        $category = if ($hasActivity) { 'unmatched-console-activity' } else { 'no-console-activity' }
+        $category = $activityFixture.Category
         Assert-InstallationVmCondition ($activityEvents.Contains('Public installed login deadline: ' + $category) -and -not $activityEvents.Contains('private-unclassified-fixture')) 'Login deadline diagnostics must distinguish activity without revealing any console contents.'
-        if ($hasActivity) { Assert-InstallationVmCondition ($activitySender.Wait(5000)) 'The activity fixture writer did not finish.' }
+        if ($activityFixture.Text) { Assert-InstallationVmCondition ($activitySender.Wait(5000)) 'The activity fixture writer did not finish.' }
     }
     finally { if ($activityPair) { Close-InstallationTestPipePair -Pair $activityPair } }
 }
