@@ -172,11 +172,13 @@ contents nor establish successful authentication; the account-identity challenge
 At a login deadline, fixed categories distinguish no activity, control-only activity, and unrecognized activity without
 printing the bytes or their length. Login timeout, session failure, and shell-prompt candidates are diagnostic categories;
 they do not satisfy the account-identity challenge.
-The serial adapter answers the exact full-screen cursor-position probe from Photon's signed `serial-console.sh`
-login profile using its existing 25-row, 80-column console size. That profile waits for a reply before showing the
-shell prompt. Fragmented probes are supported; unrelated terminal queries do not receive invented positions.
-The fixed `cursor-position-query` diagnostic identifies such requests without logging console contents or proving
-authentication; a shell can display its prompt before finishing terminal initialization.
+The serial adapter reuses the installer console parser to track its 25-row, 80-column cursor across login steps.
+It answers supported cursor-position requests only when the observed controls establish the position, including
+Photon's full-screen login-profile probe. Fragmented controls and save/restore sequences retain their ordering.
+Unknown positions or unsupported cursor modes receive no invented coordinates. Persistent state contains only
+cursor and control-parser metadata, with bounded requests; console contents remain private and temporary.
+The fixed `cursor-position-query` diagnostic identifies requests without proving authentication; a shell can display
+its prompt before finishing terminal initialization. The separate account-identity challenge must still pass.
 
 To retry login diagnostics on a retained installed VM, use `-Scenario LoginInstalled` with the same ISO identity and
 existing VM directory. Supply `-OriginalReceiptPath`, `-OriginalReceiptSha256`, `-BaselineReceiptPath`,

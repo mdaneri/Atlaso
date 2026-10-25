@@ -128,163 +128,340 @@ function Get-InstallationProvisioningStages {
 
 <#
 .SYNOPSIS
-Decode the bounded initial installation menu from a terminal text stream.
+Decode the initial installer frame or incrementally track a private console cursor.
 .DESCRIPTION
-Replays the supported terminal controls into a fixed 25-row by 80-column frame.
-This adapter is limited to the public disk-selection screen before credentials.
+One bounded ANSI tokenizer serves both public menu rendering and private cursor tracking.
+Private state contains numeric cursor metadata and parser bookkeeping, never terminal text.
 .PARAMETER Text
-Public terminal text collected before any credential input.
+Terminal text chunk to decode.
+.PARAMETER CursorState
+Per-private-pipe cursor coordinates and bounded parser bookkeeping.
+.PARAMETER CursorOnly
+Update private cursor state and return cursor-query snapshots without retaining cells.
 #>
 function ConvertFrom-InstallationConsoleFrame {
-    param([string]$Text)
-    if ($null -eq $Text) { throw 'The public installer frame is unavailable.' }
-    if ($Text.Length -gt 131072) { throw 'The public installer frame exceeds its bounded input size.' }
+    param([string]$Text, [hashtable]$CursorState, [switch]$CursorOnly)
+    if ($null -eq $Text -or $Text.Length -gt 131072) {
+        throw 'The console parser input is unavailable or exceeds its bounded size.'
+    }
+    if ($CursorOnly -and $null -eq $CursorState) { throw 'Private console cursor state is required.' }
 
-    $rowCount = 25
-    $columnCount = 80
-    $frame = [char[,]]::new($rowCount, $columnCount)
-    for ($rowIndex = 0; $rowIndex -lt $rowCount; $rowIndex++) {
-        for ($columnIndex = 0; $columnIndex -lt $columnCount; $columnIndex++) {
-            $frame[$rowIndex, $columnIndex] = ' '
+    <#
+    .SYNOPSIS
+    Refuse cursor reports after an unsupported movement without retaining console data.
+    .PARAMETER State
+    Private numeric cursor and parser metadata.
+    #>
+    function Set-ConsoleCursorUnknown {
+        param([hashtable]$State)
+        $State.RangeKnown = $false
+        $State.ColumnKnown = $false
+        $State.Saved = $null
+        $State.WrapPending = $false
+    }
+
+    <#
+    .SYNOPSIS
+    Advance within the default viewport and scroll an optional public frame.
+    .PARAMETER State
+    Numeric cursor metadata with a known default scroll region.
+    .PARAMETER Frame
+    Optional public frame; private cursor mode supplies no cells.
+    #>
+    function Move-ConsoleCursorLine {
+        param([hashtable]$State, [char[,]]$Frame)
+        if (-not $State.MarginsKnown -or -not $State.ModesKnown -or -not $State.RangeKnown) {
+            $State.RangeKnown = $false
+            return
+        }
+        if ($null -ne $Frame -and $State.RowMin -eq 24) {
+            for ($row = 0; $row -lt 24; $row++) {
+                for ($col = 0; $col -lt 80; $col++) { $Frame[$row, $col] = $Frame[($row + 1), $col] }
+            }
+            for ($col = 0; $col -lt 80; $col++) { $Frame[24, $col] = ' ' }
+        }
+        # An interval starts unknown and converges after a full viewport of LF.
+        $State.RowMin = [Math]::Min(24, $State.RowMin + 1)
+        $State.RowMax = [Math]::Min(24, $State.RowMax + 1)
+    }
+
+    $state = if ($CursorOnly) { $CursorState } else { @{} }
+    if (-not $state.ContainsKey('ParserMode')) {
+        $state.ParserMode = 'Ground'
+        $state.Csi = ''
+        $state.StringEscape = $false
+        $state.StringBell = $false
+        $state.RowMin = 0
+        $state.RowMax = if ($CursorOnly) { 24 } else { 0 }
+        $state.RangeKnown = $true
+        $state.Column = 0
+        $state.ColumnKnown = -not $CursorOnly
+        $state.WrapPending = $false
+        $state.AutoWrap = $true
+        $state.MarginsKnown = $true
+        $state.OriginMode = $false
+        $state.ModesKnown = $true
+        $state.Saved = $null
+        $state.QueryCount = 0
+    }
+    $frame = $null
+    $queries = [Collections.Generic.List[object]]::new()
+    if (-not $CursorOnly) {
+        $frame = [char[,]]::new(25, 80)
+        for ($row = 0; $row -lt 25; $row++) {
+            for ($col = 0; $col -lt 80; $col++) { $frame[$row, $col] = ' ' }
         }
     }
-    $row = 0
-    $column = 0
-    $savedRow = 0
-    $savedColumn = 0
-    $position = 0
-
-    while ($position -lt $Text.Length) {
-        $character = $Text[$position]
-        $code = [int]$character
-        if ($code -eq 27) {
-            $position++
-            if ($position -ge $Text.Length) { break }
-            $escapeKind = $Text[$position]
-            if ($escapeKind -eq '[') {
-                $position++
-                $sequenceStart = $position
-                while ($position -lt $Text.Length -and $position - $sequenceStart -le 64) {
-                    $candidate = [int]$Text[$position]
-                    if ($candidate -ge 0x40 -and $candidate -le 0x7E) { break }
-                    $position++
-                }
-                if ($position -ge $Text.Length) { break }
-                if ($position - $sequenceStart -gt 64) {
-                    while ($position -lt $Text.Length) {
-                        $candidate = [int]$Text[$position]
-                        $position++
-                        if ($candidate -ge 0x40 -and $candidate -le 0x7E) { break }
+    try {
+        foreach ($ch in $Text.ToCharArray()) {
+            $code = [int]$ch
+            if ($state.ParserMode -eq 'String') {
+                if (($state.StringBell -and $code -eq 7) -or ($state.StringEscape -and $ch -ceq '\')) {
+                    $state.ParserMode = 'Ground'
+                    $state.StringEscape = $false
+                } else { $state.StringEscape = $code -eq 27 }
+                continue
+            }
+            if ($state.ParserMode -eq 'Charset') {
+                if ($ch -cnotin @('0', 'A', 'B')) { Set-ConsoleCursorUnknown -State $state }
+                $state.ParserMode = 'Ground'
+                continue
+            }
+            if ($state.ParserMode -eq 'Escape') {
+                $state.ParserMode = 'Ground'
+                switch -CaseSensitive ([string]$ch) {
+                    '[' { $state.ParserMode = 'CSI'; $state.Csi = '' }
+                    { $_ -cin ']', 'P', '^', '_' } {
+                        $state.ParserMode = 'String'
+                        $state.StringBell = $ch -ceq ']'
+                        $state.StringEscape = $false
                     }
-                    continue
-                }
-                $final = [string]$Text[$position]
-                $parameterText = $Text.Substring($sequenceStart, $position - $sequenceStart)
-                $position++
-                if ($parameterText -notmatch '^[0-9;]*$') { continue }
-                $parameters = @()
-                if ($parameterText.Length -gt 0) {
-                    $parameters = @($parameterText.Split(';') | ForEach-Object {
-                        if ($_ -ceq '') { 0 } else { [int]::Parse($_, [Globalization.CultureInfo]::InvariantCulture) }
-                    })
-                }
-                $first = if ($parameters.Count -gt 0) { [int]$parameters[0] } else { 0 }
-                $second = if ($parameters.Count -gt 1) { [int]$parameters[1] } else { 0 }
-                switch -CaseSensitive ($final) {
-                    { $_ -in 'H', 'f' } {
-                        $row = [Math]::Clamp($(if ($first -le 0) { 0 } else { $first - 1 }), 0, $rowCount - 1)
-                        $column = [Math]::Clamp($(if ($second -le 0) { 0 } else { $second - 1 }), 0, $columnCount - 1)
+                    { $_ -cin '7', 's' } {
+                        $state.Saved = @{
+                            RowMin = $state.RowMin; RowMax = $state.RowMax; RangeKnown = $state.RangeKnown
+                            Column = $state.Column; ColumnKnown = $state.ColumnKnown; WrapPending = $state.WrapPending
+                        }
                     }
-                    'A' { $row = [Math]::Max(0, $row - $(if ($first -le 0) { 1 } else { $first })) }
-                    'B' { $row = [Math]::Min($rowCount - 1, $row + $(if ($first -le 0) { 1 } else { $first })) }
-                    'C' { $column = [Math]::Min($columnCount - 1, $column + $(if ($first -le 0) { 1 } else { $first })) }
-                    'D' { $column = [Math]::Max(0, $column - $(if ($first -le 0) { 1 } else { $first })) }
+                    { $_ -cin '8', 'u' } {
+                        if ($state.Saved) {
+                            foreach ($key in @('RowMin', 'RowMax', 'RangeKnown', 'Column', 'ColumnKnown', 'WrapPending')) {
+                                $state[$key] = $state.Saved[$key]
+                            }
+                        } else { Set-ConsoleCursorUnknown -State $state }
+                    }
+                    'D' { Move-ConsoleCursorLine -State $state -Frame $frame; $state.WrapPending = $false }
                     'E' {
-                        $row = [Math]::Min($rowCount - 1, $row + $(if ($first -le 0) { 1 } else { $first }))
-                        $column = 0
+                        Move-ConsoleCursorLine -State $state -Frame $frame
+                        $state.Column = 0; $state.ColumnKnown = $true; $state.WrapPending = $false
                     }
-                    'F' {
-                        $row = [Math]::Max(0, $row - $(if ($first -le 0) { 1 } else { $first }))
-                        $column = 0
-                    }
-                    'G' { $column = [Math]::Clamp($(if ($first -le 0) { 0 } else { $first - 1 }), 0, $columnCount - 1) }
-                    'd' { $row = [Math]::Clamp($(if ($first -le 0) { 0 } else { $first - 1 }), 0, $rowCount - 1) }
-                    'J' {
-                        $mode = if ($parameters.Count -eq 0) { 0 } else { $first }
-                        if ($mode -eq 2 -or $mode -eq 3) {
-                            for ($clearRow = 0; $clearRow -lt $rowCount; $clearRow++) {
-                                for ($clearColumn = 0; $clearColumn -lt $columnCount; $clearColumn++) { $frame[$clearRow, $clearColumn] = ' ' }
+                    'c' {
+                        $state.RowMin = 0; $state.RowMax = 0; $state.RangeKnown = $true
+                        $state.Column = 0; $state.ColumnKnown = $true; $state.WrapPending = $false
+                        $state.AutoWrap = $true; $state.MarginsKnown = $true; $state.OriginMode = $false
+                        $state.ModesKnown = $true; $state.Saved = $null
+                        if ($null -ne $frame) {
+                            for ($row = 0; $row -lt 25; $row++) {
+                                for ($col = 0; $col -lt 80; $col++) { $frame[$row, $col] = ' ' }
                             }
                         }
-                        elseif ($mode -eq 0) {
-                            for ($clearColumn = $column; $clearColumn -lt $columnCount; $clearColumn++) { $frame[$row, $clearColumn] = ' ' }
-                            for ($clearRow = $row + 1; $clearRow -lt $rowCount; $clearRow++) {
-                                for ($clearColumn = 0; $clearColumn -lt $columnCount; $clearColumn++) { $frame[$clearRow, $clearColumn] = ' ' }
-                            }
-                        }
-                        elseif ($mode -eq 1) {
-                            for ($clearRow = 0; $clearRow -lt $row; $clearRow++) {
-                                for ($clearColumn = 0; $clearColumn -lt $columnCount; $clearColumn++) { $frame[$clearRow, $clearColumn] = ' ' }
-                            }
-                            for ($clearColumn = 0; $clearColumn -le $column; $clearColumn++) { $frame[$row, $clearColumn] = ' ' }
-                        }
                     }
-                    'K' {
-                        $mode = if ($parameters.Count -eq 0) { 0 } else { $first }
-                        if ($mode -eq 2) { $startColumn = 0; $endColumn = $columnCount - 1 }
-                        elseif ($mode -eq 1) { $startColumn = 0; $endColumn = $column }
-                        else { $startColumn = $column; $endColumn = $columnCount - 1 }
-                        for ($clearColumn = $startColumn; $clearColumn -le $endColumn; $clearColumn++) { $frame[$row, $clearColumn] = ' ' }
-                    }
-                    'X' {
-                        $count = if ($first -le 0) { 1 } else { $first }
-                        $endColumn = [Math]::Min($columnCount - 1, $column + $count - 1)
-                        for ($clearColumn = $column; $clearColumn -le $endColumn; $clearColumn++) { $frame[$row, $clearColumn] = ' ' }
-                    }
-                    's' { $savedRow = $row; $savedColumn = $column }
-                    'u' { $row = $savedRow; $column = $savedColumn }
-                    default { } # Includes SGR and terminal mode changes, which do not alter visible cells.
+                    { $_ -cin '(', ')', '*', '+' } { $state.ParserMode = 'Charset' }
+                    { $_ -cin '=', '>' } { } # Input keypad modes do not move the cursor.
+                    default { Set-ConsoleCursorUnknown -State $state }
                 }
                 continue
             }
-            if ($escapeKind -in @('(', ')', '*', '+')) {
-                $position += [Math]::Min(2, $Text.Length - $position)
+            if ($state.ParserMode -eq 'DiscardCSI') {
+                if ($code -ge 0x40 -and $code -le 0x7e) { $state.ParserMode = 'Ground' }
                 continue
             }
-            $position++
-            switch -CaseSensitive ($escapeKind) {
-                '7' { $savedRow = $row; $savedColumn = $column }
-                '8' { $row = $savedRow; $column = $savedColumn }
-                'D' { $row = [Math]::Min($rowCount - 1, $row + 1) }
-                'E' { $row = [Math]::Min($rowCount - 1, $row + 1); $column = 0 }
-                default { }
+            if ($state.ParserMode -eq 'CSI') {
+                if ($code -ge 0x40 -and $code -le 0x7e) {
+                    $parameters = [string]$state.Csi
+                    $state.Csi = ''; $state.ParserMode = 'Ground'
+                    $private = $parameters.StartsWith('?', [StringComparison]::Ordinal)
+                    $body = if ($private) { $parameters.Substring(1) } else { $parameters }
+                    if ($body -notmatch '^[0-9;]*$') { Set-ConsoleCursorUnknown -State $state; continue }
+                    $parts = if ($body.Length) { @($body.Split(';')) } else { @() }
+                    $numbers = [Collections.Generic.List[int]]::new()
+                    $invalidNumber = $false
+                    foreach ($part in $parts) {
+                        $number = 0
+                        if ($part -and (-not [int]::TryParse($part, [ref]$number) -or $number -gt 1000000)) {
+                            $invalidNumber = $true
+                            break
+                        }
+                        $numbers.Add($number)
+                    }
+                    if ($invalidNumber) { Set-ConsoleCursorUnknown -State $state; continue }
+                    $n = if ($numbers.Count -gt 0 -and $numbers[0] -gt 0) { $numbers[0] } else { 1 }
+                    $second = if ($numbers.Count -gt 1 -and $numbers[1] -gt 0) { $numbers[1] } else { 1 }
+                    switch -CaseSensitive ([string]$ch) {
+                        'n' {
+                            if (-not $private -and $parts.Count -eq 1 -and $parts[0] -ceq '6') {
+                                $state.QueryCount = [Math]::Min(9, $state.QueryCount + 1)
+                                $known = $state.ModesKnown -and $state.MarginsKnown -and -not $state.OriginMode -and
+                                    $state.RangeKnown -and $state.RowMin -eq $state.RowMax -and $state.ColumnKnown
+                                # Snapshot now: the following bytes can restore a different cursor.
+                                $queries.Add([pscustomobject]@{
+                                    Known = $known; Exceeded = $state.QueryCount -gt 8
+                                    Row = if ($known) { $state.RowMin + 1 } else { $null }
+                                    Column = if ($known) { $state.Column + 1 } else { $null }
+                                })
+                            } else { Set-ConsoleCursorUnknown -State $state }
+                        }
+                        { $_ -cin 'H', 'f' } {
+                            if ($private -or $numbers.Count -gt 2 -or -not $state.MarginsKnown -or
+                                -not $state.ModesKnown -or $state.OriginMode) {
+                                Set-ConsoleCursorUnknown -State $state
+                            } else {
+                                $state.RowMin = [Math]::Clamp($n - 1, 0, 24); $state.RowMax = $state.RowMin
+                                $state.RangeKnown = $true
+                                $state.Column = [Math]::Clamp($second - 1, 0, 79); $state.ColumnKnown = $true
+                                $state.WrapPending = $false
+                            }
+                        }
+                        { $_ -cin 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'd' } {
+                            if ($private -or $numbers.Count -gt 1 -or -not $state.MarginsKnown -or
+                                -not $state.ModesKnown -or $state.OriginMode) {
+                                Set-ConsoleCursorUnknown -State $state
+                                break
+                            }
+                            switch -CaseSensitive ([string]$ch) {
+                                { $_ -cin 'A', 'F' } {
+                                    if ($state.RangeKnown) {
+                                        $state.RowMin = [Math]::Max(0, $state.RowMin - $n)
+                                        $state.RowMax = [Math]::Max(0, $state.RowMax - $n)
+                                    }
+                                }
+                                { $_ -cin 'B', 'E' } {
+                                    if ($state.RangeKnown) {
+                                        $state.RowMin = [Math]::Min(24, $state.RowMin + $n)
+                                        $state.RowMax = [Math]::Min(24, $state.RowMax + $n)
+                                    }
+                                }
+                                'd' { $state.RowMin = [Math]::Clamp($n - 1, 0, 24); $state.RowMax = $state.RowMin; $state.RangeKnown = $true }
+                                'C' { if ($state.ColumnKnown) { $state.Column = [Math]::Min(79, $state.Column + $n) } }
+                                'D' { if ($state.ColumnKnown) { $state.Column = [Math]::Max(0, $state.Column - $n) } }
+                                'G' { $state.Column = [Math]::Clamp($n - 1, 0, 79); $state.ColumnKnown = $true }
+                            }
+                            if ($ch -cin @('E', 'F')) { $state.Column = 0; $state.ColumnKnown = $true }
+                            $state.WrapPending = $false
+                        }
+                        'r' {
+                            $bottom = if ($numbers.Count -gt 1 -and $numbers[1] -gt 0) { $numbers[1] } else { 25 }
+                            $state.MarginsKnown = -not $private -and $numbers.Count -le 2 -and $n -eq 1 -and $bottom -eq 25
+                            Set-ConsoleCursorUnknown -State $state
+                            if ($state.MarginsKnown -and $state.ModesKnown -and -not $state.OriginMode) {
+                                $state.RowMin = 0; $state.RowMax = 0; $state.RangeKnown = $true
+                                $state.Column = 0; $state.ColumnKnown = $true
+                            }
+                        }
+                        's' {
+                            if ($private -or $numbers.Count) { Set-ConsoleCursorUnknown -State $state }
+                            else {
+                                $state.Saved = @{
+                                    RowMin = $state.RowMin; RowMax = $state.RowMax; RangeKnown = $state.RangeKnown
+                                    Column = $state.Column; ColumnKnown = $state.ColumnKnown; WrapPending = $state.WrapPending
+                                }
+                            }
+                        }
+                        'u' {
+                            if ($private -or $numbers.Count -or -not $state.Saved) { Set-ConsoleCursorUnknown -State $state }
+                            else {
+                                foreach ($key in @('RowMin', 'RowMax', 'RangeKnown', 'Column', 'ColumnKnown', 'WrapPending')) {
+                                    $state[$key] = $state.Saved[$key]
+                                }
+                            }
+                        }
+                        { $_ -cin 'J', 'K', 'X', 'm' } {
+                            if ($ch -ceq 'm') { break }
+                            if ($private -or $numbers.Count -gt 1) { Set-ConsoleCursorUnknown -State $state; break }
+                            if ($null -eq $frame) { break }
+                            $eraseMode = if ($numbers.Count) { $numbers[0] } else { 0 }
+                            for ($row = 0; $row -lt 25; $row++) {
+                                for ($col = 0; $col -lt 80; $col++) {
+                                    $before = $row -lt $state.RowMin -or ($row -eq $state.RowMin -and $col -le $state.Column)
+                                    $after = $row -gt $state.RowMin -or ($row -eq $state.RowMin -and $col -ge $state.Column)
+                                    $erase = if ($ch -ceq 'J') {
+                                        ($eraseMode -in 2, 3) -or ($eraseMode -eq 0 -and $after) -or ($eraseMode -eq 1 -and $before)
+                                    } elseif ($ch -ceq 'K') {
+                                        $row -eq $state.RowMin -and ($eraseMode -eq 2 -or
+                                            ($eraseMode -eq 0 -and $col -ge $state.Column) -or ($eraseMode -eq 1 -and $col -le $state.Column))
+                                    } else { $row -eq $state.RowMin -and $col -ge $state.Column -and $col -lt [Math]::Min(80, $state.Column + $n) }
+                                    if ($erase) { $frame[$row, $col] = ' ' }
+                                }
+                            }
+                        }
+                        { $_ -cin 'h', 'l' } {
+                            if (-not $private -or $numbers.Count -ne 1) {
+                                $state.ModesKnown = $false; Set-ConsoleCursorUnknown -State $state
+                                break
+                            }
+                            switch ($numbers[0]) {
+                                { $_ -cin 1, 25, 2004 } { } # Nonmoving input/visibility modes.
+                                7 { $state.AutoWrap = $ch -ceq 'h'; $state.WrapPending = $false; $state.Saved = $null }
+                                6 {
+                                    $state.OriginMode = $ch -ceq 'h'
+                                    Set-ConsoleCursorUnknown -State $state
+                                    if (-not $state.OriginMode -and $state.MarginsKnown -and $state.ModesKnown) {
+                                        $state.RowMin = 0; $state.RowMax = 0; $state.RangeKnown = $true
+                                        $state.Column = 0; $state.ColumnKnown = $true
+                                    }
+                                }
+                                1049 { Set-ConsoleCursorUnknown -State $state } # Buffer switch; an explicit H/f can reanchor.
+                                default { $state.ModesKnown = $false; Set-ConsoleCursorUnknown -State $state }
+                            }
+                        }
+                        default { Set-ConsoleCursorUnknown -State $state }
+                    }
+                } elseif ($code -ge 0x20 -and $code -le 0x3f -and $state.Csi.Length -lt 64) {
+                    $state.Csi += $ch
+                } else {
+                    $state.ParserMode = 'DiscardCSI'; $state.Csi = ''
+                    Set-ConsoleCursorUnknown -State $state
+                }
+                continue
             }
-            continue
+            $control = $true
+            switch ($code) {
+                27 { $state.ParserMode = 'Escape' }
+                13 { $state.Column = 0; $state.ColumnKnown = $true; $state.WrapPending = $false }
+                10 { Move-ConsoleCursorLine -State $state -Frame $frame; $state.WrapPending = $false }
+                8 { if ($state.ColumnKnown) { $state.Column = [Math]::Max(0, $state.Column - 1) }; $state.WrapPending = $false }
+                9 { if ($state.ColumnKnown) { $state.Column = [Math]::Min(79, (($state.Column + 8) -band -8)) }; $state.WrapPending = $false }
+                { $_ -cin 0, 7, 127 } { }
+                default { $control = $false }
+            }
+            if ($control) { continue }
+            if ($code -lt 32 -or $code -gt 126) { Set-ConsoleCursorUnknown -State $state; continue }
+            if ($state.ColumnKnown -and $state.WrapPending -and $state.AutoWrap) {
+                Move-ConsoleCursorLine -State $state -Frame $frame
+                $state.Column = 0; $state.WrapPending = $false
+            }
+            if ($null -ne $frame) { $frame[$state.RowMin, $state.Column] = $ch }
+            if ($state.ColumnKnown) {
+                if ($state.Column -eq 79) { $state.WrapPending = $state.AutoWrap }
+                else { $state.Column++ }
+            } elseif ($state.RangeKnown) {
+                # Unknown starting column can cause a wrap, so widen only the upper bound.
+                $state.RowMax = [Math]::Min(24, $state.RowMax + 1)
+            }
         }
-
-        $position++
-        switch ($code) {
-            8 { $column = [Math]::Max(0, $column - 1); continue }
-            9 { $column = [Math]::Min($columnCount - 1, (($column + 8) -band -8)); continue }
-            10 { $row = [Math]::Min($rowCount - 1, $row + 1); continue }
-            13 { $column = 0; continue }
-            default { }
+        $state.RowKnown = $state.RangeKnown -and $state.RowMin -eq $state.RowMax
+        if ($CursorOnly) { return $queries.ToArray() }
+        $visible = [Collections.Generic.List[string]]::new()
+        for ($row = 0; $row -lt 25; $row++) {
+            $builder = [Text.StringBuilder]::new(80)
+            for ($col = 0; $col -lt 80; $col++) { [void]$builder.Append($frame[$row, $col]) }
+            $visible.Add($builder.ToString().TrimEnd())
         }
-        if ($code -ge 32 -and $code -ne 127) {
-            $frame[$row, $column] = $character
-            $column = [Math]::Min($columnCount - 1, $column + 1)
-        }
+        return $visible.ToArray()
     }
-
-    $visibleRows = [Collections.Generic.List[string]]::new()
-    for ($rowIndex = 0; $rowIndex -lt $rowCount; $rowIndex++) {
-        $builder = [Text.StringBuilder]::new($columnCount)
-        for ($columnIndex = 0; $columnIndex -lt $columnCount; $columnIndex++) {
-            [void]$builder.Append($frame[$rowIndex, $columnIndex])
-        }
-        $visibleRows.Add($builder.ToString().TrimEnd())
+    finally {
+        if ($null -ne $frame) { [Array]::Clear($frame, 0, $frame.Length) }
+        $Text = ''; $body = ''; $parameters = ''; $parts = $null
     }
-    return $visibleRows.ToArray()
 }
 
 <#
@@ -356,13 +533,15 @@ Fixed public stage labels from the admitted provisioner; unknown messages are ne
 Report only fixed boot-stage categories while waiting before installed credential entry.
 .PARAMETER ReadLoginProgress
 Report only fixed PAM and shell categories; never print login-console contents.
+.PARAMETER CursorState
+Cursor-only parser state for this admitted private pipe, shared across login waits.
 .PARAMETER ShellAccount
 Require a known installed shell prompt for this account and refuse password-change conversations.
 .PARAMETER ExpectedCapacityDisk
 Exact public fixture disk whose four-GiB capacity refusal is expected before consent.
 #>
 function Wait-InstallationConsoleState {
-    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [switch]$ReadLoginProgress, [ValidateSet('', 'root', 'admin')][string]$ShellAccount = '', [string]$ExpectedCapacityDisk = '')
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [switch]$ReadLoginProgress, [ValidateSet('', 'root', 'admin')][string]$ShellAccount = '', [string]$ExpectedCapacityDisk = '', [hashtable]$CursorState)
     $buffer = [byte[]]::new(4096)
     $text = ''
     $failureDeadline = $null
@@ -372,13 +551,7 @@ function Wait-InstallationConsoleState {
     $seenBootStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $seenLoginStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $loginActivity = $false
-    # The admitted Photon serial-console.sh profile moves to the screen edge,
-    # requests its position, then blocks reading the terminal's reply. Our
-    # existing console model is 25 rows by 80 columns. Answer only that exact
-    # full-screen probe, after the installed VM's private peer is admitted.
-    $nativeSizeProbe = "`es`e[999;999H`e[6n`eu"
-    $terminalProbeTail = ''
-    $answeredSizeProbes = 0
+    if ($ReadLoginProgress -and -not $CursorState) { $CursorState = @{} }
     foreach ($stage in $KnownProvisioningStages) { [void]$knownStages.Add($stage) }
     try {
         while ([DateTimeOffset]::UtcNow -lt $Deadline) {
@@ -402,29 +575,25 @@ function Wait-InstallationConsoleState {
             $chunk = [Text.Encoding]::ASCII.GetString($buffer, 0, $count)
             $text += $chunk
             if ($ReadLoginProgress) {
-                $terminalProbePending = $terminalProbeTail + $chunk
-                # A shell may block awaiting a cursor report after displaying
-                # its prompt. Record only the fixed protocol category; this
-                # adapter must not fabricate an unknown cursor position.
-                if ($terminalProbePending.Contains("`e[6n", [StringComparison]::Ordinal) -and
-                    $seenLoginStages.Add('cursor-position-query')) {
-                    Write-Host 'Public installed login stage: cursor-position-query'
+                # Preserve high-bit bytes as non-ASCII markers instead of replacing
+                # them with printable question marks of an invented display width.
+                $cursorChunk = [Text.Encoding]::Latin1.GetString($buffer, 0, $count)
+                $cursorQueries = @(ConvertFrom-InstallationConsoleFrame -Text $cursorChunk -CursorState $CursorState -CursorOnly)
+                foreach ($cursorQuery in $cursorQueries) {
+                    if ($cursorQuery.Exceeded) { throw 'Installed console exceeded its bounded cursor-position queries.' }
+                    if ($seenLoginStages.Add('cursor-position-query')) {
+                        Write-Host 'Public installed login stage: cursor-position-query'
+                    }
+                    if ($cursorQuery.Known) {
+                        Send-InstallationConsoleText -Pipe $pipe -Text ("`e[{0};{1}R" -f $cursorQuery.Row, $cursorQuery.Column)
+                        if ($cursorQuery.Row -eq 25 -and $cursorQuery.Column -eq 80) {
+                            Write-Host 'Answered the known Photon serial terminal-size probe.'
+                        } else { Write-Host 'Answered a proven cursor-position query.' }
+                    }
                 }
-                $queries = [regex]::Matches($terminalProbePending, [regex]::Escape($nativeSizeProbe)).Count
-                for ($queryIndex = 0; $queryIndex -lt $queries; $queryIndex++) {
-                    if ($answeredSizeProbes -ge 8) { throw 'Installed console exceeded its bounded native terminal-size queries.' }
-                    Send-InstallationConsoleText -Pipe $pipe -Text "`e[25;80R"
-                    $answeredSizeProbes++
-                    Write-Host 'Answered the known Photon serial terminal-size probe.'
-                }
-                $terminalProbeTail = $terminalProbePending.Substring([Math]::Max(0, $terminalProbePending.Length - $nativeSizeProbe.Length + 1))
             }
             $plain = [regex]::Replace($text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>su]', '')
-            if ($answeredSizeProbes) {
-                # Photon documents that its read may echo the public reply.
-                # Remove only our fixed reply artifact before prompt matching.
-                $plain = $plain.Replace('^[[25;80R', '').Replace('[25;80R', '')
-            }
+            $plain = [regex]::Replace($plain, '\^?\[\[[0-9]{1,2};[0-9]{1,2}R', '')
             if ($ReadLoginProgress) {
                 $loginActivity = $true
                 # Match only fixed diagnostics, including fragmented messages.
@@ -571,7 +740,7 @@ function Wait-InstallationConsoleState {
     }
     finally {
         [Array]::Clear($buffer, 0, $buffer.Length)
-        $text = ''; $plain = ''; $chunk = ''; $terminalProbeTail = ''; $terminalProbePending = ''
+        $text = ''; $plain = ''; $chunk = ''; $cursorChunk = ''; $cursorQueries = $null
     }
 }
 
@@ -764,6 +933,7 @@ public static class AtlasoInstallationPipePeer {
     if (-not [AtlasoInstallationPipePeer]::MatchesExpectedProcess($peerId, [string[]]$providerImages, $vmxPath)) {
         throw 'The private console peer is not the receipt-bound VMware guest.'
     }
+    $cursorState = @{}
     if ($Scenario -ne 'LoginInstalled') {
         $diskOptions = @(Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline -ReadDiskSelection:($Scenario -in @('Auto', 'AutoReboot', 'CancelReview', 'Insufficient')))
         Write-Host 'Installer reached the native Photon disk selection screen.'
@@ -827,6 +997,7 @@ public static class AtlasoInstallationPipePeer {
             -not [AtlasoInstallationPipePeer]::MatchesExpectedProcess($peerId, [string[]]$providerImages, $vmxPath)) {
             throw 'The installed console peer is not the receipt-bound VMware guest.'
         }
+        $cursorState = @{}
     }
     if ($Scenario -in @('AutoReboot', 'LoginInstalled')) {
         foreach ($account in @('root', 'admin')) {
@@ -834,18 +1005,18 @@ public static class AtlasoInstallationPipePeer {
             $loginDeadline = [DateTimeOffset]::UtcNow.AddSeconds(180)
             if ($loginDeadline -gt $deadline) { $loginDeadline = $deadline }
             Write-Host ('Installed console: awaiting {0} login prompt.' -f $account)
-            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'login:' -Deadline $loginDeadline -ReadBootProgress:($account -eq 'root') -ReadLoginProgress
+            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'login:' -Deadline $loginDeadline -ReadBootProgress:($account -eq 'root') -ReadLoginProgress -CursorState $cursorState
             Send-InstallationConsoleText -Pipe $pipe -Text "$account`n"
             Write-Host ('Installed console: awaiting {0} password prompt.' -f $account)
-            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Password:' -Deadline $loginDeadline -ReadLoginProgress
+            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Password:' -Deadline $loginDeadline -ReadLoginProgress -CursorState $cursorState
             $value = if ($account -eq 'root') { $credentials.RootPassword } else { $credentials.AdminPassword }
             Send-InstallationConsoleSecret -Pipe $pipe -Value $value
             # PAM/login may flush queued input before starting the shell. Never
             # send the checkpoint command until the ordinary shell prompt appears.
             Write-Host ('Installed console: awaiting {0} shell prompt.' -f $account)
-            Wait-InstallationConsoleState -Pipe $pipe -Pattern $accountProbe.Prompt -Deadline $loginDeadline -ReadLoginProgress -ShellAccount $account
+            Wait-InstallationConsoleState -Pipe $pipe -Pattern $accountProbe.Prompt -Deadline $loginDeadline -ReadLoginProgress -ShellAccount $account -CursorState $cursorState
             Send-InstallationConsoleText -Pipe $pipe -Text ($accountProbe.Command + "`n")
-            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'ATLASO-LOGIN-OK' -Deadline $loginDeadline -ReadLoginProgress
+            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'ATLASO-LOGIN-OK' -Deadline $loginDeadline -ReadLoginProgress -CursorState $cursorState
             Write-Host ("Installed password authentication passed for {0}." -f $account)
             Send-InstallationConsoleText -Pipe $pipe -Text "exit`n"
         }
@@ -859,6 +1030,7 @@ public static class AtlasoInstallationPipePeer {
 }
 finally {
     $pipe.Dispose()
+    if ($cursorState) { $cursorState.Clear() }
     if ($credentials) { $credentials.AdminPassword.Dispose(); $credentials.RootPassword.Dispose() }
     if ($sourceContext.PSObject.Properties['CheckoutSourcePin'] -and $sourceContext.CheckoutSourcePin) {
         $sourceContext.CheckoutSourcePin.Dispose()

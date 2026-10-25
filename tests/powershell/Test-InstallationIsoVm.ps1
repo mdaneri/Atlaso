@@ -437,6 +437,42 @@ using System.Threading.Tasks;
 
 public static class AtlasoInstallationPipeTestWriter
 {
+    public static Task RawBytes(NamedPipeClientStream pipe, byte[] bytes)
+    {
+        return Task.Run(async () =>
+        {
+            using var cancel = new CancellationTokenSource(5000);
+            try
+            {
+                await pipe.WriteAsync(bytes, 0, bytes.Length, cancel.Token);
+                await pipe.FlushAsync(cancel.Token);
+            }
+            catch { pipe.Dispose(); throw; }
+        });
+    }
+
+    public static Task CursorProbe(NamedPipeClientStream pipe, string[] fragments, string expectedReply, string prompt)
+    {
+        return Task.Run(async () =>
+        {
+            using var cancel = new CancellationTokenSource(5000);
+            var reply = new byte[32];
+            try
+            {
+                await Start(pipe, fragments);
+                int length = Encoding.ASCII.GetByteCount(expectedReply);
+                await pipe.ReadExactlyAsync(reply.AsMemory(0, length), cancel.Token);
+                if (Encoding.ASCII.GetString(reply, 0, length) != expectedReply)
+                    throw new InvalidOperationException("The fixed cursor-position reply differs.");
+                var bytes = Encoding.ASCII.GetBytes(prompt);
+                try { await pipe.WriteAsync(bytes, 0, bytes.Length, cancel.Token); await pipe.FlushAsync(cancel.Token); }
+                finally { Array.Clear(bytes, 0, bytes.Length); }
+            }
+            catch { pipe.Dispose(); throw; }
+            finally { Array.Clear(reply, 0, reply.Length); }
+        });
+    }
+
     public static Task NativeSizeProbe(NamedPipeClientStream pipe, string[] fragments, int repetitions, string prompt)
     {
         return Task.Run(async () =>
@@ -546,6 +582,19 @@ $erasedRows = @(Get-InstallationConsoleDiskOptions -Text ("`e[11;1H32 GiB @ /dev
     "4 GiB @ /dev/sda`e[1B`r64 GiB @ /dev/sdb"))
 Assert-InstallationVmCondition ($erasedRows.Count -eq 2 -and $erasedRows[0].DiskPath -ceq '/dev/sda' -and
     $erasedRows[1].DiskPath -ceq '/dev/sdb') 'Erased stale rows must never remain selectable.'
+$eraseFromCursor = @(ConvertFrom-InstallationConsoleFrame -Text ("topline`r`nmidline`r`nendline`e[2;4H`e[J"))
+Assert-InstallationVmCondition ($eraseFromCursor[0] -ceq 'topline' -and $eraseFromCursor[1] -ceq 'mid' -and
+    $eraseFromCursor[2] -ceq '') 'CSI J mode 0 must erase from the cursor through the rest of the screen.'
+$eraseThroughCursor = @(ConvertFrom-InstallationConsoleFrame -Text ("topline`r`nmidline`r`nendline`e[2;4H`e[1J"))
+Assert-InstallationVmCondition ($eraseThroughCursor[0] -ceq '' -and $eraseThroughCursor[1] -ceq '    ine' -and
+    $eraseThroughCursor[2] -ceq 'endline') 'CSI J mode 1 must erase the screen through the cursor.'
+$eraseLineAfter = @(ConvertFrom-InstallationConsoleFrame -Text ("midline`e[1;4H`e[K"))
+Assert-InstallationVmCondition ($eraseLineAfter[0] -ceq 'mid') 'CSI K mode 0 must erase from the cursor to the end of its line.'
+$eraseLineBefore = @(ConvertFrom-InstallationConsoleFrame -Text ("midline`e[1;4H`e[1K"))
+Assert-InstallationVmCondition ($eraseLineBefore[0] -ceq '    ine') 'CSI K mode 1 must erase from the start of its line through the cursor.'
+$wrappedFrame = @(ConvertFrom-InstallationConsoleFrame -Text ("`e[1;80HAB"))
+Assert-InstallationVmCondition ($wrappedFrame[0].Length -eq 80 -and $wrappedFrame[0][79] -ceq 'A' -and
+    $wrappedFrame[1].StartsWith('B', [StringComparison]::Ordinal)) 'Printable text after the last column must wrap to the next row without overwriting the prior cell.'
 
 $unexpectedDiskRows = @(Get-InstallationConsoleDiskOptions -Text (
     "`e[11;1H0 GiB @ /dev/fd0`e[12;1H64 GiB @ /dev/sda`e[13;1H4 GiB @ /dev/sdb"))
@@ -884,6 +933,7 @@ foreach ($activityFixture in @(
     finally { if ($activityPair) { Close-InstallationTestPipePair -Pair $activityPair } }
 }
 $rootShellProbe = Get-InstallationAccountProbe -Account root
+Write-Host 'Starting installation terminal-protocol pipe fixtures.'
 Assert-InstallationVmCondition ($rootShellProbe.Prompt -ceq ' ]# ' -and $rootShellProbe.Command.Contains('id -u') -and -not $rootShellProbe.Command.Contains('ATLASO-LOGIN-OK')) 'Root readiness must accept the native Photon prompt while retaining a separate identity challenge.'
 foreach ($probeRepetitions in @(1, 2)) {
     $nativeProbePair = $null
@@ -906,9 +956,9 @@ try {
     $probeFloodRefused = $false
     $null = @(& {
         try { Wait-InstallationConsoleState -Pipe $probeFloodPair.Server -Pattern 'NeverSentPublicPrompt' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadLoginProgress }
-        catch { $script:probeFloodRefused = $_.Exception.Message -ceq 'Installed console exceeded its bounded native terminal-size queries.' }
+        catch { $script:probeFloodRefused = $_.Exception.Message -ceq 'Installed console exceeded its bounded cursor-position queries.' }
     } 6>&1)
-    Assert-InstallationVmCondition $probeFloodRefused 'Excessive terminal probes must fail within the existing console deadline.'
+    Assert-InstallationVmCondition $probeFloodRefused 'Excessive terminal probes must fail within the fixed per-pipe query bound.'
     Assert-InstallationVmCondition ($probeFloodSender.Wait(5000)) 'The bounded probe-flood fixture writer did not finish.'
 }
 finally { if ($probeFloodPair) { Close-InstallationTestPipePair -Pair $probeFloodPair } }
@@ -937,6 +987,95 @@ try {
     Assert-InstallationVmCondition $noInventedReply 'An unrelated cursor query must not receive an invented screen position.'
 }
 finally { if ($unrelatedQueryPair) { Close-InstallationTestPipePair -Pair $unrelatedQueryPair } }
+Write-Host 'Installation terminal-protocol pipe fixtures passed; starting cursor-state fixtures.'
+$cursorState = @{}
+$unknownPosition = @(ConvertFrom-InstallationConsoleFrame -Text "`e[6n" -CursorState $cursorState -CursorOnly)
+Assert-InstallationVmCondition (-not $unknownPosition[0].Known) 'An initially unknown cursor must remain unanswered.'
+Assert-InstallationVmCondition (-not ($cursorState.Values | Where-Object { $_ -is [string] -and $_.Contains('private') })) 'Cursor state must not retain terminal text.'
+$anchoredPosition = @(ConvertFrom-InstallationConsoleFrame -Text "`e[7;11H`e[6n" -CursorState $cursorState -CursorOnly)
+Assert-InstallationVmCondition ($anchoredPosition[-1].Known -and $anchoredPosition[-1].Row -eq 7 -and $anchoredPosition[-1].Column -eq 11) `
+    'An absolute cursor anchor must permit an accurate generic position reply.'
+$fragmentedState = @{}
+$null = ConvertFrom-InstallationConsoleFrame -Text "`e[7;" -CursorState $fragmentedState -CursorOnly
+$null = ConvertFrom-InstallationConsoleFrame -Text "11H`e[6" -CursorState $fragmentedState -CursorOnly
+$fragmentedPosition = @(ConvertFrom-InstallationConsoleFrame -Text 'n' -CursorState $fragmentedState -CursorOnly)
+Assert-InstallationVmCondition ($fragmentedPosition[0].Known -and $fragmentedPosition[0].Row -eq 7 -and $fragmentedPosition[0].Column -eq 11) `
+    'CSI anchors and position queries must survive arbitrary read fragmentation.'
+$savedState = @{}
+$savedPositions = @(ConvertFrom-InstallationConsoleFrame -Text "`e[3;4H`es`e[25;80H`e[6n`eu`e[6n" -CursorState $savedState -CursorOnly)
+Assert-InstallationVmCondition ($savedPositions.Count -eq 2 -and $savedPositions[0].Row -eq 25 -and $savedPositions[0].Column -eq 80 -and
+    $savedPositions[1].Row -eq 3 -and $savedPositions[1].Column -eq 4) 'DSR replies must snapshot cursor coordinates before a trailing restore.'
+$wrappedState = @{}
+$wrapped = @(ConvertFrom-InstallationConsoleFrame -Text ("`e[1;80HX Y`e[6n".Replace(' ','')) -CursorState $wrappedState -CursorOnly)
+Assert-InstallationVmCondition ($wrapped[0].Known -and $wrapped[0].Row -eq 2 -and $wrapped[0].Column -eq 2) 'Pending autowrap must advance the cursor only when the next printable character arrives.'
+$convergedState = @{}
+$converged = @(ConvertFrom-InstallationConsoleFrame -Text ("`r`n" * 25 + "`r`e[6n") -CursorState $convergedState -CursorOnly)
+Assert-InstallationVmCondition ($converged[0].Known -and $converged[0].Row -eq 25 -and $converged[0].Column -eq 1) `
+    'A full-screen run of line advances plus carriage return must converge the unknown starting row.'
+$invalidState = @{}
+$invalidated = @(ConvertFrom-InstallationConsoleFrame -Text "`e[?1049h`e[6n`e[10;20H`e[6n" -CursorState $invalidState -CursorOnly)
+Assert-InstallationVmCondition (-not $invalidated[0].Known -and $invalidated[1].Known -and $invalidated[1].Row -eq 10 -and $invalidated[1].Column -eq 20) `
+    'Unknown cursor modes must suppress replies until a new absolute anchor restores certainty.'
+$originState = @{}
+$originModes = @(ConvertFrom-InstallationConsoleFrame -Text "`e[?6h`e[5;9H`e[6n`e[?6l`e[6n" -CursorState $originState -CursorOnly)
+Assert-InstallationVmCondition (-not $originModes[0].Known -and $originModes[1].Known -and
+    $originModes[1].Row -eq 1 -and $originModes[1].Column -eq 1) 'Origin mode must invalidate positions until its default reset reanchors home.'
+$marginState = @{}
+$marginReset = @(ConvertFrom-InstallationConsoleFrame -Text "`e[2;24r`e[6n`e[r`e[6n" -CursorState $marginState -CursorOnly)
+Assert-InstallationVmCondition (-not $marginReset[0].Known -and $marginReset[1].Known -and
+    $marginReset[1].Row -eq 1 -and $marginReset[1].Column -eq 1) 'Nondefault scroll regions must suppress replies until full-screen margins reset.'
+$harmlessModesState = @{}
+$harmlessModes = @(ConvertFrom-InstallationConsoleFrame -Text "`e[?25l`e[?1h`e[?2004h`e=`e>`e[4;8H`e[6n" -CursorState $harmlessModesState -CursorOnly)
+Assert-InstallationVmCondition ($harmlessModes[0].Known -and $harmlessModes[0].Row -eq 4 -and $harmlessModes[0].Column -eq 8) `
+    'Visibility, application-cursor, bracketed-paste and keypad modes must preserve cursor certainty.'
+$oscState = @{}
+$null = ConvertFrom-InstallationConsoleFrame -Text "`e]0;private-fixture-title" -CursorState $oscState -CursorOnly
+$oscStateText = $oscState | ConvertTo-Json -Compress
+Assert-InstallationVmCondition ($oscState.ParserMode -eq 'String' -and -not $oscStateText.Contains('private-fixture-title')) `
+    'Split OSC payloads must be discarded while only terminator bookkeeping persists.'
+$null = ConvertFrom-InstallationConsoleFrame -Text "`a" -CursorState $oscState -CursorOnly
+$queryBoundState = @{}
+$null = ConvertFrom-InstallationConsoleFrame -Text ("`e[6n" * 8) -CursorState $queryBoundState -CursorOnly
+$overLimitQuery = @(ConvertFrom-InstallationConsoleFrame -Text "`e[6n" -CursorState $queryBoundState -CursorOnly)
+Assert-InstallationVmCondition ($overLimitQuery[0].Exceeded -and $queryBoundState.QueryCount -eq 9) `
+    'Cursor-query limits must persist across parser calls without storing terminal text.'
+$crossWaitPair = $null
+Write-Host 'Installation cursor-state fixtures passed; starting cross-wait pipe fixture.'
+try {
+    $crossWaitPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+    $crossWaitState = @{}
+    $anchorWriter = [AtlasoInstallationPipeTestWriter]::Start($crossWaitPair.Client, [string[]]@("`e[7;11HAnchorReady"))
+    Wait-InstallationConsoleState -Pipe $crossWaitPair.Server -Pattern 'AnchorReady' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadLoginProgress -CursorState $crossWaitState
+    Assert-InstallationVmCondition ($anchorWriter.Wait(5000)) 'The cross-wait anchor fixture did not finish.'
+    $queryWriter = [AtlasoInstallationPipeTestWriter]::CursorProbe($crossWaitPair.Client, [string[]]@("`e[6", 'n'), "`e[7;22R", 'CrossWaitDone')
+    Wait-InstallationConsoleState -Pipe $crossWaitPair.Server -Pattern 'CrossWaitDone' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadLoginProgress -CursorState $crossWaitState
+    Assert-InstallationVmCondition ($queryWriter.Wait(5000)) 'Cursor state must persist across login Wait calls and answer an accurate position.'
+}
+finally { if ($crossWaitPair) { Close-InstallationTestPipePair -Pair $crossWaitPair } }
+Write-Host 'Installation cross-wait pipe fixture passed; starting non-ASCII pipe fixture.'
+$highBytePair = $null
+try {
+    $highBytePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+    $highByteState = @{}
+    $rawConsole = [Collections.Generic.List[byte]]::new()
+    $rawConsole.AddRange([Text.Encoding]::ASCII.GetBytes("`e[4;8H"))
+    $rawConsole.Add([byte]0xE9)
+    $rawConsole.AddRange([Text.Encoding]::ASCII.GetBytes("`e[6nHighByteDone"))
+    $highBytes = $rawConsole.ToArray()
+    $highByteWriter = [AtlasoInstallationPipeTestWriter]::RawBytes($highBytePair.Client, $highBytes)
+    Wait-InstallationConsoleState -Pipe $highBytePair.Server -Pattern 'HighByteDone' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadLoginProgress -CursorState $highByteState
+    Assert-InstallationVmCondition ($highByteWriter.Wait(5000)) 'The bounded non-ASCII fixture writer must finish.'
+    Assert-InstallationVmCondition (-not $highByteState.RowKnown -and -not $highByteState.ColumnKnown) `
+        'A non-ASCII console byte must invalidate cursor certainty until a later anchor.'
+    $highReply = [byte[]]::new(8)
+    $highReadDeadline = [Threading.CancellationTokenSource]::new(250)
+    $highByteNoReply = $false
+    try { $null = $highBytePair.Client.ReadAsync($highReply, 0, $highReply.Length, $highReadDeadline.Token).GetAwaiter().GetResult() }
+    catch [OperationCanceledException] { $highByteNoReply = $true }
+    finally { $highReadDeadline.Dispose(); [Array]::Clear($highReply, 0, $highReply.Length); [Array]::Clear($highBytes, 0, $highBytes.Length) }
+    Assert-InstallationVmCondition $highByteNoReply 'Non-ASCII console text must not receive a guessed cursor reply.'
+}
+finally { if ($highBytePair) { Close-InstallationTestPipePair -Pair $highBytePair } }
 foreach ($rootPromptFixture in @('root [ ~ ]# ', 'root@atlaso [ /root ]# ', 'root:~# ', 'root@atlaso:/root# ', 'root# ', 'bash-5.3# ', '-bash-5.3# ')) {
     Assert-InstallationVmCondition (Test-InstallationShellPrompt -Text ("Public startup`n" + $rootPromptFixture) -Account root) 'Known native Bash prompt shapes must admit the separate identity challenge.'
 }
