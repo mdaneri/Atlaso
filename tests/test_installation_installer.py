@@ -847,6 +847,126 @@ def test_installed_serial_login_requires_development_trust(monkeypatch, tmp_path
     ] if expected == "enabled" else [])
 
 
+def _inspection_identity(module, software):
+    """Build the verified media fields consumed by the retention helper.
+
+    Args:
+        module: Loaded installer adapter.
+        software: Public source software directory for the installation fixture.
+    """
+    files = module.inventory(software)
+    return {
+        "signing_key_id": module.DEVELOPMENT_KEY_ID,
+        "development": {
+            "schema": 1,
+            "software_source_commit": "a" * 40,
+            "non_production": True,
+        },
+        "files": [
+            {
+                "path": "software/" + item["path"],
+                "size": item["size"],
+                "sha256": item["sha256"],
+            }
+            for item in files
+        ],
+    }
+
+
+def test_development_inspection_inputs_survive_photon_tmp_unmount(monkeypatch, tmp_path):
+    """Keep the exact authenticated public software tree for read-only VM checks.
+
+    Args:
+        monkeypatch: Controlled source helper module loader.
+        tmp_path: Synthetic installed root and media directory.
+    """
+    module = load_installer(monkeypatch)
+    media = tmp_path / "media"
+    source = media / "software"
+    source.mkdir(parents=True)
+    (source / "release-manifest.json").write_bytes(b"signed public manifest")
+    (source / "packages").mkdir()
+    (source / "packages/atlaso.whl").write_bytes(b"public application wheel")
+    target = tmp_path / "target"
+    state = target / "var/lib/atlaso"
+    state.mkdir(parents=True)
+    tmpfs = target / "tmp/atlaso-software"
+    shutil.copytree(source, tmpfs)
+
+    module.retain_development_inspection_inputs(media, target, _inspection_identity(module, source))
+
+    retained = state / "installation-inspection/software"
+    shutil.rmtree(target / "tmp")
+    assert (retained / "release-manifest.json").read_bytes() == b"signed public manifest"
+    assert (retained / "packages/atlaso.whl").read_bytes() == b"public application wheel"
+    assert module.inventory(retained) == module.inventory(source)
+
+
+def test_production_install_does_not_create_inspection_copy(monkeypatch, tmp_path):
+    """Leave production disk state unchanged for the development-only helper.
+
+    Args:
+        monkeypatch: Controlled source helper module loader.
+        tmp_path: Synthetic target root used to verify no mutation.
+    """
+    module = load_installer(monkeypatch)
+    target = tmp_path / "target"
+    identity = {"signing_key_id": "atlaso-release-2026-01"}
+
+    module.retain_development_inspection_inputs(tmp_path / "missing-media", target, identity)
+
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("corruption", ["marker", "digest"])
+def test_retained_inspection_refuses_changed_authority_or_software(monkeypatch, tmp_path, corruption):
+    """Refuse invalid development authority or changed bytes before target writes.
+
+    Args:
+        monkeypatch: Isolated native installer import fixture.
+        tmp_path: Task-owned media and destination fixture.
+        corruption: Independently changed marker or authenticated content digest.
+    """
+    module = load_installer(monkeypatch)
+    media = tmp_path / "media"
+    source = media / "software"
+    source.mkdir(parents=True)
+    manifest = source / "release-manifest.json"
+    manifest.write_bytes(b"authenticated public software")
+    identity = _inspection_identity(module, source)
+    if corruption == "marker":
+        identity["development"]["non_production"] = False
+    else:
+        manifest.write_bytes(b"changed public software")
+    target = tmp_path / "must-remain-absent"
+    with pytest.raises(ValueError):
+        module.retain_development_inspection_inputs(media, target, identity)
+    assert not target.exists()
+
+
+def test_existing_inspection_destination_is_preserved(monkeypatch, tmp_path):
+    """Refuse an existing inspection tree without replacing its files.
+
+    Args:
+        monkeypatch: Controlled source helper module loader.
+        tmp_path: Synthetic media and target roots.
+    """
+    module = load_installer(monkeypatch)
+    media = tmp_path / "media"
+    source = media / "software"
+    source.mkdir(parents=True)
+    (source / "release-manifest.json").write_bytes(b"authenticated public manifest")
+    state = tmp_path / "target/var/lib/atlaso"
+    destination = state / "installation-inspection/software"
+    destination.mkdir(parents=True)
+    (destination / "operator-file").write_bytes(b"preserve")
+
+    with pytest.raises(FileExistsError, match="already exist"):
+        module.retain_development_inspection_inputs(media, state.parents[2], _inspection_identity(module, source))
+
+    assert (destination / "operator-file").read_bytes() == b"preserve"
+
+
 @pytest.mark.parametrize("failure", [None, "missing-initrd", "empty-initrd", "missing-selection", "duplicate-selection", "escaping-selection"])
 def test_installed_boot_artifacts_require_native_kernel_and_initrd(monkeypatch, tmp_path, failure):
     """Refuse incomplete native boot setup before credentials or completion.

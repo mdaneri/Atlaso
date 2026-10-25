@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -36,12 +37,14 @@ from scripts.installation.manifest import (  # noqa: E402 - boot media path boot
     PHOTON_INSTALLER_SHA256,
     digest,
     installer_key_id,
+    inventory,
     verify_media,
 )
 
 NATIVE_PATH = Path("/usr/lib/python3.11/site-packages/photon_installer")
 TRUST_KEY = Path("/etc/atlaso-installer/trust.pem")
 MINIMUM_DISK_BYTES = 64 * 1024**3
+MAX_INSPECTION_SOFTWARE_BYTES = 2 * 1024**3
 
 
 class Cancelled(Exception):
@@ -303,6 +306,88 @@ def configure_development_serial_login(target: Path, identity: dict) -> None:
     subprocess.run(["chroot", str(target), "systemctl", "enable", "serial-getty@ttyS0.service"], check=True)
 
 
+def retain_development_inspection_inputs(media: Path, target: Path, identity: dict) -> None:
+    """Persist authenticated public software inputs for post-reboot VM checks.
+
+    Args:
+        media: Read-only mounted installer payload already verified by the caller.
+        target: Newly installed operating system root on an operator-selected disk.
+        identity: Signature-verified payload manifest returned by ``verify_media``.
+    """
+    development = identity.get("development")
+    if identity.get("signing_key_id") != DEVELOPMENT_KEY_ID:
+        if development is None:
+            return
+        raise ValueError("production installation cannot retain development inspection inputs")
+    if (not isinstance(development, dict)
+            or set(development) != {"schema", "software_source_commit", "non_production"}
+            or development.get("schema") != 1 or development.get("non_production") is not True
+            or not re.fullmatch(r"[0-9a-f]{40}", str(development.get("software_source_commit", "")))):
+        raise ValueError("inspection inputs require authenticated non-production media")
+
+    source = media / "software"
+    for media_directory in (media, source):
+        media_info = media_directory.lstat()
+        if (not stat.S_ISDIR(media_info.st_mode) or media_directory.is_symlink()
+                or (hasattr(media_directory, "is_junction") and media_directory.is_junction())):
+            raise ValueError("authenticated software media path is unsafe")
+    actual = inventory(source)
+    records = identity.get("files")
+    if not isinstance(records, list):
+        raise ValueError("authenticated software inventory is missing")
+    software_records = [item for item in records if isinstance(item, dict)
+                        and isinstance(item.get("path"), str) and item["path"].startswith("software/")]
+    if (any(not isinstance(item, dict) or set(item) != {"path", "size", "sha256"}
+            for item in records)
+            or any(not isinstance(item.get("size"), int) or isinstance(item["size"], bool)
+                   or item["size"] < 0 or not re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256", "")))
+                   for item in software_records)):
+        raise ValueError("authenticated software inventory record is invalid")
+    expected = {
+        str(item["path"])[len("software/"):]: item
+        for item in software_records
+    }
+    if (not expected or len(expected) != len(software_records)
+            or set(expected) != {item["path"] for item in actual}):
+        raise ValueError("authenticated software input set is incomplete")
+    total = 0
+    for item in actual:
+        record = expected[item["path"]]
+        if item["sha256"] != record.get("sha256") or item["size"] != record.get("size"):
+            raise ValueError("authenticated software input changed after verification")
+        total += item["size"]
+        if total > MAX_INSPECTION_SOFTWARE_BYTES:
+            raise ValueError("development inspection software exceeds its retention bound")
+
+    atlaso_state = target / "var/lib/atlaso"
+    for parent in (target, target / "var", target / "var/lib", atlaso_state):
+        parent_info = parent.lstat()
+        if (not stat.S_ISDIR(parent_info.st_mode) or parent.is_symlink()
+                or (hasattr(parent, "is_junction") and parent.is_junction())):
+            raise ValueError("installed inspection parent is unsafe")
+    inspection = atlaso_state / "installation-inspection"
+    if inspection.exists() or inspection.is_symlink():
+        info = inspection.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or inspection.is_symlink()
+                or (hasattr(inspection, "is_junction") and inspection.is_junction())):
+            raise ValueError("installed inspection directory is unsafe")
+    else:
+        inspection.mkdir(mode=0o755)
+    destination = inspection / "software"
+    if os.path.lexists(destination):
+        raise FileExistsError("installed inspection inputs already exist")
+    staged = inspection / ("software.tmp-" + secrets.token_hex(12))
+    try:
+        shutil.copytree(source, staged, copy_function=shutil.copyfile)
+        if inventory(staged) != actual:
+            raise ValueError("retained inspection inputs differ from authenticated media")
+        os.rename(staged, destination)
+    except Exception:
+        if staged.is_dir() and not staged.is_symlink():
+            shutil.rmtree(staged)
+        raise
+
+
 def install(media: Path, identity: dict, config: dict, consent: dict, credentials: tuple[str, str]) -> None:
     """Delegate partitions, base OS, bootloader and fstab to the pinned backend.
 
@@ -400,6 +485,7 @@ def install(media: Path, identity: dict, config: dict, consent: dict, credential
                     ["chroot", str(target), "/bin/sh", "/tmp/atlaso-src/image/common/scripts/provision-atlaso.sh"],
                     env=environment, check=True,
                 )
+                retain_development_inspection_inputs(media, target, identity)
                 record_layout(self.install_config["partitions"], target / "etc/atlaso/installation-layout.json")
                 policy = target / "etc/atlaso/data-disks.conf"
                 with policy.open("a") as handle:

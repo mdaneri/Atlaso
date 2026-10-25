@@ -204,7 +204,7 @@ def expected_inputs(iso_path: Path, iso_sha256: str) -> dict[str, Any]:
 
 def guest_program(
     expected: dict[str, Any], *, atlaso_root: Path = Path("/opt/atlaso"),
-    software_root: Path = Path("/tmp/atlaso-software"), identity_root: Path = Path("/")
+    software_root: Path = Path("/var/lib/atlaso/installation-inspection/software"), identity_root: Path = Path("/")
 ) -> str:
     """Return a bounded shell command that prints only public inspection data.
 

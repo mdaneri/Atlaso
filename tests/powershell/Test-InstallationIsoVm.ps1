@@ -1198,7 +1198,7 @@ $inspectionPair = $null
 try {
     $inspectionPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
     $inspectionSender = [AtlasoInstallationPipeTestWriter]::Start($inspectionPair.Client, [string[]]@(
-        "private-console-fixture`r`nATLASO-INSPEC", 'TION:eyJzY2hlbWEiOjF9', ":END`r`n"))
+        "private-console-fixture`r`n`rATLASO-INSPEC", 'TION:eyJzY2hlbWEiOjF9', ":END`r`r`n"))
     $inspectionRecord = Wait-InstallationConsoleState -Pipe $inspectionPair.Server -Pattern '' `
         -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadInspectionReport
     Assert-InstallationVmCondition ($inspectionRecord -ceq 'eyJzY2hlbWEiOjF9') 'Inspection must return only the fragmented encoded record.'
@@ -1208,7 +1208,7 @@ finally { if ($inspectionPair) { Close-InstallationTestPipePair -Pair $inspectio
 
 foreach ($fixture in @(
     @{ Text = "ATLASO-INSPECTION-FAILED`r`nprivate-error-details`r`n"; Error = 'Installed identity or application payload inspection failed.' },
-    @{ Text = "ATLASO-INSPECTION-FAILED:software-staging`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: software-staging.' },
+    @{ Text = "`rATLASO-INSPECTION-FAILED:software-staging`r`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: software-staging.' },
     @{ Text = "ATLASO-INSPECTION:e30=:END`r`nATLASO-INSPECTION:e30=:END`r`n"; Error = 'Installed inspection returned duplicate records.' },
     @{ Text = ('x' * 17000); Error = 'Installed inspection console output exceeded its bound.' }
 )) {
