@@ -148,6 +148,10 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("unsupported development VNC client")
             api = client_api
             client = api.connect(f"127.0.0.1::{args.port}", timeout=10)
+            # VMware's built-in console needs physical Shift events for upper
+            # case and shifted ASCII symbols. Reuse the pinned client's native
+            # force-caps behavior, also exposed by its command-line interface.
+            client.factory.force_caps = True
             send_field(client, expected, args.expected_screen_sha256, rectangle, sys.stdin, output)
         return 0
     except Exception:  # noqa: BLE001 - Third-party diagnostics must never disclose typed keys.

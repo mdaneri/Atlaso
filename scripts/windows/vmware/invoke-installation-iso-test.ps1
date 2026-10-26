@@ -605,6 +605,7 @@ function Wait-InstallationConsoleState {
     $buffer = [byte[]]::new(4096)
     $text = ''
     $failureDeadline = $null
+    $capacityDialogDeadline = $null
     $bootFailureDeadline = $null
     $lastProvisioningStage = $null
     $knownStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -621,10 +622,14 @@ function Wait-InstallationConsoleState {
             if ($failureDeadline -and [DateTimeOffset]::UtcNow -ge $failureDeadline) {
                 throw 'The installer reported a Python failure before the expected console state.'
             }
+            if ($capacityDialogDeadline -and [DateTimeOffset]::UtcNow -ge $capacityDialogDeadline) {
+                throw 'The installer did not display a complete native capacity refusal.'
+            }
             if ($bootFailureDeadline -and [DateTimeOffset]::UtcNow -ge $bootFailureDeadline) {
                 throw 'The installed system reported a kernel panic before login.'
             }
             $readDeadline = if ($failureDeadline -and $failureDeadline -lt $Deadline) { $failureDeadline } else { $Deadline }
+            if ($capacityDialogDeadline -and $capacityDialogDeadline -lt $readDeadline) { $readDeadline = $capacityDialogDeadline }
             if ($bootFailureDeadline -and $bootFailureDeadline -lt $readDeadline) { $readDeadline = $bootFailureDeadline }
             $remaining = [int][Math]::Min(30000, ($readDeadline - [DateTimeOffset]::UtcNow).TotalMilliseconds)
             if ($remaining -le 0) { break }
@@ -762,6 +767,45 @@ function Wait-InstallationConsoleState {
             if ($plain.Contains('Login incorrect', [StringComparison]::Ordinal)) {
                 throw 'Installed password authentication failed.'
             }
+            if ($ExpectedCapacityDisk -and
+                -not $plain.Contains('Traceback (most recent call last):', [StringComparison]::Ordinal)) {
+                $capacityHeaderSeen = $plain.Contains('Insufficient disk capacity.', [StringComparison]::Ordinal)
+                $capacityPromptSeen = $plain.Contains(
+                    'default installation requires a disk of at least 64 GiB', [StringComparison]::Ordinal)
+                if (($capacityHeaderSeen -or $capacityPromptSeen) -and -not $capacityDialogDeadline) {
+                    # Allow fragmented serial frames to finish the bounded native message,
+                    # then fail closed instead of waiting through the whole VM deadline.
+                    $capacityDialogDeadline = [DateTimeOffset]::UtcNow.AddSeconds(2)
+                }
+                if ($capacityHeaderSeen -or $capacityPromptSeen) {
+                    $visibleCapacityRows = @(ConvertFrom-InstallationConsoleFrame -Text $text |
+                        ForEach-Object { $_.Trim() })
+                    $capacityFound = $false
+                    for ($row = 0; $row -le $visibleCapacityRows.Count - 4; $row++) {
+                        if ($visibleCapacityRows[$row] -cne 'Insufficient disk capacity.' -or
+                            $visibleCapacityRows[$row + 1] -cne 'default installation requires a disk of at least 64 GiB' -or
+                            $visibleCapacityRows[$row + 3] -cne 'Press Enter to choose another disk, or Esc to cancel.') {
+                            continue
+                        }
+                        $capacityLine = [regex]::Match($visibleCapacityRows[$row + 2],
+                            '^Selected (?<disk>/dev/[a-zA-Z0-9_.-]{1,64}) has (?<bytes>[0-9]{1,20}) bytes\.$',
+                            [Text.RegularExpressions.RegexOptions]::CultureInvariant)
+                        if (-not $capacityLine.Success -or
+                            $capacityLine.Groups['disk'].Value -cne $ExpectedCapacityDisk -or
+                            $capacityLine.Groups['bytes'].Value -cne '4294967296') {
+                            throw 'The installer displayed a mismatched or malformed native capacity refusal.'
+                        }
+                        $capacityFound = $true
+                        break
+                    }
+                    if ($capacityFound) {
+                        Write-Host ('Public capacity refusal: {0}, 4294967296 bytes; requires 68719476736 bytes.' -f
+                            $ExpectedCapacityDisk)
+                        Write-Host 'The selected four-GiB disk was refused before erasure consent.'
+                        return
+                    }
+                }
+            }
             if ($plain.Contains('Traceback (most recent call last):', [StringComparison]::Ordinal)) {
                 if (-not $failureDeadline) { $failureDeadline = [DateTimeOffset]::UtcNow.AddSeconds(2) }
                 # Wait briefly for fragmented frames, then emit only allowlisted
@@ -795,11 +839,6 @@ function Wait-InstallationConsoleState {
                     if ($ExpectedCapacityDisk -and $kind.Groups[1].Value -ceq 'ValueError' -and -not $capacity.Success -and
                         [DateTimeOffset]::UtcNow -lt $failureDeadline) {
                         continue
-                    }
-                    if ($ExpectedCapacityDisk -and $kind.Groups[1].Value -ceq 'ValueError' -and $capacity.Success -and
-                        $capacity.Groups['disk'].Value -ceq $ExpectedCapacityDisk -and $capacity.Groups['bytes'].Value -ceq '4294967296') {
-                        Write-Host 'The selected four-GiB disk was refused before erasure consent.'
-                        return
                     }
                     throw ('The installer reported a Python failure before the expected console state. Public location: {0}; {1}.' -f $kind.Groups[1].Value, ($frames -join ', '))
                 }

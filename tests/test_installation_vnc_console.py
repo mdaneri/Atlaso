@@ -41,6 +41,7 @@ class Client:
         self.frame = frame
         self.keys: list[str] = []
         self.closed = False
+        self.factory = types.SimpleNamespace(force_caps=False)
 
     def captureScreen(self, stream, *, format: str) -> None:
         """Supply a frame without writing files.
@@ -197,3 +198,37 @@ def test_cli_sanitizes_client_failures_and_disconnects(tmp_path: Path, monkeypat
     assert result == 1 and client.closed
     assert captured.out == READY + "\n" + FAILED + "\n"
     assert captured.err == "" and sentinel not in captured.out
+    assert client.factory.force_caps is True
+
+
+def test_cli_enables_shift_before_sending_printable_keys(tmp_path: Path, monkeypatch, capsys) -> None:
+    """Use the existing client's physical Shift behavior for VMware consoles.
+
+    Args:
+        tmp_path: Pytest-owned image fixture directory.
+        monkeypatch: Scoped client and private-input substitutions.
+        capsys: Fixed public protocol output.
+    """
+    expected = png()
+    screen = tmp_path / "expected.png"
+    screen.write_bytes(expected)
+    client = Client(expected)
+    original_key = client.keyPress
+
+    def key_with_shift(key: str) -> None:
+        """Require the real client option before any control or printable key.
+
+        Args:
+            key: Public synthetic test key.
+        """
+        assert client.factory.force_caps is True
+        original_key(key)
+
+    client.keyPress = key_with_shift
+    api = types.SimpleNamespace(connect=lambda *args, **kwargs: client, shutdown=lambda: None)
+    monkeypatch.setitem(sys.modules, "vncdotool", types.SimpleNamespace(__version__="1.4.2", api=api))
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"password":"Public-fixture-42!"}\n'))
+    assert main(["--port", "6093", "--expected-screen", str(screen), "--expected-screen-sha256",
+                 hashlib.sha256(expected).hexdigest(), "--field-rectangle", "5,20,70,30"]) == 0
+    assert client.closed and client.keys[-1] == "enter"
+    assert capsys.readouterr().out == READY + "\n" + SENT + "\n"

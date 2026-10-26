@@ -1332,26 +1332,56 @@ foreach ($fixtureIdentity in @('admin', 'root')) {
 }
 
 foreach ($capacityFixture in @(
-    @{ Disk = '/dev/sda'; Bytes = '4294967296'; Pass = $true },
-    @{ Disk = '/dev/sdb'; Bytes = '4294967296'; Pass = $false },
-    @{ Disk = '/dev/sda'; Bytes = '4096'; Pass = $false }
+    @{ Disk = '/dev/sda'; Bytes = '4294967296'; Pass = $true; Fragmented = $true },
+    @{ Disk = '/dev/sdb'; Bytes = '4294967296'; Pass = $false; ExpectedFailure = 'mismatched or malformed' },
+    @{ Disk = '/dev/sda'; Bytes = '4096'; Pass = $false; ExpectedFailure = 'mismatched or malformed' },
+    @{ Disk = '/dev/sda'; Bytes = '4294967296'; Pass = $false; Malformed = $true; ExpectedFailure = 'complete native capacity refusal' },
+    @{ Disk = '/dev/sda'; Bytes = '4294967296'; Pass = $false; LegacyTraceback = $true; ExpectedFailure = 'reported a Python failure' }
 )) {
     $capacityPair = $null
     try {
         $capacityPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
-        $capacityLine = 'ValueError: default installation requires a disk of at least 64 GiB; selected {0} has {1} bytes' -f $capacityFixture.Disk, $capacityFixture.Bytes
-        $capacitySender = [AtlasoInstallationPipeTestWriter]::Start($capacityPair.Client, [string[]]@(
-            "Traceback (most recent call last):`n    raise ValueError('default installation requires a disk of at least 64 GiB')`n",
-            $capacityLine.Substring(0, 30), ($capacityLine.Substring(30) + "`n")))
+        if ($capacityFixture.LegacyTraceback) {
+            $capacityLine = 'ValueError: default installation requires a disk of at least 64 GiB; selected {0} has {1} bytes' -f $capacityFixture.Disk, $capacityFixture.Bytes
+            $capacityFragments = [string[]]@(
+                "Traceback (most recent call last):`r`n    raise ValueError('default installation requires a disk of at least 64 GiB')`r`n",
+                "  File `"/PublicFixture/installer.py`", line 205, in configure_console`r`n$capacityLine`r`n")
+        } elseif ($capacityFixture.Malformed) {
+            $capacityFragments = [string[]]@(
+                "Insufficient disk capacity.`r`ndefault installation requires a disk of at least 64 GiB`r`n",
+                (('Selected {0} has {1} bytes.' -f $capacityFixture.Disk, $capacityFixture.Bytes) + "`r`n"))
+        } else {
+            $capacityDialog = @(
+                'Insufficient disk capacity.',
+                'default installation requires a disk of at least 64 GiB',
+                ('Selected {0} has {1} bytes.' -f $capacityFixture.Disk, $capacityFixture.Bytes),
+                'Press Enter to choose another disk, or Esc to cancel.'
+            ) -join "`r`n"
+            if ($capacityFixture.Fragmented) {
+                $capacityFragments = [string[]]@(
+                    'Insufficient disk ',
+                    "capacity.`r`ndefault installation requires a disk of at least 64 GiB`r`nSelected /dev/s",
+                    'da has 4294',
+                    "967296 bytes.`r`nPress Enter to choose another disk, or Esc to cancel.`r`n")
+            } else {
+                $capacityFragments = [string[]]@($capacityDialog + "`r`n")
+            }
+        }
+        $capacitySender = [AtlasoInstallationPipeTestWriter]::Start($capacityPair.Client, $capacityFragments)
         $capacityAccepted = $false
+        $capacityFailure = ''
         try {
             $null = @(Wait-InstallationConsoleState -Pipe $capacityPair.Server -Pattern 'default installation requires a disk of at least 64 GiB' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ExpectedCapacityDisk '/dev/sda' 6>&1)
             $capacityAccepted = $true
         } catch {
-            if (-not $_.Exception.Message.StartsWith('The installer reported a Python failure', [StringComparison]::Ordinal)) { throw }
+            $capacityFailure = $_.Exception.Message
             $capacityAccepted = $false
         }
-        Assert-InstallationVmCondition ($capacityAccepted -eq $capacityFixture.Pass) 'Capacity acceptance must require the final refusal for the exact selected four-GiB disk, never echoed source or another disk.'
+        Assert-InstallationVmCondition ($capacityAccepted -eq $capacityFixture.Pass) 'Capacity acceptance must require the complete native refusal for the exact selected four-GiB disk, never an obsolete traceback or another disk.'
+        if (-not $capacityFixture.Pass) {
+            Assert-InstallationVmCondition ($capacityFailure.Contains($capacityFixture.ExpectedFailure, [StringComparison]::Ordinal)) `
+                'Mismatched, malformed, and obsolete capacity failures must remain refused.'
+        }
         Assert-InstallationVmCondition ($capacitySender.Wait(5000)) 'The capacity fixture writer did not finish.'
     }
     finally { if ($capacityPair) { Close-InstallationTestPipePair -Pair $capacityPair } }
