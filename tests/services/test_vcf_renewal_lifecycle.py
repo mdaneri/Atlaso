@@ -1,6 +1,7 @@
 """Approval, signing, uncertainty and verification boundaries for renewal."""
 
 import json
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, Mock
 
@@ -411,6 +412,55 @@ def test_async_replacement_uses_exact_chain_and_checkpoints_before_dispatch(setu
     client.replace.assert_called_once()
     assert operation["replacement_request_id"] == "replacement-request"
     assert operation["state"] == "succeeded"
+
+
+@pytest.mark.parametrize("stage", ["review", "approval", "worker"])
+@pytest.mark.parametrize("change", ["revoked", "disabled", "missing", "changed"])
+def test_invalidated_issued_material_never_reaches_replacement(setup, monkeypatch, stage, change):
+    """Revalidate real issued material at each approval and dispatch boundary.
+
+    Args:
+        setup: Isolated real CA issuance and synthetic VCF transport fixtures.
+        monkeypatch: Fixture binding the persistent runner to this test session.
+        stage: Point at which the administrator invalidates the issued record.
+        change: Certificate-accounting change that must invalidate admission.
+    """
+    db, policy, client = setup
+    propose(db, policy)
+    policy, operation = prepare(db, policy)
+    service._prepare(db, policy, operation)
+    db.get(Job, operation["job_id"]).status = "succeeded"
+    db.commit()
+    token = None
+    if stage != "review":
+        token = service.dispatch(db, "admin", "review", {"operation_id": operation["id"]})["review_token"]
+    if stage == "worker":
+        admitted = service.dispatch(db, "admin", "execute", {"operation_id": operation["id"], "review_token": token})
+    certificate = db.get(CaCertificate, operation["certificate_id"])
+    if change == "revoked":
+        certificate.status = "revoked"
+    elif change == "disabled":
+        certificate.enabled = False
+    elif change == "missing":
+        db.delete(certificate)
+    else:
+        certificate.certificate_pem = operation["root_pem"]
+    db.commit()
+    if stage == "worker":
+        monkeypatch.setattr(service, "SessionLocal", lambda: nullcontext(db))
+        service.run(admitted["job_id"])
+        assert db.get(Job, admitted["job_id"]).status == "failed"
+        retained = service._row(db, "operation", operation["id"])[1]
+        assert retained["state"] == "needs_recovery"
+        assert retained["checkpoint"] == "queued_replacement"
+    else:
+        action = "review" if stage == "review" else "execute"
+        with pytest.raises(service.RenewalError, match="prerequisites"):
+            service.dispatch(db, "admin", action, {"operation_id": operation["id"], "review_token": token})
+        assert service._row(db, "operation", operation["id"])[1]["state"] == "prepared"
+    client.replace.assert_not_called()
+    assert client.generate_csr.call_count == 1
+    assert db.scalar(select(Setting).where(Setting.key == "vcf_cert_lock:test-target")) is not None
 
 
 def test_lost_replacement_workflow_identity_is_not_declared_success_from_tls(setup, monkeypatch):

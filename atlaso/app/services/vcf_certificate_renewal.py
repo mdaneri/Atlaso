@@ -510,6 +510,21 @@ def _issue(db: Session, policy: dict[str, Any], operation: dict[str, Any]) -> No
                 leaf_pem=leaf, root_pem=root, replacement_certificate=metadata)
 
 
+def _material(db: Session, operation: dict[str, Any]) -> tuple[str, str]:
+    """Revalidate the retained public certificate against current CA accounting.
+
+    Args:
+        db: Active session admitted to the shared CA writer boundary.
+        operation: Exact CSR, issued-certificate identity and reviewed public PEM.
+    """
+    acquire_network_objects_write_lock(db)
+    db.expire_all()
+    leaf, root = native._material(db, operation)
+    if leaf != operation["leaf_pem"] or root.strip() != operation["root_pem"].strip():
+        raise RenewalError("Retained certificate material changed; native recovery is required.")
+    return leaf, root
+
+
 def _execute(db: Session, policy: dict[str, Any], operation: dict[str, Any]) -> None:
     """Dispatch the approved exact chain once and independently verify installation.
 
@@ -529,8 +544,9 @@ def _execute(db: Session, policy: dict[str, Any], operation: dict[str, Any]) -> 
         raise RenewalError("Native identity or SANs changed after preparation.")
     _, connection = _row(db, "connection", policy["connection_id"])
     with _client(db, connection) as client:
+        leaf, root = _material(db, operation)
         _checkpoint(db, operation, checkpoint="replacement_dispatch_pending", state="installing")
-        request_id = client.replace(policy["certificate_id"], operation["leaf_pem"].rstrip() + "\n" + operation["root_pem"].strip() + "\n")
+        request_id = client.replace(policy["certificate_id"], leaf.rstrip() + "\n" + root.strip() + "\n")
         _checkpoint(db, operation, checkpoint="replacement_submitted", replacement_request_id=request_id)
         _wait(client, request_id)
     _verify(db, policy, operation)
@@ -580,9 +596,7 @@ def _reconcile(db: Session, policy: dict[str, Any], operation: dict[str, Any]) -
     elif operation["checkpoint"] == "certificate_prepared" and operation.get("certificate_id"):
         # Issuance and its public material were committed atomically before the
         # worker stopped. Validate that retained material, never sign it again.
-        leaf, root = native._material(db, operation)
-        if leaf != operation["leaf_pem"] or root.strip() != operation["root_pem"].strip():
-            raise RenewalError("Retained certificate material changed; native recovery is required.")
+        _material(db, operation)
         _checkpoint(db, operation, state="prepared")
     elif operation.get("replacement_request_id"):
         _, connection = _row(db, "connection", policy["connection_id"])
@@ -762,6 +776,7 @@ def _dispatch(db: Session, actor: str, action: str, values: dict[str, Any]) -> d
         if action == "review":
             if operation["state"] != "prepared":
                 raise RenewalError("Prepare a certificate before reviewing replacement.")
+            _material(db, operation)
             token = _serializer().dumps({"actor": actor, "operation_id": operation["id"], "digest": _review_digest(operation)})
             return {"operation_id": operation["id"], "review_token": token, "summary": {
                 "host": policy["host"], "current_fingerprint": operation["current_fingerprint"], "replacement_certificate": operation["replacement_certificate"],
@@ -775,6 +790,7 @@ def _dispatch(db: Session, actor: str, action: str, values: dict[str, Any]) -> d
                 raise RenewalError("This review is stale or already used.")
             if operation["policy_snapshot"] != _policy_digest(policy) or not policy["enabled"]:
                 raise RenewalError("Enrollment changed after preparation; reconcile the retained operation.")
+            _material(db, operation)
             operation.update(state="installing", checkpoint="queued_replacement", approval_revision=operation.get("approval_revision", 0) + 1)
         elif action == "reconcile":
             if operation["state"] != "needs_recovery":

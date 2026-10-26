@@ -320,6 +320,7 @@ def test_replacement_review_is_actor_bound_single_use_and_rejects_stale_state(
     db, monkeypatch
 ):
     _prepared_review_state(db)
+    monkeypatch.setattr(renewal, "_material", Mock(return_value=("public leaf", "public chain")))
     monkeypatch.setattr(renewal, "acquire_network_objects_write_lock", Mock())
     reviewer = renewal.dispatch(db, ADMIN, "review", {"operation_id": OPERATION_ID})
     token = reviewer["review_token"]
@@ -354,6 +355,7 @@ def test_replacement_review_is_actor_bound_single_use_and_rejects_stale_state(
 
 def test_replacement_review_rejects_changed_material(db, monkeypatch):
     _prepared_review_state(db)
+    monkeypatch.setattr(renewal, "_material", Mock(return_value=("public leaf", "public chain")))
     monkeypatch.setattr(renewal, "acquire_network_objects_write_lock", Mock())
     token = renewal.dispatch(db, ADMIN, "review", {"operation_id": OPERATION_ID})["review_token"]
     _, operation = renewal._row(db, "operation", OPERATION_ID)
@@ -372,6 +374,7 @@ def test_replacement_review_rejects_changed_material(db, monkeypatch):
 
 def test_replacement_review_rejects_expired_token(db, monkeypatch):
     _prepared_review_state(db)
+    monkeypatch.setattr(renewal, "_material", Mock(return_value=("public leaf", "public chain")))
     monkeypatch.setattr(renewal, "acquire_network_objects_write_lock", Mock())
 
     class ExpiredSerializer:

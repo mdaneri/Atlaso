@@ -97,7 +97,8 @@ explicit workflow:
    CSR and Atlaso will sign that request. The target retains its private key.
 2. Follow the preparation task. Resolve any prerequisite or validation issue before proceeding to replacement.
 3. When the issued replacement is ready, open **Review replacement**. This review is bound to the administrator,
-   the exact target and certificate, and expires after ten minutes.
+   the exact target and certificate, and expires after ten minutes. Atlaso revalidates its issued-certificate record
+   at review, approval, and immediately before dispatch; revoked, disabled, missing, or changed material is refused.
 4. Verify the review again and select **Approve replacement** to submit the replacement through VCF Operations'
    asynchronous **EXTERNAL_CA** certificate workflow.
 5. Follow the task to completion. VCF's certificate status of `NORMAL` is not a component-health result. Atlaso
