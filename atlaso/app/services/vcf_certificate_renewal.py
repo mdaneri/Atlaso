@@ -255,12 +255,13 @@ def _inventory_record(connection_id: str, record: dict[str, Any]) -> dict[str, A
     return value
 
 
-def _inventory(db: Session, connection_id: str) -> list[dict[str, Any]]:
-    """Read the complete fleet inventory without certificate-management writes.
+def _inventory(db: Session, connection_id: str, *, certificate_id: str | None = None) -> list[dict[str, Any]]:
+    """Read fleet metadata and limit TLS probes to the selected target when given.
 
     Args:
         db: Active database session.
         connection_id: Saved integration identity.
+        certificate_id: Optional exact identity selected before target TLS probing.
     """
     _, connection = _row(db, "connection", connection_id)
     with _client(db, connection) as client:
@@ -268,6 +269,8 @@ def _inventory(db: Session, connection_id: str) -> list[dict[str, Any]]:
     identifiers = [str(item.get("certificateResourceKey", "")) for item in records]
     if len(identifiers) != len(set(identifiers)):
         raise RenewalError("VCF returned ambiguous certificate identities.")
+    if certificate_id is not None:
+        records = [record for record in records if record.get("certificateResourceKey") == certificate_id]
     result = []
     for record in records:
         try:
@@ -285,7 +288,7 @@ def _selected(db: Session, policy: dict[str, Any]) -> dict[str, Any]:
         db: Active database session.
         policy: Persisted exact target binding.
     """
-    records = [r for r in _inventory(db, policy["connection_id"]) if r["certificate_id"] == policy["certificate_id"]]
+    records = _inventory(db, policy["connection_id"], certificate_id=policy["certificate_id"])
     if len(records) != 1 or not records[0].get("eligible") or records[0]["host"] != policy["host"]:
         raise RenewalError("The enrolled target is missing, ambiguous or no longer eligible.")
     return records[0]
@@ -850,7 +853,7 @@ def _save_policy(db: Session, actor: str, values: dict[str, Any]) -> dict[str, A
         return _disable_policy(db, actor, str(values["policy_id"]))
     connection_id = str(values["connection_id"])
     certificate_id = str(values["certificate_id"])
-    candidates = [r for r in _inventory(db, connection_id) if r["certificate_id"] == certificate_id and r.get("eligible")]
+    candidates = [r for r in _inventory(db, connection_id, certificate_id=certificate_id) if r["certificate_id"] == certificate_id and r.get("eligible")]
     if len(candidates) != 1:
         raise RenewalError("Select one eligible vCenter Machine SSL certificate.")
     observed = candidates[0]

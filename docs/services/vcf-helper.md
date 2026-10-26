@@ -94,6 +94,10 @@ local policy and its schedule, so it remains available during a VCF outage or wh
 target, credential, profile and timing bindings are retained; disabling does not apply other wizard edits. A proposal
 can be cancelled this way, but an already prepared, running, or uncertain renewal must be finished or reconciled first.
 
+Scheduled and per-target workflow checks read fleet metadata but probe only the enrolled target's TLS endpoint.
+This avoids repeating unrelated target timeouts during checks, preparation, and replacement. Use **Refresh inventory**
+to explicitly inspect the whole fleet.
+
 The schedule and **Check now** perform discovery and propose due work. They do not generate a CSR, sign a certificate,
 install a certificate, or replace VCF Operations' native scheduler. When renewal is due, an administrator starts the
 explicit workflow:

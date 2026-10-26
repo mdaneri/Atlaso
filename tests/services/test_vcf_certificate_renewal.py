@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 from itsdangerous import SignatureExpired
@@ -132,6 +132,94 @@ def test_check_policy_uses_expiry_threshold_and_suppresses_duplicate_proposals(
     assert len(operations) == (1 if expected == "proposal" else 0)
     client_factory.assert_not_called()
     issue_certificate.assert_not_called()
+
+
+@pytest.mark.parametrize("unrelated_count", [1, 100])
+def test_scheduled_discovery_probes_only_its_enrolled_fleet_target(db, monkeypatch, unrelated_count):
+    """Unreachable unrelated fleet members cannot multiply per-policy TLS probes.
+
+    Args:
+        db: Isolated enrollment database.
+        monkeypatch: Fixture replacing only transport and the TLS projection boundary.
+        unrelated_count: Number of unrelated fleet members that would time out.
+    """
+    policy = _store_policy(db)
+    renewal._put(db, "connection", CONNECTION_ID, {"id": CONNECTION_ID})
+    db.commit()
+    client = MagicMock()
+    client.inventory.return_value = [{"certificateResourceKey": "other-" + str(n)} for n in range(unrelated_count)] + [{"certificateResourceKey": policy["certificate_id"]}]
+    context = MagicMock()
+    context.__enter__.return_value = client
+    monkeypatch.setattr(renewal, "_client", Mock(return_value=context))
+
+    def project(connection_id, record):
+        """Simulate the per-endpoint TLS observation, failing unrelated probes.
+
+        Args:
+            connection_id: Exact saved Operations integration.
+            record: One fleet record admitted to target TLS probing.
+        """
+        assert connection_id == CONNECTION_ID
+        if record["certificateResourceKey"] != policy["certificate_id"]:
+            raise RemoteError("unrelated endpoint timeout")
+        return _observation(10)
+
+    projection = Mock(side_effect=project)
+    monkeypatch.setattr(renewal, "_inventory_record", projection)
+    assert renewal.check_policy(db, POLICY_ID)["state"] == "proposal"
+    projection.assert_called_once_with(CONNECTION_ID, {"certificateResourceKey": policy["certificate_id"]})
+    client.inventory.assert_called_once()
+    client.generate_csr.assert_not_called()
+    client.replace.assert_not_called()
+
+
+def test_explicit_fleet_refresh_retains_all_target_probes(db, monkeypatch):
+    """Only the operator's inventory refresh projects the whole fleet.
+
+    Args:
+        db: Isolated connection database.
+        monkeypatch: Fixture replacing remote reads and TLS projection.
+    """
+    renewal._put(db, "connection", CONNECTION_ID, {"id": CONNECTION_ID})
+    db.commit()
+    records = [{"certificateResourceKey": "vc-" + str(n)} for n in range(3)]
+    client = MagicMock()
+    client.inventory.return_value = records
+    context = MagicMock()
+    context.__enter__.return_value = client
+    monkeypatch.setattr(renewal, "_client", Mock(return_value=context))
+    projection = Mock(side_effect=lambda connection_id, record: {"certificate_id": record["certificateResourceKey"]})
+    monkeypatch.setattr(renewal, "_inventory_record", projection)
+    assert len(renewal.dispatch(db, ADMIN, "inventory", {"connection_id": CONNECTION_ID})["inventory"]) == 3
+    assert projection.call_count == 3
+
+
+@pytest.mark.parametrize("invalid", ["missing", "duplicate", "wrong_host", "ineligible"])
+def test_target_selection_still_rejects_incomplete_or_ambiguous_identity(db, monkeypatch, invalid):
+    """Filtering before TLS cannot weaken the selected-target identity gate.
+
+    Args:
+        db: Isolated enrollment database.
+        monkeypatch: Fixture supplying adversarial fleet metadata.
+        invalid: Missing, ambiguous or changed target evidence to reject.
+    """
+    policy = _store_policy(db)
+    renewal._put(db, "connection", CONNECTION_ID, {"id": CONNECTION_ID})
+    db.commit()
+    record = {"certificateResourceKey": policy["certificate_id"]}
+    client = MagicMock()
+    client.inventory.return_value = [] if invalid == "missing" else [record, record] if invalid == "duplicate" else [record]
+    context = MagicMock()
+    context.__enter__.return_value = client
+    monkeypatch.setattr(renewal, "_client", Mock(return_value=context))
+    observed = _observation(10)
+    observed.update(host="changed.example.test" if invalid == "wrong_host" else policy["host"], eligible=invalid != "ineligible")
+    projection = Mock(return_value=observed)
+    monkeypatch.setattr(renewal, "_inventory_record", projection)
+    with pytest.raises(renewal.RenewalError, match="missing, ambiguous|ambiguous certificate"):
+        renewal._selected(db, policy)
+    if invalid in {"missing", "duplicate"}:
+        projection.assert_not_called()
 
 
 def test_default_enrollment_is_disabled_and_uses_real_timezone_schedule_validation(
