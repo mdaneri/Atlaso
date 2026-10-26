@@ -8,9 +8,9 @@ status: current
 
 # Appliance certificates with Atlaso
 
-For the research-only status of VCF-native renewal through a possible Microsoft CA compatibility adapter, see the
-[VCF Microsoft CA compatibility investigation](../reference/vcf-msca-compatibility.md). Native enrollment and a complete
-second renewal remain untested; this does not add automatic renewal to the replacement workflows below.
+Use Atlaso as the issuing CA while the target appliance generates its own certificate signing request (CSR) and keeps
+its private key. Install the signed leaf certificate and public CA chain through the target's native administration
+workflow. Start with [Certificate Authority](certificate-authority.md) for CA configuration and access.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
@@ -22,6 +22,10 @@ This verified appliance view provides visual orientation before you begin.
 *Figure: Choose a saved vault credential or request-local manual login before confirming target TLS identity.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+For the status of the deferred VCF-native Microsoft CA compatibility investigation, see the
+[VCF Microsoft CA compatibility investigation](../reference/vcf-msca-compatibility.md). This remains separate from
+the experimental Atlaso-managed vCenter Machine SSL workflow below.
 
 ## Atlaso Appliance Certificate Replacement
 
@@ -63,9 +67,35 @@ If another request advances the operation, read its current status before retryi
 If a saved operation is missing or belongs to another administrator, **Forget inaccessible reference** clears only
 this browser's reference. Its durable task and target reservations remain unchanged; temporary outages retain the reference.
 
-Use Atlaso as the issuing CA while the target appliance generates its own certificate signing request (CSR) and keeps
-its private key. Install the signed leaf certificate and public CA chain through the target's native administration
-workflow. Start with [Certificate Authority](certificate-authority.md) for CA configuration and access.
+## Atlaso-managed certificate renewal
+
+The experimental **Certificate Renewal** workflow is separate from the on-demand replacement paths in this guide.
+Its first target is vCenter Machine SSL through the VCF Operations 9.1.1 contract; native live acceptance remains
+pending. Enrollment is off by default. The administrator confirms the VCF Operations endpoint fingerprint and selects
+its saved Vault credential, then independently compares the target vCenter's displayed observed TLS fingerprint with
+a trusted source and confirms it. A separate saved vCenter Vault credential is required for authenticated, read-only
+native permission, topology, DNS, time, and health checks before and after replacement. It is not used for CSR or
+certificate replacement writes; those use VCF Operations APIs. The administrator then opts the target into
+Atlaso-managed renewal with a 30-day expiry threshold and a daily 02:00 UTC discovery schedule by default. The cron
+schedule and timezone can be configured per policy.
+
+The schedule and **Check now** discover due certificates and propose work. They do not generate, sign or install
+certificates. The administrator must explicitly select **Prepare renewal**, acknowledge the native CSR generation and
+Atlaso signing step, then inspect the proposed identity and certificate. **Review replacement** presents a
+single-use, administrator-bound review that expires after ten minutes. Only **Approve replacement** sends the reviewed
+certificate through VCF Operations' asynchronous **EXTERNAL_CA** replacement workflow. The target creates and retains
+its private key; Atlaso never exports it.
+
+The VCF certificate status `NORMAL` alone does not establish component health. Atlaso reports success after it verifies
+the exact reviewed leaf over a fresh strict-TLS connection and authenticated read-only checks using the saved vCenter
+credential confirm target health. A pending or uncertain native task retains its reservation until **Reconcile status**
+determines the outcome. Reconcile the recorded task before requesting another CSR or replacement. Atlaso-managed state
+remains distinct from VCF Operations' native Auto Renewal status. See the
+[VCF Helper operator steps](vcf-helper.md#certificate-renewal) for using the workspace.
+
+The compatibility adapter investigation is deferred to [Release 1.1 and issue #1053](https://github.com/mdaneri/Atlaso/issues/1053).
+That decision records sequencing only; MSCA interoperability has not been disproved or accepted, and vendor support is
+unconfirmed. The release-1.0 managed workflow does not claim to change VCF's native renewal status.
 
 ## Choose the certificate and trust operation
 

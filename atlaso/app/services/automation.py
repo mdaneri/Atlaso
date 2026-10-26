@@ -48,6 +48,7 @@ SCHEDULE_TASK_TYPES = {
     "vcf_depot_download",
     "managed_script",
     "dhcp_pool_verify",
+    "vcf_certificate_renewal_check",
 }
 SCRIPT_INTERPRETERS = {"bash", "python", "powershell"}
 SCHEDULE_JOB_TYPES = {
@@ -56,6 +57,7 @@ SCHEDULE_JOB_TYPES = {
     "vcf_depot_download": "vcf-depot-download",
     "managed_script": "managed-script",
     "dhcp_pool_verify": "dhcp-pool-verify",
+    "vcf_certificate_renewal_check": "vcf-certificate-renewal-check",
 }
 MAX_SCRIPT_TIMEOUT_SECONDS = 24 * 60 * 60
 MAX_SCRIPT_CONTENT_BYTES = 1024 * 1024
@@ -371,6 +373,11 @@ def validate_schedule_values(
         detached = allow_detached_dhcp_scope and "scope_id" not in config
         if not detached and (isinstance(scope_id, bool) or not isinstance(scope_id, int) or scope_id <= 0):
             errors.append("DHCP pool verification schedules require a positive integer scope_id.")
+    elif task_type == "vcf_certificate_renewal_check":
+        if not isinstance(config.get("policy_id"), str) or not re.fullmatch(r"[a-f0-9]{32}", config["policy_id"]):
+            errors.append("VCF renewal checks require an enrolled policy identity.")
+        if set(config) != {"policy_id"}:
+            errors.append("VCF renewal schedules may contain only a policy identity; preparation and replacement cannot be scheduled.")
     elif task_type == "managed_script":
         if not isinstance(config.get("revision_id"), int):
             errors.append("Managed script schedules require an integer revision_id.")
@@ -390,6 +397,10 @@ def validate_schedule_values(
             fields = cron_expression.split()
             if not fields or not re.fullmatch(r"(?:0?[0-9]|[1-5][0-9])", fields[0]):
                 errors.append("DHCP pool verification schedules must recur hourly or less often.")
+        if task_type == "vcf_certificate_renewal_check":
+            fields = cron_expression.split()
+            if not fields or not re.fullmatch(r"(?:0?[0-9]|[1-5][0-9])", fields[0]):
+                errors.append("VCF renewal checks must recur hourly or less often.")
     elif schedule_kind == "once":
         if task_type == "dhcp_pool_verify":
             errors.append("DHCP pool verification schedules must recur hourly or less often.")
