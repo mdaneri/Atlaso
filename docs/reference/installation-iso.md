@@ -274,8 +274,9 @@ Add `-InspectInstalled -InspectionPythonPath <ABSOLUTE-PYTHON-EXECUTABLE>` to `A
 to measure public machine identities and application wheel equality. Use an existing Python environment with the
 locked ISO build dependencies. Before retrieving credentials or starting the VM, the adapter authenticates the original
 ISO checksum and derives its software and helper expectations. After the root account challenge, it reuses the staged
-software verifier and installed wheel inspector, returning only a bounded public report. Development installations
-retain the authenticated software set under `/var/lib/atlaso/installation-inspection/software`; Photon's installer
+software verifier and installed wheel inspector, returning only a bounded public report. Inspection commands preserve
+Linux guest paths on Windows hosts. Development installations retain the authenticated software set under
+`/var/lib/atlaso/installation-inspection/software`; Photon's installer
 mounts `/tmp` as temporary memory, so the provisioning stage there cannot serve as post-reboot evidence. Production
 images do not retain this development inspection copy. Older development VMs without the persistent copy require
 a rebuilt ISO and a fresh receipt-owned installation for payload inspection. Missing staged software,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import base64
 import hashlib
 import io
@@ -163,6 +164,19 @@ def _expected() -> dict[str, object]:
         "payload_inspector_sha256": "e" * 64,
         "wheel_sha256": "f" * 64,
     }
+
+
+def test_default_guest_paths_stay_posix_on_windows_hosts() -> None:
+    """Host path conventions must not redirect authenticated guest helper reads."""
+    command = guest_program(_expected())
+    encoded = re.search(r'b64decode\("([A-Za-z0-9+/=]+)"\)', command)
+    assert encoded is not None
+    program = zlib.decompress(base64.b64decode(encoded.group(1))).decode()
+    strings = {node.value for node in ast.walk(ast.parse(program))
+               if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+
+    assert {"/opt/atlaso", "/var/lib/atlaso/installation-inspection/software", "/"} <= strings
+    assert not any(value.startswith("\\") for value in strings)
 
 
 def _report(expected: dict[str, object]) -> bytes:
