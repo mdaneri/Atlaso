@@ -482,6 +482,57 @@ Assert-InstallationVmCondition ($runningVmxReader.Contains('[IO.FileShare]::Read
 Assert-InstallationVmCondition ($runningVmxAdmission.Contains("@('-T', 'ws', 'list')") -and
     $runningVmxAdmission.Contains('ConvertFrom-AtlasoVmrunListOutput') -and $runningVmxAdmission.Contains('ExpectedIdentity')) `
     'Console admission must prove the exact VMX identity appears once in checked Workstation running inventory.'
+& {
+    param([string]$TargetPath, [string]$OtherPath)
+    <#
+    .SYNOPSIS
+    Return synthetic multiline provider stdout without starting a process.
+    .PARAMETER FilePath
+    Unused public fixture executable pathname.
+    .PARAMETER ArgumentList
+    Exact expected inventory arguments.
+    .PARAMETER TimeoutSeconds
+    Required bounded inventory deadline.
+    .PARAMETER Action
+    Public operation description.
+    #>
+    function Invoke-AtlasoBoundedProcess {
+        param([string]$FilePath, [string[]]$ArgumentList, [int]$TimeoutSeconds, [string]$Action)
+        if (($ArgumentList -join ' ') -cne '-T ws list' -or $TimeoutSeconds -ne 30 -or -not $FilePath -or -not $Action) {
+            throw 'Running inventory lost its bounded provider contract.'
+        }
+        return $inventory
+    }
+    <#
+    .SYNOPSIS
+    Model the shared parser's line-array boundary using existing read-only fixture files.
+    .PARAMETER Output
+    Individually split provider output lines; VMX file validation belongs to the shared parser tests.
+    #>
+    function ConvertFrom-AtlasoVmrunListOutput {
+        param([string[]]$Output)
+        if ($Output.Count -lt 2 -or $Output[0] -cnotmatch '^Total running VMs: [12]$' -or
+            @($Output | Where-Object { $_ -match "[`r`n]" }).Count) {
+            throw 'The inventory parser requires separate stdout lines.'
+        }
+        return @($Output | Select-Object -Skip 1 | Where-Object { $_ })
+    }
+    $identity = [Atlaso.WorkstationFileIdentity]::Get($TargetPath)
+    foreach ($newline in @("`n", "`r`n")) {
+        $inventory = @('Total running VMs: 2', $OtherPath, $TargetPath, '') -join $newline
+        Assert-InstallationVmRunning -VmrunPath 'synthetic-vmrun.exe' -VmxPath $TargetPath -ExpectedIdentity $identity
+    }
+    foreach ($lines in @(
+            @('Total running VMs: 1', $OtherPath),
+            @('Total running VMs: 2', $TargetPath, $TargetPath)
+        )) {
+        $inventory = $lines -join "`r`n"
+        $rejected = $false
+        try { Assert-InstallationVmRunning -VmrunPath 'synthetic-vmrun.exe' -VmxPath $TargetPath -ExpectedIdentity $identity }
+        catch { $rejected = $true }
+        if (-not $rejected) { throw 'Ambiguous or absent receipt-bound running VM was admitted.' }
+    }
+} $harnessPath $consoleDriverPath
 Assert-InstallationVmCondition (-not $consoleDiskAdmission.Contains('Assert-InstallationDiskUnchanged') -and
     -not $consoleDiskAdmission.Contains('Invoke-AtlasoBoundedProcess')) `
     'Console disk admission may pin receipt-bound file identities but must never compare or inspect disk contents.'

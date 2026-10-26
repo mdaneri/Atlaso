@@ -655,9 +655,9 @@ function Assert-InstallationVmRunning {
     if ([Atlaso.WorkstationFileIdentity]::Get($VmxPath) -cne $ExpectedIdentity) {
         throw 'Receipt-bound installation VMX identity changed before the running-VM check.'
     }
-    $output = @(Invoke-AtlasoBoundedProcess -FilePath $VmrunPath -ArgumentList @('-T', 'ws', 'list') `
+    $output = [string](Invoke-AtlasoBoundedProcess -FilePath $VmrunPath -ArgumentList @('-T', 'ws', 'list') `
         -TimeoutSeconds 30 -Action 'Read running VMware Workstation VM inventory')
-    $runningPaths = @(ConvertFrom-AtlasoVmrunListOutput -Output ([string[]]$output))
+    $runningPaths = @(ConvertFrom-AtlasoVmrunListOutput -Output @($output -split "`r?`n"))
     $matchingVms = @($runningPaths | Where-Object {
         (Get-AtlasoPathIdentity -Path $_ -Description 'running VMware VMX') -ceq $ExpectedIdentity
     })
