@@ -246,22 +246,40 @@ def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tup
             self.partition_disks.clear()
             return super().delete()
 
-    config = {"arch": "x86_64", "bootmode": "efi"}
-    if not SelectDisk(maxy, maxx, config).display().success:
-        raise Cancelled()
-    if not config.get("autopartition"):
-        if not MultiDiskPartitions(maxy, maxx, config).display().success:
+    while True:
+        config = {"arch": "x86_64", "bootmode": "efi"}
+        if not SelectDisk(maxy, maxx, config).display().success:
             raise Cancelled()
-    else:
-        config["partitions"] = [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]
-    paths = selected_disks(config)
-    consent = {path: initial[path] for path in paths}
-    revalidate_disks(config, consent, disk_inventory())
-    if config.get("autopartition") and consent[config["disk"]]["size"] < MINIMUM_DISK_BYTES:
-        raise ValueError(
-            f"default installation requires a disk of at least 64 GiB; "
-            f"selected {config['disk']} has {consent[config['disk']]['size']} bytes"
-        )
+        if not config.get("autopartition"):
+            if not MultiDiskPartitions(maxy, maxx, config).display().success:
+                raise Cancelled()
+        else:
+            config["partitions"] = [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]
+        paths = selected_disks(config)
+        consent = {path: initial[path] for path in paths}
+        revalidate_disks(config, consent, disk_inventory())
+        if not config.get("autopartition") or consent[config["disk"]]["size"] >= MINIMUM_DISK_BYTES:
+            break
+
+        # Keep the admission error inside Photon's native informational dialog.
+        # Dismissing it returns to explicit disk selection; its cancel key exits
+        # through the same pre-write cancellation path as other installer dialogs.
+        from confirmwindow import ConfirmWindow
+
+        selected = config["disk"]
+        size = consent[selected]["size"]
+        message = "\n".join((
+            "Insufficient disk capacity.",
+            "default installation requires a disk of at least 64 GiB",
+            f"Selected {selected} has {size} bytes.",
+            "Press Enter to choose another disk, or Esc to cancel.",
+        ))
+        height = len(message.splitlines()) + 7
+        width = maxx - 4
+        starty = (maxy - height) // 2 + height - 4
+        result = ConfirmWindow(height, width, maxy, maxx, starty, message, info=True).do_action()
+        if not result.success:
+            raise Cancelled()
     summary_lines = ["Erase selected disks?"]
     layout_lines = []
     for path in paths:

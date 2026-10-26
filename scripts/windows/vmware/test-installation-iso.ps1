@@ -1,13 +1,15 @@
 <#
 .SYNOPSIS
-Create, verify, or remove an owned, isolated VMware VM for Atlaso installation ISO testing.
+Create, admit, verify, or remove an owned, isolated VMware VM for Atlaso installation ISO testing.
 .DESCRIPTION
 Creates a receipt-bound, EFI-only VM with an installation ISO, two blank SCSI disks,
 no network adapters, and a serial named-pipe endpoint supplied by the caller. Before
 first start it records logical-content baselines for both disks. Verify stops the
 receipt-bound VM if needed and compares selected disk contents against those baselines.
 .PARAMETER Mode
-Select Create, Verify, BootInstalled, ResumeInstalled, or Cleanup. BootInstalled verifies disks, records the stopped-VM transition,
+Select Create, AdmitConsole, Verify, BootInstalled, ResumeInstalled, or Cleanup. AdmitConsole admits an already-running,
+receipt-bound VM for a local console observer and returns its public VMX, ISO identity, original receipt selectors, and
+local serial endpoint. It does not stop the VM or inspect disk contents. BootInstalled verifies disks, records the stopped-VM transition,
 disconnects the pinned ISO, and starts the installed system with its existing private serial endpoint.
 ResumeInstalled reuses the original boot receipt and verified disconnected configuration without editing the VMX.
 .PARAMETER Worktree
@@ -55,7 +57,7 @@ Optional exact qemu-img executable path used for logical disk comparisons.
 #>
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('Create', 'Verify', 'BootInstalled', 'ResumeInstalled', 'Cleanup')][string]$Mode = 'Create',
+    [ValidateSet('Create', 'AdmitConsole', 'Verify', 'BootInstalled', 'ResumeInstalled', 'Cleanup')][string]$Mode = 'Create',
     [string]$Worktree = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path,
     [string]$OutputDirectory = '',
     [ValidateRange(0, 2147483647)][int]$PullRequestNumber = 0,
@@ -536,6 +538,136 @@ function Assert-InstallationVmDiskBindings {
 
 <#
 .SYNOPSIS
+Read a stable VMX snapshot without excluding the running VM from in-place updates.
+.PARAMETER Path
+Exact VMX path held by the caller's no-replacement identity pin.
+.PARAMETER ExpectedIdentity
+Current VMX filesystem identity pinned under the original persistent VM binding.
+#>
+function Read-InstallationRunningVmxText {
+    param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$ExpectedIdentity)
+    if ([Atlaso.WorkstationFileIdentity]::Get($Path) -cne $ExpectedIdentity) {
+        throw 'Receipt-bound installation VMX identity changed before console admission.'
+    }
+    $readBytes = {
+        param([string]$FilePath)
+        $stream = [IO.File]::Open($FilePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try {
+            if ($stream.Length -gt 1048576) { throw 'Installation VMX exceeds its bounded size.' }
+            $bytes = [byte[]]::new([int]$stream.Length)
+            $stream.ReadExactly($bytes)
+            return ,$bytes
+        }
+        finally { $stream.Dispose() }
+    }
+    $first = & $readBytes $Path
+    $second = & $readBytes $Path
+    if ([Atlaso.WorkstationFileIdentity]::Get($Path) -cne $ExpectedIdentity -or
+        [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($first)) -cne
+        [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($second))) {
+        throw 'Receipt-bound installation VMX changed while its running configuration was read.'
+    }
+    return (Get-InstallationVmxEncoding -Bytes $second).GetString($second)
+}
+
+<#
+.SYNOPSIS
+Require the isolated installation fixture's receipt-bound disks, ISO, and local serial endpoint.
+.PARAMETER VmxLines
+Stable running VMX snapshot lines.
+.PARAMETER Context
+Admitted task context with canonical name and output directory.
+.PARAMETER IsoPath
+Pinned installation ISO path from the original VM receipt.
+#>
+function Assert-InstallationConsoleBindings {
+    param([string[]]$VmxLines, [psobject]$Context, [string]$IsoPath)
+    Assert-InstallationVmDiskBindings -VmxLines $VmxLines -Context $Context -IsoPath $IsoPath
+    # This pure validator also refuses extra devices, network adapters, a changed
+    # firmware mode, a detached ISO, or a non-local serial endpoint. Discarding
+    # its transformed text keeps the running VMX entirely read-only.
+    $null = ConvertTo-InstallationDiskBootConfiguration -Text ([string]::Join("`n", $VmxLines))
+    $serialLines = @($VmxLines | Where-Object { $_ -cmatch '^serial0\.fileName\s*=\s*"(?<pipe>[^"\r\n]+)"$' })
+    if ($serialLines.Count -ne 1) { throw 'The admitted installation serial endpoint is unavailable.' }
+    $serialPath = [regex]::Match($serialLines[0], '^serial0\.fileName\s*=\s*"(?<pipe>[^"\r\n]+)"$').Groups['pipe'].Value
+    Assert-InstallationSerialPipePath -Path $serialPath
+    return $serialPath
+}
+
+<#
+.SYNOPSIS
+Pin the two receipt-bound VMDK identities without comparing or restricting guest writes.
+.PARAMETER Baseline
+Validated disk-baseline receipt containing target and unselected roles.
+.PARAMETER Context
+Admitted task context with the canonical output directory.
+.PARAMETER Pins
+Mutable-file pins retained by the caller until console admission completes.
+#>
+function Assert-InstallationConsoleDiskIdentities {
+    param(
+        [psobject]$Baseline,
+        [psobject]$Context,
+        [Collections.Generic.List[object]]$Pins
+    )
+    foreach ($role in @('target', 'unselected')) {
+        $entries = @($Baseline.disks | Where-Object { [string]$_.role -ceq $role })
+        $fileName = if ($role -ceq 'target') { 'target-64g.vmdk' } else { 'unselected-4g.vmdk' }
+        $expectedPath = [IO.Path]::GetFullPath((Join-Path $Context.OutputDirectory $fileName))
+        if ($entries.Count -ne 1 -or
+            -not [IO.Path]::IsPathFullyQualified([string]$entries[0].source.path) -or
+            -not ([IO.Path]::GetFullPath([string]$entries[0].source.path)).Equals($expectedPath, [StringComparison]::OrdinalIgnoreCase) -or
+            [string]$entries[0].source.file_identity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$' -or
+            [string]$entries[0].source.sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+            [long]$entries[0].source.virtual_size_bytes -le 0) {
+            throw "Disk-baseline receipt must bind exactly one valid $role disk at its original path."
+        }
+        $pin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryMutableFile($expectedPath)
+        try {
+            if ([Atlaso.WorkstationFileIdentity]::Get($expectedPath) -cne [string]$entries[0].source.file_identity) {
+                throw "Receipt-bound $role disk identity changed before console admission."
+            }
+            $Pins.Add($pin)
+        }
+        catch {
+            $pin.Dispose()
+            throw
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Require exactly one running Workstation VM with the receipt-bound VMX identity.
+.PARAMETER VmrunPath
+Resolved vmrun executable.
+.PARAMETER VmxPath
+Canonical target VMX path.
+.PARAMETER ExpectedIdentity
+Original receipt-bound VMX filesystem identity.
+#>
+function Assert-InstallationVmRunning {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][string]$ExpectedIdentity
+    )
+    if ([Atlaso.WorkstationFileIdentity]::Get($VmxPath) -cne $ExpectedIdentity) {
+        throw 'Receipt-bound installation VMX identity changed before the running-VM check.'
+    }
+    $output = @(Invoke-AtlasoBoundedProcess -FilePath $VmrunPath -ArgumentList @('-T', 'ws', 'list') `
+        -TimeoutSeconds 30 -Action 'Read running VMware Workstation VM inventory')
+    $runningPaths = @(ConvertFrom-AtlasoVmrunListOutput -Output ([string[]]$output))
+    $matchingVms = @($runningPaths | Where-Object {
+        (Get-AtlasoPathIdentity -Path $_ -Description 'running VMware VMX') -ceq $ExpectedIdentity
+    })
+    if ($matchingVms.Count -ne 1 -or [Atlaso.WorkstationFileIdentity]::Get($VmxPath) -cne $ExpectedIdentity) {
+        throw 'The exact receipt-bound installation VM is not running, or its running registration is ambiguous.'
+    }
+}
+
+<#
+.SYNOPSIS
 Disconnect only the known installation CD drive without changing disks, networking, or the serial endpoint.
 .PARAMETER Text
 Stopped, receipt-bound VMX text read through its exclusive writer.
@@ -581,9 +713,11 @@ $name = if ($PullRequestNumber -gt 0) {
 }
 $context = New-InstallationVmContext -Root $resolvedWorktree -Destination $resolvedOutput -Name $name
 
-if ($Mode -in @('Verify', 'BootInstalled', 'ResumeInstalled')) {
+if ($Mode -in @('AdmitConsole', 'Verify', 'BootInstalled', 'ResumeInstalled')) {
     $vmxPin = $null
     $rootPin = $null
+    $isoPin = $null
+    $storagePins = [Collections.Generic.List[object]]::new()
     try {
         if ($Mode -eq 'ResumeInstalled' -and (-not $BootReceiptPath -or $BootReceiptSha256 -cnotmatch '^[0-9a-f]{64}$')) {
             throw 'ResumeInstalled requires the independently preserved installed-boot receipt and SHA-256.'
@@ -618,14 +752,88 @@ if ($Mode -in @('Verify', 'BootInstalled', 'ResumeInstalled')) {
         if ([Atlaso.WorkstationFileIdentity]::Get($context.OutputDirectory) -cne [string]$original.original_identities.directory) {
             throw 'Installation VM artifact directory no longer matches its creation receipt.'
         }
-        $vmxPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($context.VmxPath, $true)
+        $admittedVmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($context.VmxPath)
+        $vmxPin = if ($Mode -eq 'AdmitConsole') {
+            [Atlaso.WorkstationFileIdentity]::PinOrdinaryMutableFile($context.VmxPath)
+        } else {
+            [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($context.VmxPath, $true)
+        }
+        if ($Mode -eq 'AdmitConsole') {
+            if (-not $context.Enabled) { throw 'Console admission requires an enabled task-owned VM receipt context.' }
+            # Workstation can replace the VMX while starting a VM. Keep the
+            # original directory and persistent marker authoritative, as Verify
+            # already does, and exclude further replacement throughout admission.
+            if ([Atlaso.WorkstationFileIdentity]::Get($context.VmxPath) -cne $admittedVmxIdentity) {
+                throw 'Installation VMX identity changed while its console pin was acquired.'
+            }
+            if ($BootReceiptPath -or $BootReceiptSha256) {
+                throw 'AdmitConsole requires the initial connected installation ISO.'
+            }
+        }
         $rootPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($context.OutputDirectory, $true)
         if ([Atlaso.WorkstationFileIdentity]::Get($context.OutputDirectory) -cne [string]$original.original_identities.directory) {
             throw 'Installation VM artifact directory changed while its verification pin was acquired.'
         }
-        $cleanupIdentity = Get-AtlasoTestVmOwnershipCleanupIdentity -VmxPath $context.VmxPath
-        if ((Get-AtlasoTestVmOwnershipCleanupIdentityHash -Value $cleanupIdentity) -cne [string]$original.persistent_vm_identity_sha256) {
-            throw 'Installation VM persistent ownership identity differs from its creation receipt.'
+        if ($Mode -ne 'AdmitConsole') {
+            $cleanupIdentity = Get-AtlasoTestVmOwnershipCleanupIdentity -VmxPath $context.VmxPath
+            if ((Get-AtlasoTestVmOwnershipCleanupIdentityHash -Value $cleanupIdentity) -cne [string]$original.persistent_vm_identity_sha256) {
+                throw 'Installation VM persistent ownership identity differs from its creation receipt.'
+            }
+        }
+        if ($Mode -eq 'AdmitConsole') {
+            Assert-AtlasoTestVmCheckoutSource -Context $context
+            if ([string]$original.installation_iso.filesystem_identity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$' -or
+                [long]$original.installation_iso.size -lt 64MB) {
+                throw 'Original installation ISO filesystem identity or size is malformed.'
+            }
+            $isoPath = [IO.Path]::GetFullPath([string]$original.installation_iso.path)
+            $isoPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($isoPath, $true)
+            $isoFile = Get-Item -LiteralPath $isoPath -Force -ErrorAction Stop
+            if ([Atlaso.WorkstationFileIdentity]::Get($isoPath) -cne [string]$original.installation_iso.filesystem_identity -or
+                [long]$isoFile.Length -ne [long]$original.installation_iso.size -or
+                (Get-FileHash -LiteralPath $isoPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$original.installation_iso.sha256) {
+                throw 'Installation ISO no longer matches its original receipt identity, size, and SHA-256.'
+            }
+            $vmxText = Read-InstallationRunningVmxText -Path $context.VmxPath `
+                -ExpectedIdentity $admittedVmxIdentity
+            $vmxLines = @($vmxText -split "`r?`n")
+            $serialPath = Assert-InstallationConsoleBindings -VmxLines $vmxLines -Context $context -IsoPath $isoPath
+            Assert-InstallationConsoleDiskIdentities -Baseline $baseline -Context $context -Pins $storagePins
+            $cleanupIdentityLines = @($vmxLines | Where-Object { $_ -match '^\s*guestinfo\.atlaso\.test_vm_cleanup_identity\s*=' })
+            $cleanupIdentityMatch = if ($cleanupIdentityLines.Count -eq 1) {
+                [regex]::Match($cleanupIdentityLines[0], '^\s*guestinfo\.atlaso\.test_vm_cleanup_identity\s*=\s*"(?<identity>[0-9a-f]{32})"\s*$')
+            }
+            if ($cleanupIdentityLines.Count -ne 1 -or -not $cleanupIdentityMatch.Success -or
+                (Get-AtlasoTestVmOwnershipCleanupIdentityHash -Value $cleanupIdentityMatch.Groups['identity'].Value) -cne [string]$original.persistent_vm_identity_sha256) {
+                throw 'Installation VM persistent identity does not match the original creation receipt.'
+            }
+            if ((Read-InstallationRunningVmxText -Path $context.VmxPath `
+                    -ExpectedIdentity $admittedVmxIdentity) -cne $vmxText) {
+                throw 'Receipt-bound installation VMX configuration changed during console admission.'
+            }
+            $vmrun = Resolve-InstallationVmTool -Path $VmrunPath -FileName 'vmrun.exe'
+            Assert-InstallationVmRunning -VmrunPath $vmrun -VmxPath $context.VmxPath `
+                -ExpectedIdentity $admittedVmxIdentity
+            if ([Atlaso.WorkstationFileIdentity]::Get($context.OutputDirectory) -cne [string]$original.original_identities.directory) {
+                throw 'Installation VM artifact directory changed during console admission.'
+            }
+            [pscustomobject]@{
+                VmxPath = $context.VmxPath
+                SerialPipePath = $serialPath
+                IsoIdentity = [pscustomobject]@{
+                    Path = $isoPath
+                    FileIdentity = [string]$original.installation_iso.filesystem_identity
+                    Size = [long]$original.installation_iso.size
+                    Sha256 = [string]$original.installation_iso.sha256
+                }
+                OriginalReceiptPath = [IO.Path]::GetFullPath($OriginalReceiptPath)
+                OriginalReceiptSha256 = $OriginalReceiptSha256
+                BaselineReceiptPath = [IO.Path]::GetFullPath($BaselineReceiptPath)
+                BaselineReceiptSha256 = $BaselineReceiptSha256
+                BootReceiptPath = $BootReceiptPath
+                BootReceiptSha256 = $BootReceiptSha256
+            }
+            return
         }
         $vmxLines = @((Read-InstallationVmxText -Path $context.VmxPath) -split "`r?`n")
         Assert-InstallationVmDiskBindings -VmxLines $vmxLines -Context $context -IsoPath ([string]$original.installation_iso.path)
@@ -756,6 +964,8 @@ if ($Mode -in @('Verify', 'BootInstalled', 'ResumeInstalled')) {
         }
     }
     finally {
+        foreach ($pin in $storagePins) { $pin.Dispose() }
+        if ($isoPin) { $isoPin.Dispose() }
         if ($rootPin) { $rootPin.Dispose() }
         if ($vmxPin) { $vmxPin.Dispose() }
         if ($context.PSObject.Properties['CheckoutSourcePin'] -and $context.CheckoutSourcePin) {

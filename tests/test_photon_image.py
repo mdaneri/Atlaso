@@ -2132,6 +2132,9 @@ def test_vmware_source_snapshot_resists_during_packer_checkout_changes(
     if pwsh is None:
         pytest.skip("PowerShell 7 is required")
 
+    # Nested immutable inspector exports include their original receipt names.
+    # Keep the fixture beneath pytest's owned root without exhausting Win32 paths.
+    output_directory = tmp_path.parent / "source-snapshot"
     result = subprocess.run(
         [
             pwsh,
@@ -2143,14 +2146,14 @@ def test_vmware_source_snapshot_resists_during_packer_checkout_changes(
             "-RepositoryRoot",
             str(Path.cwd()),
             "-OutputDirectory",
-            str(tmp_path / "source-snapshot"),
+            str(output_directory),
         ],
         check=False,
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    evidence_root = tmp_path / "source-snapshot" / "certificate-repository" / "test-results"
+    evidence_root = output_directory / "certificate-repository" / "test-results"
     assert f"Certificate evidence root: {evidence_root}" in result.stdout
     for entrypoint in ("inspect-certificate-peer.ps1", "inspect-certificate-handoff.ps1"):
         assert f"Certificate entrypoint admission checks passed: {entrypoint}" in result.stdout

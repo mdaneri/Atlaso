@@ -534,13 +534,16 @@ Existing task-owned test-results root; original creation evidence remains here.
 Exact source commit named by the native plan.
 .PARAMETER TaskId
 Originating Codex task identity.
+.PARAMETER Purpose
+Select the existing certificate inspector or the development installation VNC inspector namespace.
 #>
 function New-AtlasoCertificateInspectorSnapshot {
     param(
         [Parameter(Mandatory)][string]$RepositoryRoot,
         [Parameter(Mandatory)][string]$EvidenceRoot,
         [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string]$SourceCommit,
-        [Parameter(Mandatory)][string]$TaskId
+        [Parameter(Mandatory)][string]$TaskId,
+        [ValidateSet('certificate', 'installation-vnc')][string]$Purpose = 'certificate'
     )
 
     $resolvedEvidence = Resolve-AtlasoSourceSnapshotDirectory -Path $EvidenceRoot -Description 'Certificate evidence root'
@@ -548,7 +551,8 @@ function New-AtlasoCertificateInspectorSnapshot {
     if ($checkout.Commit -cne $SourceCommit -or $TaskId -cne $env:CODEX_THREAD_ID) {
         throw 'Certificate inspector source commit or task identity differs from its plan.'
     }
-    $name = 'certificate-inspector-source-' + [guid]::NewGuid().ToString('N')
+    $prefix = if ($Purpose -eq 'certificate') { 'certificate-inspector-source' } else { 'installation-vnc-inspector-source' }
+    $name = $prefix + '-' + [guid]::NewGuid().ToString('N')
     $stageRoot = Join-Path $resolvedEvidence $name
     $verificationRoot = Join-Path $resolvedEvidence ($name + '-verify')
     $manifestPath = Join-Path $resolvedEvidence ($name + '.creation.json')
@@ -557,7 +561,7 @@ function New-AtlasoCertificateInspectorSnapshot {
         throw 'Certificate inspector source staging paths are not fresh.'
     }
     $manifest = [ordered]@{
-        schema = 1; kind = 'certificate-inspector-source'; task_id = $TaskId
+        schema = 1; kind = $prefix; task_id = $TaskId
         repository = 'mdaneri/Atlaso'; worktree = [IO.Path]::GetFullPath($RepositoryRoot)
         source_commit = $SourceCommit; staging_root = $stageRoot
         verification_root = $verificationRoot; created_at = [DateTimeOffset]::UtcNow.ToString('o')
@@ -582,15 +586,20 @@ function New-AtlasoCertificateInspectorSnapshot {
         $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($scriptsRoot))
         # The credentialed child imports these modules by name. Pin their
         # directory too so a concurrent ACL change cannot add a .pyd shadow.
+        $namespace = if ($Purpose -eq 'certificate') { 'interop' } else { 'installation' }
         $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
-            (Join-Path $scriptsRoot 'interop')))
-        foreach ($relative in @(
+            (Join-Path $scriptsRoot $namespace)))
+        $inspectorFiles = if ($Purpose -eq 'certificate') { @(
                 'scripts/__init__.py',
                 'scripts/interop/certificate_handoff_native.py',
                 'scripts/interop/certificate_peer_proof.py',
                 'scripts/interop/certificate_peer_transport.py',
                 'scripts/completed_task_files.py'
-            )) {
+            ) } else { @(
+                'scripts/__init__.py', 'scripts/installation/__init__.py',
+                'scripts/installation/vnc_console.py', 'scripts/installation/vnc_frame.py'
+            ) }
+        foreach ($relative in $inspectorFiles) {
             $path = Join-Path $snapshot.Root $relative
             $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true))
         }
@@ -614,11 +623,15 @@ function Protect-AtlasoCertificatePythonRuntime {
 
     .PARAMETER EvidenceRoot
     Task-owned evidence root containing the isolated virtual environment.
+
+    .PARAMETER RequiredModules
+    Top-level packages required by the credentialed validation consumer. Existing certificate callers require paramiko.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$PythonPath,
-        [Parameter(Mandatory)][string]$EvidenceRoot
+        [Parameter(Mandatory)][string]$EvidenceRoot,
+        [ValidateNotNullOrEmpty()][ValidatePattern('^[A-Za-z_][A-Za-z0-9_]*$')][string[]]$RequiredModules = @('paramiko')
     )
 
     $executable = [IO.Path]::GetFullPath($PythonPath)
@@ -672,8 +685,13 @@ function Protect-AtlasoCertificatePythonRuntime {
                 $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true))
             }
         }
-        if ($count -lt 100 -or -not (Test-Path -LiteralPath (Join-Path $venvRoot 'Lib/site-packages/paramiko/__init__.py'))) {
+        if ($count -lt 100) {
             throw 'Certificate Python dependencies are incomplete.'
+        }
+        foreach ($moduleName in $RequiredModules) {
+            if (-not (Test-Path -LiteralPath (Join-Path $venvRoot "Lib/site-packages/$moduleName/__init__.py") -PathType Leaf)) {
+                throw 'Credentialed validation Python dependencies are incomplete.'
+            }
         }
         if (@(Get-ChildItem -LiteralPath (Join-Path $venvRoot 'Lib/site-packages') -Filter '*.pth' -File -Force).Count -or
             (Test-Path -LiteralPath (Join-Path $venvRoot 'Lib/site-packages/sitecustomize.py')) -or

@@ -336,6 +336,56 @@ finally {
     $directoryPin.Dispose()
 }
 
+$inspectorRepository = Join-Path $OutputDirectory 'inspector-source-repository'
+New-Item -ItemType Directory -Path $inspectorRepository | Out-Null
+& git -C $inspectorRepository init --initial-branch=main | Out-Null
+& git -C $inspectorRepository config user.name 'Atlaso Snapshot Test'
+& git -C $inspectorRepository config user.email 'snapshot-test@example.invalid'
+$inspectorFiles = @(
+    'scripts/__init__.py', 'scripts/completed_task_files.py',
+    'scripts/interop/certificate_handoff_native.py', 'scripts/interop/certificate_peer_proof.py',
+    'scripts/interop/certificate_peer_transport.py', 'scripts/installation/__init__.py',
+    'scripts/installation/vnc_console.py', 'scripts/installation/vnc_frame.py'
+)
+foreach ($relative in $inspectorFiles) {
+    $path = Join-Path $inspectorRepository $relative
+    New-Item -ItemType Directory -Path (Split-Path $path) -Force | Out-Null
+    [IO.File]::WriteAllText($path, '# synthetic inspector source')
+}
+& git -C $inspectorRepository add scripts
+& git -C $inspectorRepository commit -m 'inspector fixture' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Could not commit inspector source fixture.' }
+$inspectorCommit = (& git -C $inspectorRepository rev-parse HEAD).Trim()
+$savedTaskId = $env:CODEX_THREAD_ID
+$env:CODEX_THREAD_ID = 'snapshot-inspector-test'
+try {
+    foreach ($purpose in @('certificate', 'installation-vnc')) {
+        $inspector = New-AtlasoCertificateInspectorSnapshot -RepositoryRoot $inspectorRepository `
+            -EvidenceRoot $OutputDirectory -SourceCommit $inspectorCommit `
+            -TaskId $env:CODEX_THREAD_ID -Purpose $purpose
+        try {
+            $relative = if ($purpose -eq 'certificate') {
+                'scripts/interop/certificate_peer_proof.py'
+            } else { 'scripts/installation/vnc_console.py' }
+            $blocked = $false
+            try { [IO.File]::WriteAllText((Join-Path $inspector.Root $relative), 'replacement') }
+            catch [IO.IOException] { $blocked = $true }
+            catch [UnauthorizedAccessException] { $blocked = $true }
+            if (-not $blocked) { throw 'An admitted inspector source dependency was writable.' }
+            $manifest = Get-Content -LiteralPath $inspector.Manifest -Raw | ConvertFrom-Json
+            $expectedKind = if ($purpose -eq 'certificate') {
+                'certificate-inspector-source'
+            } else { 'installation-vnc-inspector-source' }
+            if ($manifest.kind -cne $expectedKind -or $manifest.source_commit -cne $inspectorCommit) {
+                throw 'Inspector source receipt lost its purpose or original commit binding.'
+            }
+        } finally {
+            try { Unprotect-AtlasoSourceSnapshot -Root $inspector.Root }
+            finally { foreach ($pin in $inspector.Pins) { $pin.Dispose() } }
+        }
+    }
+} finally { $env:CODEX_THREAD_ID = $savedTaskId }
+
 $runtimeFixture = Join-Path $OutputDirectory 'certificate-python-pin-fixture'
 $venv = Join-Path $runtimeFixture 'venv'
 $base = Join-Path $runtimeFixture 'base'
@@ -370,6 +420,29 @@ try {
 }
 finally {
     foreach ($pin in $runtime.Pins) { $pin.Dispose() }
+}
+foreach ($moduleName in @('vncdotool', 'twisted', 'PIL')) {
+    $modulePath = Join-Path $venv "Lib/site-packages/$moduleName/__init__.py"
+    New-Item -ItemType Directory -Path (Split-Path $modulePath) -Force | Out-Null
+    [IO.File]::WriteAllText($modulePath, 'synthetic optional validation import')
+}
+$runtime = Protect-AtlasoCertificatePythonRuntime -PythonPath $python -EvidenceRoot $OutputDirectory `
+    -RequiredModules @('vncdotool', 'twisted', 'PIL')
+try {
+    $blocked = $false
+    try { [IO.File]::WriteAllText((Join-Path $venv 'Lib/site-packages/vncdotool/__init__.py'), 'replacement') }
+    catch [IO.IOException] { $blocked = $true }
+    catch [UnauthorizedAccessException] { $blocked = $true }
+    if (-not $blocked) { throw 'An optional validation import was not pinned.' }
+}
+finally { foreach ($pin in $runtime.Pins) { $pin.Dispose() } }
+foreach ($modules in @(@('missing_validation_package'), @('../paramiko'), @('paramiko/other'), @(''))) {
+    $admitted = $null
+    $rejected = $false
+    try { $admitted = Protect-AtlasoCertificatePythonRuntime -PythonPath $python -EvidenceRoot $OutputDirectory -RequiredModules $modules }
+    catch { $rejected = $true }
+    finally { if ($admitted) { foreach ($pin in $admitted.Pins) { $pin.Dispose() } } }
+    if (-not $rejected) { throw 'An invalid or missing optional runtime module was admitted.' }
 }
 $startupPath = Join-Path $venv 'Lib/site-packages/injected.pth'
 [IO.File]::WriteAllText($startupPath, 'import injected')

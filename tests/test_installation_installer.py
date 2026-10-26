@@ -546,9 +546,9 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
             self.menu = SimpleNamespace(position=0)
 
         def do_action(self):
-            """Decline the destructive confirmation."""
+            """Cancel an informational refusal or decline destructive confirmation."""
             confirmation["default"] = self.menu.position
-            return SimpleNamespace(success=True, result={"yes": False})
+            return SimpleNamespace(success=not confirmation["info"], result={"yes": False})
 
     monkeypatch.setitem(sys.modules, "confirmwindow", SimpleNamespace(ConfirmWindow=ConfirmWindow))
 
@@ -579,9 +579,13 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
     monkeypatch.setattr(module.curses, "color_pair", lambda *_args: 0, raising=False)
 
     if size_gib < 64:
-        with pytest.raises(ValueError, match=rf"selected /dev/nvme0n1 has {size_gib * 1024**3} bytes$"):
+        with pytest.raises(module.Cancelled):
             module.configure_console(Screen(), initial)
         assert calls == ["revalidate"]
+        assert confirmation["info"] is True
+        assert "default installation requires a disk of at least 64 GiB" in confirmation["message"]
+        assert f"Selected /dev/nvme0n1 has {size_gib * 1024**3} bytes." in confirmation["message"]
+        assert "Press Enter to choose another disk, or Esc to cancel." in confirmation["message"]
     else:
         with pytest.raises(module.Cancelled):
             module.configure_console(Screen(), initial)
@@ -592,6 +596,111 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
         assert "Serial/WWN: serial-root" in confirmation["message"]
         assert "/boot/efi vfat 10 MiB (Photon UEFI default)" in confirmation["message"]
         assert "ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST." in confirmation["message"]
+
+
+def test_small_default_disk_refusal_returns_to_native_disk_selection(monkeypatch):
+    """Allow choosing a different disk after a native capacity refusal.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
+    module = load_installer(monkeypatch)
+    selected = []
+    messages = []
+
+    class Screen:
+        def getmaxyx(self):
+            return 25, 80
+
+        def bkgd(self, *_args):
+            """Accept the standard Photon background setup.
+
+            Args:
+                *_args: Background arguments supplied by the installer.
+            """
+
+    class SelectDisk:
+        def __init__(self, _height, _width, config):
+            """Capture the selection configuration.
+
+            Args:
+                _height: Terminal height supplied by the installer.
+                _width: Terminal width supplied by the installer.
+                config: Mutable native installer configuration.
+            """
+            self.config = config
+
+        def display(self):
+            path = ("/dev/sdb", "/dev/nvme0n1")[len(selected)]
+            selected.append(path)
+            self.config.update({"disk": path, "autopartition": True})
+            return SimpleNamespace(success=True)
+
+    class ConfirmWindow:
+        def __init__(self, height, width, maxy, maxx, starty, message, info=False):
+            """Capture and validate a native Photon confirmation window.
+
+            Args:
+                height: Dialog height.
+                width: Dialog width.
+                maxy: Terminal height.
+                maxx: Terminal width.
+                starty: Native menu start row.
+                message: Text presented by the dialog.
+                info: Whether the dialog is informational.
+            """
+            assert_native_confirmation_geometry(height, width, maxy, maxx, starty, message)
+            messages.append((message, info))
+            self.menu = SimpleNamespace(position=0)
+
+        def do_action(self):
+            if messages[-1][1]:
+                return SimpleNamespace(success=True, result={})
+            return SimpleNamespace(success=True, result={"yes": False})
+
+    class CustomPartition:
+        pass
+
+    class Device:
+        refresh_devices = None
+        refresh_devices_bytes = None
+
+    class PartitionPane:
+        pass
+
+    monkeypatch.setitem(sys.modules, "custompartition", SimpleNamespace(
+        CustomPartition=CustomPartition, PartitionPane=PartitionPane,
+    ))
+    monkeypatch.setitem(sys.modules, "device", SimpleNamespace(Device=Device))
+    monkeypatch.setitem(sys.modules, "partitionpane", SimpleNamespace(PartitionPane=PartitionPane))
+    monkeypatch.setitem(sys.modules, "selectdisk", SimpleNamespace(SelectDisk=SelectDisk))
+    monkeypatch.setitem(sys.modules, "confirmwindow", SimpleNamespace(ConfirmWindow=ConfirmWindow))
+    initial = {
+        "/dev/sdb": {"size": 4 * 1024**3, "model": "Small test disk", "serial": "serial-small"},
+        "/dev/nvme0n1": {"size": 128 * 1024**3, "model": "NVMe", "serial": "serial-root"},
+    }
+    monkeypatch.setattr(module, "disk_inventory", lambda: initial)
+    monkeypatch.setattr(module, "selected_disks", lambda config: [config["disk"]])
+    revalidated = []
+    monkeypatch.setattr(module, "revalidate_disks", lambda _config, consent, _current: revalidated.append(tuple(consent)))
+    monkeypatch.setattr(module.curses, "init_pair", lambda *_args: None, raising=False)
+    monkeypatch.setattr(module.curses, "curs_set", lambda *_args: None, raising=False)
+    monkeypatch.setattr(module.curses, "color_pair", lambda *_args: 0, raising=False)
+    monkeypatch.setattr(module.curses, "COLOR_WHITE", 1, raising=False)
+    monkeypatch.setattr(module.curses, "COLOR_BLUE", 2, raising=False)
+    monkeypatch.setattr(module.curses, "COLOR_BLACK", 3, raising=False)
+    monkeypatch.setattr(module.curses, "COLOR_GREEN", 4, raising=False)
+    monkeypatch.setattr(module.curses, "COLOR_RED", 5, raising=False)
+    monkeypatch.setattr(module, "prompt", lambda *_args, **_kwargs: pytest.fail("credentials must follow capacity admission"))
+
+    with pytest.raises(module.Cancelled):
+        module.configure_console(Screen(), initial)
+
+    assert selected == ["/dev/sdb", "/dev/nvme0n1"]
+    assert len(revalidated) == 2
+    assert messages[0][1] is True
+    assert "Selected /dev/sdb has 4294967296 bytes." in messages[0][0]
+    assert messages[1][1] is False
 
 
 def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partition(monkeypatch):

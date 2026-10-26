@@ -159,6 +159,8 @@ The same confirmation displays the selected disks and proposed layout; no typed 
 Long custom layouts use native review pages before that final confirmation. `Insufficient`
 selects the fixture's four-GiB disk and requires the exact capacity refusal for that disk before consent. Both
 scenarios use no credentials and compare both disks with their pre-boot baselines after stopping the VM.
+The native capacity dialog identifies the selected disk and its size. Enter returns to explicit disk selection;
+Escape cancels before credentials or disk writes.
 Creation records a separate disk-baseline receipt before first boot. Retain both original receipt paths and their
 creation-time hashes from the console driver's ownership output. The console runner automatically verifies disks
 within its process deadline. To repeat verification afterward:
@@ -169,6 +171,57 @@ within its process deadline. To repeat verification afterward:
   -OriginalReceiptPath <ORIGINAL-RECEIPT> -OriginalReceiptSha256 <ORIGINAL-RECEIPT-SHA256> `
   -BaselineReceiptPath <BASELINE-RECEIPT> -BaselineReceiptSha256 <BASELINE-RECEIPT-SHA256>
 ```
+
+### Background VNC console checks
+
+The built-in Workstation VNC server can be controlled with a command-line client without using the host keyboard or
+mouse. Keep the original VM and disk-baseline receipts. Configure only that stopped VM, use an unused port bound
+exclusively to `127.0.0.1`, and verify the live listener belongs to its exact VMX. Keep the VM's network adapters absent.
+The development ISO selects `ttyS0`; for a graphical-console test, edit only that boot's GRUB kernel arguments to use
+`console=tty0`. Record this override with the result; it does not validate the default serial startup path.
+
+For an initial installer password field, `VncCredential` reuses the bounded SDK bridge, source/runtime pins, native
+provider verifier and concealed-field byte encoder. Its optional client is VNCDoTool **1.4.2**, installed with its
+dependencies into an isolated, creation-receipted task virtual environment under the seven-day package-age policy.
+Record the original client package inventory with `Get-AtlasoSourceSnapshotInventory` from
+`Atlaso.SourceSnapshot.psm1`. Ordinary application installs do not require this client. The frame tests require its
+optional Pillow dependency and are run in the prepared validation environment.
+
+First observe and capture the **empty, concealed password prompt** through the receipt-bound VNC connection. Review
+its account label and input focus, retain the image's SHA-256, and identify only its single input-row rectangle.
+Never admit a shell, ordinary text field, or arbitrary unreviewed screenshot. The adapter compares the complete live
+screen outside that small rectangle before requesting stdin and again before typing. It clears any previous retry
+text, checks the frame again, and submits only the selected SDK value. Passwords never enter arguments, environment
+variables, screenshots, ordinary files or diagnostic output. An unexpected frame, peer, source or runtime refuses
+submission; do not replace the recorded digest merely to make a refusal pass.
+
+```powershell
+.\scripts\windows\vmware\invoke-installation-iso-test.ps1 `
+  -Scenario VncCredential -TimeoutSeconds 600 `
+  -IsoPath <ORIGINAL-ISO-PATH> -IsoSha256 <ORIGINAL-ISO-SHA256> `
+  -OutputDirectory <EXACT-VM-OUTPUT-DIRECTORY> -PullRequestNumber <OWNING-PR-NUMBER> `
+  -CollisionSuffix <ORIGINAL-SUFFIX> `
+  -OriginalReceiptPath <ORIGINAL-RECEIPT> -OriginalReceiptSha256 <ORIGINAL-RECEIPT-SHA256> `
+  -BaselineReceiptPath <BASELINE-RECEIPT> -BaselineReceiptSha256 <BASELINE-RECEIPT-SHA256> `
+  -VncAccount admin -VncPort <LOOPBACK-PORT> `
+  -VncScreenPath <REVIEWED-EMPTY-FIELD-PNG> -VncScreenSha256 <RECORDED-PNG-SHA256> `
+  -VncFieldRectangle <X0,Y0,X1,Y1> -VncPythonPath <ISOLATED-VENV-PYTHON> `
+  -VncRuntimeSha256 <ORIGINAL-SITE-INVENTORY-SHA256> -VncRuntimeFileCount <ORIGINAL-FILE-COUNT>
+```
+
+`AdmitConsole` in `test-installation-iso.ps1` provides the existing running VM's read-only admission for this operation.
+It requires the initial connected ISO, original receipts, persistent identity, exact disk bindings, isolated EFI
+configuration and exact running provider. It neither stops the VM nor verifies logical disk contents. Continue to use
+`Verify` after stopping or cancelling, and preserve the separate disk-comparison result.
+
+After the VNC-driven installation completes, stop that exact VM with the owning verifier and release the initial
+private serial-pipe controller. Use `BootInstalled` on the same original VM and baseline selectors to create the
+existing media-disconnection receipt, reboot without the ISO, and run the ordinary root/admin challenges. Add
+`-InspectInstalled -InspectionPythonPath <PREPARED-INSPECTION-PYTHON>` for the existing identity and application
+payload checks. Preserve the emitted boot receipt and its creation-time digest for later `LoginInstalled` resumes.
+This scenario creates no replacement VM and does not repeat disk partitioning or password collection.
+
+### Installed-system checks
 
 Use `-Scenario AutoReboot` in a fresh VM root to install, stop, disconnect the installation CD drive, and boot the
 installed system. This development image enables the standard password-protected `serial-getty@ttyS0` service only

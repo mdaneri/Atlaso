@@ -107,6 +107,10 @@ function Get-InstallationVmFunctionText {
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'ConvertTo-InstallationDiskBootConfiguration')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Get-InstallationVmxPathAssignment')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmDiskBindings')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Read-InstallationRunningVmxText')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationConsoleBindings')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationConsoleDiskIdentities')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmRunning')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationSerialPipePath')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationProvisioningStages')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'ConvertFrom-InstallationConsoleFrame')))
@@ -150,6 +154,26 @@ $validBindings = $true
 try { Assert-InstallationVmDiskBindings -VmxLines $lines -Context $bindingContext -IsoPath 'C:\offline media\atlaso.iso' }
 catch { $validBindings = $false }
 Assert-InstallationVmCondition $validBindings 'Exact target, unselected, and pinned ISO bindings must pass layout validation.'
+$consolePipe = ''
+$consoleBindingsAccepted = $true
+try { $consolePipe = Assert-InstallationConsoleBindings -VmxLines $lines -Context $bindingContext -IsoPath 'C:\offline media\atlaso.iso' }
+catch { $consoleBindingsAccepted = $false }
+Assert-InstallationVmCondition ($consoleBindingsAccepted -and $consolePipe -ceq $pipe) 'Console admission must reuse the isolated disk, connected ISO, and local serial configuration checks.'
+$unsafeConsoleFixtures = [Collections.Generic.List[object]]::new()
+$unsafeConsoleFixtures.Add([string[]](@($lines) + 'ethernet1.present = "TRUE"'))
+$unsafeConsoleFixtures.Add([string[]](@($lines) + 'scsi0:2.present = "TRUE"'))
+$unsafeConsoleFixtures.Add([string[]]@($lines | ForEach-Object {
+        if ($_ -ceq 'sata0:0.startConnected = "TRUE"') { 'sata0:0.startConnected = "FALSE"' } else { $_ }
+    }))
+$unsafeConsoleFixtures.Add([string[]]@($lines | ForEach-Object {
+        if ($_ -ceq 'serial0.pipe.endPoint = "client"') { 'serial0.pipe.endPoint = "server"' } else { $_ }
+    }))
+foreach ($unsafeConsoleLines in $unsafeConsoleFixtures) {
+    $unsafeConsoleRejected = $false
+    try { $null = Assert-InstallationConsoleBindings -VmxLines $unsafeConsoleLines -Context $bindingContext -IsoPath 'C:\offline media\atlaso.iso' }
+    catch { $unsafeConsoleRejected = $true }
+    Assert-InstallationVmCondition $unsafeConsoleRejected 'Console admission must reject changed isolation, storage, media, and serial bindings.'
+}
 
 $unicodeSegment = [string][char]0x00E9 + 'preuve-' + [string][char]0x65E5 + [string][char]0x672C
 $unicodeDirectory = "C:\vm\$unicodeSegment"
@@ -413,7 +437,7 @@ Assert-InstallationVmCondition (-not $source.Contains("'compare', '-s'")) 'Logic
 Assert-InstallationVmCondition ($source.Contains('-Kind installation-baseline')) 'The baseline record must use its dedicated ownership-receipt kind.'
 Assert-InstallationVmCondition ($ownershipSource.Contains("'installation-baseline', 'installation-boot', 'installation-resume')")) 'The immutable ownership publisher must admit the baseline record kind.'
 Assert-InstallationVmCondition ($cleanupSource.Contains("'Confirm-AtlasoWorkstationVmInactive'")) 'The guarded VM stop helper must be available to the verification mode.'
-$verifyMode = $source.IndexOf('if ($Mode -in @(''Verify'', ''BootInstalled'', ''ResumeInstalled''))', [StringComparison]::Ordinal)
+$verifyMode = $source.IndexOf('if ($Mode -in @(''AdmitConsole'', ''Verify'', ''BootInstalled'', ''ResumeInstalled''))', [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($verifyMode -ge 0) 'The harness must expose receipt-bound disk verification.'
 $verifyOriginalRead = $source.IndexOf('Read-AtlasoTestVmSealedRecord -Context $context -Path $OriginalReceiptPath', $verifyMode, [StringComparison]::Ordinal)
 $verifyBaselineRead = $source.IndexOf('Read-AtlasoTestVmSealedRecord -Context $context -Path $BaselineReceiptPath', $verifyMode, [StringComparison]::Ordinal)
@@ -422,6 +446,45 @@ $verifyCompare = $source.IndexOf('Assert-InstallationDiskUnchanged -Disk', $veri
 Assert-InstallationVmCondition ($verifyOriginalRead -gt $verifyMode -and $verifyBaselineRead -gt $verifyOriginalRead -and $verifyStop -gt $verifyBaselineRead -and $verifyCompare -gt $verifyStop) 'Verification must validate both bound receipts before stopping the VM and compare only after stop.'
 Assert-InstallationVmCondition ($source.Contains("`$roles = @('unselected')") -and $source.Contains('if ($VerifyTarget) { $roles += ''target'' }')) 'Verification must always check the unselected disk and optionally check the target for cancellation.'
 Assert-InstallationVmCondition ($source.Contains("Invoke-AtlasoBoundedProcess -FilePath `$QemuImg -ArgumentList @('info', '--output=json', `$Path)")) 'qemu-img metadata inspection must use the existing bounded process helper.'
+Assert-InstallationVmCondition ($source.Contains("[ValidateSet('Create', 'AdmitConsole', 'Verify', 'BootInstalled', 'ResumeInstalled', 'Cleanup')]") -and
+    $source.Contains('Console admission requires an enabled task-owned VM receipt context.')) `
+    'AdmitConsole must be an explicit task-owned mode.'
+$admitConsoleBranches = @($ast.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.IfStatementAst] -and
+    $node.Extent.Text.StartsWith("if (`$Mode -eq 'AdmitConsole')", [StringComparison]::Ordinal) -and
+    $node.Extent.Text.Contains('SerialPipePath = $serialPath')
+}, $true))
+Assert-InstallationVmCondition ($admitConsoleBranches.Count -eq 1) 'Expected one dedicated read-only console-admission result branch.'
+$admitConsoleSource = $admitConsoleBranches[0].Extent.Text
+$admitSourceCheck = $admitConsoleSource.IndexOf('Assert-AtlasoTestVmCheckoutSource -Context $context', [StringComparison]::Ordinal)
+$admitVmConfigCheck = $admitConsoleSource.IndexOf('Read-InstallationRunningVmxText', [StringComparison]::Ordinal)
+$admitConsoleBindingCheck = $admitConsoleSource.IndexOf('Assert-InstallationConsoleBindings', [StringComparison]::Ordinal)
+$admitRunningCheck = $admitConsoleSource.IndexOf('Assert-InstallationVmRunning', [StringComparison]::Ordinal)
+Assert-InstallationVmCondition ($admitSourceCheck -ge 0 -and $admitVmConfigCheck -gt $admitSourceCheck -and
+    $admitConsoleBindingCheck -gt $admitVmConfigCheck -and
+    $admitRunningCheck -gt $admitConsoleBindingCheck) `
+    'Console admission must revalidate exact source, VMX configuration, isolation, and running registration before returning selectors.'
+Assert-InstallationVmCondition ($source.Contains('AdmitConsole requires the initial connected installation ISO.')) `
+    'The initial installer console admission must reject installed-boot receipt selectors.'
+foreach ($forbiddenAdmissionAction in @(
+        'Confirm-AtlasoWorkstationVmInactive', 'Assert-InstallationDiskUnchanged', 'Publish-AtlasoTestVmOwnershipRecord',
+        'Start-InstallationIsoVm', 'ShouldProcess', 'QemuImg', 'LogicalContentsUnchanged', 'VerifiedRoles'
+    )) {
+    Assert-InstallationVmCondition (-not $admitConsoleSource.Contains($forbiddenAdmissionAction)) `
+        "Console admission must not perform verification, mutation, receipt publication, or expose a disk-content claim ($forbiddenAdmissionAction)."
+}
+$runningVmxReader = Get-InstallationVmFunctionText -SourceAst $ast -Name 'Read-InstallationRunningVmxText'
+$runningVmxAdmission = Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmRunning'
+$consoleDiskAdmission = Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationConsoleDiskIdentities'
+Assert-InstallationVmCondition ($runningVmxReader.Contains('[IO.FileShare]::ReadWrite') -and $runningVmxReader.Contains('SHA256') -and
+    $runningVmxReader.Contains('ExpectedIdentity')) 'Running console admission must read a stable VMX snapshot without blocking provider writes or accepting replacement.'
+Assert-InstallationVmCondition ($runningVmxAdmission.Contains("@('-T', 'ws', 'list')") -and
+    $runningVmxAdmission.Contains('ConvertFrom-AtlasoVmrunListOutput') -and $runningVmxAdmission.Contains('ExpectedIdentity')) `
+    'Console admission must prove the exact VMX identity appears once in checked Workstation running inventory.'
+Assert-InstallationVmCondition (-not $consoleDiskAdmission.Contains('Assert-InstallationDiskUnchanged') -and
+    -not $consoleDiskAdmission.Contains('Invoke-AtlasoBoundedProcess')) `
+    'Console disk admission may pin receipt-bound file identities but must never compare or inspect disk contents.'
 
 <#
 .SYNOPSIS
@@ -649,6 +712,17 @@ finally {
     [Array]::Clear($receivedBytes, 0, $receivedBytes.Length)
     if ($pipePair) { Close-InstallationTestPipePair -Pair $pipePair }
 }
+
+$jsonStream = [IO.MemoryStream]::new()
+$jsonFixture = 'Public-"quoted"-\-fixture-42'
+$jsonSecure = New-InstallationTestSecureString -Text $jsonFixture
+try {
+    Send-InstallationConsoleSecret -Pipe $jsonStream -Value $jsonSecure -JsonRequest
+    $decoded = [Text.Encoding]::ASCII.GetString($jsonStream.ToArray()) | ConvertFrom-Json
+    Assert-InstallationVmCondition ($decoded.password -ceq $jsonFixture -and $jsonStream.ToArray()[-1] -eq 10) `
+        'VNC stdin encoding must preserve printable ASCII quotes and backslashes without using arguments or files.'
+}
+finally { $jsonSecure.Dispose(); $jsonStream.Dispose() }
 
 $pipePair = $null
 $nonAsciiFixtureText = 'Atlaso-public-fixture-' + [char]0x00E9
@@ -896,7 +970,7 @@ $resumeStart = $source.IndexOf('Start-InstallationIsoVm -VmrunPath', $resumePubl
 Assert-InstallationVmCondition ($resumePublish -gt $verifyCompare -and $resumeStart -gt $resumePublish) 'Installed resume must compare disks and publish its immutable operation receipt before starting the VM.'
 $resumeBranches = @($ast.FindAll({
     param($node)
-    $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith("if (`$Mode -in @('Verify', 'BootInstalled', 'ResumeInstalled'))", [StringComparison]::Ordinal)
+    $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith("if (`$Mode -in @('AdmitConsole', 'Verify', 'BootInstalled', 'ResumeInstalled'))", [StringComparison]::Ordinal)
 }, $true))
 Assert-InstallationVmCondition ($resumeBranches.Count -eq 1) 'Expected exactly one shared installed-VM admission branch.'
 $missingResumeReceiptRefused = $false

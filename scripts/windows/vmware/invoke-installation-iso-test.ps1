@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Drive an isolated development installer through a private serial console.
+Drive an isolated development installer through private console adapters.
 .DESCRIPTION
 The bounded child owns the local pipe server and never records raw console bytes.
 Only the current Windows user and SYSTEM can connect. Credentials remain inside
@@ -18,6 +18,8 @@ Existing canonical identity suffix distinguishing independently installed test V
 .PARAMETER Scenario
 Probe the native UI, cancel at disk/layout review, reject insufficient capacity, run Auto, or install and boot without media.
 LoginInstalled resumes an already installed, receipt-bound VM without repeating installation.
+BootInstalled completes a VNC-driven installation by disconnecting media and checking ordinary serial login.
+VncCredential submits one SDK account value at an operator-observed concealed installer field.
 .PARAMETER OriginalReceiptPath
 Original VM creation receipt for LoginInstalled.
 .PARAMETER OriginalReceiptSha256
@@ -38,6 +40,22 @@ Measure public machine identity and installed application bytes after root authe
 Existing absolute Python executable with the locked ISO inspection dependencies installed.
 .PARAMETER Child
 Internal bounded-child selector.
+.PARAMETER VncAccount
+Existing 1Password account field to send at an observed concealed VNC installer prompt.
+.PARAMETER VncPort
+Loopback-only VNC port owned by the original receipt-bound VM.
+.PARAMETER VncScreenPath
+Existing task-owned screenshot of the observed empty concealed field.
+.PARAMETER VncScreenSha256
+Independently retained digest of the observed screenshot.
+.PARAMETER VncFieldRectangle
+Single input-row rectangle excluded from the complete-frame cursor comparison.
+.PARAMETER VncPythonPath
+Task-owned isolated Python executable containing the reviewed optional VNC client.
+.PARAMETER VncRuntimeSha256
+Independently recorded deterministic inventory digest of the isolated client packages.
+.PARAMETER VncRuntimeFileCount
+Original file count of the isolated client package inventory.
 #>
 [CmdletBinding()]
 param(
@@ -46,7 +64,7 @@ param(
     [Parameter(Mandatory = $true)][string]$OutputDirectory,
     [Parameter(Mandatory = $true)][ValidateRange(1, 2147483647)][int]$PullRequestNumber,
     [string]$CollisionSuffix = '',
-    [ValidateSet('Probe', 'Cancel', 'CancelReview', 'Insufficient', 'Auto', 'AutoReboot', 'LoginInstalled')][string]$Scenario = 'Probe',
+    [ValidateSet('Probe', 'Cancel', 'CancelReview', 'Insufficient', 'Auto', 'AutoReboot', 'BootInstalled', 'LoginInstalled', 'VncCredential')][string]$Scenario = 'Probe',
     [string]$OriginalReceiptPath = '',
     [string]$OriginalReceiptSha256 = '',
     [string]$BaselineReceiptPath = '',
@@ -56,7 +74,15 @@ param(
     [ValidateRange(60, 14400)][int]$TimeoutSeconds = 3600,
     [switch]$InspectInstalled,
     [string]$InspectionPythonPath = '',
-    [switch]$Child
+    [switch]$Child,
+    [ValidateSet('', 'admin', 'root')][string]$VncAccount = '',
+    [ValidateRange(0, 65535)][int]$VncPort = 0,
+    [string]$VncScreenPath = '',
+    [string]$VncScreenSha256 = '',
+    [string]$VncFieldRectangle = '',
+    [string]$VncPythonPath = '',
+    [string]$VncRuntimeSha256 = '',
+    [ValidateRange(0, 14000)][int]$VncRuntimeFileCount = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -73,6 +99,10 @@ if (-not $Child) {
         '-InspectionPythonPath', $InspectionPythonPath
     )
     if ($InspectInstalled) { $childArguments += '-InspectInstalled' }
+    $childArguments += @('-VncAccount', $VncAccount, '-VncPort', [string]$VncPort,
+        '-VncScreenPath', $VncScreenPath, '-VncScreenSha256', $VncScreenSha256,
+        '-VncFieldRectangle', $VncFieldRectangle, '-VncPythonPath', $VncPythonPath,
+        '-VncRuntimeSha256', $VncRuntimeSha256, '-VncRuntimeFileCount', [string]$VncRuntimeFileCount)
     Invoke-AtlasoBoundedStreamingProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList $childArguments `
         -TimeoutSeconds $TimeoutSeconds -Action 'Private installation serial-console test'
     return
@@ -100,21 +130,31 @@ Send a concealed account value only at its expected masked installer field.
 Connected private serial pipe.
 .PARAMETER Value
 Concealed account password from the supported credential bridge.
+.PARAMETER JsonRequest
+Encode a single JSON field for the contained VNC adapter's private stdin stream.
 #>
 function Send-InstallationConsoleSecret {
-    param([IO.Pipes.NamedPipeServerStream]$Pipe, [Security.SecureString]$Value)
+    param([IO.Stream]$Pipe, [Security.SecureString]$Value, [switch]$JsonRequest)
     $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Value)
     $bytes = $null
     try {
         $length = [Runtime.InteropServices.Marshal]::ReadInt32($pointer, -4) / 2
-        $bytes = [byte[]]::new($length + 1)
+        $bytes = [byte[]]::new($(if ($JsonRequest) { 2 * $length + 16 } else { $length + 1 }))
+        $offset = 0
+        if ($JsonRequest) {
+            $prefix = [Text.Encoding]::ASCII.GetBytes('{"password":"')
+            $prefix.CopyTo($bytes, 0)
+            $offset = $prefix.Length
+        }
         for ($index = 0; $index -lt $length; $index++) {
             $character = [Runtime.InteropServices.Marshal]::ReadInt16($pointer, $index * 2)
             if ($character -lt 32 -or $character -gt 126) { throw 'Installer credential must satisfy the ASCII account policy.' }
-            $bytes[$index] = [byte]$character
+            if ($JsonRequest -and $character -in @(34, 92)) { $bytes[$offset++] = 92 }
+            $bytes[$offset++] = [byte]$character
         }
-        $bytes[$length] = 10
-        $Pipe.Write($bytes, 0, $bytes.Length)
+        if ($JsonRequest) { $bytes[$offset++] = 34; $bytes[$offset++] = 125 }
+        $bytes[$offset++] = 10
+        $Pipe.Write($bytes, 0, $offset)
         $Pipe.Flush()
     }
     finally {
@@ -828,117 +868,12 @@ function Get-InstallationAccountProbe {
     }
 }
 
-$worktree = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
-Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
-. (Join-Path $PSScriptRoot 'Atlaso.TestVmOwnership.ps1')
-$commit = ([string](& git -C $worktree rev-parse HEAD)).Trim()
-if ($LASTEXITCODE -ne 0) { throw 'Could not admit the installer console source commit.' }
-$branch = ([string](& git -C $worktree branch --show-current)).Trim()
-if ($LASTEXITCODE -ne 0) { throw 'Could not admit the installer console source branch.' }
-Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
-$vmName = (New-AtlasoVmwareTestIdentity -PullRequestNumber $PullRequestNumber -Purpose installation-iso -CollisionSuffix $CollisionSuffix).Name
-$sourceContext = New-AtlasoTestVmOwnershipContext -Worktree $worktree -OutputDirectory $OutputDirectory `
-    -VmxPath (Join-Path $OutputDirectory "$vmName.vmx") -Name $vmName -SourceCommit $commit `
-    -SourceBranch $branch -PullRequestNumber $PullRequestNumber
-Assert-AtlasoTestVmCheckoutSource -Context $sourceContext
-$knownProvisioningStages = @(Get-InstallationProvisioningStages -Text (Get-Content -LiteralPath `
-    (Join-Path $worktree 'image/common/scripts/provision-atlaso.sh') -Raw -Encoding utf8))
-$credentials = $null
-$resumeSelectors = @{}
-if ($Scenario -eq 'LoginInstalled') {
-    foreach ($pair in @(
-        @($OriginalReceiptPath, $OriginalReceiptSha256),
-        @($BaselineReceiptPath, $BaselineReceiptSha256),
-        @($BootReceiptPath, $BootReceiptSha256)
-    )) {
-        if (-not [IO.Path]::IsPathFullyQualified($pair[0]) -or $pair[1] -cnotmatch '^[0-9a-f]{64}$') {
-            throw 'LoginInstalled requires original, baseline, and boot receipt paths with independently preserved digests.'
-        }
-    }
-    $resumeSelectors = @{
-        OriginalReceiptPath = $OriginalReceiptPath; OriginalReceiptSha256 = $OriginalReceiptSha256
-        BaselineReceiptPath = $BaselineReceiptPath; BaselineReceiptSha256 = $BaselineReceiptSha256
-        BootReceiptPath = $BootReceiptPath; BootReceiptSha256 = $BootReceiptSha256
-    }
-} elseif ($OriginalReceiptPath -or $OriginalReceiptSha256 -or $BaselineReceiptPath -or $BaselineReceiptSha256 -or $BootReceiptPath -or $BootReceiptSha256) {
-    throw 'Existing VM receipt selectors are supported only by LoginInstalled.'
-}
-$inspection = $null
-$inspectionArguments = @()
-$encodedExpectations = ''
-if ($InspectInstalled) {
-    if ($Scenario -notin @('AutoReboot', 'LoginInstalled')) {
-        throw 'Installed inspection requires AutoReboot or LoginInstalled.'
-    }
-    if (-not [IO.Path]::IsPathFullyQualified($InspectionPythonPath) -or
-        -not (Test-Path -LiteralPath $InspectionPythonPath -PathType Leaf)) {
-        throw 'Installed inspection requires an existing absolute Python executable.'
-    }
-    # Reuse the bounded process runner and the admitted source tree. Resolve ISO
-    # expectations before obtaining credentials or starting the owned VM.
-    $inspectionArguments = @('-I', '-B', '-c',
-        'import sys;sys.path.insert(0,sys.argv.pop(1));from scripts.installation.inspection import main;raise SystemExit(main())', $worktree)
-    $prepared = Invoke-AtlasoBoundedProcess -FilePath $InspectionPythonPath `
-        -ArgumentList ($inspectionArguments + @('prepare', '--iso', $IsoPath, '--iso-sha256', $IsoSha256)) `
-        -TimeoutSeconds 120 -Action 'Installation inspection ISO admission'
-    if ($prepared.Length -gt 16384) { throw 'Installation inspection preparation exceeded its bound.' }
-    $inspection = $prepared | ConvertFrom-Json -AsHashtable
-    if ($inspection.command -isnot [string] -or $inspection.command.Length -gt 3500 -or
-        $inspection.command -cmatch '[^\x20-\x7e]' -or $inspection.command.Contains('ATLASO-INSPECTION')) {
-        throw 'Installation inspection command failed its console boundary.'
-    }
-    $encodedExpectations = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(
-        ($inspection.expected | ConvertTo-Json -Compress -Depth 8)))
-} elseif ($InspectionPythonPath) {
-    throw 'InspectionPythonPath requires InspectInstalled.'
-}
-if ($Scenario -in @('Auto', 'AutoReboot', 'LoginInstalled')) {
-    Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
-    $selector = Resolve-AtlasoOnePasswordEnvironmentId -RepositoryRoot $worktree
-    $token = Resolve-AtlasoOnePasswordServiceAccountTokenFile -RepositoryRoot $worktree `
-        -TokenFile (Join-Path $worktree '.atlaso-local/onepassword-service-account-token.dpapi')
-    $credentials = Get-AtlasoOnePasswordCredentialPair -RepositoryRoot $worktree -EnvironmentId $selector `
-        -OnePasswordServiceAccountTokenFile $token -TimeoutSeconds 300 -ConsumerDescription 'development installer console'
-}
-
-$pipeName = 'Atlaso-Installation-' + [guid]::NewGuid().ToString('N')
-if ($Scenario -eq 'LoginInstalled') {
-    $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Verify -Worktree $worktree `
-        -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix @resumeSelectors -Confirm:$false
-    if (-not [IO.Path]::GetFullPath($IsoPath).Equals([string]$vm.IsoPath, [StringComparison]::OrdinalIgnoreCase) -or
-        $IsoSha256 -cne [string]$vm.IsoSha256) {
-        throw 'LoginInstalled ISO identity differs from the original VM creation receipt.'
-    }
-    # The owning verifier returns only the admitted local serial endpoint.
-    # Reuse it with a newly created restrictive server; never edit the VMX.
-    if ([string]$vm.SerialPipePath -cnotmatch '^\\\\\.\\pipe\\(?<name>Atlaso-Installation-[0-9a-f]{32})$') {
-        throw 'The admitted installed VM serial endpoint is invalid.'
-    }
-    $pipeName = $Matches['name']
-}
-$security = [IO.Pipes.PipeSecurity]::new()
-$user = [Security.Principal.WindowsIdentity]::GetCurrent().User
-$security.SetOwner($user)
-$security.SetAccessRuleProtection($true, $false)
-foreach ($identity in @($user, [Security.Principal.SecurityIdentifier]::new('S-1-5-18'))) {
-    $security.AddAccessRule([IO.Pipes.PipeAccessRule]::new($identity, [IO.Pipes.PipeAccessRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow))
-}
-$pipe = [IO.Pipes.NamedPipeServerStreamAcl]::Create($pipeName, [IO.Pipes.PipeDirection]::InOut, 1,
-    [IO.Pipes.PipeTransmissionMode]::Byte, [IO.Pipes.PipeOptions]::Asynchronous, 8192, 8192, $security)
-$deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
-try {
-    $connection = $pipe.WaitForConnectionAsync()
-    if ($Scenario -eq 'LoginInstalled') {
-        $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode ResumeInstalled -Worktree $worktree `
-            -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix @resumeSelectors -Confirm:$false
-    } else {
-        $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Create -Worktree $worktree `
-        -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix -IsoPath $IsoPath -IsoSha256 $IsoSha256 `
-        -SerialPipePath "\\.\pipe\$pipeName" -Confirm:$false
-    }
-    Write-Host ('Installation VM ownership: ' + ($vm | ConvertTo-Json -Compress))
-    if (-not $connection.Wait(120000)) { throw 'The owned VM did not connect its private serial console.' }
-
+<#
+.SYNOPSIS
+Load the existing native verifier for a receipt-bound console provider.
+#>
+function Initialize-InstallationConsolePeerVerifier {
+    if ('AtlasoInstallationPipePeer' -as [type]) { return }
     Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -1008,6 +943,321 @@ public static class AtlasoInstallationPipePeer {
     }
 }
 '@
+}
+
+<#
+.SYNOPSIS
+Bind one loopback VNC listener to the existing native console-provider verifier.
+.PARAMETER VmxPath
+Original receipt-admitted VMX path.
+.PARAMETER Port
+Explicit loopback-only VNC listener port.
+#>
+function Get-InstallationVncPeer {
+    param([Parameter(Mandatory)][string]$VmxPath, [Parameter(Mandatory)][int]$Port)
+    if ($Port -lt 1024 -or $Port -gt 65535) { throw 'VNC requires an explicit non-privileged loopback port.' }
+    $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop)
+    if ($listeners.Count -ne 1 -or $listeners[0].LocalAddress -cne '127.0.0.1') {
+        throw 'VNC listener must bind exclusively to IPv4 loopback.'
+    }
+    Initialize-InstallationConsolePeerVerifier
+    $images = @(
+        (Join-Path $env:ProgramFiles 'VMware/VMware Workstation/x64/vmware-vmx.exe'),
+        (Join-Path $env:ProgramFiles 'VMware/VMware Workstation/vmware-vmx.exe'),
+        (Join-Path ${env:ProgramFiles(x86)} 'VMware/VMware Workstation/x64/vmware-vmx.exe')
+    ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+    $peer = [uint32]$listeners[0].OwningProcess
+    if (-not [AtlasoInstallationPipePeer]::MatchesExpectedProcess($peer, [string[]]$images, $VmxPath)) {
+        throw 'VNC listener does not belong to the original receipt-bound VM.'
+    }
+    return $peer
+}
+
+<#
+.SYNOPSIS
+Reuse the bounded SDK and byte encoder for one observed concealed VNC field.
+.PARAMETER Context
+Source-pinned task ownership context for the original VM.
+.PARAMETER Options
+Public account, loopback, observed-frame and isolated-runtime admission inputs.
+.PARAMETER Receipts
+Original VM and baseline selectors preserved at creation.
+#>
+function Invoke-InstallationVncCredential {
+    param([Parameter(Mandatory)][psobject]$Context, [Parameter(Mandatory)][hashtable]$Options,
+        [Parameter(Mandatory)][hashtable]$Receipts)
+    if ($Options.Account -notin @('admin', 'root') -or $Options.Port -lt 1024 -or
+        $Options.ScreenSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        $Options.RuntimeSha256 -cnotmatch '^[0-9a-f]{64}$' -or $Options.RuntimeFileCount -lt 1 -or
+        $Options.Rectangle -cnotmatch '^\d{1,4},\d{1,4},\d{1,4},\d{1,4}$') {
+        throw 'VNC credential input requires an explicit account, observed field and original runtime inventory.'
+    }
+    foreach ($pair in @(
+        @($Receipts.OriginalReceiptPath, $Receipts.OriginalReceiptSha256),
+        @($Receipts.BaselineReceiptPath, $Receipts.BaselineReceiptSha256)
+    )) {
+        if (-not [IO.Path]::IsPathFullyQualified($pair[0]) -or $pair[1] -cnotmatch '^[0-9a-f]{64}$') {
+            throw 'VNC requires original VM and baseline receipt selectors.'
+        }
+    }
+    $ownedPrefix = [IO.Path]::GetFullPath($Context.Worktree).TrimEnd('\', '/') + '\'
+    foreach ($path in @($Options.PythonPath, $Options.ScreenPath)) {
+        if (-not [IO.Path]::IsPathFullyQualified($path) -or
+            -not [IO.Path]::GetFullPath($path).StartsWith($ownedPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'VNC runtime and observed frame must remain inside the original task checkout.'
+        }
+        & git -C $Context.Worktree check-ignore -q -- $path
+        if ($LASTEXITCODE -ne 0) { throw 'VNC runtime and observed frame must be ignored task artifacts.' }
+    }
+    Import-Module (Join-Path $PSScriptRoot 'Atlaso.SourceSnapshot.psm1') -Force
+    $runtime = $null
+    $inspectorSource = $null
+    $framePin = $null
+    $frameDirectoryPin = $null
+    $pair = $null
+    $consumer = $null
+    try {
+        $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode AdmitConsole `
+            -Worktree $Context.Worktree -OutputDirectory $Context.OutputDirectory `
+            -PullRequestNumber $Context.PullRequestNumber -CollisionSuffix $CollisionSuffix @Receipts
+        if ($vm.IsoIdentity.Sha256 -cne $IsoSha256 -or
+            -not [IO.Path]::GetFullPath($IsoPath).Equals($vm.IsoIdentity.Path, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'VNC ISO differs from its original creation receipt.'
+        }
+        $peer = Get-InstallationVncPeer -VmxPath $vm.VmxPath -Port $Options.Port
+        $venv = [IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($Options.PythonPath))
+        $inspectorSource = New-AtlasoCertificateInspectorSnapshot -RepositoryRoot $Context.Worktree `
+            -EvidenceRoot ([IO.Path]::GetDirectoryName($venv)) -SourceCommit $Context.SourceCommit `
+            -TaskId $Context.TaskId -Purpose installation-vnc
+        Write-Host ('VNC inspector source receipt: path={0} sha256={1}' -f $inspectorSource.Manifest,
+            (Get-FileHash -LiteralPath $inspectorSource.Manifest -Algorithm SHA256).Hash.ToLowerInvariant())
+        # Keep the existing credentialed runtime guard and isolated bootstrap;
+        # only the explicitly required optional client packages differ.
+        $runtime = Protect-AtlasoCertificatePythonRuntime -PythonPath $Options.PythonPath `
+            -EvidenceRoot ([IO.Path]::GetDirectoryName($venv)) -RequiredModules @('vncdotool', 'twisted', 'PIL')
+        Assert-AtlasoCertificatePythonImportPaths -Runtime $runtime
+        $null = Assert-AtlasoSourceSnapshot -Root (Join-Path $venv 'Lib/site-packages') `
+            -ExpectedSha256 $Options.RuntimeSha256 -ExpectedFileCount $Options.RuntimeFileCount
+        $frameDirectoryPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
+            [IO.Path]::GetDirectoryName($Options.ScreenPath))
+        $framePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($Options.ScreenPath, $true)
+        if ((Get-Item -LiteralPath $Options.ScreenPath).Length -gt 8MB -or
+            (Get-FileHash -LiteralPath $Options.ScreenPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $Options.ScreenSha256) {
+            throw 'Observed VNC frame differs from its admitted digest or size.'
+        }
+        Assert-AtlasoTestVmCheckoutSource -Context $Context
+        Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
+        $selector = Resolve-AtlasoOnePasswordEnvironmentId -RepositoryRoot $Context.Worktree
+        $token = Resolve-AtlasoOnePasswordServiceAccountTokenFile -RepositoryRoot $Context.Worktree `
+            -TokenFile (Join-Path $Context.Worktree '.atlaso-local/onepassword-service-account-token.dpapi')
+        $pair = Get-AtlasoOnePasswordCredentialPair -RepositoryRoot $Context.Worktree -EnvironmentId $selector `
+            -OnePasswordServiceAccountTokenFile $token -TimeoutSeconds 300 -ConsumerDescription 'development VNC installer console'
+        $arguments = New-AtlasoCertificatePythonArguments -Runtime $runtime `
+            -ScriptPath (Join-Path $inspectorSource.Root 'scripts/installation/vnc_console.py') -ScriptArguments @(
+                '--port', [string]$Options.Port, '--expected-screen', $Options.ScreenPath,
+                '--expected-screen-sha256', $Options.ScreenSha256, '--field-rectangle', $Options.Rectangle)
+        $start = [Diagnostics.ProcessStartInfo]::new()
+        $start.FileName = $runtime.Executable
+        $start.UseShellExecute = $false
+        $start.CreateNoWindow = $true
+        $start.RedirectStandardInput = $true
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        $start.StandardInputEncoding = [Text.UTF8Encoding]::new($false)
+        foreach ($argument in $arguments) { $start.ArgumentList.Add($argument) }
+        # This grandchild inherits the outer non-breakaway Windows job. No secret
+        # is placed in its command line, environment, screenshot or ordinary file.
+        $consumer = [Diagnostics.Process]::Start($start)
+        $errors = $consumer.StandardError.ReadToEndAsync()
+        $ready = $consumer.StandardOutput.ReadLineAsync()
+        if (-not $ready.Wait(30000) -or $ready.Result -cne 'ATLASO-VNC-CREDENTIAL-READY') {
+            throw 'VNC concealed-field frame admission refused; no credential was sent.'
+        }
+        Assert-AtlasoTestVmCheckoutSource -Context $Context
+        $readmitted = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode AdmitConsole `
+            -Worktree $Context.Worktree -OutputDirectory $Context.OutputDirectory `
+            -PullRequestNumber $Context.PullRequestNumber -CollisionSuffix $CollisionSuffix @Receipts
+        if ($readmitted.VmxPath -cne $vm.VmxPath -or
+            $readmitted.IsoIdentity.Sha256 -cne $vm.IsoIdentity.Sha256) {
+            throw 'VNC VM or media identity changed before credential submission.'
+        }
+        if ((Get-InstallationVncPeer -VmxPath $vm.VmxPath -Port $Options.Port) -ne $peer) {
+            throw 'VNC console peer changed before credential submission.'
+        }
+        $secret = if ($Options.Account -ceq 'admin') { $pair.AdminPassword } else { $pair.RootPassword }
+        Send-InstallationConsoleSecret -Pipe $consumer.StandardInput.BaseStream -Value $secret -JsonRequest
+        $consumer.StandardInput.Close()
+        $sent = $consumer.StandardOutput.ReadLineAsync()
+        if (-not $sent.Wait(30000) -or $sent.Result -cne 'ATLASO-VNC-CREDENTIAL-SENT' -or
+            -not $consumer.WaitForExit(30000) -or $consumer.ExitCode -ne 0 -or
+            -not $errors.Wait(5000) -or $errors.Result.Length -ne 0) {
+            throw 'The contained VNC credential operation did not complete; private diagnostics were withheld.'
+        }
+        Write-Host ('Concealed VNC installer field submitted for {0}.' -f $Options.Account)
+    }
+    finally {
+        if ($consumer) {
+            if (-not $consumer.HasExited) {
+                $consumer.Kill($true)
+                if (-not $consumer.WaitForExit(5000)) { throw 'VNC credential child termination is unproven.' }
+            }
+            $consumer.Dispose()
+        }
+        if ($pair) { $pair.AdminPassword.Dispose(); $pair.RootPassword.Dispose() }
+        if ($framePin) { $framePin.Dispose() }
+        if ($frameDirectoryPin) { $frameDirectoryPin.Dispose() }
+        if ($runtime) { foreach ($pin in $runtime.Pins) { $pin.Dispose() } }
+        if ($inspectorSource) {
+            try { Unprotect-AtlasoSourceSnapshot -Root $inspectorSource.Root }
+            finally { foreach ($pin in $inspectorSource.Pins) { $pin.Dispose() } }
+        }
+    }
+}
+
+$worktree = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
+. (Join-Path $PSScriptRoot 'Atlaso.TestVmOwnership.ps1')
+$commit = ([string](& git -C $worktree rev-parse HEAD)).Trim()
+if ($LASTEXITCODE -ne 0) { throw 'Could not admit the installer console source commit.' }
+$branch = ([string](& git -C $worktree branch --show-current)).Trim()
+if ($LASTEXITCODE -ne 0) { throw 'Could not admit the installer console source branch.' }
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
+$vmName = (New-AtlasoVmwareTestIdentity -PullRequestNumber $PullRequestNumber -Purpose installation-iso -CollisionSuffix $CollisionSuffix).Name
+$sourceContext = New-AtlasoTestVmOwnershipContext -Worktree $worktree -OutputDirectory $OutputDirectory `
+    -VmxPath (Join-Path $OutputDirectory "$vmName.vmx") -Name $vmName -SourceCommit $commit `
+    -SourceBranch $branch -PullRequestNumber $PullRequestNumber
+Assert-AtlasoTestVmCheckoutSource -Context $sourceContext
+if ($Scenario -eq 'VncCredential') {
+    try {
+        if ($InspectInstalled -or $InspectionPythonPath -or $BootReceiptPath -or $BootReceiptSha256) {
+            throw 'VncCredential is restricted to an initial concealed installer field.'
+        }
+        $vncOptions = @{ Account = $VncAccount; Port = $VncPort; ScreenPath = $VncScreenPath
+            ScreenSha256 = $VncScreenSha256; Rectangle = $VncFieldRectangle; PythonPath = $VncPythonPath
+            RuntimeSha256 = $VncRuntimeSha256; RuntimeFileCount = $VncRuntimeFileCount }
+        $vncReceipts = @{ OriginalReceiptPath = $OriginalReceiptPath; OriginalReceiptSha256 = $OriginalReceiptSha256
+            BaselineReceiptPath = $BaselineReceiptPath; BaselineReceiptSha256 = $BaselineReceiptSha256 }
+        Invoke-InstallationVncCredential -Context $sourceContext -Options $vncOptions -Receipts $vncReceipts
+    }
+    finally {
+        if ($sourceContext.PSObject.Properties['CheckoutSourcePin'] -and $sourceContext.CheckoutSourcePin) {
+            $sourceContext.CheckoutSourcePin.Dispose()
+        }
+    }
+    return
+}
+if ($VncAccount -or $VncPort -or $VncScreenPath -or $VncScreenSha256 -or $VncFieldRectangle -or
+    $VncPythonPath -or $VncRuntimeSha256 -or $VncRuntimeFileCount) {
+    throw 'VNC inputs require the explicit VncCredential scenario.'
+}
+$knownProvisioningStages = @(Get-InstallationProvisioningStages -Text (Get-Content -LiteralPath `
+    (Join-Path $worktree 'image/common/scripts/provision-atlaso.sh') -Raw -Encoding utf8))
+$credentials = $null
+$resumeSelectors = @{}
+if ($Scenario -in @('LoginInstalled', 'BootInstalled')) {
+    $requiredReceiptPairs = @(
+        @($OriginalReceiptPath, $OriginalReceiptSha256),
+        @($BaselineReceiptPath, $BaselineReceiptSha256)
+    )
+    if ($Scenario -eq 'LoginInstalled') { $requiredReceiptPairs += ,@($BootReceiptPath, $BootReceiptSha256) }
+    elseif ($BootReceiptPath -or $BootReceiptSha256) { throw 'BootInstalled creates a new media-disconnection receipt; use LoginInstalled to resume it.' }
+    foreach ($pair in $requiredReceiptPairs) {
+        if (-not [IO.Path]::IsPathFullyQualified($pair[0]) -or $pair[1] -cnotmatch '^[0-9a-f]{64}$') {
+            throw 'Installed checks require the original VM, baseline, and applicable boot receipt selectors.'
+        }
+    }
+    $resumeSelectors = @{
+        OriginalReceiptPath = $OriginalReceiptPath; OriginalReceiptSha256 = $OriginalReceiptSha256
+        BaselineReceiptPath = $BaselineReceiptPath; BaselineReceiptSha256 = $BaselineReceiptSha256
+    }
+    if ($Scenario -eq 'LoginInstalled') {
+        $resumeSelectors.BootReceiptPath = $BootReceiptPath
+        $resumeSelectors.BootReceiptSha256 = $BootReceiptSha256
+    }
+} elseif ($OriginalReceiptPath -or $OriginalReceiptSha256 -or $BaselineReceiptPath -or $BaselineReceiptSha256 -or $BootReceiptPath -or $BootReceiptSha256) {
+    throw 'Existing VM receipt selectors require BootInstalled or LoginInstalled.'
+}
+$inspection = $null
+$inspectionArguments = @()
+$encodedExpectations = ''
+if ($InspectInstalled) {
+    if ($Scenario -notin @('AutoReboot', 'BootInstalled', 'LoginInstalled')) {
+        throw 'Installed inspection requires AutoReboot, BootInstalled or LoginInstalled.'
+    }
+    if (-not [IO.Path]::IsPathFullyQualified($InspectionPythonPath) -or
+        -not (Test-Path -LiteralPath $InspectionPythonPath -PathType Leaf)) {
+        throw 'Installed inspection requires an existing absolute Python executable.'
+    }
+    # Reuse the bounded process runner and the admitted source tree. Resolve ISO
+    # expectations before obtaining credentials or starting the owned VM.
+    $inspectionArguments = @('-I', '-B', '-c',
+        'import sys;sys.path.insert(0,sys.argv.pop(1));from scripts.installation.inspection import main;raise SystemExit(main())', $worktree)
+    $prepared = Invoke-AtlasoBoundedProcess -FilePath $InspectionPythonPath `
+        -ArgumentList ($inspectionArguments + @('prepare', '--iso', $IsoPath, '--iso-sha256', $IsoSha256)) `
+        -TimeoutSeconds 120 -Action 'Installation inspection ISO admission'
+    if ($prepared.Length -gt 16384) { throw 'Installation inspection preparation exceeded its bound.' }
+    $inspection = $prepared | ConvertFrom-Json -AsHashtable
+    if ($inspection.command -isnot [string] -or $inspection.command.Length -gt 3500 -or
+        $inspection.command -cmatch '[^\x20-\x7e]' -or $inspection.command.Contains('ATLASO-INSPECTION')) {
+        throw 'Installation inspection command failed its console boundary.'
+    }
+    $encodedExpectations = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(
+        ($inspection.expected | ConvertTo-Json -Compress -Depth 8)))
+} elseif ($InspectionPythonPath) {
+    throw 'InspectionPythonPath requires InspectInstalled.'
+}
+if ($Scenario -in @('Auto', 'AutoReboot', 'BootInstalled', 'LoginInstalled')) {
+    Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
+    $selector = Resolve-AtlasoOnePasswordEnvironmentId -RepositoryRoot $worktree
+    $token = Resolve-AtlasoOnePasswordServiceAccountTokenFile -RepositoryRoot $worktree `
+        -TokenFile (Join-Path $worktree '.atlaso-local/onepassword-service-account-token.dpapi')
+    $credentials = Get-AtlasoOnePasswordCredentialPair -RepositoryRoot $worktree -EnvironmentId $selector `
+        -OnePasswordServiceAccountTokenFile $token -TimeoutSeconds 300 -ConsumerDescription 'development installer console'
+}
+
+$pipeName = 'Atlaso-Installation-' + [guid]::NewGuid().ToString('N')
+if ($Scenario -in @('LoginInstalled', 'BootInstalled')) {
+    $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Verify -Worktree $worktree `
+        -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix @resumeSelectors -Confirm:$false
+    if (-not [IO.Path]::GetFullPath($IsoPath).Equals([string]$vm.IsoPath, [StringComparison]::OrdinalIgnoreCase) -or
+        $IsoSha256 -cne [string]$vm.IsoSha256) {
+        throw 'LoginInstalled ISO identity differs from the original VM creation receipt.'
+    }
+    # The owning verifier returns only the admitted local serial endpoint.
+    # Reuse it with a newly created restrictive server; never edit the VMX.
+    if ([string]$vm.SerialPipePath -cnotmatch '^\\\\\.\\pipe\\(?<name>Atlaso-Installation-[0-9a-f]{32})$') {
+        throw 'The admitted installed VM serial endpoint is invalid.'
+    }
+    $pipeName = $Matches['name']
+}
+$security = [IO.Pipes.PipeSecurity]::new()
+$user = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$security.SetOwner($user)
+$security.SetAccessRuleProtection($true, $false)
+foreach ($identity in @($user, [Security.Principal.SecurityIdentifier]::new('S-1-5-18'))) {
+    $security.AddAccessRule([IO.Pipes.PipeAccessRule]::new($identity, [IO.Pipes.PipeAccessRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow))
+}
+$pipe = [IO.Pipes.NamedPipeServerStreamAcl]::Create($pipeName, [IO.Pipes.PipeDirection]::InOut, 1,
+    [IO.Pipes.PipeTransmissionMode]::Byte, [IO.Pipes.PipeOptions]::Asynchronous, 8192, 8192, $security)
+$deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+try {
+    $connection = $pipe.WaitForConnectionAsync()
+    if ($Scenario -eq 'LoginInstalled') {
+        $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode ResumeInstalled -Worktree $worktree `
+            -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix @resumeSelectors -Confirm:$false
+    } elseif ($Scenario -eq 'BootInstalled') {
+        $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode BootInstalled -Worktree $worktree `
+            -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix @resumeSelectors -Confirm:$false
+        Write-Host ('Installed boot ownership: ' + ($boot | ConvertTo-Json -Depth 4 -Compress))
+    } else {
+        $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Create -Worktree $worktree `
+        -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix -IsoPath $IsoPath -IsoSha256 $IsoSha256 `
+        -SerialPipePath "\\.\pipe\$pipeName" -Confirm:$false
+    }
+    Write-Host ('Installation VM ownership: ' + ($vm | ConvertTo-Json -Compress))
+    if (-not $connection.Wait(120000)) { throw 'The owned VM did not connect its private serial console.' }
+
+    Initialize-InstallationConsolePeerVerifier
     $peerId = [uint32]0
     if (-not [AtlasoInstallationPipePeer]::GetNamedPipeClientProcessId($pipe.SafePipeHandle, [ref]$peerId)) {
         throw 'Could not prove the serial console peer process.'
@@ -1022,7 +1272,7 @@ public static class AtlasoInstallationPipePeer {
         throw 'The private console peer is not the receipt-bound VMware guest.'
     }
     $cursorState = @{}
-    if ($Scenario -ne 'LoginInstalled') {
+    if ($Scenario -notin @('LoginInstalled', 'BootInstalled')) {
         Write-Host 'Public installer phase: awaiting-disk-selection'
         $diskOptions = @(Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline -ReadBootProgress -CursorState $cursorState -ReadDiskSelection:($Scenario -in @('Probe', 'Auto', 'AutoReboot', 'CancelReview', 'Insufficient')))
         Write-Host 'Public installer phase: disk-selection-ready'
@@ -1090,7 +1340,7 @@ public static class AtlasoInstallationPipePeer {
         }
         $cursorState = @{}
     }
-    if ($Scenario -in @('AutoReboot', 'LoginInstalled')) {
+    if ($Scenario -in @('AutoReboot', 'BootInstalled', 'LoginInstalled')) {
         foreach ($account in @('root', 'admin')) {
             $accountProbe = Get-InstallationAccountProbe -Account $account
             $loginDeadline = [DateTimeOffset]::UtcNow.AddSeconds(180)
