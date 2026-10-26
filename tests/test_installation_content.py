@@ -85,6 +85,7 @@ def _report(kind, **changes):
             "python_payload_sha256": "9" * 64,
             "python_files": 8,
             "python_distributions": 2,
+            "python_external_files": 0,
         },
         "powercli": {"powercli_lock_sha256": "4" * 64, "module_count": 2},
         "rpm": {
@@ -424,7 +425,7 @@ def test_guest_program_bootstraps_and_reaches_first_read(kind, first_path, monke
         exec(program, {})
 
     assert observed == [first_path]
-    marker = "system-assets-profile" if kind == "assets" else f"system-{kind}"
+    marker = {"assets": "system-assets-profile", "python": "system-python-helpers"}.get(kind, f"system-{kind}")
     assert output.getvalue().splitlines() == [f"ATLASO-INSPECTION-FAILED:{marker}"]
 
 

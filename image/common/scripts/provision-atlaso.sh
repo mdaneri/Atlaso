@@ -955,8 +955,6 @@ ATLASO_SITE_PACKAGES="$(
     --version "$ATLASO_RELEASE_VERSION" \
     --purelib "$ATLASO_LOGICAL_SITE_PACKAGES"
 )"
-find "$ATLASO_SITE_PACKAGES" -type f -name '*.pyc' -delete
-find "$ATLASO_SITE_PACKAGES" -depth -type d -name __pycache__ -empty -delete
 install -d -o root -g root -m 0755 /usr/local/bin
 ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault
 ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/bin/atlaso-vault
@@ -1405,6 +1403,11 @@ if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then
   journalctl --rotate 2>/dev/null || true
   journalctl --vacuum-time=1s 2>/dev/null || true
 fi
+# Compatibility, notice and account checks import the installed environment.
+# Clear only its validated bootstrap path after the final imports, so strict
+# wheel inspection does not encounter provisioning-generated executable caches.
+find "$ATLASO_SITE_PACKAGES" -type f -name '*.pyc' -delete
+find "$ATLASO_SITE_PACKAGES" -depth -type d -name __pycache__ -empty -delete
 sync
 
 if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then

@@ -295,7 +295,7 @@ Add `-InspectContent` alongside `-InspectInstalled` to run five additional check
 
 - **Assets:** compare copied source, deployed shared files, their ownership/modes, and public update trust keys.
 - **Python:** reuse the signed software verifier and locked wheel-environment inspector to compare installed
-  dependency file bytes, rejecting missing, changed, or unexpected files.
+  dependency file bytes, including relocated headers, scripts and data, rejecting missing, changed, or unexpected files.
 - **PowerCLI:** run the existing provisioning script in `Validate` mode against its original lock and module root.
 - **RPMs:** reuse Photon package-state validation, require installed package identities to belong to the ISO closure,
   verify nonconfiguration, nonghost package files without plugins or verification scripts, and verify firmware files.
@@ -313,6 +313,18 @@ only a bounded public measurement; failure stops the inspection. Temporary Pytho
 stay under `/run` and are removed on normal exit. This mode does not run provisioning, connect package repositories,
 or change installed content. RPM configuration files and ghost entries are outside its file comparison, and application
 or dependency equality alone does not prove whole-system equality. Keep the five results with the original VM receipts.
+
+The Python check follows the wheel [installation schemes](https://packaging.python.org/en/latest/specifications/binary-distribution-format/).
+It checks relocated files as well as `site-packages` and permits only the declared `#!python`/`#!pythonw` interpreter
+rewrite for wheel scripts. Identical shared files can be deduplicated. Different shared bytes require one final owner
+proven by unconditional, exactly pinned dependency metadata and pip's
+[dependency-first installation order](https://pip.pypa.io/en/stable/cli/pip_install/#installation-order).
+Unrelated, ambiguous or cyclic competing owners fail. No check accepts either of two conflicting hashes arbitrarily.
+The existing strict virtualization verifier remains unchanged; the ISO inspector explicitly selects the extended
+shared inventory helper. A changed helper contract requires a rebuilt development ISO and a fresh receipt-owned
+installation. Preserve previous results rather than replacing installed helpers to force a check to pass.
+Shared provisioning clears generated package bytecode after its final compatibility and account checks. The inspector
+continues to reject unexpected executable caches instead of omitting them from the comparison.
 
 Use `-CollisionSuffix inspection-a` and `-CollisionSuffix inspection-b` for two fresh installations in separate
 canonical VM directories. The wrappers reuse the shared identity helper to preserve the PR number while giving each
@@ -396,6 +408,11 @@ of the first VM. Broader installed-content equality, host-facing OpenAPI, discon
 scenarios, preservation of disks carrying old Atlaso labels, and the default serial installer boot path remain
 outstanding. Do not describe the installer as validated or claim physical support while these gates are
 outstanding. Secure Boot is disabled for phase one; this reference makes no Secure Boot or ARM support claim.
+
+The first extended content run also matched all 1,299 copied source files, 20 deployed shared assets and the public
+update trust key. Its Python check exposed unsupported wheel installation schemes in the older shared inspector;
+that run does not establish installed dependency equality. Retain it as partial evidence with its original media
+checksum and stopped-VM disk verification.
 
 For disk selection, concealed initial credentials, first-boot networking, and recovery guidance, see
 [Physical installation](../getting-started/physical-installation.md).

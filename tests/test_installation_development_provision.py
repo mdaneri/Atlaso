@@ -15,6 +15,17 @@ RESOLVER_END = "# ATLASO_OFFLINE_VERSION_RESOLVER_END"
 DEVELOPMENT_KEY_ID = "atlaso-installation-development-public-test"
 
 
+def test_bootstrap_bytecode_cleanup_follows_all_venv_checks() -> None:
+    """The final import checks cannot regenerate caches after package cleanup."""
+    source = PROVISIONER.read_text(encoding="utf-8")
+    cleanup = source.index('find "$ATLASO_SITE_PACKAGES" -type f -name \'*.pyc\' -delete')
+    assert source.rindex('"$ATLASO_HOME/.venv/bin/python"') < cleanup
+    assert source.rindex("write_third_party_notices\n") < cleanup
+    assert source.rindex("write_build_info\n") < cleanup
+    assert source.index('python3 "$BOOTSTRAP_VENV_VALIDATOR"') < cleanup
+    assert source.index('find "$ATLASO_SITE_PACKAGES" -depth -type d -name __pycache__ -empty -delete') > cleanup
+
+
 def _resolver():
     """Load the exact Python resolver embedded in the shared provisioner."""
     source = PROVISIONER.read_text(encoding="utf-8")

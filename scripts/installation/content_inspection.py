@@ -260,7 +260,7 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
     value = json.loads(raw)
     keys = {
         "assets": {"source_digest", "source_file_count", "deployed_files", "trust_digest", "trust_keys"},
-        "python": {"python_payload_sha256", "python_files", "python_distributions"},
+        "python": {"python_payload_sha256", "python_files", "python_distributions", "python_external_files"},
         "powercli": {"powercli_lock_sha256", "module_count"},
         "rpm": {"installed_inventory", "firmware_verified", "rpm_files_verified", "package_state_verified"},
         "notices": {"notices_sha256", "notice_inputs_verified"},
@@ -274,6 +274,8 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
     for key in {"source_file_count", "deployed_files", "trust_keys", "python_files", "python_distributions", "module_count"} & value.keys():
         if type(value[key]) is not int or not 1 <= value[key] <= 100000:
             raise ValueError("content report count is invalid")
+    if kind == "python" and (type(value["python_external_files"]) is not int or not 0 <= value["python_external_files"] <= 100000):
+        raise ValueError("content external-file count is invalid")
     if kind == "assets" and any(value[key] != expected[key] for key in ("source_digest", "source_file_count", "trust_digest")):
         raise ValueError("installed source or trust differs from media")
     if kind == "assets" and value["trust_keys"] != len(expected["trust_names"]):
@@ -300,14 +302,20 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
 
 _PROGRAMS = {
     "python": r'''
+stage="system-python-helpers"
 v=load("image/common/scripts/verify-template-software.py","software_verifier_sha256","_software")
 h=load("scripts/verify_virtualization_guest_wheel.py","environment_verifier_sha256","_wheels")
+stage="system-python-software"
 software=v.verify(s,e["release_manifest_sha256"],e["version"],e["source_commit"])
-records,distributions=h._expected_environment(s/software["application_wheel"],s/"wheelhouse/cp314",e["wheel_sha256"])
+stage="system-python-expected"
+records,distributions,external=h._expected_installation(s/software["application_wheel"],s/"wheelhouse/cp314",e["wheel_sha256"])
+stage="system-python-site"
 site=Path(site_override) if site_override is not None else Path(importlib.metadata.distribution("atlaso").locate_file(""))
 if site_override is None and site.resolve()!=(a/".venv/lib/python3.14/site-packages").resolve(): raise ValueError()
+stage="system-python-scratch"
 size=sum(v[1] for v in records.values())
 if size>1073741824 or size+67108864>shutil.disk_usage(t).free: raise ValueError()
+stage="system-python-archive"
 with tempfile.TemporaryDirectory(prefix="atlaso-inspection-",dir=t) as d:
  archive=Path(d)/"site.tar";count=0;total=0
  with tarfile.open(archive,"w") as out:
@@ -318,8 +326,20 @@ with tempfile.TemporaryDirectory(prefix="atlaso-inspection-",dir=t) as d:
    count+=1;total+=z.st_size
    if count>100000 or total>1073741824: raise ValueError()
    out.add(p,arcname=p.relative_to(site).as_posix(),recursive=False)
+ stage="system-python-files"
  h._verify_site_packages_archive(archive,records,distributions)
-r=dict(python_files=len(records),python_distributions=len(distributions),python_payload_sha256=hashlib.sha256(json.dumps(records,sort_keys=True,separators=(",", ":")).encode()).hexdigest())
+stage="system-python-external"
+venv=site.resolve().parents[2]
+interpreters=(str(a/".venv/bin/python"),str(venv/"bin/python"))
+for name,record in external.items():
+ p=venv/name
+ for parent in (p,*p.parents):
+  if parent==venv: break
+  if parent.is_symlink(): raise ValueError()
+ z=p.lstat()
+ if z.st_uid or z.st_gid or(name.startswith("bin/") and not z.st_mode&0o111): raise ValueError()
+ h._verify_external_payload(read(p),record,interpreters)
+r=dict(python_files=len(records),python_distributions=len(distributions),python_external_files=len(external),python_payload_sha256=hashlib.sha256(json.dumps(dict(site=records,external=external),sort_keys=True,separators=(",", ":")).encode()).hexdigest())
 ''',
     "powercli": r'''
 p,b=checked("image/common/powershell/provision-powercli.ps1","powercli_script_sha256")

@@ -1424,6 +1424,7 @@ foreach ($fixture in @(
     @{ Text = "`rATLASO-INSPECTION-FAILED:software-staging`r`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: software-staging.' },
     @{ Text = "ATLASO-INSPECTION-FAILED:system-rpm`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-rpm.' },
     @{ Text = "ATLASO-INSPECTION-FAILED:system-assets-deployed`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-assets-deployed.' },
+    @{ Text = "ATLASO-INSPECTION-FAILED:system-python-external`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-python-external.' },
     @{ Text = "ATLASO-INSPECTION:e30=:END`r`nATLASO-INSPECTION:e30=:END`r`n"; Error = 'Installed inspection returned duplicate records.' },
     @{ Text = ('x' * 17000); Error = 'Installed inspection console output exceeded its bound.' }
 )) {
