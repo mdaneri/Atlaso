@@ -118,7 +118,7 @@ def _capture_archive_commands() -> list[tuple[str, str, str, str, str, str]]:
 
         download_start = template.find('direction   = "download"', capture[0])
         source_line = f'source      = "{guest_archive}"'
-        destination_line = f'destination = "${{var.output_directory}}/{output_name}"'
+        destination_line = f'destination = "${{local.verified_capture_directory}}/{output_name}"'
         assert download_start > capture[0]
         assert template.find(source_line, download_start) > download_start
         assert template.find(destination_line, download_start) > download_start
@@ -194,3 +194,46 @@ def test_capture_permission_commands_handle_restrictive_umask(tmp_path: Path) ->
             assert int(mode, 8) & 0o044 == 0o044
         else:
             assert mode == "644"
+
+
+def test_capture_root_admission_fixture(tmp_path: Path) -> None:
+    """Exercise capture-root identity, overlap, emptiness, and archive retention gates.
+
+    Args:
+        tmp_path: Pytest-owned directory for isolated filesystem fixtures.
+    """
+    if os.name != "nt":
+        pytest.skip("Windows filesystem identity handles are required for capture-root admission")
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is required to exercise capture-root admission")
+
+    repository = TEMPLATE.resolve().parents[2]
+    fixture = repository / "tests" / "powershell" / "Test-InstallationCaptureRoot.ps1"
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoProfile",
+            "-File",
+            str(fixture),
+            "-RepositoryRoot",
+            str(repository),
+            "-FixtureRoot",
+            str(tmp_path),
+        ],
+        cwd=repository,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_capture_hcl_requires_separate_directory() -> None:
+    """Keep capture destinations distinct from Packer's cleaned VM output."""
+    template = TEMPLATE.read_text(encoding="utf-8")
+    assert 'variable "capture_directory"' in template
+    assert 'default     = ""' in template
+    assert 'verified_capture_directory   = var.capture_installation_rpms ? regex(".+", var.capture_directory) : ""' in template
+    assert 'destination = "${var.output_directory}/installation-rpms.tar"' not in template
+    assert 'destination = "${var.output_directory}/installation-powercli.tar"' not in template

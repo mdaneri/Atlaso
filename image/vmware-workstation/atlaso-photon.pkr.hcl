@@ -192,8 +192,15 @@ variable "capture_installation_rpms" {
   description = "Capture the resolved offline installation RPM closure from this authorized Photon build."
 }
 
+variable "capture_directory" {
+  type        = string
+  default     = ""
+  description = "Existing empty host directory for captured installation archives; required only when capture_installation_rpms is true."
+}
+
 locals {
   builder_static_address       = var.builder_static_ip != "" ? split("/", var.builder_static_ip)[0] : ""
+  verified_capture_directory   = var.capture_installation_rpms ? regex(".+", var.capture_directory) : ""
   builder_static_dns_text      = join(" ", var.builder_static_dns)
   bootstrap_admin_password     = var.bootstrap_admin_password
   dry_run_system_adapters_text = var.dry_run_system_adapters ? "true" : "false"
@@ -399,7 +406,7 @@ build {
   provisioner "file" {
     direction   = "download"
     source      = "/var/tmp/atlaso-installation-rpms.tar"
-    destination = "${var.output_directory}/installation-rpms.tar"
+    destination = "${local.verified_capture_directory}/installation-rpms.tar"
     only        = var.capture_installation_rpms ? ["vmware-iso.photon"] : ["vmware-iso.disabled"]
   }
 
@@ -447,7 +454,7 @@ build {
   provisioner "file" {
     direction   = "download"
     source      = "/var/tmp/atlaso-installation-powercli.tar"
-    destination = "${var.output_directory}/installation-powercli.tar"
+    destination = "${local.verified_capture_directory}/installation-powercli.tar"
     only        = var.capture_installation_rpms ? ["vmware-iso.photon"] : ["vmware-iso.disabled"]
   }
 }

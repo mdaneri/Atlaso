@@ -81,9 +81,17 @@ the x86-64 release contract.
 ## Development-only VMware test image
 
 The existing PR builder accepts `-CaptureInstallationRpms` to download the resolved Photon RPM closure and installed
-PowerCLI modules alongside its output. This option is rejected for release builders. Capture staging uses `/var/tmp`
-so it does not consume the guest's `/tmp` memory filesystem during shared provisioning. Independently validate all
-captured inputs before assembly; capturing files alone does not establish a successful appliance build.
+PowerCLI modules. Pass an existing, empty, creation-receipted `-InstallationCaptureDirectory` and its original
+`-InstallationCaptureRootIdentity`. Keep this directory separate from the VM output: Packer removes temporary archive
+files from the VM output during cleanup. The capture directory preserves `installation-rpms.tar` and
+`installation-powercli.tar` for independent verification and ISO assembly. This option is rejected for release builders.
+Capture staging uses `/var/tmp` so it does not consume the guest's `/tmp` memory filesystem during shared provisioning.
+Use `-Headless` for unattended capture without opening the Workstation console. Independently validate all captured
+inputs before assembly; capturing files alone does not establish a successful appliance build.
+
+Refresh the complete captured dependency closure when refreshing ISO contents, together with the eligible signed
+Atlaso software bundle and its locked CPython wheelhouse. Packages absent from current official Photon metadata require
+a fresh capture; do not suppress package admission or replace individual packages without verifying the complete set.
 
 PowerCLI input can also be prepared with the existing locked module installer in a receipted task directory:
 
