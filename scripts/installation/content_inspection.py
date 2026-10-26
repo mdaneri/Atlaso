@@ -360,8 +360,11 @@ run(["pwsh","-NoLogo","-NoProfile","-NonInteractive","-File",str(p),"-Mode","Val
 r=dict(powercli_lock_sha256=hashlib.sha256(lb).hexdigest(),module_count=len(lock["modules"]))
 ''',
     "rpm": r'''
+stage="system-rpm-helper"
 p,b=checked("image/common/scripts/verify-photon-package-state.py","package_state_sha256")
+stage="system-rpm-package-state"
 run(["/usr/bin/python3","-B",str(p),"--guest-platform","none"])
+stage="system-rpm-inventory"
 rows=run(["rpm","--noplugins","-qa","--qf","%{NAME}\\t%{VERSION}-%{RELEASE}\\t%{ARCH}\\n"]).decode().splitlines()
 installed={}
 for row in rows:
@@ -372,7 +375,9 @@ for row in rows:
  if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+._:-]{0,127}",name) or name in installed or arch not in {"x86_64","noarch"}: raise ValueError()
  installed[name]=[version,arch]
  if len(installed)>1024: raise ValueError()
+stage="system-rpm-files"
 run(["rpm","--noplugins","-Va","--noscripts","--nodeps","--noconfig","--noghost"],90)
+stage="system-rpm-firmware"
 run(["rpm","--noplugins","-V","--noscripts","--nodeps","linux-firmware"],60)
 r=dict(installed_inventory=base64.b64encode(zlib.compress(json.dumps(installed,sort_keys=True,separators=(",", ":")).encode(),9)).decode(),firmware_verified=True,rpm_files_verified=True,package_state_verified=True)
 ''',
@@ -419,13 +424,17 @@ for name in e["trust_names"]:
 r=dict(source_digest=digest(records),source_file_count=len(records),deployed_files=verified,trust_digest=digest(trusted),trust_keys=len(trusted))
 ''',
     "notices": r'''
+stage="system-notices-inputs"
 p,b=checked("scripts/generate_third_party_notices.py","notice_generator_sha256")
 checked("scripts/third_party_notices.json","notice_config_sha256")
 lock,lb=checked("requirements-appliance.lock","notice_lock_sha256")
+stage="system-notices-inventory"
 inventory=run(["rpm","--noplugins","-qa","--qf","%{NAME}\\t%{VERSION}-%{RELEASE}\\t%{LICENSE}\\t%{URL}\\n"])
 with tempfile.TemporaryDirectory(prefix="atlaso-inspection-",dir=t) as d:
  inv=Path(d)/"rpms.tsv";out=Path(d)/"notices.md";inv.write_bytes(b"\n".join(sorted(set(inventory.splitlines())))+b"\n")
+ stage="system-notices-generate"
  run(["/opt/atlaso/.venv/bin/python","-B","-I",str(p),"--version",e["version"],"--output",str(out),"--lock",str(lock),"--python-environment",str(a/".venv"),"--rpm-inventory",str(inv)],90)
+ stage="system-notices-compare"
  wanted=read(out);actual=read(Path("/usr/share/doc/atlaso/THIRD_PARTY_NOTICES.md"))
  if wanted!=actual: raise ValueError()
 r=dict(notices_sha256=hashlib.sha256(actual).hexdigest(),notice_inputs_verified=True)

@@ -425,8 +425,74 @@ def test_guest_program_bootstraps_and_reaches_first_read(kind, first_path, monke
         exec(program, {})
 
     assert observed == [first_path]
-    marker = {"assets": "system-assets-profile", "python": "system-python-helpers"}.get(kind, f"system-{kind}")
+    marker = {
+        "assets": "system-assets-profile",
+        "python": "system-python-helpers",
+        "rpm": "system-rpm-helper",
+        "notices": "system-notices-inputs",
+    }.get(kind, f"system-{kind}")
     assert output.getvalue().splitlines() == [f"ATLASO-INSPECTION-FAILED:{marker}"]
+
+
+@pytest.mark.parametrize(
+    ("failure_phase", "expected_stage"),
+    [
+        ("helper", "system-rpm-helper"),
+        ("package-state", "system-rpm-package-state"),
+        ("inventory", "system-rpm-inventory"),
+        ("files", "system-rpm-files"),
+        ("firmware", "system-rpm-firmware"),
+    ],
+)
+def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
+    failure_phase, expected_stage, capsys, tmp_path
+):
+    """Run the actual generated RPM AST with safe failing command stubs."""
+    command = content_inspection.guest_content_program(
+        _expectation("rpm"),
+        atlaso_root=tmp_path / "atlaso",
+        software_root=tmp_path / "software",
+        temporary_root=tmp_path / "runtime",
+    )
+    generated = ast.parse(_decode_guest_program(command))
+    outer = next(node for node in generated.body if isinstance(node, ast.Try))
+    outer.body = [
+        node
+        for node in outer.body
+        if not isinstance(node, ast.FunctionDef) or node.name not in {"checked", "run"}
+    ]
+    sentinel = "private-rpm-diagnostic-sentinel"
+
+    def checked(path, _key):
+        if failure_phase == "helper":
+            raise SystemExit(sentinel)
+        return Path(path), b"verified public helper bytes"
+
+    def run(arguments, _timeout=60):
+        command_parts = [str(part) for part in arguments]
+        if failure_phase == "package-state" and any(Path(part).name == "verify-photon-package-state.py" for part in command_parts):
+            raise SystemExit(sentinel)
+        if failure_phase == "inventory" and "-qa" in command_parts:
+            raise SystemExit(sentinel)
+        if failure_phase == "files" and "-Va" in command_parts:
+            raise SystemExit(sentinel)
+        if failure_phase == "firmware" and "linux-firmware" in command_parts:
+            raise SystemExit(sentinel)
+        if "-qa" in command_parts:
+            return b"example\t1-1\tx86_64\n"
+        return b""
+
+    namespace = {"checked": checked, "run": run}
+    isolated = ast.Module(body=[outer], type_ignores=[])
+    with contextlib.redirect_stdout(io.StringIO()) as output:
+        exec(compile(isolated, "<generated-rpm-program>", "exec"), namespace)
+
+    assert output.getvalue().splitlines() == [
+        f"ATLASO-INSPECTION-FAILED:{expected_stage}"
+    ]
+    captured = capsys.readouterr()
+    assert sentinel not in captured.out
+    assert sentinel not in captured.err
 
 
 @pytest.mark.parametrize(

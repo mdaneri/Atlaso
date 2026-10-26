@@ -331,6 +331,9 @@ remain private. It does not permit changed bytes or establish a successful compa
 The signed-software provisioning path reinstalls the locked dependency wheels, including pip: Photon's initial virtual
 environment can contain a differently patched wheel with the same version. Version equality alone does not satisfy
 the signed payload comparison.
+RPM failures distinguish helper admission, package-state checks, inventory, package files, and firmware. Notice
+failures distinguish source inputs, inventory, generation, and comparison. These fixed categories keep command output
+private and retain the original verification requirements.
 
 Use `-CollisionSuffix inspection-a` and `-CollisionSuffix inspection-b` for two fresh installations in separate
 canonical VM directories. The wrappers reuse the shared identity helper to preserve the PR number while giving each
