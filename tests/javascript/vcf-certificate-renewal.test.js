@@ -38,7 +38,7 @@ function element() {
   };
 }
 
-function createHarness({ admin = true, connection = false, fetchImpl = async () => ({ ok: true, json: async () => ({}) }) } = {}) {
+function createHarness({ admin = true, connection = false, health = false, fetchImpl = async () => ({ ok: true, json: async () => ({}) }) } = {}) {
   const root = element();
   root.dataset = { admin: String(admin), endpoint: "/ui/management/vcf-helper/certificate-renewals", csrf: "csrf-test", tasksRoot: "/ui/management/tasks" };
   const status = element();
@@ -48,12 +48,12 @@ function createHarness({ admin = true, connection = false, fetchImpl = async () 
   const gridElement = element();
   const reconfirmSelect = element();
   const reconfirmOpen = element();
-  const fields = Object.fromEntries(["connection_id", "name", "address", "port", "credential_vault_id", "credential_entry_id", "confirm_fingerprint"].map((name) => [name, { ...element(), value: "", checked: false }]));
+  const fields = Object.fromEntries(["connection_id", "name", "address", "port", "credential_vault_id", "credential_entry_id", "confirm_fingerprint", "policy_id", "health_credential_vault_id", "health_credential_entry_id", "confirm_health_fingerprint"].map((name) => [name, { ...element(), value: "", checked: false }]));
   const form = { ...element(), elements: { namedItem: (name) => fields[name] }, querySelector: () => null };
   const fingerprint = element();
   const probe = element();
   const explanation = element();
-  const dialog = { ...element(), querySelector: (selector) => selector.includes("connection-form") ? form : selector.includes("fingerprint") ? fingerprint : selector.includes("probe") ? probe : selector.includes("reconfirm-context") ? explanation : null };
+  const dialog = { ...element(), querySelector: (selector) => selector.includes("connection-form") || selector.includes("health-form") ? form : selector.includes("health-host") ? explanation : selector.includes("fingerprint") ? fingerprint : selector.includes("probe") ? probe : selector.includes("reconfirm-context") ? explanation : null };
   let wizardConfig;
   let wizard;
   let gridConfig;
@@ -65,6 +65,7 @@ function createHarness({ admin = true, connection = false, fetchImpl = async () 
       if (id === "vcf-helper-certificates") return panel;
       if (id === "vcf-renewal-grid") return gridElement;
       if (id === "vcf-renewal-connection-dialog" && connection) return dialog;
+      if (id === "vcf-renewal-health-dialog" && health) return dialog;
       return null;
     },
     createElement: () => element(),
@@ -181,4 +182,52 @@ test("reconfirming a saved connection requires a fresh fingerprint and retains i
   await harness.wizard.open({});
   assert.equal(harness.fields.connection_id.value,"");
   assert.equal(harness.fields.confirm_fingerprint.checked,false);
+});
+
+
+test("health reconfirmation binds saved target and requires fresh fingerprint acknowledgement", async () => {
+  const calls=[];
+  const harness=createHarness({health:true,fetchImpl:async (url,options={}) => {
+    calls.push({url,options});
+    return {ok:true,json:async () => url.endsWith("/state") ? {connections:[],inventory:[],policies:[],profiles:[]} : url.endsWith("/probe") ? {fingerprint:"b".repeat(64)} : {policy_id:"p1"}};
+  }});
+  const action=harness.gridConfig.rowActions.find((a) => a.label === "Reconfirm health access");
+  assert.equal(action.disabled({getData:() => ({policy_id:"p1",proposal_state:"needs_recovery"})}),false);
+  assert.equal(action.disabled({getData:() => ({policy_id:"p1",proposal_state:"installing"})}),true);
+  const launcher={};
+  let opened;
+  const onOpen=harness.wizardConfig.onOpen;
+  harness.wizardConfig.onOpen=(options) => {opened=options;onOpen(options);};
+  await action.action(null,{getData:() => ({policy_id:"p1",host:"vcenter.example.test",proposal_state:"needs_recovery"}),getElement:() => launcher});
+  assert.equal(opened.launcher,launcher);
+  assert.equal(harness.fields.policy_id.value,"p1");
+  assert.equal(harness.explanation.textContent,"vcenter.example.test");
+  assert.equal(harness.wizardConfig.validateStep({step:{id:"credential"}}).valid,false);
+  harness.fields.health_credential_vault_id.value="v1";
+  harness.fields.health_credential_entry_id.value="e1";
+  await harness.probe.events.click();
+  assert.deepEqual(JSON.parse(calls[0].options.body),{policy_id:"p1"});
+  assert.equal(harness.wizardConfig.validateStep({step:{id:"fingerprint"}}).valid,false);
+  harness.fields.confirm_health_fingerprint.checked=true;
+  assert.equal(harness.wizardConfig.validateStep({step:{id:"fingerprint"}}),true);
+  await harness.wizardConfig.onSubmit();
+  const saved=calls.find((c) => c.url.endsWith("/save_policy"));
+  assert.deepEqual(JSON.parse(saved.options.body),{policy_id:"p1",confirm_health_update:true,health_credential_vault_id:"v1",health_credential_entry_id:"e1",confirmed_target_tls_fingerprint:"b".repeat(64)});
+  assert.equal(saved.options.headers["X-CSRF-Token"],"csrf-test");
+  harness.fields.health_credential_entry_id.events.change();
+  assert.equal(harness.fields.confirm_health_fingerprint.checked,false);
+  assert.equal(harness.wizardConfig.validateStep({step:{id:"fingerprint"}}).valid,false);
+  assert.equal(calls.some((c) => c.url.endsWith("/inventory")),false);
+});
+
+test("a delayed health probe cannot confirm a changed credential", async () => {
+  let resolveProbe;
+  const harness=createHarness({health:true,fetchImpl:() => new Promise((resolve) => {resolveProbe=resolve;})});
+  await harness.wizard.open({context:{item:{policy_id:"p1",host:"vcenter.example.test"}}});
+  const probing=harness.probe.events.click();
+  harness.fields.health_credential_entry_id.events.change();
+  resolveProbe({ok:true,json:async () => ({fingerprint:"b".repeat(64)})});
+  await probing;
+  harness.fields.confirm_health_fingerprint.checked=true;
+  assert.equal(harness.wizardConfig.validateStep({step:{id:"fingerprint"}}).valid,false);
 });

@@ -84,7 +84,7 @@
   const rowAction = (label, action, disabled = () => false) => ({
     label,
     disabled: (row) => disabled(row?.getData?.() || {}),
-    action: (_event, row) => action(row?.getData?.() || {}),
+    action: (_event, row) => action(row?.getData?.() || {}, row),
   });
 
   let grid;
@@ -132,6 +132,7 @@
       rowAction("Check now", (item) => runAction("check", { policy_id: item.policy_id }), (item) => !item.policy_id || !item.enabled),
       rowAction("Enroll / Edit policy", (item) => openPolicy(item)),
       rowAction("Disable enrollment", (item) => runAction("save_policy", { policy_id: item.policy_id, enabled: false }), (item) => !item.policy_id || !item.enabled || !["not_due", "proposal", "succeeded", "cancelled", "None"].includes(item.proposal_state)),
+      rowAction("Reconfirm health access", (item, row) => openHealth(item, row?.getElement?.()), (item) => !item.policy_id || !["not_due", "proposal", "prepared", "needs_recovery", "succeeded", "cancelled", "None"].includes(item.proposal_state)),
       rowAction("Prepare renewal", (item) => openPrepare(item), (item) => !item.policy_id || !item.enabled || !item.eligible || item.proposal_state !== "proposal"),
       rowAction("Review replacement", (item) => openReview(item), (item) => !item.operation_id || item.proposal_state !== "prepared"),
       rowAction("Reconcile status", (item) => runAction("reconcile", { operation_id: item.operation_id }), (item) => !item.operation_id || item.proposal_state !== "needs_recovery"),
@@ -519,6 +520,66 @@
     if (!policyWizard) return;
     const current = { ...item, ...(policyByTarget.get(targetKey(item.connection_id, item.certificate_id)) || {}) };
     policyWizard.open({ launcher: document.activeElement, context: { item: current } }).catch((error) => setMessage(error.message, true));
+  }
+
+  const healthDialog = document.getElementById("vcf-renewal-health-dialog");
+  const healthForm = healthDialog?.querySelector("[data-vcf-renewal-health-form]");
+  const healthField = (name) => healthForm?.elements.namedItem(name);
+  const healthProbe = healthDialog?.querySelector("[data-vcf-renewal-health-probe]");
+  const healthFingerprint = healthDialog?.querySelector("[data-vcf-renewal-health-fingerprint]");
+  let healthObservedFingerprint = "";
+  let healthFingerprintRevision = 0;
+  function clearHealthFingerprint() {
+    healthFingerprintRevision += 1;
+    healthObservedFingerprint = "";
+    if (healthFingerprint) healthFingerprint.textContent = "Not checked";
+    if (healthField("confirm_health_fingerprint")) healthField("confirm_health_fingerprint").checked = false;
+  }
+  const healthWizard = healthForm ? window.AtlasoUiPatterns.createWizard({
+    form: healthForm, dialog: healthDialog,
+    steps: [
+      { id: "credential", title: "Choose the current health credential", description: "Select the saved HTTPS credential for this exact vCenter." },
+      { id: "fingerprint", title: "Confirm target TLS identity", description: "Independently confirm the enrolled leaf or this operation's issued replacement." },
+    ],
+    onOpen: ({context}) => {
+      healthField("policy_id").value = context.item.policy_id || context.item.id;
+      healthDialog.querySelector("[data-vcf-renewal-health-host]").textContent = context.item.host;
+      clearHealthFingerprint();
+    },
+    validateStep: ({step}) => {
+      if (step.id === "credential" && !(healthField("health_credential_vault_id").value && healthField("health_credential_entry_id").value)) return {valid:false,message:"Choose the current saved vCenter HTTPS credential.",field:"health_credential_entry_id"};
+      if (step.id === "fingerprint" && !(healthObservedFingerprint && healthField("confirm_health_fingerprint").checked)) return {valid:false,message:"Read and independently confirm the current target fingerprint.",field:"confirm_health_fingerprint"};
+      return true;
+    },
+    onSubmit: async () => {
+      const result = await call("/save_policy", {policy_id:healthField("policy_id").value,confirm_health_update:healthField("confirm_health_fingerprint").checked,
+        health_credential_vault_id:healthField("health_credential_vault_id").value,health_credential_entry_id:healthField("health_credential_entry_id").value,
+        confirmed_target_tls_fingerprint:healthObservedFingerprint});
+      await loadState();
+      setMessage(result.message || "Target health access reconfirmed.");
+      return {close:true};
+    },
+  }) : null;
+  ["health_credential_vault_id","health_credential_entry_id"].forEach((name) => {
+    healthField(name)?.addEventListener("change",clearHealthFingerprint);
+    healthField(name)?.addEventListener("input",clearHealthFingerprint);
+  });
+  healthProbe?.addEventListener("click", async () => {
+    healthProbe.disabled = true;
+    clearHealthFingerprint();
+    const revision = healthFingerprintRevision;
+    try {
+      const result = await call("/probe", {policy_id:healthField("policy_id").value});
+      if (revision !== healthFingerprintRevision) return;
+      healthObservedFingerprint = String(result.fingerprint || "");
+      healthFingerprint.textContent = healthObservedFingerprint || "Fingerprint unavailable";
+    } catch (error) { if (revision === healthFingerprintRevision) healthWizard.setError(error.message); }
+    finally { healthProbe.disabled = false; }
+  });
+  healthDialog?.addEventListener("close", () => { clearHealthFingerprint(); healthWizard?.reset(); });
+  function openHealth(item, launcher) {
+    const current = {...item,...(policyByTarget.get(targetKey(item.connection_id,item.certificate_id)) || {})};
+    healthWizard?.open({launcher:launcher || document.activeElement,context:{item:current}}).catch((error) => setMessage(error.message,true));
   }
 
   const prepareDialog = document.getElementById("vcf-renewal-prepare-dialog");

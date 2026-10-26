@@ -105,6 +105,11 @@ def test_renewal_workspace_is_rendered_inside_vcf_helper_certificates_tab(client
     assert policy_steps == sorted(policy_steps)
     assert 'name="health_credential_vault_id"' in response.text
     assert 'name="health_credential_entry_id"' in response.text
+    health_start = response.text.index('data-vcf-renewal-health-form')
+    health_steps = [response.text.index(f'data-atlaso-wizard-step="{step}"', health_start) for step in ("credential", "fingerprint")]
+    assert health_steps == sorted(health_steps)
+    assert 'data-vcf-renewal-health-host' in response.text[health_start:health_steps[-1]]
+    assert 'name="confirm_health_fingerprint"' in response.text[health_start:]
 
 
 def test_renewal_state_requires_admin(client):

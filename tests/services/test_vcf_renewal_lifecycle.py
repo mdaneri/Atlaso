@@ -265,6 +265,193 @@ def test_connection_reconfirmation_rejects_concurrent_changes_atomically(setup, 
     assert db.scalar(select(Setting).where(Setting.key == "vcf_cert_lock:test-target")) is not None
 
 
+def health_access_fixture(monkeypatch, policy):
+    """Provide a current public Vault reference and read-only native adapter.
+
+    Args:
+        monkeypatch: Test-only native transport replacement.
+        policy: Immutable enrolled target identity.
+    """
+    reference = {"mode": "vault", "vault_id": 1, "entry_id": 2, "revision": "rotated-health"}
+    monkeypatch.setattr(service, "_reference", Mock(return_value=reference))
+    remote = MagicMock()
+    remote.product_info.return_value = {"product": "VMware vCenter Server", "version": "9.1.1"}
+    remote.vcenter_permissions.return_value = True
+    remote.vcenter_registrations.return_value = [{"node_id": "node", "service_id": "service", "endpoints": "https://" + policy["host"] + "/sdk"}]
+    remote.vcenter_ha.return_value = {"config_state": "NOT_CONFIGURED"}
+    remote.health.return_value = {"health": "red"}
+    context = MagicMock()
+    context.__enter__.return_value = remote
+    monkeypatch.setattr(service.native, "_native", Mock(return_value=context))
+    return reference, remote
+
+
+@pytest.mark.parametrize("phase", ["none", "prepared", "csr_submitted", "replacement_submitted"])
+def test_health_reconfirmation_repairs_only_access_and_preserves_native_work(setup, monkeypatch, phase):
+    """A rotated health credential can be repaired before or after native installation.
+
+    Args:
+        setup: Isolated real issuance and durable native request fixtures.
+        monkeypatch: Fixture providing authenticated native reads without a live target.
+        phase: Native checkpoint at the time the password rotates.
+    """
+    db, policy, client = setup
+    operation = None
+    old_token = None
+    if phase != "none":
+        propose(db, policy)
+        policy, operation = prepare(db, policy)
+        if phase == "csr_submitted":
+            service._checkpoint(db, operation, state="needs_recovery", checkpoint=phase, csr_request_id="retained-csr")
+        else:
+            service._prepare(db, policy, operation)
+            old_token = service.dispatch(db, "admin", "review", {"operation_id": operation["id"]})["review_token"]
+            if phase == "replacement_submitted":
+                service._checkpoint(db, operation, state="needs_recovery", checkpoint=phase, replacement_request_id="retained-replacement")
+        db.get(Job, operation["job_id"]).status = "succeeded" if phase == "prepared" else "failed"
+        db.commit()
+    before = service._row(db, "operation", operation["id"])[1] if operation else None
+    reference, remote = health_access_fixture(monkeypatch, policy)
+    monkeypatch.setattr(service.native, "_ready_ca", Mock(side_effect=AssertionError("health repair must not require an enabled CA")))
+    client.reset_mock()
+    pin = operation["replacement_certificate"]["fingerprint_sha256"] if phase == "replacement_submitted" else policy["confirmed_target_tls_fingerprint"]
+    result = service.dispatch(db, "admin", "save_policy", {"policy_id": policy["id"], "confirm_health_update": True,
+        "health_credential_vault_id": 1, "health_credential_entry_id": 2, "confirmed_target_tls_fingerprint": pin,
+        "address": "unrelated.example.test", "port": 8443})
+    current = service._row(db, "policy", policy["id"])[1]
+    assert result["policy_id"] == policy["id"] and current["health_reference"] == reference
+    assert current["host"] == policy["host"] and current["profile_id"] == policy["profile_id"]
+    assert current["confirmed_target_tls_fingerprint"] == policy["confirmed_target_tls_fingerprint"]
+    target = service.native._native.call_args.args[0]
+    assert target.host == policy["host"] and target.port == 443 and target.fingerprint == pin.lower()
+    assert target.strict_tls is (phase == "replacement_submitted")
+    if target.strict_tls:
+        assert target.ca_pem == operation["root_pem"]
+    remote.login.assert_called_once()
+    remote.health.assert_called_once()  # Red health can be observed, never declared successful here.
+    client.generate_csr.assert_not_called()
+    client.replace.assert_not_called()
+    if operation:
+        retained = service._row(db, "operation", operation["id"])[1]
+        for key in ("state", "checkpoint", "csr_request_id", "replacement_request_id", "certificate_id", "csr_pem", "leaf_pem", "reservation_keys"):
+            assert retained.get(key) == before.get(key)
+        assert retained["policy_snapshot"] == service._policy_digest(current)
+        assert retained["approval_revision"] == before.get("approval_revision", 0) + 1
+        assert db.scalar(select(Setting).where(Setting.key == "vcf_cert_lock:test-target")) is not None
+        if phase == "prepared":
+            with pytest.raises(service.RenewalError, match="stale or already used"):
+                service.dispatch(db, "admin", "execute", {"operation_id": retained["id"], "review_token": old_token})
+        if phase == "replacement_submitted":
+            monkeypatch.setattr(service.native, "_verify", Mock(return_value=True))
+            service._reconcile(db, current, retained)
+            assert service._row(db, "operation", retained["id"])[1]["state"] == "succeeded"
+            client.workflow.assert_called_once_with("retained-replacement")
+            assert service._credentials.call_args.args[1] == reference
+            assert service._credentials.call_args.args[2].strict_tls
+            client.generate_csr.assert_not_called()
+            client.replace.assert_not_called()
+
+
+@pytest.mark.parametrize("invalid", ["fingerprint", "login", "identity", "topology", "permissions", "version", "live_task"])
+def test_health_reconfirmation_refuses_unverified_access_without_changing_checkpoints(setup, monkeypatch, invalid):
+    """Failed read-only confirmation cannot change a retained credential or operation.
+
+    Args:
+        setup: Isolated issued-certificate and reservation fixtures.
+        monkeypatch: Fixture supplying failed native identity or authentication evidence.
+        invalid: Specific precondition to reject.
+    """
+    db, policy, _ = setup
+    propose(db, policy)
+    policy, operation = prepare(db, policy)
+    service._prepare(db, policy, operation)
+    job = db.get(Job, operation["job_id"])
+    job.status = "running" if invalid == "live_task" else "succeeded"
+    db.commit()
+    before = service._row(db, "operation", operation["id"])[1]
+    _, remote = health_access_fixture(monkeypatch, policy)
+    pin = policy["confirmed_target_tls_fingerprint"]
+    if invalid == "fingerprint":
+        pin = "e" * 64
+    elif invalid == "login":
+        remote.login.side_effect = RemoteError("synthetic login failure")
+    elif invalid == "identity":
+        remote.vcenter_registrations.return_value[0]["endpoints"] = "https://other.lab.test/sdk"
+    elif invalid == "topology":
+        remote.vcenter_ha.return_value = {}
+    elif invalid == "permissions":
+        remote.vcenter_permissions.return_value = False
+    elif invalid == "version":
+        remote.product_info.return_value = {"version": "7.0.0"}
+    with pytest.raises(service.RenewalError):
+        service.dispatch(db, "admin", "save_policy", {"policy_id": policy["id"], "confirm_health_update": True,
+            "health_credential_vault_id": 1, "health_credential_entry_id": 2, "confirmed_target_tls_fingerprint": pin})
+    assert service._row(db, "operation", operation["id"])[1] == before
+    assert service._row(db, "policy", policy["id"])[1]["health_reference"] == policy["health_reference"]
+    if invalid in {"fingerprint", "live_task"}:
+        remote.login.assert_not_called()
+
+
+
+@pytest.mark.parametrize("drift", ["policy", "operation", "credential", "task"])
+def test_health_reconfirmation_rejects_concurrent_changes(setup, monkeypatch, drift):
+    """Fresh authentication cannot overwrite a changed policy or active worker.
+
+    Args:
+        setup: Isolated durable operation and issued material.
+        monkeypatch: Fixture changing state during remote authentication.
+        drift: Competing state change to preserve.
+    """
+    db, policy, _ = setup
+    propose(db, policy)
+    policy, operation = prepare(db, policy)
+    service._prepare(db, policy, operation)
+    db.get(Job, operation["job_id"]).status = "succeeded"
+    db.commit()
+    before = service._row(db, "operation", operation["id"])[1]
+    reference, remote = health_access_fixture(monkeypatch, policy)
+    if drift == "credential":
+        monkeypatch.setattr(service, "_reference", Mock(side_effect=[reference, {"revision": "newer"}]))
+
+    def authenticated(credentials):
+        """Simulate a competing durable update while native login is in flight."""
+        del credentials
+        if drift == "policy":
+            service._put(db, "policy", policy["id"], dict(policy, threshold_days=15))
+        elif drift == "operation":
+            service._checkpoint(db, operation, checkpoint="concurrent_checkpoint")
+        elif drift == "task":
+            db.add(Job(id="job_competing_health", type=service.JOB_TYPE, status="running", created_by="admin", task_config_json=json.dumps({"policy_id": policy["id"]})))
+        db.commit()
+
+    remote.login.side_effect = authenticated
+    with pytest.raises(service.RenewalError, match="changed during|active certificate write task"):
+        service.dispatch(db, "admin", "save_policy", {"policy_id": policy["id"], "confirm_health_update": True,
+            "health_credential_vault_id": 1, "health_credential_entry_id": 2,
+            "confirmed_target_tls_fingerprint": policy["confirmed_target_tls_fingerprint"]})
+    retained = service._row(db, "operation", operation["id"])[1]
+    assert retained == (dict(before, checkpoint="concurrent_checkpoint", write_revision=before["write_revision"] + 1) if drift == "operation" else before)
+    assert service._row(db, "policy", policy["id"])[1]["health_reference"] == policy["health_reference"]
+
+
+def test_health_fingerprint_probe_is_bound_to_saved_target(setup, monkeypatch):
+    """An unauthenticated probe ignores supplied addresses and never opens credentials.
+
+    Args:
+        setup: Saved enrollment fixture.
+        monkeypatch: Fixture replacing the public TLS probe.
+    """
+    db, policy, _ = setup
+    transport = Mock()
+    transport.probe.return_value = {"sha256": "2" * 64, "issuer": "Synthetic", "subject": "Synthetic"}
+    factory = Mock(return_value=transport)
+    monkeypatch.setattr(service, "PinnedHTTPS", factory)
+    monkeypatch.setattr(service, "_reference", Mock(side_effect=AssertionError("probe must not resolve credentials")))
+    service.dispatch(db, "admin", "probe", {"policy_id": policy["id"], "address": "other.test", "port": 8443})
+    target = factory.call_args.args[0]
+    assert target.host == policy["host"] and target.port == 443
+
+
 def test_approved_csr_is_signed_once_without_a_target_private_key(setup):
     """Real CA issuance retains target key custody and validates the resulting leaf.
 

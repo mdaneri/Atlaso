@@ -38,6 +38,10 @@ from atlaso.app.models import (
 from atlaso.app.services import ca
 from atlaso.app.services import vcf_certificates as native
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+from atlaso.app.services.vcf_certificate_discovery import (
+    standalone_vcenter,
+    supported_version,
+)
 from atlaso.app.services.vcf_certificate_material import (
     CertificateMaterialError,
     certificate_metadata,
@@ -737,6 +741,95 @@ def _idle_connection_policies(db: Session, identifier: str) -> list[dict[str, An
     return policies
 
 
+def _idle_health_policy(db: Session, policy_id: str) -> None:
+    """Require the bound certificate worker to finish before health access changes.
+
+    Args:
+        db: Current administrator session.
+        policy_id: Exact target enrollment identity.
+    """
+    for job in db.scalars(select(Job).where(Job.type == JOB_TYPE, Job.status.in_(["pending", "running"]))):
+        if json.loads(job.task_config_json).get("policy_id") == policy_id:
+            raise RenewalError("Wait for the active certificate write task to finish before reconfirming health access.")
+
+
+def _confirm_health_login(target: Target, credentials: Any, host: str) -> None:
+    """Authenticate read-only native access without requiring CA readiness or green health.
+
+    Args:
+        target: Retained exact TLS identity; an issued replacement uses strict TLS.
+        credentials: Request-local credentials resolved only after the pin check.
+        host: Immutable enrolled vCenter identity.
+    """
+    with native._native(target, "vcenter") as remote:
+        remote.login(credentials)
+        info = remote.product_info()
+        if not isinstance(info, dict) or not supported_version("vcenter", info):
+            raise RenewalError("Native vCenter version could not be verified.")
+        if not remote.vcenter_permissions(credentials):
+            raise RenewalError("The selected vCenter account lacks the required certificate-management permissions.")
+        registrations = remote.vcenter_registrations()
+        if not standalone_vcenter(remote.vcenter_ha(), registrations):
+            raise RenewalError("Native vCenter topology could not be verified.")
+        endpoints = [urlsplit(value) for value in registrations[0]["endpoints"].split(",")]
+        identities = {(value.hostname or "").lower().rstrip(".") for value in endpoints
+                      if value.scheme == "https" and value.path == "/sdk" and not value.username and not value.password}
+        if identities != {host}:
+            raise RenewalError("Native vCenter identity differs from the enrolled target.")
+        remote.health()  # Observation only: failed component health is still reconciled separately.
+
+
+def _reconfirm_health(db: Session, actor: str, values: dict[str, Any]) -> dict[str, Any]:
+    """Repair a rotated health credential without rebinding or repeating native work.
+
+    Args:
+        db: Administrator database session.
+        actor: Administrator explicitly reconfirming this retained operation.
+        values: Policy identity, saved Vault reference and freshly confirmed fingerprint.
+    """
+    policy_id = str(values["policy_id"])
+    _, policy = _row(db, "policy", policy_id)
+    operation = _active(db, policy)
+    if operation and operation["actor"] != actor:
+        raise RenewalError("This renewal operation belongs to another administrator.")
+    _idle_health_policy(db, policy_id)
+    pin = Target(policy["host"], 443, str(values.get("confirmed_target_tls_fingerprint", ""))).fingerprint
+    original_pin = Target(policy["host"], 443, policy["confirmed_target_tls_fingerprint"]).fingerprint
+    replacement_value = operation.get("replacement_certificate", {}).get("fingerprint_sha256") if operation else None
+    replacement_pin = Target(policy["host"], 443, replacement_value).fingerprint if replacement_value else None
+    if pin not in {original_pin, replacement_pin}:
+        raise RenewalError("Health access must retain the enrolled leaf or this operation's exact issued replacement.")
+    strict = pin != original_pin
+    target = Target(policy["host"], 443, pin, strict_tls=strict,
+                    ca_pem=operation["root_pem"] if strict and operation else None, deadline=time.monotonic() + 90)
+    reference_values = {"credential_vault_id": values.get("health_credential_vault_id"), "credential_entry_id": values.get("health_credential_entry_id")}
+    reference = _reference(db, reference_values, target)
+    credentials = _credentials(db, reference, target)
+    _confirm_health_login(target, credentials, policy["host"])
+    acquire_network_objects_write_lock(db)
+    db.expire_all()
+    _, current = _row(db, "policy", policy_id)
+    current_operation = _active(db, current)
+    if (_policy_digest(current) != _policy_digest(policy)
+            or current.get("operation_id") != policy.get("operation_id")
+            or (current_operation or {}).get("write_revision") != (operation or {}).get("write_revision")):
+        raise RenewalError("Renewal state changed during health confirmation; inspect it again.")
+    _idle_health_policy(db, policy_id)
+    if _reference(db, reference_values, target) != reference:
+        raise RenewalError("The health credential changed during confirmation; select it again.")
+    current["health_reference"] = reference
+    if current_operation:
+        updates: dict[str, Any] = {"approval_revision": current_operation.get("approval_revision", 0) + 1}
+        if "policy_snapshot" in current_operation:
+            updates["policy_snapshot"] = _policy_digest(current)
+        _checkpoint(db, current_operation, commit=False, **updates)
+    _put(db, "policy", policy_id, current)
+    db.add(AuditEvent(actor=actor, action="vcf_renewal_health_reconfirmed", resource_type="vcf_certificate_renewal", resource_id=policy_id,
+                      detail="Retained target TLS identity and read-only native authentication reconfirmed; native checkpoints preserved."))
+    db.commit()
+    return {"policy_id": policy_id, "message": "Health access reconfirmed. Review prepared replacements again or reconcile retained native work."}
+
+
 def _save_connection(db: Session, actor: str, values: dict[str, Any]) -> dict[str, Any]:
     """Authenticate an explicitly confirmed new or retained Operations endpoint.
 
@@ -792,7 +885,12 @@ def _dispatch(db: Session, actor: str, action: str, values: dict[str, Any]) -> d
         values: Bounded parsed browser values.
     """
     if action == "probe":
-        observed = PinnedHTTPS(_target(values)).probe()
+        if values.get("policy_id"):
+            _, policy = _row(db, "policy", str(values["policy_id"]))
+            target = _health_target(policy, "0" * 64)
+        else:
+            target = _target(values)
+        observed = PinnedHTTPS(target).probe()
         return {"fingerprint": observed["sha256"], "issuer": observed["issuer"], "subject": observed["subject"]}
     if action == "save_connection":
         return _save_connection(db, actor, values)
@@ -897,6 +995,8 @@ def _save_policy(db: Session, actor: str, values: dict[str, Any]) -> dict[str, A
         validate_schedule_values,
     )
 
+    if values.get("confirm_health_update") is True:
+        return _reconfirm_health(db, actor, values)
     enabled = values.get("enabled", False)
     if not isinstance(enabled, bool):
         raise RenewalError("Enrollment enabled state must be a boolean.")

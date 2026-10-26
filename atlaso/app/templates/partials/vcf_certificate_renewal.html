@@ -112,6 +112,32 @@
   </form>
 </dialog>
 
+<dialog id="vcf-renewal-health-dialog" class="confirm-modal wide-modal" aria-labelledby="vcf-renewal-health-title">
+  <form class="confirm-modal-panel form-stack" data-atlaso-wizard data-vcf-renewal-health-form>
+    <input type="hidden" name="policy_id">
+    <p class="kicker" data-atlaso-wizard-kicker>Step 1 of 2</p><h2 id="vcf-renewal-health-title" data-atlaso-wizard-title>Reconfirm health access</h2><p class="muted" data-atlaso-wizard-description>Reconfirm read-only access to the saved vCenter target.</p>
+    <div class="alert error hidden" data-atlaso-wizard-error></div>
+    <p>Saved target: <strong data-vcf-renewal-health-host></strong></p>
+    <p class="muted">This changes only the saved health credential. Retained certificate material, native requests and reservations stay in place. Prepared replacements require a fresh review.</p>
+    <section data-atlaso-wizard-step="credential">
+      <fieldset class="vcf-vault-credential-picker" data-vcf-vault-credential-picker data-address-field="vcf_health_reconfirm_address_unused" data-username-field="vcf_health_reconfirm_username_unused" data-password-field="vcf_health_reconfirm_password_unused" data-port-field="vcf_health_reconfirm_port_unused" data-address-mode="server">
+        <legend>Current vCenter health credential</legend>
+        <div class="form-grid">
+          <label><span class="field-label"><span>Vault</span><button class="help-icon" type="button" data-help="Choose the Vault containing the current saved credential for this vCenter. No password is loaded into the page.">i</button></span><select name="health_credential_vault_id" data-vcf-credential-vault required><option value="">Choose a vault</option>{% for vault in vcf_vault_credential_options %}<option value="{{ vault.id }}">{{ vault.name }}</option>{% endfor %}</select></label>
+          <label><span class="field-label"><span>Key and endpoint</span><button class="help-icon" type="button" data-help="The saved HTTPS URI must match the enrolled vCenter host and port.">i</button></span><select name="health_credential_entry_id" data-vcf-credential-entry required disabled><option value="">Choose a vault first</option></select></label>
+        </div>
+        <p class="muted" data-vcf-credential-status>Choose the current saved HTTPS credential for the target shown above.</p>
+      </fieldset>
+    </section>
+    <section class="hidden" data-atlaso-wizard-step="fingerprint">
+      <button class="button secondary" type="button" data-vcf-renewal-health-probe>Read target TLS fingerprint</button>
+      <p>Observed target SHA-256 fingerprint: <code data-vcf-renewal-health-fingerprint>Not checked</code></p>
+      <label><span class="field-label"><span>Target identity confirmation</span><button class="help-icon" type="button" data-help="Independently verify this fingerprint. Atlaso accepts only the enrolled leaf or the exact replacement already issued for this operation; the replacement requires strict TLS.">i</button></span><input type="checkbox" name="confirm_health_fingerprint" required><span>I independently confirmed this target fingerprint and approve authenticating read-only health access.</span></label>
+    </section>
+    <div class="confirm-modal-actions" data-atlaso-wizard-nav><button class="button ghost" type="button" data-atlaso-wizard-cancel>Cancel</button><button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button><button class="button primary" type="button" data-atlaso-wizard-next>Next</button><button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Reconfirm health access</button></div>
+  </form>
+</dialog>
+
 <dialog id="vcf-renewal-prepare-dialog" class="confirm-modal" aria-labelledby="vcf-renewal-prepare-title">
   <form class="confirm-modal-panel form-stack" data-vcf-renewal-prepare-form>
     <h2 id="vcf-renewal-prepare-title">Prepare renewal</h2>

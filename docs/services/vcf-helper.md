@@ -96,6 +96,14 @@ not rebind the enrolled targets or repeat native requests. Pending or running ce
 first. Prepared and recovery operations retain their checkpoints and reservations, and any prepared replacement
 requires a fresh review after reconfirmation. Use **Reconcile status** to observe a retained native workflow.
 
+If the separate vCenter health password rotates, use the target row's **Reconfirm health access** action. Select its
+current saved Vault credential, read the target fingerprint, independently confirm it, and authenticate. The endpoint
+stays bound to that vCenter; only the enrolled leaf or the exact issued replacement is accepted, with strict TLS for
+the replacement. This read-only authentication repair does not require a ready CA/profile or green health, does not
+repeat certificate writes, and preserves retained material and native request checkpoints. A pending or running write
+task must finish first, and prepared replacements require a fresh approval afterward. Reconcile an existing native
+request rather than starting another replacement.
+
 To stop scheduled checks, choose the certificate row's **Disable enrollment** action. Disabling uses only the saved
 local policy and its schedule, so it remains available during a VCF outage or when the CA/profile is disabled. Saved
 target, credential, profile and timing bindings are retained; disabling does not apply other wizard edits. A proposal
