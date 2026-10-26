@@ -80,6 +80,12 @@ target identity, issuer, expiry, renewal state, last and next attempt, and task 
 bound scheduled check, manual check, or certificate operation, including failed checks. The shared **Tasks** view holds
 workflow progress and results; the certificate row reports the current per-target state.
 
+Scheduled discovery rechecks the enrolling administrator's access. Explicit preparation and replacement tasks recheck
+the approving administrator instead, so another authorized administrator can prepare a proposal after the original
+enrollment owner loses access. If an approver loses access before dispatch, the task fails with a recoverable
+checkpoint. After that approver is authorized again, **Reconcile status** unwinds undispatched work without repeating
+certificate writes; preparation can then be reviewed again.
+
 To enroll a target, confirm the VCF Operations HTTPS fingerprint and select its saved **Vault** credential. Also
 independently compare the target vCenter's displayed observed TLS fingerprint with a trusted source and confirm that
 exact fingerprint. Select a separate saved **Vault** credential for the target vCenter's authenticated read-only

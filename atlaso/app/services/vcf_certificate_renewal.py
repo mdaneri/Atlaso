@@ -642,10 +642,12 @@ def run(job_id: str) -> None:
         operation = None
         try:
             _, policy = _row(db, "policy", config["policy_id"])
-            _actor(db, policy["actor"])
             if job.type == CHECK_JOB_TYPE:
                 result = check_policy(db, policy["id"])
             else:
+                # Load before authorization so a revoked approver leaves a recoverable
+                # checkpoint. Explicit writes belong to their approving administrator;
+                # scheduled discovery rechecks the enrollment owner in check_policy().
                 _, operation = _row(db, "operation", config["operation_id"])
                 _actor(db, operation["actor"])
                 if operation.get("job_id") != job_id or operation.get("policy_snapshot") != _policy_digest(policy):

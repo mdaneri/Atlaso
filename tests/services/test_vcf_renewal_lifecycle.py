@@ -855,3 +855,93 @@ def test_renewal_schedules_and_runtime_state_are_not_exported(setup):
     db.commit()
     assert not _schedules_to_archive(db)
     assert not any(row["key"].startswith(service.PREFIX) for row in _settings_rows(db))
+
+
+@pytest.mark.parametrize("change", ["disabled", "demoted"])
+def test_active_approver_can_finish_when_enrollment_owner_loses_authority(setup, monkeypatch, change):
+    """Explicit write authority belongs to the current approving administrator.
+
+    Args:
+        setup: Isolated real CA, proposal and native workflow fixtures.
+        monkeypatch: Fixture binding the durable runner and native verification.
+        change: Enrollment-owner authorization change before preparation.
+    """
+    db, policy, client = setup
+    propose(db, policy)
+    db.add(User(username="second-admin", enabled=True, role="admin"))
+    owner = db.scalar(select(User).where(User.username == "admin"))
+    owner.enabled = change != "disabled"
+    owner.role = "viewer" if change == "demoted" else "admin"
+    owner.roles_json = json.dumps([owner.role])
+    db.commit()
+    admitted = service.dispatch(db, "second-admin", "prepare", {"policy_id": policy["id"], "acknowledge_preparation": True, "acknowledge_recovery": True})
+    monkeypatch.setattr(service, "SessionLocal", lambda: nullcontext(db))
+    service.run(admitted["job_id"])
+    retained = service._row(db, "operation", admitted["operation_id"])[1]
+    assert db.get(Job, admitted["job_id"]).status == "succeeded"
+    assert retained["state"] == "prepared" and retained["actor"] == "second-admin"
+    review = service.dispatch(db, "second-admin", "review", {"operation_id": retained["id"]})
+    replacement = service.dispatch(db, "second-admin", "execute", {"operation_id": retained["id"], "review_token": review["review_token"]})
+    client.replace.return_value = "approved-replacement"
+    monkeypatch.setattr(service.native, "_verify", Mock(return_value=True))
+    service.run(replacement["job_id"])
+    assert db.get(Job, replacement["job_id"]).status == "succeeded"
+    assert service._row(db, "operation", retained["id"])[1]["state"] == "succeeded"
+    client.generate_csr.assert_called_once()
+    client.replace.assert_called_once()
+    assert db.scalar(select(Setting).where(Setting.key == "vcf_cert_lock:test-target")) is None
+
+
+@pytest.mark.parametrize("change", ["disabled", "demoted"])
+@pytest.mark.parametrize("stage", ["prepare", "execute"])
+def test_revoked_approver_fails_without_writes_and_retains_recoverable_checkpoint(setup, monkeypatch, change, stage):
+    """Authorization loss after admission cannot strand or dispatch the operation.
+
+    Args:
+        setup: Isolated real CA and durable operation fixtures.
+        monkeypatch: Fixture binding the persistent runner to the isolated session.
+        change: Approver disablement or demotion after task admission.
+        stage: Admitted preparation or replacement task to reject.
+    """
+    db, policy, client = setup
+    propose(db, policy)
+    policy, operation = prepare(db, policy)
+    job_id = operation["job_id"]
+    if stage == "execute":
+        service._prepare(db, policy, operation)
+        db.get(Job, job_id).status = "succeeded"
+        db.commit()
+        token = service.dispatch(db, "admin", "review", {"operation_id": operation["id"]})["review_token"]
+        job_id = service.dispatch(db, "admin", "execute", {"operation_id": operation["id"], "review_token": token})["job_id"]
+    before = service._row(db, "operation", operation["id"])[1]
+    actor = db.scalar(select(User).where(User.username == "admin"))
+    actor.enabled = change != "disabled"
+    actor.role = "viewer" if change == "demoted" else "admin"
+    actor.roles_json = json.dumps([actor.role])
+    db.commit()
+    generated = client.generate_csr.call_count
+    monkeypatch.setattr(service, "SessionLocal", lambda: nullcontext(db))
+    service.run(job_id)
+    retained = service._row(db, "operation", operation["id"])[1]
+    assert db.get(Job, job_id).status == "failed"
+    assert retained["state"] == "needs_recovery"
+    assert retained["checkpoint"] == before["checkpoint"]
+    assert retained.get("certificate_id") == before.get("certificate_id")
+    assert client.generate_csr.call_count == generated
+    client.replace.assert_not_called()
+    assert db.scalar(select(Setting).where(Setting.key == "vcf_cert_lock:test-target")) is not None
+    # Restore this same approver; recovery only unwinds the undispatched intent.
+    actor.enabled, actor.role, actor.roles_json = True, "admin", '["admin"]'
+    db.commit()
+    recovery = service.dispatch(db, "admin", "reconcile", {"operation_id": retained["id"]})
+    service.run(recovery["job_id"])
+    assert db.get(Job, recovery["job_id"]).status == "succeeded"
+    assert service._row(db, "operation", retained["id"])[1]["state"] == ("proposal" if stage == "prepare" else "prepared")
+    assert client.generate_csr.call_count == generated
+    client.replace.assert_not_called()
+    if stage == "prepare":
+        assert db.scalar(select(Setting).where(Setting.key == "vcf_cert_lock:test-target")) is None
+        service.dispatch(db, "admin", "save_policy", {"policy_id": policy["id"], "enabled": False})
+    else:
+        with pytest.raises(service.RenewalError, match="stale or already used"):
+            service.dispatch(db, "admin", "execute", {"operation_id": retained["id"], "review_token": token})
