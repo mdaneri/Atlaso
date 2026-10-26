@@ -334,7 +334,9 @@ with tempfile.TemporaryDirectory(prefix="atlaso-inspection-",dir=t) as d:
   if message.startswith("guest site-packages contains an unexpected file: "):
    name=message.partition(": ")[2]
    stage="system-python-bytecode" if name.endswith(".pyc") and "__pycache__" in PurePosixPath(name).parts else "system-python-extra"
-  elif message.startswith("installed wheel member does not match: "): stage="system-python-changed"
+  elif message.startswith("installed wheel member does not match: "):
+   stage="system-python-changed";name=message.partition(": ")[2]
+   if name in records: stage+="-"+hashlib.sha256(name.encode("utf-8")).hexdigest()
   elif message.startswith("installed wheel member is missing: "): stage="system-python-missing"
   raise
 stage="system-python-external"

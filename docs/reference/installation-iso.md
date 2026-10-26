@@ -325,6 +325,9 @@ shared inventory helper. A changed helper contract requires a rebuilt developmen
 installation. Preserve previous results rather than replacing installed helpers to force a check to pass.
 Shared provisioning clears generated package bytecode after its final compatibility and account checks. The inspector
 continues to reject unexpected executable caches instead of omitting them from the comparison.
+If an immutable Python file differs, its failure category may include the SHA-256 of its original wheel member name.
+This identifies a public, media-bound source record for diagnosis; installed file contents and raw checker errors
+remain private. It does not permit changed bytes or establish a successful comparison.
 
 Use `-CollisionSuffix inspection-a` and `-CollisionSuffix inspection-b` for two fresh installations in separate
 canonical VM directories. The wrappers reuse the shared identity helper to preserve the PR number while giving each

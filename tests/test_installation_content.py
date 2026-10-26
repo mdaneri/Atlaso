@@ -430,24 +430,36 @@ def test_guest_program_bootstraps_and_reaches_first_read(kind, first_path, monke
 
 
 @pytest.mark.parametrize(
-    ("error", "expected_stage"),
+    ("error", "record_names", "expected_stage"),
     [
-        ("installed wheel member does not match: package.py", "system-python-changed"),
-        ("installed wheel member is missing: package.py", "system-python-missing"),
+        (
+            "installed wheel member does not match: package.py",
+            ("package.py",),
+            "system-python-changed-" + hashlib.sha256(b"package.py").hexdigest(),
+        ),
+        (
+            "installed wheel member does not match: private-sentinel.py "
+            "private-python-classifier-sentinel",
+            (),
+            "system-python-changed",
+        ),
+        ("installed wheel member is missing: package.py", (), "system-python-missing"),
         (
             "guest site-packages contains an unexpected file: __pycache__/module.cpython-314.pyc",
+            (),
             "system-python-bytecode",
         ),
         (
             "guest site-packages contains an unexpected file: __pycache__/module.txt",
+            (),
             "system-python-extra",
         ),
-        ("private-python-classifier-sentinel", "system-python-files"),
+        ("private-python-classifier-sentinel", (), "system-python-files"),
     ],
-    ids=["changed", "missing", "bytecode", "other-pycache-extra", "unknown"],
+    ids=["changed-known", "changed-unknown-private", "missing", "bytecode", "other-pycache-extra", "unknown"],
 )
 def test_generated_python_classifier_uses_stages_without_exposing_checker_errors(
-    error, expected_stage, capsys, tmp_path
+    error, record_names, expected_stage, capsys, tmp_path
 ):
     """Execute only the generated try node that classifies the shared checker."""
     command = content_inspection.guest_content_program(
@@ -483,10 +495,11 @@ def test_generated_python_classifier_uses_stages_without_exposing_checker_errors
     namespace = {
         "h": Checker(),
         "archive": object(),
-        "records": {},
+        "records": {name: ("a" * 64, 1) for name in record_names},
         "distributions": set(),
         "stage": "system-python-files",
         "PurePosixPath": PurePosixPath,
+        "hashlib": hashlib,
     }
     with pytest.raises(SystemExit):
         exec(compile(isolated, "<generated-python-classifier>", "exec"), namespace)
@@ -498,7 +511,7 @@ def test_generated_python_classifier_uses_stages_without_exposing_checker_errors
         "system-python-extra",
         "system-python-changed",
         "system-python-missing",
-    }
+    } or re.fullmatch(r"system-python-changed-[0-9a-f]{64}", namespace["stage"])
     captured = capsys.readouterr()
     assert error not in captured.out
     assert error not in captured.err
