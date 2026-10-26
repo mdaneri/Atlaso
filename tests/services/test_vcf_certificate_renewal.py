@@ -48,6 +48,12 @@ def db():
 
 
 def _policy(*, enabled: bool = True, operation_id: str | None = None) -> dict:
+    """Policy.
+
+    Args:
+        enabled: Whether this fixture enables scheduled discovery.
+        operation_id: Optional retained renewal operation identity.
+    """
     return {
         "id": POLICY_ID,
         "actor": ADMIN,
@@ -69,6 +75,13 @@ def _policy(*, enabled: bool = True, operation_id: str | None = None) -> dict:
 
 
 def _store_policy(db: Session, *, enabled: bool = True, operation_id: str | None = None) -> dict:
+    """Store policy.
+
+    Args:
+        db: Isolated database session containing enrollment and task state.
+        enabled: Whether this fixture enables scheduled discovery.
+        operation_id: Optional retained renewal operation identity.
+    """
     policy = _policy(enabled=enabled, operation_id=operation_id)
     renewal._put(db, "policy", POLICY_ID, policy)
     db.commit()
@@ -76,6 +89,11 @@ def _store_policy(db: Session, *, enabled: bool = True, operation_id: str | None
 
 
 def _observation(days_remaining: float) -> dict:
+    """Observation.
+
+    Args:
+        days_remaining: Synthetic number of days until the target certificate expires.
+    """
     return {
         "connection_id": CONNECTION_ID,
         "certificate_id": "vcenter-machine-ssl",
@@ -91,6 +109,12 @@ def _observation(days_remaining: float) -> dict:
 
 
 def test_disabled_policy_check_does_not_discover_or_open_remote_clients(db, monkeypatch):
+    """Test disabled policy check does not discover or open remote clients.
+
+    Args:
+        db: Isolated database session containing enrollment and task state.
+        monkeypatch: Pytest fixture replacing remote calls or request-local dependencies.
+    """
     _store_policy(db, enabled=False)
     selected = Mock(side_effect=AssertionError("disabled policy must not inspect VCF"))
     client_factory = Mock(side_effect=AssertionError("disabled policy must not authenticate"))
@@ -112,6 +136,14 @@ def test_disabled_policy_check_does_not_discover_or_open_remote_clients(db, monk
 def test_check_policy_uses_expiry_threshold_and_suppresses_duplicate_proposals(
     db, monkeypatch, days_remaining, expected
 ):
+    """Test check policy uses expiry threshold and suppresses duplicate proposals.
+
+    Args:
+        db: Isolated database session containing enrollment and task state.
+        monkeypatch: Pytest fixture replacing remote calls or request-local dependencies.
+        days_remaining: Synthetic number of days until the target certificate expires.
+        expected: Expected proposal or canonical workflow state.
+    """
     _store_policy(db)
     selected = Mock(return_value=_observation(days_remaining))
     client_factory = Mock(side_effect=AssertionError("discovery must not open a write workflow"))
@@ -225,6 +257,12 @@ def test_target_selection_still_rejects_incomplete_or_ambiguous_identity(db, mon
 def test_default_enrollment_is_disabled_and_uses_real_timezone_schedule_validation(
     db, monkeypatch
 ):
+    """Test default enrollment is disabled and uses real timezone schedule validation.
+
+    Args:
+        db: Isolated database session containing enrollment and task state.
+        monkeypatch: Pytest fixture replacing remote calls or request-local dependencies.
+    """
     candidate = _observation(90)
     monkeypatch.setattr(renewal, "_inventory", Mock(return_value=[candidate]))
     monkeypatch.setattr(
@@ -352,6 +390,12 @@ def test_automation_schedule_validator_accepts_iana_zone_and_rejects_unknown_zon
 def test_worker_check_job_ignores_malicious_execute_action_and_never_writes(
     db, monkeypatch
 ):
+    """Test worker check job ignores malicious execute action and never writes.
+
+    Args:
+        db: Isolated database session containing enrollment and task state.
+        monkeypatch: Pytest fixture replacing remote calls or request-local dependencies.
+    """
     policy = _policy(operation_id=OPERATION_ID)
     renewal._put(db, "policy", POLICY_ID, policy)
     operation = {
@@ -401,6 +445,12 @@ def test_worker_check_job_ignores_malicious_execute_action_and_never_writes(
 
 
 def test_dispatch_rechecks_admin_authorization_before_any_remote_probe(db, monkeypatch):
+    """Test dispatch rechecks admin authorization before any remote probe.
+
+    Args:
+        db: Isolated database session containing enrollment and task state.
+        monkeypatch: Pytest fixture replacing remote calls or request-local dependencies.
+    """
     probe = Mock(side_effect=AssertionError("unauthorized probe reached remote endpoint"))
     monkeypatch.setattr(
         renewal, "PinnedHTTPS", Mock(return_value=Mock(probe=probe))
@@ -418,6 +468,12 @@ def test_dispatch_rechecks_admin_authorization_before_any_remote_probe(db, monke
 
 
 def test_dispatch_sanitizes_credential_and_remote_error_details(db, monkeypatch):
+    """Test dispatch sanitizes credential and remote error details.
+
+    Args:
+        db: Isolated database session containing enrollment and task state.
+        monkeypatch: Pytest fixture replacing remote calls or request-local dependencies.
+    """
     monkeypatch.setattr(
         renewal,
         "_inventory",
@@ -434,6 +490,12 @@ def test_dispatch_sanitizes_credential_and_remote_error_details(db, monkeypatch)
 
 
 def test_only_one_check_task_is_admitted_per_policy(db, monkeypatch):
+    """Test only one check task is admitted per policy.
+
+    Args:
+        db: Isolated database session containing enrollment and task state.
+        monkeypatch: Pytest fixture replacing remote calls or request-local dependencies.
+    """
     _store_policy(db)
     monkeypatch.setattr(renewal, "acquire_network_objects_write_lock", Mock())
 
@@ -449,6 +511,11 @@ def test_only_one_check_task_is_admitted_per_policy(db, monkeypatch):
 
 
 def _prepared_review_state(db: Session) -> dict:
+    """Prepared review state.
+
+    Args:
+        db: Isolated database session containing enrollment and task state.
+    """
     policy = _policy(operation_id=OPERATION_ID)
     operation = {
         "id": OPERATION_ID,
@@ -475,6 +542,12 @@ def _prepared_review_state(db: Session) -> dict:
 def test_replacement_review_is_actor_bound_single_use_and_rejects_stale_state(
     db, monkeypatch
 ):
+    """Test replacement review is actor bound single use and rejects stale state.
+
+    Args:
+        db: Isolated database session containing enrollment and task state.
+        monkeypatch: Pytest fixture replacing remote calls or request-local dependencies.
+    """
     _prepared_review_state(db)
     monkeypatch.setattr(renewal, "_material", Mock(return_value=("public leaf", "public chain")))
     monkeypatch.setattr(renewal, "acquire_network_objects_write_lock", Mock())
@@ -510,6 +583,12 @@ def test_replacement_review_is_actor_bound_single_use_and_rejects_stale_state(
 
 
 def test_replacement_review_rejects_changed_material(db, monkeypatch):
+    """Test replacement review rejects changed material.
+
+    Args:
+        db: Isolated database session containing enrollment and task state.
+        monkeypatch: Pytest fixture replacing remote calls or request-local dependencies.
+    """
     _prepared_review_state(db)
     monkeypatch.setattr(renewal, "_material", Mock(return_value=("public leaf", "public chain")))
     monkeypatch.setattr(renewal, "acquire_network_objects_write_lock", Mock())
@@ -529,16 +608,33 @@ def test_replacement_review_rejects_changed_material(db, monkeypatch):
 
 
 def test_replacement_review_rejects_expired_token(db, monkeypatch):
+    """Test replacement review rejects expired token.
+
+    Args:
+        db: Isolated database session containing enrollment and task state.
+        monkeypatch: Pytest fixture replacing remote calls or request-local dependencies.
+    """
     _prepared_review_state(db)
     monkeypatch.setattr(renewal, "_material", Mock(return_value=("public leaf", "public chain")))
     monkeypatch.setattr(renewal, "acquire_network_objects_write_lock", Mock())
 
     class ExpiredSerializer:
         def dumps(self, value: dict) -> str:
+            """Dumps.
+
+            Args:
+                value: Candidate value to validate or serialize.
+            """
             del value
             return "expired-review-token"
 
         def loads(self, value: str, *, max_age: int) -> dict:
+            """Loads.
+
+            Args:
+                value: Candidate value to validate or serialize.
+                max_age: Maximum accepted review-token age in seconds.
+            """
             del value, max_age
             raise SignatureExpired("expired")
 

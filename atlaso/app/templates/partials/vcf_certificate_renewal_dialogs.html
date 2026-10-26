@@ -1,0 +1,136 @@
+{% if identity.has_role('admin') %}
+<dialog id="vcf-renewal-connection-dialog" class="confirm-modal wide-modal" aria-labelledby="vcf-renewal-connection-title" aria-describedby="vcf-renewal-connection-description">
+  <form class="confirm-modal-panel form-stack" data-atlaso-wizard data-vcf-renewal-connection-form>
+    <input type="hidden" name="connection_id">
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <p class="kicker" data-atlaso-wizard-kicker>Step 1 of 3</p><h2 id="vcf-renewal-connection-title" data-atlaso-wizard-title>Identify VCF Operations</h2><p id="vcf-renewal-connection-description" class="muted" data-atlaso-wizard-description>Confirm the endpoint identity before using the saved Vault credential.</p>
+    <div class="alert error hidden" data-atlaso-wizard-error></div>
+    <p class="muted" data-vcf-renewal-reconfirm-context></p>
+    <section data-atlaso-wizard-step="credential">
+      <fieldset class="vcf-vault-credential-picker" data-vcf-vault-credential-picker data-address-field="address" data-username-field="" data-password-field="" data-port-field="port" data-address-mode="server">
+        <legend>Saved VCF Operations credential</legend>
+        <div class="form-grid">
+          <label><span class="field-label"><span>Vault</span><button class="help-icon" type="button" data-help="Choose a saved Vault entry with an HTTP or HTTPS URI for this VCF Operations endpoint.">i</button></span><select name="credential_vault_id" data-vcf-credential-vault required><option value="">Choose a vault</option>{% for vault in vcf_vault_credential_options %}<option value="{{ vault.id }}">{{ vault.name }}</option>{% endfor %}</select></label>
+          <label><span class="field-label"><span>Key and endpoint</span><button class="help-icon" type="button" data-help="Select the exact saved HTTP or HTTPS endpoint. The credential stays in Vault and is resolved only on the server.">i</button></span><select name="credential_entry_id" data-vcf-credential-entry required disabled><option value="">Choose a vault first</option></select></label>
+        </div>
+        <p class="muted" data-vcf-credential-status>{% if vcf_vault_credential_options %}Choose a saved HTTP/HTTPS credential. Manual credentials are not used.{% else %}No Vault keys are available to this account.{% endif %}</p>
+      </fieldset>
+      <p class="muted">Scheduled checks use this saved credential reference. Atlaso never loads its password into the page.</p>
+    </section>
+    <section class="hidden" data-atlaso-wizard-step="server">
+      <label><span class="field-label"><span>Connection name</span><button class="help-icon" type="button" data-help="Local label for this saved VCF Operations endpoint; up to 100 characters.">i</button></span><input name="name" maxlength="100" required autocomplete="off"></label>
+      <div class="form-grid">
+        <label><span class="field-label"><span>Server address</span><button class="help-icon" type="button" data-help="Filled and locked to the selected Vault URI. Change the Vault entry to use another endpoint; maximum 253 characters.">i</button></span><input name="address" required maxlength="253" autocomplete="off" placeholder="vcf-operations.example.test"></label>
+        <label><span class="field-label"><span>Port</span><button class="help-icon" type="button" data-help="Filled from the selected Vault URI; HTTPS defaults to 443. Valid range: 1–65535.">i</button></span><input name="port" type="number" min="1" max="65535" value="443" required></label>
+      </div>
+      <p class="muted">Confirm the saved endpoint identity before Atlaso uses this credential.</p>
+    </section>
+    <section class="hidden" data-atlaso-wizard-step="fingerprint">
+      <button class="button secondary" type="button" data-vcf-renewal-probe>Read TLS fingerprint</button>
+      <p>Observed SHA-256 fingerprint: <code data-vcf-renewal-fingerprint>Not checked</code></p>
+      <label><span class="field-label"><span>Endpoint identity confirmation</span><button class="help-icon" type="button" data-help="Compare this observed SHA-256 fingerprint with a trusted source before saving the connection.">i</button></span><input type="checkbox" name="confirm_fingerprint" required><span>Confirm this exact fingerprint against a trusted source before saving.</span></label>
+      <p class="muted">The fingerprint probe does not send Vault credentials. Changing the endpoint or saved credential clears this confirmation.</p>
+    </section>
+    <div class="confirm-modal-actions" data-atlaso-wizard-nav><button class="button ghost" type="button" data-atlaso-wizard-cancel>Cancel</button><button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button><button class="button primary" type="button" data-atlaso-wizard-next>Next</button><button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Save connection</button></div>
+  </form>
+</dialog>
+
+<dialog id="vcf-renewal-policy-dialog" class="confirm-modal wide-modal" aria-labelledby="vcf-renewal-policy-title" aria-describedby="vcf-renewal-policy-description">
+  <form class="confirm-modal-panel form-stack" data-atlaso-wizard data-vcf-renewal-policy-form>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="policy_id">
+    <p class="kicker" data-atlaso-wizard-kicker>Step 1 of 3</p><h2 id="vcf-renewal-policy-title" data-atlaso-wizard-title>Enroll a certificate</h2><p id="vcf-renewal-policy-description" class="muted" data-atlaso-wizard-description>Choose a discovered vCenter Machine SSL target and Atlaso CA profile.</p>
+    <div class="alert error hidden" data-atlaso-wizard-error></div>
+    <section data-atlaso-wizard-step="target">
+      <label><span class="field-label"><span>VCF connection</span><button class="help-icon" type="button" data-help="Choose a previously verified VCF Operations endpoint.">i</button></span><select name="connection_id" required></select></label>
+      <label><span class="field-label"><span>Certificate target</span><button class="help-icon" type="button" data-help="Only discovered vCenter Machine SSL targets are listed. The target host and fingerprint are read-only inventory evidence.">i</button></span><select name="certificate_id" required></select></label>
+      <label><span class="field-label"><span>Atlaso CA profile</span><button class="help-icon" type="button" data-help="Choose an enabled vCenter CA profile. The profile must be ready when preparation begins.">i</button></span><select name="profile_id" required></select></label>
+    </section>
+    <section class="hidden" data-atlaso-wizard-step="target-health">
+      <p class="muted">A separate saved Vault credential is used only for native vCenter identity and health checks. CSR requests and certificate replacement use VCF Operations.</p>
+      <p>Target host: <strong data-vcf-renewal-target-host>Choose a target first.</strong></p>
+      <p>Observed vCenter TLS fingerprint: <code data-vcf-renewal-target-fingerprint>Choose a target first.</code></p>
+      <label><span class="field-label"><span>Target identity confirmation</span><button class="help-icon" type="button" data-help="Independently compare the observed vCenter fingerprint with a trusted source. The saved health credential must also match this target host.">i</button></span><input type="checkbox" name="confirm_target_fingerprint" required><span>I confirmed this target fingerprint against a trusted source.</span></label>
+      <fieldset class="vcf-vault-credential-picker" data-vcf-vault-credential-picker data-address-field="vcf_renewal_health_address_unused" data-username-field="vcf_renewal_health_username_unused" data-password-field="vcf_renewal_health_password_unused" data-port-field="vcf_renewal_health_port_unused" data-address-mode="server">
+        <legend>Saved vCenter health credential</legend>
+        <div class="form-grid">
+          <label><span class="field-label"><span>Vault</span><button class="help-icon" type="button" data-help="Choose a Vault containing an HTTP or HTTPS credential for read-only native vCenter checks.">i</button></span><select name="health_credential_vault_id" data-vcf-credential-vault required><option value="">Choose a vault</option>{% for vault in vcf_vault_credential_options %}<option value="{{ vault.id }}">{{ vault.name }}</option>{% endfor %}</select></label>
+          <label><span class="field-label"><span>Key and endpoint</span><button class="help-icon" type="button" data-help="Choose an endpoint whose URI host matches the target shown above. No password is loaded into the page.">i</button></span><select name="health_credential_entry_id" data-vcf-credential-entry required disabled><option value="">Choose a vault first</option></select></label>
+        </div>
+        <p class="muted" data-vcf-credential-status>{% if vcf_vault_credential_options %}Choose a saved HTTP/HTTPS credential.{% else %}No Vault keys are available to this account.{% endif %}</p>
+      </fieldset>
+      <p class="muted">The backend checks that the selected credential endpoint matches the discovered target host. No password is loaded into this page.</p>
+    </section>
+    <section class="hidden" data-atlaso-wizard-step="policy">
+      <label class="switch-field automation-policy-row full"><span class="field-label"><span>Scheduled enrollment</span><button class="help-icon" type="button" data-help="When enabled, the persistent scheduler checks expiry and creates proposals. It never prepares a CSR or replaces a certificate.">i</button></span><input class="switch-input" name="enabled" type="checkbox"><span class="switch-track" aria-hidden="true"></span></label>
+      <div class="form-grid">
+        <label><span class="field-label"><span>Expiry threshold (days)</span><button class="help-icon" type="button" data-help="Use 1–365 days. A proposal is created when expiry is within the threshold. Default: 30 days.">i</button></span><input name="threshold_days" type="number" min="1" max="365" value="30" required></label>
+      </div>
+      <div class="form-grid automation-schedule-form">
+        <label><span class="field-label"><span>Timezone</span><button class="help-icon" type="button" data-help="IANA timezone used to interpret cron values. Stored execution timestamps remain UTC.">i</button></span><input name="timezone_name" value="UTC" placeholder="America/Los_Angeles" maxlength="64" required autocomplete="off"></label>
+        <div class="full automation-cron-builder" data-automation-schedule-timing="cron">
+          <input type="hidden" name="cron_expression" value="0 2 * * *" data-automation-cron-expression>
+          <div class="form-grid">
+            <label><span class="field-label"><span>Repeat</span><button class="help-icon" type="button" data-help="Builds a standard five-field cron schedule without requiring cron syntax. Choose Custom only for advanced expressions.">i</button></span><select data-automation-cron-frequency><option value="hourly">Hourly</option><option value="daily" selected>Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="custom">Custom</option></select></label>
+            <label class="hidden" data-automation-cron-control="hourly"><span class="field-label"><span>At minute</span><button class="help-icon" type="button" data-help="Minute from 0 through 59 when the check runs every hour.">i</button></span><input type="number" min="0" max="59" value="0" data-automation-cron-minute></label>
+            <label data-automation-cron-control="time"><span class="field-label"><span>At time</span><button class="help-icon" type="button" data-help="Local time in the schedule timezone for daily, weekly, and monthly checks.">i</button></span><input type="time" value="02:00" data-automation-cron-time></label>
+            <label class="hidden" data-automation-cron-control="weekly"><span class="field-label"><span>Day of week</span><button class="help-icon" type="button" data-help="Local weekday in the selected timezone.">i</button></span><select data-automation-cron-weekday><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option></select></label>
+            <label class="hidden" data-automation-cron-control="monthly"><span class="field-label"><span>Day of month</span><button class="help-icon" type="button" data-help="Calendar day from 1 through 31. Months without that day do not run the check.">i</button></span><input type="number" min="1" max="31" value="1" data-automation-cron-monthday></label>
+            <label class="full hidden" data-automation-cron-control="custom"><span class="field-label"><span>Custom cron expression</span><button class="help-icon" type="button" data-help="Advanced five-field minute, hour, day, month, weekday expression.">i</button></span><input value="0 2 * * *" maxlength="100" autocomplete="off" data-automation-cron-custom></label>
+          </div>
+          <div class="automation-cron-summary"><span>Generated schedule</span><strong data-automation-cron-summary>Every day at 02:00 UTC</strong><code data-automation-cron-preview>0 2 * * *</code></div>
+        </div>
+      </div>
+      <p class="muted">Enrollment defaults off. Scheduled checks only inspect certificates and create one active proposal; they never request a CSR, issue, or replace a certificate.</p>
+    </section>
+    <div class="confirm-modal-actions" data-atlaso-wizard-nav><button class="button ghost" type="button" data-atlaso-wizard-cancel>Cancel</button><button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button><button class="button primary" type="button" data-atlaso-wizard-next>Next</button><button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Save enrollment</button></div>
+  </form>
+</dialog>
+
+<dialog id="vcf-renewal-health-dialog" class="confirm-modal wide-modal" aria-labelledby="vcf-renewal-health-title">
+  <form class="confirm-modal-panel form-stack" data-atlaso-wizard data-vcf-renewal-health-form>
+    <input type="hidden" name="policy_id">
+    <p class="kicker" data-atlaso-wizard-kicker>Step 1 of 2</p><h2 id="vcf-renewal-health-title" data-atlaso-wizard-title>Reconfirm health access</h2><p class="muted" data-atlaso-wizard-description>Reconfirm read-only access to the saved vCenter target.</p>
+    <div class="alert error hidden" data-atlaso-wizard-error></div>
+    <p>Saved target: <strong data-vcf-renewal-health-host></strong></p>
+    <p class="muted">This changes only the saved health credential. Retained certificate material, native requests and reservations stay in place. Prepared replacements require a fresh review.</p>
+    <section data-atlaso-wizard-step="credential">
+      <fieldset class="vcf-vault-credential-picker" data-vcf-vault-credential-picker data-address-field="vcf_health_reconfirm_address_unused" data-username-field="vcf_health_reconfirm_username_unused" data-password-field="vcf_health_reconfirm_password_unused" data-port-field="vcf_health_reconfirm_port_unused" data-address-mode="server">
+        <legend>Current vCenter health credential</legend>
+        <div class="form-grid">
+          <label><span class="field-label"><span>Vault</span><button class="help-icon" type="button" data-help="Choose the Vault containing the current saved credential for this vCenter. No password is loaded into the page.">i</button></span><select name="health_credential_vault_id" data-vcf-credential-vault required><option value="">Choose a vault</option>{% for vault in vcf_vault_credential_options %}<option value="{{ vault.id }}">{{ vault.name }}</option>{% endfor %}</select></label>
+          <label><span class="field-label"><span>Key and endpoint</span><button class="help-icon" type="button" data-help="The saved HTTPS URI must match the enrolled vCenter host and port.">i</button></span><select name="health_credential_entry_id" data-vcf-credential-entry required disabled><option value="">Choose a vault first</option></select></label>
+        </div>
+        <p class="muted" data-vcf-credential-status>Choose the current saved HTTPS credential for the target shown above.</p>
+      </fieldset>
+    </section>
+    <section class="hidden" data-atlaso-wizard-step="fingerprint">
+      <button class="button secondary" type="button" data-vcf-renewal-health-probe>Read target TLS fingerprint</button>
+      <p>Observed target SHA-256 fingerprint: <code data-vcf-renewal-health-fingerprint>Not checked</code></p>
+      <label><span class="field-label"><span>Target identity confirmation</span><button class="help-icon" type="button" data-help="Independently verify this fingerprint. Atlaso accepts only the enrolled leaf or the exact replacement already issued for this operation; the replacement requires strict TLS.">i</button></span><input type="checkbox" name="confirm_health_fingerprint" required><span>I independently confirmed this target fingerprint and approve authenticating read-only health access.</span></label>
+    </section>
+    <div class="confirm-modal-actions" data-atlaso-wizard-nav><button class="button ghost" type="button" data-atlaso-wizard-cancel>Cancel</button><button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button><button class="button primary" type="button" data-atlaso-wizard-next>Next</button><button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Reconfirm health access</button></div>
+  </form>
+</dialog>
+
+<dialog id="vcf-renewal-prepare-dialog" class="confirm-modal" aria-labelledby="vcf-renewal-prepare-title">
+  <form class="confirm-modal-panel form-stack" data-vcf-renewal-prepare-form>
+    <h2 id="vcf-renewal-prepare-title">Prepare renewal</h2>
+    <p>Preparation requests a CSR from the target and issues a certificate through the selected Atlaso CA profile. It does not install the certificate.</p>
+    <label><span class="field-label"><span>Prepare acknowledgement</span><button class="help-icon" type="button" data-help="This action requests a new CSR from the target and asks Atlaso to issue a certificate. It does not install the certificate.">i</button></span><input type="checkbox" name="acknowledge_preparation" required><span>I explicitly approve requesting the target-owned CSR and issuing a renewal.</span></label>
+    <label><span class="field-label"><span>Recovery acknowledgement</span><button class="help-icon" type="button" data-help="Confirm the operator recovery path before preparation. Resolve uncertain outcomes with Reconcile status before any retry.">i</button></span><input type="checkbox" name="acknowledge_recovery" required><span>I confirmed recovery prerequisites and will reconcile an uncertain result before retrying.</span></label>
+    <div class="alert error hidden" data-vcf-renewal-dialog-error role="alert"></div>
+    <div class="confirm-modal-actions"><button class="button ghost" type="button" data-vcf-renewal-cancel>Cancel</button><button class="button primary" type="submit">Prepare renewal</button></div>
+  </form>
+</dialog>
+
+<dialog id="vcf-renewal-review-dialog" class="confirm-modal wide-modal" aria-labelledby="vcf-renewal-review-title">
+  <form class="confirm-modal-panel form-stack" data-vcf-renewal-review-form>
+    <h2 id="vcf-renewal-review-title">Review replacement</h2>
+    <p>Review the exact certificate, SANs, chain, target, and expected impact before approving installation.</p>
+    <pre class="code-preview" data-vcf-renewal-review-summary aria-live="polite">Review details have not been loaded.</pre>
+    <label><span class="field-label"><span>Replacement approval</span><button class="help-icon" type="button" data-help="This separate approval submits the exact reviewed public certificate chain to VCF Operations for installation.">i</button></span><input type="checkbox" name="approve_replacement" required><span>I approve replacing this target certificate with the exact reviewed certificate.</span></label>
+    <div class="alert error hidden" data-vcf-renewal-dialog-error role="alert"></div>
+    <div class="confirm-modal-actions"><button class="button ghost" type="button" data-vcf-renewal-cancel>Cancel</button><button class="button danger" type="submit" disabled>Approve replacement</button></div>
+  </form>
+</dialog>
+{% endif %}

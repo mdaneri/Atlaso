@@ -27,6 +27,11 @@ def client() -> OperationsClient:
 
 
 def test_login_uses_pinned_transport_and_ops_token(monkeypatch):
+    """Test login uses pinned transport and ops token.
+
+    Args:
+        monkeypatch: Pytest fixture replacing remote calls or request-local dependencies.
+    """
     transport_request = Mock(return_value=(200, {"token": "short-lived-token"}))
     monkeypatch.setattr(
         "atlaso.app.services.vcf_operations.PinnedHTTPS.request", transport_request
@@ -72,6 +77,11 @@ def test_login_sends_no_credentials_when_endpoint_pin_mismatches():
     [None, {}, {"token": ""}, {"token": "bad\r\nheader"}, {"token": "x" * 4097}],
 )
 def test_login_rejects_invalid_tokens(payload):
+    """Test login rejects invalid tokens.
+
+    Args:
+        payload: Decoded public response or synthetic response under validation.
+    """
     item = OperationsClient(Target("vcf-ops.test", 443, "a" * 64))
     item.transport.request = Mock(return_value=(200, payload))
 
@@ -82,6 +92,11 @@ def test_login_rejects_invalid_tokens(payload):
 
 
 def test_context_exit_releases_and_erases_token(client):
+    """Test context exit releases and erases token.
+
+    Args:
+        client: Pinned Operations client backed by a synthetic transport.
+    """
     client.transport.request = Mock(return_value=(200, None))
     client._token = "secret-session-token"
 
@@ -107,6 +122,11 @@ def test_requests_require_login():
 
 
 def test_version_requires_exact_locked_contract(client):
+    """Test version requires exact locked contract.
+
+    Args:
+        client: Pinned Operations client backed by a synthetic transport.
+    """
     client.transport.request = Mock(
         return_value=(
             200,
@@ -145,6 +165,12 @@ def test_version_requires_exact_locked_contract(client):
     ],
 )
 def test_version_rejects_other_build_families(client, version):
+    """Test version rejects other build families.
+
+    Args:
+        client: Pinned Operations client backed by a synthetic transport.
+        version: Synthetic installed-build response under validation.
+    """
     client.transport.request = Mock(return_value=(200, version))
 
     with pytest.raises(RemoteError, match="9.1.1.0"):
@@ -152,6 +178,11 @@ def test_version_rejects_other_build_families(client, version):
 
 
 def _certificate(certificate_id: str = "vc-machine-ssl") -> dict[str, object]:
+    """Certificate.
+
+    Args:
+        certificate_id: Exact native certificate identity to inspect or operate on.
+    """
     return {
         "certificateResourceKey": certificate_id,
         "appliance": "VCENTER",
@@ -171,6 +202,13 @@ def _certificate(certificate_id: str = "vc-machine-ssl") -> dict[str, object]:
 
 
 def _page(rows, page: int, total: int) -> dict[str, object]:
+    """Page.
+
+    Args:
+        rows: Public inventory records included in the synthetic page.
+        page: Requested zero-based inventory page.
+        total: Declared total number of inventory records.
+    """
     return {
         "pageInfo": {"page": page, "pageSize": 100, "totalCount": total},
         "vcfCertificateModels": rows,
@@ -178,6 +216,11 @@ def _page(rows, page: int, total: int) -> dict[str, object]:
 
 
 def test_inventory_paginates_and_returns_only_public_allowlisted_fields(client):
+    """Test inventory paginates and returns only public allowlisted fields.
+
+    Args:
+        client: Pinned Operations client backed by a synthetic transport.
+    """
     rows = [_certificate(f"vc-machine-ssl-{index}") for index in range(100)]
     client.transport.request = Mock(
         side_effect=[
@@ -208,6 +251,12 @@ def test_inventory_paginates_and_returns_only_public_allowlisted_fields(client):
     ],
 )
 def test_inventory_rejects_missing_or_ambiguous_data(client, payload):
+    """Test inventory rejects missing or ambiguous data.
+
+    Args:
+        client: Pinned Operations client backed by a synthetic transport.
+        payload: Decoded public response or synthetic response under validation.
+    """
     client.transport.request = Mock(return_value=(200, payload))
 
     with pytest.raises(RemoteError):
@@ -215,6 +264,12 @@ def test_inventory_rejects_missing_or_ambiguous_data(client, payload):
 
 
 def _csr(certificate_id: str = "vc-machine-ssl", csr_id: str = "request-1"):
+    """Csr.
+
+    Args:
+        certificate_id: Exact native certificate identity to inspect or operate on.
+        csr_id: Synthetic CSR identity associated with the selected certificate.
+    """
     return {
         "id": csr_id,
         "certificateId": certificate_id,
@@ -228,6 +283,11 @@ def _csr(certificate_id: str = "vc-machine-ssl", csr_id: str = "request-1"):
 
 
 def test_csr_listing_is_scoped_to_exact_certificate(client):
+    """Test csr listing is scoped to exact certificate.
+
+    Args:
+        client: Pinned Operations client backed by a synthetic transport.
+    """
     client.transport.request = Mock(
         return_value=(
             200,
@@ -245,6 +305,11 @@ def test_csr_listing_is_scoped_to_exact_certificate(client):
 
 
 def test_csr_listing_rejects_cross_certificate_or_ambiguous_rows(client):
+    """Test csr listing rejects cross certificate or ambiguous rows.
+
+    Args:
+        client: Pinned Operations client backed by a synthetic transport.
+    """
     for records in ([_csr("different")], [_csr(), _csr(csr_id="request-1")]):
         client.transport.request = Mock(
             return_value=(
@@ -260,6 +325,11 @@ def test_csr_listing_rejects_cross_certificate_or_ambiguous_rows(client):
 
 
 def test_generate_csr_uses_target_owned_request_and_validates_async_id(client):
+    """Test generate csr uses target owned request and validates async id.
+
+    Args:
+        client: Pinned Operations client backed by a synthetic transport.
+    """
     client.transport.request = Mock(return_value=(202, {"requestId": "workflow-1"}))
     spec = {
         "commonName": "vcenter.test",
@@ -283,6 +353,11 @@ def test_generate_csr_uses_target_owned_request_and_validates_async_id(client):
 
 
 def test_generate_csr_rejects_unsupported_spec_fields(client):
+    """Test generate csr rejects unsupported spec fields.
+
+    Args:
+        client: Pinned Operations client backed by a synthetic transport.
+    """
     with pytest.raises(RemoteError, match="unsupported fields"):
         client.generate_csr("vc-machine-ssl", {"commonName": "vcenter.test", "key": "private"})
 
@@ -304,6 +379,11 @@ def _chain_pem() -> str:
 
 
 def test_replace_submits_exact_external_chain_and_request_id(client):
+    """Test replace submits exact external chain and request id.
+
+    Args:
+        client: Pinned Operations client backed by a synthetic transport.
+    """
     chain = _chain_pem()
     client.transport.request = Mock(return_value=(202, {"requestId": "replace-1"}))
 
@@ -318,6 +398,11 @@ def test_replace_submits_exact_external_chain_and_request_id(client):
 
 
 def test_replace_rejects_malformed_chain_before_remote_write(client):
+    """Test replace rejects malformed chain before remote write.
+
+    Args:
+        client: Pinned Operations client backed by a synthetic transport.
+    """
     client.transport.request = Mock()
 
     with pytest.raises(RemoteError, match="public PEM"):
@@ -339,6 +424,13 @@ def test_replace_rejects_malformed_chain_before_remote_write(client):
 def test_workflow_returns_canonical_state_without_remote_error_text(
     client, remote_state, expected
 ):
+    """Test workflow returns canonical state without remote error text.
+
+    Args:
+        client: Pinned Operations client backed by a synthetic transport.
+        remote_state: Workflow state returned by the synthetic native API.
+        expected: Expected proposal or canonical workflow state.
+    """
     client.transport.request = Mock(
         return_value=(
             200,
@@ -361,6 +453,11 @@ def test_workflow_returns_canonical_state_without_remote_error_text(
 
 
 def test_workflow_rejects_mismatched_id_and_unknown_state(client):
+    """Test workflow rejects mismatched id and unknown state.
+
+    Args:
+        client: Pinned Operations client backed by a synthetic transport.
+    """
     client.transport.request = Mock(
         return_value=(200, {"requestId": "other", "state": "COMPLETED"})
     )
@@ -375,5 +472,10 @@ def test_workflow_rejects_mismatched_id_and_unknown_state(client):
 
 
 def test_health_is_explicitly_unknown_without_resource_identity_mapping(client):
+    """Test health is explicitly unknown without resource identity mapping.
+
+    Args:
+        client: Pinned Operations client backed by a synthetic transport.
+    """
     with pytest.raises(RemoteError, match="health is unknown"):
         client.component_health(_certificate())

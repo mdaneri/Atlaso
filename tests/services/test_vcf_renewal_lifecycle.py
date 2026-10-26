@@ -414,7 +414,11 @@ def test_health_reconfirmation_rejects_concurrent_changes(setup, monkeypatch, dr
         monkeypatch.setattr(service, "_reference", Mock(side_effect=[reference, {"revision": "newer"}]))
 
     def authenticated(credentials):
-        """Simulate a competing durable update while native login is in flight."""
+        """Simulate a competing durable update while native login is in flight.
+
+        Args:
+            credentials: Request-local login credentials, excluded from retained state.
+        """
         del credentials
         if drift == "policy":
             service._put(db, "policy", policy["id"], dict(policy, threshold_days=15))

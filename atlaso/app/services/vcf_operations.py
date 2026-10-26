@@ -91,18 +91,36 @@ _WORKFLOW_STATES = {
 
 
 def _safe_identifier(value: Any, label: str) -> str:
+    """Validate a bounded native resource identifier.
+
+    Args:
+        value: Candidate value to validate or serialize.
+        label: Public field label used in sanitized validation errors.
+    """
     if not isinstance(value, str) or not _SAFE_ID.fullmatch(value):
         raise RemoteError(f"VCF Operations returned an invalid {label}")
     return value
 
 
 def _safe_host(value: Any, label: str) -> str:
+    """Validate and normalize a public appliance hostname.
+
+    Args:
+        value: Candidate value to validate or serialize.
+        label: Public field label used in sanitized validation errors.
+    """
     if not isinstance(value, str) or not _SAFE_HOST.fullmatch(value):
         raise RemoteError(f"VCF Operations returned an invalid {label}")
     return value.rstrip(".").lower()
 
 
 def _page_info(payload: dict[str, Any], page: int) -> tuple[int, int]:
+    """Validate exact pagination metadata before collecting another page.
+
+    Args:
+        payload: Decoded public response or synthetic response under validation.
+        page: Requested zero-based inventory page.
+    """
     info = payload.get("pageInfo")
     if not isinstance(info, dict):
         raise RemoteError("VCF Operations returned incomplete pagination data")
@@ -124,6 +142,11 @@ def _page_info(payload: dict[str, Any], page: int) -> tuple[int, int]:
 
 
 def _validate_chain(chain: str) -> str:
+    """Reject malformed, oversized or private certificate material.
+
+    Args:
+        chain: Public PEM certificate chain to validate before submission.
+    """
     if not isinstance(chain, str) or not chain or len(chain.encode("utf-8")) > _MAX_CHAIN_SIZE:
         raise RemoteError("Replacement chain is empty or exceeds the request limit")
     if "PRIVATE KEY" in chain or not re.fullmatch(
@@ -144,6 +167,11 @@ class OperationsClient:
     """Use the pinned Operations endpoint and the locked 9.1.1.0 API contract."""
 
     def __init__(self, target: Target):
+        """Bind a request-local client to the confirmed endpoint.
+
+        Args:
+            target: Operator-confirmed HTTPS endpoint and expected TLS identity.
+        """
         self.target = target
         self.transport = PinnedHTTPS(target)
         self._token: str | None = None
@@ -155,6 +183,13 @@ class OperationsClient:
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        """Release the short-lived token when leaving the client context.
+
+        Args:
+            exc_type: Exception type raised inside the client context, if any.
+            exc: Exception raised inside the client context, if any.
+            traceback: Context exception traceback, if any.
+        """
         try:
             self.logout()
         except RemoteError:
@@ -170,6 +205,15 @@ class OperationsClient:
         expected_status: int = 200,
         token: str | None = None,
     ) -> Any:
+        """Send a bounded pinned request and require its exact success status.
+
+        Args:
+            method: HTTP method for the documented Operations resource.
+            path: Relative documented Operations API path.
+            body: Request-local JSON payload; credentials are never persisted.
+            expected_status: Exact HTTP success status required by this contract.
+            token: Optional request-local authentication override.
+        """
         auth_token = self._token if token is None else token
         if auth_token is None and path != f"{_BASE}/auth/token/acquire":
             raise RemoteError("Authenticate before requesting VCF Operations data")
@@ -182,7 +226,11 @@ class OperationsClient:
         return result
 
     def login(self, credentials: Credentials) -> None:
-        """Acquire a request-local OpsToken through the pinned HTTPS transport."""
+        """Acquire a request-local OpsToken through the pinned HTTPS transport.
+
+        Args:
+            credentials: Request-local login credentials, excluded from retained state.
+        """
         if not isinstance(credentials, Credentials):
             raise TypeError("VCF Operations credentials must use Credentials")
         self._token = None
@@ -275,6 +323,11 @@ class OperationsClient:
 
     @staticmethod
     def _public_certificate(model: Any) -> dict[str, Any]:
+        """Project and validate allowlisted public certificate metadata.
+
+        Args:
+            model: Decoded certificate model containing public inventory metadata.
+        """
         if not isinstance(model, dict):
             raise RemoteError("VCF Operations returned a malformed certificate record")
         result = {key: model[key] for key in _CERTIFICATE_FIELDS if key in model}
@@ -330,7 +383,11 @@ class OperationsClient:
         return result
 
     def csrs(self, certificate_id: str) -> list[dict[str, Any]]:
-        """Return bounded CSR rows whose documented certificate identity matches."""
+        """Return bounded CSR rows whose documented certificate identity matches.
+
+        Args:
+            certificate_id: Exact native certificate identity to inspect or operate on.
+        """
         cert_id = _safe_identifier(certificate_id, "certificate identity")
         rows: list[dict[str, Any]] = []
         page = 0
@@ -373,6 +430,12 @@ class OperationsClient:
 
     @staticmethod
     def _public_csr(record: Any, certificate_id: str) -> dict[str, Any]:
+        """Public csr.
+
+        Args:
+            record: Public native record whose shape and identity are validated.
+            certificate_id: Exact native certificate identity to inspect or operate on.
+        """
         if not isinstance(record, dict):
             raise RemoteError("VCF Operations returned a malformed CSR record")
         record_id = _safe_identifier(record.get("id"), "CSR identity")
@@ -395,7 +458,12 @@ class OperationsClient:
         return result
 
     def generate_csr(self, certificate_id: str, spec: dict[str, Any]) -> str:
-        """Ask VCF Operations to generate a target-owned CSR and return its workflow ID."""
+        """Ask VCF Operations to generate a target-owned CSR and return its workflow ID.
+
+        Args:
+            certificate_id: Exact native certificate identity to inspect or operate on.
+            spec: Allowlisted target-owned CSR subject and SAN request.
+        """
         cert_id = _safe_identifier(certificate_id, "certificate identity")
         if not isinstance(spec, dict) or set(spec) - _CSR_SPEC_FIELDS:
             raise RemoteError("CSR specification has unsupported fields")
@@ -428,7 +496,12 @@ class OperationsClient:
         return self._request_id(payload)
 
     def replace(self, certificate_id: str, full_chain: str) -> str:
-        """Submit a public PEM chain through VCF's external-CA replacement operation."""
+        """Submit a public PEM chain through VCF's external-CA replacement operation.
+
+        Args:
+            certificate_id: Exact native certificate identity to inspect or operate on.
+            full_chain: Exact reviewed public PEM chain for external-CA replacement.
+        """
         cert_id = _safe_identifier(certificate_id, "certificate identity")
         chain = _validate_chain(full_chain)
         payload = self._request(
@@ -441,12 +514,21 @@ class OperationsClient:
 
     @staticmethod
     def _request_id(payload: Any) -> str:
+        """Extract an unambiguous asynchronous workflow identity.
+
+        Args:
+            payload: Decoded public response or synthetic response under validation.
+        """
         if not isinstance(payload, dict):
             raise RemoteError("VCF Operations returned an invalid workflow response")
         return _safe_identifier(payload.get("requestId"), "workflow request identity")
 
     def workflow(self, request_id: str) -> dict[str, str]:
-        """Return a minimal canonical workflow state without raw remote error text."""
+        """Return a minimal canonical workflow state without raw remote error text.
+
+        Args:
+            request_id: Retained asynchronous native workflow identity.
+        """
         workflow_id = _safe_identifier(request_id, "workflow request identity")
         payload = self._request(
             "GET",
@@ -469,7 +551,11 @@ class OperationsClient:
         return result
 
     def component_health(self, record: dict[str, Any]) -> bool:
-        """Fail closed: SDK data does not bind a fleet certificate to a health resource."""
+        """Fail closed: SDK data does not bind a fleet certificate to a health resource.
+
+        Args:
+            record: Public native record whose shape and identity are validated.
+        """
         del record
         raise RemoteError(
             "VCF Operations component health is unknown without a verified resource identity mapping"

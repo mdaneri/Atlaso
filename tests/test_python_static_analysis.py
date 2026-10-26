@@ -160,6 +160,8 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
             "atlaso/app/services/vcf_lab_remote.py",
             "atlaso/app/services/vcf_lab_overrides.py",
             "atlaso/app/services/vcf_certificates.py",
+            "atlaso/app/services/vcf_certificate_renewal.py",
+            "atlaso/app/services/vcf_operations.py",
             "atlaso/app/services/vcf_certificate_remote.py",
             "atlaso/app/services/vcf_certificate_sddc.py",
             "atlaso/app/services/vcf_certificate_material.py",

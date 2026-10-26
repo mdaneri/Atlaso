@@ -181,6 +181,14 @@ def test_renewal_dispatch_preserves_actor_action_and_safe_payload(client, monkey
     )
 
     def dispatch(db, actor, action, values):
+        """Dispatch.
+
+        Args:
+            db: Isolated database session containing enrollment and task state.
+            actor: Authenticated administrator initiating the browser action.
+            action: Allowlisted browser renewal action.
+            values: Parsed public browser action parameters.
+        """
         calls.append((actor, action, values))
         return {"job_id": "task-123", "state": "queued"}
 
@@ -223,6 +231,11 @@ def test_renewal_service_conflicts_are_sanitized(client, monkeypatch):
     from atlaso.app.services import vcf_certificate_renewal as renewal
 
     def fail(*args):
+        """Fail.
+
+        Args:
+            *args: Unused arguments supplied to the synthetic failure callback.
+        """
         raise renewal.RenewalError("The replacement review is stale.")
 
     monkeypatch.setattr(renewal, "dispatch", fail)
