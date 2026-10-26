@@ -39,7 +39,7 @@ def _source_repository(path: Path) -> str:
         "image/common/scripts/provision-atlaso.sh": (
             'run_tdnf "Photon appliance package installation" \\\n  install python3 linux-firmware\n'
         ),
-        "image/common/photon-rpm-gpg/VMWARE-RPM-GPG-KEY-test": "test-key\n",
+        "image/common/photon-rpm-gpg/VMWARE-RPM-GPG-KEY-4096": "test-key\n",
         "image/common/powershell/provision-powercli.ps1": "# validation fixture\n",
         "image/common/update-trust/atlaso-release-2026-01.pem": "public trust fixture\n",
         "scripts/installation/installer.py": "print('fixture')\n",

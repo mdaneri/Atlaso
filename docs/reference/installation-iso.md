@@ -134,6 +134,8 @@ that initrd removes the OpenSSL command-line executable. The downloadable verifi
 
 RPM repository generation explicitly uses gzip metadata so the pinned Photon initrd can read it, regardless of the
 build host’s default compression format. Repository configuration uses UTF-8 with LF line endings for Photon TDNF.
+The installed runtime uses the same current Photon 4096-bit RPM key as the shared repository initializer, with
+signature checking enabled. Legacy keys remain available to the pinned native installer where required.
 
 The VMware harness creates an isolated EFI VM with no network adapters, two blank SCSI disks, and a private serial
 console. Its VMX configuration uses UTF-8 to preserve non-ASCII worktree, ISO, and output paths.

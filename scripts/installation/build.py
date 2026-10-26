@@ -12,6 +12,7 @@ import subprocess
 import tarfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
+from image.common.scripts.configure_photon_repositories import DEFAULT_GPG_KEY_PATH
 from scripts.installation.assets import _safe_name
 from scripts.installation.manifest import (
     KEY_ID,
@@ -282,9 +283,14 @@ def repository_configuration(source: Path) -> tuple[str, str]:
 
     Args:
         source: Input source file or directory."""
-    keys = " ".join(f"file://{MEDIA}/source/image/common/photon-rpm-gpg/{path.name}" for path in sorted((source / "image/common/photon-rpm-gpg").glob("VMWARE-RPM-GPG-KEY*")))
+    # Match the shared Photon repository initializer. Modern TDNF rejects the
+    # legacy key while staging the installed runtime's signed RPM closure.
+    key = source / "image/common/photon-rpm-gpg" / DEFAULT_GPG_KEY_PATH.name
+    if key.is_symlink() or not key.is_file():
+        raise ValueError("installation repository requires the canonical Photon RPM key")
+    key_uri = f"file://{MEDIA}/source/image/common/photon-rpm-gpg/{key.name}"
     configuration = f"[main]\nreposdir={MEDIA}/rpm-repos\ngpgcheck=1\nkeepcache=0\n"
-    repository = f"[atlaso-installation]\nname=Atlaso offline installation\nbaseurl=file://{MEDIA}/rpms\nenabled=1\ngpgcheck=1\ngpgkey={keys}\n"
+    repository = f"[atlaso-installation]\nname=Atlaso offline installation\nbaseurl=file://{MEDIA}/rpms\nenabled=1\ngpgcheck=1\ngpgkey={key_uri}\n"
     return configuration, repository
 
 

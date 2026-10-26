@@ -225,6 +225,9 @@ def test_repository_writer_refuses_existing_configuration(tmp_path: Path, existi
         existing: File or directory whose existing identity must be preserved.
     """
     source = _source(tmp_path)
+    key = source / "image/common/photon-rpm-gpg" / build.DEFAULT_GPG_KEY_PATH.name
+    key.parent.mkdir(parents=True)
+    key.write_bytes(b"canonical public key fixture")
     output = tmp_path / "payload"
     output.mkdir()
     target = output / existing
@@ -239,6 +242,52 @@ def test_repository_writer_refuses_existing_configuration(tmp_path: Path, existi
         build.write_repository_configuration(output, source)
     assert preserved.read_bytes() == b"retained configuration"
     assert preserved.stat().st_ino == original.st_ino
+
+
+def test_offline_repository_reuses_current_photon_key_and_keeps_signature_checks(tmp_path: Path) -> None:
+    """Stage modern TDNF inputs without the incompatible legacy key.
+
+    Args:
+        tmp_path: Owned source and output fixture root.
+    """
+    source = _source(tmp_path)
+    keys = source / "image/common/photon-rpm-gpg"
+    keys.mkdir(parents=True)
+    (keys / build.DEFAULT_GPG_KEY_PATH.name).write_bytes(b"canonical public key fixture")
+    (keys / "VMWARE-RPM-GPG-KEY").write_bytes(b"legacy public key fixture")
+    output = tmp_path / "payload"
+    output.mkdir()
+
+    build.write_repository_configuration(output, source)
+
+    configuration = (output / "tdnf.conf").read_bytes()
+    repository = (output / "rpm-repos/atlaso-installation.repo").read_bytes()
+    assert b"gpgcheck=1\n" in configuration
+    assert b"gpgcheck=1\n" in repository
+    assert b"\r" not in configuration + repository
+    assert b"baseurl=file:///mnt/atlaso-install/atlaso/rpms\n" in repository
+    assert repository.split(b"gpgkey=", 1)[1] == (
+        b"file:///mnt/atlaso-install/atlaso/source/image/common/photon-rpm-gpg/VMWARE-RPM-GPG-KEY-4096\n"
+    )
+
+
+def test_offline_repository_refuses_missing_current_key_before_writes(tmp_path: Path) -> None:
+    """A retained legacy key cannot replace the shared canonical trust input.
+
+    Args:
+        tmp_path: Owned source and output fixture root.
+    """
+    source = _source(tmp_path)
+    keys = source / "image/common/photon-rpm-gpg"
+    keys.mkdir(parents=True)
+    (keys / "VMWARE-RPM-GPG-KEY").write_bytes(b"legacy public key fixture")
+    output = tmp_path / "payload"
+    output.mkdir()
+
+    with pytest.raises(ValueError, match="canonical Photon RPM key"):
+        build.write_repository_configuration(output, source)
+
+    assert list(output.iterdir()) == []
 
 
 @pytest.mark.parametrize(
