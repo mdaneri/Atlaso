@@ -59,10 +59,12 @@ Successful setup refreshes the trust rows and pending Apply state in place.
    **Establish Trust** controls to trust Atlaso's server identity. The Atlaso listener rail exposes its public server
    chain. A root-CA trust choice is preferable where vCenter supports it, because vCenter versions that pin only the
    leaf need trust re-establishment after server-certificate renewal. Confirm the server identity independently.
-3. In vCenter, create or select the KMS cluster's client certificate with **Make KMS trust vCenter**. The private key
-   stays in vCenter. Use a vCenter account with `Cryptographer.ManageKeyServers` permission for read-only certificate
-   discovery. You can enter it for this enrollment or select a saved Atlaso Vault credential. Saved entries need an
-   authorized HTTPS URI, including any non-default port; entries without one cannot be selected.
+3. In vCenter, make sure the selected KMS cluster has an active client certificate. If needed, create or select it
+   with **Make KMS trust vCenter** and complete the vCenter activation step; generating a certificate alone does not
+   make it available for discovery. The private key stays in vCenter. Use a vCenter account with
+   `Cryptographer.ManageKeyServers` permission for read-only certificate discovery. You can enter it for this enrollment
+   or select a saved Atlaso Vault credential. Saved entries need an authorized HTTPS URI, including any non-default
+   port; entries without one cannot be selected.
 4. In Atlaso **Trusted vCenters**, choose **+ Add trusted vCenter here**, then **Enroll from vCenter**. Choose
    **Enter credentials manually** or **Use a saved Vault credential**, then confirm the
    server address. Manual mode uses HTTPS port 443. A saved URI supplies the hostname and port and keeps the hostname
@@ -77,7 +79,26 @@ Successful setup refreshes the trust rows and pending Apply state in place.
    not create clusters. Then review the discovered public KMIP client certificate
    and provider assignment before approval. Atlaso re-reads both identities on approval and rejects a changed one.
 5. Review **Pending Appliance Changes** and run global **Appliance Apply** for `kms`. Until that apply completes,
-   vCenter's client certificate is not usable for KMIP key operations. Recheck the connection in vCenter.
+   vCenter's client certificate is not usable for KMIP key operations. Recheck the connection in vCenter and confirm
+   that both sides show the trust relationship as established and the provider is healthy/green.
+
+### Recover a missing vCenter client certificate
+
+Read-only discovery does not create or rotate a vCenter certificate. If the selected cluster has no active KMIP client
+certificate, or its certificate value is missing or blank, Atlaso reports that specific recovery condition and directs
+you to prepare the certificate in vCenter. Malformed or expired certificates remain certificate validation errors;
+do not treat them as a missing-certificate condition.
+
+1. In vCenter, open **Configure > Security > Key Providers** and select the existing standard provider used for this
+   enrollment.
+2. Open **Establish Trust > Make KMS trust vCenter > vCenter Certificate**. Create a client certificate only if one
+   is missing, then complete the activation step so the selected provider has an active certificate. Certificate
+   generation without activation is not sufficient.
+3. Return to the same Atlaso enrollment wizard with its existing server, credential, provider, and cluster selections.
+   Retry **Next** to inspect the certificate again. Review the exact public-certificate fingerprint, then explicitly
+   approve it in the wizard. The private key remains in vCenter; Atlaso stores only the approved public certificate.
+4. Review **Pending Appliance Changes** and run global **Appliance Apply** for `kms`. Verify the trust relationship
+   from both vCenter and Atlaso, and confirm the provider reports healthy/green before relying on KMIP operations.
 
 This path starts in vCenter and does not require a pre-created trusted-vCenter row or manual public-certificate paste
 in Atlaso. Manual credentials exist only for the current enrollment requests and are cleared when the wizard closes

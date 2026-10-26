@@ -15,7 +15,7 @@ from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 from atlaso.app.services import vsphere_enrollment as enrollment
 
 
-def _client_certificate() -> str:
+def _client_certificate(*, expired: bool = False) -> str:
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "vcsa.example.test")])
     now = datetime.now(timezone.utc)
@@ -25,8 +25,8 @@ def _client_certificate() -> str:
         .issuer_name(name)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(minutes=1))
-        .not_valid_after(now + timedelta(days=30))
+        .not_valid_before(now - timedelta(days=2))
+        .not_valid_after(now - timedelta(days=1) if expired else now + timedelta(days=30))
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .add_extension(
             x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]), critical=False
@@ -447,6 +447,38 @@ def test_discovery_reads_only_registered_atlaso_cluster_and_logs_out(
         .hex()
     )
     assert any(path.endswith("/Logout") for path in fake.calls)
+
+
+@pytest.mark.parametrize("certificate", ["", " \t\r\n", None, {}, "malformed", "expired"])
+def test_discovery_distinguishes_missing_client_certificate_and_logs_out(monkeypatch, certificate) -> None:
+    """Missing identity gives recovery steps without generating keys or approving trust.
+
+    Args:
+        monkeypatch: Fixture replacing vCenter TLS and HTTP operations.
+        certificate: Missing, invalid, or expired certificate response.
+    """
+    if certificate == "expired":
+        certificate = _client_certificate(expired=True)
+    fake = _FakeVcenter(certificate)
+    monkeypatch.setattr(enrollment, "vcenter_https_leaf", lambda *_args, **_kwargs: b"test-leaf")
+    monkeypatch.setattr(enrollment, "_pinned_context", lambda _leaf: object())
+    monkeypatch.setattr(enrollment.httpx, "Client", lambda **_kwargs: fake)
+    with pytest.raises(enrollment.EnrollmentError) as error:
+        enrollment.discover_vcenter_client(
+            host="vcsa.example.test", cluster_id="Atlaso-KMIP", username="admin", password="test-secret",
+            confirmed_https_fingerprint=enrollment.certificate_fingerprint(b"test-leaf"),
+            atlaso_host="kms.atlaso.example.test", atlaso_port=5696,
+        )
+    missing = isinstance(certificate, str) and not certificate.strip()
+    assert ("No active vCenter KMIP client certificate" in str(error.value)) is missing
+    if missing:
+        assert "Make KMS trust vCenter" in str(error.value)
+        assert "activate" in str(error.value)
+        assert "Next" in str(error.value)
+        assert "Appliance Apply" in str(error.value)
+    assert [path.rsplit("/", 1)[-1] for path in fake.calls] == [
+        "content", "Login", "ListKmsClusters", "RetrieveClientCert", "Logout",
+    ]
 
 
 def test_discovery_rejects_wrong_atlaso_endpoint_before_client_certificate(
