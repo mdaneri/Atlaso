@@ -677,6 +677,36 @@ def run(job_id: str) -> None:
         db.commit()
 
 
+def _latest_job_id(db: Session, policy: dict[str, Any], schedule: Schedule | None, operation: dict[str, Any] | None) -> str | None:
+    """Select the newest retained task belonging to this exact enrollment.
+
+    Args:
+        db: Read-only administration session.
+        policy: Enrolled target and latest manual-task reference.
+        schedule: Validated bound discovery schedule, if retained.
+        operation: Latest retained certificate operation, if present.
+    """
+    identifiers = {policy.get("last_job_id"), schedule.last_job_id if schedule else None,
+                   operation.get("job_id") if operation else None} - {None, ""}
+    if not identifiers:
+        return None
+    for job in db.scalars(select(Job).where(Job.id.in_(identifiers)).order_by(Job.created_at.desc(), Job.id.desc())):
+        if job.type not in {CHECK_JOB_TYPE, JOB_TYPE}:
+            continue
+        try:
+            config = json.loads(job.task_config_json)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(config, dict) or config.get("policy_id") != policy["id"]:
+            continue
+        if schedule and job.id == schedule.last_job_id and job.schedule_id != schedule.id:
+            continue
+        if job.type == JOB_TYPE and (not operation or config.get("operation_id") != operation["id"]):
+            continue
+        return job.id
+    return None
+
+
 def state(db: Session, actor: str) -> dict[str, Any]:
     """Return public administration state without resolving credentials.
 
@@ -696,9 +726,9 @@ def state(db: Session, actor: str) -> dict[str, Any]:
         value["next_check_at"] = schedule.next_run_at.isoformat() if schedule and schedule.next_run_at else None
         value["proposal_state"] = "not_due"
         operation = _row(db, "operation", policy["operation_id"])[1] if policy.get("operation_id") else None
-        value["job_id"] = policy.get("last_job_id")
+        value["job_id"] = _latest_job_id(db, policy, schedule, operation)
         if operation:
-            value.update(proposal_state=operation["state"], job_id=operation.get("job_id") or value["job_id"])
+            value["proposal_state"] = operation["state"]
         policies.append(value)
         if policy.get("observation"):
             inventory.append(policy["observation"])

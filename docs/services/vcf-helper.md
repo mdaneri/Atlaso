@@ -76,7 +76,8 @@ documents `EXTERNAL_CA`, a public PEM chain, and an asynchronous workflow respon
 it does not establish availability or successful behavior on an installed build. No VCF 9.1.0 compatibility is inferred.
 
 Start in **VCF Helper → Certificates → Certificate Renewal**. The certificate list is read-only: use it to inspect
-target identity, issuer, expiry, renewal state, last and next attempt, and task history. The shared **Tasks** view holds
+target identity, issuer, expiry, renewal state, last and next attempt, and task history. The task link selects the newest
+bound scheduled check, manual check, or certificate operation, including failed checks. The shared **Tasks** view holds
 workflow progress and results; the certificate row reports the current per-target state.
 
 To enroll a target, confirm the VCF Operations HTTPS fingerprint and select its saved **Vault** credential. Also

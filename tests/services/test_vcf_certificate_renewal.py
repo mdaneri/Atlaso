@@ -552,3 +552,71 @@ def test_replacement_review_rejects_expired_token(db, monkeypatch):
             "execute",
             {"operation_id": OPERATION_ID, "review_token": token},
         )
+
+
+@pytest.mark.parametrize("scheduled_status", ["pending", "succeeded", "failed"])
+@pytest.mark.parametrize("newest", ["scheduled", "manual", "operation"])
+def test_task_history_selects_latest_bound_execution(db, scheduled_status, newest):
+    """Scheduled results remain visible alongside manual and certificate tasks.
+
+    Args:
+        db: Isolated persisted target/schedule/job database.
+        scheduled_status: Queued, completed or failed scheduled check.
+        newest: Execution source having the latest creation timestamp.
+    """
+    policy = _store_policy(db, operation_id=OPERATION_ID)
+    policy["last_job_id"] = "manual"
+    renewal._put(db, "policy", POLICY_ID, policy)
+    renewal._put(db, "operation", OPERATION_ID, {"id": OPERATION_ID, "state": "proposal", "job_id": "operation"})
+    db.add(Schedule(id=1, name="Renewal", task_type="vcf_certificate_renewal_check", task_config_json=json.dumps({"policy_id": POLICY_ID}), created_by=ADMIN, last_job_id="scheduled"))
+    db.flush()
+    for source in ("scheduled", "manual", "operation"):
+        db.add(Job(id=source, type=renewal.JOB_TYPE if source == "operation" else renewal.CHECK_JOB_TYPE,
+                   status=scheduled_status if source == "scheduled" else "succeeded", created_by=ADMIN,
+                   created_at=datetime(2030, 1, 2 if source == newest else 1, tzinfo=timezone.utc),
+                   schedule_id=1 if source == "scheduled" else None,
+                   task_config_json=json.dumps({"policy_id": POLICY_ID, "operation_id": OPERATION_ID})))
+    db.commit()
+    result = renewal.state(db, ADMIN)["policies"][0]
+    assert result["job_id"] == newest
+    assert result["proposal_state"] == "proposal"
+
+
+def test_first_scheduled_discovery_is_linked_without_manual_task(db, monkeypatch):
+    """A real scheduler-created discovery job appears after proposal creation.
+
+    Args:
+        db: Isolated enrollment database.
+        monkeypatch: Fixture replacing only read-only VCF observation.
+    """
+    _store_policy(db)
+    db.add(Schedule(id=1, name="Renewal", task_type="vcf_certificate_renewal_check", task_config_json=json.dumps({"policy_id": POLICY_ID}), created_by=ADMIN,
+                    enabled=True, cron_expression="0 2 * * *", timezone_name="UTC", next_run_at=datetime(2030, 1, 1, tzinfo=timezone.utc)))
+    db.commit()
+    automation.enqueue_due_schedules(db, now=datetime(2030, 1, 2, tzinfo=timezone.utc))
+    schedule = db.get(Schedule, 1)
+    assert schedule.last_job_id
+    monkeypatch.setattr(renewal, "_selected", Mock(return_value=_observation(5)))
+    renewal.check_policy(db, POLICY_ID)
+    result = renewal.state(db, ADMIN)["policies"][0]
+    assert result["job_id"] == schedule.last_job_id
+    assert result["proposal_state"] == "proposal"
+
+
+@pytest.mark.parametrize("invalid", ["missing", "foreign_schedule", "foreign_policy", "wrong_type", "malformed"])
+def test_task_history_ignores_unbound_or_missing_scheduled_job(db, invalid):
+    """A saved schedule pointer cannot link another target's or missing task.
+
+    Args:
+        db: Isolated enrollment database.
+        invalid: Invalid retained schedule/job binding to ignore.
+    """
+    _store_policy(db)
+    db.add(Schedule(id=1, name="Renewal", task_type="vcf_certificate_renewal_check", task_config_json=json.dumps({"policy_id": POLICY_ID}), created_by=ADMIN, last_job_id="scheduled"))
+    db.flush()
+    if invalid != "missing":
+        db.add(Job(id="scheduled", type="unrelated" if invalid == "wrong_type" else renewal.CHECK_JOB_TYPE,
+                   status="failed", created_by=ADMIN, schedule_id=None if invalid == "foreign_schedule" else 1,
+                   task_config_json="broken" if invalid == "malformed" else json.dumps({"policy_id": "other" if invalid == "foreign_policy" else POLICY_ID})))
+    db.commit()
+    assert renewal.state(db, ADMIN)["policies"][0]["job_id"] is None
