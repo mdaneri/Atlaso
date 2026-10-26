@@ -36,6 +36,8 @@ Independently preserved installed-boot receipt digest.
 Whole test and console deadline.
 .PARAMETER InspectInstalled
 Measure public machine identity and installed application bytes after root authentication.
+.PARAMETER InspectContent
+Also reuse locked Python, PowerCLI, RPM, firmware, shared-asset and notice checks on the installed guest.
 .PARAMETER InspectionPythonPath
 Existing absolute Python executable with the locked ISO inspection dependencies installed.
 .PARAMETER Child
@@ -73,6 +75,7 @@ param(
     [string]$BootReceiptSha256 = '',
     [ValidateRange(60, 14400)][int]$TimeoutSeconds = 3600,
     [switch]$InspectInstalled,
+    [switch]$InspectContent,
     [string]$InspectionPythonPath = '',
     [switch]$Child,
     [ValidateSet('', 'admin', 'root')][string]$VncAccount = '',
@@ -99,6 +102,7 @@ if (-not $Child) {
         '-InspectionPythonPath', $InspectionPythonPath
     )
     if ($InspectInstalled) { $childArguments += '-InspectInstalled' }
+    if ($InspectContent) { $childArguments += '-InspectContent' }
     $childArguments += @('-VncAccount', $VncAccount, '-VncPort', [string]$VncPort,
         '-VncScreenPath', $VncScreenPath, '-VncScreenSha256', $VncScreenSha256,
         '-VncFieldRectangle', $VncFieldRectangle, '-VncPythonPath', $VncPythonPath,
@@ -671,7 +675,7 @@ function Wait-InstallationConsoleState {
             $plain = [regex]::Replace($text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>su]', '')
             $plain = [regex]::Replace($plain, '\^?\[\[[0-9]{1,2};[0-9]{1,2}R', '')
             if ($ReadInspectionReport) {
-                $inspectionFailure = [regex]::Match($plain, 'ATLASO-INSPECTION-FAILED(?::(?<stage>initialization|source-helpers|software-staging|software-verification|application-payload|public-identities))?[\r\n]+')
+                $inspectionFailure = [regex]::Match($plain, 'ATLASO-INSPECTION-FAILED(?::(?<stage>initialization|source-helpers|software-staging|software-verification|application-payload|public-identities|system-(?:assets|python|powercli|rpm|notices)))?[\r\n]+')
                 if ($inspectionFailure.Success) {
                     $inspectionStage = $inspectionFailure.Groups['stage'].Value
                     if ($inspectionStage) { throw ('Installed inspection failed at public stage: ' + $inspectionStage + '.') }
@@ -1174,7 +1178,7 @@ $sourceContext = New-AtlasoTestVmOwnershipContext -Worktree $worktree -OutputDir
 Assert-AtlasoTestVmCheckoutSource -Context $sourceContext
 if ($Scenario -eq 'VncCredential') {
     try {
-        if ($InspectInstalled -or $InspectionPythonPath -or $BootReceiptPath -or $BootReceiptSha256) {
+        if ($InspectInstalled -or $InspectContent -or $InspectionPythonPath -or $BootReceiptPath -or $BootReceiptSha256) {
             throw 'VncCredential is restricted to an initial concealed installer field.'
         }
         $vncOptions = @{ Account = $VncAccount; Port = $VncPort; ScreenPath = $VncScreenPath
@@ -1225,6 +1229,7 @@ if ($Scenario -in @('LoginInstalled', 'BootInstalled')) {
 $inspection = $null
 $inspectionArguments = @()
 $encodedExpectations = ''
+if ($InspectContent -and -not $InspectInstalled) { throw 'InspectContent requires InspectInstalled.' }
 if ($InspectInstalled) {
     if ($Scenario -notin @('AutoReboot', 'BootInstalled', 'LoginInstalled')) {
         throw 'Installed inspection requires AutoReboot, BootInstalled or LoginInstalled.'
@@ -1237,10 +1242,12 @@ if ($InspectInstalled) {
     # expectations before obtaining credentials or starting the owned VM.
     $inspectionArguments = @('-I', '-B', '-c',
         'import sys;sys.path.insert(0,sys.argv.pop(1));from scripts.installation.inspection import main;raise SystemExit(main())', $worktree)
+    $prepareArguments = @('prepare', '--iso', $IsoPath, '--iso-sha256', $IsoSha256)
+    if ($InspectContent) { $prepareArguments += '--content' }
     $prepared = Invoke-AtlasoBoundedProcess -FilePath $InspectionPythonPath `
-        -ArgumentList ($inspectionArguments + @('prepare', '--iso', $IsoPath, '--iso-sha256', $IsoSha256)) `
+        -ArgumentList ($inspectionArguments + $prepareArguments) `
         -TimeoutSeconds 120 -Action 'Installation inspection ISO admission'
-    if ($prepared.Length -gt 16384) { throw 'Installation inspection preparation exceeded its bound.' }
+    if ($prepared.Length -gt $(if ($InspectContent) { 32768 } else { 16384 })) { throw 'Installation inspection preparation exceeded its bound.' }
     $inspection = $prepared | ConvertFrom-Json -AsHashtable
     if ($inspection.command -isnot [string] -or $inspection.command.Length -gt 3500 -or
         $inspection.command -cmatch '[^\x20-\x7e]' -or $inspection.command.Contains('ATLASO-INSPECTION')) {
@@ -1248,6 +1255,18 @@ if ($InspectInstalled) {
     }
     $encodedExpectations = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(
         ($inspection.expected | ConvertTo-Json -Compress -Depth 8)))
+    if ($InspectContent) {
+        if (@($inspection.content).Count -ne 5 -or
+            (@($inspection.content | ForEach-Object { $_.expected.kind }) -join ',') -cne 'assets,python,powercli,rpm,notices') {
+            throw 'Installed content checks differ from the fixed validation plan.'
+        }
+        foreach ($check in $inspection.content) {
+            if ($check.command -isnot [string] -or $check.command.Length -gt 3500 -or
+                $check.command -cmatch '[^\x20-\x7e]' -or $check.command.Contains('ATLASO-INSPECTION')) {
+                throw 'Content inspection command failed its console boundary.'
+            }
+        }
+    }
 } elseif ($InspectionPythonPath) {
     throw 'InspectionPythonPath requires InspectInstalled.'
 }
@@ -1415,6 +1434,22 @@ try {
                     -TimeoutSeconds 30 -Action 'Installed inspection record validation'
                 if ($publicReport.Length -gt 8192) { throw 'Validated installation inspection exceeded its bound.' }
                 Write-Host ('Installed public identity and application payload: ' + $publicReport.Trim())
+                if ($InspectContent) {
+                    foreach ($check in $inspection.content) {
+                        Send-InstallationConsoleText -Pipe $pipe -Text ($check.command + "`n")
+                        $contentDeadline = [DateTimeOffset]::UtcNow.AddSeconds(180)
+                        if ($contentDeadline -gt $deadline) { $contentDeadline = $deadline }
+                        $contentRecord = Wait-InstallationConsoleState -Pipe $pipe -Pattern '' -Deadline $contentDeadline `
+                            -ReadInspectionReport -ReadLoginProgress -CursorState $cursorState
+                        $contentExpected = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(
+                            ($check.expected | ConvertTo-Json -Compress -Depth 8)))
+                        $contentReport = Invoke-AtlasoBoundedProcess -FilePath $InspectionPythonPath `
+                            -ArgumentList ($inspectionArguments + @('validate-content', '--expected', $contentExpected, '--report', $contentRecord)) `
+                            -TimeoutSeconds 30 -Action 'Installed content record validation'
+                        if ($contentReport.Length -gt 8192) { throw 'Validated content report exceeded its bound.' }
+                        Write-Host ('Installed content ' + $check.expected.kind + ': ' + $contentReport.Trim())
+                    }
+                }
             }
             Send-InstallationConsoleText -Pipe $pipe -Text ('exit' + $accountProbe.EnterKey)
         }

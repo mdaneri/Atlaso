@@ -1,0 +1,25 @@
+<section class="panel wide-panel" data-vcf-renewal-root data-endpoint="{{ management_ui_root }}/vcf-helper/certificate-renewals" data-csrf="{{ csrf_token }}" data-admin="{{ 'true' if identity.has_role('admin') else 'false' }}" data-tasks-root="{{ management_ui_root }}/tasks">
+  <div class="section-heading">
+    <div><h3>Certificate Renewal</h3><p class="muted">Atlaso-managed renewal for VCF-managed vCenter Machine SSL certificates.</p></div>
+    <span class="status-chip">Experimental — live validation pending</span>
+  </div>
+  <p class="muted">Daily checks create proposals only. Preparing a renewal requests a target-owned CSR and issues through an enabled Atlaso CA profile; replacement always requires a separate operator approval.</p>
+  {% if identity.has_role('admin') %}
+  <div class="toolbar">
+    <button class="button primary" type="button" data-vcf-renewal-connect-open aria-haspopup="dialog" aria-controls="vcf-renewal-connection-dialog">Add VCF connection</button>
+    <label><span class="field-label"><span>Saved Operations connection</span><button class="help-icon" type="button" data-help="Select an existing connection to reconfirm its saved Vault credential and current TLS fingerprint. Its host and port must remain unchanged.">i</button></span><select data-vcf-renewal-reconfirm-select><option value="">No saved connection</option></select></label>
+    <button class="button secondary" type="button" data-vcf-renewal-reconfirm-open disabled aria-haspopup="dialog" aria-controls="vcf-renewal-connection-dialog">Reconfirm connection</button>
+    <button class="button secondary" type="button" data-vcf-renewal-refresh>Refresh inventory</button>
+  </div>
+  <p class="muted" data-vcf-renewal-message role="status" aria-live="polite">Connect a VCF Operations endpoint to load certificate inventory.</p>
+  <p class="muted" data-vcf-renewal-grid-status role="status" aria-live="polite"></p>
+  <a class="button ghost hidden" data-vcf-renewal-task href="{{ management_ui_root }}/tasks">Open task details</a>
+  <div id="vcf-renewal-grid" class="hidden" data-fallback-id="vcf-renewal-fallback" aria-label="Certificate renewal inventory"></div>
+  <div id="vcf-renewal-fallback" data-vcf-renewal-fallback>
+    <p class="muted">No renewal inventory is loaded. Add a VCF Operations connection, then refresh the inventory.</p>
+    <div class="table-scroll"><table class="data-table fallback-table"><thead><tr><th>Target</th><th>Issuer</th><th>Expiry</th><th>Eligibility</th><th>Enrollment and proposal</th><th>Last / next check</th><th>Task history</th></tr></thead><tbody><tr><td colspan="7">Inventory will appear after a connection is configured.</td></tr></tbody></table></div>
+  </div>
+  {% else %}
+  <p class="muted" role="status">Administrator access is required to view VCF certificate renewal state or make changes.</p>
+  {% endif %}
+</section>

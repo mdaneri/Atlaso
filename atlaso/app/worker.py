@@ -80,6 +80,8 @@ AUTOMATION_VAULT_STAGE_DIR = Path("/run/atlaso-automation-vaults")
 WORKER_STARTUP_STATUS_PATH = Path("/var/lib/atlaso/worker-startup.json")
 APPLIANCE_UPDATE_STATUS_MARKER_PATH = Path("/run/atlaso-appliance-update-status")
 WORKER_JOB_TYPES = {
+    "vcf-certificate-renewal-check",
+    "vcf-certificate-renewal",
     "dhcp-pool-verify",
     "diagnostic-bundle",
     "appliance-update",
@@ -453,6 +455,9 @@ def recover_interrupted_worker_jobs(
         db: Active database session.
         release_finalizer_ready: Whether the runtime restart gate opened before recovery.
     """
+    from atlaso.app.services.vcf_certificate_renewal import recover_interrupted_jobs
+
+    recover_interrupted_jobs(db)
     media_cleanup_ready = True
     media_cancellation_pending = db.scalar(select(Job.id).where(
         Job.type == "pxe-media-sync", Job.status == JobStatus.RUNNING.value,
@@ -2227,7 +2232,11 @@ def run_worker_once() -> str | None:
         job_id = job.id
         job_type = job.type
     try:
-        if job_type == "dhcp-pool-verify":
+        if job_type in {"vcf-certificate-renewal-check", "vcf-certificate-renewal"}:
+            from atlaso.app.services.vcf_certificate_renewal import run
+
+            run(job_id)
+        elif job_type == "dhcp-pool-verify":
             from atlaso.app.services.dhcp_pool_verification import run
 
             run(job_id)

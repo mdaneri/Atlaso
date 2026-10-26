@@ -2476,7 +2476,7 @@ def test_vcf_helper_vault_picker_resolves_password_only_on_server(client, monkey
 
     page = client.get("/vcf-helper")
     assert page.status_code == 200
-    assert page.text.count("data-vcf-vault-credential-picker") == 5
+    assert page.text.count("data-vcf-vault-credential-picker") == 8
     assert 'credential_address_field = "target_url"' in Path(
         "atlaso/app/templates/partials/vcf_ldap_modal.html"
     ).read_text(encoding="utf-8")

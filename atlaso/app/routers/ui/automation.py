@@ -618,6 +618,8 @@ def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
         schedule = db.get(Schedule, schedule_id)
         if schedule is None:
             raise HTTPException(status_code=404, detail="Schedule not found.")
+        if schedule.task_type == "vcf_certificate_renewal_check":
+            raise HTTPException(status_code=409, detail="Manage certificate renewal enrollment and timing in VCF Helper > Certificates.")
         parsed_once: datetime | None = None
         try:
             if run_once_at.strip():
@@ -802,6 +804,8 @@ def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
         schedule = db.get(Schedule, schedule_id)
         if schedule is None:
             raise HTTPException(status_code=404, detail="Schedule not found.")
+        if schedule.task_type == "vcf_certificate_renewal_check":
+            raise HTTPException(status_code=409, detail="Manage certificate renewal enrollment and timing in VCF Helper > Certificates.")
         if not schedule.enabled and schedule.task_type == "vcf_depot_download":
             try:
                 config = json.loads(schedule.task_config_json or "{}")
@@ -890,6 +894,8 @@ def build_router(dependencies: AutomationUiDependencies) -> AutomationUiRouter:
         schedule = db.get(Schedule, schedule_id)
         if schedule is None:
             raise HTTPException(status_code=404, detail="Schedule not found.")
+        if schedule.task_type == "vcf_certificate_renewal_check":
+            raise HTTPException(status_code=409, detail="Manage certificate renewal enrollment and timing in VCF Helper > Certificates.")
         name = schedule.name
         for job in (
             db.execute(select(Job).where(Job.schedule_id == schedule.id))

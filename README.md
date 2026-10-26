@@ -68,6 +68,10 @@ VCF Helper groups its workflows into Deployment, Credentials, Certificates, LDAP
 The Appliance Certificate Replacement wizard supports standalone SRM and vCenter plus the SDDC Manager appliance
 resource in initialized VCF 9.x management domains. Native SDDC Manager lab validation remains pending; see the
 [certificate operator guide](docs/services/appliance-certificates.md#sddc-manager-9x) for API scope and limits.
+The experimental **Certificate Renewal** workflow adds opt-in, Atlaso-managed renewal for vCenter Machine SSL on the
+VCF Operations 9.1.1 contract. Schedules discover due work; an administrator explicitly prepares and approves each
+replacement. Live acceptance is pending, and the workflow does not claim to enable VCF Operations' native auto-renewal.
+See the [VCF Helper guide](docs/services/vcf-helper.md#certificate-renewal) for operating steps and limits.
 VCF Helper also lets administrators review supported, accessible VCF/ESX credential candidates and import selected
 passwords into encrypted vaults for URI-backed autofill and scripts or Kickstarts. See the
 [Vaults guide](docs/services/vaults.md#vcf-helper-import) for discovery coverage, endpoint mapping, and reimport

@@ -109,12 +109,13 @@ def _iso_member(iso: pycdlib.PyCdlib, path: str) -> bytes:
     return stream.getvalue()
 
 
-def expected_inputs(iso_path: Path, iso_sha256: str) -> dict[str, Any]:
-    """Bind inspection expectations to a checksum-admitted installer ISO.
+def _admitted_inputs(iso_path: Path, iso_sha256: str, *, content: bool = False) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Bind base and optional content expectations to the original installer.
 
     Args:
         iso_path: Original development ISO selected by the VM receipt.
         iso_sha256: Independently preserved digest of that ISO.
+        content: Also prepare the fixed existing-validator content checks.
     """
     if not _DIGEST.fullmatch(iso_sha256):
         raise ValueError("installation ISO digest is invalid")
@@ -190,16 +191,37 @@ def expected_inputs(iso_path: Path, iso_sha256: str) -> dict[str, Any]:
             if inventory.get("software/" + wheel_path) != wheel_digest:
                 raise ValueError("application wheel differs from signed media inventory")
             installation_iso._verify_pinned(pinned)
-            return {
+            expected = {
                 "schema": 1, "iso_sha256": iso_sha256, "version": version, "source_commit": commit,
                 "release_manifest_sha256": inventory["software/release-manifest.json"],
                 "software_verifier_sha256": inventory["source/image/common/scripts/verify-template-software.py"],
                 "payload_inspector_sha256": inventory["source/scripts/interop/routing_deployment_inspection.py"],
                 "wheel_sha256": wheel_digest,
             }
+            checks = []
+            if content:
+                from scripts.installation.content_inspection import (
+                    SOURCE_MEMBERS,
+                    prepare_content_inputs,
+                )
+
+                sources = {name: _iso_member(iso, "/atlaso/" + name) for name in SOURCE_MEMBERS}
+                checks = prepare_content_inputs(expected, manifest, sources)
+                installation_iso._verify_pinned(pinned)
+            return expected, checks
         finally:
             if opened:
                 iso.close()
+
+
+def expected_inputs(iso_path: Path, iso_sha256: str) -> dict[str, Any]:
+    """Bind the existing application/identity check to a checksum-admitted ISO.
+
+    Args:
+        iso_path: Original development ISO selected by the VM receipt.
+        iso_sha256: Independently preserved digest of that ISO.
+    """
+    return _admitted_inputs(iso_path, iso_sha256)[0]
 
 
 def guest_program(
@@ -316,19 +338,38 @@ def main() -> int:
     prepare = sub.add_parser("prepare")
     prepare.add_argument("--iso", type=Path, required=True)
     prepare.add_argument("--iso-sha256", required=True)
+    prepare.add_argument("--content", action="store_true")
     validate = sub.add_parser("validate")
     validate.add_argument("--expected", required=True)
     validate.add_argument("--report", required=True)
+    content_validate = sub.add_parser("validate-content")
+    content_validate.add_argument("--expected", required=True)
+    content_validate.add_argument("--report", required=True)
     args = parser.parse_args()
     try:
         if args.operation == "prepare":
-            expected = expected_inputs(args.iso, args.iso_sha256)
+            if args.content:
+                expected, checks = _admitted_inputs(args.iso, args.iso_sha256, content=True)
+            else:
+                expected, checks = expected_inputs(args.iso, args.iso_sha256), []
             result = {"expected": expected, "command": guest_program(expected)}
+            if args.content:
+                from scripts.installation.content_inspection import (
+                    guest_content_program,
+                )
+
+                result["content"] = [{"expected": check, "command": guest_content_program(check)} for check in checks]
+        elif args.operation == "validate-content":
+            from scripts.installation.content_inspection import validate_content_report
+
+            expected = json.loads(_decode(args.expected))
+            result = validate_content_report(_decode(args.report), expected)
         else:
             expected = json.loads(_decode(args.expected))
             result = validate_report(_decode(args.report), expected)
         encoded = json.dumps(result, sort_keys=True, separators=(",", ":"))
-        if len(encoded) > _MAX_REPORT:
+        limit = 32768 if args.operation == "prepare" and args.content else _MAX_REPORT
+        if len(encoded) > limit:
             raise ValueError("inspection output exceeds the bound")
         sys.stdout.write(encoded + "\n")
         return 0

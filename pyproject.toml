@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.461"
+version = "0.9.462"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -115,6 +115,8 @@ files = [
   "atlaso/app/services/vcf_lab_remote.py",
   "atlaso/app/services/vcf_lab_overrides.py",
   "atlaso/app/services/vcf_certificates.py",
+  "atlaso/app/services/vcf_certificate_renewal.py",
+  "atlaso/app/services/vcf_operations.py",
   "atlaso/app/services/vcf_certificate_remote.py",
   "atlaso/app/services/vcf_certificate_sddc.py",
   "atlaso/app/services/vcf_certificate_material.py",

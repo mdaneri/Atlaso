@@ -10,9 +10,12 @@ status: roadmap
 # Offline installation ISO build and verification
 
 This reference records the build and release path for
-[issue #542](https://github.com/mdaneri/Atlaso/issues/542). A development ISO completed a disconnected Auto
-installation in VMware at source commit
-`960621fdd0e6c1babcc707e2ca0ca2896539876e`; reboot and installed-system acceptance remain in progress. Physical
+[issue #542](https://github.com/mdaneri/Atlaso/issues/542). The development ISO from source commit
+`353be9d4cb12d8116530e89b2147ca19154b0a7a` completed two independent disconnected Auto installations in VMware.
+Both booted without media, passed root/admin authentication and account challenges, matched the application wheel,
+and preserved their unselected disks. Public machine and SSH identities differed between installations and stayed
+stable across two resumes of the first VM. These VNC installations used a one-time `console=tty0` boot override;
+the default serial installer path and broader installed-system acceptance remain in progress. Physical
 SATA/NVMe and wired-Ethernet acceptance remains outstanding. This VM result does not establish physical-platform
 support or complete issue acceptance.
 
@@ -288,6 +291,29 @@ machine ID and Ed25519 public host key; they do not read private keys or applian
 does not establish equality of all installed RPMs, PowerShell modules, trust material, or notices. Network isolation
 remains in effect, so this option does not establish host-facing API or Appliance Update acceptance.
 
+Add `-InspectContent` alongside `-InspectInstalled` to run five additional checks against that same original ISO:
+
+- **Assets:** compare copied source, deployed shared files, their ownership/modes, and public update trust keys.
+- **Python:** reuse the signed software verifier and locked wheel-environment inspector to compare installed
+  dependency file bytes, rejecting missing, changed, or unexpected files.
+- **PowerCLI:** run the existing provisioning script in `Validate` mode against its original lock and module root.
+- **RPMs:** reuse Photon package-state validation, require installed package identities to belong to the ISO closure,
+  verify nonconfiguration, nonghost package files without plugins or verification scripts, and verify firmware files.
+- **Notices:** regenerate the notices from the original source inputs and installed package inventories in RAM,
+  then compare them with the installed document.
+
+For a subsequent resume, append these options to the receipt-bound `LoginInstalled` invocation above:
+
+```powershell
+  -InspectInstalled -InspectContent -InspectionPythonPath <ABSOLUTE-PREPARED-PYTHON-EXECUTABLE>
+```
+
+The adapter authenticates every helper against the admitted media before credential retrieval. Each check returns
+only a bounded public measurement; failure stops the inspection. Temporary Python archives and generated notices
+stay under `/run` and are removed on normal exit. This mode does not run provisioning, connect package repositories,
+or change installed content. RPM configuration files and ghost entries are outside its file comparison, and application
+or dependency equality alone does not prove whole-system equality. Keep the five results with the original VM receipts.
+
 Use `-CollisionSuffix inspection-a` and `-CollisionSuffix inspection-b` for two fresh installations in separate
 canonical VM directories. The wrappers reuse the shared identity helper to preserve the PR number while giving each
 VM a distinct name. Supply the same suffix with that VM's original receipt selectors for every subsequent login,
@@ -308,9 +334,10 @@ pre-boot baseline using `qemu-img compare`. Add `-VerifyTarget` after cancellati
 The development `Probe` and `Cancel` scenarios passed earlier. A disconnected `Auto` installation also completed in
 the receipt-bound VM for source commit `960621fdd0e6c1babcc707e2ca0ca2896539876e`. After stopping the VM,
 receipt-bound verification confirmed the unselected disk's logical contents matched its pre-boot baseline. Fresh
-machine identity uniqueness, payload
-equality, the host-facing `/openapi.json`, Appliance Update success and rollback persistence, and physical acceptance
-remain outstanding. A serial-enabled boot attempt exposed a missing initramfs package. After adding its resolved RPM
+machine identity uniqueness and application wheel equality subsequently passed on two independent installations from
+the source commit recorded above. Broader payload equality, the host-facing `/openapi.json`, Appliance Update success
+and rollback persistence, and physical acceptance remain outstanding. A serial-enabled boot attempt exposed a missing
+initramfs package. After adding its resolved RPM
 closure, the corrected development image completed disconnected installation and booted without media through systemd
 to the root login/password prompts. After correcting shell readiness and PowerShell Enter handling, the retained
 installation passed both chosen-password login and separate root/admin identity challenges. The receipt-bound
@@ -326,7 +353,8 @@ Publication is a separate, explicit workflow dispatch after the exact ISO has be
 success and rollback persistence, and unselected-disk preservation were tested. The workflow requires that checksum
 to match the signed draft index before publishing, then downloads and verifies the published assets again. The
 development ISO has completed disconnected Auto installation, boot without media, chosen-account login challenges,
-and the unselected-disk comparison. Identity uniqueness, full payload equality, and Appliance Update checks remain
+and the unselected-disk comparison. Public identity uniqueness and application wheel equality also passed. Full payload
+equality and Appliance Update checks remain
 unrecorded, so this result does not establish
 full installer acceptance or authorize publication. Do not publish or describe the installer as validated before the
 remaining acceptance evidence exists.
@@ -360,10 +388,12 @@ intended to use before writing the verified ISO to removable media.
 
 The generated release index reports physical hardware acceptance as pending until SATA/NVMe and wired-Ethernet results
 are recorded. Native VM evidence alone does not establish physical support or complete issue #542. The development
-VMware path supports receipt-bound blank-disk ISO and installer-console tests. Probe, Cancel, and one disconnected
-Auto installation have passed. A retained development installation also booted without media, authenticated both
-chosen account passwords, passed the separate root/admin identity challenges, and preserved its unselected disk.
-Public identity uniqueness, installed payload equality, and the disconnected update/rollback scenarios remain
+VMware path supports receipt-bound blank-disk ISO and installer-console tests. Probe, Cancel, capacity refusal,
+and disconnected Auto installations have passed. Two independently installed VMs booted without media,
+authenticated both chosen account passwords, passed separate root/admin challenges, matched the ISO-bound application
+wheel, and preserved their unselected disks. Public identities were unique between them and stable across resumes
+of the first VM. Broader installed-content equality, host-facing OpenAPI, disconnected update/rollback, custom/fault
+scenarios, preservation of disks carrying old Atlaso labels, and the default serial installer boot path remain
 outstanding. Do not describe the installer as validated or claim physical support while these gates are
 outstanding. Secure Boot is disabled for phase one; this reference makes no Secure Boot or ARM support claim.
 
