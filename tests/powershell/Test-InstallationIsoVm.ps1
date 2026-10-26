@@ -814,7 +814,7 @@ try {
         "ValueError: default installation requires a disk of at least 64 GiB; selected /dev/sda has 4294967296 bytes`nPublicSyntheticSensitiveFixture`n"))
     $failureObserved = $false
     try {
-        Wait-InstallationConsoleState -Pipe $pipePair.Server -Pattern 'Review planned partitions' `
+        Wait-InstallationConsoleState -Pipe $pipePair.Server -Pattern 'Erase selected disks?' `
             -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -KnownProvisioningStages $knownStageFixture 6>&1 | ForEach-Object { $capacityDiagnostics.Add($_) }
     }
     catch { $failureObserved = $_.Exception.Message -ceq 'The installer reported a Python failure before the expected console state. Public location: ValueError; installer.py:205.' }

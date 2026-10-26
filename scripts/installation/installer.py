@@ -89,8 +89,55 @@ def prompt(maxy: int, maxx: int, title: str, message: str, *, secret: bool = Fal
     return state["value"]
 
 
+def confirm_installation(maxy: int, maxx: int, message: str) -> bool:
+    """Show a native Photon confirmation with No selected initially.
+
+    Args:
+        maxy: Available terminal height in rows.
+        maxx: Available terminal width in columns.
+        message: Complete, already wrapped destructive-installation summary.
+    """
+    from confirmwindow import ConfirmWindow
+
+    height = len(message.splitlines()) + 7
+    width = maxx - 4
+    if height > maxy or width < 40:
+        raise ValueError("installation confirmation exceeds the console page size")
+    starty = (maxy - height) // 2 + height - 4
+    confirmation = ConfirmWindow(height, width, maxy, maxx, starty, message)
+    confirmation.menu.position = 1
+    result = confirmation.do_action()
+    return bool(result.success and result.result and result.result.get("yes") is True)
+
+
+def show_layout_review_pages(maxy: int, maxx: int, lines: list[str]) -> None:
+    """Show every long custom-layout line in native informational pages.
+
+    Args:
+        maxy: Available terminal height in rows.
+        maxx: Available terminal width in columns.
+        lines: Complete layout summary lines, without truncation.
+    """
+    from confirmwindow import ConfirmWindow
+
+    width = maxx - 4
+    body_width = width - 5
+    wrapped = [part for line in lines for part in (textwrap.wrap(line, body_width) or [""])]
+    page_capacity = maxy - 12
+    if body_width <= 0 or page_capacity < 1:
+        raise ValueError("installation review exceeds the console page size")
+    pages = [wrapped[index:index + page_capacity] for index in range(0, len(wrapped), page_capacity)]
+    for index, page in enumerate(pages, start=1):
+        message = "Planned installation layout ({}/{})\n{}".format(index, len(pages), "\n".join(page))
+        height = len(message.splitlines()) + 7
+        starty = (maxy - height) // 2 + height - 4
+        result = ConfirmWindow(height, width, maxy, maxx, starty, message, info=True).do_action()
+        if not result.success:
+            raise Cancelled()
+
+
 def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tuple[str, str]]:
-    """Collect the native layout, exact erasure consent, and concealed credentials.
+    """Collect the native layout, destructive consent, and concealed credentials.
 
     Args:
         screen: Active curses screen used by the installer.
@@ -215,24 +262,35 @@ def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tup
             f"default installation requires a disk of at least 64 GiB; "
             f"selected {config['disk']} has {consent[config['disk']]['size']} bytes"
         )
+    summary_lines = ["Erase selected disks?"]
+    layout_lines = []
     for path in paths:
         item = consent[path]
-        layout = [
-            f"{p.get('mountpoint') or 'swap'} {p['filesystem']} {p['size'] or 'remaining'} MiB"
+        label = f"{path}: {item.get('model') or 'Unknown'} {item['size'] // 1024**3} GiB"
+        serial = item.get("serial") or item.get("wwn") or "unavailable"
+        summary_lines.extend((label, f"Serial/WWN: {serial}"))
+        partitions = [
+            f"  {p.get('mountpoint') or 'swap'} {p['filesystem']} {p['size'] or 'remaining'} MiB"
             for p in config["partitions"] if p.get("disk", config["disk"]) == path
         ]
         if path == config["disk"]:
             # ESPSIZE is 10 MiB in the hash-pinned native Photon 2.2 backend.
-            layout.insert(0, "/boot/efi vfat 10 MiB (Photon UEFI default)")
-        for offset in range(0, len(layout), 5):
-            summary = "\n".join(layout[offset:offset + 5])
-            if prompt(maxy, maxx, "Review planned partitions", f"Disk {path}\n{summary}\nEFI boot files are placed on the selected boot disk.\nType NEXT to review erasure consent:") != "NEXT":
-                raise Cancelled()
-        message = f"{path}: {item.get('model')} {item['size'] // 1024**3} GiB\nSerial: {item.get('serial') or item.get('wwn') or 'unavailable'}\nALL EXISTING DATA ON THIS DISK WILL BE LOST.\nType ERASE {path} to confirm:"
-        expected = f"ERASE {path}"
-        typed = prompt(maxy, maxx, "Review Atlaso installation disk", message)
-        if typed != expected:
-            raise Cancelled()
+            partitions.insert(0, "  /boot/efi vfat 10 MiB (Photon UEFI default)")
+        layout_lines.append(f"{path} planned layout:")
+        layout_lines.extend(partitions)
+    wrapped_summary = [part for line in summary_lines for part in (textwrap.wrap(line, maxx - 9) or [""])]
+    wrapped_layout = [part for line in layout_lines for part in (textwrap.wrap(line, maxx - 9) or [""])]
+    confirmation_lines = wrapped_summary + ["", "Planned layout:"] + wrapped_layout + [
+        "", "ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.", "Select Yes to continue or No to cancel."
+    ]
+    if len(confirmation_lines) > maxy - 10:
+        show_layout_review_pages(maxy, maxx, layout_lines)
+        confirmation_lines = wrapped_summary + [
+            "", "Planned layout is shown above.", "ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.",
+            "Select Yes to continue or No to cancel.",
+        ]
+    if not confirm_installation(maxy, maxx, "\n".join(confirmation_lines)):
+        raise Cancelled()
     passwords = []
     for username in ("admin", "root"):
         def validator(value, account=username):
@@ -245,9 +303,21 @@ def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tup
             return not errors, " ".join(errors)
 
         first = prompt(maxy, maxx, f"Set {username} password", "Enter the local account password.", secret=True, validator=validator)
-        second = prompt(maxy, maxx, f"Confirm {username} password", "Enter the same password again.", secret=True)
-        if first != second:
-            raise Cancelled()
+        def matching_validator(value, expected=first):
+            """Require confirmation to match without exposing the first entry.
+
+            Args:
+                value: Concealed confirmation value.
+                expected: Concealed first entry retained only for comparison.
+            """
+            if value == expected:
+                return True, ""
+            return False, "Passwords do not match."
+
+        prompt(
+            maxy, maxx, f"Confirm {username} password", "Enter the same password again.",
+            secret=True, validator=matching_validator,
+        )
         passwords.append(first)
     revalidate_disks(config, consent, disk_inventory())
     # Secret material never enters Photon configuration, dynamic substitutions,

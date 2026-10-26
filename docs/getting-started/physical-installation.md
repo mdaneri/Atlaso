@@ -58,11 +58,11 @@ into ordered parts, the verifier checks each part and the reconstructed image.
 
 1. Boot the removable media in UEFI mode with Secure Boot disabled.
 2. Select Auto or Custom, choose the disk or disks, and review the complete proposed layout.
-3. For each selected disk, type the displayed confirmation `ERASE /dev/...` only after checking its identity and
-   confirming that all data on it may be erased. Cancel if anything is unexpected.
+3. Check the displayed disk identities and proposed partitions, then select **Yes** at **Erase selected disks?**
+   only when all data on those disks may be erased. The confirmation defaults to **No**; decline if anything is unexpected.
 4. Enter the administrator and root passwords at the installer’s concealed prompts. Passwords must use ASCII
    characters and meet the existing local-account password policy. The installer must not display or retain these
-   values in ordinary logs.
+   values in ordinary logs. If a confirmation does not match, correct it in the same prompt; installation does not restart.
 5. Remove the installation media when prompted, then boot the installed system.
 6. Use the existing tty1 networking setup on first boot to configure management networking.
 7. Verify the management address and host-facing `/openapi.json` endpoint before beginning Atlaso configuration.

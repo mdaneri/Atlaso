@@ -23,6 +23,30 @@ Args:
     return module
 
 
+def assert_native_confirmation_geometry(height, width, maxy, maxx, starty, message):
+    """Check text and menu placement against Photon's pinned Window geometry.
+
+    Args:
+        height: Native ConfirmWindow height.
+        width: Native ConfirmWindow width.
+        maxy: Terminal height.
+        maxx: Terminal width.
+        starty: Native Menu start row.
+        message: Complete text sent to ConfirmWindow.
+    """
+    line_count = len(message.splitlines())
+    window_top = (maxy - height) // 2
+    last_text_row = window_top + 2 + line_count - 1
+    menu_last_row = starty
+    assert height <= maxy
+    assert width == maxx - 4
+    assert height - 5 >= line_count
+    assert starty == window_top + height - 4
+    assert menu_last_row > last_text_row
+    assert menu_last_row < window_top + height - 1
+    assert maxx - 9 >= max(map(len, message.splitlines()))
+
+
 @pytest.mark.parametrize("boot_failure", [False, True])
 def test_shared_provisioning_follows_native_grub_generation(monkeypatch, tmp_path, boot_failure):
     """Retain native finalization and generate boot files before shared provisioning.
@@ -170,6 +194,80 @@ def test_prompt_rejects_more_than_native_review_page_before_reader_creation(monk
     message = "\n".join(f"Prompt line {index}" for index in range(16))
     with pytest.raises(ValueError, match="console page size"):
         module.prompt(25, 80, "Review", message)
+
+
+def test_long_layout_uses_complete_native_information_pages(monkeypatch):
+    """Preserve every planned custom partition across native review pages.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing the native confirmation window.
+    """
+    module = load_installer(monkeypatch)
+    pages = []
+
+    class ConfirmWindow:
+        def __init__(self, height, _width, maxy, maxx, starty, message, info=False):
+            """Capture each displayed page without involving curses.
+
+            Args:
+                height: Dialog height.
+                _width: Dialog width.
+                maxy: Terminal height.
+                maxx: Terminal width.
+                starty: Menu start row.
+                message: Complete page text.
+                info: Whether the dialog is informational.
+            """
+            assert_native_confirmation_geometry(height, _width, maxy, maxx, starty, message)
+            pages.append((message, info))
+
+        def do_action(self):
+            """Accept the informational page."""
+            return SimpleNamespace(success=True, result={"yes": True})
+
+    monkeypatch.setitem(sys.modules, "confirmwindow", SimpleNamespace(ConfirmWindow=ConfirmWindow))
+    lines = [f"/dev/sda planned partition {index:02d} /mount/{index:02d} ext4 1024 MiB" for index in range(40)]
+
+    module.show_layout_review_pages(25, 80, lines)
+
+    assert len(pages) > 1
+    assert all(info for _message, info in pages)
+    rendered = "\n".join(message for message, _info in pages)
+    for line in lines:
+        assert line in rendered
+
+
+def test_cancelled_native_layout_page_aborts_review(monkeypatch):
+    """Do not proceed to credentials when a Photon information page fails.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing the native confirmation window.
+    """
+    module = load_installer(monkeypatch)
+
+    class ConfirmWindow:
+        def __init__(self, _height, _width, _maxy, _maxx, _starty, _message, info=False):
+            """Accept only the native info-page constructor contract.
+
+            Args:
+                _height: Dialog height.
+                _width: Dialog width.
+                _maxy: Terminal height.
+                _maxx: Terminal width.
+                _starty: Menu start row.
+                _message: Complete page text.
+                info: Whether this is an informational page.
+            """
+            assert info
+
+        def do_action(self):
+            """Report native dismissal as an unsuccessful action."""
+            return SimpleNamespace(success=False, result=None)
+
+    monkeypatch.setitem(sys.modules, "confirmwindow", SimpleNamespace(ConfirmWindow=ConfirmWindow))
+
+    with pytest.raises(module.Cancelled):
+        module.show_layout_review_pages(25, 80, [f"/dev/sda partition {index}" for index in range(20)])
 
 
 def test_environment_value_round_trips_posix_shell_metacharacters(monkeypatch, tmp_path):
@@ -427,6 +525,33 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
     monkeypatch.setattr(module, "selected_disks", lambda _config: ["/dev/nvme0n1"])
     monkeypatch.setattr(module, "revalidate_disks", lambda *_args: calls.append("revalidate"))
 
+    confirmation = {}
+
+    class ConfirmWindow:
+        def __init__(self, height, width, maxy, maxx, starty, message, info=False):
+            """Record the complete destructive confirmation.
+
+            Args:
+                height: Native dialog height.
+                width: Native dialog width.
+                maxy: Terminal height.
+                maxx: Terminal width.
+                starty: Menu start row.
+                message: Complete confirmation message.
+                info: Whether the dialog is informational.
+            """
+            assert_native_confirmation_geometry(height, width, maxy, maxx, starty, message)
+            confirmation["message"] = message
+            confirmation["info"] = info
+            self.menu = SimpleNamespace(position=0)
+
+        def do_action(self):
+            """Decline the destructive confirmation."""
+            confirmation["default"] = self.menu.position
+            return SimpleNamespace(success=True, result={"yes": False})
+
+    monkeypatch.setitem(sys.modules, "confirmwindow", SimpleNamespace(ConfirmWindow=ConfirmWindow))
+
     def prompt(_height, _width, title, _message, *, secret=False, validator=None):
         """
         Args:
@@ -438,10 +563,6 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
             validator: Validation callback passed to the prompt.
         """
         calls.append((title, secret))
-        if title == "Review planned partitions":
-            return "NEXT"
-        if title == "Review Atlaso installation disk":
-            return "CANCEL"
         pytest.fail("password prompt must not follow cancelled destructive review")
 
     monkeypatch.setattr(module, "prompt", prompt)
@@ -464,7 +585,13 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
     else:
         with pytest.raises(module.Cancelled):
             module.configure_console(Screen(), initial)
-        assert calls == ["revalidate", ("Review planned partitions", False), ("Review Atlaso installation disk", False)]
+        assert calls == ["revalidate"]
+        assert confirmation["default"] == 1
+        assert "Erase selected disks?" in confirmation["message"]
+        assert f"/dev/nvme0n1: Test NVMe {size_gib} GiB" in confirmation["message"]
+        assert "Serial/WWN: serial-root" in confirmation["message"]
+        assert "/boot/efi vfat 10 MiB (Photon UEFI default)" in confirmation["message"]
+        assert "ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST." in confirmation["message"]
 
 
 def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partition(monkeypatch):
@@ -597,6 +724,34 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
     monkeypatch.setattr(module, "disk_inventory", lambda: initial)
     monkeypatch.setattr(module, "selected_disks", lambda _config: ["/dev/nvme0n1", "/dev/sdb"])
     monkeypatch.setattr(module, "revalidate_disks", lambda *_args: None)
+
+    confirmations = []
+    password_errors = []
+
+    class ConfirmWindow:
+        def __init__(self, height, width, maxy, maxx, starty, message, info=False):
+            """Capture the full summary shown for both selected disks.
+
+            Args:
+                height: Native dialog height.
+                width: Native dialog width.
+                maxy: Terminal height.
+                maxx: Terminal width.
+                starty: Menu start row.
+                message: Full confirmation content.
+                info: Whether this is an informational page.
+            """
+            assert_native_confirmation_geometry(height, width, maxy, maxx, starty, message)
+            confirmations.append({"message": message, "info": info})
+            self.menu = SimpleNamespace(position=0)
+
+        def do_action(self):
+            """Accept the dialog after capturing its default choice."""
+            confirmations[-1]["default"] = self.menu.position
+            return SimpleNamespace(success=True, result={"yes": True})
+
+    monkeypatch.setitem(sys.modules, "confirmwindow", SimpleNamespace(ConfirmWindow=ConfirmWindow))
+
     def prompt(_height, _width, title, message, *, secret=False, validator=None):
         """
         Args:
@@ -607,10 +762,16 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
             secret: Whether the fake prompt should conceal its input.
             validator: Validation callback passed to the prompt.
         """
-        if title == "Review planned partitions":
-            return "NEXT"
-        if title == "Review Atlaso installation disk":
-            return f"ERASE {message.split(':', 1)[0]}"
+        if title.startswith("Set "):
+            value = "Good-Password42!"
+            assert validator(value)[0]
+            return value
+        if secret and validator:
+            accepted, error = validator("Other-Password42!")
+            assert not accepted
+            password_errors.append(error)
+            assert validator("Good-Password42!")[0]
+            return "Good-Password42!"
         return "test-password"
 
     monkeypatch.setattr(module, "prompt", prompt)
@@ -635,6 +796,17 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
     ]]
     assert consent == initial
     assert config["partitions"] == interactions[0]
+    assert len(confirmations) == 1
+    confirmation = confirmations[0]
+    assert confirmation["info"] is False
+    assert confirmation["default"] == 1
+    assert "Erase selected disks?" in confirmation["message"]
+    assert "/dev/nvme0n1: NVMe 128 GiB" in confirmation["message"]
+    assert "Serial/WWN: serial-root" in confirmation["message"]
+    assert "/dev/sdb: SATA 256 GiB" in confirmation["message"]
+    assert "Serial/WWN: serial-backup" in confirmation["message"]
+    assert "/mnt/atlaso-vcf-backups xfs 8192 MiB" in confirmation["message"]
+    assert password_errors == ["Passwords do not match.", "Passwords do not match."]
     pane = custompartition_module.PartitionPane()
     pane.partition()
     assert pane.lines[1].startswith("/dev/nvme0n1")

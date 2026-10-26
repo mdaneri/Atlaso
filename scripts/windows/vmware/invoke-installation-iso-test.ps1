@@ -1043,15 +1043,15 @@ public static class AtlasoInstallationPipePeer {
                 Wait-InstallationConsoleState -Pipe $pipe -Pattern 'default installation requires a disk of at least 64 GiB' `
                     -Deadline $deadline -ExpectedCapacityDisk $target.DiskPath
             } else {
-                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Review planned partitions' -Deadline $deadline
+                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Erase selected disks?' -Deadline $deadline
                 if ($Scenario -eq 'CancelReview') {
-                    Send-InstallationConsoleText -Pipe $pipe -Text "CANCEL`n"
+                    # Photon's confirmation defaults to No; Enter declines erasure.
+                    Send-InstallationConsoleText -Pipe $pipe -Text "`n"
                     Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
                     Write-Host 'Planned-layout review cancelled before erasure consent.'
                 } else {
-                    Send-InstallationConsoleText -Pipe $pipe -Text "NEXT`n"
-                    Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Review Atlaso installation disk' -Deadline $deadline
-                    Send-InstallationConsoleText -Pipe $pipe -Text ("ERASE {0}`n" -f $target.DiskPath)
+                    # The native horizontal Yes/No menu starts on No. Select Yes explicitly.
+                    Send-InstallationConsoleText -Pipe $pipe -Text "`eOD`n"
                     foreach ($account in @('admin', 'root')) {
                         $value = if ($account -eq 'admin') { $credentials.AdminPassword } else { $credentials.RootPassword }
                         foreach ($verb in @('Set', 'Confirm')) {
