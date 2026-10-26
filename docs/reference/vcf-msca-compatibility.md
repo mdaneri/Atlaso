@@ -15,8 +15,12 @@ credentials obtained, certificates issued, or enrollment/renewal tests performed
 
 **Recommendation: adapter implementation gate not satisfied; lab validation required.**
 The official evidence makes a narrow AD CS Web Enrollment investigation worthwhile, but does not establish an
-implementable VCF wire contract or Atlaso interoperability. Missing evidence is neither a technical NO-GO nor a
-reason to start the fallback renewal controller. Keep #1042 open.
+implementable VCF wire contract or Atlaso interoperability. Missing evidence is neither a technical NO-GO nor proof
+that a non-Microsoft implementation is supported. The release sequence now delivers the experimental Atlaso-managed
+renewal path first under [#1052](https://github.com/mdaneri/Atlaso/issues/1052); the MSCA adapter investigation is
+deferred to [Release 1.1, #1053](https://github.com/mdaneri/Atlaso/issues/1053). That scheduling decision does not
+change this report's technical conclusion. Keep [#1042](https://github.com/mdaneri/Atlaso/issues/1042) open for live
+acceptance and the remaining renewal outcome.
 
 Atlaso currently provides [on-demand appliance certificate replacement](../services/appliance-certificates.md).
 [VCF Certificate Trust](../services/vcf-trust.md) distributes public trust. Neither establishes VCF-native enrollment
@@ -248,9 +252,11 @@ after downstream work no longer needs them; preserve ambiguous or recovery-pendi
 | Research-only work package | Official-source and repository investigation completed; lab runbook provided. | This does not complete #1042's protocol discovery or renewal acceptance. |
 | Phase 0 adapter implementation gate | **Not satisfied; lab validation required.** | Exact build/plugin contract, safe real-MSCA protocol observations, unresolved-case disposition, and reviewed authorization/security model. |
 | Atlaso adapter native-renewal acceptance | **Untested.** | Atlaso-backed native enrollment, independently verified origin/eligibility, full VCF-scheduled second renewal and recovery tests. |
+| Atlaso-managed renewal release sequence | **Selected for the first delivery; documented under #1052. Live VCF Operations 9.1.1 acceptance remains pending.** | Exact supported API behavior, full second renewal, strict-TLS leaf verification, target health and recovery evidence. This does not make a technical conclusion about MSCA emulation. |
+| Microsoft CA compatibility work | **Deferred to Release 1.1 under #1053; gate remains unsatisfied.** | The isolated real-MSCA baseline, exact build/plugin exchange, separate adapter review, and full VCF-scheduled second renewal described above. |
 | Production/vendor support | **Unconfirmed; no supported emulation claim.** | Independent Broadcom confirmation for the actual non-Microsoft configuration, separate from technical acceptance. |
-| Fallback Atlaso-managed controller | **Not selected by this research.** | Evidence-backed incompatibility or an explicit support/security-risk decision under #1042, followed by its own implementation scope. |
 
-The next bounded task is the isolated real-MSCA investigation. Do not mark unperformed cases passed, classify missing
-lab access as technical failure, close #1042 on documentation delivery, or expose an experimental enrollment endpoint
-as a consequence of publishing this report.
+The next MSCA-specific work package is the isolated real-MSCA investigation for Release 1.1. Do not mark unperformed
+cases passed, classify missing lab access as technical failure, close #1042 on documentation delivery, or expose an
+experimental enrollment endpoint as a consequence of publishing this report. Release sequencing does not establish
+MSCA incompatibility, native renewal success, or Broadcom support.

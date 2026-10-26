@@ -115,6 +115,7 @@
           </button>
           {% if not identity.has_role('admin') %}<p class="muted" id="vcf-appliance-certificate-admin-reason">Administrator access is required to replace appliance certificates.</p>{% endif %}
         </div>
+        {% include "partials/vcf_certificate_renewal.html" %}
       </div>
       <div class="tab-panel" id="vcf-helper-ldap" role="tabpanel" aria-labelledby="vcf-helper-ldap-tab" hidden>
         <h3>LDAP</h3>
@@ -259,4 +260,5 @@
 <script src="/static/vcf-lab-overrides.js?v=issue-873-6" defer></script>
 <script src="/static/vcf-helper-tabs.js?v=issue-1027-1" defer></script>
 <script src="/static/vcf-appliance-certificates.js?v=issue-1038-6" defer></script>
+<script src="/static/vcf-certificate-renewal.js?v=issue-1052-1" defer></script>
 {% endblock %}

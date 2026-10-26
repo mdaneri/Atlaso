@@ -1413,6 +1413,10 @@ def _schedules_to_archive(db: Session) -> list[dict[str, Any]]:
     scopes = {scope.id: scope.name for scope in db.scalars(select(DhcpScope))}
     rows: list[dict[str, Any]] = []
     for schedule in db.execute(select(Schedule).order_by(Schedule.name)).scalars().all():
+        # Renewal schedules bind appliance-local Vault references and retained
+        # operation history; they cannot be transferred in a settings archive.
+        if schedule.task_type == "vcf_certificate_renewal_check":
+            continue
         payload = _row_to_dict(schedule, exclude={"enabled", "next_run_at", "last_run_at", "last_job_id", "run_once_at"})
         payload["enabled"] = False
         payload["run_once_at"] = schedule.run_once_at.isoformat() if schedule.run_once_at else None
@@ -1787,6 +1791,7 @@ def _clear_desired_state(db: Session) -> None:
                 ~Setting.key.startswith("vcf_lab_", autoescape=True),
                 ~Setting.key.startswith("vcf_cert_op:", autoescape=True),
                 ~Setting.key.startswith("vcf_cert_lock:", autoescape=True),
+                ~Setting.key.startswith("vcf_renewal:", autoescape=True),
             )
         db.execute(statement)
     db.flush()
