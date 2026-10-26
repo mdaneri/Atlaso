@@ -2,10 +2,12 @@
 
 import ast
 import base64
+import contextlib
 import csv
 import hashlib
 import io
 import json
+import os
 import re
 import tarfile
 import zlib
@@ -102,6 +104,13 @@ def _report(kind, **changes):
         "iso_sha256": "a" * 64,
         **{**values[kind], **changes},
     }
+
+
+def _decode_guest_program(command):
+    """Decode the bounded source embedded in a generated guest command."""
+    compressed = re.search(r'b64decode\("([A-Za-z0-9+/=]+)"\)', command)
+    assert compressed is not None
+    return zlib.decompress(base64.b64decode(compressed.group(1))).decode()
 
 
 def _prepare_fixture():
@@ -365,9 +374,7 @@ def test_guest_content_program_uses_bounded_ascii_console_command(kind, tmp_path
     assert command.isascii()
     assert len(command) <= 3500
     assert "/opt/atlaso/.venv/bin/python -B -I -c 'exec(" in command
-    compressed = re.search(r'b64decode\("([A-Za-z0-9+/=]+)"\)', command)
-    assert compressed is not None
-    program = zlib.decompress(base64.b64decode(compressed.group(1))).decode()
+    program = _decode_guest_program(command)
     assert repr(str(atlaso)) in program
     assert repr(str(software)) in program
     assert repr(str(temporary)) in program
@@ -381,6 +388,44 @@ def test_guest_content_program_uses_bounded_ascii_console_command(kind, tmp_path
         ]
         assert "%{NAME}\\t%{VERSION}-%{RELEASE}\\t%{ARCH}\\n" in constants
         assert "\t" in constants
+
+
+@pytest.mark.parametrize(
+    ("kind", "first_path"),
+    [
+        ("assets", Path("/etc/atlaso/installation-profile")),
+        ("python", Path("/fixture/atlaso/image/common/scripts/verify-template-software.py")),
+        ("powercli", Path("/fixture/atlaso/image/common/powershell/provision-powercli.ps1")),
+        ("rpm", Path("/fixture/atlaso/image/common/scripts/verify-photon-package-state.py")),
+        ("notices", Path("/fixture/atlaso/scripts/generate_third_party_notices.py")),
+    ],
+)
+def test_guest_program_bootstraps_and_reaches_first_read(kind, first_path, monkeypatch, tmp_path):
+    """Run generated source only until an intercepted first guest file read."""
+    command = content_inspection.guest_content_program(
+        _expectation(kind),
+        atlaso_root="/fixture/atlaso",
+        software_root=tmp_path / "software",
+        temporary_root=tmp_path / "runtime",
+        site_root=tmp_path / "site-packages",
+    )
+    program = _decode_guest_program(command)
+    observed = []
+
+    def stop_before_read(path, *_args, **_kwargs):
+        """Record the intended file and stop before touching the filesystem."""
+        observed.append(Path(path))
+        raise OSError("synthetic boundary: no guest filesystem access")
+
+    output = io.StringIO()
+    monkeypatch.setattr(os, "O_NOFOLLOW", 0, raising=False)
+    monkeypatch.setattr(os, "open", stop_before_read)
+    with contextlib.redirect_stdout(output):
+        exec(program, {})
+
+    assert observed == [first_path]
+    marker = "system-assets-profile" if kind == "assets" else f"system-{kind}"
+    assert output.getvalue().splitlines() == [f"ATLASO-INSPECTION-FAILED:{marker}"]
 
 
 @pytest.mark.parametrize("encoded", [

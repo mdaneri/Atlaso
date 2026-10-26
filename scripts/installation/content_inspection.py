@@ -237,7 +237,7 @@ def digest(d):return hashlib.sha256("".join(k+"\\0"+d[k]+"\\n" for k in sorted(d
     declarations = ("e=" + repr(command_expected) + "\na=Path(" + repr(str(atlaso_root)) + ")\ns=Path(" +
                     repr(str(software_root)) + ")\nt=Path(" + repr(str(temporary_root)) + ")\nsite_override=" +
                     repr(str(site_root) if site_root is not None else None) + "\nprofile_data=" + repr(PROFILE.encode()) + "\n")
-    body = 'stage="system-' + kind + '"\n' + declarations + prelude + _PROGRAMS[kind]
+    body = 'stage="system-' + kind + '"\n' + prelude + declarations + _PROGRAMS[kind]
     body += '\nr.update(schema=1,kind=e["kind"],iso_sha256=e["iso_sha256"])\nx=json.dumps(r,sort_keys=True,separators=(",",":")).encode()\nif len(x)>4096: raise ValueError()\nprint("ATLASO-INSPECTION:"+base64.b64encode(x).decode()+":END")'
     program = 'try:\n' + textwrap.indent(body, " ") + '\nexcept BaseException:\n print("ATLASO-INSPECTION-FAILED:"+stage)'
     compressed = base64.b64encode(zlib.compress(program.encode(), 9)).decode()
