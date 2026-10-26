@@ -89,6 +89,11 @@ Machine SSL certificate; enrollment defaults off. Set the renewal threshold (30 
 at 02:00 UTC by default, with a configurable cron schedule and timezone), then save the policy. Confirm the target and
 policy in the read-only certificate list.
 
+To stop scheduled checks, choose the certificate row's **Disable enrollment** action. Disabling uses only the saved
+local policy and its schedule, so it remains available during a VCF outage or when the CA/profile is disabled. Saved
+target, credential, profile and timing bindings are retained; disabling does not apply other wizard edits. A proposal
+can be cancelled this way, but an already prepared, running, or uncertain renewal must be finished or reconciled first.
+
 The schedule and **Check now** perform discovery and propose due work. They do not generate a CSR, sign a certificate,
 install a certificate, or replace VCF Operations' native scheduler. When renewal is due, an administrator starts the
 explicit workflow:

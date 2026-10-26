@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from unittest.mock import Mock
 
 import pytest
@@ -172,6 +173,73 @@ def test_default_enrollment_is_disabled_and_uses_real_timezone_schedule_validati
     assert schedule.next_run_at is None
     assert json.loads(schedule.task_config_json) == {"policy_id": policy["id"]}
     client_factory.assert_not_called()
+
+
+@pytest.mark.parametrize("proposal", [False, True])
+def test_disable_existing_enrollment_is_local_and_retains_bindings(db, monkeypatch, proposal):
+    """Outages and unavailable issuance prerequisites cannot prevent stopping checks.
+
+    Args:
+        db: Isolated policy database.
+        monkeypatch: Fixture prohibiting remote or CA/credential access.
+        proposal: Whether a discovery-only proposal must also be cancelled.
+    """
+    policy = _store_policy(db, operation_id=OPERATION_ID if proposal else None)
+    schedule = Schedule(id=policy["schedule_id"], name="Renewal", task_type="vcf_certificate_renewal_check", task_config_json=json.dumps({"policy_id": POLICY_ID}), created_by=ADMIN, enabled=True, next_run_at=datetime(2030, 1, 1, tzinfo=timezone.utc))
+    db.add(schedule)
+    if proposal:
+        renewal._put(db, "operation", OPERATION_ID, {"id": OPERATION_ID, "state": "proposal", "checkpoint": "discovered", "write_revision": 0})
+    db.commit()
+    for name in ("_inventory", "_reference", "_credentials", "OperationsClient"):
+        monkeypatch.setattr(renewal, name, Mock(side_effect=AssertionError("disable must remain local")))
+    monkeypatch.setattr(renewal.native, "_ready_ca", Mock(side_effect=AssertionError("CA/profile is unavailable")))
+    result = renewal.dispatch(db, ADMIN, "save_policy", {"policy_id": POLICY_ID, "enabled": False, "connection_id": "changed", "profile_id": 999})
+    current = renewal._row(db, "policy", POLICY_ID)[1]
+    assert current == dict(policy, enabled=False)
+    assert result["schedule_id"] == schedule.id
+    assert not schedule.enabled and schedule.next_run_at is None
+    assert renewal.check_policy(db, POLICY_ID)["state"] == "disabled"
+    if proposal:
+        assert renewal._row(db, "operation", OPERATION_ID)[1]["state"] == "cancelled"
+
+
+@pytest.mark.parametrize("active_state", ["preparing", "prepared", "installing", "verifying", "needs_recovery"])
+def test_disable_refuses_admitted_operations_without_changing_reservations(db, monkeypatch, active_state):
+    """An operator must reconcile retained native work before editing enrollment.
+
+    Args:
+        db: Isolated policy database.
+        monkeypatch: Fixture forbidding remote discovery.
+        active_state: Admitted operation state that must remain protected.
+    """
+    policy = _store_policy(db, operation_id=OPERATION_ID)
+    renewal._put(db, "operation", OPERATION_ID, {"id": OPERATION_ID, "state": active_state, "write_revision": 1})
+    db.add(Setting(key="vcf_cert_lock:retained", value=OPERATION_ID))
+    db.commit()
+    monkeypatch.setattr(renewal, "_inventory", Mock(side_effect=AssertionError("disable must remain local")))
+    with pytest.raises(renewal.RenewalError, match="active renewal"):
+        renewal.dispatch(db, ADMIN, "save_policy", {"policy_id": POLICY_ID, "enabled": False})
+    assert renewal._row(db, "policy", POLICY_ID)[1] == policy
+    assert db.scalar(select(Setting).where(Setting.key == "vcf_cert_lock:retained")).value == OPERATION_ID
+
+
+@pytest.mark.parametrize("binding", ["missing", "foreign", "malformed"])
+def test_disable_never_mutates_an_unbound_schedule(db, binding):
+    """A retained or reused schedule identity does not grant authority over it.
+
+    Args:
+        db: Isolated policy database.
+        binding: Missing, foreign or malformed retained schedule binding.
+    """
+    policy = _store_policy(db)
+    if binding != "missing":
+        db.add(Schedule(id=policy["schedule_id"], name="Unbound", task_type="vcf_certificate_renewal_check", task_config_json="broken" if binding == "malformed" else json.dumps({"policy_id": "f" * 32}), created_by=ADMIN, enabled=True))
+        db.commit()
+    result = renewal.dispatch(db, ADMIN, "save_policy", {"policy_id": POLICY_ID, "enabled": False})
+    assert result["schedule_id"] is None
+    assert not renewal._row(db, "policy", POLICY_ID)[1]["enabled"]
+    if binding != "missing":
+        assert db.get(Schedule, policy["schedule_id"]).enabled
 
 
 def test_automation_schedule_validator_accepts_iana_zone_and_rejects_unknown_zone():

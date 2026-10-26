@@ -129,6 +129,7 @@
     rowActions: [
       rowAction("Check now", (item) => runAction("check", { policy_id: item.policy_id }), (item) => !item.policy_id || !item.enabled),
       rowAction("Enroll / Edit policy", (item) => openPolicy(item)),
+      rowAction("Disable enrollment", (item) => runAction("save_policy", { policy_id: item.policy_id, enabled: false }), (item) => !item.policy_id || !item.enabled || !["not_due", "proposal", "succeeded", "cancelled", "None"].includes(item.proposal_state)),
       rowAction("Prepare renewal", (item) => openPrepare(item), (item) => !item.policy_id || !item.enabled || !item.eligible || item.proposal_state !== "proposal"),
       rowAction("Review replacement", (item) => openReview(item), (item) => !item.operation_id || item.proposal_state !== "prepared"),
       rowAction("Reconcile status", (item) => runAction("reconcile", { operation_id: item.operation_id }), (item) => !item.operation_id || item.proposal_state !== "needs_recovery"),
@@ -467,6 +468,12 @@
       return true;
     },
     onSubmit: async () => {
+      if (policyField("policy_id").value && !policyField("enabled").checked) {
+        const result = await call("/save_policy", { policy_id: policyField("policy_id").value, enabled: false });
+        await loadState();
+        setMessage(result.message || "Enrollment disabled; saved bindings were retained.");
+        return { close: true };
+      }
       updateCronBuilder();
       const body = {
         connection_id: policyConnection.value,

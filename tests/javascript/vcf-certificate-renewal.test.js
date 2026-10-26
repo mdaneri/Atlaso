@@ -112,3 +112,21 @@ test("renewal action failures remain visible and do not issue a follow-up mutati
   assert.equal(status.attributes.role, "alert");
   assert.equal(status.classList.contains("hidden"), false);
 });
+
+test("disabling enrollment needs only its saved policy and remains guarded during native work", async () => {
+  const calls = [];
+  const { gridConfig } = createHarness({fetchImpl: async (url, options = {}) => {
+    calls.push({url, options});
+    return {ok:true, json:async () => url.endsWith("/state") ? {connections:[],profiles:[],inventory:[],policies:[]} : {policy_id:"policy-7"}};
+  }});
+  const disable = gridConfig.rowActions.find((action) => action.label === "Disable enrollment");
+  assert.equal(disable.disabled({getData:() => ({policy_id:"p",enabled:true,proposal_state:"proposal"})}), false);
+  assert.equal(disable.disabled({getData:() => ({policy_id:"p",enabled:true,proposal_state:"prepared"})}), true);
+  assert.equal(disable.disabled({getData:() => ({policy_id:"p",enabled:false,proposal_state:"not_due"})}), true);
+  await disable.action(null, {getData:() => ({policy_id:"policy-7",enabled:true,proposal_state:"not_due"})});
+  assert.equal(calls[0].url, "/ui/management/vcf-helper/certificate-renewals/save_policy");
+  assert.deepEqual(JSON.parse(calls[0].options.body), {policy_id:"policy-7",enabled:false});
+  assert.equal(calls[0].options.headers["X-CSRF-Token"], "csrf-test");
+  assert.equal(calls.length, 2);
+  assert.ok(calls[1].url.endsWith("/state"));
+});

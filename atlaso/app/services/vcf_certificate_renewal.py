@@ -799,6 +799,37 @@ def _dispatch(db: Session, actor: str, action: str, values: dict[str, Any]) -> d
     raise RenewalError("Unknown renewal action.")
 
 
+def _disable_policy(db: Session, actor: str, policy_id: str) -> dict[str, Any]:
+    """Stop discovery using local bindings while preserving admitted native work.
+
+    Args:
+        db: Administrator session before writer admission.
+        actor: Current administrator for the audit event.
+        policy_id: Existing enrollment identity whose bindings must be retained.
+    """
+    acquire_network_objects_write_lock(db)
+    _, policy = _row(db, "policy", policy_id)
+    active = _active(db, policy)
+    if active and active["state"] != "proposal":
+        raise RenewalError("Reconcile or finish the active renewal before disabling this policy.")
+    if active:
+        active.update(state="cancelled", checkpoint="enrollment_disabled", write_revision=active["write_revision"] + 1)
+        _put(db, "operation", active["id"], active)
+    schedule = db.get(Schedule, policy["schedule_id"]) if policy.get("schedule_id") else None
+    try:
+        bound = schedule is not None and schedule.task_type == "vcf_certificate_renewal_check" and json.loads(schedule.task_config_json).get("policy_id") == policy_id
+    except (ValueError, TypeError, AttributeError):
+        bound = False
+    if bound and schedule is not None:
+        schedule.enabled, schedule.next_run_at = False, None
+    policy["enabled"] = False
+    _put(db, "policy", policy_id, policy)
+    db.add(AuditEvent(actor=actor, action="vcf_renewal_policy", resource_type="vcf_certificate_renewal", resource_id=policy_id, detail="Discovery-only enrollment disabled locally; saved bindings retained."))
+    db.commit()
+    return {"policy_id": policy_id, "schedule_id": schedule.id if bound and schedule else None,
+            "message": "Enrollment disabled. Saved target, credentials, profile and timing bindings were retained."}
+
+
 def _save_policy(db: Session, actor: str, values: dict[str, Any]) -> dict[str, Any]:
     """Create or edit one opt-in policy and its discovery-only persistent schedule.
 
@@ -812,6 +843,11 @@ def _save_policy(db: Session, actor: str, values: dict[str, Any]) -> dict[str, A
         validate_schedule_values,
     )
 
+    enabled = values.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise RenewalError("Enrollment enabled state must be a boolean.")
+    if values.get("policy_id") and values.get("enabled") is False:
+        return _disable_policy(db, actor, str(values["policy_id"]))
     connection_id = str(values["connection_id"])
     certificate_id = str(values["certificate_id"])
     candidates = [r for r in _inventory(db, connection_id) if r["certificate_id"] == certificate_id and r.get("eligible")]
@@ -829,9 +865,6 @@ def _save_policy(db: Session, actor: str, values: dict[str, Any]) -> dict[str, A
     target = Target(observed["host"], 443, pin)
     health_reference = _reference(db, {"credential_vault_id": values.get("health_credential_vault_id"), "credential_entry_id": values.get("health_credential_entry_id")}, target)
     identifier = str(values.get("policy_id") or uuid4().hex)
-    enabled = values.get("enabled", False)
-    if not isinstance(enabled, bool):
-        raise RenewalError("Enrollment enabled state must be a boolean.")
     cron = str(values.get("cron_expression", "0 2 * * *"))
     timezone_name = str(values.get("timezone_name", "UTC"))
     errors = validate_schedule_values(task_type="vcf_certificate_renewal_check", task_config_json=_json({"policy_id": identifier}),
