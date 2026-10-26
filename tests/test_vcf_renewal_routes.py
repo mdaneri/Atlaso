@@ -7,6 +7,36 @@ from tests.routers.ui.helpers import login
 PREFIX = "/ui/management/vcf-helper/certificate-renewals"
 
 
+def test_web_restart_leaves_active_worker_checkpoint_and_request_identity_intact(client):
+    """A web restart cannot invalidate a separate worker's in-flight CSR response.
+
+    Args:
+        client: Application fixture with an initialized isolated database.
+    """
+    from starlette.testclient import TestClient
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.main import create_app
+    from atlaso.app.models import Job
+    from atlaso.app.services import vcf_certificate_renewal as renewal
+
+    operation_id = "e" * 32
+    job_id = "job_renewal_live_worker"
+    operation = {"id": operation_id, "state": "preparing", "checkpoint": "csr_dispatch_pending", "write_revision": 4}
+    with SessionLocal() as db:
+        renewal._put(db, "operation", operation_id, operation)
+        db.add(Job(id=job_id, type=renewal.JOB_TYPE, status="running", created_by="admin", task_config_json='{"operation_id":"' + operation_id + '"}'))
+        db.commit()
+    with TestClient(create_app()) as restarted:
+        assert restarted.get("/ui/management/login").status_code == 200
+    with SessionLocal() as db:
+        assert db.get(Job, job_id).status == "running"
+        assert renewal._row(db, "operation", operation_id)[1] == operation
+        # Simulate the original worker returning from the dispatched request.
+        renewal._checkpoint(db, operation, checkpoint="csr_submitted", csr_request_id="native-returned-request")
+        assert renewal._row(db, "operation", operation_id)[1]["csr_request_id"] == "native-returned-request"
+
+
 @pytest.mark.parametrize("action", ["edit", "toggle", "delete"])
 def test_renewal_schedule_edits_stay_with_enrollment_policy(client, action):
     """Generic schedule actions cannot detach timing from its renewal policy.

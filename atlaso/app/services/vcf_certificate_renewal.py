@@ -577,6 +577,13 @@ def _reconcile(db: Session, policy: dict[str, Any], operation: dict[str, Any]) -
         # The issued material remains reserved; a new actor-bound review is
         # required before any later replacement dispatch.
         _checkpoint(db, operation, state="prepared", checkpoint="certificate_prepared")
+    elif operation["checkpoint"] == "certificate_prepared" and operation.get("certificate_id"):
+        # Issuance and its public material were committed atomically before the
+        # worker stopped. Validate that retained material, never sign it again.
+        leaf, root = native._material(db, operation)
+        if leaf != operation["leaf_pem"] or root.strip() != operation["root_pem"].strip():
+            raise RenewalError("Retained certificate material changed; native recovery is required.")
+        _checkpoint(db, operation, state="prepared")
     elif operation.get("replacement_request_id"):
         _, connection = _row(db, "connection", policy["connection_id"])
         with _client(db, connection) as client:
@@ -849,16 +856,23 @@ def _save_policy(db: Session, actor: str, values: dict[str, Any]) -> dict[str, A
 
 
 def recover_interrupted_jobs(db: Session) -> int:
-    """Retain uncertain operations and reservations after a web/worker restart.
+    """Recover stopped worker jobs; never call while their worker can still run.
 
     Args:
-        db: Active startup database session.
+        db: Worker startup session after the preceding worker has stopped.
     """
     jobs = list(db.scalars(select(Job).where(Job.type == JOB_TYPE, Job.status == "running")))
     for job in jobs:
         config = json.loads(job.task_config_json)
         try:
             _, operation = _row(db, "operation", config["operation_id"])
+            if operation["state"] == "succeeded" and operation["checkpoint"] == "verified":
+                # Completion and reservation release already committed; only
+                # the task's final status write was interrupted.
+                job.status, job.error, job.progress_percent = "succeeded", "", 100
+                job.result = _json({"operation_id": operation["id"], "state": "succeeded", "checkpoint": "verified"})
+                job.finished_at = utcnow()
+                continue
             _checkpoint(db, operation, state="needs_recovery", error="Interrupted renewal; reconcile native state before another write.")
         except (RenewalError, ValueError, KeyError):
             db.rollback()

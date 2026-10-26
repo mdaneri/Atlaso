@@ -258,6 +258,55 @@ def test_restart_preserves_uncertain_checkpoint_and_reservation(setup):
     assert db.scalar(select(Setting).where(Setting.key == "vcf_cert_lock:test-target")) is not None
 
 
+def test_restart_after_issuance_restores_same_prepared_certificate_without_writes(setup, monkeypatch):
+    """A committed issuance survives a crash before the worker task status commits.
+
+    Args:
+        setup: Isolated cryptographic and transport fixtures.
+        monkeypatch: Fixture preventing a second signing operation.
+    """
+    db, policy, client = setup
+    propose(db, policy)
+    policy, operation = prepare(db, policy)
+    db.get(Job, operation["job_id"]).status = "running"
+    service._prepare(db, policy, operation)
+    certificate_id, leaf = operation["certificate_id"], operation["leaf_pem"]
+    assert service.recover_interrupted_jobs(db) == 1
+    _, retained = service._row(db, "operation", operation["id"])
+    assert retained["state"] == "needs_recovery" and retained["checkpoint"] == "certificate_prepared"
+    monkeypatch.setattr(service.ca, "issue_certificate", Mock(side_effect=AssertionError("must not reissue")))
+    client.reset_mock()
+    service._reconcile(db, policy, retained)
+    assert retained["state"] == "prepared" and retained["certificate_id"] == certificate_id
+    assert retained["leaf_pem"] == leaf
+    assert len(list(db.scalars(select(CaCertificate)))) == 1
+    assert db.scalar(select(Setting).where(Setting.key == "vcf_cert_lock:test-target")) is not None
+    review = service.dispatch(db, "admin", "review", {"operation_id": retained["id"]})
+    assert review["summary"]["leaf_pem"] == leaf and review["review_token"]
+    client.generate_csr.assert_not_called()
+    client.replace.assert_not_called()
+
+
+def test_restart_after_verified_commit_preserves_success_and_released_reservation(setup, monkeypatch):
+    """Task finalization cannot undo an already committed verified replacement.
+
+    Args:
+        setup: Isolated cryptographic and database fixtures.
+        monkeypatch: Fixture supplying successful native verification.
+    """
+    db, policy, _ = setup
+    propose(db, policy)
+    policy, operation = prepare(db, policy)
+    db.get(Job, operation["job_id"]).status = "running"
+    service._prepare(db, policy, operation)
+    monkeypatch.setattr(service.native, "_verify", Mock(return_value=True))
+    service._verify(db, policy, operation)
+    assert service.recover_interrupted_jobs(db) == 1
+    assert service._row(db, "operation", operation["id"])[1]["state"] == "succeeded"
+    assert db.get(Job, operation["job_id"]).status == "succeeded"
+    assert db.scalar(select(Setting).where(Setting.key == "vcf_cert_lock:test-target")) is None
+
+
 def test_reconcile_undispatched_preparation_releases_for_explicit_retry(setup):
     """A durable pre-dispatch failure can return to a proposal without remote writes.
 

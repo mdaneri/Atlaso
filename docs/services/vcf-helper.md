@@ -109,6 +109,10 @@ recorded task before starting another renewal. Do not issue another CSR or repea
 outcome is unresolved. Review upcoming expiry, the last attempt, task details and audit history to diagnose failures;
 resume only from the recorded recovery guidance.
 
+A web-service restart leaves the independent renewal worker and its checkpoints running. After a worker restart,
+**Reconcile status** can restore a durably prepared certificate for review without generating another CSR or signing
+again. The retained target reservation stays in place until the separately approved replacement is verified.
+
 Renewal policies and checkpoint state are stored on the appliance and excluded from settings archives. Restore
 preserves uncertain operation and reservation records, but does not export or recreate renewal schedules or Vault
 entries; after restore, reconcile outstanding operations and restore the required credentials before re-enrolling any
