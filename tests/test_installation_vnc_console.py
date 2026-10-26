@@ -108,9 +108,22 @@ def test_field_uses_only_private_stdin_and_fixed_checkpoints() -> None:
     output = io.StringIO()
     send_field(client, expected, hashlib.sha256(expected).hexdigest(), (5, 20, 70, 30),
                io.StringIO(json.dumps({"password": value}) + "\n"), output)
-    assert client.keys == [*(["backspace"] * 255), *value, "enter"]
+    assert client.keys == [*(["bsp"] * 255), *value, "enter"]
     assert output.getvalue() == READY + "\n" + SENT + "\n"
     assert value not in output.getvalue()
+
+
+def test_field_controls_exist_in_pinned_client_keymap() -> None:
+    """Check control names against the optional real client's keyboard vocabulary."""
+    library = pytest.importorskip("vncdotool.keys")
+    expected = png()
+    client = Client(expected)
+    value = 'Public-"quoted"-\\-fixture-42'
+    send_field(client, expected, hashlib.sha256(expected).hexdigest(), (5, 20, 70, 30),
+               io.StringIO(json.dumps({"password": value}) + "\n"), io.StringIO())
+    assert [library.KEYMAP[key] for key in client.keys[:255]] == [library.Key.BackSpace] * 255
+    assert library.KEYMAP[client.keys[-1]] == library.Key.Return
+    assert client.keys[255:-1] == list(value)
 
 
 def test_changed_frame_after_private_input_sends_no_keys() -> None:

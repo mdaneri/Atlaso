@@ -101,7 +101,7 @@ def send_field(client, expected: bytes, digest: str, rectangle: tuple[int, int, 
         # Backspace on an empty field stays in that field. Clear retry text
         # without assuming a platform-specific line-kill shortcut.
         for _ in range(_NATIVE_FIELD_LIMIT):
-            client.keyPress("backspace")
+            client.keyPress("bsp")
             client.pause(0.001)
         check_frame()
         for character in password:
