@@ -237,9 +237,9 @@ def digest(d):return hashlib.sha256("".join(k+"\\0"+d[k]+"\\n" for k in sorted(d
     declarations = ("e=" + repr(command_expected) + "\na=Path(" + repr(str(atlaso_root)) + ")\ns=Path(" +
                     repr(str(software_root)) + ")\nt=Path(" + repr(str(temporary_root)) + ")\nsite_override=" +
                     repr(str(site_root) if site_root is not None else None) + "\nprofile_data=" + repr(PROFILE.encode()) + "\n")
-    body = declarations + prelude + _PROGRAMS[kind]
+    body = 'stage="system-' + kind + '"\n' + declarations + prelude + _PROGRAMS[kind]
     body += '\nr.update(schema=1,kind=e["kind"],iso_sha256=e["iso_sha256"])\nx=json.dumps(r,sort_keys=True,separators=(",",":")).encode()\nif len(x)>4096: raise ValueError()\nprint("ATLASO-INSPECTION:"+base64.b64encode(x).decode()+":END")'
-    program = 'try:\n' + textwrap.indent(body, " ") + '\nexcept BaseException:\n print("ATLASO-INSPECTION-FAILED:system-' + kind + '")'
+    program = 'try:\n' + textwrap.indent(body, " ") + '\nexcept BaseException:\n print("ATLASO-INSPECTION-FAILED:"+stage)'
     compressed = base64.b64encode(zlib.compress(program.encode(), 9)).decode()
     command = "/opt/atlaso/.venv/bin/python -B -I -c 'exec(__import__(\"zlib\").decompress(__import__(\"base64\").b64decode(\"" + compressed + "\")))'"
     if len(command) > 3500 or not command.isascii():
@@ -346,8 +346,11 @@ run(["rpm","--noplugins","-V","--noscripts","--nodeps","linux-firmware"],60)
 r=dict(installed_inventory=base64.b64encode(zlib.compress(json.dumps(installed,sort_keys=True,separators=(",", ":")).encode(),9)).decode(),firmware_verified=True,rpm_files_verified=True,package_state_verified=True)
 ''',
     "assets": r'''
+stage="system-assets-profile"
 if read(Path("/etc/atlaso/installation-profile"),128)!=profile_data: raise ValueError()
+stage="system-assets-helper"
 h=load("scripts/verify_virtualization_guest_wheel.py","environment_verifier_sha256","_assets")
+stage="system-assets-source"
 records={};pending=[a];total=0
 skip={"bin","releases","current",".venv","build-info.json"};excluded={".git",".venv",".pytest_cache","data","test-results","__pycache__"}
 while pending:
@@ -359,9 +362,11 @@ while pending:
   b=read(p);total+=len(b);records[rel]=hashlib.sha256(b).hexdigest()
   if len(records)>10000 or total>536870912: raise ValueError()
 if len(records)!=e["source_file_count"] or digest(records)!=e["source_digest"]: raise ValueError()
+stage="system-assets-powershell-profile"
 omit=set(e["omitted_sources"])
 profiles=[p for p in h.POWERSHELL_PROFILE_TARGETS if Path(p).exists()]
 if len(profiles)!=1 or Path("/usr/bin/pwsh").resolve().parent/"profile.ps1"!=Path(profiles[0]): raise ValueError()
+stage="system-assets-deployed"
 verified=0
 for source,target in {**h.DEPLOYED_TEXT_FILES,**h.DEPLOYED_BINARY_FILES}.items():
  if source in omit:
@@ -372,6 +377,7 @@ for source,target in {**h.DEPLOYED_TEXT_FILES,**h.DEPLOYED_BINARY_FILES}.items()
  z=Path(actual).lstat()
  if z.st_uid or z.st_gid or stat.S_IMODE(z.st_mode)!=h.DEPLOYED_FILE_MODES[target] or read(Path(actual))!=b: raise ValueError()
  verified+=1
+stage="system-assets-trust"
 trust=Path("/etc/atlaso/update-trust.d")
 if sorted(p.name for p in trust.iterdir())!=e["trust_names"]: raise ValueError()
 trusted={}
