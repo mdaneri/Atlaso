@@ -186,6 +186,9 @@ dependencies into an isolated, creation-receipted task virtual environment under
 Record the original client package inventory with `Get-AtlasoSourceSnapshotInventory` from
 `Atlaso.SourceSnapshot.psm1`. Ordinary application installs do not require this client. The frame tests require its
 optional Pillow dependency and are run in the prepared validation environment.
+Set `TMP` and `TEMP` to an existing, creation-receipted task temporary root before invoking the consumer. The SDK bridge
+finishes its durable marker publication and cleanup before VNC source/runtime pins are held; the pins and frame checks
+still precede credential transmission.
 
 First observe and capture the **empty, concealed password prompt** through the receipt-bound VNC connection. Review
 its account label and input focus, retain the image's SHA-256, and identify only its single input-row rectangle.

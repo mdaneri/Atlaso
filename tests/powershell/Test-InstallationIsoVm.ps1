@@ -476,6 +476,14 @@ foreach ($forbiddenAdmissionAction in @(
 }
 $runningVmxReader = Get-InstallationVmFunctionText -SourceAst $ast -Name 'Read-InstallationRunningVmxText'
 $runningVmxAdmission = Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmRunning'
+$vncConsumer = Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Invoke-InstallationVncCredential'
+$sdkPreparation = $vncConsumer.IndexOf('Get-AtlasoOnePasswordCredentialPair', [StringComparison]::Ordinal)
+$sourceGuard = $vncConsumer.IndexOf('New-AtlasoCertificateInspectorSnapshot', [StringComparison]::Ordinal)
+$runtimeGuard = $vncConsumer.IndexOf('Protect-AtlasoCertificatePythonRuntime', [StringComparison]::Ordinal)
+$secretSubmission = $vncConsumer.IndexOf('Send-InstallationConsoleSecret', [StringComparison]::Ordinal)
+Assert-InstallationVmCondition ($sdkPreparation -ge 0 -and $sourceGuard -gt $sdkPreparation -and
+    $runtimeGuard -gt $sdkPreparation -and $secretSubmission -gt $sourceGuard -and $secretSubmission -gt $runtimeGuard) `
+    'SDK marker publication must complete before read-only ancestor pins, while VNC source/runtime admission must precede secret submission.'
 $consoleDiskAdmission = Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationConsoleDiskIdentities'
 Assert-InstallationVmCondition ($runningVmxReader.Contains('[IO.FileShare]::ReadWrite') -and $runningVmxReader.Contains('SHA256') -and
     $runningVmxReader.Contains('ExpectedIdentity')) 'Running console admission must read a stable VMX snapshot without blocking provider writes or accepting replacement.'

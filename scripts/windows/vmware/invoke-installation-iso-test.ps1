@@ -1025,6 +1025,18 @@ function Invoke-InstallationVncCredential {
             throw 'VNC ISO differs from its original creation receipt.'
         }
         $peer = Get-InstallationVncPeer -VmxPath $vm.VmxPath -Port $Options.Port
+        # The SDK bridge must finish its durable state publication and cleanup
+        # before the VNC guards hold read-only ancestor directory handles. Those
+        # handles intentionally exclude atomic child-file replacement in the
+        # checkout-local bridge marker directory. Retain only SecureStrings here;
+        # client code/runtime/frame admission still precedes plaintext submission.
+        Assert-AtlasoTestVmCheckoutSource -Context $Context
+        Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
+        $selector = Resolve-AtlasoOnePasswordEnvironmentId -RepositoryRoot $Context.Worktree
+        $token = Resolve-AtlasoOnePasswordServiceAccountTokenFile -RepositoryRoot $Context.Worktree `
+            -TokenFile (Join-Path $Context.Worktree '.atlaso-local/onepassword-service-account-token.dpapi')
+        $pair = Get-AtlasoOnePasswordCredentialPair -RepositoryRoot $Context.Worktree -EnvironmentId $selector `
+            -OnePasswordServiceAccountTokenFile $token -TimeoutSeconds 300 -ConsumerDescription 'development VNC installer console'
         $venv = [IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($Options.PythonPath))
         $inspectorSource = New-AtlasoCertificateInspectorSnapshot -RepositoryRoot $Context.Worktree `
             -EvidenceRoot ([IO.Path]::GetDirectoryName($venv)) -SourceCommit $Context.SourceCommit `
@@ -1046,12 +1058,6 @@ function Invoke-InstallationVncCredential {
             throw 'Observed VNC frame differs from its admitted digest or size.'
         }
         Assert-AtlasoTestVmCheckoutSource -Context $Context
-        Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
-        $selector = Resolve-AtlasoOnePasswordEnvironmentId -RepositoryRoot $Context.Worktree
-        $token = Resolve-AtlasoOnePasswordServiceAccountTokenFile -RepositoryRoot $Context.Worktree `
-            -TokenFile (Join-Path $Context.Worktree '.atlaso-local/onepassword-service-account-token.dpapi')
-        $pair = Get-AtlasoOnePasswordCredentialPair -RepositoryRoot $Context.Worktree -EnvironmentId $selector `
-            -OnePasswordServiceAccountTokenFile $token -TimeoutSeconds 300 -ConsumerDescription 'development VNC installer console'
         $arguments = New-AtlasoCertificatePythonArguments -Runtime $runtime `
             -ScriptPath (Join-Path $inspectorSource.Root 'scripts/installation/vnc_console.py') -ScriptArguments @(
                 '--port', [string]$Options.Port, '--expected-screen', $Options.ScreenPath,

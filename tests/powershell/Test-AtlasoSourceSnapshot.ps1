@@ -20,6 +20,7 @@ Import-Module (
 Import-Module (
     Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationCleanup.psm1'
 ) -Force
+. (Join-Path $RepositoryRoot 'scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1')
 
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $mutableDiskPath = Join-Path $OutputDirectory 'mutable-peer-disk.vmdk'
@@ -364,6 +365,14 @@ try {
             -EvidenceRoot $OutputDirectory -SourceCommit $inspectorCommit `
             -TaskId $env:CODEX_THREAD_ID -Purpose $purpose
         try {
+            $publicationPath = Join-Path $OutputDirectory ($purpose + '-public-marker.json')
+            $publicationRefused = $false
+            try { Write-AtlasoDurableJsonFile -Path $publicationPath -Payload @{ public_fixture = $true } }
+            catch [ComponentModel.Win32Exception] {
+                if ($_.Exception.NativeErrorCode -ne 32) { throw }
+                $publicationRefused = $true
+            }
+            if (-not $publicationRefused) { throw 'Read-only ancestor pins did not exclude atomic marker publication.' }
             $relative = if ($purpose -eq 'certificate') {
                 'scripts/interop/certificate_peer_proof.py'
             } else { 'scripts/installation/vnc_console.py' }
@@ -382,6 +391,10 @@ try {
         } finally {
             try { Unprotect-AtlasoSourceSnapshot -Root $inspector.Root }
             finally { foreach ($pin in $inspector.Pins) { $pin.Dispose() } }
+        }
+        Write-AtlasoDurableJsonFile -Path $publicationPath -Payload @{ public_fixture = $true }
+        if (-not (Test-Path -LiteralPath $publicationPath -PathType Leaf)) {
+            throw 'Atomic marker publication did not resume after inspector pin disposal.'
         }
     }
 } finally { $env:CODEX_THREAD_ID = $savedTaskId }
