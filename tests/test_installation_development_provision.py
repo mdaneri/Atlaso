@@ -1,11 +1,20 @@
-"""Tests for the offline installer release-version resolver."""
+"""Offline regressions for signed software installation during provisioning."""
 
 from __future__ import annotations
 
 import ast
+import base64
+import csv
+import hashlib
+import io
 import json
+import os
 import re
+import shlex
+import subprocess
+import venv
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 
@@ -13,6 +22,8 @@ PROVISIONER = Path("image/common/scripts/provision-atlaso.sh")
 RESOLVER_START = "# ATLASO_OFFLINE_VERSION_RESOLVER_START"
 RESOLVER_END = "# ATLASO_OFFLINE_VERSION_RESOLVER_END"
 DEVELOPMENT_KEY_ID = "atlaso-installation-development-public-test"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+PROVISION_SCRIPT = REPOSITORY_ROOT / "image/common/scripts/provision-atlaso.sh"
 
 
 def test_bootstrap_bytecode_cleanup_follows_all_venv_checks() -> None:
@@ -178,3 +189,130 @@ def test_development_manifest_requires_stable_semver(
 
     with pytest.raises(ValueError, match="identity is invalid"):
         _resolver()(media, "0.9.453", "VMware, Inc.")
+
+
+def _signed_wheel(path: Path, value: str) -> tuple[str, str]:
+    """Write one small valid wheel and return its requirement/hash identity."""
+    name = "atlaso_seed_probe"
+    version = "1.0.0"
+    dist_info = f"{name}-{version}.dist-info"
+    members = {
+        f"{name}/__init__.py": f"VALUE = {value!r}\n".encode(),
+        f"{dist_info}/METADATA": (
+            "Metadata-Version: 2.4\n"
+            "Name: atlaso-seed-probe\n"
+            f"Version: {version}\n"
+        ).encode(),
+        f"{dist_info}/WHEEL": (
+            "Wheel-Version: 1.0\n"
+            "Root-Is-Purelib: true\n"
+            "Tag: py3-none-any\n"
+        ).encode(),
+    }
+    rows = []
+    for member, content in members.items():
+        digest = base64.urlsafe_b64encode(hashlib.sha256(content).digest()).decode().rstrip("=")
+        rows.append((member, f"sha256={digest}", str(len(content))))
+    record_name = f"{dist_info}/RECORD"
+    output = io.StringIO(newline="")
+    csv.writer(output, lineterminator="\n").writerows([*rows, (record_name, "", "")])
+    with ZipFile(path, "w") as archive:
+        for member, content in members.items():
+            archive.writestr(member, content)
+        archive.writestr(record_name, output.getvalue())
+    requirement = f"atlaso-seed-probe=={version}"
+    return requirement, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _signed_dependency_install_tokens() -> list[str]:
+    """Extract the signed lock install command from shared provisioning source."""
+    lines = PROVISION_SCRIPT.read_text(encoding="utf-8").splitlines()
+    for index, line in enumerate(lines):
+        if not line.strip().startswith("PIP_CONFIG_FILE=/dev/null ") or "-m pip install" not in line:
+            continue
+        command_lines = []
+        current = index
+        while True:
+            part = lines[current].rstrip()
+            continued = part.endswith("\\")
+            command_lines.append(part[:-1] if continued else part)
+            if not continued:
+                break
+            current += 1
+        tokens = shlex.split(" ".join(command_lines), posix=True)
+        requirement = tokens.index("--requirement") if "--requirement" in tokens else -1
+        if requirement >= 0 and "requirements-wheelhouse.lock" in tokens[requirement + 1]:
+            return tokens
+    raise AssertionError("signed wheelhouse dependency install command was not found")
+
+
+def test_signed_provisioning_install_replaces_same_version_seed_wheel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The signed locked wheel must replace a different preinstalled same-version wheel."""
+    atlaso_home = tmp_path / "atlaso"
+    environment = atlaso_home / ".venv"
+    environment_python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    cache = tmp_path / "pip-cache"
+    monkeypatch.setenv("PIP_CONFIG_FILE", os.devnull)
+    monkeypatch.setenv("PIP_NO_INDEX", "1")
+    monkeypatch.setenv("PIP_CACHE_DIR", str(cache))
+    venv.EnvBuilder(with_pip=True).create(environment)
+
+    seed_wheel = tmp_path / "atlaso_seed_probe-1.0.0-py3-none-any.whl"
+    seed_requirement, _seed_digest = _signed_wheel(seed_wheel, "seed")
+    subprocess.run(
+        [
+            str(environment_python),
+            "-m",
+            "pip",
+            "install",
+            "--no-index",
+            "--no-deps",
+            "--disable-pip-version-check",
+            str(seed_wheel),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PIP_CONFIG_FILE": os.devnull, "PIP_NO_INDEX": "1", "PIP_CACHE_DIR": str(cache)},
+    )
+
+    wheelhouse = tmp_path / "wheelhouse" / "cp314"
+    wheelhouse.mkdir(parents=True)
+    locked_wheel = wheelhouse / "atlaso_seed_probe-1.0.0-py3-none-any.whl"
+    locked_requirement, locked_digest = _signed_wheel(locked_wheel, "locked")
+    assert locked_requirement == seed_requirement
+    lock = wheelhouse / "requirements-wheelhouse.lock"
+    lock.write_text(
+        f"{locked_requirement} --hash=sha256:{locked_digest}\n",
+        encoding="utf-8",
+    )
+
+    tokens = _signed_dependency_install_tokens()
+    assert tokens[0] == "PIP_CONFIG_FILE=/dev/null"
+    arguments = tokens[1:]
+    arguments[0] = str(environment_python)
+    arguments[arguments.index("--find-links") + 1] = str(wheelhouse)
+    arguments[arguments.index("--requirement") + 1] = str(lock)
+    subprocess.run(
+        arguments,
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PIP_CONFIG_FILE": os.devnull, "PIP_NO_INDEX": "1", "PIP_CACHE_DIR": str(cache)},
+    )
+
+    observed = subprocess.run(
+        [
+            str(environment_python),
+            "-c",
+            "import importlib.metadata, atlaso_seed_probe; "
+            "print(importlib.metadata.version('atlaso-seed-probe')); "
+            "print(atlaso_seed_probe.VALUE)",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert observed == ["1.0.0", "locked"]

@@ -328,6 +328,9 @@ continues to reject unexpected executable caches instead of omitting them from t
 If an immutable Python file differs, its failure category may include the SHA-256 of its original wheel member name.
 This identifies a public, media-bound source record for diagnosis; installed file contents and raw checker errors
 remain private. It does not permit changed bytes or establish a successful comparison.
+The signed-software provisioning path reinstalls the locked dependency wheels, including pip: Photon's initial virtual
+environment can contain a differently patched wheel with the same version. Version equality alone does not satisfy
+the signed payload comparison.
 
 Use `-CollisionSuffix inspection-a` and `-CollisionSuffix inspection-b` for two fresh installations in separate
 canonical VM directories. The wrappers reuse the shared identity helper to preserve the PR number while giving each

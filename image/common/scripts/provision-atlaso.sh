@@ -931,8 +931,10 @@ if [ -n "${ATLASO_SOFTWARE_MANIFEST_SHA256:-}" ]; then
     --root /tmp/atlaso-software --manifest-sha256 "$ATLASO_SOFTWARE_MANIFEST_SHA256" \
     --version "$ATLASO_RELEASE_VERSION" --commit "$ATLASO_SOFTWARE_SOURCE_COMMIT")
   # The signed wheelhouse is authoritative even when a host pip mirror is configured.
+  # Photon may seed a patched pip with the same version as the locked wheel;
+  # reinstall so version equality cannot retain bytes outside the signed bundle.
   PIP_CONFIG_FILE=/dev/null "$ATLASO_HOME/.venv/bin/python" -m pip install \
-    --no-index --no-compile --require-hashes --find-links /tmp/atlaso-software/wheelhouse/cp314 \
+    --force-reinstall --no-index --no-compile --require-hashes --find-links /tmp/atlaso-software/wheelhouse/cp314 \
     --requirement /tmp/atlaso-software/wheelhouse/cp314/requirements-wheelhouse.lock
   PIP_CONFIG_FILE=/dev/null "$ATLASO_HOME/.venv/bin/python" -m pip install \
     --no-index --no-compile --no-deps "$published_wheel"
