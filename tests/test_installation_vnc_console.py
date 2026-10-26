@@ -42,6 +42,8 @@ class Client:
         self.keys: list[str] = []
         self.closed = False
         self.factory = types.SimpleNamespace(force_caps=False)
+        self.captures = 0
+        self.one_capture = False
 
     def captureScreen(self, stream, *, format: str) -> None:
         """Supply a frame without writing files.
@@ -51,6 +53,10 @@ class Client:
             format: Explicit PNG encoding selected by the adapter.
         """
         assert format == "PNG"
+        assert not self.closed
+        self.captures += 1
+        if self.one_capture:
+            assert self.captures == 1, "The static-screen observer cannot refresh twice."
         stream.write(self.frame)
 
     def keyPress(self, key: str) -> None:
@@ -72,6 +78,30 @@ class Client:
     def disconnect(self) -> None:
         """Record connection teardown."""
         self.closed = True
+
+
+def observed_api(typing_client: Client, frame: bytes):
+    """Model one fixed typing connection and fresh static-screen observers.
+
+    Args:
+        typing_client: Original peer that alone may receive keys.
+        frame: Public synthetic frame returned once by each observer.
+    """
+    clients = []
+
+    def connect(*args, **kwargs):
+        """Return a distinct observer after the original typing peer.
+
+        Args:
+            *args: Public loopback endpoint.
+            **kwargs: Public connection timeout.
+        """
+        peer = Client(frame) if clients else typing_client
+        peer.one_capture = True
+        clients.append(peer)
+        return peer
+
+    return types.SimpleNamespace(connect=connect, shutdown=lambda: None, clients=clients)
 
 
 @pytest.mark.parametrize("value", ['"not-object"\n', '{}\n', '{"password":"x","extra":1}\n',
@@ -189,7 +219,7 @@ def test_cli_sanitizes_client_failures_and_disconnects(tmp_path: Path, monkeypat
         raise RuntimeError(sentinel)
 
     client.keyPress = fail_key
-    api = types.SimpleNamespace(connect=lambda *args, **kwargs: client, shutdown=lambda: None)
+    api = observed_api(client, expected)
     monkeypatch.setitem(sys.modules, "vncdotool", types.SimpleNamespace(__version__="1.4.2", api=api))
     monkeypatch.setattr(sys, "stdin", io.StringIO('{"password":"Public-fixture-42"}\n'))
     result = main(["--port", "6093", "--expected-screen", str(screen), "--expected-screen-sha256",
@@ -225,10 +255,12 @@ def test_cli_enables_shift_before_sending_printable_keys(tmp_path: Path, monkeyp
         original_key(key)
 
     client.keyPress = key_with_shift
-    api = types.SimpleNamespace(connect=lambda *args, **kwargs: client, shutdown=lambda: None)
+    api = observed_api(client, expected)
     monkeypatch.setitem(sys.modules, "vncdotool", types.SimpleNamespace(__version__="1.4.2", api=api))
     monkeypatch.setattr(sys, "stdin", io.StringIO('{"password":"Public-fixture-42!"}\n'))
     assert main(["--port", "6093", "--expected-screen", str(screen), "--expected-screen-sha256",
                  hashlib.sha256(expected).hexdigest(), "--field-rectangle", "5,20,70,30"]) == 0
     assert client.closed and client.keys[-1] == "enter"
+    assert len(api.clients) == 4 and client.captures == 0
+    assert all(peer.closed and peer.captures == 1 and peer.keys == [] for peer in api.clients[1:])
     assert capsys.readouterr().out == READY + "\n" + SENT + "\n"

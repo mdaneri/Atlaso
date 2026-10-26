@@ -72,7 +72,8 @@ def read_password(stream) -> str:
     return password
 
 
-def send_field(client, expected: bytes, digest: str, rectangle: tuple[int, int, int, int], stdin, stdout) -> None:
+def send_field(client, expected: bytes, digest: str, rectangle: tuple[int, int, int, int], stdin, stdout,
+               *, capture_frame=None) -> None:
     """Type only after the caller-observed concealed dialog still matches.
 
     Args:
@@ -82,11 +83,15 @@ def send_field(client, expected: bytes, digest: str, rectangle: tuple[int, int, 
         rectangle: Single input-row rectangle excluded from cursor comparison.
         stdin: Private password pipe from the containing PowerShell process.
         stdout: Parent protocol stream accepting only fixed checkpoints.
+        capture_frame: Optional fresh read-only capture operation for static VMware screens.
     """
     def check_frame() -> None:
         """Recheck the complete dialog without storing live pixels on disk."""
         image = io.BytesIO()
-        client.captureScreen(image, format="PNG")
+        if capture_frame is None:
+            client.captureScreen(image, format="PNG")
+        else:
+            capture_frame(image)
         if not frames_match(expected, image.getvalue(), digest, rectangle):
             raise ValueError("concealed dialog changed")
 
@@ -152,7 +157,28 @@ def main(argv: list[str] | None = None) -> int:
             # case and shifted ASCII symbols. Reuse the pinned client's native
             # force-caps behavior, also exposed by its command-line interface.
             client.factory.force_caps = True
-            send_field(client, expected, args.expected_screen_sha256, rectangle, sys.stdin, output)
+            # Finish the original typing connection's handshake before READY.
+            # This socket remains fixed throughout parent admission and typing.
+            client.pause(0.001)
+
+            def capture_frame(destination) -> None:
+                """Read one complete frame without reusing an unchanged-screen request.
+
+                Args:
+                    destination: In-memory PNG destination; never an ordinary file.
+                """
+                # VMware can answer a repeated request with an empty update,
+                # which this pinned client deliberately waits past. A new
+                # read-only connection supplies a full initial frame. Keys and
+                # credentials stay on the original, separately admitted socket.
+                observer = api.connect(f"127.0.0.1::{args.port}", timeout=10)
+                try:
+                    observer.captureScreen(destination, format="PNG")
+                finally:
+                    observer.disconnect()
+
+            send_field(client, expected, args.expected_screen_sha256, rectangle, sys.stdin, output,
+                       capture_frame=capture_frame)
         return 0
     except Exception:  # noqa: BLE001 - Third-party diagnostics must never disclose typed keys.
         # Neither a protocol/library exception nor its traceback may disclose keys.

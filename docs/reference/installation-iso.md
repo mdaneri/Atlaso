@@ -197,6 +197,9 @@ screen outside that small rectangle before requesting stdin and again before typ
 text, checks the frame again, and submits only the selected SDK value. Passwords never enter arguments, environment
 variables, screenshots, ordinary files or diagnostic output. An unexpected frame, peer, source or runtime refuses
 submission; do not replace the recorded digest merely to make a refusal pass.
+Each screen check uses a fresh read-only VNC connection because the pinned client waits on empty updates from an
+unchanged VMware screen. All key events stay on the original admitted connection, with the client's native Shift
+option enabled for uppercase and shifted ASCII symbols.
 
 ```powershell
 .\scripts\windows\vmware\invoke-installation-iso-test.ps1 `
