@@ -327,7 +327,16 @@ with tempfile.TemporaryDirectory(prefix="atlaso-inspection-",dir=t) as d:
    if count>100000 or total>1073741824: raise ValueError()
    out.add(p,arcname=p.relative_to(site).as_posix(),recursive=False)
  stage="system-python-files"
- h._verify_site_packages_archive(archive,records,distributions)
+ try:
+  h._verify_site_packages_archive(archive,records,distributions)
+ except SystemExit as failure:
+  message=str(failure)
+  if message.startswith("guest site-packages contains an unexpected file: "):
+   name=message.partition(": ")[2]
+   stage="system-python-bytecode" if name.endswith(".pyc") and "__pycache__" in PurePosixPath(name).parts else "system-python-extra"
+  elif message.startswith("installed wheel member does not match: "): stage="system-python-changed"
+  elif message.startswith("installed wheel member is missing: "): stage="system-python-missing"
+  raise
 stage="system-python-external"
 venv=site.resolve().parents[2]
 interpreters=(str(a/".venv/bin/python"),str(venv/"bin/python"))

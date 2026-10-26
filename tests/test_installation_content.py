@@ -11,7 +11,7 @@ import os
 import re
 import tarfile
 import zlib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
@@ -427,6 +427,81 @@ def test_guest_program_bootstraps_and_reaches_first_read(kind, first_path, monke
     assert observed == [first_path]
     marker = {"assets": "system-assets-profile", "python": "system-python-helpers"}.get(kind, f"system-{kind}")
     assert output.getvalue().splitlines() == [f"ATLASO-INSPECTION-FAILED:{marker}"]
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_stage"),
+    [
+        ("installed wheel member does not match: package.py", "system-python-changed"),
+        ("installed wheel member is missing: package.py", "system-python-missing"),
+        (
+            "guest site-packages contains an unexpected file: __pycache__/module.cpython-314.pyc",
+            "system-python-bytecode",
+        ),
+        (
+            "guest site-packages contains an unexpected file: __pycache__/module.txt",
+            "system-python-extra",
+        ),
+        ("private-python-classifier-sentinel", "system-python-files"),
+    ],
+    ids=["changed", "missing", "bytecode", "other-pycache-extra", "unknown"],
+)
+def test_generated_python_classifier_uses_stages_without_exposing_checker_errors(
+    error, expected_stage, capsys, tmp_path
+):
+    """Execute only the generated try node that classifies the shared checker."""
+    command = content_inspection.guest_content_program(
+        _expectation("python"),
+        atlaso_root=tmp_path / "atlaso",
+        software_root=tmp_path / "software",
+        temporary_root=tmp_path / "runtime",
+        site_root=tmp_path / "site-packages",
+    )
+    generated = ast.parse(_decode_guest_program(command))
+
+    def checks_shared_site_archive(node):
+        return any(
+            isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Call)
+            and isinstance(statement.value.func, ast.Attribute)
+            and statement.value.func.attr == "_verify_site_packages_archive"
+            for statement in node.body
+        )
+
+    candidates = [
+        node
+        for node in ast.walk(generated)
+        if isinstance(node, ast.Try) and checks_shared_site_archive(node)
+    ]
+    assert len(candidates) == 1
+
+    class Checker:
+        def _verify_site_packages_archive(self, *_args):
+            raise SystemExit(error)
+
+    isolated = ast.Module(body=[candidates[0]], type_ignores=[])
+    namespace = {
+        "h": Checker(),
+        "archive": object(),
+        "records": {},
+        "distributions": set(),
+        "stage": "system-python-files",
+        "PurePosixPath": PurePosixPath,
+    }
+    with pytest.raises(SystemExit):
+        exec(compile(isolated, "<generated-python-classifier>", "exec"), namespace)
+
+    assert namespace["stage"] == expected_stage
+    assert namespace["stage"] in {
+        "system-python-files",
+        "system-python-bytecode",
+        "system-python-extra",
+        "system-python-changed",
+        "system-python-missing",
+    }
+    captured = capsys.readouterr()
+    assert error not in captured.out
+    assert error not in captured.err
 
 
 @pytest.mark.parametrize("encoded", [
