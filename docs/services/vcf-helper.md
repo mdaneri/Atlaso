@@ -89,6 +89,13 @@ Machine SSL certificate; enrollment defaults off. Set the renewal threshold (30 
 at 02:00 UTC by default, with a configurable cron schedule and timezone), then save the policy. Confirm the target and
 policy in the read-only certificate list.
 
+After an Operations password rotation or TLS certificate change, select the **Saved Operations connection** and choose
+**Reconfirm connection**. Select its current Vault credential, verify the same server and port, independently confirm
+the freshly observed TLS fingerprint, and save. Atlaso authenticates before updating that existing connection; it does
+not rebind the enrolled targets or repeat native requests. Pending or running certificate write tasks must finish
+first. Prepared and recovery operations retain their checkpoints and reservations, and any prepared replacement
+requires a fresh review after reconfirmation. Use **Reconcile status** to observe a retained native workflow.
+
 To stop scheduled checks, choose the certificate row's **Disable enrollment** action. Disabling uses only the saved
 local policy and its schedule, so it remains available during a VCF outage or when the CA/profile is disabled. Saved
 target, credential, profile and timing bindings are retained; disabling does not apply other wizard edits. A proposal

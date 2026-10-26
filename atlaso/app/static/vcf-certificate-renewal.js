@@ -12,6 +12,8 @@
   const message = root.querySelector("[data-vcf-renewal-message]");
   const taskLink = root.querySelector("[data-vcf-renewal-task]");
   const gridElement = document.getElementById("vcf-renewal-grid");
+  const reconfirmSelect = root.querySelector("[data-vcf-renewal-reconfirm-select]");
+  const reconfirmOpen = root.querySelector("[data-vcf-renewal-reconfirm-open]");
   let state = { connections: [], profiles: [], inventory: [], policies: [] };
   let refreshTimer = null;
   let refreshBusy = false;
@@ -158,6 +160,14 @@
       state.profiles ||= [];
       state.inventory ||= [];
       state.policies ||= [];
+      if (reconfirmSelect) {
+        const previousConnection = reconfirmSelect.value;
+        reconfirmSelect.replaceChildren();
+        addOption(reconfirmSelect, "", "Choose a saved connection");
+        state.connections.forEach((item) => addOption(reconfirmSelect, item.id, `${item.name} · ${item.address}:${item.port}`));
+        reconfirmSelect.value = connectionById(previousConnection) ? previousConnection : String(state.connections[0]?.id || "");
+        if (reconfirmOpen) reconfirmOpen.disabled = !reconfirmSelect.value;
+      }
       if (!discover) {
         const recorded = new Set(state.inventory.map((item) => targetKey(item.connection_id, item.certificate_id)));
         state.inventory.push(...previousInventory.filter((item) => connectionById(item.connection_id) && !recorded.has(targetKey(item.connection_id, item.certificate_id))));
@@ -240,7 +250,12 @@
       if (step.id === "server" && !(connectField("name")?.value.trim() && connectField("address")?.value.trim() && Number(connectField("port")?.value) >= 1 && Number(connectField("port")?.value) <= 65535)) return { valid: false, message: "Review the connection name and the valid server address and port filled from the selected Vault URI.", field: !connectField("name")?.value.trim() ? "name" : !connectField("address")?.value.trim() ? "address" : "port" };
       return true;
     },
-    onOpen: () => {
+    onOpen: ({ context }) => {
+      const existing = connectionById(context?.connection_id);
+      connectField("connection_id").value = existing?.id || "";
+      connectField("name").value = existing?.name || "";
+      const explanation = connectDialog.querySelector("[data-vcf-renewal-reconfirm-context]");
+      if (explanation) explanation.textContent = existing ? `Reconfirm ${existing.name} at ${existing.address}:${existing.port}. Choose its current Vault credential and independently confirm the TLS fingerprint. Retained renewals keep their checkpoints. Prepared replacements require a fresh review.` : "Add a new saved VCF Operations endpoint.";
       invalidateFingerprint();
       window.setTimeout(updateConnectCredentialStatus, 0);
     },
@@ -253,10 +268,14 @@
         credential_vault_id: connectField("credential_vault_id").value,
         credential_entry_id: connectField("credential_entry_id").value,
       };
+      if (connectField("connection_id").value) {
+        body.connection_id = connectField("connection_id").value;
+        body.confirm_connection_update = connectField("confirm_fingerprint").checked;
+      }
       const result = await call("/save_connection", body);
-      setMessage("VCF Operations connection saved. Discovering certificate inventory…");
       showTask(result.job_id || result.task_id);
-      await loadState({ discover: true });
+      await loadState({ discover: !body.connection_id });
+      setMessage(result.message || "VCF Operations connection saved.");
       return { close: true };
     },
   }) : null;
@@ -551,6 +570,11 @@
 
   root.querySelector("[data-vcf-renewal-connect-open]")?.addEventListener("click", (event) => {
     connectionWizard?.open({ launcher: event.currentTarget }).catch((error) => setMessage(error.message, true));
+  });
+  reconfirmSelect?.addEventListener("change", () => { if (reconfirmOpen) reconfirmOpen.disabled = !reconfirmSelect.value; });
+  reconfirmOpen?.addEventListener("click", (event) => {
+    if (!reconfirmSelect?.value) return;
+    connectionWizard?.open({ launcher: event.currentTarget, context: { connection_id: reconfirmSelect.value } }).catch((error) => setMessage(error.message, true));
   });
   root.querySelector("[data-vcf-renewal-refresh]")?.addEventListener("click", () => loadState({ discover: true }).catch(() => {}));
   prepareForm?.addEventListener("submit", async (event) => {

@@ -722,6 +722,66 @@ def dispatch(db: Session, actor: str, action: str, values: dict[str, Any]) -> di
         raise RenewalError("Renewal prerequisites could not be verified. Check credentials, TLS identity and native capability.") from exc
 
 
+def _idle_connection_policies(db: Session, identifier: str) -> list[dict[str, Any]]:
+    """Reject connection changes while any bound certificate write task is live.
+
+    Args:
+        db: Administrator session before confirmation or its final writer transaction.
+        identifier: Retained Operations connection identity.
+    """
+    policies = [p for p in _all(db, "policy") if p["connection_id"] == identifier]
+    policy_ids = {p["id"] for p in policies}
+    for job in db.scalars(select(Job).where(Job.type == JOB_TYPE, Job.status.in_(["pending", "running"]))):
+        if json.loads(job.task_config_json).get("policy_id") in policy_ids:
+            raise RenewalError("Wait for the active certificate write task to finish before reconfirming this connection.")
+    return policies
+
+
+def _save_connection(db: Session, actor: str, values: dict[str, Any]) -> dict[str, Any]:
+    """Authenticate an explicitly confirmed new or retained Operations endpoint.
+
+    Args:
+        db: Administrator database session.
+        actor: Administrator confirming this endpoint and saved Vault reference.
+        values: Public endpoint, exact fingerprint, Vault reference and optional existing identity.
+    """
+    target = _target(values)
+    existing = _row(db, "connection", str(values["connection_id"]))[1] if values.get("connection_id") else None
+    if existing:
+        if values.get("confirm_connection_update") is not True:
+            raise RenewalError("Explicitly confirm reconnection and the current endpoint fingerprint.")
+        if target.host != existing["address"] or target.port != existing["port"]:
+            raise RenewalError("Reconfirmation must retain the saved Operations host and port.")
+        _idle_connection_policies(db, str(existing["id"]))
+    reference = _reference(db, values, target)
+    identifier = str(existing["id"]) if existing else uuid4().hex
+    connection = {"id": identifier, "name": str(values.get("name", "VCF Operations"))[:120], "address": target.host, "port": target.port,
+                  "confirmed_tls_fingerprint": target.fingerprint, "reference": reference, "actor": actor}
+    # Resolve and authenticate only after the exact fresh fingerprint and saved
+    # Vault destination are checked. The request-local token is released here.
+    with _client(db, connection):
+        pass
+    acquire_network_objects_write_lock(db)
+    db.expire_all()
+    if existing:
+        if _digest(_row(db, "connection", identifier)[1]) != _digest(existing):
+            raise RenewalError("The saved connection changed during confirmation; inspect it again.")
+        policies = _idle_connection_policies(db, identifier)
+        for policy in policies:
+            operation = _active(db, policy)
+            if operation and operation.get("certificate_id"):
+                # Keep request identities, native checkpoints and reservations.
+                # An old approval cannot outlive a connection reconfirmation.
+                _checkpoint(db, operation, commit=False, approval_revision=operation.get("approval_revision", 0) + 1)
+    if _reference(db, values, target) != reference:
+        raise RenewalError("The Vault credential changed during confirmation; select it again.")
+    _put(db, "connection", identifier, connection)
+    db.add(AuditEvent(actor=actor, action="vcf_renewal_connection_reconfirmed" if existing else "vcf_renewal_connection_created",
+                      resource_type="vcf_operations_connection", resource_id=identifier, detail="Exact endpoint fingerprint and saved Vault authentication confirmed."))
+    db.commit()
+    return {"connection_id": identifier, "message": "Existing Operations connection reconfirmed; review prepared replacements again." if existing else "Operations connection saved."}
+
+
 def _dispatch(db: Session, actor: str, action: str, values: dict[str, Any]) -> dict[str, Any]:
     """Implement browser actions behind shared authorization and error sanitation.
 
@@ -735,16 +795,7 @@ def _dispatch(db: Session, actor: str, action: str, values: dict[str, Any]) -> d
         observed = PinnedHTTPS(_target(values)).probe()
         return {"fingerprint": observed["sha256"], "issuer": observed["issuer"], "subject": observed["subject"]}
     if action == "save_connection":
-        target = _target(values)
-        reference = _reference(db, values, target)
-        connection = {"id": uuid4().hex, "name": str(values.get("name", "VCF Operations"))[:120], "address": target.host, "port": target.port,
-                      "confirmed_tls_fingerprint": target.fingerprint, "reference": reference, "actor": actor}
-        with _client(db, connection):
-            pass
-        acquire_network_objects_write_lock(db)
-        _put(db, "connection", str(connection["id"]), connection)
-        db.commit()
-        return {"connection_id": connection["id"]}
+        return _save_connection(db, actor, values)
     if action == "inventory":
         return {"inventory": _inventory(db, str(values["connection_id"]))}
     if action == "save_policy":

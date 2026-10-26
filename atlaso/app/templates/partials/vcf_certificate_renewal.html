@@ -7,6 +7,8 @@
   {% if identity.has_role('admin') %}
   <div class="toolbar">
     <button class="button primary" type="button" data-vcf-renewal-connect-open aria-haspopup="dialog" aria-controls="vcf-renewal-connection-dialog">Add VCF connection</button>
+    <label><span class="field-label"><span>Saved Operations connection</span><button class="help-icon" type="button" data-help="Select an existing connection to reconfirm its saved Vault credential and current TLS fingerprint. Its host and port must remain unchanged.">i</button></span><select data-vcf-renewal-reconfirm-select><option value="">No saved connection</option></select></label>
+    <button class="button secondary" type="button" data-vcf-renewal-reconfirm-open disabled aria-haspopup="dialog" aria-controls="vcf-renewal-connection-dialog">Reconfirm connection</button>
     <button class="button secondary" type="button" data-vcf-renewal-refresh>Refresh inventory</button>
   </div>
   <p class="muted" data-vcf-renewal-message role="status" aria-live="polite">Connect a VCF Operations endpoint to load certificate inventory.</p>
@@ -25,9 +27,11 @@
 {% if identity.has_role('admin') %}
 <dialog id="vcf-renewal-connection-dialog" class="confirm-modal wide-modal" aria-labelledby="vcf-renewal-connection-title" aria-describedby="vcf-renewal-connection-description">
   <form class="confirm-modal-panel form-stack" data-atlaso-wizard data-vcf-renewal-connection-form>
+    <input type="hidden" name="connection_id">
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
     <p class="kicker" data-atlaso-wizard-kicker>Step 1 of 3</p><h2 id="vcf-renewal-connection-title" data-atlaso-wizard-title>Identify VCF Operations</h2><p id="vcf-renewal-connection-description" class="muted" data-atlaso-wizard-description>Confirm the endpoint identity before using the saved Vault credential.</p>
     <div class="alert error hidden" data-atlaso-wizard-error></div>
+    <p class="muted" data-vcf-renewal-reconfirm-context></p>
     <section data-atlaso-wizard-step="credential">
       <fieldset class="vcf-vault-credential-picker" data-vcf-vault-credential-picker data-address-field="address" data-username-field="" data-password-field="" data-port-field="port" data-address-mode="server">
         <legend>Saved VCF Operations credential</legend>

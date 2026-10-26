@@ -102,6 +102,169 @@ def prepare(db, policy):
     return current, operation
 
 
+def connection_confirmation(db, policy):
+    """Store a synthetic Operations binding and return explicit reconfirmation input.
+
+    Args:
+        db: Isolated database session.
+        policy: Enrolled target whose connection identity must remain stable.
+    """
+    old = {"id": policy["connection_id"], "name": "Operations", "address": "operations.lab.test", "port": 443,
+           "confirmed_tls_fingerprint": "2" * 64, "reference": {"mode": "vault", "vault_id": 1, "entry_id": 2, "revision": "old"}, "actor": "admin"}
+    service._put(db, "connection", old["id"], old)
+    db.commit()
+    values = {"connection_id": old["id"], "confirm_connection_update": True, "name": "Operations", "address": old["address"], "port": 443,
+              "confirmed_tls_fingerprint": "3" * 64, "credential_vault_id": 1, "credential_entry_id": 2}
+    return old, values
+
+
+@pytest.mark.parametrize("recovery", [False, True])
+def test_connection_reconfirmation_retains_native_work_and_invalidates_old_approval(setup, monkeypatch, recovery):
+    """Rotated Operations access repairs the same binding without retrying native writes.
+
+    Args:
+        setup: Real synthetic issuance and durable operation fixtures.
+        monkeypatch: Fixture providing newly selected Vault metadata and native health.
+        recovery: Whether a retained replacement request needs reconciliation.
+    """
+    db, policy, client = setup
+    propose(db, policy)
+    policy, operation = prepare(db, policy)
+    service._prepare(db, policy, operation)
+    db.get(Job, operation["job_id"]).status = "succeeded"
+    db.commit()
+    old_token = service.dispatch(db, "admin", "review", {"operation_id": operation["id"]})["review_token"]
+    if recovery:
+        service._checkpoint(db, operation, state="needs_recovery", checkpoint="replacement_submitted", replacement_request_id="retained-replacement")
+    before = service._row(db, "operation", operation["id"])[1]
+    _, values = connection_confirmation(db, policy)
+    reference = {"mode": "vault", "vault_id": 1, "entry_id": 2, "revision": "rotated"}
+    monkeypatch.setattr(service, "_reference", Mock(return_value=reference))
+    service._client.reset_mock()
+    result = service.dispatch(db, "admin", "save_connection", values)
+    assert result["connection_id"] == policy["connection_id"]
+    updated = service._row(db, "connection", policy["connection_id"])[1]
+    assert updated["reference"] == reference and updated["confirmed_tls_fingerprint"] == "3" * 64
+    assert service._client.call_args.args[1] == updated
+    retained = service._row(db, "operation", operation["id"])[1]
+    assert retained["state"] == before["state"] and retained["checkpoint"] == before["checkpoint"]
+    assert retained["csr_request_id"] == before["csr_request_id"]
+    assert retained.get("replacement_request_id") == before.get("replacement_request_id")
+    assert retained["certificate_id"] == before["certificate_id"]
+    assert retained["approval_revision"] == before.get("approval_revision", 0) + 1
+    assert db.scalar(select(Setting).where(Setting.key == "vcf_cert_lock:test-target")) is not None
+    assert service._row(db, "policy", policy["id"])[1]["connection_id"] == updated["id"]
+    if recovery:
+        client.reset_mock()
+        monkeypatch.setattr(service.native, "_verify", Mock(return_value=True))
+        service._reconcile(db, policy, retained)
+        client.workflow.assert_called_once_with("retained-replacement")
+        client.generate_csr.assert_not_called()
+        client.replace.assert_not_called()
+    else:
+        with pytest.raises(service.RenewalError, match="stale or already used"):
+            service.dispatch(db, "admin", "execute", {"operation_id": operation["id"], "review_token": old_token})
+        assert service.dispatch(db, "admin", "review", {"operation_id": operation["id"]})["review_token"] != old_token
+
+
+@pytest.mark.parametrize("invalid", ["acknowledgement", "host", "port"])
+def test_connection_reconfirmation_cannot_retarget_or_omit_confirmation(setup, monkeypatch, invalid):
+    """Connection repair cannot send a saved credential to another endpoint.
+
+    Args:
+        setup: Isolated database and transport fixtures.
+        monkeypatch: Fixture forbidding credential resolution before admission.
+        invalid: Required confirmation or immutable endpoint field to violate.
+    """
+    db, policy, _ = setup
+    old, values = connection_confirmation(db, policy)
+    values[{"acknowledgement": "confirm_connection_update", "host": "address", "port": "port"}[invalid]] = {"acknowledgement": False, "host": "other.lab.test", "port": 8443}[invalid]
+    reference = Mock(side_effect=AssertionError("must not resolve a rejected destination"))
+    monkeypatch.setattr(service, "_reference", reference)
+    service._client.reset_mock()
+    with pytest.raises(service.RenewalError, match="confirm|host and port"):
+        service.dispatch(db, "admin", "save_connection", values)
+    reference.assert_not_called()
+    service._client.assert_not_called()
+    assert service._row(db, "connection", old["id"])[1] == old
+
+
+@pytest.mark.parametrize("status", ["pending", "running"])
+def test_connection_reconfirmation_waits_for_live_certificate_tasks(setup, monkeypatch, status):
+    """Connection confirmation must not invalidate a live worker's transport.
+
+    Args:
+        setup: Isolated operation and transport fixtures.
+        monkeypatch: Fixture forbidding credential resolution during a write task.
+        status: Live worker task status to guard.
+    """
+    db, policy, _ = setup
+    old, values = connection_confirmation(db, policy)
+    db.add(Job(id="job_live_write", type=service.JOB_TYPE, status=status, created_by="admin", task_config_json=json.dumps({"policy_id": policy["id"]})))
+    db.commit()
+    monkeypatch.setattr(service, "_reference", Mock(side_effect=AssertionError("write task must finish first")))
+    service._client.reset_mock()
+    with pytest.raises(service.RenewalError, match="active certificate write task"):
+        service.dispatch(db, "admin", "save_connection", values)
+    service._client.assert_not_called()
+    assert service._row(db, "connection", old["id"])[1] == old
+
+
+def test_connection_reconfirmation_authentication_failure_keeps_old_binding(setup, monkeypatch):
+    """An unsuccessful fresh authentication cannot replace stored identity evidence.
+
+    Args:
+        setup: Isolated connection database and Operations transport fixtures.
+        monkeypatch: Fixture supplying rotated public Vault metadata.
+    """
+    db, policy, _ = setup
+    old, values = connection_confirmation(db, policy)
+    monkeypatch.setattr(service, "_reference", Mock(return_value={"revision": "new"}))
+    service._client.side_effect = RemoteError("synthetic authentication failure")
+    with pytest.raises(service.RenewalError, match="prerequisites"):
+        service.dispatch(db, "admin", "save_connection", values)
+    assert service._row(db, "connection", old["id"])[1] == old
+
+
+@pytest.mark.parametrize("drift", ["connection", "credential", "task"])
+def test_connection_reconfirmation_rejects_concurrent_changes_atomically(setup, monkeypatch, drift):
+    """Confirmation cannot overwrite newer access or stale an active operation.
+
+    Args:
+        setup: Isolated issuance and Operations transport fixtures.
+        monkeypatch: Fixture simulating a change during fresh authentication.
+        drift: State changed between preflight and the final writer gate.
+    """
+    db, policy, _ = setup
+    propose(db, policy)
+    policy, operation = prepare(db, policy)
+    service._prepare(db, policy, operation)
+    db.get(Job, operation["job_id"]).status = "succeeded"
+    db.commit()
+    before = service._row(db, "operation", operation["id"])[1]
+    old, values = connection_confirmation(db, policy)
+    reference = {"revision": "new"}
+    monkeypatch.setattr(service, "_reference", Mock(side_effect=[reference, {"revision": "newer"}]) if drift == "credential" else Mock(return_value=reference))
+    context = MagicMock()
+
+    def authenticated():
+        """Commit synthetic competing work after the initial admission check."""
+        if drift == "connection":
+            service._put(db, "connection", old["id"], dict(old, name="Concurrent confirmation"))
+        elif drift == "task":
+            db.add(Job(id="job_concurrent_write", type=service.JOB_TYPE, status="pending", created_by="admin", task_config_json=json.dumps({"policy_id": policy["id"]})))
+        db.commit()
+
+    context.__enter__.side_effect = authenticated
+    monkeypatch.setattr(service, "_client", Mock(return_value=context))
+    with pytest.raises(service.RenewalError, match="changed during|active certificate write task"):
+        service.dispatch(db, "admin", "save_connection", values)
+    retained = service._row(db, "operation", operation["id"])[1]
+    assert retained == before
+    assert service._row(db, "connection", old["id"])[1] == (dict(old, name="Concurrent confirmation") if drift == "connection" else old)
+    assert db.scalar(select(Setting).where(Setting.key == "vcf_cert_lock:test-target")) is not None
+
+
 def test_approved_csr_is_signed_once_without_a_target_private_key(setup):
     """Real CA issuance retains target key custody and validates the resulting leaf.
 
