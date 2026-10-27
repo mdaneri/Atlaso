@@ -378,6 +378,10 @@ The separate rpcbind profile binds its exact admitted RPM checksum and initial-i
 directory from root:root to root:sys. The shared verifier requires a real directory with uid 0, sys gid 2 and mode
 `0755` before and after package comparison. Only its group-only discrepancy is reconciled; owner, mode, type,
 digest and other flags still fail. No state files or children are inspected.
+The OpenSSH server profile reuses the same directory validator for its pinned initial-install script. It requires
+only the real privilege-separation directory at `/usr/share/empty.sshd` to have uid 0, sys gid 2 and mode
+`0711` before and after comparison. Only that directory's group-only RPM discrepancy is reconciled;
+missing entries, changed ownership or permissions, child paths and other flags still fail. SSH keys are never read.
 The host checks those package pins before generating the console command, which reuses the authenticated shared
 helper's constants to keep the transport within its fixed size limit.
 The shared Photon verifier is authenticated against the original media and must match the host's supported contract.

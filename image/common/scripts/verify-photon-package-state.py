@@ -30,6 +30,8 @@ INSTALLATION_AUDIT_PATH = Path("/var/log/audit")
 INSTALLATION_AUDIT_TMPFILES_ROW = "d /var/log/audit 0700 root root - -"
 INSTALLATION_RPCBIND_SHA256 = "2c3d001aca71e6c6c81377a7bfc7ec9c3d26ee7a9891b4a706a8205657bc31ba"
 INSTALLATION_RPCBIND_PATH = Path("/var/lib/rpcbind")
+INSTALLATION_OPENSSH_SHA256 = "cf1bace04bca67f58536b2cc241754bcdb3bb7e2b38c518bc283f3c90c16a2d8"
+INSTALLATION_OPENSSH_PATH = Path("/usr/share/empty.sshd")
 INSTALLATION_SHIM_SHA256 = "e41e6109d7be89ae83da63ef8021ef9a0e053ecd4fe1f47ae73dd79270d688c7"
 INSTALLATION_GRUB_EFI_SHA256 = "516e63a3c609abecf4a4bf3ef2661d4f1bed26729a612f73e0bfcb530727e91f"
 INSTALLATION_LAYOUT_HELPER_PATH = Path(__file__).resolve().parents[3] / "scripts/installation/layout.py"
@@ -454,6 +456,33 @@ def verify_installation_audit_metadata(audit_sha256: str) -> dict[str, bool]:
     return {"runtime_audit_metadata_verified": True}
 
 
+def _verify_installation_sys_directory(profile: str, package_sha256: str) -> None:
+    """Reuse the two admitted packages' root:sys initial-install metadata proof.
+
+    Args:
+        profile: Fixed native package profile, never an arbitrary path selector.
+        package_sha256: Original package checksum admitted from the ISO.
+    """
+    profiles = {
+        "rpcbind": (INSTALLATION_RPCBIND_SHA256, INSTALLATION_RPCBIND_PATH, 0o755),
+        "openssh": (INSTALLATION_OPENSSH_SHA256, INSTALLATION_OPENSSH_PATH, 0o711),
+    }
+    if profile not in profiles or package_sha256 != profiles[profile][0]:
+        raise ValueError("native directory runtime metadata profile is not admitted")
+    _, directory, mode = profiles[profile]
+    try:
+        from grp import getgrnam
+
+        sys_gid = getgrnam("sys").gr_gid
+        metadata = directory.lstat()
+    except (KeyError, OSError) as exc:
+        raise ValueError("installation native directory metadata is unavailable") from exc
+    if (sys_gid != 2 or not stat.S_ISDIR(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) != mode
+            or metadata.st_uid != 0 or metadata.st_gid != sys_gid):
+        raise ValueError("installation directory metadata differs from native post-transaction policy")
+
+
 def verify_installation_rpcbind_metadata(rpcbind_sha256: str) -> dict[str, bool]:
     """Verify the pinned RPC package's initial-install ownership policy.
 
@@ -464,20 +493,21 @@ def verify_installation_rpcbind_metadata(rpcbind_sha256: str) -> dict[str, bool]
     script changes only ownership to root:sys. Photon's admitted filesystem
     declares sys as gid 2. No state files or directory children are read.
     """
-    if rpcbind_sha256 != INSTALLATION_RPCBIND_SHA256:
-        raise ValueError("rpcbind runtime metadata profile is not admitted")
-    try:
-        from grp import getgrnam
-
-        sys_gid = getgrnam("sys").gr_gid
-        metadata = INSTALLATION_RPCBIND_PATH.lstat()
-    except (KeyError, OSError) as exc:
-        raise ValueError("installation rpcbind directory metadata is unavailable") from exc
-    if (sys_gid != 2 or not stat.S_ISDIR(metadata.st_mode)
-            or stat.S_IMODE(metadata.st_mode) != 0o755
-            or metadata.st_uid != 0 or metadata.st_gid != sys_gid):
-        raise ValueError("installation rpcbind directory metadata differs from native post-transaction policy")
+    _verify_installation_sys_directory("rpcbind", rpcbind_sha256)
     return {"runtime_rpcbind_metadata_verified": True}
+
+
+def verify_installation_openssh_metadata(openssh_sha256: str) -> dict[str, bool]:
+    """Verify only the native privilege-separation directory, never SSH keys.
+
+    Args:
+        openssh_sha256: Original OpenSSH server RPM checksum admitted from the ISO.
+
+    The archive declares root:root mode ``0711``. Its own initial-install
+    script changes that directory to root:sys without changing permissions.
+    """
+    _verify_installation_sys_directory("openssh", openssh_sha256)
+    return {"runtime_openssh_metadata_verified": True}
 
 
 def _verified_installation_layout() -> dict:
@@ -544,7 +574,7 @@ def verify_installation_efi_metadata(shim_sha256: str, grub_efi_sha256: str) -> 
 
 def verify_installation_metadata(
     filesystem_sha256: str, systemd_sha256: str, audit_sha256: str, rpcbind_sha256: str,
-    shim_sha256: str, grub_efi_sha256: str
+    shim_sha256: str, grub_efi_sha256: str, openssh_sha256: str
 ) -> dict[str, bool]:
     """Reuse the admitted native profiles before or after package comparison.
 
@@ -555,11 +585,13 @@ def verify_installation_metadata(
         rpcbind_sha256: Original Photon rpcbind RPM checksum.
         shim_sha256: Original Photon shim RPM checksum.
         grub_efi_sha256: Original Photon GRUB EFI-image RPM checksum.
+        openssh_sha256: Original Photon OpenSSH server RPM checksum.
     """
     result = verify_installation_runtime_metadata(filesystem_sha256)
     result.update(verify_installation_journal_metadata(systemd_sha256))
     result.update(verify_installation_audit_metadata(audit_sha256))
     result.update(verify_installation_rpcbind_metadata(rpcbind_sha256))
+    result.update(verify_installation_openssh_metadata(openssh_sha256))
     result.update(verify_installation_efi_metadata(shim_sha256, grub_efi_sha256))
     return result
 

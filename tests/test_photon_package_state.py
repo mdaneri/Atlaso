@@ -1090,15 +1090,21 @@ def test_installation_audit_metadata_rejects_unknown_package_before_reads(
 
 
 @pytest.mark.parametrize("defect", [None, "mode", "owner", "group", "type", "missing", "group-name", "group-id"])
-def test_installation_rpcbind_metadata_matches_native_post_script(monkeypatch, defect):
+@pytest.mark.parametrize("profile", ["rpcbind", "openssh"])
+def test_installation_sys_directory_matches_native_post_script(monkeypatch, defect, profile):
     """Admit only the pinned initial-install directory ownership, without children.
 
     Args:
         monkeypatch: Replace only fixed public metadata observations.
         defect: Native directory or group identity drift to reject.
+        profile: Fixed native package profile under test.
     """
     verifier = load_verifier()
-    metadata = SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0, st_gid=2)
+    path = Path("/var/lib/rpcbind" if profile == "rpcbind" else "/usr/share/empty.sshd")
+    mode = 0o755 if profile == "rpcbind" else 0o711
+    verify = getattr(verifier, f"verify_installation_{profile}_metadata")
+    checksum = getattr(verifier, f"INSTALLATION_{profile.upper()}_SHA256")
+    metadata = SimpleNamespace(st_mode=stat.S_IFDIR | mode, st_uid=0, st_gid=2)
     if defect == "mode":
         metadata.st_mode = stat.S_IFDIR | 0o750
     elif defect == "owner":
@@ -1120,13 +1126,13 @@ def test_installation_rpcbind_metadata_matches_native_post_script(monkeypatch, d
             raise KeyError(name)
         return SimpleNamespace(gr_gid=3 if defect == "group-id" else 2)
 
-    def metadata_only(path):
+    def metadata_only(requested):
         """Reject child or content inspection while observing the directory.
 
         Args:
-            path: Fixed public directory path requested by the verifier.
+            requested: Fixed public directory path requested by the verifier.
         """
-        assert path == Path("/var/lib/rpcbind")
+        assert requested == path
         reads.append(path)
         if defect == "missing":
             raise FileNotFoundError(path)
@@ -1136,19 +1142,21 @@ def test_installation_rpcbind_metadata_matches_native_post_script(monkeypatch, d
     monkeypatch.setattr(Path, "lstat", metadata_only)
     if defect:
         with pytest.raises(ValueError):
-            verifier.verify_installation_rpcbind_metadata(verifier.INSTALLATION_RPCBIND_SHA256)
+            verify(checksum)
     else:
-        assert verifier.verify_installation_rpcbind_metadata(verifier.INSTALLATION_RPCBIND_SHA256) == {
-            "runtime_rpcbind_metadata_verified": True
+        assert verify(checksum) == {
+            f"runtime_{profile}_metadata_verified": True
         }
-    assert reads == ([] if defect == "group-name" else [Path("/var/lib/rpcbind")])
+    assert reads == ([] if defect == "group-name" else [path])
 
 
-def test_installation_rpcbind_rejects_unknown_package_before_metadata(monkeypatch):
+@pytest.mark.parametrize("profile", ["rpcbind", "openssh"])
+def test_installation_sys_directory_rejects_unknown_package_before_metadata(monkeypatch, profile):
     """Refuse unknown package identity before touching the group or directory.
 
     Args:
         monkeypatch: Intercept any forbidden metadata lookup.
+        profile: Fixed native package profile under test.
     """
     verifier = load_verifier()
 
@@ -1163,7 +1171,7 @@ def test_installation_rpcbind_rejects_unknown_package_before_metadata(monkeypatc
     monkeypatch.setitem(sys.modules, "grp", SimpleNamespace(getgrnam=forbidden))
     monkeypatch.setattr(Path, "lstat", forbidden)
     with pytest.raises(ValueError, match="profile is not admitted"):
-        verifier.verify_installation_rpcbind_metadata("0" * 64)
+        getattr(verifier, f"verify_installation_{profile}_metadata")("0" * 64)
 
 
 @pytest.mark.parametrize("defect", [
