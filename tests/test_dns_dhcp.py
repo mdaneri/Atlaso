@@ -213,6 +213,70 @@ def test_dnsmasq_renderer_emits_shared_authoritative_zones_and_generated_glue():
     assert "rebind-domain-ok=/corp.example/" in main_lines
 
 
+@pytest.mark.parametrize("authoritative", [False, True])
+@pytest.mark.parametrize("expand_hosts", [False, True])
+def test_dnsmasq_host_identity_isolation_preserves_managed_names(authoritative, expand_hosts):
+    """Local loopback identity must never become a client-facing DNS answer.
+
+    Args:
+        authoritative: Whether managed records use the isolated backend.
+        expand_hosts: Whether short DHCP and lease-mirror names are expanded.
+    """
+    settings = DnsSettings(
+        enabled=True,
+        listen_interface="eth1",
+        listen_address="192.168.50.1",
+        domain="lab.internal",
+        authoritative=authoritative,
+        expand_hosts=expand_hosts,
+    )
+
+    def render(address):
+        """Render a fresh desired state after a managed address changes.
+
+        Args:
+            address: Current applied appliance address to publish.
+        """
+        return render_dnsmasq_config(
+            dns_settings=settings,
+            dns_records=[
+                DnsRecord(hostname="atlaso.lab.internal", record_type="A", address=address),
+                DnsRecord(hostname="app.lab.internal", record_type="A", address="192.168.50.20"),
+            ],
+            dhcp_settings=DhcpSettings(
+                enabled=True, interface_name="eth1", site_address="192.168.50.1", prefix_length=24,
+            ),
+            dhcp_reservations=[
+                DhcpReservation(hostname="client1", mac_address="02:00:00:00:00:01", ip_address="192.168.50.120"),
+            ],
+        )
+
+    config = render("192.168.50.1")
+    main_lines = [line for line in config.splitlines() if not line.startswith(DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX)]
+    backend_lines = [
+        line.removeprefix(DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX)
+        for line in config.splitlines() if line.startswith(DNSMASQ_AUTHORITATIVE_CONFIG_PREFIX)
+    ]
+    record_lines = backend_lines if authoritative else main_lines
+    assert "no-hosts" in main_lines
+    assert ("expand-hosts" in main_lines) == expand_hosts
+    assert "host-record=atlaso.lab.internal,192.168.50.1" in record_lines
+    assert "host-record=app.lab.internal,192.168.50.20" in record_lines
+    assert any(line.startswith("dhcp-host=") and "02:00:00:00:00:01" in line for line in main_lines)
+    if authoritative:
+        assert "no-hosts" in backend_lines
+        assert ("expand-hosts" in backend_lines) == expand_hosts
+        assert "hostsdir=/var/lib/atlaso-dns-authoritative-leases" in backend_lines
+        assert "dhcp-script=/opt/atlaso/bin/atlaso-helper" in main_lines
+        assert "server=/lab.internal/127.0.0.1#5353" in main_lines
+    else:
+        assert not backend_lines
+        assert "hostsdir=/var/lib/atlaso-dns-authoritative-leases" in main_lines
+    moved = render("192.168.50.2")
+    assert "host-record=atlaso.lab.internal,192.168.50.2" in moved
+    assert "host-record=atlaso.lab.internal,192.168.50.1" not in moved
+
+
 @pytest.mark.parametrize("configured_cache_size,expected_cache_size", [(0, 150), (500, 500)])
 def test_dnssec_renderer_keeps_required_cache(configured_cache_size, expected_cache_size):
     """Recursive DNSSEC validation must retain enough cache.

@@ -1309,7 +1309,9 @@ preserved with their affected subsystem below. Keep new requirements at their to
   service listeners preserve authoritative positive and negative answers while retaining PTR and upstream-recursive
   behavior within the existing listener and firewall boundaries. The client-facing cache must be disabled in
   authoritative mode because cached forwarded answers lose their AA flag. Apply, rollback, and reboot policy must manage
-  both dnsmasq services as one DNS/DHCP unit. Generated nameserver glue must retain recursive PTR answers, and live DHCP
+  both dnsmasq services as one DNS/DHCP unit. Both instances must exclude `/etc/hosts` through `no-hosts` while
+  preserving the explicit lease `hostsdir`; appliance-local loopback identity must never shadow managed records through
+  `expand-hosts`. Generated nameserver glue must retain recursive PTR answers, and live DHCP
   names in managed-suffix DHCP scopes must be synchronized into the authoritative backend, retain DHCP lease UI/API
   visibility and reverse lookup, and be reconciled against active leases before backend startup. DNS health must require
   that backend while either desired or last-applied DNS configuration is authoritative.
