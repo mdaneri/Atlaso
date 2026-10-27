@@ -259,8 +259,18 @@ Assert-ValidationRootCondition $rejectedSibling 'A VM output path outside the re
 $validText = $record | ConvertTo-Json -Compress
 $validBytes = [Text.UTF8Encoding]::new($false).GetBytes($validText)
 $validDigest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($validBytes)).ToLowerInvariant()
-$null = Read-AtlasoTestVmValidationRootReceiptEnvelope -Text $validText `
+$parsedRecord = Read-AtlasoTestVmValidationRootReceiptEnvelope -Text $validText `
     -ExpectedSha256 $validDigest -ObservedSha256 $validDigest -Length $validBytes.Length
+Assert-ValidationRootCondition ($parsedRecord.created_utc -is [string] -and
+    $parsedRecord.created_utc -ceq $record.created_utc) `
+    'Receipt parsing must preserve the exact UTC string instead of a host-local DateTime.'
+$previousWhatIf = $WhatIfPreference
+try {
+    $WhatIfPreference = $true
+    $null = Assert-AtlasoTestVmValidationRootReceiptRecord -Context $context -Record $parsedRecord `
+        -ReceiptPath $receiptPath -ReceiptSha256 $receiptSha256 -ObservedRootIdentity $rootIdentity
+}
+finally { $WhatIfPreference = $previousWhatIf }
 $tampered = $false
 $tamperedText = $validText + ' '
 $tamperedBytes = [Text.UTF8Encoding]::new($false).GetBytes($tamperedText)
@@ -286,6 +296,13 @@ $binding = [ordered]@{
 }
 $vmRecord = [pscustomobject]@{ validation_root = $binding }
 Assert-AtlasoTestVmValidationRootRecordBinding -Context $admissionContext -Record $vmRecord
+$previousWhatIf = $WhatIfPreference
+try {
+    $WhatIfPreference = $true
+    Assert-AtlasoTestVmValidationRootRecordBinding -Context $admissionContext `
+        -Record ([pscustomobject]@{ validation_root = [pscustomobject]$binding })
+}
+finally { $WhatIfPreference = $previousWhatIf }
 foreach ($field in @('path', 'directory_identity', 'receipt_path', 'receipt_sha256')) {
     $candidateBinding = [ordered]@{
         path = $rootPath

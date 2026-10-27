@@ -161,7 +161,7 @@ function Assert-AtlasoTestVmValidationRootReceiptRecord {
         'worktree', 'worktree_directory_identity', 'pull_request_number', 'local_builder',
         'path', 'directory_identity', 'created_utc', 'cleanup_tool'
     )
-    $actualProperties = @($Record.PSObject.Properties | ForEach-Object Name | Sort-Object)
+    $actualProperties = @($Record.PSObject.Properties | ForEach-Object { $_.Name } | Sort-Object)
     $expectedProperties = @($requiredProperties | Sort-Object)
     if (@(Compare-Object -ReferenceObject $expectedProperties -DifferenceObject $actualProperties).Count -ne 0 -or
         $Record.schema -ne 1 -or $Record.phase -cne 'installation-validation-root-created' -or
@@ -253,8 +253,21 @@ function Read-AtlasoTestVmValidationRootReceiptEnvelope {
         $ObservedSha256 -ine $ExpectedSha256) {
         throw 'Validation-root receipt differs from its independently preserved creation digest.'
     }
-    try { return $Text | ConvertFrom-Json -ErrorAction Stop }
-    catch { throw 'Validation-root creation receipt is not valid JSON.' }
+    $document = $null
+    try {
+        $record = $Text | ConvertFrom-Json -ErrorAction Stop
+        # Recent PowerShell versions deserialize ISO timestamps as local DateTime.
+        # Preserve the original UTC string before checking its recorded offset.
+        $document = [System.Text.Json.JsonDocument]::Parse($Text)
+        $timestamp = $document.RootElement.GetProperty('created_utc')
+        if ($timestamp.ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+            throw 'The creation timestamp must be a JSON string.'
+        }
+        $record.created_utc = $timestamp.GetString()
+        return $record
+    }
+    catch { throw 'Validation-root creation receipt is not valid JSON with a creation timestamp.' }
+    finally { if ($document) { $document.Dispose() } }
 }
 
 <#
@@ -404,7 +417,7 @@ function Assert-AtlasoTestVmValidationRootRecordBinding {
     $actualFields = if ($binding -is [System.Collections.IDictionary]) {
         @($binding.Keys | ForEach-Object { [string]$_ } | Sort-Object)
     } else {
-        @($binding.PSObject.Properties | ForEach-Object Name | Sort-Object)
+        @($binding.PSObject.Properties | ForEach-Object { $_.Name } | Sort-Object)
     }
     $bindingPath = if ($binding -is [System.Collections.IDictionary]) { $binding['path'] } else { $binding.path }
     $bindingIdentity = if ($binding -is [System.Collections.IDictionary]) { $binding['directory_identity'] } else { $binding.directory_identity }
