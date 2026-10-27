@@ -110,7 +110,7 @@ RS256, mandatory PKCE S256, and scopes `openid profile email groups`.
 
 ## Dependency decision
 
-The runtime lock includes Authlib 1.8.0. RSA/JWK handling remains fixed to `joserfc`, RS256, and an explicit `kid`; no
+The runtime lock includes Authlib 1.9.1. RSA/JWK handling remains fixed to `joserfc`, RS256, and an explicit `kid`; no
 algorithm negotiation is accepted.
 
 ## Authorization Code browser flow
