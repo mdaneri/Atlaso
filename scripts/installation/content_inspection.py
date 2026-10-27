@@ -20,8 +20,10 @@ PHOTON_SYSTEMD_SHA256 = "2ef0275f25c9b782e7f3cbbaaa5bf0d9037149b5253630c6db27e15
 # Public-name diagnostics only, never RPM acceptance exceptions. These names
 # come from filesystem-1.1-11.ph5.x86_64.rpm, SHA-256
 # 7f5bba3e84f6eb50f6e5e311325089bc642549469d83793e0ba5f40d74ec6024.
-# The final two are public journal directories from systemd-257.13-5.ph5,
+# The journal directories are from systemd-257.13-5.ph5,
 # SHA-256 2ef0275f25c9b782e7f3cbbaaa5bf0d9037149b5253630c6db27e155c461618f.
+# The audit log directory is from audit-4.1.3-3.ph5, SHA-256
+# e55fac7b24b2f7546485f0b8b37fb7b105be764436dd4b139ccaa88e6c3e374f.
 RPM_DIAGNOSTIC_PATHS = (
     "/bin",
     "/boot",
@@ -139,6 +141,7 @@ RPM_DIAGNOSTIC_PATHS = (
     "/var/tmp",
     "/var/log/journal",
     "/var/log/journal/remote",
+    "/var/log/audit",
 )
 SOURCE_MEMBERS = (
     "source/image/common/scripts/provision-atlaso.sh",

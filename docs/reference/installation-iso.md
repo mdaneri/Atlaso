@@ -391,7 +391,8 @@ The identifier hashes that public package name. Fixed public filesystem entries 
 in the checked-in public path registry, entry type and permission mode. Arbitrary paths, file contents and raw
 verification errors stay private, and the check still fails.
 The registry also includes the public `/var/log/journal` and `/var/log/journal/remote` directories from the
-admitted systemd RPM. Their metadata can be diagnosed; differences are not accepted by this registry.
+admitted systemd RPM and `/var/log/audit` from the admitted audit RPM. Only directory metadata is reported;
+journal and audit records remain private. Differences are not accepted by this registry.
 Known entries may also include the nine fixed RPM verification flags. The RPM command uses Python's standard Base85
 transport to keep the complete public registry within the existing console limit; encoded data is checked for safe
 quoting, and reports retain their existing Base64 format. Other inspection commands retain their existing transport.

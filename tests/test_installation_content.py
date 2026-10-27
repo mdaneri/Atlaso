@@ -388,7 +388,10 @@ def test_rpm_guest_loader_admits_only_original_helper_bytes(monkeypatch, tmp_pat
     helper.write_bytes(original)
     expected = _expectation("rpm")
     expected["package_state_sha256"] = hashlib.sha256(original).hexdigest()
-    command = content_inspection.guest_content_program(expected, atlaso_root=root)
+    # Keep the real loader test independent of the host's temporary path length;
+    # the live command uses the short fixed /opt/atlaso path and its normal bound.
+    monkeypatch.chdir(tmp_path)
+    command = content_inspection.guest_content_program(expected, atlaso_root=Path("atlaso"))
     outer = ast.parse(_decode_guest_program(command)).body[0]
     start = next(i for i, node in enumerate(outer.body)
                  if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
@@ -767,8 +770,24 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
             + hashlib.sha256(b"systemd").hexdigest()
             + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/var/log/journal/remote')}-d2755-v.......T.",
         ),
+        (
+            b"audit\n",
+            "audit",
+            "/var/log/audit",
+            stat.S_IFDIR | 0o700,
+            "system-rpm-files-package-"
+            + hashlib.sha256(b"audit").hexdigest()
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/var/log/audit')}-d0700-v.......T.",
+        ),
+        (
+            b"audit\n",
+            "audit",
+            "/var/log/audit/private-record.log",
+            None,
+            "system-rpm-files-package-" + hashlib.sha256(b"audit").hexdigest(),
+        ),
     ],
-    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata", "fixed-missing-entry", "journal-metadata", "remote-journal-metadata"],
+    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata", "fixed-missing-entry", "journal-metadata", "remote-journal-metadata", "audit-directory-metadata", "private-audit-file"],
 )
 def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     owner_output, owner_name, verify_path, metadata_mode, expected_stage,

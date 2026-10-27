@@ -120,11 +120,11 @@ $worktree = 'E:\.codex\worktree\issue542-offline-iso\Atlaso'
 $evidence = 'E:\.codex\worktree\.evidence\issue542-01a1694b'
 $rootPath = 'C:\AtlasoBuilds\issue542\vm-validation'
 $vmName = 'Atlaso-PR-1036-installation-iso-inspection-a'
-$output = Join-Path $rootPath $vmName
+$output = [IO.Path]::Combine($rootPath, $vmName)
 $sourceCommit = 'b' * 40
 $rootSourceCommit = 'a' * 40
 $rootIdentity = '12345678:1234567890ABCDEF'
-$receiptPath = Join-Path $evidence 'installation-validation-root.json'
+$receiptPath = [IO.Path]::Combine($evidence, 'installation-validation-root.json')
 $receiptSha256 = 'd' * 64
 $context = [pscustomobject]@{
     TaskId = 'task-542'
@@ -142,7 +142,8 @@ $context = [pscustomobject]@{
     OutputDirectory = $output
 }
 
-$legacyOutput = Join-Path $worktree 'test-results\Atlaso-PR-1036-installation-iso-legacy'
+# These are in-memory Windows paths; their drives need not exist on a CI host.
+$legacyOutput = [IO.Path]::Combine($worktree, 'test-results\Atlaso-PR-1036-installation-iso-legacy')
 $legacy = Assert-AtlasoTestVmValidationRootSelector -Worktree $worktree `
     -OutputDirectory $legacyOutput -Name 'Atlaso-PR-1036-test-vm' `
     -SourceCommit $sourceCommit -PullRequestNumber 1036 -LocalBuilder:$false
@@ -247,7 +248,7 @@ finally { $script:ValidationRootGitExitCode = 0 }
 Assert-ValidationRootCondition $rejectedAncestry 'A root receipt from an unrelated source history must be rejected.'
 
 $siblingContext = $context.PSObject.Copy()
-$siblingContext.OutputDirectory = Join-Path (Split-Path -Parent $rootPath) 'other-root-output'
+$siblingContext.OutputDirectory = [IO.Path]::Combine([IO.Path]::GetDirectoryName($rootPath), 'other-root-output')
 $rejectedSibling = $false
 try {
     $null = Assert-AtlasoTestVmValidationRootReceiptRecord -Context $siblingContext -Record $record `
@@ -357,7 +358,7 @@ try {
     $disabledContextRejected = $false
     try {
         $null = New-AtlasoTestVmOwnershipContext -Worktree $worktree -OutputDirectory $output `
-            -VmxPath (Join-Path $output "$vmName.vmx") -Name $vmName `
+            -VmxPath ([IO.Path]::Combine($output, "$vmName.vmx")) -Name $vmName `
             -ValidationRootReceiptPath $receiptPath -ValidationRootReceiptSha256 $receiptSha256
     }
     catch { $disabledContextRejected = $_.Exception.Message.Contains('enabled, receipt-backed task ownership context') }
