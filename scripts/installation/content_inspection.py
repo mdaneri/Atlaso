@@ -391,7 +391,13 @@ def guest_content_program(
         site_root: Explicit fixture site-packages path; live checks use package metadata.
     """
     kind = _validate_expected(expected)
-    command_expected = {key: value for key, value in expected.items() if key not in {"allowed_inventory", "required_packages"}}
+    # The host has checked these exact package pins above, and prepare binds
+    # the installed helper to the supported bytes. Reuse its authenticated
+    # constants instead of transmitting four duplicate random digests.
+    omitted = {"allowed_inventory", "required_packages"}
+    if kind == "rpm":
+        omitted |= {"filesystem_sha256", "systemd_sha256", "audit_sha256", "rpcbind_sha256"}
+    command_expected = {key: value for key, value in expected.items() if key not in omitted}
     imports = ("import base64,hashlib,json,os,re,stat,subprocess,types,zlib\nfrom pathlib import Path\n" if kind == "rpm" else
                "import base64,hashlib,importlib.metadata,json,os,re,shutil,stat,subprocess,tarfile,tempfile,types,zlib\nfrom pathlib import Path,PurePosixPath\n")
     prelude = imports + '''
@@ -573,7 +579,7 @@ for row in rows:
  installed[name]=[version,arch]
  if len(installed)>1024: raise ValueError()
 stage="system-rpm-runtime"
-runtime=h.verify_installation_metadata(e["filesystem_sha256"],e["systemd_sha256"],e["audit_sha256"],e["rpcbind_sha256"])
+runtime=h.verify_installation_metadata(h.INSTALLATION_FILESYSTEM_SHA256,h.INSTALLATION_SYSTEMD_SHA256,h.INSTALLATION_AUDIT_SHA256,h.INSTALLATION_RPCBIND_SHA256)
 stage="system-rpm-files"
 absent=set()
 try:
@@ -615,7 +621,7 @@ except PrivateCommandFailure as failure:
 stage="system-rpm-firmware"
 run(["rpm","--noplugins","-V","--noscripts","--nodeps","linux-firmware"],60)
 stage="system-rpm-runtime"
-runtime=h.verify_installation_metadata(e["filesystem_sha256"],e["systemd_sha256"],e["audit_sha256"],e["rpcbind_sha256"])
+runtime=h.verify_installation_metadata(h.INSTALLATION_FILESYSTEM_SHA256,h.INSTALLATION_SYSTEMD_SHA256,h.INSTALLATION_AUDIT_SHA256,h.INSTALLATION_RPCBIND_SHA256)
 r=dict(installed_inventory=base64.b64encode(zlib.compress(json.dumps(installed,sort_keys=True,separators=(",", ":")).encode(),9)).decode(),firmware_verified=True,rpm_files_verified=True,package_state_verified=True,runtime_media_directories_absent=len(absent),**runtime)
 ''',
     "assets": r'''

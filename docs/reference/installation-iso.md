@@ -374,6 +374,8 @@ The separate rpcbind profile binds its exact admitted RPM checksum and initial-i
 directory from root:root to root:sys. The shared verifier requires a real directory with uid 0, sys gid 2 and mode
 `0755` before and after package comparison. Only its group-only discrepancy is reconciled; owner, mode, type,
 digest and other flags still fail. No state files or children are inspected.
+The host checks those package pins before generating the console command, which reuses the authenticated shared
+helper's constants to keep the transport within its fixed size limit.
 The shared Photon verifier is authenticated against the original media and must match the host's supported contract.
 A changed verifier requires a rebuilt development ISO and fresh receipt-owned installation; do not replace it in an
 old VM to force acceptance. Keep the older results bound to their original media.

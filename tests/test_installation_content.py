@@ -145,6 +145,10 @@ def _runtime_fixture_helper():
     fields = {name: True for name in ("runtime_proc_verified", "runtime_run_verified",
                                       "runtime_login_metadata_verified", "runtime_mail_spool_verified")}
     return SimpleNamespace(__file__="verify-photon-package-state.py",
+                           INSTALLATION_FILESYSTEM_SHA256=content_inspection.PHOTON_FILESYSTEM_SHA256,
+                           INSTALLATION_SYSTEMD_SHA256=content_inspection.PHOTON_SYSTEMD_SHA256,
+                           INSTALLATION_AUDIT_SHA256=content_inspection.PHOTON_AUDIT_SHA256,
+                           INSTALLATION_RPCBIND_SHA256=content_inspection.PHOTON_RPCBIND_SHA256,
                            verify_installation_metadata=lambda *_checksums: {**fields, "runtime_journal_metadata_verified": True,
                                                                             "runtime_audit_metadata_verified": True,
                                                                             "runtime_rpcbind_metadata_verified": True})
@@ -579,6 +583,9 @@ def test_guest_content_program_uses_bounded_ascii_console_command(kind, tmp_path
     if kind == "python":
         assert repr(str(site)) in program
     if kind == "rpm":
+        for package in ("FILESYSTEM", "SYSTEMD", "AUDIT", "RPCBIND"):
+            assert f"h.INSTALLATION_{package}_SHA256" in program
+            assert f"e[\"{package.lower()}_sha256\"]" not in program
         constants = [
             node.value
             for node in ast.walk(ast.parse(program))
