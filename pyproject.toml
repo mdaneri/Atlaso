@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.463"
+version = "0.9.464"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -42,6 +42,7 @@ dev = [
   "pymdown-extensions==12.2",
   "pytest>=8.3.3",
   "pytest-asyncio>=0.24.0",
+  "setuptools>=84.1.0",
   'uvloop==0.23.0 ; sys_platform != "win32" and sys_platform != "cygwin" and platform_python_implementation != "PyPy"',
 ]
 
