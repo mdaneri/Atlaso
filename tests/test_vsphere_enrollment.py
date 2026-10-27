@@ -16,6 +16,11 @@ from atlaso.app.services import vsphere_enrollment as enrollment
 
 
 def _client_certificate(*, expired: bool = False) -> str:
+    """Create an active or expired synthetic vCenter client certificate.
+
+    Args:
+        expired: Whether the certificate should have an expired validity period.
+    """
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "vcsa.example.test")])
     now = datetime.now(timezone.utc)

@@ -198,6 +198,12 @@ configuration at `/etc/atlaso/dnsmasq.d/atlaso.conf`, and, when authoritative mo
 backend configuration at `/etc/atlaso/dnsmasq.d/atlaso-authoritative.conf`. It starts
 `atlaso-dns-authoritative.service` before restarting `dnsmasq.service`.
 
+Both generated configurations use `no-hosts`: the appliance's `/etc/hosts` is reserved for local OS identity and is
+never published to DNS clients. This prevents a short loopback entry such as `127.0.0.1 atlaso` from becoming
+`atlaso.lab.internal` through `expand-hosts` and hiding the managed appliance address. Explicit DNS records, DHCP
+reservations, and the authoritative DHCP lease mirror remain available. `expand-hosts` still applies to the managed
+lease mirror. Appliance-local hostname resolution continues through the OS hosts/NSS and configured resolver paths.
+
 On an applied appliance, verify the installed directives and query behavior:
 
 ```sh
@@ -205,6 +211,10 @@ sudo grep -E '^(auth-zone|auth-server|auth-soa|auth-ttl|host-record=ns)' /etc/at
 sudo grep -E '^server=/.+/127\.0\.0\.1#5353$' /etc/atlaso/dnsmasq.d/atlaso.conf
 systemctl is-active atlaso-dns-authoritative
 systemctl is-active dnsmasq
+sudo grep -x no-hosts /etc/atlaso/dnsmasq.d/atlaso.conf /etc/atlaso/dnsmasq.d/atlaso-authoritative.conf
+dig @192.168.50.1 atlaso.lab.internal A
+dig @127.0.0.1 -p 5353 atlaso.lab.internal A
+getent hosts atlaso.lab.internal
 dig @192.168.50.1 atlaso.internal SOA
 dig @192.168.50.1 atlaso.internal NS
 dig @192.168.50.1 ns1.atlaso.internal A
@@ -217,6 +227,12 @@ dig @127.0.0.1 example.com A
 The missing managed name should return authoritative NXDOMAIN with SOA authority. The loopback queries verify existing
 PTR behavior and configured upstream recursion. Replace addresses and names with the appliance's selected listener and
 managed data.
+
+For the appliance FQDN, compare the LAN listener's answer from another machine with the direct port-5353 backend
+answer on the appliance. Both must contain the applied managed address rather than a loopback hosts entry. Local
+`getent` may follow OS hostname/NSS policy, so it is a separate local-resolution check. Repeat after DNS/DHCP Apply
+and reboot; after changing the managed address and applying, verify both wire answers contain the new address and no
+stale address. Check an ordinary service record and a live DHCP client name as well.
 
 ### DHCP upstream preservation
 

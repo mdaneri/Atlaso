@@ -10,7 +10,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 The shared [Appliance Apply review](docs/operate/appliance-apply.md) shows the complete execution plan, including
 unchanged required dependencies and their reasons, before submitting one task.
 
-DNS listeners serve managed zones and configured upstream forwarding together. Appliance Apply coordinates host
+DNS listeners serve managed zones and configured upstream forwarding together, excluding appliance-local `/etc/hosts`
+entries from published answers. Appliance Apply coordinates host
 resolution with DNS activation and updates Atlaso-owned service records after listener-address readiness; DHCP scopes
 may advertise routed DNS/NTP service endpoints. See the
 [DNS](docs/services/dns.md) and [DHCP](docs/services/dhcp.md) guides.

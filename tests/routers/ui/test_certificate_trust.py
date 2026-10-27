@@ -1079,7 +1079,11 @@ def test_missing_client_certificate_guidance_does_not_save_trust(client, monkeyp
     monkeypatch.setattr(transport, "applied_kmip_listener_addresses", lambda *_args, **_kwargs: frozenset())
 
     def missing(**_kwargs):
-        """Report the same bounded missing-identity condition on each retry."""
+        """Report the same bounded missing-identity condition on each retry.
+
+        Args:
+            **_kwargs: Ignored discovery request parameters.
+        """
         raise EnrollmentError(MISSING_CLIENT_CERTIFICATE_GUIDANCE)
 
     monkeypatch.setattr(transport, "discover_vcenter_client", missing)

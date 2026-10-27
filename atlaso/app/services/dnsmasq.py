@@ -1568,6 +1568,9 @@ def render_dnsmasq_config(
         "domain-needed",
         "bogus-priv",
         "no-resolv",
+        # Appliance-local host identity must not override managed DNS records.
+        # In particular, expand-hosts can publish a short loopback hostname.
+        "no-hosts",
         "bind-dynamic",
         f"dhcp-leasefile={DNSMASQ_LEASE_FILE_PATH}",
         f"cache-size={cache_size}",
@@ -1647,6 +1650,7 @@ def render_dnsmasq_config(
                 "# Managed by Atlaso. Local changes may be overwritten.",
                 f"port={DNSMASQ_AUTHORITATIVE_PORT}",
                 "no-resolv",
+                "no-hosts",
                 "bind-interfaces",
                 f"listen-address={DNSMASQ_AUTHORITATIVE_LOOPBACK_ADDRESS}",
                 f"hostsdir={DNSMASQ_AUTHORITATIVE_LEASE_HOSTS_DIR}",
