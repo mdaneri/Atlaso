@@ -335,9 +335,9 @@ RPM failures distinguish helper admission, package-state checks, inventory, pack
 failures distinguish source inputs, inventory, generation, and comparison. These fixed categories keep command output
 private and retain the original verification requirements.
 For an RPM file failure, a package identifier can be reported only after its name matches the original media inventory.
-The identifier hashes that public package name. Fixed public filesystem directories can also be identified by a short
-label, entry type and permission mode. Arbitrary paths, file contents and raw verification errors stay private, and
-the check still fails.
+The identifier hashes that public package name. Fixed public filesystem entries can also be identified by their index
+in the checked-in public path registry, entry type and permission mode. Arbitrary paths, file contents and raw
+verification errors stay private, and the check still fails.
 
 Use `-CollisionSuffix inspection-a` and `-CollisionSuffix inspection-b` for two fresh installations in separate
 canonical VM directories. The wrappers reuse the shared identity helper to preserve the PR number while giving each

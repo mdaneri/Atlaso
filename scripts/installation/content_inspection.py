@@ -15,6 +15,125 @@ from scripts import verify_virtualization_guest_wheel as wheel_verifier
 from scripts.installation.layout import PROFILE
 
 KINDS = ("assets", "python", "powercli", "rpm", "notices")
+# Public-name diagnostics only, never RPM acceptance exceptions. These names
+# come from filesystem-1.1-11.ph5.x86_64.rpm, SHA-256
+# 7f5bba3e84f6eb50f6e5e311325089bc642549469d83793e0ba5f40d74ec6024.
+RPM_DIAGNOSTIC_PATHS = (
+    "/bin",
+    "/boot",
+    "/dev",
+    "/etc",
+    "/etc/fstab",
+    "/etc/group",
+    "/etc/hosts",
+    "/etc/inputrc",
+    "/etc/modprobe.d",
+    "/etc/modprobe.d/usb.conf",
+    "/etc/mtab",
+    "/etc/opt",
+    "/etc/passwd",
+    "/etc/profile",
+    "/etc/profile.d",
+    "/etc/profile.d/proxy.sh",
+    "/etc/sysconfig",
+    "/etc/sysconfig/clock",
+    "/etc/sysconfig/console",
+    "/etc/sysconfig/proxy",
+    "/home",
+    "/lib",
+    "/lib64",
+    "/media",
+    "/mnt",
+    "/mnt/hgfs",
+    "/proc",
+    "/root",
+    "/run",
+    "/run/lock",
+    "/run/media/cdrom",
+    "/run/media/floppy",
+    "/sbin",
+    "/srv",
+    "/tmp",
+    "/usr",
+    "/usr/bin",
+    "/usr/include",
+    "/usr/lib",
+    "/usr/lib/debug",
+    "/usr/lib/debug/bin",
+    "/usr/lib/debug/lib",
+    "/usr/lib/debug/lib64",
+    "/usr/lib/debug/sbin",
+    "/usr/lib/debug/usr/bin",
+    "/usr/lib/debug/usr/lib",
+    "/usr/lib/debug/usr/lib64",
+    "/usr/lib/debug/usr/sbin",
+    "/usr/lib/sysusers.d/group.conf",
+    "/usr/lib/sysusers.d/users.conf",
+    "/usr/lib64",
+    "/usr/libexec",
+    "/usr/local",
+    "/usr/local/bin",
+    "/usr/local/include",
+    "/usr/local/lib",
+    "/usr/local/lib64",
+    "/usr/local/share",
+    "/usr/local/share/color",
+    "/usr/local/share/dict",
+    "/usr/local/share/doc",
+    "/usr/local/share/info",
+    "/usr/local/share/locale",
+    "/usr/local/share/man",
+    "/usr/local/share/man/man1",
+    "/usr/local/share/man/man2",
+    "/usr/local/share/man/man3",
+    "/usr/local/share/man/man4",
+    "/usr/local/share/man/man5",
+    "/usr/local/share/man/man6",
+    "/usr/local/share/man/man7",
+    "/usr/local/share/man/man8",
+    "/usr/local/share/misc",
+    "/usr/local/share/terminfo",
+    "/usr/local/share/zoneinfo",
+    "/usr/local/src",
+    "/usr/sbin",
+    "/usr/share",
+    "/usr/share/color",
+    "/usr/share/dict",
+    "/usr/share/doc",
+    "/usr/share/info",
+    "/usr/share/locale",
+    "/usr/share/man",
+    "/usr/share/man/man1",
+    "/usr/share/man/man2",
+    "/usr/share/man/man3",
+    "/usr/share/man/man4",
+    "/usr/share/man/man5",
+    "/usr/share/man/man6",
+    "/usr/share/man/man7",
+    "/usr/share/man/man8",
+    "/usr/share/misc",
+    "/usr/share/terminfo",
+    "/usr/share/zoneinfo",
+    "/usr/src",
+    "/var",
+    "/var/cache",
+    "/var/lib",
+    "/var/lib/color",
+    "/var/lib/locate",
+    "/var/lib/misc",
+    "/var/local",
+    "/var/lock",
+    "/var/log",
+    "/var/log/btmp",
+    "/var/log/wtmp",
+    "/var/mail",
+    "/var/mnt",
+    "/var/opt",
+    "/var/run",
+    "/var/spool",
+    "/var/srv",
+    "/var/tmp",
+)
 SOURCE_MEMBERS = (
     "source/image/common/scripts/provision-atlaso.sh",
     "source/scripts/verify_virtualization_guest_wheel.py",
@@ -253,6 +372,8 @@ def digest(d):return hashlib.sha256("".join(k+"\\0"+d[k]+"\\n" for k in sorted(d
     declarations = ("e=" + repr(command_expected) + "\na=Path(" + repr(str(atlaso_root)) + ")\ns=Path(" +
                     repr(str(software_root)) + ")\nt=Path(" + repr(str(temporary_root)) + ")\nsite_override=" +
                     repr(str(site_root) if site_root is not None else None) + "\nprofile_data=" + repr(PROFILE.encode()) + "\n")
+    if kind == "rpm":
+        declarations += "fixed_rpm_paths=" + repr(RPM_DIAGNOSTIC_PATHS) + "\n"
     body = 'stage="system-' + kind + '"\n' + prelude + declarations + _PROGRAMS[kind]
     body += '\nr.update(schema=1,kind=e["kind"],iso_sha256=e["iso_sha256"])\nx=json.dumps(r,sort_keys=True,separators=(",",":")).encode()\nif len(x)>4096: raise ValueError()\nprint("ATLASO-INSPECTION:"+base64.b64encode(x).decode()+":END")'
     program = 'try:\n' + textwrap.indent(body, " ") + '\nexcept BaseException:\n print("ATLASO-INSPECTION-FAILED:"+stage)'
@@ -405,10 +526,13 @@ except PrivateCommandFailure as failure:
   valid_owners=sorted(owner for owner in set(owners) if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+._:-]{0,127}",owner))
   if valid_owners:
    stage+="-package-"+hashlib.sha256(valid_owners[0].encode("utf-8")).hexdigest()
-   fixed={"/root":"root","/tmp":"tmp","/var/tmp":"vartmp","/run":"run","/var/run":"varrun","/var/lock":"varlock","/bin":"bin","/sbin":"sbin","/lib":"lib","/lib64":"lib64","/usr/local/lib64":"locallib64","/boot":"boot","/boot/efi":"efi","/opt":"opt","/home":"home","/dev":"dev","/dev/pts":"devpts","/dev/shm":"shm","/var/cache":"cache","/var/lib":"varlib","/var/log":"varlog","/usr":"usr","/usr/local":"local","/usr/local/share":"localshare"}
-   if path in fixed:
-    z=Path(path).lstat();kind="d" if stat.S_ISDIR(z.st_mode) else "l" if stat.S_ISLNK(z.st_mode) else "f" if stat.S_ISREG(z.st_mode) else "o"
-    stage+="-"+fixed[path]+"-"+kind+format(stat.S_IMODE(z.st_mode),"04o")
+   if path in fixed_rpm_paths:
+    entry="-entry"+str(fixed_rpm_paths.index(path))
+    try: z=Path(path).lstat()
+    except FileNotFoundError: stage+=entry+"-missing"
+    else:
+     kind="d" if stat.S_ISDIR(z.st_mode) else "l" if stat.S_ISLNK(z.st_mode) else "f" if stat.S_ISREG(z.st_mode) else "o"
+     stage+=entry+"-"+kind+format(stat.S_IMODE(z.st_mode),"04o")
    break
  raise
 stage="system-rpm-firmware"

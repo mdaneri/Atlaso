@@ -532,10 +532,19 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
             stat.S_IFDIR | 0o700,
             "system-rpm-files-package-"
             + hashlib.sha256(b"filesystem").hexdigest()
-            + "-root-d0700",
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/root')}-d0700",
+        ),
+        (
+            b"filesystem\n",
+            "filesystem",
+            "/run/media/cdrom",
+            -1,
+            "system-rpm-files-package-"
+            + hashlib.sha256(b"filesystem").hexdigest()
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/run/media/cdrom')}-missing",
         ),
     ],
-    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata"],
+    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata", "fixed-missing-entry"],
 )
 def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     owner_output, owner_name, verify_path, metadata_mode, expected_stage,
@@ -563,7 +572,9 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     def safe_lstat(path):
         name = Path(path).as_posix()
         lstat_calls.append(name)
-        if name == "/root" and metadata_mode is not None:
+        if name == verify_path and metadata_mode is not None:
+            if metadata_mode == -1:
+                raise FileNotFoundError()
             return SimpleNamespace(st_mode=metadata_mode)
         raise AssertionError("diagnostic attempted metadata access outside its fixed path")
 
