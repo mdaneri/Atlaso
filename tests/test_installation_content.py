@@ -5,6 +5,7 @@ import base64
 import contextlib
 import csv
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -106,6 +107,7 @@ def _report(kind, **changes):
             "runtime_proc_verified": True,
             "runtime_run_verified": True,
             "runtime_login_metadata_verified": True,
+            "runtime_mail_spool_verified": True,
             "runtime_media_directories_absent": 0,
         },
         "notices": {"notices_sha256": "a" * 64, "notice_inputs_verified": True},
@@ -116,6 +118,13 @@ def _report(kind, **changes):
         "iso_sha256": "a" * 64,
         **{**values[kind], **changes},
     }
+
+
+def _runtime_fixture_helper():
+    """Return only declared runtime proof fields for unrelated adapter fixtures."""
+    fields = {name: True for name in ("runtime_proc_verified", "runtime_run_verified",
+                                      "runtime_login_metadata_verified", "runtime_mail_spool_verified")}
+    return SimpleNamespace(verify_installation_runtime_metadata=lambda _checksum: dict(fields))
 
 
 def _decode_guest_program(command):
@@ -135,11 +144,11 @@ def _prepare_fixture():
             verify_virtualization_guest_wheel.__file__
         ).read_bytes(),
         "source/image/common/powershell/powercli-lock.json": lock,
+        "source/image/common/scripts/verify-photon-package-state.py": Path("image/common/scripts/verify-photon-package-state.py").read_bytes(),
     }
     all_files = {
         **sources,
         "source/image/common/powershell/provision-powercli.ps1": b"# PowerCLI validation fixture\n",
-        "source/image/common/scripts/verify-photon-package-state.py": b"# RPM state fixture\n",
         "source/scripts/generate_third_party_notices.py": b"# Notice generator fixture\n",
         "source/scripts/third_party_notices.json": b"{}\n",
         "source/requirements-appliance.lock": b"# Public lock fixture\n",
@@ -308,6 +317,41 @@ def test_guest_program_refuses_unreviewed_filesystem_profile():
         content_inspection.guest_content_program(expected)
 
 
+def test_rpm_guest_loader_admits_only_original_helper_bytes(monkeypatch, tmp_path):
+    """Execute the real generated loader, including imports and byte admission."""
+    root = tmp_path / "atlaso"
+    member = "image/common/scripts/verify-photon-package-state.py"
+    helper = root / member
+    helper.parent.mkdir(parents=True)
+    original = b"def public_fixture():\n return 'verified'\n"
+    helper.write_bytes(original)
+    expected = _expectation("rpm")
+    expected["package_state_sha256"] = hashlib.sha256(original).hexdigest()
+    command = content_inspection.guest_content_program(expected, atlaso_root=root)
+    outer = ast.parse(_decode_guest_program(command)).body[0]
+    start = next(i for i, node in enumerate(outer.body)
+                 if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+                 and node.value.value == "system-rpm-helper")
+    namespace = {}
+    monkeypatch.setattr(os, "O_NOFOLLOW", getattr(os, "O_NOFOLLOW", 0), raising=False)
+    exec(compile(ast.Module(body=outer.body[:start], type_ignores=[]), "<real-rpm-loader>", "exec"), namespace)
+    admitted = namespace["load"](member, "package_state_sha256", "_public_fixture")
+    assert admitted.public_fixture() == "verified"
+    helper.write_bytes(b"raise AssertionError('changed helper must not execute')\n")
+    with pytest.raises(ValueError):
+        namespace["load"](member, "package_state_sha256", "_changed_fixture")
+
+
+def test_prepare_content_inputs_requires_original_shared_photon_contract():
+    """Even admitted media must provide the helper contract used by the adapter."""
+    base, manifest, sources = _prepare_fixture()
+    member = content_inspection.SOURCE_MEMBERS[3]
+    sources[member] += b"\n# different public helper contract\n"
+    next(item for item in manifest["files"] if item["path"] == member)["sha256"] = hashlib.sha256(sources[member]).hexdigest()
+    with pytest.raises(ValueError, match="original shared Photon runtime contract"):
+        content_inspection.prepare_content_inputs(base, manifest, sources)
+
+
 @pytest.mark.parametrize("kind", content_inspection.KINDS)
 def test_validate_content_report_accepts_only_expected_public_measurements(kind):
     """Valid reports retain their exact media identity and expected fields."""
@@ -354,6 +398,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"runtime_proc_verified": False},
         {"runtime_run_verified": False},
         {"runtime_login_metadata_verified": False},
+        {"runtime_mail_spool_verified": False},
         {"runtime_media_directories_absent": True},
         {"runtime_media_directories_absent": 3},
         {"installed_inventory": _inventory({"linux": ["wrong", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"]})},
@@ -362,7 +407,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"], "rogue": ["1.0", "noarch"]})},
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"]})},
     ],
-    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
+    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "runtime-mail-spool", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
 )
 def test_validate_content_report_rejects_unverified_rpm_closure(changes):
     """The installed RPM identities must satisfy the signed allowed closure."""
@@ -507,7 +552,7 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
     outer.body = [
         node
         for node in outer.body
-        if not isinstance(node, ast.FunctionDef) or node.name not in {"checked", "run", "verify_runtime"}
+        if not isinstance(node, ast.FunctionDef) or node.name not in {"checked", "run", "load"}
     ]
     sentinel = "private-rpm-diagnostic-sentinel"
 
@@ -530,7 +575,7 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
             return b"example\t1-1\tx86_64\n"
         return b""
 
-    namespace = {"checked": checked, "run": run, "verify_runtime": lambda: True}
+    namespace = {"checked": checked, "run": run, "load": lambda *_args: _runtime_fixture_helper()}
     isolated = ast.Module(body=[outer], type_ignores=[])
     with contextlib.redirect_stdout(io.StringIO()) as output:
         exec(compile(isolated, "<generated-rpm-program>", "exec"), namespace)
@@ -606,7 +651,7 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     outer.body = [
         node
         for node in outer.body
-        if not isinstance(node, ast.FunctionDef) or node.name not in {"checked", "run", "verify_runtime"}
+        if not isinstance(node, ast.FunctionDef) or node.name not in {"checked", "run", "load"}
     ]
     sentinel = b"private-rpm-file-path-and-stderr-sentinel"
     verify_output = f".......T. {verify_path}\n".encode()
@@ -642,7 +687,7 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
             return b"example\t1-1\tx86_64\n"
         return b""
 
-    namespace.update(checked=checked, run=run, verify_runtime=lambda: True)
+    namespace.update(checked=checked, run=run, load=lambda *_args: _runtime_fixture_helper())
     isolated = ast.Module(body=[outer], type_ignores=[])
     with contextlib.redirect_stdout(io.StringIO()) as output:
         exec(compile(isolated, "<generated-rpm-file-diagnostic>", "exec"), namespace)
@@ -711,8 +756,11 @@ def test_rpm_runtime_proc_check_retains_package_failures(
     ))
     outer = next(node for node in generated.body if isinstance(node, ast.Try))
     outer.body = [node for node in outer.body if not isinstance(node, ast.FunctionDef)
-                  or node.name not in {"checked", "run", "read"}]
+                  or node.name not in {"checked", "run", "read", "load"}]
     monkeypatch.setitem(sys.modules, "grp", SimpleNamespace(getgrnam=lambda name: SimpleNamespace(gr_gid=22)))
+    spec = importlib.util.spec_from_file_location("_iso_runtime_fixture", "image/common/scripts/verify-photon-package-state.py")
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
     namespace = {}
     firmware_checked = False
     root = "/private-subroot" if mount == "subroot" else "/"
@@ -757,6 +805,8 @@ def test_rpm_runtime_proc_check_retains_package_failures(
             entry_type = stat.S_IFLNK if mount == "logsymlink" else stat.S_IFREG
             return SimpleNamespace(st_mode=entry_type | native_mode, st_nlink=2 if mount == "loglink" else 1,
                                    st_uid=int(mount == "loguid"), st_gid=0 if mount == "loggid" or (mount == "lograce" and firmware_checked) else 22)
+        if name == "/var/mail":
+            return SimpleNamespace(st_mode=stat.S_IFDIR | 0o1755, st_uid=0, st_gid=34)
         if name == "/run":
             return SimpleNamespace(st_mode=stat.S_IFDIR | (0o700 if mount == "runmode" else 0o755), st_uid=int(mount == "runuid"), st_gid=0)
         if name in {"/run/media/cdrom", "/run/media/floppy"}:
@@ -767,7 +817,8 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         return SimpleNamespace(st_mode=mode, st_uid=uid, st_gid=gid)
 
     monkeypatch.setattr(Path, "lstat", lstat)
-    namespace.update(read=read, checked=checked, run=run)
+    monkeypatch.setattr(helper, "_read_installation_mountinfo", lambda: mountinfo)
+    namespace.update(read=read, checked=checked, run=run, load=lambda *_args: helper)
     with contextlib.redirect_stdout(io.StringIO()) as output:
         exec(compile(ast.Module(body=[outer], type_ignores=[]), "<rpm-proc-fixture>", "exec"), namespace)
     actual = output.getvalue()
@@ -784,6 +835,7 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         assert report["runtime_proc_verified"] is True
         assert report["runtime_run_verified"] is True
         assert report["runtime_login_metadata_verified"] is True
+        assert report["runtime_mail_spool_verified"] is True
         assert report["runtime_media_directories_absent"] == rows.count("missing /run/media/")
         assert report["rpm_files_verified"] is True
 

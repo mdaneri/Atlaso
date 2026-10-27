@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import stat
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -373,3 +376,199 @@ def test_package_cleanup_rejects_unsafe_distroverpkg(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="not a valid RPM package identity"):
         verifier.read_distroverpkg(tdnf_config)
+
+
+_FILESYSTEM_SHA256 = "7f5bba3e84f6eb50f6e5e311325089bc642549469d83793e0ba5f40d74ec6024"
+_UTMP_GID = 22
+
+
+def _mountinfo(
+    *,
+    proc_type: str = "proc",
+    proc_root: str = "/",
+    run_type: str = "tmpfs",
+    run_root: str = "/",
+    duplicate_proc: bool = False,
+    duplicate_run: bool = False,
+) -> str:
+    """Build a small public mountinfo sample for the two protected mounts."""
+    proc = f"31 25 0:26 {proc_root} /proc rw,nosuid,nodev,noexec - {proc_type} proc rw\n"
+    run = f"32 25 0:27 {run_root} /run rw,nosuid,nodev - {run_type} tmpfs rw\n"
+    return proc * (2 if duplicate_proc else 1) + run * (2 if duplicate_run else 1)
+
+
+def _runtime_paths() -> dict[str, SimpleNamespace]:
+    """Return valid synthetic metadata for the required Photon runtime paths."""
+    return {
+        "/proc": SimpleNamespace(st_mode=stat.S_IFDIR | 0o555, st_uid=0, st_gid=0, st_nlink=2),
+        "/run": SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0, st_gid=0, st_nlink=2),
+        "/var/log/btmp": SimpleNamespace(st_mode=stat.S_IFREG | 0o660, st_uid=0, st_gid=_UTMP_GID, st_nlink=1),
+        "/var/log/wtmp": SimpleNamespace(st_mode=stat.S_IFREG | 0o664, st_uid=0, st_gid=_UTMP_GID, st_nlink=1),
+        "/var/mail": SimpleNamespace(st_mode=stat.S_IFDIR | 0o1755, st_uid=0, st_gid=34, st_nlink=2),
+    }
+
+
+def _runtime_verifier(monkeypatch, mountinfo: str, paths: dict[str, SimpleNamespace]):
+    """Load the package verifier with isolated mount, metadata, and group reads."""
+    group_queries = []
+
+    def getgrnam(name: str):
+        group_queries.append(name)
+        if name != "utmp":
+            raise KeyError(name)
+        return SimpleNamespace(gr_gid=_UTMP_GID)
+
+    monkeypatch.setitem(sys.modules, "grp", SimpleNamespace(getgrnam=getgrnam))
+    verifier = load_verifier()
+    mount_reads = []
+
+    def read_mountinfo(path=Path("/proc/self/mountinfo")):
+        mount_reads.append(path)
+        return mountinfo
+
+    def fake_lstat(path: Path):
+        entry = paths.get(path.as_posix())
+        if entry is None:
+            raise AssertionError(f"unexpected metadata path: {path}")
+        return entry
+
+    monkeypatch.setattr(verifier, "_read_installation_mountinfo", read_mountinfo)
+    monkeypatch.setattr(Path, "lstat", fake_lstat)
+    return verifier, mount_reads, group_queries
+
+
+def test_installation_runtime_metadata_accepts_exact_photon_state(monkeypatch):
+    """Accept the expected proc/run mounts and protected login/mail metadata."""
+    paths = _runtime_paths()
+    verifier, mount_reads, group_queries = _runtime_verifier(
+        monkeypatch, _mountinfo(), paths
+    )
+
+    result = verifier.verify_installation_runtime_metadata(_FILESYSTEM_SHA256)
+
+    assert result == {
+        "runtime_proc_verified": True,
+        "runtime_run_verified": True,
+        "runtime_login_metadata_verified": True,
+        "runtime_mail_spool_verified": True,
+    }
+    assert mount_reads == [Path("/proc/self/mountinfo")]
+    assert group_queries == ["utmp"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "proc-type",
+        "malformed-table",
+        "proc-root",
+        "duplicate-proc",
+        "run-type",
+        "run-root",
+        "duplicate-run",
+        "proc-mode",
+        "proc-owner",
+        "run-mode",
+        "run-group",
+        "btmp-mode",
+        "btmp-owner",
+        "btmp-group",
+        "btmp-symlink",
+        "btmp-hardlink",
+        "wtmp-mode",
+        "wtmp-owner",
+        "wtmp-group",
+        "wtmp-symlink",
+        "wtmp-hardlink",
+        "mail-mode",
+        "mail-owner",
+        "mail-group",
+        "mail-symlink",
+    ],
+)
+def test_installation_runtime_metadata_rejects_mount_and_path_drift(
+    monkeypatch, mutation: str
+):
+    """Reject mount topology, type, ownership, group, link, and mode defects."""
+    paths = _runtime_paths()
+    mountinfo = _mountinfo()
+    if mutation == "malformed-table":
+        mountinfo = "private-fixture-malformed\n"
+    elif mutation == "proc-type":
+        mountinfo = _mountinfo(proc_type="tmpfs")
+    elif mutation == "proc-root":
+        mountinfo = _mountinfo(proc_root="/subtree")
+    elif mutation == "duplicate-proc":
+        mountinfo = _mountinfo(duplicate_proc=True)
+    elif mutation == "run-type":
+        mountinfo = _mountinfo(run_type="proc")
+    elif mutation == "run-root":
+        mountinfo = _mountinfo(run_root="/subtree")
+    elif mutation == "duplicate-run":
+        mountinfo = _mountinfo(duplicate_run=True)
+    else:
+        path_name, defect = mutation.split("-", 1)
+        path = {"btmp": "/var/log/btmp", "wtmp": "/var/log/wtmp", "mail": "/var/mail", "proc": "/proc", "run": "/run"}[path_name]
+        current = paths[path]
+        if defect == "mode":
+            replacement = {"proc": stat.S_IFDIR | 0o755, "run": stat.S_IFDIR | 0o700, "btmp": stat.S_IFREG | 0o600, "wtmp": stat.S_IFREG | 0o600, "mail": stat.S_IFDIR | 0o755}[path_name]
+            current.st_mode = replacement
+        elif defect == "owner":
+            current.st_uid = 1000
+        elif defect == "group":
+            current.st_gid = _UTMP_GID + 1 if path_name in {"btmp", "wtmp"} else 35
+        elif defect == "symlink":
+            current.st_mode = stat.S_IFLNK | 0o777
+        elif defect == "hardlink":
+            current.st_nlink = 2
+
+    verifier, _mount_reads, _group_queries = _runtime_verifier(
+        monkeypatch, mountinfo, paths
+    )
+    with pytest.raises(ValueError):
+        verifier.verify_installation_runtime_metadata(_FILESYSTEM_SHA256)
+
+
+def test_installation_runtime_metadata_rejects_unknown_filesystem_profile(monkeypatch):
+    """Unknown signed media never triggers runtime filesystem inspection."""
+    paths = _runtime_paths()
+    verifier, mount_reads, group_queries = _runtime_verifier(
+        monkeypatch, _mountinfo(), paths
+    )
+
+    with pytest.raises(ValueError):
+        verifier.verify_installation_runtime_metadata("0" * 64)
+
+    assert mount_reads == []
+    assert group_queries == []
+
+
+def test_mountinfo_reader_rejects_input_over_one_mib(tmp_path: Path):
+    """Mountinfo input is bounded before it can drive topology checks."""
+    verifier = load_verifier()
+    oversized = tmp_path / "mountinfo"
+    oversized.write_bytes(b"x" * (1024 * 1024 + 1))
+
+    with pytest.raises(ValueError):
+        verifier._read_installation_mountinfo(oversized)
+
+
+@pytest.mark.parametrize("link_kind", ["symlink", "hardlink"])
+def test_mountinfo_reader_rejects_links(tmp_path: Path, link_kind: str):
+    """Mountinfo must be read from an ordinary single-link file."""
+    if link_kind == "symlink" and not getattr(os, "O_NOFOLLOW", 0):
+        pytest.skip("host does not provide an O_NOFOLLOW open flag")
+    verifier = load_verifier()
+    source = tmp_path / "mountinfo-source"
+    source.write_text(_mountinfo(), encoding="utf-8")
+    linked = tmp_path / "mountinfo-linked"
+    try:
+        if link_kind == "symlink":
+            linked.symlink_to(source)
+        else:
+            os.link(source, linked)
+    except (NotImplementedError, OSError) as error:
+        pytest.skip(f"host does not permit this local link fixture: {error}")
+
+    with pytest.raises((OSError, ValueError)):
+        verifier._read_installation_mountinfo(linked)

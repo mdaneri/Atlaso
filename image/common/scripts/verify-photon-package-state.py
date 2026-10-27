@@ -5,13 +5,16 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import os
 import re
+import stat
 import subprocess
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 PACKAGE_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9+._:-]*\Z")
 PHOTON_DEFAULT_DISTROVERPKG = "photon-release"
+INSTALLATION_FILESYSTEM_SHA256 = "7f5bba3e84f6eb50f6e5e311325089bc642549469d83793e0ba5f40d74ec6024"
 REQUIRED_RUNTIME_PACKAGES = (
     "photon-release",
     "rpm",
@@ -200,6 +203,65 @@ def verify_photon_package_state(
     verify_rpm_packages_absent(FORBIDDEN_RUNTIME_PACKAGES, runner=runner)
     verify_paths_absent(tuple(image_root / path for path in CLOUD_INIT_RUNTIME_PATHS))
     return distroverpkg
+
+
+def _read_installation_mountinfo(path: Path = Path("/proc/self/mountinfo")) -> str:
+    """Read a bounded private mount table without following its leaf.
+
+    Args:
+        path: Native mount table, injectable only for isolated fixtures.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    with os.fdopen(os.open(path, flags), "rb") as stream:
+        metadata = os.fstat(stream.fileno())
+        raw = stream.read(1024 * 1024 + 1)
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or len(raw) > 1024 * 1024:
+        raise ValueError("installation mount table is not a bounded ordinary file")
+    return raw.decode("utf-8")
+
+
+def verify_installation_runtime_metadata(filesystem_sha256: str) -> dict[str, bool]:
+    """Verify native runtime metadata that shadows the admitted empty payload.
+
+    Args:
+        filesystem_sha256: Original checksum admitted from the ISO manifest.
+
+    The fixed Photon filesystem RPM declares empty runtime directories and login
+    records. Native mounts and systemd tmpfiles change their metadata after boot.
+    Its own post-transaction script explicitly chmods /var/mail to 1755 and
+    chowns it to uid 0, gid 34. No private login record contents are read here.
+    """
+    if filesystem_sha256 != INSTALLATION_FILESYSTEM_SHA256:
+        raise ValueError("Photon filesystem runtime metadata profile is not admitted")
+    from grp import getgrnam
+
+    mounts = []
+    for row in _read_installation_mountinfo().splitlines():
+        before, separator, after = row.partition(" - ")
+        fields, filesystem_fields = before.split(), after.split()
+        if not separator or len(fields) < 6 or len(filesystem_fields) < 3:
+            raise ValueError("installation runtime mount table is malformed")
+        mounts.append((fields, filesystem_fields))
+    for name, filesystem, mode in (("/proc", "proc", 0o555), ("/run", "tmpfs", 0o755)):
+        metadata = Path(name).lstat()
+        if (not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != mode
+                or metadata.st_uid != 0 or metadata.st_gid != 0):
+            raise ValueError("installation runtime mount metadata differs")
+        rows = [row for row in mounts if row[0][4] == name]
+        if len(rows) != 1 or rows[0][0][3] != "/" or rows[0][1][0] != filesystem:
+            raise ValueError("installation runtime mount identity differs")
+    utmp_gid = getgrnam("utmp").gr_gid
+    for name, mode in (("/var/log/btmp", 0o660), ("/var/log/wtmp", 0o664)):
+        metadata = Path(name).lstat()
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                or stat.S_IMODE(metadata.st_mode) != mode or metadata.st_uid != 0 or metadata.st_gid != utmp_gid):
+            raise ValueError("installation login record metadata differs")
+    metadata = Path("/var/mail").lstat()
+    if (not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o1755
+            or metadata.st_uid != 0 or metadata.st_gid != 34):
+        raise ValueError("installation mail spool metadata differs from native post-transaction policy")
+    return {"runtime_proc_verified": True, "runtime_run_verified": True,
+            "runtime_login_metadata_verified": True, "runtime_mail_spool_verified": True}
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

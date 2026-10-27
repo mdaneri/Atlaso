@@ -139,6 +139,7 @@ SOURCE_MEMBERS = (
     "source/image/common/scripts/provision-atlaso.sh",
     "source/scripts/verify_virtualization_guest_wheel.py",
     "source/image/common/powershell/powercli-lock.json",
+    "source/image/common/scripts/verify-photon-package-state.py",
 )
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _PACKAGE = re.compile(r"[A-Za-z0-9][A-Za-z0-9+._:-]{0,127}\Z")
@@ -224,6 +225,10 @@ def prepare_content_inputs(base: dict[str, Any], manifest: dict, sources: dict[s
     reference_digest = hashlib.sha256(Path(wheel_verifier.__file__).read_bytes()).hexdigest()
     if reference_digest != files[SOURCE_MEMBERS[1]]:
         raise ValueError("content adapter requires the original shared verifier contract")
+    state_digest = hashlib.sha256((Path(__file__).resolve().parents[2] /
+                                   "image/common/scripts/verify-photon-package-state.py").read_bytes()).hexdigest()
+    if state_digest != files[SOURCE_MEMBERS[3]]:
+        raise ValueError("content adapter requires the original shared Photon runtime contract")
     removals = re.findall(r'run_tdnf "Build-only package removal" --noautoremove remove ([^\r\n]+)', sources[SOURCE_MEMBERS[0]].decode())
     if len(removals) != 1 or not all(_PACKAGE.fullmatch(name) for name in removals[0].split()):
         raise ValueError("shared build-only package removal is ambiguous")
@@ -353,7 +358,7 @@ def guest_content_program(
     """
     kind = _validate_expected(expected)
     command_expected = {key: value for key, value in expected.items() if key not in {"allowed_inventory", "required_packages"}}
-    imports = ("import base64,hashlib,json,os,re,stat,subprocess,zlib\nfrom pathlib import Path\n" if kind == "rpm" else
+    imports = ("import base64,hashlib,json,os,re,stat,subprocess,types,zlib\nfrom pathlib import Path\n" if kind == "rpm" else
                "import base64,hashlib,importlib.metadata,json,os,re,shutil,stat,subprocess,tarfile,tempfile,types,zlib\nfrom pathlib import Path,PurePosixPath\n")
     prelude = imports + '''
 def read(p,n=16777216):
@@ -376,7 +381,7 @@ def run(args,timeout=60):
  if c.returncode: raise PrivateCommandFailure(c)
  return c.stdout
 '''
-    if kind in {"assets", "python"}:
+    if kind in {"assets", "python", "rpm"}:
         prelude += '''def load(rel,key,n):
  p,b=checked(rel,key);m=types.ModuleType(n);m.__file__=str(p);exec(compile(b,str(p),"exec"),m.__dict__);return m
 '''
@@ -388,7 +393,6 @@ def run(args,timeout=60):
         declarations += ("s=Path(" + repr(str(software_root)) + ")\nt=Path(" + repr(str(temporary_root)) + ")\nsite_override=" +
                          repr(str(site_root) if site_root is not None else None) + "\nprofile_data=" + repr(PROFILE.encode()) + "\n")
     if kind == "rpm":
-        prelude += _RPM_RUNTIME_CHECK
         declarations += "fixed_rpm_paths=" + repr(" ".join(RPM_DIAGNOSTIC_PATHS)) + ".split()\n"
     body = 'stage="system-' + kind + '"\n' + prelude + declarations + _PROGRAMS[kind]
     body += '\nr.update(schema=1,kind=e["kind"],iso_sha256=e["iso_sha256"])\nx=json.dumps(r,sort_keys=True,separators=(",",":")).encode()\nif len(x)>4096: raise ValueError()\nprint("ATLASO-INSPECTION:"+base64.b64encode(x).decode()+":END")'
@@ -420,7 +424,7 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
         "assets": {"source_digest", "source_file_count", "deployed_files", "trust_digest", "trust_keys"},
         "python": {"python_payload_sha256", "python_files", "python_distributions", "python_external_files"},
         "powercli": {"powercli_lock_sha256", "module_count"},
-        "rpm": {"installed_inventory", "firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_media_directories_absent", "runtime_login_metadata_verified"},
+        "rpm": {"installed_inventory", "firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_media_directories_absent", "runtime_login_metadata_verified", "runtime_mail_spool_verified"},
         "notices": {"notices_sha256", "notice_inputs_verified"},
     }[kind]
     if (not isinstance(value, dict) or set(value) != _COMMON_KEYS | keys or type(value.get("schema")) is not int or value["schema"] != 1
@@ -449,7 +453,7 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
         if (not isinstance(actual, dict) or not 1 <= len(actual) <= 1024 or not isinstance(allowed, dict)
                 or not isinstance(required, list) or not set(required) <= actual.keys()
                 or any(name not in allowed or identity != allowed[name] for name, identity in actual.items())
-                or any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_login_metadata_verified"))
+                or any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_login_metadata_verified", "runtime_mail_spool_verified"))
                 or type(value["runtime_media_directories_absent"]) is not int or not 0 <= value["runtime_media_directories_absent"] <= 2):
             raise ValueError("installed RPM closure or file verification differs from media")
         value = {key: field for key, field in value.items() if key != "installed_inventory"}
@@ -457,29 +461,6 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
     if kind == "notices" and value["notice_inputs_verified"] is not True:
         raise ValueError("installed notices were not reproduced")
     return value
-
-
-# The kernel's proc root shadows the RPM-owned empty directory (0755 in the
-# admitted Photon filesystem package). Measure that mount independently; only
-# its mode-only RPM discrepancy may be reconciled, never package file changes.
-# The same signed RPM contains only empty directories for /run/media/cdrom and
-# /run/media/floppy. Their absence is runtime state only after proving /run tmpfs.
-# Native systemd-257.13-5.ph5 tmpfiles.d/var.conf manages the initially empty
-# wtmp/btmp files as root:utmp, modes 0664/0660. Their login records are mutable.
-_RPM_RUNTIME_CHECK = '''def verify_runtime():
- from grp import getgrnam
- mounts=read(Path("/proc/self/mountinfo"),1048576).decode().splitlines()
- for path,fs,mode in (("/proc","proc",0o555),("/run","tmpfs",0o755)):
-  z=Path(path).lstat()
-  if not stat.S_ISDIR(z.st_mode) or stat.S_IMODE(z.st_mode)!=mode or z.st_uid or z.st_gid: raise ValueError()
-  rows=[v.split(" - ",1) for v in mounts if v.split()[4]==path]
-  if len(rows)!=1 or rows[0][0].split()[3]!="/" or rows[0][1].split()[0]!=fs: raise ValueError()
- gid=getgrnam("utmp").gr_gid
- for path,mode in (("/var/log/btmp",0o660),("/var/log/wtmp",0o664)):
-  z=Path(path).lstat()
-  if not stat.S_ISREG(z.st_mode) or z.st_nlink!=1 or stat.S_IMODE(z.st_mode)!=mode or z.st_uid or z.st_gid!=gid: raise ValueError()
- return True
-'''
 
 
 _PROGRAMS = {
@@ -544,6 +525,7 @@ r=dict(powercli_lock_sha256=hashlib.sha256(lb).hexdigest(),module_count=len(lock
     "rpm": r'''
 stage="system-rpm-helper"
 p,b=checked("image/common/scripts/verify-photon-package-state.py","package_state_sha256")
+h=load("image/common/scripts/verify-photon-package-state.py","package_state_sha256","_rpm_state")
 stage="system-rpm-package-state"
 run(["/usr/bin/python3","-B",str(p),"--guest-platform","none"])
 stage="system-rpm-inventory"
@@ -558,7 +540,7 @@ for row in rows:
  installed[name]=[version,arch]
  if len(installed)>1024: raise ValueError()
 stage="system-rpm-runtime"
-proc_verified=verify_runtime()
+runtime=h.verify_installation_runtime_metadata(e["filesystem_sha256"])
 stage="system-rpm-files"
 absent=set()
 try:
@@ -567,7 +549,7 @@ except PrivateCommandFailure as failure:
  lines=failure.result.stdout.decode("utf-8").splitlines()
  remaining=[]
  for line in lines:
-  if re.fullmatch(r"\.M\.{7}\s+/proc",line): continue
+  if re.fullmatch(r"\.M\.{7}\s+/(?:proc|var/mail)",line): continue
   if re.fullmatch(r"[S.][M.][5.]\.{3}[G.][T.]\.\s+(/var/log/(?:btmp|wtmp))",line): continue
   m=re.fullmatch(r"missing\s+(/run/media/(?:cdrom|floppy))",line)
   if m:
@@ -598,8 +580,8 @@ except PrivateCommandFailure as failure:
 stage="system-rpm-firmware"
 run(["rpm","--noplugins","-V","--noscripts","--nodeps","linux-firmware"],60)
 stage="system-rpm-runtime"
-proc_verified=verify_runtime()
-r=dict(installed_inventory=base64.b64encode(zlib.compress(json.dumps(installed,sort_keys=True,separators=(",", ":")).encode(),9)).decode(),firmware_verified=True,rpm_files_verified=True,package_state_verified=True,runtime_proc_verified=proc_verified,runtime_run_verified=proc_verified,runtime_media_directories_absent=len(absent),runtime_login_metadata_verified=proc_verified)
+runtime=h.verify_installation_runtime_metadata(e["filesystem_sha256"])
+r=dict(installed_inventory=base64.b64encode(zlib.compress(json.dumps(installed,sort_keys=True,separators=(",", ":")).encode(),9)).decode(),firmware_verified=True,rpm_files_verified=True,package_state_verified=True,runtime_media_directories_absent=len(absent),**runtime)
 ''',
     "assets": r'''
 stage="system-assets-profile"
