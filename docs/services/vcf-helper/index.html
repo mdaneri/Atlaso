@@ -4779,8 +4779,10 @@ explicit workflow:</p>
 <li>When the issued replacement is ready, open <strong>Review replacement</strong>. This review is bound to the administrator,
    the exact target and certificate, and expires after ten minutes. Atlaso revalidates its issued-certificate record
    at review, approval, and immediately before dispatch; revoked, disabled, missing, or changed material is refused.</li>
-<li>Verify the review again and select <strong>Approve replacement</strong> to submit the replacement through VCF Operations'
-   asynchronous <strong>EXTERNAL_CA</strong> certificate workflow.</li>
+<li>Verify the review again and check <strong>Replacement approval</strong>. <strong>Approve replacement</strong> becomes available only after
+   the current exact review finishes loading and approval is checked, even if you checked it while loading.
+   Select <strong>Approve replacement</strong> to submit through VCF Operations' asynchronous <strong>EXTERNAL_CA</strong> certificate workflow.
+   Closing the dialog or a failed approval clears that review; reopen it and approve the fresh review to retry.</li>
 <li>Follow the task to completion. VCF's certificate status of <code>NORMAL</code> is not a component-health result. Atlaso
    reports success only after a fresh strict-TLS connection serves the exact reviewed leaf and authenticated
    read-only checks against the target vCenter confirm health.</li>
