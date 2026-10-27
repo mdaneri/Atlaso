@@ -797,9 +797,10 @@ def test_installation_journal_metadata_rejects_policy_file_drift(
     policy, _policy_bytes, journal = _journal_policy_fixture(
         verifier, monkeypatch, tmp_path
     )
+    _enable_policy_stat_overrides(monkeypatch, verifier)
     _journal_directory_metadata(monkeypatch, journal)
     if mutation == "bytes":
-        policy.write_bytes(b"z /var/log/journal 0700 root root - -\n")
+        policy.write_bytes(b"# changed package policy\n" + _policy_bytes)
     elif mutation == "directory":
         policy.unlink()
         policy.mkdir()
@@ -823,7 +824,7 @@ def test_installation_journal_metadata_rejects_policy_file_drift(
                 monkeypatch, verifier, mode=mode, uid=uid, gid=gid
             )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="checksum differs" if mutation == "bytes" else None):
         verifier.verify_installation_journal_metadata(
             verifier.INSTALLATION_SYSTEMD_SHA256
         )

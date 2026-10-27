@@ -57,6 +57,34 @@ foreach ($phaseCall in $phaseCalls) {
         $_ -is [System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -ceq 'CollisionSuffix'
     })
     Assert-InstallationVmCondition ($suffixParameters.Count -eq 1) 'Every ISO lifecycle phase must carry the same canonical identity suffix.'
+    foreach ($selector in @('ValidationRootReceiptPath', 'ValidationRootReceiptSha256')) {
+        $elements = @($phaseCall.CommandElements)
+        $parameters = @($elements | Where-Object {
+            $_ -is [System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -ceq $selector
+        })
+        Assert-InstallationVmCondition ($parameters.Count -eq 1) 'Every ISO phase must carry both original external-root selectors exactly once.'
+        $position = [array]::IndexOf($elements, $parameters[0])
+        $value = $elements[$position + 1]
+        Assert-InstallationVmCondition ($value -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $value.VariablePath.UserPath -ceq $selector) 'ISO phases must forward the unchanged original external-root selector.'
+    }
+}
+$childArguments = @($driverAst.FindAll({ param($node)
+    $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+    $node.Left.Extent.Text -ceq '$childArguments' -and $node.Operator -eq [System.Management.Automation.Language.TokenKind]::Equals
+}, $true))
+Assert-InstallationVmCondition ($childArguments.Count -eq 1) 'The bounded consumer must have one canonical child argument array.'
+foreach ($selector in @('ValidationRootReceiptPath', 'ValidationRootReceiptSha256')) {
+    $binding = "'-{0}', `${0}" -f $selector
+    Assert-InstallationVmCondition ($childArguments[0].Right.Extent.Text.Contains($binding)) 'The bounded child must retain both original external-root selectors.'
+}
+foreach ($entryPoint in @(@{ Ast = $ast; Context = 'context' }, @{ Ast = $driverAst; Context = 'sourceContext' })) {
+    $release = '$' + $entryPoint.Context + '.ValidationRootAdmission.Dispose()'
+    $leases = @($entryPoint.Ast.FindAll({ param($node)
+        $node -is [System.Management.Automation.Language.TryStatementAst] -and $node.Finally -and
+        $node.Finally.Extent.Text.Contains($release)
+    }, $true))
+    Assert-InstallationVmCondition ($leases.Count -eq 1) 'Each ISO entry point must release its root admission on all early failures and returns.'
 }
 
 <#

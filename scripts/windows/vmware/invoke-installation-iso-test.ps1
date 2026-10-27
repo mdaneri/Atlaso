@@ -11,6 +11,10 @@ Verified development installation ISO.
 Independently retained ISO digest.
 .PARAMETER OutputDirectory
 Absent task-owned VM output directory.
+.PARAMETER ValidationRootReceiptPath
+Original creation receipt admitting an explicitly approved external installation validation root.
+.PARAMETER ValidationRootReceiptSha256
+Independently retained creation-time digest of the external root receipt.
 .PARAMETER PullRequestNumber
 Exact owning pull request.
 .PARAMETER CollisionSuffix
@@ -64,6 +68,8 @@ param(
     [Parameter(Mandatory = $true)][string]$IsoPath,
     [Parameter(Mandatory = $true)][string]$IsoSha256,
     [Parameter(Mandatory = $true)][string]$OutputDirectory,
+    [string]$ValidationRootReceiptPath = '',
+    [string]$ValidationRootReceiptSha256 = '',
     [Parameter(Mandatory = $true)][ValidateRange(1, 2147483647)][int]$PullRequestNumber,
     [string]$CollisionSuffix = '',
     [ValidateSet('Probe', 'Cancel', 'CancelReview', 'Insufficient', 'Auto', 'AutoReboot', 'BootInstalled', 'LoginInstalled', 'VncCredential')][string]$Scenario = 'Probe',
@@ -95,6 +101,7 @@ if (-not $Child) {
         '-NoProfile', '-File', $PSCommandPath, '-Child', '-IsoPath', $IsoPath,
         '-IsoSha256', $IsoSha256, '-OutputDirectory', $OutputDirectory,
         '-PullRequestNumber', [string]$PullRequestNumber, '-CollisionSuffix', $CollisionSuffix, '-Scenario', $Scenario,
+        '-ValidationRootReceiptPath', $ValidationRootReceiptPath, '-ValidationRootReceiptSha256', $ValidationRootReceiptSha256,
         '-TimeoutSeconds', [string]$TimeoutSeconds,
         '-OriginalReceiptPath', $OriginalReceiptPath, '-OriginalReceiptSha256', $OriginalReceiptSha256,
         '-BaselineReceiptPath', $BaselineReceiptPath, '-BaselineReceiptSha256', $BaselineReceiptSha256,
@@ -1043,10 +1050,15 @@ Source-pinned task ownership context for the original VM.
 Public account, loopback, observed-frame and isolated-runtime admission inputs.
 .PARAMETER Receipts
 Original VM and baseline selectors preserved at creation.
+.PARAMETER ValidationRootReceiptPath
+Original creation receipt admitting this VM's external validation root.
+.PARAMETER ValidationRootReceiptSha256
+Independently retained original root receipt digest.
 #>
 function Invoke-InstallationVncCredential {
     param([Parameter(Mandatory)][psobject]$Context, [Parameter(Mandatory)][hashtable]$Options,
-        [Parameter(Mandatory)][hashtable]$Receipts)
+        [Parameter(Mandatory)][hashtable]$Receipts,
+        [string]$ValidationRootReceiptPath = '', [string]$ValidationRootReceiptSha256 = '')
     if ($Options.Account -notin @('admin', 'root') -or $Options.Port -lt 1024 -or
         $Options.ScreenSha256 -cnotmatch '^[0-9a-f]{64}$' -or
         $Options.RuntimeSha256 -cnotmatch '^[0-9a-f]{64}$' -or $Options.RuntimeFileCount -lt 1 -or
@@ -1078,7 +1090,9 @@ function Invoke-InstallationVncCredential {
     $pair = $null
     $consumer = $null
     try {
-        $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode AdmitConsole `
+        $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
+            -Mode AdmitConsole `
             -Worktree $Context.Worktree -OutputDirectory $Context.OutputDirectory `
             -PullRequestNumber $Context.PullRequestNumber -CollisionSuffix $CollisionSuffix @Receipts
         if ($vm.IsoIdentity.Sha256 -cne $IsoSha256 -or
@@ -1141,7 +1155,9 @@ function Invoke-InstallationVncCredential {
             throw 'VNC concealed-field frame admission refused; no credential was sent.'
         }
         Assert-AtlasoTestVmCheckoutSource -Context $Context
-        $readmitted = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode AdmitConsole `
+        $readmitted = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
+            -Mode AdmitConsole `
             -Worktree $Context.Worktree -OutputDirectory $Context.OutputDirectory `
             -PullRequestNumber $Context.PullRequestNumber -CollisionSuffix $CollisionSuffix @Receipts
         if ($readmitted.VmxPath -cne $vm.VmxPath -or
@@ -1192,7 +1208,10 @@ Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
 $vmName = (New-AtlasoVmwareTestIdentity -PullRequestNumber $PullRequestNumber -Purpose installation-iso -CollisionSuffix $CollisionSuffix).Name
 $sourceContext = New-AtlasoTestVmOwnershipContext -Worktree $worktree -OutputDirectory $OutputDirectory `
     -VmxPath (Join-Path $OutputDirectory "$vmName.vmx") -Name $vmName -SourceCommit $commit `
-    -SourceBranch $branch -PullRequestNumber $PullRequestNumber
+    -SourceBranch $branch -PullRequestNumber $PullRequestNumber `
+    -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256
+# Keep external-root admission alive through every child phase, then release it.
+try {
 Assert-AtlasoTestVmCheckoutSource -Context $sourceContext
 if ($Scenario -eq 'VncCredential') {
     try {
@@ -1204,7 +1223,8 @@ if ($Scenario -eq 'VncCredential') {
             RuntimeSha256 = $VncRuntimeSha256; RuntimeFileCount = $VncRuntimeFileCount }
         $vncReceipts = @{ OriginalReceiptPath = $OriginalReceiptPath; OriginalReceiptSha256 = $OriginalReceiptSha256
             BaselineReceiptPath = $BaselineReceiptPath; BaselineReceiptSha256 = $BaselineReceiptSha256 }
-        Invoke-InstallationVncCredential -Context $sourceContext -Options $vncOptions -Receipts $vncReceipts
+        Invoke-InstallationVncCredential -Context $sourceContext -Options $vncOptions -Receipts $vncReceipts `
+            -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256
     }
     finally {
         if ($sourceContext.PSObject.Properties['CheckoutSourcePin'] -and $sourceContext.CheckoutSourcePin) {
@@ -1304,7 +1324,9 @@ if ($Scenario -in @('Auto', 'AutoReboot', 'BootInstalled', 'LoginInstalled')) {
 
 $pipeName = 'Atlaso-Installation-' + [guid]::NewGuid().ToString('N')
 if ($Scenario -in @('LoginInstalled', 'BootInstalled')) {
-    $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Verify -Worktree $worktree `
+    $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
+            -Mode Verify -Worktree $worktree `
         -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix @resumeSelectors -Confirm:$false
     if (-not [IO.Path]::GetFullPath($IsoPath).Equals([string]$vm.IsoPath, [StringComparison]::OrdinalIgnoreCase) -or
         $IsoSha256 -cne [string]$vm.IsoSha256) {
@@ -1330,14 +1352,20 @@ $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
 try {
     $connection = $pipe.WaitForConnectionAsync()
     if ($Scenario -eq 'LoginInstalled') {
-        $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode ResumeInstalled -Worktree $worktree `
+        $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
+            -Mode ResumeInstalled -Worktree $worktree `
             -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix @resumeSelectors -Confirm:$false
     } elseif ($Scenario -eq 'BootInstalled') {
-        $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode BootInstalled -Worktree $worktree `
+        $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
+            -Mode BootInstalled -Worktree $worktree `
             -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix @resumeSelectors -Confirm:$false
         Write-Host ('Installed boot ownership: ' + ($boot | ConvertTo-Json -Depth 4 -Compress))
     } else {
-        $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Create -Worktree $worktree `
+        $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
+            -Mode Create -Worktree $worktree `
         -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix -IsoPath $IsoPath -IsoSha256 $IsoSha256 `
         -SerialPipePath "\\.\pipe\$pipeName" -Confirm:$false
     }
@@ -1405,7 +1433,9 @@ try {
         }
         # Keep checked provider stop and disk comparison inside this runner's existing
         # whole-process-tree deadline, including the shared vmrun inactivity checks.
-        $verification = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Verify -Worktree $worktree `
+        $verification = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
+            -Mode Verify -Worktree $worktree `
             -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix `
             -OriginalReceiptPath $vm.ReceiptPath -OriginalReceiptSha256 $vm.ReceiptSha256 `
             -BaselineReceiptPath $vm.BaselineReceiptPath -BaselineReceiptSha256 $vm.BaselineReceiptSha256 `
@@ -1415,7 +1445,9 @@ try {
     if ($Scenario -eq 'AutoReboot') {
         $pipe.Disconnect()
         $connection = $pipe.WaitForConnectionAsync()
-        $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode BootInstalled -Worktree $worktree `
+        $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
+            -Mode BootInstalled -Worktree $worktree `
             -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix `
             -OriginalReceiptPath $vm.ReceiptPath -OriginalReceiptSha256 $vm.ReceiptSha256 `
             -BaselineReceiptPath $vm.BaselineReceiptPath -BaselineReceiptSha256 $vm.BaselineReceiptSha256 -Confirm:$false
@@ -1476,7 +1508,9 @@ try {
             }
             Send-InstallationConsoleText -Pipe $pipe -Text ('exit' + $accountProbe.EnterKey)
         }
-        $verification = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') -Mode Verify -Worktree $worktree `
+        $verification = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
+            -Mode Verify -Worktree $worktree `
             -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix `
             -OriginalReceiptPath $vm.ReceiptPath -OriginalReceiptSha256 $vm.ReceiptSha256 `
             -BaselineReceiptPath $vm.BaselineReceiptPath -BaselineReceiptSha256 $vm.BaselineReceiptSha256 `
@@ -1490,5 +1524,12 @@ finally {
     if ($credentials) { $credentials.AdminPassword.Dispose(); $credentials.RootPassword.Dispose() }
     if ($sourceContext.PSObject.Properties['CheckoutSourcePin'] -and $sourceContext.CheckoutSourcePin) {
         $sourceContext.CheckoutSourcePin.Dispose()
+    }
+}
+
+}
+finally {
+    if ($sourceContext.PSObject.Properties['ValidationRootAdmission'] -and $sourceContext.ValidationRootAdmission) {
+        $sourceContext.ValidationRootAdmission.Dispose()
     }
 }

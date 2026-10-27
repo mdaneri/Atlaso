@@ -151,6 +151,25 @@ Fresh VM creation requires 74 GiB free on its host volume: the 64 GiB target, 4 
 establish sufficient host capacity. An installed-VM boot or inspection resume reserves 6 GiB for new memory backing
 and overhead; it does not reserve space for arbitrary future guest disk growth.
 
+When the source volume lacks this capacity, a maintainer may explicitly approve a separate development VM root.
+Keep the configured Codex worktree root, source checkout, credentials, VNC client, and durable `.task-ownership`
+records in their original locations. Do not repurpose `OwnershipRoot`, move an existing VM, use a junction, or adopt
+an existing directory. The controlling task must create the approved empty root exclusively with the existing
+`CreateAndPinOrdinaryDirectoryPath` lifecycle helper and publish its original native identity in the creation callback,
+before using the directory. Preserve that receipt and its SHA-256 outside all VM removal roots.
+
+The internal schema-1 root receipt uses phase `installation-validation-root-created` and kind `artifact`. It binds
+the task, repository, branch, source commit, worktree path and native identity, PR/local identity, approved root path
+and native identity, creation time, and supported artifact-root cleanup descriptor. Every operation validates the
+receipt, source ancestry, directory identities and output containment, retaining native pins through the operation.
+Only canonical installation-ISO VMs may use this development path. Ordinary VM output rules stay unchanged.
+
+Pass `-ValidationRootReceiptPath <ORIGINAL-ROOT-RECEIPT>` and
+`-ValidationRootReceiptSha256 <CREATION-TIME-SHA256>` with the same output directory on every console, boot,
+resume, verification and cleanup operation. The bounded consumer forwards them to each lifecycle phase; VM records
+also bind the original root receipt. Missing, changed, mismatched or reconstructed provenance refuses the operation.
+Delete each VM with its existing receipt-bound cleanup operation before releasing the empty validation root.
+
 ```powershell
 $isoSha256 = (Get-FileHash -LiteralPath <DEVELOPMENT-ISO-PATH> -Algorithm SHA256).Hash.ToLowerInvariant()
 .\scripts\windows\vmware\invoke-installation-iso-test.ps1 `

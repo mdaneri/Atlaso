@@ -15,7 +15,11 @@ ResumeInstalled reuses the original boot receipt and verified disconnected confi
 .PARAMETER Worktree
 Exact clean Atlaso worktree used to bind ownership.
 .PARAMETER OutputDirectory
-Canonical VM artifact directory beneath Worktree.
+Canonical VM artifact directory beneath Worktree or an explicitly approved, originally receipted validation root.
+.PARAMETER ValidationRootReceiptPath
+Original creation receipt for an approved external installation validation root, stored in durable task evidence.
+.PARAMETER ValidationRootReceiptSha256
+Independently retained creation-time digest of ValidationRootReceiptPath.
 .PARAMETER PullRequestNumber
 Owning pull request number for this test VM.
 .PARAMETER CollisionSuffix
@@ -60,6 +64,8 @@ param(
     [ValidateSet('Create', 'AdmitConsole', 'Verify', 'BootInstalled', 'ResumeInstalled', 'Cleanup')][string]$Mode = 'Create',
     [string]$Worktree = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path,
     [string]$OutputDirectory = '',
+    [string]$ValidationRootReceiptPath = '',
+    [string]$ValidationRootReceiptSha256 = '',
     [ValidateRange(0, 2147483647)][int]$PullRequestNumber = 0,
     [string]$CollisionSuffix = '',
     [switch]$LocalBuilder,
@@ -301,15 +307,21 @@ Exact Atlaso worktree.
 Canonical VM artifact directory.
 .PARAMETER Name
 Canonical Workstation VM name.
+.PARAMETER ValidationRootReceiptPath
+Original creation receipt admitting the explicitly approved external validation root.
+.PARAMETER ValidationRootReceiptSha256
+Independently retained original root receipt digest.
 #>
 function New-InstallationVmContext {
-    param([string]$Root, [string]$Destination, [string]$Name)
+    param([string]$Root, [string]$Destination, [string]$Name,
+        [string]$ValidationRootReceiptPath = '', [string]$ValidationRootReceiptSha256 = '')
     $commit = ([string](& git -C $Root rev-parse HEAD 2>$null)).Trim()
     if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the exact worktree commit.' }
     $branch = ([string](& git -C $Root branch --show-current 2>$null)).Trim()
     if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the exact worktree branch.' }
     New-AtlasoTestVmOwnershipContext -Worktree $Root -OwnershipRoot $OwnershipRoot -OwnershipTaskId $OwnershipTaskId `
         -OutputDirectory $Destination -VmxPath (Join-Path $Destination "$Name.vmx") -Name $Name `
+        -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
         -SourceCommit $commit -SourceBranch $branch -PullRequestNumber $PullRequestNumber -LocalBuilder:$LocalBuilder
 }
 
@@ -747,7 +759,7 @@ function ConvertTo-InstallationDiskBootConfiguration {
 }
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-    throw 'Pass a canonical -OutputDirectory beneath the exact -Worktree.'
+    throw 'Pass a canonical -OutputDirectory beneath the source checkout or an approved, receipted validation root.'
 }
 $resolvedWorktree = (Resolve-Path -LiteralPath $Worktree).Path
 $resolvedOutput = [System.IO.Path]::GetFullPath($OutputDirectory)
@@ -759,7 +771,10 @@ $name = if ($PullRequestNumber -gt 0) {
     $fullLocalCommit = ([string](& git -C $resolvedWorktree rev-parse HEAD 2>$null)).Trim()
     (New-AtlasoVmwareTestIdentity -LocalBuilder -SourceCommit $fullLocalCommit -Purpose installation-iso -CollisionSuffix $CollisionSuffix).Name
 }
-$context = New-InstallationVmContext -Root $resolvedWorktree -Destination $resolvedOutput -Name $name
+$context = New-InstallationVmContext -Root $resolvedWorktree -Destination $resolvedOutput -Name $name `
+    -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256
+# The external-root lease must also close on early preflight failures and returns.
+try {
 
 if ($Mode -in @('AdmitConsole', 'Verify', 'BootInstalled', 'ResumeInstalled')) {
     $vmxPin = $null
@@ -1057,6 +1072,7 @@ if ($Mode -eq 'Cleanup') {
             [long]$record.installation_iso.size -lt 64MB) {
             throw 'Original installation receipt does not match the admitted task and VM.'
         }
+        Assert-AtlasoTestVmValidationRootBinding -Context $context -Record $record
         & git -C $context.Worktree merge-base --is-ancestor ([string]$record.source_commit) ([string]$context.SourceCommit) 2>$null
         if ($LASTEXITCODE -ne 0) { throw 'Original installation receipt source is not an ancestor of the admitted checkout.' }
         Assert-AtlasoTestVmCheckoutSource -Context $context
@@ -1161,4 +1177,11 @@ finally {
         $context.CheckoutSourcePin.Dispose()
     }
     $isoPin.Dispose()
+}
+
+}
+finally {
+    if ($context.PSObject.Properties['ValidationRootAdmission'] -and $context.ValidationRootAdmission) {
+        $context.ValidationRootAdmission.Dispose()
+    }
 }
