@@ -25,6 +25,8 @@ PHOTON_AUDIT_SHA256 = "e55fac7b24b2f7546485f0b8b37fb7b105be764436dd4b139ccaa88e6
 # SHA-256 2ef0275f25c9b782e7f3cbbaaa5bf0d9037149b5253630c6db27e155c461618f.
 # The audit log directory is from audit-4.1.3-3.ph5, SHA-256
 # e55fac7b24b2f7546485f0b8b37fb7b105be764436dd4b139ccaa88e6c3e374f.
+# The rpcbind state directory is from rpcbind-1.2.6-6.ph5, SHA-256
+# 2c3d001aca71e6c6c81377a7bfc7ec9c3d26ee7a9891b4a706a8205657bc31ba.
 RPM_DIAGNOSTIC_PATHS = (
     "/bin",
     "/boot",
@@ -143,6 +145,7 @@ RPM_DIAGNOSTIC_PATHS = (
     "/var/log/journal",
     "/var/log/journal/remote",
     "/var/log/audit",
+    "/var/lib/rpcbind",
 )
 SOURCE_MEMBERS = (
     "source/image/common/scripts/provision-atlaso.sh",

@@ -368,6 +368,8 @@ Before and after package verification, `/var/log/audit` must be a root:root dire
 native tmpfiles rule requires. Only that directory's mode-only RPM discrepancy is reconciled. Missing entries,
 owner or group changes, different file types, altered policy bytes and other verification flags still fail.
 Audit records and child paths are not read.
+Fixed public failure diagnostics may identify the packaged `/var/lib/rpcbind` directory's type, mode and RPM
+verification flags. Its contents and child names remain private, and this diagnostic does not reconcile a discrepancy.
 The shared Photon verifier is authenticated against the original media and must match the host's supported contract.
 A changed verifier requires a rebuilt development ISO and fresh receipt-owned installation; do not replace it in an
 old VM to force acceptance. Keep the older results bound to their original media.

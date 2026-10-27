@@ -806,8 +806,24 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
             None,
             "system-rpm-files-package-" + hashlib.sha256(b"audit").hexdigest(),
         ),
+        (
+            b"rpcbind\n",
+            "rpcbind",
+            "/var/lib/rpcbind",
+            stat.S_IFDIR | 0o755,
+            "system-rpm-files-package-"
+            + hashlib.sha256(b"rpcbind").hexdigest()
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/var/lib/rpcbind')}-d0755-v.......T.",
+        ),
+        (
+            b"rpcbind\n",
+            "rpcbind",
+            "/var/lib/rpcbind/private-state",
+            None,
+            "system-rpm-files-package-" + hashlib.sha256(b"rpcbind").hexdigest(),
+        ),
     ],
-    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata", "fixed-missing-entry", "journal-metadata", "remote-journal-metadata", "audit-directory-metadata", "private-audit-file"],
+    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata", "fixed-missing-entry", "journal-metadata", "remote-journal-metadata", "audit-directory-metadata", "private-audit-file", "rpcbind-directory-metadata", "private-rpcbind-file"],
 )
 def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     owner_output, owner_name, verify_path, metadata_mode, expected_stage,
