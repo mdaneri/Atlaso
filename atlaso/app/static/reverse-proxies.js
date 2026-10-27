@@ -758,13 +758,13 @@
     }
 
     async function applyMutationResponse(response, operation) {
-      const sequence = ++loadSequence;
+      loadSequence += 1;
       try {
         const saved = await response.json();
-        if (sequence === loadSequence) {
-          applyCollection(saved);
-          showError("");
-        }
+        // Mutations are serialized through their complete response bodies. A
+        // newly queued edit invalidates GETs, never this confirmed write.
+        applyCollection(saved);
+        showError("");
         return saved;
       } catch {
         throw new Error(`The change was ${operation}, but its returned collection could not be displayed. Refresh the page before saving again.`);

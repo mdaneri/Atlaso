@@ -313,6 +313,95 @@ test("rapid Enabled toggles serialize full-record writes and keep the latest con
   assert.equal(errors.at(-1), "Save rejected");
 });
 
+for (const nextEditId of [17, 18]) {
+test(`queued ${nextEditId === 17 ? "same-row" : "other-row"} edit cannot invalidate an earlier successful response body`, async () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const rowsStart = source.indexOf("    function setCollectionRows(");
+  const rowsEnd = source.indexOf("    function setValidation(", rowsStart);
+  const applyStart = source.indexOf("    function applyCollection(");
+  const applyEnd = source.indexOf("    function routeField(", applyStart);
+  const queueStart = source.indexOf("    function enqueueMutation(");
+  const submitStart = source.indexOf("    function submitPayload(");
+  const submitEnd = source.indexOf("    function openWizard(", submitStart);
+  const enabledStart = source.indexOf("    const saveEnabled =");
+  const enabledEnd = source.indexOf("    const text =", enabledStart);
+  const initial = { id: 17, name: "Body pending", description: "Original", hostname: "app.example.test",
+    enabled: false, public_listing: true, managed_dns: false, listeners: [{ interface: "wan0", address: "192.0.2.10" }],
+    routes: [{ id: 27, path_prefix: "/old/", upstream_host: "old-backend.example.test" }] };
+  const other = { ...structuredClone(initial), id: 18, name: "Other row", description: "Other row fields" };
+  let server = [structuredClone(initial), other];
+  let releaseHeaders, releaseBody;
+  const requests = [], rendered = [], errors = [];
+  class HTMLElement {}
+  const context = vm.createContext({ MAX_ITEMS: 512, loadSequence: 0, mutationQueue: Promise.resolve(), pendingMutations: 0,
+    enabledEditSequence: 0, enabledEdits: new Map(), saveUrl: "/save", csrf: "test", canWrite: true,
+    items: structuredClone(server), serializeProxy: reverseProxies.serializeProxy,
+    visibleProxyRow: reverseProxies.visibleProxyRow, HTMLElement,
+    document: { querySelector: () => null, getElementById: () => null },
+    table: { setData: (rows) => rendered.push(rows) }, element: { dataset: {} },
+    updateListenerOptions: () => {}, setValidation: () => {}, showError: (message) => errors.push(message),
+    endpointMessage: async () => "Save rejected",
+    fetch: async (_url, options) => {
+      const request = { payload: JSON.parse(options.body) };
+      requests.push(request);
+      return new Promise((resolveHeaders) => { releaseHeaders = (ok) => {
+        if (!ok) { resolveHeaders({ ok: false }); return; }
+        const index = server.findIndex((item) => item.id === request.payload.id);
+        server[index] = { ...server[index], ...request.payload };
+        if (index === 0) server[index] = { ...server[index], description: "Canonical after commit",
+          listeners: [{ interface: "wan1", address: "198.51.100.17" }],
+          routes: [{ id: 27, path_prefix: "/canonical/", upstream_scheme: "https",
+            upstream_host: "canonical-backend.example.test", upstream_port: 8443, path_behavior: "strip", trust_mode: "trusted_ca" }] };
+        resolveHeaders({ ok: true, json: () => new Promise((resolveBody) => { releaseBody = () => resolveBody({
+          items: structuredClone(server), listener_options: [], config_preview: "committed enabled state",
+        }); }) });
+      }; });
+    },
+  });
+  vm.runInContext(`${source.slice(rowsStart, rowsEnd)} ${source.slice(applyStart, applyEnd)}
+    ${source.slice(queueStart, submitStart)} ${source.slice(submitStart, submitEnd)}
+    ${source.slice(enabledStart, enabledEnd)} globalThis.saveEnabled = saveEnabled;`, context);
+  const cell = (id, value) => ({ getRow: () => ({ getData: () => ({ ...(id === 17 ? initial : other), enabled: value }) }), getValue: () => value,
+    restoreOldValue: () => {} });
+
+  const firstSave = context.saveEnabled(cell(17, true));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 1);
+  releaseHeaders(true); // The server commits and fetch resolves, but response.json() is still pending.
+  await new Promise((resolve) => setImmediate(resolve));
+  const latestValue = nextEditId === 17 ? false : true;
+  const latestSave = context.saveEnabled(cell(nextEditId, latestValue));
+  assert.equal(context.enabledEdits.get(String(nextEditId)).value, latestValue);
+  releaseBody();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].payload.id, nextEditId);
+  assert.equal(requests[1].payload.enabled, latestValue);
+  assert.equal(requests[1].payload.description, nextEditId === 17 ? "Canonical after commit" : other.description);
+  if (nextEditId === 17) {
+    assert.equal(requests[1].payload.listeners[0].interface, "wan1");
+    assert.equal(requests[1].payload.routes[0].path_prefix, "/canonical/");
+  }
+  assert.equal(context.items[0].enabled, true, "the successful first response remains authoritative");
+  assert.equal(context.items[0].description, "Canonical after commit");
+  assert.equal(context.items[0].listeners[0].interface, "wan1");
+  assert.equal(context.items[0].routes[0].path_prefix, "/canonical/");
+  assert.deepEqual(Array.from(rendered.at(-1).slice(0, 2), (item) => item.enabled),
+    nextEditId === 17 ? [false, false] : [true, true],
+    "the earlier success and the newest pending intent are rendered");
+
+  releaseHeaders(false);
+  await Promise.all([firstSave, latestSave]);
+  assert.equal(server[0].enabled, true);
+  assert.equal(context.items[0].enabled, server[0].enabled);
+  assert.equal(context.items[1].enabled, server[1].enabled);
+  assert.deepEqual(Array.from(rendered.at(-1).slice(0, 2), (item) => item.enabled), [true, false],
+    "the failed save rolls back without losing the completed first save");
+  assert.equal(errors.at(-1), "Save rejected");
+});
+}
+
 test("wizard edits, inline toggles, and deletes share one ordered mutation queue", async () => {
   const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
   const queueStart = source.indexOf("    function enqueueMutation(");
