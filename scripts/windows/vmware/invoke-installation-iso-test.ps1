@@ -690,10 +690,10 @@ function Wait-InstallationConsoleState {
                         -not $allowedPackageHashes.Contains($inspectionStage.Substring('system-rpm-files-package-'.Length, 64))) {
                         $inspectionStage = 'system-rpm-files'
                     }
-                    # Entries index the fixed public filesystem RPM path registry in
+                    # Entries index the fixed public RPM path registry in
                     # content_inspection.py. Out-of-range indexes reveal no metadata.
                     $entryDiagnostic = [regex]::Match($inspectionStage, '-entry(?<index>[0-9]{1,3})-(?:[dlfo][0-7]{4}|missing)(?:-v[SM5DLUGTP?.]{9})?$')
-                    if ($entryDiagnostic.Success -and [int]$entryDiagnostic.Groups['index'].Value -ge 114) {
+                    if ($entryDiagnostic.Success -and [int]$entryDiagnostic.Groups['index'].Value -ge 116) {
                         $inspectionStage = $inspectionStage.Substring(0, $entryDiagnostic.Index)
                     }
                     if ($inspectionStage) { throw ('Installed inspection failed at public stage: ' + $inspectionStage + '.') }

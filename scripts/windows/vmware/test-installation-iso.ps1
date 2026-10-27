@@ -177,6 +177,54 @@ function Start-InstallationIsoVm {
 
 <#
 .SYNOPSIS
+Read the exact host volume capacity for the task-owned VM path.
+.PARAMETER OutputDirectory
+Task-owned VM path whose containing volume is inspected.
+#>
+function Get-InstallationHostVolumeInfo {
+    param(
+        [Parameter(Mandatory = $true)][string]$OutputDirectory
+    )
+    $fullPath = [IO.Path]::GetFullPath($OutputDirectory)
+    $volumeRoot = [IO.Path]::GetPathRoot($fullPath)
+    if (-not $volumeRoot) { throw 'Installation VM host volume cannot be identified.' }
+    try { $volume = [IO.DriveInfo]::new($volumeRoot) }
+    catch { throw 'Installation VM host volume cannot be inspected.' }
+    if (-not $volume.IsReady) { return [pscustomobject]@{ IsReady = $false; AvailableFreeSpace = [long]0 } }
+    return [pscustomobject]@{ IsReady = $true; AvailableFreeSpace = [long]$volume.AvailableFreeSpace }
+}
+
+<#
+.SYNOPSIS
+Refuse an installation VM operation when the containing volume lacks capacity.
+.PARAMETER OutputDirectory
+Exact task-owned VM directory, present only for a receipt-bound existing VM.
+.PARAMETER ExistingVm
+Select the fixed 6 GiB memory-backing and overhead allowance for read-only inspection of an existing VM.
+#>
+function Assert-InstallationHostCapacity {
+    param(
+        [Parameter(Mandatory = $true)][string]$OutputDirectory,
+        [switch]$ExistingVm
+    )
+    $volume = Get-InstallationHostVolumeInfo -OutputDirectory $OutputDirectory
+    if (-not $volume -or -not $volume.IsReady -or $volume.AvailableFreeSpace -isnot [long] -or $volume.AvailableFreeSpace -lt 0) {
+        throw 'Installation VM host volume is not ready or its available capacity is unknown.'
+    }
+    $required = [long](4GB + 2GB)
+    if (-not $ExistingVm) {
+        # Reserve both sparse VMDK maxima before creating any receipt or artifact.
+        $required += [long](64GB + 4GB)
+    }
+    if ([long]$volume.AvailableFreeSpace -lt $required) {
+        $requiredGiB = [math]::Ceiling($required / 1GB)
+        $availableGiB = [math]::Floor([long]$volume.AvailableFreeSpace / 1GB)
+        throw "Installation VM host volume requires at least $requiredGiB GiB free; $availableGiB GiB is available."
+    }
+}
+
+<#
+.SYNOPSIS
 Quote a value for one VMware VMX assignment.
 .PARAMETER Value
 Text to encode as one VMX string while preserving spaces and path separators.
@@ -883,6 +931,7 @@ if ($Mode -in @('AdmitConsole', 'Verify', 'BootInstalled', 'ResumeInstalled')) {
             Assert-InstallationDiskUnchanged -Disk $disk[0] -Role $role -OutputDirectory $context.OutputDirectory -QemuImg $qemuImg
         }
         if ($Mode -eq 'BootInstalled') {
+            Assert-InstallationHostCapacity -OutputDirectory $context.OutputDirectory -ExistingVm
             $vmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($context.VmxPath)
             $vmxPin.Dispose()
             $vmxPin = $null
@@ -928,6 +977,7 @@ if ($Mode -in @('AdmitConsole', 'Verify', 'BootInstalled', 'ResumeInstalled')) {
             Start-InstallationIsoVm -VmrunPath $vmrun -VmxPath $context.VmxPath -OutputDirectory $context.OutputDirectory
         }
         elseif ($Mode -eq 'ResumeInstalled') {
+            Assert-InstallationHostCapacity -OutputDirectory $context.OutputDirectory -ExistingVm
             Assert-AtlasoTestVmCheckoutSource -Context $context
             $resume = [ordered]@{
                 schema = 1; phase = 'installation-resume-without-media'; task_id = $context.TaskId
@@ -1043,6 +1093,7 @@ try {
     $iso = [ordered]@{ path = $isoResolved; filesystem_identity = [Atlaso.WorkstationFileIdentity]::Get($isoResolved); size = $isoItem.Length; sha256 = $IsoSha256.ToLowerInvariant() }
     if (-not $PSCmdlet.ShouldProcess($resolvedOutput, 'Create isolated receipt-bound installation ISO test VM')) { return }
 
+    Assert-InstallationHostCapacity -OutputDirectory $resolvedOutput
     Assert-AtlasoTestVmCheckoutSource -Context $context
     $context | Add-Member -NotePropertyName InvocationId -NotePropertyValue ([guid]::NewGuid().ToString('N')) -Force
     $intent = [ordered]@{

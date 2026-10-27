@@ -730,8 +730,26 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
             + hashlib.sha256(b"filesystem").hexdigest()
             + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/usr/local/share/man/man8')}-missing-v.......T.",
         ),
+        (
+            b"systemd\n",
+            "systemd",
+            "/var/log/journal",
+            stat.S_IFDIR | 0o2755,
+            "system-rpm-files-package-"
+            + hashlib.sha256(b"systemd").hexdigest()
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/var/log/journal')}-d2755-v.......T.",
+        ),
+        (
+            b"systemd\n",
+            "systemd",
+            "/var/log/journal/remote",
+            stat.S_IFDIR | 0o2755,
+            "system-rpm-files-package-"
+            + hashlib.sha256(b"systemd").hexdigest()
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/var/log/journal/remote')}-d2755-v.......T.",
+        ),
     ],
-    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata", "fixed-missing-entry"],
+    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata", "fixed-missing-entry", "journal-metadata", "remote-journal-metadata"],
 )
 def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     owner_output, owner_name, verify_path, metadata_mode, expected_stage,

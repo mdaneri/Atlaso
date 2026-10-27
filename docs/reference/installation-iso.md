@@ -146,6 +146,11 @@ Hash the generated ISO and use the exact owning pull request number. `Probe` che
 selection screen exposes both blank fixture disks, and `Cancel` checks cancellation before disk writes. `Auto` exercises
 the single-disk Auto installation path. Reboot, persistence, and Appliance Update checks remain separate follow-up tests:
 
+Fresh VM creation requires 74 GiB free on its host volume: the 64 GiB target, 4 GiB unselected disk,
+4 GiB memory backing, and 2 GiB overhead. Sparse disks grow during installation, so their initial file sizes do not
+establish sufficient host capacity. An installed-VM boot or inspection resume reserves 6 GiB for new memory backing
+and overhead; it does not reserve space for arbitrary future guest disk growth.
+
 ```powershell
 $isoSha256 = (Get-FileHash -LiteralPath <DEVELOPMENT-ISO-PATH> -Algorithm SHA256).Hash.ToLowerInvariant()
 .\scripts\windows\vmware\invoke-installation-iso-test.ps1 `
@@ -360,6 +365,8 @@ For an RPM file failure, a package identifier can be reported only after its nam
 The identifier hashes that public package name. Fixed public filesystem entries can also be identified by their index
 in the checked-in public path registry, entry type and permission mode. Arbitrary paths, file contents and raw
 verification errors stay private, and the check still fails.
+The registry also includes the public `/var/log/journal` and `/var/log/journal/remote` directories from the
+admitted systemd RPM. Their metadata can be diagnosed; differences are not accepted by this registry.
 Known entries may also include the nine fixed RPM verification flags. The RPM command uses Python's standard Base85
 transport to keep the complete public registry within the existing console limit; encoded data is checked for safe
 quoting, and reports retain their existing Base64 format. Other inspection commands retain their existing transport.
