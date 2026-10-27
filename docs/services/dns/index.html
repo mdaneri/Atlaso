@@ -4583,22 +4583,36 @@ changed unit. The helper stages and validates <code>/var/lib/atlaso/apply/dnsmas
 configuration at <code>/etc/atlaso/dnsmasq.d/atlaso.conf</code>, and, when authoritative mode is enabled, installs the extracted
 backend configuration at <code>/etc/atlaso/dnsmasq.d/atlaso-authoritative.conf</code>. It starts
 <code>atlaso-dns-authoritative.service</code> before restarting <code>dnsmasq.service</code>.</p>
+<p>Both generated configurations use <code>no-hosts</code>: the appliance's <code>/etc/hosts</code> is reserved for local OS identity and is
+never published to DNS clients. This prevents a short loopback entry such as <code>127.0.0.1 atlaso</code> from becoming
+<code>atlaso.lab.internal</code> through <code>expand-hosts</code> and hiding the managed appliance address. Explicit DNS records, DHCP
+reservations, and the authoritative DHCP lease mirror remain available. <code>expand-hosts</code> still applies to the managed
+lease mirror. Appliance-local hostname resolution continues through the OS hosts/NSS and configured resolver paths.</p>
 <p>On an applied appliance, verify the installed directives and query behavior:</p>
 <div class="language-sh highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>sudo<span class="w"> </span>grep<span class="w"> </span>-E<span class="w"> </span><span class="s1">&#39;^(auth-zone|auth-server|auth-soa|auth-ttl|host-record=ns)&#39;</span><span class="w"> </span>/etc/atlaso/dnsmasq.d/atlaso-authoritative.conf
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>sudo<span class="w"> </span>grep<span class="w"> </span>-E<span class="w"> </span><span class="s1">&#39;^server=/.+/127\.0\.0\.1#5353$&#39;</span><span class="w"> </span>/etc/atlaso/dnsmasq.d/atlaso.conf
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>systemctl<span class="w"> </span>is-active<span class="w"> </span>atlaso-dns-authoritative
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>systemctl<span class="w"> </span>is-active<span class="w"> </span>dnsmasq
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>dig<span class="w"> </span>@192.168.50.1<span class="w"> </span>atlaso.internal<span class="w"> </span>SOA
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>dig<span class="w"> </span>@192.168.50.1<span class="w"> </span>atlaso.internal<span class="w"> </span>NS
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>dig<span class="w"> </span>@192.168.50.1<span class="w"> </span>ns1.atlaso.internal<span class="w"> </span>A
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>dig<span class="w"> </span>@192.168.50.1<span class="w"> </span>app.atlaso.internal<span class="w"> </span>A
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>dig<span class="w"> </span>@192.168.50.1<span class="w"> </span>missing.atlaso.internal<span class="w"> </span>A
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>dig<span class="w"> </span>@127.0.0.1<span class="w"> </span>-x<span class="w"> </span><span class="m">192</span>.168.50.20
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>dig<span class="w"> </span>@127.0.0.1<span class="w"> </span>example.com<span class="w"> </span>A
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>sudo<span class="w"> </span>grep<span class="w"> </span>-x<span class="w"> </span>no-hosts<span class="w"> </span>/etc/atlaso/dnsmasq.d/atlaso.conf<span class="w"> </span>/etc/atlaso/dnsmasq.d/atlaso-authoritative.conf
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>dig<span class="w"> </span>@192.168.50.1<span class="w"> </span>atlaso.lab.internal<span class="w"> </span>A
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>dig<span class="w"> </span>@127.0.0.1<span class="w"> </span>-p<span class="w"> </span><span class="m">5353</span><span class="w"> </span>atlaso.lab.internal<span class="w"> </span>A
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>getent<span class="w"> </span>hosts<span class="w"> </span>atlaso.lab.internal
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>dig<span class="w"> </span>@192.168.50.1<span class="w"> </span>atlaso.internal<span class="w"> </span>SOA
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>dig<span class="w"> </span>@192.168.50.1<span class="w"> </span>atlaso.internal<span class="w"> </span>NS
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>dig<span class="w"> </span>@192.168.50.1<span class="w"> </span>ns1.atlaso.internal<span class="w"> </span>A
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>dig<span class="w"> </span>@192.168.50.1<span class="w"> </span>app.atlaso.internal<span class="w"> </span>A
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>dig<span class="w"> </span>@192.168.50.1<span class="w"> </span>missing.atlaso.internal<span class="w"> </span>A
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>dig<span class="w"> </span>@127.0.0.1<span class="w"> </span>-x<span class="w"> </span><span class="m">192</span>.168.50.20
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>dig<span class="w"> </span>@127.0.0.1<span class="w"> </span>example.com<span class="w"> </span>A
 </span></code></pre></div>
 <p>The missing managed name should return authoritative NXDOMAIN with SOA authority. The loopback queries verify existing
 PTR behavior and configured upstream recursion. Replace addresses and names with the appliance's selected listener and
 managed data.</p>
+<p>For the appliance FQDN, compare the LAN listener's answer from another machine with the direct port-5353 backend
+answer on the appliance. Both must contain the applied managed address rather than a loopback hosts entry. Local
+<code>getent</code> may follow OS hostname/NSS policy, so it is a separate local-resolution check. Repeat after DNS/DHCP Apply
+and reboot; after changing the managed address and applying, verify both wire answers contain the new address and no
+stale address. Check an ordinary service record and a live DHCP client name as well.</p>
 <h3 id="dhcp-upstream-preservation">DHCP upstream preservation<a class="headerlink" href="#dhcp-upstream-preservation" title="Permanent link">&para;</a></h3>
 <p>Explicit DNS upstreams always take precedence. When the management interface uses DHCP and upstreams are empty, Atlaso
 uses that interface's observed DHCP resolvers as dnsmasq forwarders. Local DNS intentionally changes
