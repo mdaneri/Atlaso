@@ -4235,6 +4235,10 @@ must not embed credentials, and must provide complete upload-time metadata or co
 shorten the upload-time cutoff to obtain a newer dependency, including for a security update. If no eligible version
 satisfies the input declarations, change the input constraint through a reviewed dependency update or wait until the
 required release reaches seven full days.</p>
+<p>The appliance bootstrap pins setuptools to <code>84.1.0</code>, which fixes the upstream Windows legacy wheel-installation
+path escape described in <a href="https://github.com/pypa/setuptools/security/advisories/GHSA-xmj3-9gf7-h52w">GHSA-xmj3-9gf7-h52w</a>.
+The development extra also requires this patched minimum so its transitive setuptools selection remains safe.
+Regenerate both appliance and development locks when updating this dependency.</p>
 <p>The Windows candidate job installs the release-tools and virtualization-smoke locks into one interpreter. Their input
 manifests therefore pin shared runtime packages compatibly so the second installation cannot replace part of the
 already validated release-tool environment.
