@@ -100,6 +100,7 @@ def _report(kind, **changes):
             "firmware_verified": True,
             "rpm_files_verified": True,
             "package_state_verified": True,
+            "runtime_proc_verified": True,
         },
         "notices": {"notices_sha256": "a" * 64, "notice_inputs_verified": True},
     }
@@ -321,13 +322,14 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"firmware_verified": False},
         {"rpm_files_verified": False},
         {"package_state_verified": False},
+        {"runtime_proc_verified": False},
         {"installed_inventory": _inventory({"linux": ["wrong", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"]})},
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "aarch64"], "python3": ["3.14-2.ph5", "x86_64"]})},
         {"installed_inventory": _inventory({"linux": "6.1-1.ph5", "python3": ["3.14-2.ph5", "x86_64"]})},
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"], "rogue": ["1.0", "noarch"]})},
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"]})},
     ],
-    ids=["firmware", "rpm-files", "package-state", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
+    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
 )
 def test_validate_content_report_rejects_unverified_rpm_closure(changes):
     """The installed RPM identities must satisfy the signed allowed closure."""
@@ -463,7 +465,7 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
     outer.body = [
         node
         for node in outer.body
-        if not isinstance(node, ast.FunctionDef) or node.name not in {"checked", "run"}
+        if not isinstance(node, ast.FunctionDef) or node.name not in {"checked", "run", "verify_proc"}
     ]
     sentinel = "private-rpm-diagnostic-sentinel"
 
@@ -486,7 +488,7 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
             return b"example\t1-1\tx86_64\n"
         return b""
 
-    namespace = {"checked": checked, "run": run}
+    namespace = {"checked": checked, "run": run, "verify_proc": lambda: True}
     isolated = ast.Module(body=[outer], type_ignores=[])
     with contextlib.redirect_stdout(io.StringIO()) as output:
         exec(compile(isolated, "<generated-rpm-program>", "exec"), namespace)
@@ -562,7 +564,7 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     outer.body = [
         node
         for node in outer.body
-        if not isinstance(node, ast.FunctionDef) or node.name not in {"checked", "run"}
+        if not isinstance(node, ast.FunctionDef) or node.name not in {"checked", "run", "verify_proc"}
     ]
     sentinel = b"private-rpm-file-path-and-stderr-sentinel"
     verify_output = f".......T. {verify_path}\n".encode()
@@ -598,7 +600,7 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
             return b"example\t1-1\tx86_64\n"
         return b""
 
-    namespace.update(checked=checked, run=run)
+    namespace.update(checked=checked, run=run, verify_proc=lambda: True)
     isolated = ast.Module(body=[outer], type_ignores=[])
     with contextlib.redirect_stdout(io.StringIO()) as output:
         exec(compile(isolated, "<generated-rpm-file-diagnostic>", "exec"), namespace)
@@ -615,6 +617,89 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     captured = capsys.readouterr()
     assert sentinel.decode() not in captured.out
     assert sentinel.decode() not in captured.err
+
+
+@pytest.mark.parametrize(
+    ("rows", "returncode", "stderr", "mount", "mode", "uid", "gid", "failure"),
+    [
+        (".M....... /proc\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        ("", 0, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        (".M....... /proc\n..5...... /usr/bin/managed\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("..5...... /proc\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        (".M....... /proc/sys\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("missing /proc\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        (".M....... /proc\n", 1, b"private-error", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        (".M....... /proc\n", 2, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        (".M....... /proc\n", 1, b"", "tmpfs", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        (".M....... /proc\n", 1, b"", "duplicate", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        (".M....... /proc\n", 1, b"", "subroot", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        (".M....... /proc\n", 1, b"", "absent", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        (".M....... /proc\n", 1, b"", "proc", stat.S_IFDIR | 0o700, 0, 0, "runtime"),
+        (".M....... /proc\n", 1, b"", "proc", stat.S_IFREG | 0o555, 0, 0, "runtime"),
+        (".M....... /proc\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 1, 0, "runtime"),
+        (".M....... /proc\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 1, "runtime"),
+    ],
+)
+def test_rpm_runtime_proc_check_retains_package_failures(
+    rows, returncode, stderr, mount, mode, uid, gid, failure, monkeypatch
+):
+    """Reconcile only a proven proc mount's mode, retaining every other failure."""
+    generated = ast.parse(_decode_guest_program(
+        content_inspection.guest_content_program(_expectation("rpm"))
+    ))
+    outer = next(node for node in generated.body if isinstance(node, ast.Try))
+    outer.body = [node for node in outer.body if not isinstance(node, ast.FunctionDef)
+                  or node.name not in {"checked", "run", "read"}]
+    namespace = {}
+    root = "/private-subroot" if mount == "subroot" else "/"
+    filesystem = "tmpfs" if mount == "tmpfs" else "proc"
+    mountinfo = f"28 1 0:5 {root} /proc rw,nosuid,nodev,noexec - {filesystem} proc rw\n"
+    if mount == "duplicate":
+        mountinfo *= 2
+    if mount == "absent":
+        mountinfo = "28 1 0:5 / /private-fixture rw - proc proc rw\n"
+
+    def read(path, limit):
+        assert path.as_posix() == "/proc/self/mountinfo"
+        assert limit == 1048576
+        return mountinfo.encode()
+
+    def checked(path, _key):
+        return Path(path), b"verified public helper bytes"
+
+    def run(arguments, _timeout=60):
+        if "-Va" in arguments and returncode:
+            raise namespace["PrivateCommandFailure"](SimpleNamespace(
+                stdout=rows.encode(), stderr=stderr, returncode=returncode
+            ))
+        if "-qa" in arguments:
+            return b"filesystem\t1.1-11.ph5\tx86_64\nlinux\t6.1-1.ph5\tx86_64\npython3\t3.14-2.ph5\tx86_64\n"
+        if "-qf" in arguments:
+            return b"filesystem\n"
+        return b""
+
+    def lstat(path):
+        assert path.as_posix() == "/proc"
+        return SimpleNamespace(st_mode=mode, st_uid=uid, st_gid=gid)
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+    namespace.update(read=read, checked=checked, run=run)
+    with contextlib.redirect_stdout(io.StringIO()) as output:
+        exec(compile(ast.Module(body=[outer], type_ignores=[]), "<rpm-proc-fixture>", "exec"), namespace)
+    actual = output.getvalue()
+    assert "private-" not in actual
+    if failure:
+        assert actual.startswith(f"ATLASO-INSPECTION-FAILED:system-rpm-{failure}")
+        assert "ATLASO-INSPECTION:" not in actual
+    else:
+        encoded = re.fullmatch(r"ATLASO-INSPECTION:([A-Za-z0-9+/=]+):END\n", actual)
+        assert encoded is not None
+        report = content_inspection.validate_content_report(
+            base64.b64decode(encoded[1]), _expectation("rpm")
+        )
+        assert report["runtime_proc_verified"] is True
+        assert report["rpm_files_verified"] is True
 
 
 def test_rpm_diagnostic_packages_returns_exact_source_inventory_names():

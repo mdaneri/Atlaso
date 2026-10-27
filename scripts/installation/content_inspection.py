@@ -356,8 +356,6 @@ def checked(rel,key):
  p=a/rel;b=read(p,1048576)
  if hashlib.sha256(b).hexdigest()!=e[key]: raise ValueError()
  return p,b
-def load(rel,key,n):
- p,b=checked(rel,key);m=types.ModuleType(n);m.__file__=str(p);exec(compile(b,str(p),"exec"),m.__dict__);return m
 class PrivateCommandFailure(Exception):
  def __init__(self,result):
   super().__init__("private command failed");self.result=result
@@ -367,12 +365,19 @@ def run(args,timeout=60):
  if len(c.stdout)+len(c.stderr)>1048576: raise ValueError()
  if c.returncode: raise PrivateCommandFailure(c)
  return c.stdout
-def digest(d):return hashlib.sha256("".join(k+"\\0"+d[k]+"\\n" for k in sorted(d)).encode()).hexdigest()
+'''
+    if kind in {"assets", "python"}:
+        prelude += '''def load(rel,key,n):
+ p,b=checked(rel,key);m=types.ModuleType(n);m.__file__=str(p);exec(compile(b,str(p),"exec"),m.__dict__);return m
+'''
+    if kind == "assets":
+        prelude += '''def digest(d):return hashlib.sha256("".join(k+"\\0"+d[k]+"\\n" for k in sorted(d)).encode()).hexdigest()
 '''
     declarations = ("e=" + repr(command_expected) + "\na=Path(" + repr(str(atlaso_root)) + ")\ns=Path(" +
                     repr(str(software_root)) + ")\nt=Path(" + repr(str(temporary_root)) + ")\nsite_override=" +
                     repr(str(site_root) if site_root is not None else None) + "\nprofile_data=" + repr(PROFILE.encode()) + "\n")
     if kind == "rpm":
+        prelude += _RPM_PROC_CHECK
         declarations += "fixed_rpm_paths=" + repr(RPM_DIAGNOSTIC_PATHS) + "\n"
     body = 'stage="system-' + kind + '"\n' + prelude + declarations + _PROGRAMS[kind]
     body += '\nr.update(schema=1,kind=e["kind"],iso_sha256=e["iso_sha256"])\nx=json.dumps(r,sort_keys=True,separators=(",",":")).encode()\nif len(x)>4096: raise ValueError()\nprint("ATLASO-INSPECTION:"+base64.b64encode(x).decode()+":END")'
@@ -399,7 +404,7 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
         "assets": {"source_digest", "source_file_count", "deployed_files", "trust_digest", "trust_keys"},
         "python": {"python_payload_sha256", "python_files", "python_distributions", "python_external_files"},
         "powercli": {"powercli_lock_sha256", "module_count"},
-        "rpm": {"installed_inventory", "firmware_verified", "rpm_files_verified", "package_state_verified"},
+        "rpm": {"installed_inventory", "firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified"},
         "notices": {"notices_sha256", "notice_inputs_verified"},
     }[kind]
     if (not isinstance(value, dict) or set(value) != _COMMON_KEYS | keys or type(value.get("schema")) is not int or value["schema"] != 1
@@ -428,13 +433,25 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
         if (not isinstance(actual, dict) or not 1 <= len(actual) <= 1024 or not isinstance(allowed, dict)
                 or not isinstance(required, list) or not set(required) <= actual.keys()
                 or any(name not in allowed or identity != allowed[name] for name, identity in actual.items())
-                or any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified"))):
+                or any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified"))):
             raise ValueError("installed RPM closure or file verification differs from media")
         value = {key: field for key, field in value.items() if key != "installed_inventory"}
         value.update(installed_rpms=len(actual), rpm_inventory_sha256=hashlib.sha256(json.dumps(actual,sort_keys=True,separators=(",", ":")).encode()).hexdigest())
     if kind == "notices" and value["notice_inputs_verified"] is not True:
         raise ValueError("installed notices were not reproduced")
     return value
+
+
+# The kernel's proc root shadows the RPM-owned empty directory (0755 in the
+# admitted Photon filesystem package). Measure that mount independently; only
+# its mode-only RPM discrepancy may be reconciled, never package file changes.
+_RPM_PROC_CHECK = '''def verify_proc():
+ z=Path("/proc").lstat()
+ if not stat.S_ISDIR(z.st_mode) or stat.S_IMODE(z.st_mode)!=0o555 or z.st_uid or z.st_gid: raise ValueError()
+ rows=[v.split(" - ",1) for v in read(Path("/proc/self/mountinfo"),1048576).decode().splitlines() if v.split()[4]=="/proc"]
+ if len(rows)!=1 or rows[0][0].split()[3]!="/" or rows[0][1].split()[0]!="proc": raise ValueError()
+ return True
+'''
 
 
 _PROGRAMS = {
@@ -512,12 +529,17 @@ for row in rows:
  if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+._:-]{0,127}",name) or name in installed or arch not in {"x86_64","noarch"}: raise ValueError()
  installed[name]=[version,arch]
  if len(installed)>1024: raise ValueError()
+stage="system-rpm-runtime"
+proc_verified=verify_proc()
 stage="system-rpm-files"
 try:
  run(["rpm","--noplugins","-Va","--noscripts","--nodeps","--noconfig","--noghost"],90)
 except PrivateCommandFailure as failure:
+ lines=failure.result.stdout.decode("utf-8").splitlines()
+ remaining=[line for line in lines if not re.fullmatch(r"\.M\.{7}\s+/proc",line)]
+ if failure.result.returncode!=1 or failure.result.stderr or not lines: remaining=lines or [""]
  candidates=[]
- for line in failure.result.stdout.decode("utf-8").splitlines():
+ for line in remaining:
   match=re.fullmatch(r"(?:[SM5DLUGTP?.]{9}|missing)\s+(?:[a-z?]\s+)?(/[^\x00\r\n]+)",line)
   if match: candidates.append(match[1])
   if len(candidates)==16: break
@@ -534,10 +556,10 @@ except PrivateCommandFailure as failure:
      kind="d" if stat.S_ISDIR(z.st_mode) else "l" if stat.S_ISLNK(z.st_mode) else "f" if stat.S_ISREG(z.st_mode) else "o"
      stage+=entry+"-"+kind+format(stat.S_IMODE(z.st_mode),"04o")
    break
- raise
+ if remaining: raise
 stage="system-rpm-firmware"
 run(["rpm","--noplugins","-V","--noscripts","--nodeps","linux-firmware"],60)
-r=dict(installed_inventory=base64.b64encode(zlib.compress(json.dumps(installed,sort_keys=True,separators=(",", ":")).encode(),9)).decode(),firmware_verified=True,rpm_files_verified=True,package_state_verified=True)
+r=dict(installed_inventory=base64.b64encode(zlib.compress(json.dumps(installed,sort_keys=True,separators=(",", ":")).encode(),9)).decode(),firmware_verified=True,rpm_files_verified=True,package_state_verified=True,runtime_proc_verified=proc_verified)
 ''',
     "assets": r'''
 stage="system-assets-profile"

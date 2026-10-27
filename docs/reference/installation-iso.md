@@ -314,6 +314,11 @@ stay under `/run` and are removed on normal exit. This mode does not run provisi
 or change installed content. RPM configuration files and ghost entries are outside its file comparison, and application
 or dependency equality alone does not prove whole-system equality. Keep the five results with the original VM receipts.
 
+The RPM check measures the live `/proc` mount separately: it must be one root-owned proc filesystem mounted at `/proc`,
+with its filesystem root `/` and directory mode `0555`. That kernel mount shadows the package's empty `0755` directory.
+Only the exact mode-only discrepancy for `/proc` is reconciled after this proof. Other paths, missing entries, changed
+file digests, additional verification flags, command errors and stderr still fail; files beneath `/proc` are not exempt.
+
 The Python check follows the wheel [installation schemes](https://packaging.python.org/en/latest/specifications/binary-distribution-format/).
 It checks relocated files as well as `site-packages` and permits only the declared `#!python`/`#!pythonw` interpreter
 rewrite for wheel scripts. Identical shared files can be deduplicated. Different shared bytes require one final owner

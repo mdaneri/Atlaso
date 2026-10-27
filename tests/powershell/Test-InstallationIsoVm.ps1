@@ -1425,6 +1425,7 @@ foreach ($fixture in @(
     @{ Text = "`rATLASO-INSPECTION-FAILED:software-staging`r`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: software-staging.' },
     @{ Text = "ATLASO-INSPECTION-FAILED:system-rpm`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-rpm.' },
     @{ Text = "ATLASO-INSPECTION-FAILED:system-rpm-files`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-rpm-files.' },
+    @{ Text = "ATLASO-INSPECTION-FAILED:system-rpm-runtime`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-rpm-runtime.' },
     @{ Text = ("ATLASO-INSPECTION-FAILED:system-rpm-files-package-" + $pipPackageHash + "`r`nprivate-error-details`r`n"); AllowedRpmPackages = @('pip'); Error = ('Installed inspection failed at public stage: system-rpm-files-package-' + $pipPackageHash + '.') },
     @{ Text = ("ATLASO-INSPECTION-FAILED:system-rpm-files-package-" + $pipPackageHash + "-entry30-missing`r`nprivate-error-details`r`n"); AllowedRpmPackages = @('pip'); Error = ('Installed inspection failed at public stage: system-rpm-files-package-' + $pipPackageHash + '-entry30-missing.') },
     @{ Text = ("ATLASO-INSPECTION-FAILED:system-rpm-files-package-" + $pipPackageHash + "-entry114-missing`r`nprivate-error-details`r`n"); AllowedRpmPackages = @('pip'); Error = ('Installed inspection failed at public stage: system-rpm-files-package-' + $pipPackageHash + '.') },
