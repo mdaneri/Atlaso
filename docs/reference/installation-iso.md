@@ -370,6 +370,10 @@ owner or group changes, different file types, altered policy bytes and other ver
 Audit records and child paths are not read.
 Fixed public failure diagnostics may identify the packaged `/var/lib/rpcbind` directory's type, mode and RPM
 verification flags. Its contents and child names remain private, and this diagnostic does not reconcile a discrepancy.
+The separate rpcbind profile binds its exact admitted RPM checksum and initial-install script, which changes that
+directory from root:root to root:sys. The shared verifier requires a real directory with uid 0, sys gid 2 and mode
+`0755` before and after package comparison. Only its group-only discrepancy is reconciled; owner, mode, type,
+digest and other flags still fail. No state files or children are inspected.
 The shared Photon verifier is authenticated against the original media and must match the host's supported contract.
 A changed verifier requires a rebuilt development ISO and fresh receipt-owned installation; do not replace it in an
 old VM to force acceptance. Keep the older results bound to their original media.

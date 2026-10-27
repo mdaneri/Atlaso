@@ -70,6 +70,7 @@ def _expectation(kind):
             "filesystem_sha256": content_inspection.PHOTON_FILESYSTEM_SHA256,
             "systemd_sha256": content_inspection.PHOTON_SYSTEMD_SHA256,
             "audit_sha256": content_inspection.PHOTON_AUDIT_SHA256,
+            "rpcbind_sha256": content_inspection.PHOTON_RPCBIND_SHA256,
             "allowed_inventory": _inventory({
                 "linux": ["6.1-1.ph5", "x86_64"],
                 "python3": ["3.14-2.ph5", "x86_64"],
@@ -126,6 +127,7 @@ def _report(kind, **changes):
             "runtime_mail_spool_verified": True,
             "runtime_journal_metadata_verified": True,
             "runtime_audit_metadata_verified": True,
+            "runtime_rpcbind_metadata_verified": True,
             "runtime_media_directories_absent": 0,
         },
         "notices": {"notices_sha256": "a" * 64, "notice_inputs_verified": True},
@@ -143,9 +145,9 @@ def _runtime_fixture_helper():
     fields = {name: True for name in ("runtime_proc_verified", "runtime_run_verified",
                                       "runtime_login_metadata_verified", "runtime_mail_spool_verified")}
     return SimpleNamespace(__file__="verify-photon-package-state.py",
-                           verify_installation_runtime_metadata=lambda _checksum: dict(fields),
-                           verify_installation_journal_metadata=lambda _checksum: {"runtime_journal_metadata_verified": True},
-                           verify_installation_audit_metadata=lambda _checksum: {"runtime_audit_metadata_verified": True})
+                           verify_installation_metadata=lambda *_checksums: {**fields, "runtime_journal_metadata_verified": True,
+                                                                            "runtime_audit_metadata_verified": True,
+                                                                            "runtime_rpcbind_metadata_verified": True})
 
 
 def _decode_guest_program(command):
@@ -207,6 +209,9 @@ def _prepare_fixture():
     records.append({"path": "rpms/audit.rpm", "sha256": content_inspection.PHOTON_AUDIT_SHA256})
     rpms.append({"file": "audit.rpm", "name": "audit", "version": "4.1.3-3.ph5", "architecture": "x86_64",
                  "sha256": content_inspection.PHOTON_AUDIT_SHA256})
+    records.append({"path": "rpms/rpcbind.rpm", "sha256": content_inspection.PHOTON_RPCBIND_SHA256})
+    rpms.append({"file": "rpcbind.rpm", "name": "rpcbind", "version": "1.2.6-6.ph5", "architecture": "x86_64",
+                 "sha256": content_inspection.PHOTON_RPCBIND_SHA256})
     manifest = {
         "files": records,
         "packages": ["linux", "linux-firmware", "python3"],
@@ -329,6 +334,7 @@ def test_prepare_content_inputs_binds_expectations_to_admitted_files():
         "filesystem": ["1.1-11.ph5", "x86_64"],
         "linux": ["6.1-1.ph5", "x86_64"],
         "python3": ["3.14-2.ph5", "x86_64"],
+        "rpcbind": ["1.2.6-6.ph5", "x86_64"],
         "systemd": ["257.13-5.ph5", "x86_64"],
     }
     assert expectations[0]["source_file_count"] == 10
@@ -354,7 +360,7 @@ def test_prepare_content_inputs_rejects_source_not_bound_to_manifest(tamper):
         content_inspection.prepare_content_inputs(base, manifest, sources)
 
 
-@pytest.mark.parametrize("package", ["filesystem", "systemd", "audit"])
+@pytest.mark.parametrize("package", ["filesystem", "systemd", "audit", "rpcbind"])
 def test_prepare_content_inputs_refuses_unreviewed_runtime_profile(package):
     """A different authenticated RPM cannot inherit the known mutable profile.
 
@@ -368,7 +374,7 @@ def test_prepare_content_inputs_refuses_unreviewed_runtime_profile(package):
         content_inspection.prepare_content_inputs(base, manifest, sources)
 
 
-@pytest.mark.parametrize("package", ["filesystem", "systemd", "audit"])
+@pytest.mark.parametrize("package", ["filesystem", "systemd", "audit", "rpcbind"])
 def test_guest_program_refuses_unreviewed_runtime_profile(package):
     """Unknown runtime profiles stop preparation before any guest command exists.
 
@@ -482,6 +488,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"runtime_mail_spool_verified": False},
         {"runtime_journal_metadata_verified": False},
         {"runtime_audit_metadata_verified": False},
+        {"runtime_rpcbind_metadata_verified": False},
         {"runtime_media_directories_absent": True},
         {"runtime_media_directories_absent": 3},
         {"installed_inventory": _inventory({"linux": ["wrong", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"]})},
@@ -490,7 +497,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"], "rogue": ["1.0", "noarch"]})},
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"]})},
     ],
-    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "runtime-mail-spool", "runtime-journal-metadata", "runtime-audit-metadata", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
+    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "runtime-mail-spool", "runtime-journal-metadata", "runtime-audit-metadata", "runtime-rpcbind-metadata", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
 )
 def test_validate_content_report_rejects_unverified_rpm_closure(changes):
     """The installed RPM identities must satisfy the signed allowed closure.
@@ -927,6 +934,13 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
 @pytest.mark.parametrize(
     ("rows", "returncode", "stderr", "mount", "mode", "uid", "gid", "failure"),
     [
+        ("......G.. /var/lib/rpcbind\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        ("......G.. /var/lib/rpcbind\n", 1, b"", "rpcrace", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        (".M....G.. /var/lib/rpcbind\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        (".....UG.. /var/lib/rpcbind\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("..5...G.. /var/lib/rpcbind\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("missing /var/lib/rpcbind\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("......G.. /var/lib/rpcbind/private-state\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         (".M....... /proc\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
         (".M....... /var/log/audit\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
         (".M....... /var/log/audit\n", 1, b"", "auditrace", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
@@ -1114,6 +1128,21 @@ def test_rpm_runtime_proc_check_retains_package_failures(
             raise ValueError("private audit policy drift")
         return {"runtime_audit_metadata_verified": True}
 
+    rpc_checks = []
+
+    def verify_rpc(checksum):
+        """Require exact native RPC ownership proof before and after comparison.
+
+        Args:
+            checksum: Media-admitted rpcbind RPM checksum.
+        """
+        assert checksum == helper.INSTALLATION_RPCBIND_SHA256
+        rpc_checks.append(checksum)
+        if mount == "rpcrace" and firmware_checked:
+            raise ValueError("private RPC directory drift")
+        return {"runtime_rpcbind_metadata_verified": True}
+
+    monkeypatch.setattr(helper, "verify_installation_rpcbind_metadata", verify_rpc)
     monkeypatch.setattr(helper, "verify_installation_audit_metadata", verify_audit)
     monkeypatch.setattr(helper, "verify_installation_journal_metadata", verify_journal)
     namespace.update(read=read, checked=checked, run=run, load=lambda *_args: helper)
@@ -1138,6 +1167,8 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         assert len(journal_checks) == 2
         assert report["runtime_audit_metadata_verified"] is True
         assert len(audit_checks) == 2
+        assert report["runtime_rpcbind_metadata_verified"] is True
+        assert len(rpc_checks) == 2
         assert report["runtime_media_directories_absent"] == rows.count("missing /run/media/")
         assert report["rpm_files_verified"] is True
 

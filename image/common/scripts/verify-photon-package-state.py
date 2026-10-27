@@ -28,6 +28,8 @@ INSTALLATION_AUDIT_TMPFILES_SHA256 = "d4ea0b752525c573cd144461ed3ac5c4e86d195011
 INSTALLATION_AUDIT_TMPFILES_MAX_BYTES = 4096
 INSTALLATION_AUDIT_PATH = Path("/var/log/audit")
 INSTALLATION_AUDIT_TMPFILES_ROW = "d /var/log/audit 0700 root root - -"
+INSTALLATION_RPCBIND_SHA256 = "2c3d001aca71e6c6c81377a7bfc7ec9c3d26ee7a9891b4a706a8205657bc31ba"
+INSTALLATION_RPCBIND_PATH = Path("/var/lib/rpcbind")
 REQUIRED_RUNTIME_PACKAGES = (
     "photon-release",
     "rpm",
@@ -433,6 +435,50 @@ def verify_installation_audit_metadata(audit_sha256: str) -> dict[str, bool]:
             or metadata.st_uid != 0 or metadata.st_gid != 0):
         raise ValueError("installation audit directory metadata differs from native tmpfiles policy")
     return {"runtime_audit_metadata_verified": True}
+
+
+def verify_installation_rpcbind_metadata(rpcbind_sha256: str) -> dict[str, bool]:
+    """Verify the pinned RPC package's initial-install ownership policy.
+
+    Args:
+        rpcbind_sha256: Original rpcbind RPM checksum admitted from the ISO.
+
+    The archive declares root:root mode ``0755``; its own initial-install
+    script changes only ownership to root:sys. Photon's admitted filesystem
+    declares sys as gid 2. No state files or directory children are read.
+    """
+    if rpcbind_sha256 != INSTALLATION_RPCBIND_SHA256:
+        raise ValueError("rpcbind runtime metadata profile is not admitted")
+    try:
+        from grp import getgrnam
+
+        sys_gid = getgrnam("sys").gr_gid
+        metadata = INSTALLATION_RPCBIND_PATH.lstat()
+    except (KeyError, OSError) as exc:
+        raise ValueError("installation rpcbind directory metadata is unavailable") from exc
+    if (sys_gid != 2 or not stat.S_ISDIR(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) != 0o755
+            or metadata.st_uid != 0 or metadata.st_gid != sys_gid):
+        raise ValueError("installation rpcbind directory metadata differs from native post-transaction policy")
+    return {"runtime_rpcbind_metadata_verified": True}
+
+
+def verify_installation_metadata(
+    filesystem_sha256: str, systemd_sha256: str, audit_sha256: str, rpcbind_sha256: str
+) -> dict[str, bool]:
+    """Reuse the admitted native profiles before or after package comparison.
+
+    Args:
+        filesystem_sha256: Original Photon filesystem RPM checksum.
+        systemd_sha256: Original Photon systemd RPM checksum.
+        audit_sha256: Original Photon audit RPM checksum.
+        rpcbind_sha256: Original Photon rpcbind RPM checksum.
+    """
+    result = verify_installation_runtime_metadata(filesystem_sha256)
+    result.update(verify_installation_journal_metadata(systemd_sha256))
+    result.update(verify_installation_audit_metadata(audit_sha256))
+    result.update(verify_installation_rpcbind_metadata(rpcbind_sha256))
+    return result
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

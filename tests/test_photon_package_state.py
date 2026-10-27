@@ -1087,3 +1087,80 @@ def test_installation_audit_metadata_rejects_unknown_package_before_reads(
     with pytest.raises(ValueError, match="profile is not admitted"):
         verifier.verify_installation_audit_metadata("0" * 64)
     assert reads == []
+
+
+@pytest.mark.parametrize("defect", [None, "mode", "owner", "group", "type", "missing", "group-name", "group-id"])
+def test_installation_rpcbind_metadata_matches_native_post_script(monkeypatch, defect):
+    """Admit only the pinned initial-install directory ownership, without children.
+
+    Args:
+        monkeypatch: Replace only fixed public metadata observations.
+        defect: Native directory or group identity drift to reject.
+    """
+    verifier = load_verifier()
+    metadata = SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0, st_gid=2)
+    if defect == "mode":
+        metadata.st_mode = stat.S_IFDIR | 0o750
+    elif defect == "owner":
+        metadata.st_uid = 31
+    elif defect == "group":
+        metadata.st_gid = 0
+    elif defect == "type":
+        metadata.st_mode = stat.S_IFLNK | 0o755
+    reads = []
+
+    def group(name):
+        """Resolve only the fixed group declared by the native script.
+
+        Args:
+            name: Group name requested by the verifier.
+        """
+        assert name == "sys"
+        if defect == "group-name":
+            raise KeyError(name)
+        return SimpleNamespace(gr_gid=3 if defect == "group-id" else 2)
+
+    def metadata_only(path):
+        """Reject child or content inspection while observing the directory.
+
+        Args:
+            path: Fixed public directory path requested by the verifier.
+        """
+        assert path == Path("/var/lib/rpcbind")
+        reads.append(path)
+        if defect == "missing":
+            raise FileNotFoundError(path)
+        return metadata
+
+    monkeypatch.setitem(sys.modules, "grp", SimpleNamespace(getgrnam=group))
+    monkeypatch.setattr(Path, "lstat", metadata_only)
+    if defect:
+        with pytest.raises(ValueError):
+            verifier.verify_installation_rpcbind_metadata(verifier.INSTALLATION_RPCBIND_SHA256)
+    else:
+        assert verifier.verify_installation_rpcbind_metadata(verifier.INSTALLATION_RPCBIND_SHA256) == {
+            "runtime_rpcbind_metadata_verified": True
+        }
+    assert reads == ([] if defect == "group-name" else [Path("/var/lib/rpcbind")])
+
+
+def test_installation_rpcbind_rejects_unknown_package_before_metadata(monkeypatch):
+    """Refuse unknown package identity before touching the group or directory.
+
+    Args:
+        monkeypatch: Intercept any forbidden metadata lookup.
+    """
+    verifier = load_verifier()
+
+    def forbidden(*_args):
+        """Refuse metadata access for an unreviewed package.
+
+        Args:
+            *_args: Any attempted lookup arguments.
+        """
+        raise AssertionError("unknown package caused metadata access")
+
+    monkeypatch.setitem(sys.modules, "grp", SimpleNamespace(getgrnam=forbidden))
+    monkeypatch.setattr(Path, "lstat", forbidden)
+    with pytest.raises(ValueError, match="profile is not admitted"):
+        verifier.verify_installation_rpcbind_metadata("0" * 64)
