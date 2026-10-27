@@ -23,8 +23,10 @@ from atlaso.app.models import (
 )
 from atlaso.app.secrets import encrypt_secret
 from atlaso.app.services.vsphere_enrollment import (
+    MISSING_CLIENT_CERTIFICATE_GUIDANCE,
     DiscoveredClient,
     DiscoveredInventory,
+    EnrollmentError,
     certificate_fingerprint,
 )
 from atlaso.app.services.vsphere_key_providers import (
@@ -1060,6 +1062,52 @@ def test_vcenter_enrollment_manual_credentials_are_request_local(client, monkeyp
         assert all("credential_source=manual" in event.detail for event in enrollment_audit)
         assert all(username not in (event.detail or "") for event in audit)
         assert all(password not in (event.detail or "") for event in audit)
+
+
+def test_missing_client_certificate_guidance_does_not_save_trust(client, monkeypatch) -> None:
+    """Inspection and approval retain recoverable missing-identity feedback without writes.
+
+    Args:
+        client: Isolated authenticated application test client.
+        monkeypatch: Fixture replacing remote discovery with a missing identity.
+    """
+    from atlaso.app.routers.ui import certificate_trust as transport
+
+    csrf = _login(client)
+    leaf = b"synthetic-leaf"
+    monkeypatch.setattr(transport, "vcenter_https_leaf", lambda *_args, **_kwargs: leaf)
+    monkeypatch.setattr(transport, "applied_kmip_listener_addresses", lambda *_args, **_kwargs: frozenset())
+
+    def missing(**_kwargs):
+        """Report the same bounded missing-identity condition on each retry.
+
+        Args:
+            **_kwargs: Ignored discovery request parameters.
+        """
+        raise EnrollmentError(MISSING_CLIENT_CERTIFICATE_GUIDANCE)
+
+    monkeypatch.setattr(transport, "discover_vcenter_client", missing)
+    with SessionLocal() as db:
+        provider = VsphereKeyProvider(id=str(uuid4()), name="Missing identity", enabled=True)
+        db.add(provider)
+        db.commit()
+        provider_id = provider.id
+        before = (db.query(VsphereTrustedVcenter).count(), db.query(VsphereTrustedVcenterCertificate).count())
+    data = {
+        "csrf": csrf, "credential_source": "manual", "hostname": "vcsa.example.test",
+        "username": "synthetic-user", "password": "synthetic-password", "cluster_id": "Default",
+        "confirmed_https_fingerprint": certificate_fingerprint(leaf),
+        "provider_id": provider_id, "name": "Synthetic vCenter", "expected_client_fingerprint": "00" * 32,
+    }
+    for route in ("inspect", "approve"):
+        response = client.post(f"/vsphere-key-providers/enrollment/{route}", data=data)
+        assert response.status_code == 422
+        assert response.json()["detail"] == MISSING_CLIENT_CERTIFICATE_GUIDANCE
+    with SessionLocal() as db:
+        assert (db.query(VsphereTrustedVcenter).count(), db.query(VsphereTrustedVcenterCertificate).count()) == before
+    page = client.get("/vsphere-key-providers")
+    assert 'data-vsphere-client-certificate-help' in page.text
+    assert 'Make KMS trust vCenter' in page.text
 
 
 def test_enrollment_rechecks_listener_ip_admission_before_saving_trust(client, monkeypatch) -> None:
