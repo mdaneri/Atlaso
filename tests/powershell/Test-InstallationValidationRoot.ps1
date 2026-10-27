@@ -66,6 +66,7 @@ $functionNames = @(
     'Assert-AtlasoTestVmValidationRootSelector',
     'Assert-AtlasoTestVmValidationRootReceiptRecord',
     'Read-AtlasoTestVmValidationRootReceiptEnvelope',
+    'Read-AtlasoTestVmValidationRootReceipt',
     'ConvertTo-AtlasoTestVmValidationRootAdmission',
     'Assert-AtlasoTestVmValidationRootRecordBinding',
     'Assert-AtlasoTestVmValidationRootBinding'
@@ -81,6 +82,17 @@ $readerDefinition = @($ownershipAst.FindAll({
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
         $node.Name -ceq 'Read-AtlasoTestVmValidationRootReceipt'
     }, $true))[0]
+# Exercise the production reader's imported command boundary. A module's private
+# helpers are unavailable here even when pure-validator tests can extract them.
+$readerCommands = @($readerDefinition.Body.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.CommandAst]
+    }, $true) | ForEach-Object { $_.GetCommandName() } | Sort-Object -Unique)
+foreach ($commandName in $readerCommands) {
+    if ($commandName -and -not (Get-Command -Name $commandName -ErrorAction SilentlyContinue)) {
+        throw "Production validation-root reader dependency is unavailable after its normal imports: $commandName"
+    }
+}
 $pinAssignments = @($readerDefinition.Body.FindAll({
         param($node)
         $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
@@ -346,8 +358,7 @@ Assert-ValidationRootCondition (-not $pins.CanRead -and $admission.Disposed) `
 $admission.Dispose()
 
 $readerText = Get-ValidationRootFunctionText -SourceAst $ownershipAst -Name 'Read-AtlasoTestVmValidationRootReceipt'
-Assert-ValidationRootCondition ($readerText.Contains('Assert-AtlasoPathHasNoReparsePoint -Path $evidencePath') -and
-    $readerText.Contains('Assert-AtlasoPathHasNoReparsePoint -Path $rootPath') -and
+Assert-ValidationRootCondition ($readerText.Contains('PinOrdinaryDirectoryPath($evidencePath, $true)') -and
     $readerText.Contains('PinOrdinaryReadFile($receipt, $true)') -and
     $readerText.Contains('PinOrdinaryDirectoryPath($rootPath, $true)')) `
     'External root admission must retain no-reparse evidence, receipt, and root pins.'

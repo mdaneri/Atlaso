@@ -332,7 +332,7 @@ function Read-AtlasoTestVmValidationRootReceipt {
     }
     $pins = [Atlaso.WorkstationFileIdentity+ReadOnlySourcePins]::new()
     try {
-        Assert-AtlasoPathHasNoReparsePoint -Path $evidencePath
+        # The native pin checks every ancestor without following reparse points.
         $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($evidencePath, $true))
         if ([Atlaso.WorkstationFileIdentity]::Get($evidencePath) -cne [string]$Context.EvidenceDirectoryId) {
             throw 'Task ownership evidence identity changed before validation-root admission.'
@@ -354,7 +354,6 @@ function Read-AtlasoTestVmValidationRootReceipt {
             $rootPath.Equals([System.IO.Path]::GetPathRoot($rootPath).TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase)) {
             throw 'Validation-root receipt cannot designate a volume root or a root outside the requested VM output.'
         }
-        Assert-AtlasoPathHasNoReparsePoint -Path $rootPath
         $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($rootPath, $true))
         $rootIdentity = [Atlaso.WorkstationFileIdentity]::Get($rootPath)
         $validated = Assert-AtlasoTestVmValidationRootReceiptRecord -Context $Context -Record $record `
