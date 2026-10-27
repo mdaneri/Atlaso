@@ -172,6 +172,11 @@ remain without errors, including before browser scripts run; review these warnin
 6. **Review**: check the identity, listener, path routes, publication, and desired state, including any TLS warnings.
    Choose **Save reverse proxy** to save the desired state.
 
+The grid's **Enabled** cell autosaves desired state. Rapid toggles are saved in order, using the latest confirmed
+record for each save; the cell retains your newest selection while earlier saves finish. If the latest save fails,
+the cell returns to the last confirmed state and shows the error. Correct the reported problem and try again.
+Wizard saves and deletes share this save order.
+
 Saving or deleting updates the collection and validation preview from the returned response. If the completed result
 cannot be displayed, refresh the page before saving again.
 
