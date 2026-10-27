@@ -21,6 +21,7 @@
   let reviewOperationId = "";
   let reviewToken = "";
   let reviewRevision = 0;
+  let reviewSubmitting = false;
 
   const text = (value, empty = "Not recorded") => value === null || value === undefined || value === "" ? empty : String(value);
   const safeCell = (value, empty = "Not recorded") => {
@@ -596,36 +597,47 @@
   const reviewForm = reviewDialog?.querySelector("[data-vcf-renewal-review-form]");
   const reviewSummary = reviewDialog?.querySelector("[data-vcf-renewal-review-summary]");
   const reviewApprove = reviewForm?.querySelector("[type='submit']");
+  const reviewApproval = reviewForm?.elements.namedItem("approve_replacement");
+  const reviewError = reviewForm?.querySelector("[data-vcf-renewal-dialog-error]");
+  function syncReviewApproval() {
+    if (reviewApprove) reviewApprove.disabled = !reviewDialog?.open || reviewSubmitting || !reviewApproval?.checked || !reviewToken;
+  }
   function openReview(item) {
     if (!item.operation_id) return;
     const revision = ++reviewRevision;
     reviewOperationId = String(item.operation_id);
     reviewToken = "";
+    reviewSubmitting = false;
     reviewForm.reset();
-    reviewApprove.disabled = true;
+    syncReviewApproval();
     reviewSummary.textContent = "Loading exact replacement details…";
+    reviewError.textContent = "";
+    reviewError.classList.add("hidden");
     reviewDialog.showModal();
     call("/review", { operation_id: reviewOperationId }).then((result) => {
       if (revision !== reviewRevision || !reviewDialog.open) return;
-      reviewToken = String(result.review_token || "");
+      const token = typeof result.review_token === "string" ? result.review_token : "";
+      if (!token.trim()) throw new Error("The review response did not include an approval token.");
+      reviewToken = token;
       const summary = result.summary;
       reviewSummary.textContent = typeof summary === "string" ? summary : JSON.stringify(summary ?? {}, null, 2);
-      if (!reviewToken) throw new Error("The review response did not include an approval token.");
+      syncReviewApproval();
     }).catch((error) => {
       if (revision !== reviewRevision || !reviewDialog.open) return;
+      reviewToken = "";
+      syncReviewApproval();
       reviewSummary.textContent = "Review details could not be loaded.";
-      const alert = reviewForm.querySelector("[data-vcf-renewal-dialog-error]");
-      alert.textContent = error.message || "Review details could not be loaded.";
-      alert.classList.remove("hidden");
+      reviewError.textContent = error.message || "Review details could not be loaded.";
+      reviewError.classList.remove("hidden");
     });
   }
-  reviewForm?.querySelector("[name='approve_replacement']")?.addEventListener("change", (event) => {
-    reviewApprove.disabled = !event.target.checked || !reviewToken;
-  });
+  reviewApproval?.addEventListener("change", syncReviewApproval);
   reviewDialog?.addEventListener("close", () => {
     reviewRevision += 1;
     reviewToken = "";
     reviewOperationId = "";
+    reviewSubmitting = false;
+    syncReviewApproval();
     reviewSummary.textContent = "Review details have not been loaded.";
   });
 
@@ -659,19 +671,27 @@
   });
   reviewForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (!reviewToken || !reviewForm.elements.namedItem("approve_replacement").checked) return;
-    const errorNode = reviewForm.querySelector("[data-vcf-renewal-dialog-error]");
+    if (reviewSubmitting || !reviewDialog.open || !reviewToken || !reviewApproval?.checked) return;
+    const revision = reviewRevision;
+    const operationId = reviewOperationId;
+    const token = reviewToken;
+    reviewSubmitting = true;
+    syncReviewApproval();
+    const errorNode = reviewError;
     errorNode.classList.add("hidden");
     try {
-      const result = await call("/execute", { operation_id: reviewOperationId, review_token: reviewToken });
+      const result = await call("/execute", { operation_id: operationId, review_token: token });
+      if (revision !== reviewRevision || !reviewDialog.open) return;
       reviewToken = "";
       showTask(result.job_id || result.task_id);
       setMessage("Reviewed replacement was submitted. Reconcile status and verify task results.");
       reviewDialog.close();
       await loadState();
     } catch (error) {
+      if (revision !== reviewRevision || !reviewDialog.open) return;
       reviewToken = "";
-      reviewApprove.disabled = true;
+      reviewSubmitting = false;
+      syncReviewApproval();
       errorNode.textContent = error.message || "Replacement approval could not complete. Reopen the review to obtain a fresh approval.";
       errorNode.classList.remove("hidden");
     }
