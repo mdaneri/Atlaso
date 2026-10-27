@@ -71,6 +71,8 @@ def _expectation(kind):
             "systemd_sha256": content_inspection.PHOTON_SYSTEMD_SHA256,
             "audit_sha256": content_inspection.PHOTON_AUDIT_SHA256,
             "rpcbind_sha256": content_inspection.PHOTON_RPCBIND_SHA256,
+            "shim_sha256": content_inspection.PHOTON_SHIM_SHA256,
+            "grub_efi_sha256": content_inspection.PHOTON_GRUB_EFI_SHA256,
             "allowed_inventory": _inventory({
                 "linux": ["6.1-1.ph5", "x86_64"],
                 "python3": ["3.14-2.ph5", "x86_64"],
@@ -128,6 +130,7 @@ def _report(kind, **changes):
             "runtime_journal_metadata_verified": True,
             "runtime_audit_metadata_verified": True,
             "runtime_rpcbind_metadata_verified": True,
+            "runtime_efi_metadata_verified": True,
             "runtime_media_directories_absent": 0,
         },
         "notices": {"notices_sha256": "a" * 64, "notice_inputs_verified": True},
@@ -149,9 +152,11 @@ def _runtime_fixture_helper():
                            INSTALLATION_SYSTEMD_SHA256=content_inspection.PHOTON_SYSTEMD_SHA256,
                            INSTALLATION_AUDIT_SHA256=content_inspection.PHOTON_AUDIT_SHA256,
                            INSTALLATION_RPCBIND_SHA256=content_inspection.PHOTON_RPCBIND_SHA256,
+                           INSTALLATION_SHIM_SHA256=content_inspection.PHOTON_SHIM_SHA256,
+                           INSTALLATION_GRUB_EFI_SHA256=content_inspection.PHOTON_GRUB_EFI_SHA256,
                            verify_installation_metadata=lambda *_checksums: {**fields, "runtime_journal_metadata_verified": True,
                                                                             "runtime_audit_metadata_verified": True,
-                                                                            "runtime_rpcbind_metadata_verified": True})
+                                                                            "runtime_rpcbind_metadata_verified": True, "runtime_efi_metadata_verified": True})
 
 
 def _decode_guest_program(command):
@@ -217,6 +222,13 @@ def _prepare_fixture():
     records.append({"path": "rpms/rpcbind.rpm", "sha256": content_inspection.PHOTON_RPCBIND_SHA256})
     rpms.append({"file": "rpcbind.rpm", "name": "rpcbind", "version": "1.2.6-6.ph5", "architecture": "x86_64",
                  "sha256": content_inspection.PHOTON_RPCBIND_SHA256})
+    records.append({"path": "rpms/shim.rpm", "sha256": content_inspection.PHOTON_SHIM_SHA256})
+    rpms.append({"file": "shim.rpm", "name": "shim-signed", "version": "16.1-1.ph5", "architecture": "x86_64",
+                 "sha256": content_inspection.PHOTON_SHIM_SHA256})
+    records.append({"path": "rpms/grub_efi.rpm", "sha256": content_inspection.PHOTON_GRUB_EFI_SHA256})
+    rpms.append({"file": "grub_efi.rpm", "name": "grub2-efi-image", "version": "2.12-2.ph5", "architecture": "x86_64",
+                 "sha256": content_inspection.PHOTON_GRUB_EFI_SHA256})
+    records.append({"path": "source/scripts/installation/layout.py", "sha256": content_inspection.PHOTON_LAYOUT_HELPER_SHA256})
     manifest = {
         "files": records,
         "packages": ["linux", "linux-firmware", "python3"],
@@ -337,12 +349,14 @@ def test_prepare_content_inputs_binds_expectations_to_admitted_files():
     assert allowed == {
         "audit": ["4.1.3-3.ph5", "x86_64"],
         "filesystem": ["1.1-11.ph5", "x86_64"],
+        "grub2-efi-image": ["2.12-2.ph5", "x86_64"],
         "linux": ["6.1-1.ph5", "x86_64"],
         "python3": ["3.14-2.ph5", "x86_64"],
         "rpcbind": ["1.2.6-6.ph5", "x86_64"],
+        "shim-signed": ["16.1-1.ph5", "x86_64"],
         "systemd": ["257.13-5.ph5", "x86_64"],
     }
-    assert expectations[0]["source_file_count"] == 10
+    assert expectations[0]["source_file_count"] == 11
     assert expectations[4]["notice_lock_sha256"] == hashlib.sha256(
         b"# Authenticated software dependency lock\n"
     ).hexdigest()
@@ -427,7 +441,7 @@ def test_prepare_content_inputs_rejects_source_not_bound_to_manifest(tamper):
         content_inspection.prepare_content_inputs(base, manifest, sources)
 
 
-@pytest.mark.parametrize("package", ["filesystem", "systemd", "audit", "rpcbind"])
+@pytest.mark.parametrize("package", ["filesystem", "systemd", "audit", "rpcbind", "shim", "grub_efi"])
 def test_prepare_content_inputs_refuses_unreviewed_runtime_profile(package):
     """A different authenticated RPM cannot inherit the known mutable profile.
 
@@ -436,12 +450,13 @@ def test_prepare_content_inputs_refuses_unreviewed_runtime_profile(package):
     """
     base, manifest, sources = _prepare_fixture()
     next(item for item in manifest["files"] if item["path"] == f"rpms/{package}.rpm")["sha256"] = "0" * 64
-    next(item for item in manifest["rpm_inventory"] if item["name"] == package)["sha256"] = "0" * 64
+    name = {"shim": "shim-signed", "grub_efi": "grub2-efi-image"}.get(package, package)
+    next(item for item in manifest["rpm_inventory"] if item["name"] == name)["sha256"] = "0" * 64
     with pytest.raises(ValueError, match="reviewed runtime metadata profile"):
         content_inspection.prepare_content_inputs(base, manifest, sources)
 
 
-@pytest.mark.parametrize("package", ["filesystem", "systemd", "audit", "rpcbind"])
+@pytest.mark.parametrize("package", ["filesystem", "systemd", "audit", "rpcbind", "shim", "grub_efi"])
 def test_guest_program_refuses_unreviewed_runtime_profile(package):
     """Unknown runtime profiles stop preparation before any guest command exists.
 
@@ -452,6 +467,23 @@ def test_guest_program_refuses_unreviewed_runtime_profile(package):
     expected[f"{package}_sha256"] = "0" * 64
     with pytest.raises(ValueError, match="runtime metadata profile is not admitted"):
         content_inspection.guest_content_program(expected)
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_efi_profile_requires_original_shared_layout_helper(missing):
+    """Reject layout-helper drift before generating credential-consuming commands.
+
+    Args:
+        missing: Remove the original helper instead of changing its digest.
+    """
+    base, manifest, sources = _prepare_fixture()
+    member = "source/scripts/installation/layout.py"
+    if missing:
+        manifest["files"] = [item for item in manifest["files"] if item["path"] != member]
+    else:
+        next(item for item in manifest["files"] if item["path"] == member)["sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="installation layout requires the original shared verifier"):
+        content_inspection.prepare_content_inputs(base, manifest, sources)
 
 
 def test_rpm_guest_loader_admits_only_original_helper_bytes(monkeypatch, tmp_path):
@@ -556,6 +588,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"runtime_journal_metadata_verified": False},
         {"runtime_audit_metadata_verified": False},
         {"runtime_rpcbind_metadata_verified": False},
+        {"runtime_efi_metadata_verified": False},
         {"runtime_media_directories_absent": True},
         {"runtime_media_directories_absent": 3},
         {"installed_inventory": _inventory({"linux": ["wrong", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"]})},
@@ -564,7 +597,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"], "rogue": ["1.0", "noarch"]})},
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"]})},
     ],
-    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "runtime-mail-spool", "runtime-journal-metadata", "runtime-audit-metadata", "runtime-rpcbind-metadata", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
+    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "runtime-mail-spool", "runtime-journal-metadata", "runtime-audit-metadata", "runtime-rpcbind-metadata", "runtime-efi-metadata", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
 )
 def test_validate_content_report_rejects_unverified_rpm_closure(changes):
     """The installed RPM identities must satisfy the signed allowed closure.
@@ -1028,6 +1061,13 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     ("rows", "returncode", "stderr", "mount", "mode", "uid", "gid", "failure"),
     [
         ("......G.. /var/lib/rpcbind\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        (".M.....T. /boot/efi/EFI/BOOT/bootx64.efi\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        (".M....... /boot/efi/EFI/BOOT/revocations.efi\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        (".M.....T. /boot/efi/EFI/BOOT/bootx64.efi\n", 1, b"", "efirace", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        (".M5....T. /boot/efi/EFI/BOOT/bootx64.efi\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        (".M...U.T. /boot/efi/EFI/BOOT/bootx64.efi\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("missing /boot/efi/EFI/BOOT/revocations.efi\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        (".M.....T. /boot/efi/EFI/BOOT/other.efi\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         ("......G.. /var/lib/rpcbind\n", 1, b"", "rpcrace", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
         (".M....G.. /var/lib/rpcbind\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         (".....UG.. /var/lib/rpcbind\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
@@ -1235,6 +1275,23 @@ def test_rpm_runtime_proc_check_retains_package_failures(
             raise ValueError("private RPC directory drift")
         return {"runtime_rpcbind_metadata_verified": True}
 
+    efi_checks = []
+
+    def verify_efi(checksum, grub_checksum):
+        """Require the native EFI proof before and after package comparison.
+
+        Args:
+            checksum: Media-admitted shim RPM checksum.
+            grub_checksum: Media-admitted GRUB EFI-image RPM checksum.
+        """
+        assert checksum == helper.INSTALLATION_SHIM_SHA256
+        assert grub_checksum == helper.INSTALLATION_GRUB_EFI_SHA256
+        efi_checks.append((checksum, grub_checksum))
+        if mount == "efirace" and firmware_checked:
+            raise ValueError("private EFI metadata drift")
+        return {"runtime_efi_metadata_verified": True}
+
+    monkeypatch.setattr(helper, "verify_installation_efi_metadata", verify_efi)
     monkeypatch.setattr(helper, "verify_installation_rpcbind_metadata", verify_rpc)
     monkeypatch.setattr(helper, "verify_installation_audit_metadata", verify_audit)
     monkeypatch.setattr(helper, "verify_installation_journal_metadata", verify_journal)
@@ -1257,6 +1314,8 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         assert report["runtime_login_metadata_verified"] is True
         assert report["runtime_mail_spool_verified"] is True
         assert report["runtime_journal_metadata_verified"] is True
+        assert report["runtime_efi_metadata_verified"] is True
+        assert len(efi_checks) == 2
         assert len(journal_checks) == 2
         assert report["runtime_audit_metadata_verified"] is True
         assert len(audit_checks) == 2

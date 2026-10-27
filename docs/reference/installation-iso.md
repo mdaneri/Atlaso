@@ -418,6 +418,16 @@ The registry includes the two EFI files from the admitted `shim-signed` RPM. The
 can identify boot-file discrepancies without reading private console output. This diagnostic does not accept a changed
 boot file or relax the RPM comparison.
 
+The EFI profile separately binds both the admitted `shim-signed` and `grub2-efi-image` RPMs and their three boot files'
+hashes, sizes and modification times. It authenticates and reuses
+the shared installed-layout verifier to check recorded filesystem UUIDs, then requires a single root-owned VFAT mount
+at `/boot/efi`, with filesystem root `/`, native file/directory masks `0022`, and no nested mounts. All three files
+must be ordinary single-link root:root files on that same filesystem, mode `0755`, with unchanged bytes and exact
+native two-second timestamps. Metadata is stable while each file is read, and the complete proof runs before and after RPM
+comparison. Only those files' mode and timestamp discrepancies are reconciled; other flags, paths and changed bytes
+still fail. These checks follow [Linux's VFAT mount masks](https://cdn.kernel.org/doc/html/latest/filesystems/vfat.html)
+and [FAT timestamp encoding](https://github.com/torvalds/linux/blob/v6.1/fs/fat/misc.c).
+
 Use `-CollisionSuffix inspection-a` and `-CollisionSuffix inspection-b` for two fresh installations in separate
 canonical VM directories. The wrappers reuse the shared identity helper to preserve the PR number while giving each
 VM a distinct name. Supply the same suffix with that VM's original receipt selectors for every subsequent login,

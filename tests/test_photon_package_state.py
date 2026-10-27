@@ -1164,3 +1164,136 @@ def test_installation_rpcbind_rejects_unknown_package_before_metadata(monkeypatc
     monkeypatch.setattr(Path, "lstat", forbidden)
     with pytest.raises(ValueError, match="profile is not admitted"):
         verifier.verify_installation_rpcbind_metadata("0" * 64)
+
+
+@pytest.mark.parametrize("defect", [
+    None, "package", "grub-package", "layout-identity", "layout-filesystem", "missing-mount", "duplicate-mount", "subroot",
+    "filesystem", "nested-mount", "mask", "duplicate-mask", "root-mode", "root-owner", "root-group", "root-type",
+    "file-mode", "file-owner", "file-group", "file-type", "file-link", "size", "bytes", "timestamp", "fraction",
+    "device", "replacement", "missing-file", "malformed-mount",
+])
+def test_installation_efi_profile_requires_native_mount_and_exact_files(monkeypatch, defect):
+    """Keep immutable EFI bytes strict while proving native VFAT metadata.
+
+    Args:
+        monkeypatch: Replace only the public file and mount observations.
+        defect: Mount, file, identity or package drift to reject.
+    """
+    verifier = load_verifier()
+    payloads = {"EFI/BOOT/bootx64.efi": b"public loader", "EFI/BOOT/revocations.efi": b"public revocations",
+                "EFI/BOOT/grubx64.efi": b"public grub"}
+    records = tuple((name, len(data), hashlib.sha256(data).hexdigest(), modified)
+                    for (name, data), modified in zip(payloads.items(), (1781509843, 1781509848, 1788335074), strict=True))
+    monkeypatch.setattr(verifier, "INSTALLATION_EFI_FILES", records)
+    root = Path("/boot/efi")
+    observations = []
+
+    def layout():
+        """Stand in for the existing UUID-backed, no-format mount verifier."""
+        observations.append("layout")
+        if defect == "layout-identity":
+            raise ValueError("recorded UUID differs")
+        return {"mounts": [{"target": "/boot/efi", "filesystem": "ext4" if defect == "layout-filesystem" else "vfat"}]}
+
+    kind = "ext4" if defect == "filesystem" else "vfat"
+    mount_root = "/subroot" if defect == "subroot" else "/"
+    options = "rw,fmask=0022,dmask=0022"
+    if defect == "mask":
+        options = "rw,fmask=0000,dmask=0022"
+    elif defect == "duplicate-mask":
+        options += ",fmask=0022"
+    rows = f"31 1 8:1 {mount_root} /boot/efi rw - {kind} /dev/fixture {options}\n"
+    if defect == "duplicate-mount":
+        rows *= 2
+    elif defect == "missing-mount":
+        rows = ""
+    elif defect == "nested-mount":
+        rows += "32 31 8:2 / /boot/efi/EFI rw - vfat /dev/other rw,fmask=0022,dmask=0022\n"
+    elif defect == "malformed-mount":
+        rows = "malformed private mount row"
+    monkeypatch.setattr(verifier, "_verified_installation_layout", layout)
+    monkeypatch.setattr(verifier, "_read_installation_mountinfo", lambda: rows)
+    calls = {}
+
+    def metadata(path):
+        """Refuse all observation outside the fixed public EFI file inventory.
+
+        Args:
+            path: Fixed root or public package file being inspected.
+        """
+        observations.append("metadata")
+        if path == root:
+            return SimpleNamespace(st_mode=(stat.S_IFREG if defect == "root-type" else stat.S_IFDIR)
+                                   | (0o777 if defect == "root-mode" else 0o755), st_uid=int(defect == "root-owner"),
+                                   st_gid=int(defect == "root-group"), st_dev=31)
+        name = path.relative_to(root).as_posix()
+        assert name in payloads
+        if defect == "missing-file":
+            raise FileNotFoundError()
+        calls[name] = calls.get(name, 0) + 1
+        modified = next(item[3] for item in records if item[0] == name)
+        return SimpleNamespace(st_mode=(stat.S_IFLNK if defect == "file-type" else stat.S_IFREG)
+                               | (0o777 if defect == "file-mode" else 0o755), st_uid=int(defect == "file-owner"),
+                               st_gid=int(defect == "file-group"), st_dev=32 if defect == "device" else 31,
+                               st_ino=calls[name] if defect == "replacement" else 8, st_nlink=2 if defect == "file-link" else 1,
+                               st_size=len(payloads[name]) + int(defect == "size"), st_ctime_ns=9,
+                               st_mtime_ns=(modified // 2 * 2 + 2 * int(defect == "timestamp")) * 1_000_000_000
+                               + int(defect == "fraction"))
+
+    def public_bytes(path, mode, maximum, _label):
+        """Return only the fixed public bytes normally read with no-follow checks.
+
+        Args:
+            path: Fixed public EFI file.
+            mode: Required native file mode.
+            maximum: Exact original file size used as the read bound.
+            _label: Fixed error label, never console contents.
+        """
+        name = path.relative_to(root).as_posix()
+        assert name in payloads and mode == 0o755 and maximum == len(payloads[name])
+        return b"changed public bytes" if defect == "bytes" else payloads[name]
+
+    monkeypatch.setattr(Path, "lstat", metadata)
+    monkeypatch.setattr(verifier, "_read_installation_tmpfiles", public_bytes)
+    checksum = "0" * 64 if defect == "package" else verifier.INSTALLATION_SHIM_SHA256
+    grub_checksum = "0" * 64 if defect == "grub-package" else verifier.INSTALLATION_GRUB_EFI_SHA256
+    if defect:
+        with pytest.raises((ValueError, FileNotFoundError)):
+            verifier.verify_installation_efi_metadata(checksum, grub_checksum)
+    else:
+        assert verifier.verify_installation_efi_metadata(checksum, grub_checksum) == {"runtime_efi_metadata_verified": True}
+        assert set(calls) == set(payloads)
+    if defect in {"package", "grub-package"}:
+        assert observations == []
+
+
+@pytest.mark.parametrize("defect", [None, "bytes", "profile"])
+def test_installation_layout_reuses_only_checked_helper_bytes(monkeypatch, defect):
+    """Compile the authenticated shared helper bytes without reopening its path.
+
+    Args:
+        monkeypatch: Provide an isolated authenticated source fixture.
+        defect: Helper-byte or installed-profile drift to reject.
+    """
+    verifier = load_verifier()
+    raw = b"def installation_profile(): return True\ndef verify_layout(): return {'mounts': []}\n"
+    monkeypatch.setattr(verifier, "INSTALLATION_LAYOUT_HELPER_SHA256", hashlib.sha256(raw).hexdigest())
+    if defect == "bytes":
+        raw += b"raise AssertionError('changed helper executed')\n"
+    elif defect == "profile":
+        raw = raw.replace(b"return True", b"return False")
+        monkeypatch.setattr(verifier, "INSTALLATION_LAYOUT_HELPER_SHA256", hashlib.sha256(raw).hexdigest())
+    monkeypatch.setattr(verifier, "_read_installation_tmpfiles", lambda *_args: raw)
+    if defect:
+        with pytest.raises(ValueError):
+            verifier._verified_installation_layout()
+    else:
+        assert verifier._verified_installation_layout() == {"mounts": []}
+
+
+def test_installation_efi_layout_pin_matches_shared_helper():
+    """Require explicit profile review when the reused mount-verifier source changes."""
+    verifier = load_verifier()
+    assert hashlib.sha256(Path("scripts/installation/layout.py").read_bytes()).hexdigest() == (
+        verifier.INSTALLATION_LAYOUT_HELPER_SHA256
+    )

@@ -30,6 +30,17 @@ INSTALLATION_AUDIT_PATH = Path("/var/log/audit")
 INSTALLATION_AUDIT_TMPFILES_ROW = "d /var/log/audit 0700 root root - -"
 INSTALLATION_RPCBIND_SHA256 = "2c3d001aca71e6c6c81377a7bfc7ec9c3d26ee7a9891b4a706a8205657bc31ba"
 INSTALLATION_RPCBIND_PATH = Path("/var/lib/rpcbind")
+INSTALLATION_SHIM_SHA256 = "e41e6109d7be89ae83da63ef8021ef9a0e053ecd4fe1f47ae73dd79270d688c7"
+INSTALLATION_GRUB_EFI_SHA256 = "516e63a3c609abecf4a4bf3ef2661d4f1bed26729a612f73e0bfcb530727e91f"
+INSTALLATION_LAYOUT_HELPER_PATH = Path(__file__).resolve().parents[3] / "scripts/installation/layout.py"
+INSTALLATION_LAYOUT_HELPER_SHA256 = "52e6bf44667e7e3f8d176164a76267bed7c8d9718cfcd4286e510658cf61e257"
+INSTALLATION_EFI_PATH = Path("/boot/efi")
+# Public sizes, hashes and modification times from the admitted shim/GRUB RPMs.
+INSTALLATION_EFI_FILES = (
+    ("EFI/BOOT/bootx64.efi", 1018992, "0b9a7492dcb168b00033d4ccc1edda816c9da3822fcb7e901cce72a017cf08fa", 1781509843),
+    ("EFI/BOOT/revocations.efi", 74128, "e24e036243e4d97dc6c446c5c6e7e6f57235a0cc5048537b3d54c8e857b8409d", 1781509848),
+    ("EFI/BOOT/grubx64.efi", 1383728, "08b51e2dc0be95bb124f0ab6d60544e2f81247da2b94b3f5169bb11bf78d77f3", 1788335074),
+)
 REQUIRED_RUNTIME_PACKAGES = (
     "photon-release",
     "rpm",
@@ -235,6 +246,18 @@ def _read_installation_mountinfo(path: Path = Path("/proc/self/mountinfo")) -> s
     return raw.decode("utf-8")
 
 
+def _installation_mount_rows() -> list[tuple[list[str], list[str]]]:
+    """Parse the existing bounded native mount table without reporting its contents."""
+    mounts = []
+    for row in _read_installation_mountinfo().splitlines():
+        before, separator, after = row.partition(" - ")
+        fields, filesystem_fields = before.split(), after.split()
+        if not separator or len(fields) < 6 or len(filesystem_fields) < 3:
+            raise ValueError("installation runtime mount table is malformed")
+        mounts.append((fields, filesystem_fields))
+    return mounts
+
+
 def verify_installation_runtime_metadata(filesystem_sha256: str) -> dict[str, bool]:
     """Verify native runtime metadata that shadows the admitted empty payload.
 
@@ -250,13 +273,7 @@ def verify_installation_runtime_metadata(filesystem_sha256: str) -> dict[str, bo
         raise ValueError("Photon filesystem runtime metadata profile is not admitted")
     from grp import getgrnam
 
-    mounts = []
-    for row in _read_installation_mountinfo().splitlines():
-        before, separator, after = row.partition(" - ")
-        fields, filesystem_fields = before.split(), after.split()
-        if not separator or len(fields) < 6 or len(filesystem_fields) < 3:
-            raise ValueError("installation runtime mount table is malformed")
-        mounts.append((fields, filesystem_fields))
+    mounts = _installation_mount_rows()
     for name, filesystem, mode in (("/proc", "proc", 0o555), ("/run", "tmpfs", 0o755)):
         metadata = Path(name).lstat()
         if (not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != mode
@@ -463,8 +480,71 @@ def verify_installation_rpcbind_metadata(rpcbind_sha256: str) -> dict[str, bool]
     return {"runtime_rpcbind_metadata_verified": True}
 
 
+def _verified_installation_layout() -> dict:
+    """Authenticate and reuse the installed-layout verifier before mount observation.
+
+    Compile only the checksum-bound shared helper bytes already read through the
+    root-owned no-follow policy reader; do not reopen an import pathname.
+    """
+    raw = _read_installation_tmpfiles(INSTALLATION_LAYOUT_HELPER_PATH, 0o644, 65536, "layout helper")
+    if hashlib.sha256(raw).hexdigest() != INSTALLATION_LAYOUT_HELPER_SHA256:
+        raise ValueError("installation layout helper checksum differs")
+    scope = {"__name__": "_verified_installation_layout"}
+    exec(compile(raw, str(INSTALLATION_LAYOUT_HELPER_PATH), "exec"), scope)
+    if not scope["installation_profile"]():
+        raise ValueError("installation profile is missing")
+    return scope["verify_layout"]()
+
+
+def verify_installation_efi_metadata(shim_sha256: str, grub_efi_sha256: str) -> dict[str, bool]:
+    """Verify native VFAT metadata and immutable bytes for the three boot files.
+
+    Args:
+        shim_sha256: Original shim RPM checksum admitted from the ISO.
+        grub_efi_sha256: Original GRUB EFI-image RPM checksum admitted from the ISO.
+
+    VFAT derives permissions from mount masks and stores modification times in
+    two-second units. Reuse recorded UUID mount checks, require the native masks,
+    and independently verify all packaged byte sequences and rounded times.
+    """
+    if shim_sha256 != INSTALLATION_SHIM_SHA256 or grub_efi_sha256 != INSTALLATION_GRUB_EFI_SHA256:
+        raise ValueError("EFI runtime metadata profile is not admitted")
+    layout = _verified_installation_layout()
+    if not any(item["target"] == "/boot/efi" and item["filesystem"] == "vfat" for item in layout["mounts"]):
+        raise ValueError("installation EFI filesystem differs from recorded layout")
+    mounts = _installation_mount_rows()
+    rows = [row for row in mounts if row[0][4] == "/boot/efi"]
+    if (len(rows) != 1 or rows[0][0][3] != "/" or rows[0][1][0] != "vfat"
+            or any(row[0][4].startswith("/boot/efi/") for row in mounts)):
+        raise ValueError("installation EFI mount identity differs")
+    options = rows[0][1][2].split(",")
+    for key, expected in (("fmask", "0022"), ("dmask", "0022")):
+        if [item for item in options if item.startswith(key + "=")] != [key + "=" + expected]:
+            raise ValueError("installation EFI mount permissions differ")
+    root = INSTALLATION_EFI_PATH.lstat()
+    if (not stat.S_ISDIR(root.st_mode) or stat.S_IMODE(root.st_mode) != 0o755
+            or root.st_uid or root.st_gid):
+        raise ValueError("installation EFI root metadata differs")
+    for name, size, checksum, modified in INSTALLATION_EFI_FILES:
+        path = INSTALLATION_EFI_PATH / name
+        before = path.lstat()
+        raw = _read_installation_tmpfiles(path, 0o755, size, "EFI file")
+        metadata = path.lstat()
+        stable_fields = ("st_dev", "st_ino", "st_mode", "st_nlink", "st_uid", "st_gid",
+                         "st_size", "st_mtime_ns", "st_ctime_ns")
+        if (any(getattr(before, name) != getattr(metadata, name) for name in stable_fields)
+                or not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                or stat.S_IMODE(metadata.st_mode) != 0o755 or metadata.st_uid or metadata.st_gid
+                or metadata.st_size != size or len(raw) != size or hashlib.sha256(raw).hexdigest() != checksum
+                or metadata.st_dev != root.st_dev
+                or metadata.st_mtime_ns != (modified // 2 * 2) * 1_000_000_000):
+            raise ValueError("installation EFI bytes or native timestamp differ")
+    return {"runtime_efi_metadata_verified": True}
+
+
 def verify_installation_metadata(
-    filesystem_sha256: str, systemd_sha256: str, audit_sha256: str, rpcbind_sha256: str
+    filesystem_sha256: str, systemd_sha256: str, audit_sha256: str, rpcbind_sha256: str,
+    shim_sha256: str, grub_efi_sha256: str
 ) -> dict[str, bool]:
     """Reuse the admitted native profiles before or after package comparison.
 
@@ -473,11 +553,14 @@ def verify_installation_metadata(
         systemd_sha256: Original Photon systemd RPM checksum.
         audit_sha256: Original Photon audit RPM checksum.
         rpcbind_sha256: Original Photon rpcbind RPM checksum.
+        shim_sha256: Original Photon shim RPM checksum.
+        grub_efi_sha256: Original Photon GRUB EFI-image RPM checksum.
     """
     result = verify_installation_runtime_metadata(filesystem_sha256)
     result.update(verify_installation_journal_metadata(systemd_sha256))
     result.update(verify_installation_audit_metadata(audit_sha256))
     result.update(verify_installation_rpcbind_metadata(rpcbind_sha256))
+    result.update(verify_installation_efi_metadata(shim_sha256, grub_efi_sha256))
     return result
 
 
