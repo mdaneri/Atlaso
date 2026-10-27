@@ -894,8 +894,15 @@ test("display escaping protects operator-controlled text", () => {
 
 test("management service worker precaches the reverse-proxy page asset", () => {
   const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
+  const template = fs.readFileSync("atlaso/app/templates/traffic_publishing.html", "utf8");
   assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}[1-9]\d*`;/);
-  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-17"/);
+  const templateAsset = template.match(/<script src="([^\"]*\/reverse-proxies\.js\?v=[^\"]+)" defer>/)?.[1];
+  const workerAsset = worker.match(/"(\/static\/reverse-proxies\.js\?v=[^\"]+)"/)?.[1];
+  const expectedAsset = "/static/reverse-proxies.js?v=reverse-proxy-autosave-1062-1";
+  assert.equal(templateAsset, expectedAsset);
+  assert.equal(workerAsset, expectedAsset);
+  assert.doesNotMatch(templateAsset, /issue-723-17/);
+  assert.doesNotMatch(workerAsset, /issue-723-17/);
 });
 
 function classListFor(classes) {
