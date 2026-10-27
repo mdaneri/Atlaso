@@ -10,6 +10,7 @@ import json
 import os
 import re
 import stat
+import sys
 import tarfile
 import zlib
 from pathlib import Path, PurePosixPath
@@ -56,6 +57,7 @@ def _expectation(kind):
         },
         "rpm": {
             "package_state_sha256": "5" * 64,
+            "filesystem_sha256": content_inspection.PHOTON_FILESYSTEM_SHA256,
             "allowed_inventory": _inventory({
                 "linux": ["6.1-1.ph5", "x86_64"],
                 "python3": ["3.14-2.ph5", "x86_64"],
@@ -102,6 +104,7 @@ def _report(kind, **changes):
             "package_state_verified": True,
             "runtime_proc_verified": True,
             "runtime_run_verified": True,
+            "runtime_login_metadata_verified": True,
             "runtime_media_directories_absent": 0,
         },
         "notices": {"notices_sha256": "a" * 64, "notice_inputs_verified": True},
@@ -158,6 +161,11 @@ def _prepare_fixture():
         }
         for name, version in (("linux", "6.1-1.ph5"), ("python3", "3.14-2.ph5"))
     ]
+    # The admitted binary is represented only by its public digest in this
+    # manifest fixture; prepare_content_inputs never reads RPM payload bytes.
+    records.append({"path": "rpms/filesystem.rpm", "sha256": content_inspection.PHOTON_FILESYSTEM_SHA256})
+    rpms.append({"file": "filesystem.rpm", "name": "filesystem", "version": "1.1-11.ph5", "architecture": "x86_64",
+                 "sha256": content_inspection.PHOTON_FILESYSTEM_SHA256})
     manifest = {
         "files": records,
         "packages": ["linux", "linux-firmware", "python3"],
@@ -259,6 +267,7 @@ def test_prepare_content_inputs_binds_expectations_to_admitted_files():
     ]
     allowed = json.loads(zlib.decompress(base64.b64decode(rpm["allowed_inventory"])))
     assert allowed == {
+        "filesystem": ["1.1-11.ph5", "x86_64"],
         "linux": ["6.1-1.ph5", "x86_64"],
         "python3": ["3.14-2.ph5", "x86_64"],
     }
@@ -279,6 +288,23 @@ def test_prepare_content_inputs_rejects_source_not_bound_to_manifest(tamper):
 
     with pytest.raises(ValueError, match="source differs"):
         content_inspection.prepare_content_inputs(base, manifest, sources)
+
+
+def test_prepare_content_inputs_refuses_unreviewed_filesystem_profile():
+    """A different authenticated RPM cannot inherit the known mutable profile."""
+    base, manifest, sources = _prepare_fixture()
+    next(item for item in manifest["files"] if item["path"] == "rpms/filesystem.rpm")["sha256"] = "0" * 64
+    next(item for item in manifest["rpm_inventory"] if item["name"] == "filesystem")["sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="reviewed runtime metadata profile"):
+        content_inspection.prepare_content_inputs(base, manifest, sources)
+
+
+def test_guest_program_refuses_unreviewed_filesystem_profile():
+    """Unknown runtime profiles stop preparation before any guest command exists."""
+    expected = _expectation("rpm")
+    expected["filesystem_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="runtime metadata profile is not admitted"):
+        content_inspection.guest_content_program(expected)
 
 
 @pytest.mark.parametrize("kind", content_inspection.KINDS)
@@ -326,6 +352,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"package_state_verified": False},
         {"runtime_proc_verified": False},
         {"runtime_run_verified": False},
+        {"runtime_login_metadata_verified": False},
         {"runtime_media_directories_absent": True},
         {"runtime_media_directories_absent": 3},
         {"installed_inventory": _inventory({"linux": ["wrong", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"]})},
@@ -334,7 +361,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"], "rogue": ["1.0", "noarch"]})},
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"]})},
     ],
-    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
+    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
 )
 def test_validate_content_report_rejects_unverified_rpm_closure(changes):
     """The installed RPM identities must satisfy the signed allowed closure."""
@@ -545,11 +572,11 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
         (
             b"filesystem\n",
             "filesystem",
-            "/usr/local/share/man/man8",
+            "/bin",
             -1,
             "system-rpm-files-package-"
             + hashlib.sha256(b"filesystem").hexdigest()
-            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/usr/local/share/man/man8')}-missing",
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/bin')}-missing",
         ),
     ],
     ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata", "fixed-missing-entry"],
@@ -630,6 +657,17 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     [
         (".M....... /proc\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
         ("", 0, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        ("SM5...GT. /var/log/btmp\nSM5...GT. /var/log/wtmp\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        ("SM5..UGT. /var/log/btmp\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("SM5...GTP /var/log/btmp\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("SM5...GT. /var/log/private-fixture\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("missing /var/log/btmp\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("SM5...GT. /var/log/btmp\n", 1, b"", "logmode", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        ("SM5...GT. /var/log/btmp\n", 1, b"", "loguid", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        ("SM5...GT. /var/log/btmp\n", 1, b"", "loggid", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        ("SM5...GT. /var/log/btmp\n", 1, b"", "loglink", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        ("SM5...GT. /var/log/btmp\n", 1, b"", "logsymlink", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        ("", 0, b"", "lograce", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
         ("missing /run/media/cdrom\nmissing /run/media/floppy\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
         ("missing /run/media/cdrom\n", 1, b"", "presentmedia", stat.S_IFDIR | 0o555, 0, 0, "files"),
         ("missing /run/media/other\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
@@ -665,7 +703,9 @@ def test_rpm_runtime_proc_check_retains_package_failures(
     outer = next(node for node in generated.body if isinstance(node, ast.Try))
     outer.body = [node for node in outer.body if not isinstance(node, ast.FunctionDef)
                   or node.name not in {"checked", "run", "read"}]
+    monkeypatch.setitem(sys.modules, "grp", SimpleNamespace(getgrnam=lambda name: SimpleNamespace(gr_gid=22)))
     namespace = {}
+    firmware_checked = False
     root = "/private-subroot" if mount == "subroot" else "/"
     filesystem = "tmpfs" if mount == "tmpfs" else "proc"
     mountinfo = f"28 1 0:5 {root} /proc rw,nosuid,nodev,noexec - {filesystem} proc rw\n"
@@ -686,6 +726,9 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         return Path(path), b"verified public helper bytes"
 
     def run(arguments, _timeout=60):
+        nonlocal firmware_checked
+        if "-V" in arguments and "linux-firmware" in arguments:
+            firmware_checked = True
         if "-Va" in arguments and returncode:
             raise namespace["PrivateCommandFailure"](SimpleNamespace(
                 stdout=rows.encode(), stderr=stderr, returncode=returncode
@@ -698,6 +741,13 @@ def test_rpm_runtime_proc_check_retains_package_failures(
 
     def lstat(path):
         name = path.as_posix()
+        if name in {"/var/log/btmp", "/var/log/wtmp"}:
+            native_mode = 0o660 if name.endswith("/btmp") else 0o664
+            if mount == "logmode":
+                native_mode = 0o666
+            entry_type = stat.S_IFLNK if mount == "logsymlink" else stat.S_IFREG
+            return SimpleNamespace(st_mode=entry_type | native_mode, st_nlink=2 if mount == "loglink" else 1,
+                                   st_uid=int(mount == "loguid"), st_gid=0 if mount == "loggid" or (mount == "lograce" and firmware_checked) else 22)
         if name == "/run":
             return SimpleNamespace(st_mode=stat.S_IFDIR | (0o700 if mount == "runmode" else 0o755), st_uid=int(mount == "runuid"), st_gid=0)
         if name in {"/run/media/cdrom", "/run/media/floppy"}:
@@ -724,6 +774,7 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         )
         assert report["runtime_proc_verified"] is True
         assert report["runtime_run_verified"] is True
+        assert report["runtime_login_metadata_verified"] is True
         assert report["runtime_media_directories_absent"] == rows.count("missing /run/media/")
         assert report["rpm_files_verified"] is True
 

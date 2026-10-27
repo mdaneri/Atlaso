@@ -15,6 +15,7 @@ from scripts import verify_virtualization_guest_wheel as wheel_verifier
 from scripts.installation.layout import PROFILE
 
 KINDS = ("assets", "python", "powercli", "rpm", "notices")
+PHOTON_FILESYSTEM_SHA256 = "7f5bba3e84f6eb50f6e5e311325089bc642549469d83793e0ba5f40d74ec6024"
 # Public-name diagnostics only, never RPM acceptance exceptions. These names
 # come from filesystem-1.1-11.ph5.x86_64.rpm, SHA-256
 # 7f5bba3e84f6eb50f6e5e311325089bc642549469d83793e0ba5f40d74ec6024.
@@ -134,6 +135,10 @@ RPM_DIAGNOSTIC_PATHS = (
     "/var/srv",
     "/var/tmp",
 )
+_RPM_METADATA_PATHS = {
+    "/bin", "/proc", "/root", "/run", "/run/lock", "/run/media/cdrom", "/run/media/floppy",
+    "/tmp", "/var/lock", "/var/log", "/var/log/btmp", "/var/log/wtmp", "/var/run", "/var/tmp",
+}
 SOURCE_MEMBERS = (
     "source/image/common/scripts/provision-atlaso.sh",
     "source/scripts/verify_virtualization_guest_wheel.py",
@@ -153,7 +158,7 @@ _EXPECTED_EXTRA = {
     "assets": {"environment_verifier_sha256", "source_digest", "source_file_count", "trust_names", "trust_digest", "omitted_sources", "deployed_file_count"},
     "python": {"software_verifier_sha256", "environment_verifier_sha256", "release_manifest_sha256", "version", "source_commit", "wheel_sha256"},
     "powercli": {"powercli_script_sha256", "powercli_lock_sha256", "module_count"},
-    "rpm": {"package_state_sha256", "allowed_inventory", "required_packages"},
+    "rpm": {"package_state_sha256", "allowed_inventory", "required_packages", "filesystem_sha256"},
     "notices": {"notice_generator_sha256", "notice_config_sha256", "notice_lock_sha256", "version"},
 }
 
@@ -232,6 +237,7 @@ def prepare_content_inputs(base: dict[str, Any], manifest: dict, sources: dict[s
     if not isinstance(rpms, list) or not 1 <= len(rpms) <= 1024 or not isinstance(packages, list):
         raise ValueError("content RPM inventory is missing or excessive")
     allowed = {}
+    filesystem_sha256 = ""
     for item in rpms:
         if (not isinstance(item, dict) or set(item) != {"file", "name", "version", "architecture", "sha256"}
                 or not _PACKAGE.fullmatch(str(item["name"])) or item["name"] in allowed
@@ -240,6 +246,10 @@ def prepare_content_inputs(base: dict[str, Any], manifest: dict, sources: dict[s
                 or files.get("rpms/" + str(item["file"])) != item["sha256"]):
             raise ValueError("content RPM identity differs from admitted files")
         allowed[item["name"]] = [item["version"], item["architecture"]]
+        if item["name"] == "filesystem":
+            filesystem_sha256 = item["sha256"]
+    if filesystem_sha256 != PHOTON_FILESYSTEM_SHA256:
+        raise ValueError("admitted Photon filesystem requires a reviewed runtime metadata profile")
     required = sorted(set(packages) - removed)
     if not required or not set(required) <= allowed.keys():
         raise ValueError("required runtime package set is incomplete")
@@ -270,7 +280,8 @@ def prepare_content_inputs(base: dict[str, Any], manifest: dict, sources: dict[s
         "powercli": {"powercli_script_sha256": files["source/image/common/powershell/provision-powercli.ps1"],
                      "powercli_lock_sha256": files[SOURCE_MEMBERS[2]], "module_count": len(lock["modules"])},
         "rpm": {"package_state_sha256": files["source/image/common/scripts/verify-photon-package-state.py"],
-                "allowed_inventory": _compressed(allowed), "required_packages": _compressed(required)},
+                "allowed_inventory": _compressed(allowed), "required_packages": _compressed(required),
+                "filesystem_sha256": filesystem_sha256},
         "notices": {"notice_generator_sha256": files["source/scripts/generate_third_party_notices.py"],
                     "notice_config_sha256": files["source/scripts/third_party_notices.json"],
                     "notice_lock_sha256": files["source/requirements-appliance.lock"], "version": base["version"]},
@@ -309,6 +320,8 @@ def _validate_expected(expected: dict[str, Any]) -> str:
     if kind == "powercli" and (type(expected["module_count"]) is not int or not 1 <= expected["module_count"] <= 1000):
         raise ValueError("content module count is invalid")
     if kind == "rpm":
+        if expected["filesystem_sha256"] != PHOTON_FILESYSTEM_SHA256:
+            raise ValueError("Photon filesystem runtime metadata profile is not admitted")
         allowed = _package_inventory(_decode_inventory(expected["allowed_inventory"]))
         required = _decode_inventory(expected["required_packages"])
         if (not isinstance(required, list) or not required or any(not isinstance(name, str) for name in required)
@@ -380,7 +393,8 @@ def run(args,timeout=60):
                          repr(str(site_root) if site_root is not None else None) + "\nprofile_data=" + repr(PROFILE.encode()) + "\n")
     if kind == "rpm":
         prelude += _RPM_RUNTIME_CHECK
-        declarations += "fixed_rpm_paths=" + repr(RPM_DIAGNOSTIC_PATHS) + "\n"
+        declarations += "fixed_rpm_paths=" + repr({path: index for index, path in enumerate(RPM_DIAGNOSTIC_PATHS)
+                                                   if path in _RPM_METADATA_PATHS}) + "\n"
     body = 'stage="system-' + kind + '"\n' + prelude + declarations + _PROGRAMS[kind]
     body += '\nr.update(schema=1,kind=e["kind"],iso_sha256=e["iso_sha256"])\nx=json.dumps(r,sort_keys=True,separators=(",",":")).encode()\nif len(x)>4096: raise ValueError()\nprint("ATLASO-INSPECTION:"+base64.b64encode(x).decode()+":END")'
     program = 'try:\n' + textwrap.indent(body, " ") + '\nexcept BaseException:\n print("ATLASO-INSPECTION-FAILED:"+stage)'
@@ -406,7 +420,7 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
         "assets": {"source_digest", "source_file_count", "deployed_files", "trust_digest", "trust_keys"},
         "python": {"python_payload_sha256", "python_files", "python_distributions", "python_external_files"},
         "powercli": {"powercli_lock_sha256", "module_count"},
-        "rpm": {"installed_inventory", "firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_media_directories_absent"},
+        "rpm": {"installed_inventory", "firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_media_directories_absent", "runtime_login_metadata_verified"},
         "notices": {"notices_sha256", "notice_inputs_verified"},
     }[kind]
     if (not isinstance(value, dict) or set(value) != _COMMON_KEYS | keys or type(value.get("schema")) is not int or value["schema"] != 1
@@ -435,7 +449,7 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
         if (not isinstance(actual, dict) or not 1 <= len(actual) <= 1024 or not isinstance(allowed, dict)
                 or not isinstance(required, list) or not set(required) <= actual.keys()
                 or any(name not in allowed or identity != allowed[name] for name, identity in actual.items())
-                or any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified"))
+                or any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_login_metadata_verified"))
                 or type(value["runtime_media_directories_absent"]) is not int or not 0 <= value["runtime_media_directories_absent"] <= 2):
             raise ValueError("installed RPM closure or file verification differs from media")
         value = {key: field for key, field in value.items() if key != "installed_inventory"}
@@ -450,13 +464,20 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
 # its mode-only RPM discrepancy may be reconciled, never package file changes.
 # The same signed RPM contains only empty directories for /run/media/cdrom and
 # /run/media/floppy. Their absence is runtime state only after proving /run tmpfs.
+# Native systemd-257.13-5.ph5 tmpfiles.d/var.conf manages the initially empty
+# wtmp/btmp files as root:utmp, modes 0664/0660. Their login records are mutable.
 _RPM_RUNTIME_CHECK = '''def verify_runtime():
+ from grp import getgrnam
  mounts=read(Path("/proc/self/mountinfo"),1048576).decode().splitlines()
  for path,fs,mode in (("/proc","proc",0o555),("/run","tmpfs",0o755)):
   z=Path(path).lstat()
   if not stat.S_ISDIR(z.st_mode) or stat.S_IMODE(z.st_mode)!=mode or z.st_uid or z.st_gid: raise ValueError()
   rows=[v.split(" - ",1) for v in mounts if v.split()[4]==path]
   if len(rows)!=1 or rows[0][0].split()[3]!="/" or rows[0][1].split()[0]!=fs: raise ValueError()
+ gid=getgrnam("utmp").gr_gid
+ for path,mode in (("/var/log/btmp",0o660),("/var/log/wtmp",0o664)):
+  z=Path(path).lstat()
+  if not stat.S_ISREG(z.st_mode) or z.st_nlink!=1 or stat.S_IMODE(z.st_mode)!=mode or z.st_uid or z.st_gid!=gid: raise ValueError()
  return True
 '''
 
@@ -547,6 +568,7 @@ except PrivateCommandFailure as failure:
  remaining=[]
  for line in lines:
   if re.fullmatch(r"\.M\.{7}\s+/proc",line): continue
+  if re.fullmatch(r"[S.][M.][5.]\.{3}[G.][T.]\.\s+(/var/log/(?:btmp|wtmp))",line): continue
   m=re.fullmatch(r"missing\s+(/run/media/(?:cdrom|floppy))",line)
   if m:
    try: Path(m[1]).lstat()
@@ -564,7 +586,7 @@ except PrivateCommandFailure as failure:
   if valid_owners:
    stage+="-package-"+hashlib.sha256(valid_owners[0].encode("utf-8")).hexdigest()
    if path in fixed_rpm_paths:
-    entry="-entry"+str(fixed_rpm_paths.index(path))
+    entry="-entry"+str(fixed_rpm_paths[path])
     try: z=Path(path).lstat()
     except FileNotFoundError: stage+=entry+"-missing"
     else:
@@ -574,7 +596,9 @@ except PrivateCommandFailure as failure:
  if remaining: raise
 stage="system-rpm-firmware"
 run(["rpm","--noplugins","-V","--noscripts","--nodeps","linux-firmware"],60)
-r=dict(installed_inventory=base64.b64encode(zlib.compress(json.dumps(installed,sort_keys=True,separators=(",", ":")).encode(),9)).decode(),firmware_verified=True,rpm_files_verified=True,package_state_verified=True,runtime_proc_verified=proc_verified,runtime_run_verified=proc_verified,runtime_media_directories_absent=len(absent))
+stage="system-rpm-runtime"
+proc_verified=verify_runtime()
+r=dict(installed_inventory=base64.b64encode(zlib.compress(json.dumps(installed,sort_keys=True,separators=(",", ":")).encode(),9)).decode(),firmware_verified=True,rpm_files_verified=True,package_state_verified=True,runtime_proc_verified=proc_verified,runtime_run_verified=proc_verified,runtime_media_directories_absent=len(absent),runtime_login_metadata_verified=proc_verified)
 ''',
     "assets": r'''
 stage="system-assets-profile"

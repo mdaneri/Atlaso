@@ -321,7 +321,13 @@ file digests, additional verification flags, command errors and stderr still fai
 The two empty media-mount directories declared by the admitted Photon filesystem RPM, `/run/media/cdrom` and
 `/run/media/floppy`, may be absent after reboot only when `/run` is independently proven to be one root-owned tmpfs
 with filesystem root `/` and mode `0755`, and each reported directory is absent at inspection. The report records this
-absence count. Other missing paths and changes to existing entries still fail; no packaged file bytes are omitted.
+absence count. Other missing paths and changes to existing entries still fail.
+The profile is bound to the exact admitted filesystem RPM checksum; a different RPM requires review before inspection.
+Its initially empty `btmp` and `wtmp` login records are mutable. The inspector follows Photon's native systemd tmpfiles
+policy: both must be ordinary, single-link files owned by root and group `utmp`, with modes `0660` and `0664`
+respectively. Their record contents remain private. Only size, digest, mode, group and modification-time discrepancies
+for those two records are reconciled after that metadata proof; missing records, changed owners, links and other paths
+still fail. Immutable packaged files retain their byte and metadata comparison.
 
 The Python check follows the wheel [installation schemes](https://packaging.python.org/en/latest/specifications/binary-distribution-format/).
 It checks relocated files as well as `site-packages` and permits only the declared `#!python`/`#!pythonw` interpreter
