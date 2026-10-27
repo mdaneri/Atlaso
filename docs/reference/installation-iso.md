@@ -337,6 +337,12 @@ still fail. Immutable packaged files retain their byte and metadata comparison.
 The same RPM's post-transaction script sets `/var/mail` to mode `1755`, uid `0`, gid `34`, while its archive declares
 mode `1775`. The shared verifier requires exactly that native post-transaction directory metadata before reconciling
 its mode-only RPM discrepancy. Changed owners, groups, entry types or other verification flags still fail.
+The systemd journal-directory profile is separately bound to the exact admitted systemd RPM and its native
+`/usr/lib/tmpfiles.d/systemd.conf` checksum. That policy must remain a root-owned, single-link ordinary file with
+mode `0644`. Before and after package verification, `/var/log/journal` must be a directory owned by root and
+`systemd-journal`, with mode `2755`, exactly as the native tmpfiles rule specifies. Only mode and group discrepancies
+for that directory are reconciled after this proof. Missing entries, owner or digest changes, descendants, other
+verification flags and different policy bytes still fail. Journal contents remain private and are not inspected.
 The shared Photon verifier is authenticated against the original media and must match the host's supported contract.
 A changed verifier requires a rebuilt development ISO and fresh receipt-owned installation; do not replace it in an
 old VM to force acceptance. Keep the older results bound to their original media.

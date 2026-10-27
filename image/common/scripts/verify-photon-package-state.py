@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import hashlib
 import os
 import re
 import stat
@@ -15,6 +16,12 @@ from pathlib import Path
 PACKAGE_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9+._:-]*\Z")
 PHOTON_DEFAULT_DISTROVERPKG = "photon-release"
 INSTALLATION_FILESYSTEM_SHA256 = "7f5bba3e84f6eb50f6e5e311325089bc642549469d83793e0ba5f40d74ec6024"
+INSTALLATION_SYSTEMD_SHA256 = "2ef0275f25c9b782e7f3cbbaaa5bf0d9037149b5253630c6db27e155c461618f"
+INSTALLATION_SYSTEMD_TMPFILES_PATH = Path("/usr/lib/tmpfiles.d/systemd.conf")
+INSTALLATION_SYSTEMD_TMPFILES_SHA256 = "68e4c097e33b30c731a359cb3af86693e5f854c53d3d6bb5ec9eb7d17f04e585"
+INSTALLATION_SYSTEMD_JOURNAL_PATH = Path("/var/log/journal")
+INSTALLATION_SYSTEMD_JOURNAL_TMPFILES_ROW = "z /var/log/journal 2755 root systemd-journal - -"
+INSTALLATION_SYSTEMD_TMPFILES_MAX_BYTES = 1024 * 1024
 REQUIRED_RUNTIME_PACKAGES = (
     "photon-release",
     "rpm",
@@ -262,6 +269,118 @@ def verify_installation_runtime_metadata(filesystem_sha256: str) -> dict[str, bo
         raise ValueError("installation mail spool metadata differs from native post-transaction policy")
     return {"runtime_proc_verified": True, "runtime_run_verified": True,
             "runtime_login_metadata_verified": True, "runtime_mail_spool_verified": True}
+
+
+def _read_installation_systemd_tmpfiles() -> bytes:
+    """Read the admitted tmpfiles policy through a bounded no-follow handle.
+
+    The file is public package policy, not guest journal data. Its root-owned
+    ordinary-file metadata and pinned bytes are checked before use.
+    """
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise ValueError("installation systemd tmpfiles policy cannot be opened without following links")
+    try:
+        descriptor = os.open(INSTALLATION_SYSTEMD_TMPFILES_PATH, os.O_RDONLY | nofollow)
+    except OSError as exc:
+        raise ValueError("installation systemd tmpfiles policy is unavailable") from exc
+    try:
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = -1
+            metadata = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_nlink != 1
+                or metadata.st_uid != 0
+                or metadata.st_gid != 0
+                or stat.S_IMODE(metadata.st_mode) != 0o644
+                or not 0 < metadata.st_size <= INSTALLATION_SYSTEMD_TMPFILES_MAX_BYTES
+            ):
+                raise ValueError("installation systemd tmpfiles policy metadata differs")
+            raw = stream.read(INSTALLATION_SYSTEMD_TMPFILES_MAX_BYTES + 1)
+            after = os.fstat(stream.fileno())
+            before_identity = (
+                metadata.st_dev,
+                metadata.st_ino,
+                metadata.st_mode,
+                metadata.st_nlink,
+                metadata.st_uid,
+                metadata.st_gid,
+                metadata.st_size,
+                metadata.st_mtime_ns,
+                metadata.st_ctime_ns,
+            )
+            after_identity = (
+                after.st_dev,
+                after.st_ino,
+                after.st_mode,
+                after.st_nlink,
+                after.st_uid,
+                after.st_gid,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            )
+            if (
+                len(raw) != metadata.st_size
+                or len(raw) > INSTALLATION_SYSTEMD_TMPFILES_MAX_BYTES
+                or before_identity != after_identity
+            ):
+                raise ValueError("installation systemd tmpfiles policy changed while it was read")
+            return raw
+    except OSError as exc:
+        raise ValueError("installation systemd tmpfiles policy could not be read") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def verify_installation_journal_metadata(systemd_sha256: str) -> dict[str, bool]:
+    """Verify only the native systemd-owned metadata on the journal directory.
+
+    Args:
+        systemd_sha256: Original checksum admitted from the ISO RPM manifest.
+
+    The fixed systemd RPM ships an empty journal directory. Its pinned tmpfiles
+    policy creates that directory as root:systemd-journal mode ``2755``. No
+    journal children or contents are opened or inspected.
+    """
+    if systemd_sha256 != INSTALLATION_SYSTEMD_SHA256:
+        raise ValueError("systemd runtime metadata profile is not admitted")
+    raw = _read_installation_systemd_tmpfiles()
+    if hashlib.sha256(raw).hexdigest() != INSTALLATION_SYSTEMD_TMPFILES_SHA256:
+        raise ValueError("installation systemd tmpfiles policy checksum differs")
+    try:
+        lines = raw.decode("utf-8").splitlines()
+    except UnicodeError as exc:
+        raise ValueError("installation systemd tmpfiles policy is not UTF-8") from exc
+    journal_rows = [
+        fields
+        for line in lines
+        if (fields := line.split())
+        and len(fields) > 1
+        and fields[0] == "z"
+        and fields[1] == "/var/log/journal"
+    ]
+    if journal_rows != [INSTALLATION_SYSTEMD_JOURNAL_TMPFILES_ROW.split()]:
+        raise ValueError("installation systemd journal tmpfiles policy differs")
+    try:
+        from grp import getgrnam
+
+        journal_gid = getgrnam("systemd-journal").gr_gid
+        metadata = INSTALLATION_SYSTEMD_JOURNAL_PATH.lstat()
+    except (KeyError, OSError) as exc:
+        raise ValueError("installation systemd journal directory metadata is unavailable") from exc
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_IMODE(metadata.st_mode) != 0o2755
+        or metadata.st_uid != 0
+        or metadata.st_gid != journal_gid
+    ):
+        raise ValueError(
+            "installation systemd journal directory metadata differs from native tmpfiles policy"
+        )
+    return {"runtime_journal_metadata_verified": True}
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

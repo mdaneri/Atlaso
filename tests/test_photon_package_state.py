@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import os
 import stat
@@ -624,3 +625,276 @@ def test_mountinfo_reader_rejects_links(tmp_path: Path, link_kind: str):
 
     with pytest.raises((OSError, ValueError)):
         verifier._read_installation_mountinfo(linked)
+
+
+def _journal_policy_fixture(verifier, monkeypatch, tmp_path: Path):
+    """Prepare public native-policy and journal metadata fixtures.
+
+    Args:
+        verifier: Loaded Photon package-state verifier module.
+        monkeypatch: Pytest fixture for controlled dependency replacement.
+        tmp_path: Pytest temporary directory for isolated fixture files.
+    """
+    policy = tmp_path / "systemd.conf"
+    policy_bytes = (
+        "a+ /var/log/journal - - - - -\n"
+        "z /var/log/journal/%m 2755 root systemd-journal - -\n"
+        "z /var/log/journal/%m/system.journal 0640 root systemd-journal - -\n"
+        + verifier.INSTALLATION_SYSTEMD_JOURNAL_TMPFILES_ROW
+        + "\n"
+    ).encode("utf-8")
+    policy.write_bytes(policy_bytes)
+    journal = tmp_path / "journal"
+    journal.mkdir()
+    monkeypatch.setattr(verifier, "INSTALLATION_SYSTEMD_TMPFILES_PATH", policy)
+    monkeypatch.setattr(verifier, "INSTALLATION_SYSTEMD_JOURNAL_PATH", journal)
+    monkeypatch.setattr(
+        verifier,
+        "INSTALLATION_SYSTEMD_TMPFILES_SHA256",
+        hashlib.sha256(policy_bytes).hexdigest(),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "grp",
+        SimpleNamespace(
+            getgrnam=lambda name: SimpleNamespace(gr_gid=190)
+            if name == "systemd-journal"
+            else (_ for _ in ()).throw(KeyError(name))
+        ),
+    )
+    return policy, policy_bytes, journal
+
+
+def _journal_directory_metadata(monkeypatch, journal: Path, *, mode=None, uid=0, gid=190):
+    """Supply controlled lstat metadata for only the journal directory.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing Path.lstat.
+        journal: Exact fixture directory checked by the verifier.
+        mode: Optional file type and permission bits to expose.
+        uid: Owner id to expose.
+        gid: Group id to expose.
+    """
+    original_lstat = Path.lstat
+    metadata = SimpleNamespace(
+        st_mode=stat.S_IFDIR | 0o2755 if mode is None else mode,
+        st_uid=uid,
+        st_gid=gid,
+    )
+
+    def fake_lstat(path: Path):
+        """Return fixture metadata only for the selected journal path.
+
+        Args:
+            path: Filesystem path being inspected.
+        """
+        if path == journal:
+            return metadata
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", fake_lstat)
+    return metadata
+
+
+def _root_owned_policy_stat(real_metadata, *, mode=None, uid=0, gid=0, size=None):
+    """Return synthetic metadata for the open policy file.
+
+    Args:
+        real_metadata: Actual stat result used for stable file identity fields.
+        mode: Optional file type and permission bits to expose.
+        uid: Owner id to expose.
+        gid: Group id to expose.
+        size: Optional file size to expose.
+    """
+    return SimpleNamespace(
+        st_dev=real_metadata.st_dev,
+        st_ino=real_metadata.st_ino,
+        st_mode=stat.S_IFREG | 0o644 if mode is None else mode,
+        st_nlink=real_metadata.st_nlink,
+        st_uid=uid,
+        st_gid=gid,
+        st_size=real_metadata.st_size if size is None else size,
+        st_mtime_ns=real_metadata.st_mtime_ns,
+        st_ctime_ns=real_metadata.st_ctime_ns,
+    )
+
+
+def _enable_policy_stat_overrides(monkeypatch, verifier, *, mode=None, uid=0, gid=0, size=None):
+    """Present deterministic root-owned policy metadata without host chown.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        verifier: Loaded Photon package-state verifier module.
+        mode: Optional file type and permission bits to expose.
+        uid: Owner id to expose.
+        gid: Group id to expose.
+        size: Optional file size to expose.
+    """
+    original_fstat = verifier.os.fstat
+
+    def fake_fstat(descriptor: int):
+        """Return deterministic policy metadata for the fixture descriptor.
+
+        Args:
+            descriptor: Open policy file descriptor.
+        """
+        return _root_owned_policy_stat(
+            original_fstat(descriptor), mode=mode, uid=uid, gid=gid, size=size
+        )
+
+    monkeypatch.setattr(verifier.os, "fstat", fake_fstat)
+
+
+def test_installation_journal_metadata_accepts_native_policy_and_directory(
+    monkeypatch, tmp_path: Path
+):
+    """Accept the pinned tmpfiles rule and root-owned 2755 journal directory.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+    """
+    if not getattr(os, "O_NOFOLLOW", 0):
+        pytest.skip("host does not provide an O_NOFOLLOW open flag")
+    verifier = load_verifier()
+    _policy, _policy_bytes, journal = _journal_policy_fixture(
+        verifier, monkeypatch, tmp_path
+    )
+    _enable_policy_stat_overrides(monkeypatch, verifier)
+    _journal_directory_metadata(monkeypatch, journal)
+
+    assert verifier.verify_installation_journal_metadata(
+        verifier.INSTALLATION_SYSTEMD_SHA256
+    ) == {"runtime_journal_metadata_verified": True}
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "bytes",
+        "directory",
+        "symlink",
+        "hardlink",
+        "mode",
+        "owner",
+        "group",
+        "size",
+    ],
+)
+def test_installation_journal_metadata_rejects_policy_file_drift(
+    monkeypatch, tmp_path: Path, mutation: str
+):
+    """Reject changed or unsafe public native tmpfiles policy files.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+        mutation: Policy file defect to exercise.
+    """
+    if not getattr(os, "O_NOFOLLOW", 0):
+        pytest.skip("host does not provide an O_NOFOLLOW open flag")
+    verifier = load_verifier()
+    policy, _policy_bytes, journal = _journal_policy_fixture(
+        verifier, monkeypatch, tmp_path
+    )
+    _journal_directory_metadata(monkeypatch, journal)
+    if mutation == "bytes":
+        policy.write_bytes(b"z /var/log/journal 0700 root root - -\n")
+    elif mutation == "directory":
+        policy.unlink()
+        policy.mkdir()
+    elif mutation == "symlink":
+        policy.unlink()
+        policy.symlink_to(tmp_path / "missing-target")
+    elif mutation == "hardlink":
+        os.link(policy, tmp_path / "policy-link")
+    elif mutation in {"mode", "owner", "group", "size"}:
+        if mutation == "size":
+            _enable_policy_stat_overrides(
+                monkeypatch,
+                verifier,
+                size=verifier.INSTALLATION_SYSTEMD_TMPFILES_MAX_BYTES + 1,
+            )
+        else:
+            mode = stat.S_IFREG | 0o600 if mutation == "mode" else None
+            uid = 1000 if mutation == "owner" else 0
+            gid = 1000 if mutation == "group" else 0
+            _enable_policy_stat_overrides(
+                monkeypatch, verifier, mode=mode, uid=uid, gid=gid
+            )
+
+    with pytest.raises(ValueError):
+        verifier.verify_installation_journal_metadata(
+            verifier.INSTALLATION_SYSTEMD_SHA256
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["mode", "type", "owner", "group", "missing"],
+)
+def test_installation_journal_metadata_rejects_directory_drift(
+    monkeypatch, tmp_path: Path, mutation: str
+):
+    """Reject journal directory type, mode, owner, group, or presence drift.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+        mutation: Journal directory defect to exercise.
+    """
+    verifier = load_verifier()
+    _policy, policy_bytes, journal = _journal_policy_fixture(
+        verifier, monkeypatch, tmp_path
+    )
+    monkeypatch.setattr(verifier, "_read_installation_systemd_tmpfiles", lambda: policy_bytes)
+    if mutation == "missing":
+        original_lstat = Path.lstat
+
+        def missing_lstat(path: Path):
+            """Report the journal fixture missing while preserving other paths.
+
+            Args:
+                path: Filesystem path being inspected.
+            """
+            if path == journal:
+                raise FileNotFoundError(path)
+            return original_lstat(path)
+
+        monkeypatch.setattr(Path, "lstat", missing_lstat)
+    else:
+        mode = stat.S_IFREG | 0o2755 if mutation == "type" else None
+        uid = 1000 if mutation == "owner" else 0
+        gid = 191 if mutation == "group" else 190
+        if mutation == "mode":
+            mode = stat.S_IFDIR | 0o755
+        _journal_directory_metadata(
+            monkeypatch, journal, mode=mode, uid=uid, gid=gid
+        )
+
+    with pytest.raises(ValueError):
+        verifier.verify_installation_journal_metadata(
+            verifier.INSTALLATION_SYSTEMD_SHA256
+        )
+
+
+def test_installation_journal_metadata_rejects_unknown_systemd_before_reads(
+    monkeypatch,
+):
+    """Reject unreviewed systemd package identity before policy or path reads.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
+    verifier = load_verifier()
+    reads = []
+
+    def unexpected_policy_read() -> bytes:
+        """Record that the guarded policy read was attempted."""
+        reads.append(True)
+        raise AssertionError("unreviewed systemd package caused a policy read")
+
+    monkeypatch.setattr(verifier, "_read_installation_systemd_tmpfiles", unexpected_policy_read)
+    with pytest.raises(ValueError, match="profile is not admitted"):
+        verifier.verify_installation_journal_metadata("0" * 64)
+    assert reads == []

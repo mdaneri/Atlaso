@@ -68,12 +68,14 @@ def _expectation(kind):
         "rpm": {
             "package_state_sha256": "5" * 64,
             "filesystem_sha256": content_inspection.PHOTON_FILESYSTEM_SHA256,
+            "systemd_sha256": content_inspection.PHOTON_SYSTEMD_SHA256,
             "allowed_inventory": _inventory({
                 "linux": ["6.1-1.ph5", "x86_64"],
                 "python3": ["3.14-2.ph5", "x86_64"],
                 "optional-tool": ["1.0-1.ph5", "noarch"],
                 "pip": ["26.2.1-1.ph5", "noarch"],
                 "filesystem": ["1.1-11.ph5", "x86_64"],
+                "systemd": ["257.13-5.ph5", "x86_64"],
             }),
             "required_packages": _inventory(["linux", "python3"]),
         },
@@ -121,6 +123,7 @@ def _report(kind, **changes):
             "runtime_run_verified": True,
             "runtime_login_metadata_verified": True,
             "runtime_mail_spool_verified": True,
+            "runtime_journal_metadata_verified": True,
             "runtime_media_directories_absent": 0,
         },
         "notices": {"notices_sha256": "a" * 64, "notice_inputs_verified": True},
@@ -137,7 +140,8 @@ def _runtime_fixture_helper():
     """Return only declared runtime proof fields for unrelated adapter fixtures."""
     fields = {name: True for name in ("runtime_proc_verified", "runtime_run_verified",
                                       "runtime_login_metadata_verified", "runtime_mail_spool_verified")}
-    return SimpleNamespace(verify_installation_runtime_metadata=lambda _checksum: dict(fields))
+    return SimpleNamespace(verify_installation_runtime_metadata=lambda _checksum: dict(fields),
+                           verify_installation_journal_metadata=lambda _checksum: {"runtime_journal_metadata_verified": True})
 
 
 def _decode_guest_program(command):
@@ -193,6 +197,9 @@ def _prepare_fixture():
     records.append({"path": "rpms/filesystem.rpm", "sha256": content_inspection.PHOTON_FILESYSTEM_SHA256})
     rpms.append({"file": "filesystem.rpm", "name": "filesystem", "version": "1.1-11.ph5", "architecture": "x86_64",
                  "sha256": content_inspection.PHOTON_FILESYSTEM_SHA256})
+    records.append({"path": "rpms/systemd.rpm", "sha256": content_inspection.PHOTON_SYSTEMD_SHA256})
+    rpms.append({"file": "systemd.rpm", "name": "systemd", "version": "257.13-5.ph5", "architecture": "x86_64",
+                 "sha256": content_inspection.PHOTON_SYSTEMD_SHA256})
     manifest = {
         "files": records,
         "packages": ["linux", "linux-firmware", "python3"],
@@ -314,6 +321,7 @@ def test_prepare_content_inputs_binds_expectations_to_admitted_files():
         "filesystem": ["1.1-11.ph5", "x86_64"],
         "linux": ["6.1-1.ph5", "x86_64"],
         "python3": ["3.14-2.ph5", "x86_64"],
+        "systemd": ["257.13-5.ph5", "x86_64"],
     }
     assert expectations[0]["source_file_count"] == 10
     assert expectations[2]["powercli_lock_sha256"] == hashlib.sha256(
@@ -338,19 +346,29 @@ def test_prepare_content_inputs_rejects_source_not_bound_to_manifest(tamper):
         content_inspection.prepare_content_inputs(base, manifest, sources)
 
 
-def test_prepare_content_inputs_refuses_unreviewed_filesystem_profile():
-    """A different authenticated RPM cannot inherit the known mutable profile."""
+@pytest.mark.parametrize("package", ["filesystem", "systemd"])
+def test_prepare_content_inputs_refuses_unreviewed_runtime_profile(package):
+    """A different authenticated RPM cannot inherit the known mutable profile.
+
+    Args:
+        package: Package whose native runtime metadata profile is changed.
+    """
     base, manifest, sources = _prepare_fixture()
-    next(item for item in manifest["files"] if item["path"] == "rpms/filesystem.rpm")["sha256"] = "0" * 64
-    next(item for item in manifest["rpm_inventory"] if item["name"] == "filesystem")["sha256"] = "0" * 64
+    next(item for item in manifest["files"] if item["path"] == f"rpms/{package}.rpm")["sha256"] = "0" * 64
+    next(item for item in manifest["rpm_inventory"] if item["name"] == package)["sha256"] = "0" * 64
     with pytest.raises(ValueError, match="reviewed runtime metadata profile"):
         content_inspection.prepare_content_inputs(base, manifest, sources)
 
 
-def test_guest_program_refuses_unreviewed_filesystem_profile():
-    """Unknown runtime profiles stop preparation before any guest command exists."""
+@pytest.mark.parametrize("package", ["filesystem", "systemd"])
+def test_guest_program_refuses_unreviewed_runtime_profile(package):
+    """Unknown runtime profiles stop preparation before any guest command exists.
+
+    Args:
+        package: Package whose native runtime metadata profile is changed.
+    """
     expected = _expectation("rpm")
-    expected["filesystem_sha256"] = "0" * 64
+    expected[f"{package}_sha256"] = "0" * 64
     with pytest.raises(ValueError, match="runtime metadata profile is not admitted"):
         content_inspection.guest_content_program(expected)
 
@@ -451,6 +469,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"runtime_run_verified": False},
         {"runtime_login_metadata_verified": False},
         {"runtime_mail_spool_verified": False},
+        {"runtime_journal_metadata_verified": False},
         {"runtime_media_directories_absent": True},
         {"runtime_media_directories_absent": 3},
         {"installed_inventory": _inventory({"linux": ["wrong", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"]})},
@@ -459,7 +478,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"], "rogue": ["1.0", "noarch"]})},
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"]})},
     ],
-    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "runtime-mail-spool", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
+    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "runtime-mail-spool", "runtime-journal-metadata", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
 )
 def test_validate_content_report_rejects_unverified_rpm_closure(changes):
     """The installed RPM identities must satisfy the signed allowed closure.
@@ -854,6 +873,15 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     ("rows", "returncode", "stderr", "mount", "mode", "uid", "gid", "failure"),
     [
         (".M....... /proc\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        (".M....G.. /var/log/journal\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        (".M....... /var/log/journal\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        ("......G.. /var/log/journal\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        (".M....G.. /var/log/journal\n", 1, b"", "journalrace", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        (".M5...G.. /var/log/journal\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        (".M...UG.. /var/log/journal\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        (".M....G.. /var/log/journal/remote\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("missing /var/log/journal\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        (".M....G.. /var/log/journal\n", 1, b"private-error", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         ("", 0, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
         ("SM5...GT. /var/log/btmp\nSM5...GT. /var/log/wtmp\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
         ("SM5..UGT. /var/log/btmp\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
@@ -997,6 +1025,21 @@ def test_rpm_runtime_proc_check_retains_package_failures(
 
     monkeypatch.setattr(Path, "lstat", lstat)
     monkeypatch.setattr(helper, "_read_installation_mountinfo", lambda: mountinfo)
+    journal_checks = []
+
+    def verify_journal(checksum):
+        """Return or reject the native policy boundary for this generated command.
+
+        Args:
+            checksum: Media-admitted systemd package checksum.
+        """
+        assert checksum == content_inspection.PHOTON_SYSTEMD_SHA256
+        journal_checks.append(checksum)
+        if mount == "journalrace" and firmware_checked:
+            raise ValueError("private journal policy drift")
+        return {"runtime_journal_metadata_verified": True}
+
+    monkeypatch.setattr(helper, "verify_installation_journal_metadata", verify_journal)
     namespace.update(read=read, checked=checked, run=run, load=lambda *_args: helper)
     with contextlib.redirect_stdout(io.StringIO()) as output:
         exec(compile(ast.Module(body=[outer], type_ignores=[]), "<rpm-proc-fixture>", "exec"), namespace)
@@ -1015,6 +1058,8 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         assert report["runtime_run_verified"] is True
         assert report["runtime_login_metadata_verified"] is True
         assert report["runtime_mail_spool_verified"] is True
+        assert report["runtime_journal_metadata_verified"] is True
+        assert len(journal_checks) == 2
         assert report["runtime_media_directories_absent"] == rows.count("missing /run/media/")
         assert report["rpm_files_verified"] is True
 
@@ -1029,6 +1074,7 @@ def test_rpm_diagnostic_packages_returns_exact_source_inventory_names():
         "optional-tool",
         "pip",
         "python3",
+        "systemd",
     ]
 
 
