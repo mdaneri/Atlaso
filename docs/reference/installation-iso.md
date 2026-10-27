@@ -353,6 +353,9 @@ For an RPM file failure, a package identifier can be reported only after its nam
 The identifier hashes that public package name. Fixed public filesystem entries can also be identified by their index
 in the checked-in public path registry, entry type and permission mode. Arbitrary paths, file contents and raw
 verification errors stay private, and the check still fails.
+Known entries may also include the nine fixed RPM verification flags. The RPM command uses Python's standard Base85
+transport to keep the complete public registry within the existing console limit; encoded data is checked for safe
+quoting, and reports retain their existing Base64 format. Other inspection commands retain their existing transport.
 
 Use `-CollisionSuffix inspection-a` and `-CollisionSuffix inspection-b` for two fresh installations in separate
 canonical VM directories. The wrappers reuse the shared identity helper to preserve the PR number while giving each

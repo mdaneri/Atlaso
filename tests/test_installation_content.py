@@ -9,6 +9,7 @@ import io
 import json
 import os
 import re
+import shlex
 import stat
 import sys
 import tarfile
@@ -119,9 +120,9 @@ def _report(kind, **changes):
 
 def _decode_guest_program(command):
     """Decode the bounded source embedded in a generated guest command."""
-    compressed = re.search(r'b64decode\("([A-Za-z0-9+/=]+)"\)', command)
+    compressed = re.search(r'(b64|b85)decode\("([^"\r\n]+)"\)', command)
     assert compressed is not None
-    return zlib.decompress(base64.b64decode(compressed.group(1))).decode()
+    return zlib.decompress(getattr(base64, compressed[1] + "decode")(compressed[2])).decode()
 
 
 def _prepare_fixture():
@@ -414,6 +415,14 @@ def test_guest_content_program_uses_bounded_ascii_console_command(kind, tmp_path
     assert len(command) <= 3500
     assert "/opt/atlaso/.venv/bin/python -B -I -c 'exec(" in command
     program = _decode_guest_program(command)
+    argv = shlex.split(command)
+    assert argv[:4] == ["/opt/atlaso/.venv/bin/python", "-B", "-I", "-c"]
+    assert len(argv) == 5
+    decoded = []
+    # Execute only the transport wrapper; capture its inner exec argument so
+    # no guest program or filesystem access runs on the host.
+    exec(compile(argv[4], "<quoted-console-transport>", "exec"), {"exec": decoded.append})
+    assert decoded == [program.encode()]
     assert repr(str(atlaso)) in program
     if kind != "rpm":
         assert repr(str(software)) in program
@@ -567,16 +576,16 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
             stat.S_IFDIR | 0o700,
             "system-rpm-files-package-"
             + hashlib.sha256(b"filesystem").hexdigest()
-            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/root')}-d0700",
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/root')}-d0700-v.......T.",
         ),
         (
             b"filesystem\n",
             "filesystem",
-            "/bin",
+            "/usr/local/share/man/man8",
             -1,
             "system-rpm-files-package-"
             + hashlib.sha256(b"filesystem").hexdigest()
-            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/bin')}-missing",
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/usr/local/share/man/man8')}-missing-v.......T.",
         ),
     ],
     ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata", "fixed-missing-entry"],

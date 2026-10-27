@@ -135,10 +135,6 @@ RPM_DIAGNOSTIC_PATHS = (
     "/var/srv",
     "/var/tmp",
 )
-_RPM_METADATA_PATHS = {
-    "/bin", "/proc", "/root", "/run", "/run/lock", "/run/media/cdrom", "/run/media/floppy",
-    "/tmp", "/var/lock", "/var/log", "/var/log/btmp", "/var/log/wtmp", "/var/run", "/var/tmp",
-}
 SOURCE_MEMBERS = (
     "source/image/common/scripts/provision-atlaso.sh",
     "source/scripts/verify_virtualization_guest_wheel.py",
@@ -393,13 +389,17 @@ def run(args,timeout=60):
                          repr(str(site_root) if site_root is not None else None) + "\nprofile_data=" + repr(PROFILE.encode()) + "\n")
     if kind == "rpm":
         prelude += _RPM_RUNTIME_CHECK
-        declarations += "fixed_rpm_paths=" + repr({path: index for index, path in enumerate(RPM_DIAGNOSTIC_PATHS)
-                                                   if path in _RPM_METADATA_PATHS}) + "\n"
+        declarations += "fixed_rpm_paths=" + repr(" ".join(RPM_DIAGNOSTIC_PATHS)) + ".split()\n"
     body = 'stage="system-' + kind + '"\n' + prelude + declarations + _PROGRAMS[kind]
     body += '\nr.update(schema=1,kind=e["kind"],iso_sha256=e["iso_sha256"])\nx=json.dumps(r,sort_keys=True,separators=(",",":")).encode()\nif len(x)>4096: raise ValueError()\nprint("ATLASO-INSPECTION:"+base64.b64encode(x).decode()+":END")'
     program = 'try:\n' + textwrap.indent(body, " ") + '\nexcept BaseException:\n print("ATLASO-INSPECTION-FAILED:"+stage)'
-    compressed = base64.b64encode(zlib.compress(program.encode(), 9)).decode()
-    command = "/opt/atlaso/.venv/bin/python -B -I -c 'exec(__import__(\"zlib\").decompress(__import__(\"base64\").b64decode(\"" + compressed + "\")))'"
+    codec = "b85" if kind == "rpm" else "b64"
+    compressed = getattr(base64, codec + "encode")(zlib.compress(program.encode(), 9)).decode()
+    # Both standard alphabets exclude quotes and backslashes, preserving the
+    # existing single POSIX -c argument without increasing its console limit.
+    if any(char in compressed for char in "'\"\\\r\n"):
+        raise ValueError("content inspection transport is not quote-safe")
+    command = "/opt/atlaso/.venv/bin/python -B -I -c 'exec(__import__(\"zlib\").decompress(__import__(\"base64\")." + codec + "decode(\"" + compressed + "\")))'"
     if len(command) > 3500 or not command.isascii():
         raise ValueError("content inspection command exceeds the console bound")
     return command
@@ -578,20 +578,21 @@ except PrivateCommandFailure as failure:
  candidates=[]
  for line in remaining:
   match=re.fullmatch(r"(?:[SM5DLUGTP?.]{9}|missing)\s+(?:[a-z?]\s+)?(/[^\x00\r\n]+)",line)
-  if match: candidates.append(match[1])
+  if match: candidates.append((match[1],line.split()[0]))
   if len(candidates)==16: break
- for path in candidates:
+ for path,flags in candidates:
   owners=run(["rpm","--noplugins","-qf","--qf","%{NAME}\\n",path],3).decode("utf-8").splitlines()
   valid_owners=sorted(owner for owner in set(owners) if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+._:-]{0,127}",owner))
   if valid_owners:
    stage+="-package-"+hashlib.sha256(valid_owners[0].encode("utf-8")).hexdigest()
    if path in fixed_rpm_paths:
-    entry="-entry"+str(fixed_rpm_paths[path])
+    entry="-entry"+str(fixed_rpm_paths.index(path))
     try: z=Path(path).lstat()
     except FileNotFoundError: stage+=entry+"-missing"
     else:
      kind="d" if stat.S_ISDIR(z.st_mode) else "l" if stat.S_ISLNK(z.st_mode) else "f" if stat.S_ISREG(z.st_mode) else "o"
      stage+=entry+"-"+kind+format(stat.S_IMODE(z.st_mode),"04o")
+    if re.fullmatch(r"[SM5DLUGTP?.]{9}",flags): stage+="-v"+flags
    break
  if remaining: raise
 stage="system-rpm-firmware"
