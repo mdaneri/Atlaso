@@ -2052,6 +2052,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#recover-a-missing-vcenter-client-certificate" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Recover a missing vCenter client certificate
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#resolve-a-target-endpoint-mismatch" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4168,6 +4179,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#recover-a-missing-vcenter-client-certificate" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Recover a missing vCenter client certificate
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#resolve-a-target-endpoint-mismatch" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4453,10 +4475,12 @@ Successful setup refreshes the trust rows and pending Apply state in place.</p>
    <strong>Establish Trust</strong> controls to trust Atlaso's server identity. The Atlaso listener rail exposes its public server
    chain. A root-CA trust choice is preferable where vCenter supports it, because vCenter versions that pin only the
    leaf need trust re-establishment after server-certificate renewal. Confirm the server identity independently.</li>
-<li>In vCenter, create or select the KMS cluster's client certificate with <strong>Make KMS trust vCenter</strong>. The private key
-   stays in vCenter. Use a vCenter account with <code>Cryptographer.ManageKeyServers</code> permission for read-only certificate
-   discovery. You can enter it for this enrollment or select a saved Atlaso Vault credential. Saved entries need an
-   authorized HTTPS URI, including any non-default port; entries without one cannot be selected.</li>
+<li>In vCenter, make sure the selected KMS cluster has an active client certificate. If needed, create or select it
+   with <strong>Make KMS trust vCenter</strong> and complete the vCenter activation step; generating a certificate alone does not
+   make it available for discovery. The private key stays in vCenter. Use a vCenter account with
+   <code>Cryptographer.ManageKeyServers</code> permission for read-only certificate discovery. You can enter it for this enrollment
+   or select a saved Atlaso Vault credential. Saved entries need an authorized HTTPS URI, including any non-default
+   port; entries without one cannot be selected.</li>
 <li>In Atlaso <strong>Trusted vCenters</strong>, choose <strong>+ Add trusted vCenter here</strong>, then <strong>Enroll from vCenter</strong>. Choose
    <strong>Enter credentials manually</strong> or <strong>Use a saved Vault credential</strong>, then confirm the
    server address. Manual mode uses HTTPS port 443. A saved URI supplies the hostname and port and keeps the hostname
@@ -4471,7 +4495,25 @@ Successful setup refreshes the trust rows and pending Apply state in place.</p>
    not create clusters. Then review the discovered public KMIP client certificate
    and provider assignment before approval. Atlaso re-reads both identities on approval and rejects a changed one.</li>
 <li>Review <strong>Pending Appliance Changes</strong> and run global <strong>Appliance Apply</strong> for <code>kms</code>. Until that apply completes,
-   vCenter's client certificate is not usable for KMIP key operations. Recheck the connection in vCenter.</li>
+   vCenter's client certificate is not usable for KMIP key operations. Recheck the connection in vCenter and confirm
+   that both sides show the trust relationship as established and the provider is healthy/green.</li>
+</ol>
+<h3 id="recover-a-missing-vcenter-client-certificate">Recover a missing vCenter client certificate<a class="headerlink" href="#recover-a-missing-vcenter-client-certificate" title="Permanent link">&para;</a></h3>
+<p>Read-only discovery does not create or rotate a vCenter certificate. If the selected cluster has no active KMIP client
+certificate, or its certificate value is missing or blank, Atlaso reports that specific recovery condition and directs
+you to prepare the certificate in vCenter. Malformed or expired certificates remain certificate validation errors;
+do not treat them as a missing-certificate condition.</p>
+<ol>
+<li>In vCenter, open <strong>Configure &gt; Security &gt; Key Providers</strong> and select the existing standard provider used for this
+   enrollment.</li>
+<li>Open <strong>Establish Trust &gt; Make KMS trust vCenter &gt; vCenter Certificate</strong>. Create a client certificate only if one
+   is missing, then complete the activation step so the selected provider has an active certificate. Certificate
+   generation without activation is not sufficient.</li>
+<li>Return to the same Atlaso enrollment wizard with its existing server, credential, provider, and cluster selections.
+   Retry <strong>Next</strong> to inspect the certificate again. Review the exact public-certificate fingerprint, then explicitly
+   approve it in the wizard. The private key remains in vCenter; Atlaso stores only the approved public certificate.</li>
+<li>Review <strong>Pending Appliance Changes</strong> and run global <strong>Appliance Apply</strong> for <code>kms</code>. Verify the trust relationship
+   from both vCenter and Atlaso, and confirm the provider reports healthy/green before relying on KMIP operations.</li>
 </ol>
 <p>This path starts in vCenter and does not require a pre-created trusted-vCenter row or manual public-certificate paste
 in Atlaso. Manual credentials exist only for the current enrollment requests and are cleared when the wizard closes
