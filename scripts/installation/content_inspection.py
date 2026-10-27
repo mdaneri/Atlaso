@@ -17,6 +17,7 @@ from scripts.installation.layout import PROFILE
 KINDS = ("assets", "python", "powercli", "rpm", "notices")
 PHOTON_FILESYSTEM_SHA256 = "7f5bba3e84f6eb50f6e5e311325089bc642549469d83793e0ba5f40d74ec6024"
 PHOTON_SYSTEMD_SHA256 = "2ef0275f25c9b782e7f3cbbaaa5bf0d9037149b5253630c6db27e155c461618f"
+PHOTON_AUDIT_SHA256 = "e55fac7b24b2f7546485f0b8b37fb7b105be764436dd4b139ccaa88e6c3e374f"
 # Public-name diagnostics only, never RPM acceptance exceptions. These names
 # come from filesystem-1.1-11.ph5.x86_64.rpm, SHA-256
 # 7f5bba3e84f6eb50f6e5e311325089bc642549469d83793e0ba5f40d74ec6024.
@@ -163,7 +164,7 @@ _EXPECTED_EXTRA = {
     "assets": {"environment_verifier_sha256", "source_digest", "source_file_count", "trust_names", "trust_digest", "omitted_sources", "deployed_file_count"},
     "python": {"software_verifier_sha256", "environment_verifier_sha256", "release_manifest_sha256", "version", "source_commit", "wheel_sha256"},
     "powercli": {"powercli_script_sha256", "powercli_lock_sha256", "module_count"},
-    "rpm": {"package_state_sha256", "allowed_inventory", "required_packages", "filesystem_sha256", "systemd_sha256"},
+    "rpm": {"package_state_sha256", "allowed_inventory", "required_packages", "filesystem_sha256", "systemd_sha256", "audit_sha256"},
     "notices": {"notice_generator_sha256", "notice_config_sha256", "notice_lock_sha256", "version"},
 }
 
@@ -248,6 +249,7 @@ def prepare_content_inputs(base: dict[str, Any], manifest: dict, sources: dict[s
     allowed = {}
     filesystem_sha256 = ""
     systemd_sha256 = ""
+    audit_sha256 = ""
     for item in rpms:
         if (not isinstance(item, dict) or set(item) != {"file", "name", "version", "architecture", "sha256"}
                 or not _PACKAGE.fullmatch(str(item["name"])) or item["name"] in allowed
@@ -260,10 +262,14 @@ def prepare_content_inputs(base: dict[str, Any], manifest: dict, sources: dict[s
             filesystem_sha256 = item["sha256"]
         if item["name"] == "systemd":
             systemd_sha256 = item["sha256"]
+        if item["name"] == "audit":
+            audit_sha256 = item["sha256"]
     if filesystem_sha256 != PHOTON_FILESYSTEM_SHA256:
         raise ValueError("admitted Photon filesystem requires a reviewed runtime metadata profile")
     if systemd_sha256 != PHOTON_SYSTEMD_SHA256:
         raise ValueError("admitted Photon systemd requires a reviewed runtime metadata profile")
+    if audit_sha256 != PHOTON_AUDIT_SHA256:
+        raise ValueError("admitted Photon audit requires a reviewed runtime metadata profile")
     required = sorted(set(packages) - removed)
     if not required or not set(required) <= allowed.keys():
         raise ValueError("required runtime package set is incomplete")
@@ -295,7 +301,7 @@ def prepare_content_inputs(base: dict[str, Any], manifest: dict, sources: dict[s
                      "powercli_lock_sha256": files[SOURCE_MEMBERS[2]], "module_count": len(lock["modules"])},
         "rpm": {"package_state_sha256": files["source/image/common/scripts/verify-photon-package-state.py"],
                 "allowed_inventory": _compressed(allowed), "required_packages": _compressed(required),
-                "filesystem_sha256": filesystem_sha256, "systemd_sha256": systemd_sha256},
+                "filesystem_sha256": filesystem_sha256, "systemd_sha256": systemd_sha256, "audit_sha256": audit_sha256},
         "notices": {"notice_generator_sha256": files["source/scripts/generate_third_party_notices.py"],
                     "notice_config_sha256": files["source/scripts/third_party_notices.json"],
                     "notice_lock_sha256": files["source/requirements-appliance.lock"], "version": base["version"]},
@@ -338,6 +344,8 @@ def _validate_expected(expected: dict[str, Any]) -> str:
             raise ValueError("Photon filesystem runtime metadata profile is not admitted")
         if expected["systemd_sha256"] != PHOTON_SYSTEMD_SHA256:
             raise ValueError("Photon systemd runtime metadata profile is not admitted")
+        if expected["audit_sha256"] != PHOTON_AUDIT_SHA256:
+            raise ValueError("Photon audit runtime metadata profile is not admitted")
         allowed = _package_inventory(_decode_inventory(expected["allowed_inventory"]))
         required = _decode_inventory(expected["required_packages"])
         if (not isinstance(required, list) or not required or any(not isinstance(name, str) for name in required)
@@ -388,7 +396,7 @@ def checked(rel,key):
  return p,b
 class PrivateCommandFailure(Exception):
  def __init__(self,result):
-  super().__init__("private command failed");self.result=result
+  super().__init__();self.result=result
 
 def run(args,timeout=60):
  c=subprocess.run(args,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout)
@@ -408,7 +416,7 @@ def run(args,timeout=60):
         declarations += ("s=Path(" + repr(str(software_root)) + ")\nt=Path(" + repr(str(temporary_root)) + ")\nsite_override=" +
                          repr(str(site_root) if site_root is not None else None) + "\nprofile_data=" + repr(PROFILE.encode()) + "\n")
     if kind == "rpm":
-        declarations += "fixed_rpm_paths=" + repr(" ".join(RPM_DIAGNOSTIC_PATHS)) + ".split()\n"
+        declarations += "paths=" + repr(" ".join(RPM_DIAGNOSTIC_PATHS)) + ".split()\n"
     body = 'stage="system-' + kind + '"\n' + prelude + declarations + _PROGRAMS[kind]
     body += '\nr.update(schema=1,kind=e["kind"],iso_sha256=e["iso_sha256"])\nx=json.dumps(r,sort_keys=True,separators=(",",":")).encode()\nif len(x)>4096: raise ValueError()\nprint("ATLASO-INSPECTION:"+base64.b64encode(x).decode()+":END")'
     program = 'try:\n' + textwrap.indent(body, " ") + '\nexcept BaseException:\n print("ATLASO-INSPECTION-FAILED:"+stage)'
@@ -439,7 +447,7 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
         "assets": {"source_digest", "source_file_count", "deployed_files", "trust_digest", "trust_keys"},
         "python": {"python_payload_sha256", "python_files", "python_distributions", "python_external_files"},
         "powercli": {"powercli_lock_sha256", "module_count"},
-        "rpm": {"installed_inventory", "firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_media_directories_absent", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified"},
+        "rpm": {"installed_inventory", "firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_media_directories_absent", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified", "runtime_audit_metadata_verified"},
         "notices": {"notices_sha256", "notice_inputs_verified"},
     }[kind]
     if (not isinstance(value, dict) or set(value) != _COMMON_KEYS | keys or type(value.get("schema")) is not int or value["schema"] != 1
@@ -468,7 +476,7 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
         if (not isinstance(actual, dict) or not 1 <= len(actual) <= 1024 or not isinstance(allowed, dict)
                 or not isinstance(required, list) or not set(required) <= actual.keys()
                 or any(name not in allowed or identity != allowed[name] for name, identity in actual.items())
-                or any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified"))
+                or any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified", "runtime_audit_metadata_verified"))
                 or type(value["runtime_media_directories_absent"]) is not int or not 0 <= value["runtime_media_directories_absent"] <= 2):
             raise ValueError("installed RPM closure or file verification differs from media")
         value = {key: field for key, field in value.items() if key != "installed_inventory"}
@@ -539,10 +547,9 @@ r=dict(powercli_lock_sha256=hashlib.sha256(lb).hexdigest(),module_count=len(lock
 ''',
     "rpm": r'''
 stage="system-rpm-helper"
-p,b=checked("image/common/scripts/verify-photon-package-state.py","package_state_sha256")
 h=load("image/common/scripts/verify-photon-package-state.py","package_state_sha256","_rpm_state")
 stage="system-rpm-package-state"
-run(["/usr/bin/python3","-B",str(p),"--guest-platform","none"])
+run(["/usr/bin/python3","-B",h.__file__,"--guest-platform","none"])
 stage="system-rpm-inventory"
 rows=run(["rpm","--noplugins","-qa","--qf","%{NAME}\\t%{VERSION}-%{RELEASE}\\t%{ARCH}\\n"]).decode().splitlines()
 installed={}
@@ -555,36 +562,36 @@ for row in rows:
  installed[name]=[version,arch]
  if len(installed)>1024: raise ValueError()
 stage="system-rpm-runtime"
-runtime=h.verify_installation_runtime_metadata(e["filesystem_sha256"]);runtime.update(h.verify_installation_journal_metadata(e["systemd_sha256"]))
+runtime=h.verify_installation_runtime_metadata(e["filesystem_sha256"]);runtime.update(h.verify_installation_journal_metadata(e["systemd_sha256"]));runtime.update(h.verify_installation_audit_metadata(e["audit_sha256"]))
 stage="system-rpm-files"
 absent=set()
 try:
  run(["rpm","--noplugins","-Va","--noscripts","--nodeps","--noconfig","--noghost"],90)
 except PrivateCommandFailure as failure:
  lines=failure.result.stdout.decode("utf-8").splitlines()
- remaining=[]
+ bad=[]
  for line in lines:
-  if re.fullmatch(r"\.M\.{7}\s+/(?:proc|var/mail)",line): continue
+  if re.fullmatch(r"\.M\.{7}\s+/(?:proc|var/mail|var/log/audit)",line): continue
   if re.fullmatch(r"\.[M.]\.{4}[G.]\.{2}\s+/var/log/journal",line): continue
   if re.fullmatch(r"[S.][M.][5.]\.{3}[G.][T.]\.\s+(/var/log/(?:btmp|wtmp))",line): continue
   m=re.fullmatch(r"missing\s+(/run/media/(?:cdrom|floppy))",line)
   if m:
    try: Path(m[1]).lstat()
    except FileNotFoundError: absent.add(m[1]);continue
-  remaining.append(line)
- if failure.result.returncode!=1 or failure.result.stderr or not lines: remaining=lines or [""]
- candidates=[]
- for line in remaining:
+  bad.append(line)
+ if failure.result.returncode!=1 or failure.result.stderr or not lines: bad=lines or [""]
+ entries=[]
+ for line in bad:
   match=re.fullmatch(r"(?:[SM5DLUGTP?.]{9}|missing)\s+(?:[a-z?]\s+)?(/[^\x00\r\n]+)",line)
-  if match: candidates.append((match[1],line.split()[0]))
-  if len(candidates)==16: break
- for path,flags in candidates:
+  if match: entries.append((match[1],line.split()[0]))
+  if len(entries)==16: break
+ for path,flags in entries:
   owners=run(["rpm","--noplugins","-qf","--qf","%{NAME}\\n",path],3).decode("utf-8").splitlines()
-  valid_owners=sorted(owner for owner in set(owners) if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+._:-]{0,127}",owner))
-  if valid_owners:
-   stage+="-package-"+hashlib.sha256(valid_owners[0].encode("utf-8")).hexdigest()
-   if path in fixed_rpm_paths:
-    entry="-entry"+str(fixed_rpm_paths.index(path))
+  owners=sorted(owner for owner in set(owners) if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+._:-]{0,127}",owner))
+  if owners:
+   stage+="-package-"+hashlib.sha256(owners[0].encode("utf-8")).hexdigest()
+   if path in paths:
+    entry="-entry"+str(paths.index(path))
     try: z=Path(path).lstat()
     except FileNotFoundError: stage+=entry+"-missing"
     else:
@@ -592,11 +599,11 @@ except PrivateCommandFailure as failure:
      stage+=entry+"-"+kind+format(stat.S_IMODE(z.st_mode),"04o")
     if re.fullmatch(r"[SM5DLUGTP?.]{9}",flags): stage+="-v"+flags
    break
- if remaining: raise
+ if bad: raise
 stage="system-rpm-firmware"
 run(["rpm","--noplugins","-V","--noscripts","--nodeps","linux-firmware"],60)
 stage="system-rpm-runtime"
-runtime=h.verify_installation_runtime_metadata(e["filesystem_sha256"]);runtime.update(h.verify_installation_journal_metadata(e["systemd_sha256"]))
+runtime=h.verify_installation_runtime_metadata(e["filesystem_sha256"]);runtime.update(h.verify_installation_journal_metadata(e["systemd_sha256"]));runtime.update(h.verify_installation_audit_metadata(e["audit_sha256"]))
 r=dict(installed_inventory=base64.b64encode(zlib.compress(json.dumps(installed,sort_keys=True,separators=(",", ":")).encode(),9)).decode(),firmware_verified=True,rpm_files_verified=True,package_state_verified=True,runtime_media_directories_absent=len(absent),**runtime)
 ''',
     "assets": r'''

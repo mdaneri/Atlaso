@@ -69,6 +69,7 @@ def _expectation(kind):
             "package_state_sha256": "5" * 64,
             "filesystem_sha256": content_inspection.PHOTON_FILESYSTEM_SHA256,
             "systemd_sha256": content_inspection.PHOTON_SYSTEMD_SHA256,
+            "audit_sha256": content_inspection.PHOTON_AUDIT_SHA256,
             "allowed_inventory": _inventory({
                 "linux": ["6.1-1.ph5", "x86_64"],
                 "python3": ["3.14-2.ph5", "x86_64"],
@@ -124,6 +125,7 @@ def _report(kind, **changes):
             "runtime_login_metadata_verified": True,
             "runtime_mail_spool_verified": True,
             "runtime_journal_metadata_verified": True,
+            "runtime_audit_metadata_verified": True,
             "runtime_media_directories_absent": 0,
         },
         "notices": {"notices_sha256": "a" * 64, "notice_inputs_verified": True},
@@ -140,8 +142,10 @@ def _runtime_fixture_helper():
     """Return only declared runtime proof fields for unrelated adapter fixtures."""
     fields = {name: True for name in ("runtime_proc_verified", "runtime_run_verified",
                                       "runtime_login_metadata_verified", "runtime_mail_spool_verified")}
-    return SimpleNamespace(verify_installation_runtime_metadata=lambda _checksum: dict(fields),
-                           verify_installation_journal_metadata=lambda _checksum: {"runtime_journal_metadata_verified": True})
+    return SimpleNamespace(__file__="verify-photon-package-state.py",
+                           verify_installation_runtime_metadata=lambda _checksum: dict(fields),
+                           verify_installation_journal_metadata=lambda _checksum: {"runtime_journal_metadata_verified": True},
+                           verify_installation_audit_metadata=lambda _checksum: {"runtime_audit_metadata_verified": True})
 
 
 def _decode_guest_program(command):
@@ -200,6 +204,9 @@ def _prepare_fixture():
     records.append({"path": "rpms/systemd.rpm", "sha256": content_inspection.PHOTON_SYSTEMD_SHA256})
     rpms.append({"file": "systemd.rpm", "name": "systemd", "version": "257.13-5.ph5", "architecture": "x86_64",
                  "sha256": content_inspection.PHOTON_SYSTEMD_SHA256})
+    records.append({"path": "rpms/audit.rpm", "sha256": content_inspection.PHOTON_AUDIT_SHA256})
+    rpms.append({"file": "audit.rpm", "name": "audit", "version": "4.1.3-3.ph5", "architecture": "x86_64",
+                 "sha256": content_inspection.PHOTON_AUDIT_SHA256})
     manifest = {
         "files": records,
         "packages": ["linux", "linux-firmware", "python3"],
@@ -318,6 +325,7 @@ def test_prepare_content_inputs_binds_expectations_to_admitted_files():
     ]
     allowed = json.loads(zlib.decompress(base64.b64decode(rpm["allowed_inventory"])))
     assert allowed == {
+        "audit": ["4.1.3-3.ph5", "x86_64"],
         "filesystem": ["1.1-11.ph5", "x86_64"],
         "linux": ["6.1-1.ph5", "x86_64"],
         "python3": ["3.14-2.ph5", "x86_64"],
@@ -346,7 +354,7 @@ def test_prepare_content_inputs_rejects_source_not_bound_to_manifest(tamper):
         content_inspection.prepare_content_inputs(base, manifest, sources)
 
 
-@pytest.mark.parametrize("package", ["filesystem", "systemd"])
+@pytest.mark.parametrize("package", ["filesystem", "systemd", "audit"])
 def test_prepare_content_inputs_refuses_unreviewed_runtime_profile(package):
     """A different authenticated RPM cannot inherit the known mutable profile.
 
@@ -360,7 +368,7 @@ def test_prepare_content_inputs_refuses_unreviewed_runtime_profile(package):
         content_inspection.prepare_content_inputs(base, manifest, sources)
 
 
-@pytest.mark.parametrize("package", ["filesystem", "systemd"])
+@pytest.mark.parametrize("package", ["filesystem", "systemd", "audit"])
 def test_guest_program_refuses_unreviewed_runtime_profile(package):
     """Unknown runtime profiles stop preparation before any guest command exists.
 
@@ -473,6 +481,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"runtime_login_metadata_verified": False},
         {"runtime_mail_spool_verified": False},
         {"runtime_journal_metadata_verified": False},
+        {"runtime_audit_metadata_verified": False},
         {"runtime_media_directories_absent": True},
         {"runtime_media_directories_absent": 3},
         {"installed_inventory": _inventory({"linux": ["wrong", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"]})},
@@ -481,7 +490,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"], "rogue": ["1.0", "noarch"]})},
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"]})},
     ],
-    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "runtime-mail-spool", "runtime-journal-metadata", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
+    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "runtime-mail-spool", "runtime-journal-metadata", "runtime-audit-metadata", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
 )
 def test_validate_content_report_rejects_unverified_rpm_closure(changes):
     """The installed RPM identities must satisfy the signed allowed closure.
@@ -532,7 +541,7 @@ def test_guest_content_program_uses_bounded_ascii_console_command(kind, tmp_path
         kind: Content kind or scenario exercised by the test.
         tmp_path: Pytest temporary directory for isolated filesystem fixtures.
     """
-    atlaso = tmp_path / "atlaso"
+    atlaso = Path("atlaso") if kind == "rpm" else tmp_path / "atlaso"
     software = tmp_path / "software"
     temporary = tmp_path / "runtime"
     site = tmp_path / "site-packages"
@@ -651,7 +660,7 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
     """
     command = content_inspection.guest_content_program(
         _expectation("rpm"),
-        atlaso_root=tmp_path / "atlaso",
+        atlaso_root=Path("atlaso"),
         software_root=tmp_path / "software",
         temporary_root=tmp_path / "runtime",
     )
@@ -695,7 +704,18 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
             return b"example\t1-1\tx86_64\n"
         return b""
 
-    namespace = {"checked": checked, "run": run, "load": lambda *_args: _runtime_fixture_helper()}
+    def load(path, key, _name):
+        """Preserve the real loader's checksum admission in the phase fixture.
+
+        Args:
+            path: Helper source path passed to the loader.
+            key: Expected digest key passed to the loader.
+            _name: Private module name supplied by the generated command.
+        """
+        checked(path, key)
+        return _runtime_fixture_helper()
+
+    namespace = {"checked": checked, "run": run, "load": load}
     isolated = ast.Module(body=[outer], type_ignores=[])
     with contextlib.redirect_stdout(io.StringIO()) as output:
         exec(compile(isolated, "<generated-rpm-program>", "exec"), namespace)
@@ -807,7 +827,7 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     """
     command = content_inspection.guest_content_program(
         _expectation("rpm"),
-        atlaso_root=tmp_path / "atlaso",
+        atlaso_root=Path("atlaso"),
         software_root=tmp_path / "software",
         temporary_root=tmp_path / "runtime",
     )
@@ -892,6 +912,12 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     ("rows", "returncode", "stderr", "mount", "mode", "uid", "gid", "failure"),
     [
         (".M....... /proc\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        (".M....... /var/log/audit\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        (".M....... /var/log/audit\n", 1, b"", "auditrace", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        (".M5...... /var/log/audit\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        (".M...U... /var/log/audit\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        (".M....G.. /var/log/audit\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("missing /var/log/audit\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         (".M....G.. /var/log/journal\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
         (".M....... /var/log/journal\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
         ("......G.. /var/log/journal\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
@@ -1058,6 +1084,21 @@ def test_rpm_runtime_proc_check_retains_package_failures(
             raise ValueError("private journal policy drift")
         return {"runtime_journal_metadata_verified": True}
 
+    audit_checks = []
+
+    def verify_audit(checksum):
+        """Require native audit metadata before and after package verification.
+
+        Args:
+            checksum: Pinned audit checksum passed to the shared verifier.
+        """
+        assert checksum == helper.INSTALLATION_AUDIT_SHA256
+        audit_checks.append(checksum)
+        if mount == "auditrace" and firmware_checked:
+            raise ValueError("private audit policy drift")
+        return {"runtime_audit_metadata_verified": True}
+
+    monkeypatch.setattr(helper, "verify_installation_audit_metadata", verify_audit)
     monkeypatch.setattr(helper, "verify_installation_journal_metadata", verify_journal)
     namespace.update(read=read, checked=checked, run=run, load=lambda *_args: helper)
     with contextlib.redirect_stdout(io.StringIO()) as output:
@@ -1079,6 +1120,8 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         assert report["runtime_mail_spool_verified"] is True
         assert report["runtime_journal_metadata_verified"] is True
         assert len(journal_checks) == 2
+        assert report["runtime_audit_metadata_verified"] is True
+        assert len(audit_checks) == 2
         assert report["runtime_media_directories_absent"] == rows.count("missing /run/media/")
         assert report["rpm_files_verified"] is True
 
@@ -1167,7 +1210,7 @@ def test_generated_python_classifier_uses_stages_without_exposing_checker_errors
     """
     command = content_inspection.guest_content_program(
         _expectation("python"),
-        atlaso_root=tmp_path / "atlaso",
+        atlaso_root=Path("atlaso"),
         software_root=tmp_path / "software",
         temporary_root=tmp_path / "runtime",
         site_root=tmp_path / "site-packages",

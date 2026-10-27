@@ -22,6 +22,12 @@ INSTALLATION_SYSTEMD_TMPFILES_SHA256 = "68e4c097e33b30c731a359cb3af86693e5f854c5
 INSTALLATION_SYSTEMD_JOURNAL_PATH = Path("/var/log/journal")
 INSTALLATION_SYSTEMD_JOURNAL_TMPFILES_ROW = "z /var/log/journal 2755 root systemd-journal - -"
 INSTALLATION_SYSTEMD_TMPFILES_MAX_BYTES = 1024 * 1024
+INSTALLATION_AUDIT_SHA256 = "e55fac7b24b2f7546485f0b8b37fb7b105be764436dd4b139ccaa88e6c3e374f"
+INSTALLATION_AUDIT_TMPFILES_PATH = Path("/usr/lib/tmpfiles.d/audit.conf")
+INSTALLATION_AUDIT_TMPFILES_SHA256 = "d4ea0b752525c573cd144461ed3ac5c4e86d19501150df278add839e758c19c4"
+INSTALLATION_AUDIT_TMPFILES_MAX_BYTES = 4096
+INSTALLATION_AUDIT_PATH = Path("/var/log/audit")
+INSTALLATION_AUDIT_TMPFILES_ROW = "d /var/log/audit 0700 root root - -"
 REQUIRED_RUNTIME_PACKAGES = (
     "photon-release",
     "rpm",
@@ -271,19 +277,25 @@ def verify_installation_runtime_metadata(filesystem_sha256: str) -> dict[str, bo
             "runtime_login_metadata_verified": True, "runtime_mail_spool_verified": True}
 
 
-def _read_installation_systemd_tmpfiles() -> bytes:
+def _read_installation_tmpfiles(path: Path, mode: int, maximum_bytes: int, policy_name: str) -> bytes:
     """Read the admitted tmpfiles policy through a bounded no-follow handle.
 
-    The file is public package policy, not guest journal data. Its root-owned
-    ordinary-file metadata and pinned bytes are checked before use.
+    Args:
+        path: Fixed public policy path selected by the package profile.
+        mode: Native packaged permission bits for that policy.
+        maximum_bytes: Maximum policy size admitted by the profile.
+        policy_name: Fixed package name used in non-secret error categories.
+
+    This reads public package policy only. Root ownership, ordinary-file identity
+    and stable metadata are checked before the caller verifies its pinned bytes.
     """
     nofollow = getattr(os, "O_NOFOLLOW", None)
     if nofollow is None:
-        raise ValueError("installation systemd tmpfiles policy cannot be opened without following links")
+        raise ValueError(f"installation {policy_name} tmpfiles policy cannot be opened without following links")
     try:
-        descriptor = os.open(INSTALLATION_SYSTEMD_TMPFILES_PATH, os.O_RDONLY | nofollow)
+        descriptor = os.open(path, os.O_RDONLY | nofollow)
     except OSError as exc:
-        raise ValueError("installation systemd tmpfiles policy is unavailable") from exc
+        raise ValueError(f"installation {policy_name} tmpfiles policy is unavailable") from exc
     try:
         with os.fdopen(descriptor, "rb") as stream:
             descriptor = -1
@@ -293,11 +305,11 @@ def _read_installation_systemd_tmpfiles() -> bytes:
                 or metadata.st_nlink != 1
                 or metadata.st_uid != 0
                 or metadata.st_gid != 0
-                or stat.S_IMODE(metadata.st_mode) != 0o644
-                or not 0 < metadata.st_size <= INSTALLATION_SYSTEMD_TMPFILES_MAX_BYTES
+                or stat.S_IMODE(metadata.st_mode) != mode
+                or not 0 < metadata.st_size <= maximum_bytes
             ):
-                raise ValueError("installation systemd tmpfiles policy metadata differs")
-            raw = stream.read(INSTALLATION_SYSTEMD_TMPFILES_MAX_BYTES + 1)
+                raise ValueError(f"installation {policy_name} tmpfiles policy metadata differs")
+            raw = stream.read(maximum_bytes + 1)
             after = os.fstat(stream.fileno())
             before_identity = (
                 metadata.st_dev,
@@ -323,16 +335,30 @@ def _read_installation_systemd_tmpfiles() -> bytes:
             )
             if (
                 len(raw) != metadata.st_size
-                or len(raw) > INSTALLATION_SYSTEMD_TMPFILES_MAX_BYTES
+                or len(raw) > maximum_bytes
                 or before_identity != after_identity
             ):
-                raise ValueError("installation systemd tmpfiles policy changed while it was read")
+                raise ValueError(f"installation {policy_name} tmpfiles policy changed while it was read")
             return raw
     except OSError as exc:
-        raise ValueError("installation systemd tmpfiles policy could not be read") from exc
+        raise ValueError(f"installation {policy_name} tmpfiles policy could not be read") from exc
     finally:
         if descriptor >= 0:
             os.close(descriptor)
+
+
+def _read_installation_systemd_tmpfiles() -> bytes:
+    """Reuse the native policy reader with the existing systemd profile."""
+    return _read_installation_tmpfiles(
+        INSTALLATION_SYSTEMD_TMPFILES_PATH, 0o644, INSTALLATION_SYSTEMD_TMPFILES_MAX_BYTES, "systemd"
+    )
+
+
+def _read_installation_audit_tmpfiles() -> bytes:
+    """Read only the fixed audit package policy, never audit records."""
+    return _read_installation_tmpfiles(
+        INSTALLATION_AUDIT_TMPFILES_PATH, 0o640, INSTALLATION_AUDIT_TMPFILES_MAX_BYTES, "audit"
+    )
 
 
 def verify_installation_journal_metadata(systemd_sha256: str) -> dict[str, bool]:
@@ -381,6 +407,32 @@ def verify_installation_journal_metadata(systemd_sha256: str) -> dict[str, bool]
             "installation systemd journal directory metadata differs from native tmpfiles policy"
         )
     return {"runtime_journal_metadata_verified": True}
+
+
+def verify_installation_audit_metadata(audit_sha256: str) -> dict[str, bool]:
+    """Verify the audit directory's native root-only runtime permissions.
+
+    Args:
+        audit_sha256: Original audit RPM checksum admitted from the ISO manifest.
+
+    The pinned native tmpfiles policy creates this packaged directory as
+    root:root ``0700``. No audit children or record contents are inspected.
+    """
+    if audit_sha256 != INSTALLATION_AUDIT_SHA256:
+        raise ValueError("audit runtime metadata profile is not admitted")
+    raw = _read_installation_audit_tmpfiles()
+    if hashlib.sha256(raw).hexdigest() != INSTALLATION_AUDIT_TMPFILES_SHA256:
+        raise ValueError("installation audit tmpfiles policy checksum differs")
+    if raw.decode("utf-8").splitlines() != [INSTALLATION_AUDIT_TMPFILES_ROW]:
+        raise ValueError("installation audit tmpfiles policy differs")
+    try:
+        metadata = INSTALLATION_AUDIT_PATH.lstat()
+    except OSError as exc:
+        raise ValueError("installation audit directory metadata is unavailable") from exc
+    if (not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o700
+            or metadata.st_uid != 0 or metadata.st_gid != 0):
+        raise ValueError("installation audit directory metadata differs from native tmpfiles policy")
+    return {"runtime_audit_metadata_verified": True}
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

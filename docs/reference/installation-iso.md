@@ -362,6 +362,12 @@ mode `0644`. Before and after package verification, `/var/log/journal` must be a
 `systemd-journal`, with mode `2755`, exactly as the native tmpfiles rule specifies. Only mode and group discrepancies
 for that directory are reconciled after this proof. Missing entries, owner or digest changes, descendants, other
 verification flags and different policy bytes still fail. Journal contents remain private and are not inspected.
+The audit-directory profile similarly requires the exact admitted audit RPM and its native
+`/usr/lib/tmpfiles.d/audit.conf` checksum. The policy must be an ordinary single-link root:root file with mode `0640`.
+Before and after package verification, `/var/log/audit` must be a root:root directory with mode `0700`, as its
+native tmpfiles rule requires. Only that directory's mode-only RPM discrepancy is reconciled. Missing entries,
+owner or group changes, different file types, altered policy bytes and other verification flags still fail.
+Audit records and child paths are not read.
 The shared Photon verifier is authenticated against the original media and must match the host's supported contract.
 A changed verifier requires a rebuilt development ISO and fresh receipt-owned installation; do not replace it in an
 old VM to force acceptance. Keep the older results bound to their original media.

@@ -899,3 +899,191 @@ def test_installation_journal_metadata_rejects_unknown_systemd_before_reads(
     with pytest.raises(ValueError, match="profile is not admitted"):
         verifier.verify_installation_journal_metadata("0" * 64)
     assert reads == []
+
+
+def _audit_policy_fixture(verifier, monkeypatch, tmp_path: Path):
+    """Prepare the pinned audit tmpfiles rule and runtime directory fixture.
+
+    Args:
+        verifier: Loaded Photon package-state verifier module.
+        monkeypatch: Pytest fixture for controlled dependency replacement.
+        tmp_path: Pytest temporary directory for isolated fixture files.
+    """
+    policy = tmp_path / "audit.conf"
+    policy_bytes = b"d /var/log/audit 0700 root root - -\n"
+    policy.write_bytes(policy_bytes)
+    audit = tmp_path / "audit"
+    audit.mkdir()
+    monkeypatch.setattr(verifier, "INSTALLATION_AUDIT_TMPFILES_PATH", policy)
+    monkeypatch.setattr(verifier, "INSTALLATION_AUDIT_PATH", audit)
+    return policy, policy_bytes, audit
+
+
+def test_installation_audit_metadata_accepts_native_policy_and_directory(
+    monkeypatch, tmp_path: Path
+):
+    """Accept the exact pinned audit policy and root-owned 0700 directory.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+    """
+    if not getattr(os, "O_NOFOLLOW", 0):
+        pytest.skip("host does not provide an O_NOFOLLOW open flag")
+    verifier = load_verifier()
+    _policy, _policy_bytes, audit = _audit_policy_fixture(
+        verifier, monkeypatch, tmp_path
+    )
+    _enable_policy_stat_overrides(
+        monkeypatch, verifier, mode=stat.S_IFREG | 0o640
+    )
+    _journal_directory_metadata(
+        monkeypatch, audit, mode=stat.S_IFDIR | 0o700, uid=0, gid=0
+    )
+    assert verifier.verify_installation_audit_metadata(
+        verifier.INSTALLATION_AUDIT_SHA256
+    ) == {"runtime_audit_metadata_verified": True}
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["bytes", "directory", "symlink", "hardlink", "mode", "owner", "group", "size"],
+)
+def test_installation_audit_metadata_rejects_policy_file_drift(
+    monkeypatch, tmp_path: Path, mutation: str
+):
+    """Reject audit policy content, type, link, and metadata changes.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+        mutation: Policy file defect to exercise.
+    """
+    if not getattr(os, "O_NOFOLLOW", 0):
+        pytest.skip("host does not provide an O_NOFOLLOW open flag")
+    verifier = load_verifier()
+    policy, policy_bytes, audit = _audit_policy_fixture(
+        verifier, monkeypatch, tmp_path
+    )
+    _enable_policy_stat_overrides(
+        monkeypatch, verifier, mode=stat.S_IFREG | 0o640
+    )
+    _journal_directory_metadata(
+        monkeypatch, audit, mode=stat.S_IFDIR | 0o700, uid=0, gid=0
+    )
+    if mutation == "bytes":
+        policy.write_bytes(b"# changed audit policy\n" + policy_bytes)
+    elif mutation == "directory":
+        policy.unlink()
+        policy.mkdir()
+    elif mutation == "symlink":
+        policy.unlink()
+        policy.symlink_to(tmp_path / "missing-target")
+    elif mutation == "hardlink":
+        os.link(policy, tmp_path / "policy-link")
+    elif mutation in {"mode", "owner", "group", "size"}:
+        if mutation == "size":
+            _enable_policy_stat_overrides(
+                monkeypatch,
+                verifier,
+                mode=stat.S_IFREG | 0o640,
+                size=verifier.INSTALLATION_AUDIT_TMPFILES_MAX_BYTES + 1,
+            )
+        else:
+            mode = stat.S_IFREG | 0o600 if mutation == "mode" else stat.S_IFREG | 0o640
+            uid = 1000 if mutation == "owner" else 0
+            gid = 1000 if mutation == "group" else 0
+            _enable_policy_stat_overrides(
+                monkeypatch, verifier, mode=mode, uid=uid, gid=gid
+            )
+
+    with pytest.raises(ValueError, match="checksum differs" if mutation == "bytes" else None):
+        verifier.verify_installation_audit_metadata(
+            verifier.INSTALLATION_AUDIT_SHA256
+        )
+
+
+@pytest.mark.parametrize("mutation", ["mode", "type", "owner", "group", "missing"])
+def test_installation_audit_metadata_rejects_directory_drift(
+    monkeypatch, tmp_path: Path, mutation: str
+):
+    """Reject missing or incorrectly typed/owned audit directories.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+        mutation: Directory defect to exercise.
+    """
+    verifier = load_verifier()
+    _policy, policy_bytes, audit = _audit_policy_fixture(
+        verifier, monkeypatch, tmp_path
+    )
+    monkeypatch.setattr(
+        verifier, "_read_installation_audit_tmpfiles", lambda: policy_bytes
+    )
+    if mutation == "missing":
+        original_lstat = Path.lstat
+
+        def missing_lstat(path: Path):
+            """Report only the audit fixture missing.
+
+            Args:
+                path: Filesystem path being inspected.
+            """
+            if path == audit:
+                raise FileNotFoundError(path)
+            return original_lstat(path)
+
+        monkeypatch.setattr(Path, "lstat", missing_lstat)
+    else:
+        mode = stat.S_IFDIR | 0o700
+        uid = 0
+        gid = 0
+        if mutation == "mode":
+            mode = stat.S_IFDIR | 0o750
+        elif mutation == "type":
+            mode = stat.S_IFREG | 0o700
+        elif mutation == "owner":
+            uid = 1000
+        elif mutation == "group":
+            gid = 1000
+        _journal_directory_metadata(
+            monkeypatch, audit, mode=mode, uid=uid, gid=gid
+        )
+
+    with pytest.raises(ValueError):
+        verifier.verify_installation_audit_metadata(
+            verifier.INSTALLATION_AUDIT_SHA256
+        )
+
+
+def test_installation_audit_metadata_rejects_unknown_package_before_reads(
+    monkeypatch,
+):
+    """Reject unreviewed package identity before policy or directory reads.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
+    verifier = load_verifier()
+    reads = []
+
+    def unexpected_policy_read() -> bytes:
+        """Record forbidden policy reads for an unknown package checksum."""
+        reads.append("policy")
+        raise AssertionError("unreviewed package caused an audit policy read")
+
+    def unexpected_directory_stat(path: Path):
+        """Record forbidden metadata reads for an unknown package checksum.
+
+        Args:
+            path: Filesystem path being inspected.
+        """
+        reads.append("directory")
+        raise AssertionError("unreviewed package caused an audit path read")
+
+    monkeypatch.setattr(verifier, "_read_installation_audit_tmpfiles", unexpected_policy_read)
+    monkeypatch.setattr(Path, "lstat", unexpected_directory_stat)
+    with pytest.raises(ValueError, match="profile is not admitted"):
+        verifier.verify_installation_audit_metadata("0" * 64)
+    assert reads == []
