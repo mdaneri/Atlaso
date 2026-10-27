@@ -528,11 +528,12 @@ def test_rpm_guest_loader_admits_only_original_helper_bytes(monkeypatch, tmp_pat
     namespace = {}
     monkeypatch.setattr(os, "O_NOFOLLOW", getattr(os, "O_NOFOLLOW", 0), raising=False)
     exec(compile(ast.Module(body=outer.body[:start], type_ignores=[]), "<real-rpm-loader>", "exec"), namespace)
-    admitted = namespace["load"](member, "package_state_sha256", "_public_fixture")
+    assert namespace["e"] == {"i": expected["iso_sha256"], "p": expected["package_state_sha256"]}
+    admitted = namespace["load"](member, "p", "_public_fixture")
     assert admitted.public_fixture() == "verified"
     helper.write_bytes(b"raise AssertionError('changed helper must not execute')\n")
     with pytest.raises(ValueError):
-        namespace["load"](member, "package_state_sha256", "_changed_fixture")
+        namespace["load"](member, "p", "_changed_fixture")
 
 
 def test_prepare_content_inputs_requires_original_shared_photon_contract():
@@ -1004,8 +1005,20 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
             None,
             "system-rpm-files-package-" + hashlib.sha256(b"openldap-servers").hexdigest(),
         ),
+        (
+            b"linux\n",
+            "linux",
+            "/boot/linux-6.12.113-5.ph5.cfg",
+            stat.S_IFREG | 0o644,
+            "system-rpm-files-package-" + hashlib.sha256(b"linux").hexdigest()
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/boot/linux-6.12.113-5.ph5.cfg')}-f0644-v.......T.",
+        ),
+        (
+            b"linux\n", "linux", "/boot/linux-unknown.cfg", None,
+            "system-rpm-files-package-" + hashlib.sha256(b"linux").hexdigest(),
+        ),
     ],
-    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata", "fixed-missing-entry", "journal-metadata", "remote-journal-metadata", "audit-directory-metadata", "private-audit-file", "rpcbind-directory-metadata", "private-rpcbind-file", "efi-boot-file", "efi-revocations-file", "private-efi-file", "ldap-unit", "ldap-data-directory", "ldap-runtime-directory", "private-ldap-child"],
+    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata", "fixed-missing-entry", "journal-metadata", "remote-journal-metadata", "audit-directory-metadata", "private-audit-file", "rpcbind-directory-metadata", "private-rpcbind-file", "efi-boot-file", "efi-revocations-file", "private-efi-file", "ldap-unit", "ldap-data-directory", "ldap-runtime-directory", "private-ldap-child", "kernel-boot-config", "unknown-kernel-config"],
 )
 def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     owner_output, owner_name, verify_path, metadata_mode, expected_stage,

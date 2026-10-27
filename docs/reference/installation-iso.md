@@ -430,6 +430,8 @@ boot file or relax the RPM comparison.
 The admitted OpenLDAP server package contributes only its public service unit and two declared directories to this
 registry. Their fixed indices can identify missing entries, modes and verification flags. LDAP databases, configuration
 values and private children are never read or emitted, and the diagnostic does not accept a discrepancy.
+The pinned Linux package's `/boot/linux-6.12.113-5.ph5.cfg` is also a fixed public diagnostic entry. Only its index,
+type, mode and RPM verification flags can be reported; its contents stay private and any discrepancy still fails.
 
 The EFI profile separately binds both the admitted `shim-signed` and `grub2-efi-image` RPMs and their three boot files'
 hashes, sizes and modification times. It authenticates and reuses

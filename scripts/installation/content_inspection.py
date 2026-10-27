@@ -37,6 +37,8 @@ PHOTON_AUDIT_SHA256 = "e55fac7b24b2f7546485f0b8b37fb7b105be764436dd4b139ccaa88e6
 # e41e6109d7be89ae83da63ef8021ef9a0e053ecd4fe1f47ae73dd79270d688c7.
 # The LDAP directories and unit are from openldap-servers-2.6.4-6.ph5,
 # SHA-256 11b4af044b7418ba9af5cf6762e2cbe5add5b3463774d20f6be89b8ff98c47dc.
+# The kernel boot configuration is from linux-6.12.113-5.ph5, SHA-256
+# 2987a19840476e522f2d19431b60b5e146b3a03fab17287ec211f1cf7e6e8bd4.
 RPM_DIAGNOSTIC_PATHS = (
     "/bin",
     "/boot",
@@ -161,6 +163,7 @@ RPM_DIAGNOSTIC_PATHS = (
     "/usr/lib/systemd/system/slapd.service",
     "/var/lib/openldap",
     "/var/run/openldap",
+    "/boot/linux-6.12.113-5.ph5.cfg",
 )
 SOURCE_MEMBERS = (
     "source/image/common/scripts/provision-atlaso.sh",
@@ -445,6 +448,10 @@ def guest_content_program(
     if kind == "rpm":
         omitted |= {"filesystem_sha256", "systemd_sha256", "audit_sha256", "rpcbind_sha256", "openssh_sha256", "openldap_sha256", "shim_sha256", "grub_efi_sha256"}
     command_expected = {key: value for key, value in expected.items() if key not in omitted}
+    if kind == "rpm":
+        # Only the internal console envelope is abbreviated. The host still
+        # admits the complete expectation, and checked() authenticates the helper.
+        command_expected = {"i": expected["iso_sha256"], "p": expected["package_state_sha256"]}
     imports = ("import base64,hashlib,json,os,re,stat,subprocess,types,zlib\nfrom pathlib import Path\n" if kind == "rpm" else
                "import base64,hashlib,importlib.metadata,json,os,re,shutil,stat,subprocess,tarfile,tempfile,types,zlib\nfrom pathlib import Path,PurePosixPath\n")
     prelude = imports + '''
@@ -482,7 +489,8 @@ def run(args,timeout=60):
     if kind == "rpm":
         declarations += "paths=" + repr(" ".join(RPM_DIAGNOSTIC_PATHS)) + ".split()\n"
     body = 'stage="system-' + kind + '"\n' + prelude + declarations + _PROGRAMS[kind]
-    body += '\nr.update(schema=1,kind=e["kind"],iso_sha256=e["iso_sha256"])\nx=json.dumps(r,sort_keys=True,separators=(",",":")).encode()\nif len(x)>4096: raise ValueError()\nprint("ATLASO-INSPECTION:"+base64.b64encode(x).decode()+":END")'
+    binding = 'kind="rpm",iso_sha256=e["i"]' if kind == "rpm" else 'kind=e["kind"],iso_sha256=e["iso_sha256"]'
+    body += '\nr.update(schema=1,' + binding + ')\nx=json.dumps(r,sort_keys=True,separators=(",",":")).encode()\nif len(x)>4096: raise ValueError()\nprint("ATLASO-INSPECTION:"+base64.b64encode(x).decode()+":END")'
     program = 'try:\n' + textwrap.indent(body, " ") + '\nexcept BaseException:\n print("ATLASO-INSPECTION-FAILED:"+stage)'
     codec = "b85" if kind == "rpm" else "b64"
     compressed = getattr(base64, codec + "encode")(zlib.compress(program.encode(), 9)).decode()
@@ -611,7 +619,7 @@ r=dict(powercli_lock_sha256=hashlib.sha256(lb).hexdigest(),module_count=len(lock
 ''',
     "rpm": r'''
 stage="system-rpm-helper"
-h=load("image/common/scripts/verify-photon-package-state.py","package_state_sha256","_rpm_state")
+h=load("image/common/scripts/verify-photon-package-state.py","p","_rpm_state")
 stage="system-rpm-package-state"
 run(["/usr/bin/python3","-B",h.__file__,"--guest-platform","none"])
 stage="system-rpm-inventory"

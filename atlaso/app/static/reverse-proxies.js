@@ -336,6 +336,10 @@
     let table = null;
     let wizard = null;
     let loadSequence = 0;
+    let mutationQueue = Promise.resolve();
+    let pendingMutations = 0;
+    let enabledEditSequence = 0;
+    const enabledEdits = new Map();
     let originalRecord = null;
     const health = initializeHealth(document.getElementById("reverse-proxy-health-table"), showError);
 
@@ -349,7 +353,11 @@
       items = Array.isArray(nextItems) ? nextItems.slice(0, MAX_ITEMS) : [];
       const count = document.querySelector("[data-reverse-proxy-count]");
       if (count instanceof HTMLElement) count.textContent = `${items.length} proxies`;
-      const tableRows = canWrite ? [...items.map(visibleProxyRow), { is_new: true, name: "" }] : items.map(visibleProxyRow);
+      const rows = items.map((item) => {
+        const edit = enabledEdits.get(String(item.id));
+        return visibleProxyRow(edit ? { ...item, enabled: edit.value } : item);
+      });
+      const tableRows = canWrite ? [...rows, { is_new: true, name: "" }] : rows;
       void table?.setData?.(tableRows);
       const fallback = document.getElementById(element.dataset.fallbackId || "");
       if (fallback instanceof HTMLElement) {
@@ -474,6 +482,7 @@
     }
 
     async function refreshData() {
+      if (pendingMutations) return;
       const sequence = ++loadSequence;
       try {
         const response = await fetch(dataUrl, { credentials: "same-origin", headers: { Accept: "application/json" } });
@@ -722,25 +731,40 @@
       return true;
     }
 
-    async function submitPayload(payload) {
-      const response = await fetch(saveUrl, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { Accept: "application/json", "Content-Type": "application/json", "X-CSRF-Token": csrf },
-        body: JSON.stringify(payload),
+    function enqueueMutation(action) {
+      // Every mutation returns the complete collection. Keep writes and their
+      // projections ordered across rows, wizard saves, and deletes alike.
+      pendingMutations += 1;
+      loadSequence += 1;
+      const pending = mutationQueue.then(action).finally(() => { pendingMutations -= 1; });
+      mutationQueue = pending.catch(() => {});
+      return pending;
+    }
+
+    function submitPayload(payload) {
+      return enqueueMutation(async () => {
+        // Enabled saves resolve their complete record only when the preceding
+        // write has supplied its authoritative collection.
+        const record = typeof payload === "function" ? payload() : payload;
+        const response = await fetch(saveUrl, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { Accept: "application/json", "Content-Type": "application/json", "X-CSRF-Token": csrf },
+          body: JSON.stringify(record),
+        });
+        if (!response.ok) throw new Error(await endpointMessage(response, "The reverse-proxy change could not be saved."));
+        return applyMutationResponse(response, "saved");
       });
-      if (!response.ok) throw new Error(await endpointMessage(response, "The reverse-proxy change could not be saved."));
-      return applyMutationResponse(response, "saved");
     }
 
     async function applyMutationResponse(response, operation) {
-      const sequence = ++loadSequence;
+      loadSequence += 1;
       try {
         const saved = await response.json();
-        if (sequence === loadSequence) {
-          applyCollection(saved);
-          showError("");
-        }
+        // Mutations are serialized through their complete response bodies. A
+        // newly queued edit invalidates GETs, never this confirmed write.
+        applyCollection(saved);
+        showError("");
         return saved;
       } catch {
         throw new Error(`The change was ${operation}, but its returned collection could not be displayed. Refresh the page before saving again.`);
@@ -817,12 +841,14 @@
         tone: "danger",
       })) return;
       try {
-        const response = await fetch(`${saveUrl.replace(/\/save$/, "")}/${encodeURIComponent(data.id)}/delete`, {
-          method: "POST", credentials: "same-origin",
-          headers: { Accept: "application/json", "X-CSRF-Token": csrf },
+        await enqueueMutation(async () => {
+          const response = await fetch(`${saveUrl.replace(/\/save$/, "")}/${encodeURIComponent(data.id)}/delete`, {
+            method: "POST", credentials: "same-origin",
+            headers: { Accept: "application/json", "X-CSRF-Token": csrf },
+          });
+          if (!response.ok) throw new Error(await endpointMessage(response, "The reverse proxy could not be deleted."));
+          await applyMutationResponse(response, "deleted");
         });
-        if (!response.ok) throw new Error(await endpointMessage(response, "The reverse proxy could not be deleted."));
-        await applyMutationResponse(response, "deleted");
       } catch (error) {
         showError(error instanceof Error ? error.message : "The reverse proxy could not be deleted.");
       }
@@ -836,17 +862,29 @@
     const saveEnabled = async (cell) => {
       const row = cell.getRow().getData();
       if (!canWrite || row.is_new) return;
-      const current = items.find((item) => String(item.id) === String(row.id));
-      if (!current) {
+      const rowId = String(row.id);
+      if (!items.some((item) => String(item.id) === rowId)) {
         cell.restoreOldValue();
         return;
       }
+      const edit = { generation: ++enabledEditSequence, value: Boolean(cell.getValue()) };
+      enabledEdits.set(rowId, edit);
+      const isLatestEdit = () => enabledEdits.get(rowId) === edit;
       try {
-        await submitPayload(serializeProxy(current, Boolean(cell.getValue())));
-        const saved = items.find((item) => String(item.id) === String(row.id));
-        if (saved) await cell.getRow().update(visibleProxyRow(saved));
+        await submitPayload(() => {
+          const current = items.find((item) => String(item.id) === rowId);
+          if (!current) throw new Error("This reverse proxy no longer exists. Refresh the page before saving again.");
+          return serializeProxy(current, edit.value);
+        });
+        if (!isLatestEdit()) return;
+        enabledEdits.delete(rowId);
+        setCollectionRows();
       } catch (error) {
-        cell.restoreOldValue();
+        if (!isLatestEdit()) return;
+        enabledEdits.delete(rowId);
+        // A previous optimistic cell value may itself belong to a failed save.
+        // Roll back to the last server-confirmed record instead.
+        setCollectionRows();
         showError(error instanceof Error ? error.message : "The enabled state could not be saved.");
       }
     };

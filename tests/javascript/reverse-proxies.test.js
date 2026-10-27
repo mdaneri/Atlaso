@@ -115,16 +115,18 @@ test("successful saves consume the returned collection and ignore older GET resp
   const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
   const applyStart = source.indexOf("    function applyCollection(");
   const applyEnd = source.indexOf("    function routeField(", applyStart);
-  const submitStart = source.indexOf("    async function submitPayload(");
+  const queueStart = source.indexOf("    function enqueueMutation(");
+  const submitStart = source.indexOf("    function submitPayload(");
   const submitEnd = source.indexOf("    function openWizard(", submitStart);
   const enabledStart = source.indexOf("    const saveEnabled =");
   const enabledEnd = source.indexOf("    const text =", enabledStart);
   const saved = { items: [{ id: 7, name: "Saved", enabled: true, routes: [], listeners: [] }], listener_options: [], config_preview: "new preview" };
   let finishGet, failPost = false;
   const calls = [], collections = [], previews = [];
-  const context = vm.createContext({ MAX_ITEMS: 512, loadSequence: 0, saveUrl: "/save", dataUrl: "/data", csrf: "test", canWrite: true, items: [],
+  const context = vm.createContext({ MAX_ITEMS: 512, loadSequence: 0, mutationQueue: Promise.resolve(), pendingMutations: 0,
+    enabledEditSequence: 0, enabledEdits: new Map(), saveUrl: "/save", dataUrl: "/data", csrf: "test", canWrite: true, items: [],
     serializeProxy: (record, enabled) => ({ ...record, enabled }), visibleProxyRow: reverseProxies.visibleProxyRow,
-    setCollectionRows: (items) => { context.items = items; collections.push(items); },
+    setCollectionRows: (items = context.items) => { context.items = items; collections.push(items); },
     updateListenerOptions: () => {}, setValidation: (payload) => previews.push(payload.config_preview), showError: () => {},
     endpointMessage: async () => "POST rejected",
     fetch: async (url, options) => {
@@ -132,7 +134,7 @@ test("successful saves consume the returned collection and ignore older GET resp
       if (options.method === "POST") return { ok: !failPost, json: async () => saved };
       return new Promise((resolve) => { finishGet = resolve; });
     } });
-  vm.runInContext(source.slice(applyStart, applyEnd) + source.slice(submitStart, submitEnd)
+  vm.runInContext(source.slice(applyStart, applyEnd) + source.slice(queueStart, submitStart) + source.slice(submitStart, submitEnd)
     + source.slice(enabledStart, enabledEnd) + "globalThis.runEnabled = saveEnabled;", context);
   const pending = context.refreshData();
   await context.submitPayload({ id: 7, enabled: true });
@@ -142,22 +144,332 @@ test("successful saves consume the returned collection and ignore older GET resp
   await pending;
   assert.equal(collections.length, 1);
   assert.equal(calls.length, 2); // The initial GET and save POST; no post-save GET.
-  let restored = 0, updated;
-  const cell = { getRow: () => ({ getData: () => ({ id: 7 }), update: async (row) => { updated = row; } }),
+  let restored = 0;
+  const cell = { getRow: () => ({ getData: () => ({ id: 7 }) }),
     getValue: () => true, restoreOldValue: () => { restored += 1; } };
   await context.runEnabled(cell);
   assert.equal(restored, 0);
-  assert.equal(updated.enabled, true);
+  assert.equal(collections.at(-1)[0].enabled, true);
   failPost = true;
   await context.runEnabled(cell);
-  assert.equal(restored, 1);
+  assert.equal(restored, 0);
+  assert.equal(collections.at(-1)[0].enabled, true, "a failed edit rebuilds from the last confirmed collection");
   failPost = false;
   saved.items = null;
   await assert.rejects(context.submitPayload({ id: 7 }), /change was saved.*Refresh the page/);
 });
 
+test("rapid Enabled toggles serialize full-record writes and keep the latest confirmed state", async () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const rowsStart = source.indexOf("    function setCollectionRows(");
+  const rowsEnd = source.indexOf("    function setValidation(", rowsStart);
+  const applyStart = source.indexOf("    function applyCollection(");
+  const applyEnd = source.indexOf("    function routeField(", applyStart);
+  const queueStart = source.indexOf("    function enqueueMutation(");
+  const submitStart = source.indexOf("    function submitPayload(");
+  const submitEnd = source.indexOf("    function openWizard(", submitStart);
+  const enabledStart = source.indexOf("    const saveEnabled =");
+  const enabledEnd = source.indexOf("    const text =", enabledStart);
+  const initial = {
+    id: 7, name: "Current", description: "Preserve this description", hostname: "app.example.test",
+    enabled: false, public_listing: true, managed_dns: false, listeners: [{ interface: "wan0", address: "192.0.2.10" }],
+    routes: [{ id: 19, path_prefix: "/app/", upstream_host: "backend.example.test" }],
+  };
+  const other = { ...structuredClone(initial), id: 8, name: "Other", enabled: false, description: "Other row remains intact" };
+  let server = [structuredClone(initial), other];
+  let releaseRequest;
+  let releaseGet, getCalls = 0;
+  const requests = [], rendered = [], validations = [], errors = [];
+  class HTMLElement {}
+  const context = vm.createContext({ MAX_ITEMS: 512, loadSequence: 0, mutationQueue: Promise.resolve(), pendingMutations: 0,
+    enabledEditSequence: 0, enabledEdits: new Map(), saveUrl: "/save", csrf: "test", canWrite: true,
+    dataUrl: "/data", items: structuredClone(server), serializeProxy: reverseProxies.serializeProxy,
+    visibleProxyRow: reverseProxies.visibleProxyRow,
+    HTMLElement, document: { querySelector: () => null, getElementById: () => null },
+    table: { setData: (rows) => rendered.push(rows) },
+    element: { dataset: {} },
+    updateListenerOptions: () => {}, setValidation: (payload) => validations.push(payload.config_preview), showError: (message) => errors.push(message),
+    endpointMessage: async () => "Save rejected",
+    fetch: async (url, options) => {
+      if (url === "/data") { getCalls += 1; return new Promise((resolve) => { releaseGet = resolve; }); }
+      const request = { payload: JSON.parse(options.body) };
+      requests.push(request);
+      return new Promise((resolve) => { releaseRequest = (ok) => {
+        if (ok) {
+          const index = server.findIndex((item) => item.id === request.payload.id);
+          server[index] = { ...server[index], ...request.payload };
+          if (requests.length === 1) {
+            server[index].description = "Server normalized description";
+            server[index].listeners = [{ interface: "wan1", address: "198.51.100.20" }];
+            server[index].routes = [{ id: 19, path_prefix: "/canonical/", upstream_scheme: "https",
+              upstream_host: "canonical-backend.example.test", upstream_port: 8443, path_behavior: "strip", trust_mode: "trusted_ca" }];
+          }
+          const saved = structuredClone(server);
+          resolve({ ok: true, json: async () => ({ items: saved, listener_options: [], config_preview: `enabled=${request.payload.id}:${request.payload.enabled}` }) });
+        } else {
+          resolve({ ok: false });
+        }
+      }; });
+    },
+  });
+  vm.runInContext(`${source.slice(rowsStart, rowsEnd)}
+    ${source.slice(applyStart, applyEnd)}
+    ${source.slice(queueStart, submitStart)} ${source.slice(submitStart, submitEnd)}
+    ${source.slice(enabledStart, enabledEnd)} globalThis.runEnabled = saveEnabled; globalThis.readItems = () => items;`,
+  context);
+
+  const makeCell = (id, value) => {
+    const row = { ...(id === 7 ? initial : other), enabled: value };
+    return { getRow: () => ({ getData: () => row }),
+      getValue: () => value, restoreOldValue: () => { row.enabled = initial.enabled; } };
+  };
+  const pendingGet = context.refreshData();
+  const first = context.runEnabled(makeCell(7, true));
+  const second = context.runEnabled(makeCell(7, false));
+  const otherRow = context.runEnabled(makeCell(8, true));
+  context.applyCollection({ items: context.items, listener_options: [], config_preview: "pending" });
+  await context.refreshData();
+  assert.equal(getCalls, 1, "refreshes during queued writes do not issue another GET");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 1, "the second full-record write waits for the first response");
+  assert.equal(context.enabledEdits.get("7").value, false, "newest user intent stays pending in the row projection");
+  assert.equal(context.enabledEdits.get("8").value, true, "another row retains its own pending intent");
+  assert.deepEqual(Array.from(rendered.at(-1).slice(0, 2), (item) => item.enabled), [false, true]);
+  releaseGet({ ok: true, json: async () => ({ items: [{ ...initial, name: "Stale GET" }, other], listener_options: [] }) });
+  await pendingGet;
+  assert.equal(context.readItems()[0].name, "Current", "a GET started before the mutation cannot overwrite its collection");
+  releaseRequest(true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].payload.id, 7);
+  assert.equal(requests[1].payload.enabled, false);
+  assert.equal(requests[1].payload.description, "Server normalized description");
+  assert.equal(requests[1].payload.listeners[0].interface, "wan1");
+  assert.equal(requests[1].payload.routes[0].path_prefix, "/canonical/");
+  assert.equal(requests[1].payload.routes[0].upstream_host, "canonical-backend.example.test");
+  assert.equal(server[0].enabled, true, "first commit is observed before second write dispatch");
+  assert.deepEqual(Array.from(rendered.at(-1).slice(0, 2), (item) => item.enabled), [false, true],
+    "the older confirmed response does not replace pending row selections");
+  releaseRequest(true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 3);
+  assert.equal(requests[2].payload.id, 8);
+  assert.equal(requests[2].payload.description, other.description);
+  releaseRequest(true);
+  await Promise.all([first, second, otherRow]);
+  assert.equal(server[0].enabled, false);
+  assert.equal(server[1].enabled, true);
+  assert.equal(context.items[0].enabled, server[0].enabled);
+  assert.equal(context.items[1].enabled, server[1].enabled);
+  assert.deepEqual(Array.from(rendered.at(-1).slice(0, 2), (item) => item.enabled), [false, true]);
+  assert.equal(validations.at(-1), "enabled=8:true");
+  assert.equal(context.enabledEdits.has("7"), false);
+
+  // A stale failure cannot undo a newer accepted value, and the queued retry is
+  // built from the last authoritative record rather than the failed attempt.
+  context.items = structuredClone(server);
+  const beforeFailures = requests.length;
+  const failedToggle = context.runEnabled(makeCell(7, true));
+  const successfulToggle = context.runEnabled(makeCell(7, false));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, beforeFailures + 1);
+  releaseRequest(false);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, beforeFailures + 2);
+  assert.equal(requests.at(-1).payload.enabled, false);
+  assert.equal(requests.at(-1).payload.description, "Server normalized description");
+  releaseRequest(true);
+  await Promise.all([failedToggle, successfulToggle]);
+  assert.equal(context.items[0].enabled, false);
+  assert.equal(rendered.at(-1)[0].enabled, false);
+  assert.equal(errors.at(-1), "", "an obsolete failure does not replace newer save state");
+
+  // If the latest save fails after an earlier success, roll back to that
+  // confirmed value, even if it differs from the failed cell's prior value.
+  const confirmedToggle = context.runEnabled(makeCell(7, true));
+  const rejectedLatest = context.runEnabled(makeCell(7, false));
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseRequest(true);
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseRequest(false);
+  await Promise.all([confirmedToggle, rejectedLatest]);
+  assert.equal(server[0].enabled, true, "the failed latest write leaves the confirmed server value intact");
+  assert.equal(context.items[0].enabled, true);
+  assert.equal(rendered.at(-1)[0].enabled, true, "the rebuilt live table rolls back to the last confirmed value");
+  assert.equal(errors.at(-1), "Save rejected");
+
+  // If both a stale attempt and the latest attempt fail, the live table still
+  // returns to the confirmed state and the stale error remains suppressed.
+  const staleFailure = context.runEnabled(makeCell(7, false));
+  const latestFailure = context.runEnabled(makeCell(7, true));
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseRequest(false);
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseRequest(false);
+  await Promise.all([staleFailure, latestFailure]);
+  assert.equal(server[0].enabled, true);
+  assert.equal(context.items[0].enabled, true);
+  assert.equal(rendered.at(-1)[0].enabled, true);
+  assert.equal(errors.at(-1), "Save rejected");
+});
+
+for (const nextEditId of [17, 18]) {
+test(`queued ${nextEditId === 17 ? "same-row" : "other-row"} edit cannot invalidate an earlier successful response body`, async () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const rowsStart = source.indexOf("    function setCollectionRows(");
+  const rowsEnd = source.indexOf("    function setValidation(", rowsStart);
+  const applyStart = source.indexOf("    function applyCollection(");
+  const applyEnd = source.indexOf("    function routeField(", applyStart);
+  const queueStart = source.indexOf("    function enqueueMutation(");
+  const submitStart = source.indexOf("    function submitPayload(");
+  const submitEnd = source.indexOf("    function openWizard(", submitStart);
+  const enabledStart = source.indexOf("    const saveEnabled =");
+  const enabledEnd = source.indexOf("    const text =", enabledStart);
+  const initial = { id: 17, name: "Body pending", description: "Original", hostname: "app.example.test",
+    enabled: false, public_listing: true, managed_dns: false, listeners: [{ interface: "wan0", address: "192.0.2.10" }],
+    routes: [{ id: 27, path_prefix: "/old/", upstream_host: "old-backend.example.test" }] };
+  const other = { ...structuredClone(initial), id: 18, name: "Other row", description: "Other row fields" };
+  let server = [structuredClone(initial), other];
+  let releaseHeaders, releaseBody;
+  const requests = [], rendered = [], errors = [];
+  class HTMLElement {}
+  const context = vm.createContext({ MAX_ITEMS: 512, loadSequence: 0, mutationQueue: Promise.resolve(), pendingMutations: 0,
+    enabledEditSequence: 0, enabledEdits: new Map(), saveUrl: "/save", csrf: "test", canWrite: true,
+    items: structuredClone(server), serializeProxy: reverseProxies.serializeProxy,
+    visibleProxyRow: reverseProxies.visibleProxyRow, HTMLElement,
+    document: { querySelector: () => null, getElementById: () => null },
+    table: { setData: (rows) => rendered.push(rows) }, element: { dataset: {} },
+    updateListenerOptions: () => {}, setValidation: () => {}, showError: (message) => errors.push(message),
+    endpointMessage: async () => "Save rejected",
+    fetch: async (_url, options) => {
+      const request = { payload: JSON.parse(options.body) };
+      requests.push(request);
+      return new Promise((resolveHeaders) => { releaseHeaders = (ok) => {
+        if (!ok) { resolveHeaders({ ok: false }); return; }
+        const index = server.findIndex((item) => item.id === request.payload.id);
+        server[index] = { ...server[index], ...request.payload };
+        if (index === 0) server[index] = { ...server[index], description: "Canonical after commit",
+          listeners: [{ interface: "wan1", address: "198.51.100.17" }],
+          routes: [{ id: 27, path_prefix: "/canonical/", upstream_scheme: "https",
+            upstream_host: "canonical-backend.example.test", upstream_port: 8443, path_behavior: "strip", trust_mode: "trusted_ca" }] };
+        resolveHeaders({ ok: true, json: () => new Promise((resolveBody) => { releaseBody = () => resolveBody({
+          items: structuredClone(server), listener_options: [], config_preview: "committed enabled state",
+        }); }) });
+      }; });
+    },
+  });
+  vm.runInContext(`${source.slice(rowsStart, rowsEnd)} ${source.slice(applyStart, applyEnd)}
+    ${source.slice(queueStart, submitStart)} ${source.slice(submitStart, submitEnd)}
+    ${source.slice(enabledStart, enabledEnd)} globalThis.saveEnabled = saveEnabled;`, context);
+  const cell = (id, value) => ({ getRow: () => ({ getData: () => ({ ...(id === 17 ? initial : other), enabled: value }) }), getValue: () => value,
+    restoreOldValue: () => {} });
+
+  const firstSave = context.saveEnabled(cell(17, true));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 1);
+  releaseHeaders(true); // The server commits and fetch resolves, but response.json() is still pending.
+  await new Promise((resolve) => setImmediate(resolve));
+  const latestValue = nextEditId === 17 ? false : true;
+  const latestSave = context.saveEnabled(cell(nextEditId, latestValue));
+  assert.equal(context.enabledEdits.get(String(nextEditId)).value, latestValue);
+  releaseBody();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].payload.id, nextEditId);
+  assert.equal(requests[1].payload.enabled, latestValue);
+  assert.equal(requests[1].payload.description, nextEditId === 17 ? "Canonical after commit" : other.description);
+  if (nextEditId === 17) {
+    assert.equal(requests[1].payload.listeners[0].interface, "wan1");
+    assert.equal(requests[1].payload.routes[0].path_prefix, "/canonical/");
+  }
+  assert.equal(context.items[0].enabled, true, "the successful first response remains authoritative");
+  assert.equal(context.items[0].description, "Canonical after commit");
+  assert.equal(context.items[0].listeners[0].interface, "wan1");
+  assert.equal(context.items[0].routes[0].path_prefix, "/canonical/");
+  assert.deepEqual(Array.from(rendered.at(-1).slice(0, 2), (item) => item.enabled),
+    nextEditId === 17 ? [false, false] : [true, true],
+    "the earlier success and the newest pending intent are rendered");
+
+  releaseHeaders(false);
+  await Promise.all([firstSave, latestSave]);
+  assert.equal(server[0].enabled, true);
+  assert.equal(context.items[0].enabled, server[0].enabled);
+  assert.equal(context.items[1].enabled, server[1].enabled);
+  assert.deepEqual(Array.from(rendered.at(-1).slice(0, 2), (item) => item.enabled), [true, false],
+    "the failed save rolls back without losing the completed first save");
+  assert.equal(errors.at(-1), "Save rejected");
+});
+}
+
+test("wizard edits, inline toggles, and deletes share one ordered mutation queue", async () => {
+  const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const queueStart = source.indexOf("    function enqueueMutation(");
+  const helperEnd = source.indexOf("    function openWizard(", queueStart);
+  const deleteStart = source.indexOf("    async function deleteProxy(", helperEnd);
+  const deleteEnd = source.indexOf("    const fallback =", deleteStart);
+  const enabledStart = source.indexOf("    const saveEnabled =");
+  const enabledEnd = source.indexOf("    const text =", enabledStart);
+  const server = [
+    { id: 7, name: "Inline", enabled: false, routes: [], listeners: [] },
+    { id: 8, name: "Wizard", enabled: false, routes: [], listeners: [] },
+  ];
+  const requests = [];
+  const context = vm.createContext({ loadSequence: 0, mutationQueue: Promise.resolve(), pendingMutations: 0,
+    enabledEditSequence: 0, enabledEdits: new Map(), saveUrl: "/proxies/save", csrf: "test", canWrite: true,
+    items: structuredClone(server), serializeProxy: reverseProxies.serializeProxy,
+    visibleProxyRow: reverseProxies.visibleProxyRow, applyCollection: (payload) => { context.items = payload.items; },
+    setCollectionRows: (items = context.items) => { context.items = items; },
+    showError: () => {}, endpointMessage: async () => "Mutation rejected",
+    global: { requestConfirmation: async () => true },
+    fetch: async (url, options) => {
+      const request = { url, method: options.method, payload: options.body ? JSON.parse(options.body) : null };
+      requests.push(request);
+      return new Promise((resolve) => { request.finish = () => {
+        if (url.endsWith("/delete")) {
+          const id = Number(url.match(/\/(\d+)\/delete$/)?.[1]);
+          const index = server.findIndex((item) => item.id === id);
+          if (index >= 0) server.splice(index, 1);
+        } else {
+          const index = server.findIndex((item) => item.id === request.payload.id);
+          server[index] = { ...server[index], ...request.payload };
+        }
+        resolve({ ok: true, json: async () => ({ items: structuredClone(server), listener_options: [], config_preview: "updated" }) });
+      }; });
+    },
+  });
+  vm.runInContext(`${source.slice(queueStart, helperEnd)} ${source.slice(deleteStart, deleteEnd)}
+    ${source.slice(enabledStart, enabledEnd)} globalThis.removeProxy = deleteProxy; globalThis.saveEnabled = saveEnabled;`, context);
+
+  const wizardSave = context.submitPayload({ ...server[1], description: "Wizard edit" });
+  const inlineSave = context.saveEnabled({ getRow: () => ({ getData: () => server[0] }), getValue: () => true,
+    restoreOldValue: () => {} });
+  const deleting = context.removeProxy(server[1]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "/proxies/save");
+  assert.equal(requests[0].payload.description, "Wizard edit");
+  assert.equal(context.pendingMutations, 3);
+
+  requests[0].finish();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].payload.id, 7);
+  requests[1].finish();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests.length, 3);
+  assert.match(requests[2].url, /\/8\/delete$/);
+  requests[2].finish();
+  await Promise.all([wizardSave, inlineSave, deleting]);
+  assert.deepEqual(server.map((item) => item.id), [7]);
+  assert.equal(server[0].enabled, true);
+  assert.deepEqual(context.items, server);
+  assert.equal(context.pendingMutations, 0);
+});
+
 test("fallback deletes share confirmation and consume returned collections without a follow-up GET", async () => {
   const source = fs.readFileSync("atlaso/app/static/reverse-proxies.js", "utf8");
+  const queueStart = source.indexOf("    function enqueueMutation(");
   const helperStart = source.indexOf("    async function applyMutationResponse(");
   const helperEnd = source.indexOf("    function openWizard(", helperStart);
   const actionStart = source.indexOf("    async function deleteProxy(");
@@ -172,7 +484,8 @@ test("fallback deletes share confirmation and consume returned collections witho
   let allowed = true, ok = true, malformed = false;
   const calls = [], errors = [], collections = [], confirmations = [];
   const deleted = { items: [], listener_options: [], config_preview: "retired preview" };
-  const context = vm.createContext({ loadSequence: 0, saveUrl: "/proxies/save", csrf: "test",
+  const context = vm.createContext({ loadSequence: 0, mutationQueue: Promise.resolve(), pendingMutations: 0,
+    saveUrl: "/proxies/save", csrf: "test",
     canWrite: true, Element, items: [{ id: 7, name: "Proxy" }],
     fallback: { addEventListener: (_type, callback) => { handler = callback; } },
     global: { requestConfirmation: async (options) => { confirmations.push(options); return allowed; } },
@@ -180,7 +493,7 @@ test("fallback deletes share confirmation and consume returned collections witho
     showError: (error) => errors.push(error), endpointMessage: async () => "Delete rejected",
     fetch: async (url, options) => { calls.push([url, options]); return { ok, json: async () => malformed ? {} : deleted }; },
   });
-  vm.runInContext(source.slice(helperStart, helperEnd) + source.slice(actionStart, actionEnd)
+  vm.runInContext(source.slice(queueStart, helperStart) + source.slice(helperStart, helperEnd) + source.slice(actionStart, actionEnd)
     + source.slice(fallbackStart, fallbackEnd), context);
   const button = new Element("7");
   await handler({ target: button });
@@ -581,8 +894,15 @@ test("display escaping protects operator-controlled text", () => {
 
 test("management service worker precaches the reverse-proxy page asset", () => {
   const worker = fs.readFileSync("atlaso/app/static/service-worker.js", "utf8");
+  const template = fs.readFileSync("atlaso/app/templates/traffic_publishing.html", "utf8");
   assert.match(worker, /const ATLASO_CACHE = `\$\{ATLASO_CACHE_PREFIX\}[1-9]\d*`;/);
-  assert.match(worker, /"\/static\/reverse-proxies\.js\?v=issue-723-17"/);
+  const templateAsset = template.match(/<script src="([^\"]*\/reverse-proxies\.js\?v=[^\"]+)" defer>/)?.[1];
+  const workerAsset = worker.match(/"(\/static\/reverse-proxies\.js\?v=[^\"]+)"/)?.[1];
+  const expectedAsset = "/static/reverse-proxies.js?v=reverse-proxy-autosave-1062-1";
+  assert.equal(templateAsset, expectedAsset);
+  assert.equal(workerAsset, expectedAsset);
+  assert.doesNotMatch(templateAsset, /issue-723-17/);
+  assert.doesNotMatch(workerAsset, /issue-723-17/);
 });
 
 function classListFor(classes) {
@@ -612,7 +932,7 @@ test("fallback refresh replaces nonempty rows, removes stale actions, and escape
     createElement: (tag) => new HTMLElement(tag),
     createTextNode: (text) => ({ textContent: text }),
   }, visibleProxyRow: reverseProxies.visibleProxyRow });
-  vm.runInContext(`const MAX_ITEMS = 256; let items = []; const table = null;
+  vm.runInContext(`const MAX_ITEMS = 256; let items = []; const table = null; const enabledEdits = new Map();
     let canWrite = true; const element = {dataset: {fallbackId: "fallback"}};
     ${source.slice(start, end)}`, context);
   const refresh = (rows) => {
