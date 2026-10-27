@@ -1097,6 +1097,14 @@ def test_rpm_diagnostic_packages_returns_exact_source_inventory_names():
     ]
 
 
+def test_rpm_public_registry_matches_console_privacy_bound():
+    """Keep the cross-language public-index boundary aligned with its registry."""
+    source = (Path(__file__).resolve().parents[1] / "scripts/windows/vmware/invoke-installation-iso-test.ps1").read_text()
+    match = re.search(r"entryDiagnostic.Groups\['index'\].Value -ge ([0-9]+)", source)
+    assert match is not None
+    assert int(match[1]) == len(content_inspection.RPM_DIAGNOSTIC_PATHS)
+
+
 @pytest.mark.parametrize("kind", ["assets", "python", "powercli", "notices"])
 def test_rpm_diagnostic_packages_omits_names_for_non_rpm_checks(kind):
     """Other content kinds cannot receive RPM ownership candidates.
