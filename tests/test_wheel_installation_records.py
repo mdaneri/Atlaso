@@ -19,7 +19,11 @@ INTERPRETER = "/opt/atlaso/.venv/bin/python"
 
 
 def _canonical(name: str) -> str:
-    """Return the wheel distribution spelling used by dist-info paths."""
+    """Return the wheel distribution spelling used by dist-info paths.
+
+    Args:
+        name: Public package or parameter name used by the helper.
+    """
     return re.sub(r"[-_.]+", "_", name).lower()
 
 
@@ -33,7 +37,17 @@ def _wheel(
     duplicate_record_self: bool = False,
     member_modes: dict[str, int] | None = None,
 ) -> Path:
-    """Write one minimal wheel with valid metadata and a hashed RECORD."""
+    """Write one minimal wheel with valid metadata and a hashed RECORD.
+
+    Args:
+        path: Filesystem path used by the isolated fixture.
+        name: Public package or parameter name used by the helper.
+        version: Version string used in the synthetic metadata.
+        members: Wheel member paths and bytes to write.
+        requires: Dependency declarations for the synthetic wheel.
+        duplicate_record_self: Whether to repeat the RECORD self-entry.
+        member_modes: ZIP member mode bits for the synthetic wheel.
+    """
     canonical = _canonical(name)
     dist_info = f"{canonical}-{version}.dist-info"
     metadata = (
@@ -65,7 +79,12 @@ def _wheel(
 
 
 def _app(tmp_path: Path, requires: tuple[str, ...] = ()) -> Path:
-    """Create a minimal Atlaso wheel required by the shared environment parser."""
+    """Create a minimal Atlaso wheel required by the shared environment parser.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+        requires: Dependency declarations for the synthetic wheel.
+    """
     return _wheel(
         tmp_path / "atlaso-1.2.3-py3-none-any.whl",
         "Atlaso",
@@ -76,7 +95,12 @@ def _app(tmp_path: Path, requires: tuple[str, ...] = ()) -> Path:
 
 
 def _environment(tmp_path: Path, app_requires: tuple[str, ...] = ()):
-    """Create the required Atlaso wheel and an initially empty wheelhouse."""
+    """Create the required Atlaso wheel and an initially empty wheelhouse.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+        app_requires: Exact dependency requirements for the synthetic Atlaso wheel.
+    """
     wheelhouse = tmp_path / "wheelhouse"
     wheelhouse.mkdir()
     app = _app(tmp_path, app_requires)
@@ -84,17 +108,34 @@ def _environment(tmp_path: Path, app_requires: tuple[str, ...] = ()):
 
 
 def _read(app: Path, wheelhouse: Path, digest: str):
-    """Resolve scheme-aware installed records through the shared API."""
+    """Resolve scheme-aware installed records through the shared API.
+
+    Args:
+        app: Atlaso wheel path used to build the environment.
+        wheelhouse: Directory containing signed wheel fixtures.
+        digest: Expected wheelhouse digest.
+    """
     return verifier._expected_installation(app, wheelhouse, digest)
 
 
 def _data_path(name: str, version: str, category: str, member: str) -> str:
-    """Build one wheel data-directory member name."""
+    """Build one wheel data-directory member name.
+
+    Args:
+        name: Public package or parameter name used by the helper.
+        version: Version string used in the synthetic metadata.
+        category: Wheel .data installation category.
+        member: Wheel payload member name.
+    """
     return f"{_canonical(name)}-{version}.data/{category}/{member}"
 
 
 def test_nested_vendor_record_is_payload_not_a_distribution(tmp_path: Path):
-    """Vendored metadata stays byte-bound without granting generated-file exemptions."""
+    """Vendored metadata stays byte-bound without granting generated-file exemptions.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+    """
     app, wheelhouse, digest = _environment(tmp_path)
     nested = "sample_dep/_vendor/vendor-2.0.dist-info/RECORD"
     content = b"signed embedded metadata\n"
@@ -107,7 +148,11 @@ def test_nested_vendor_record_is_payload_not_a_distribution(tmp_path: Path):
 
 
 def test_wheel_root_cannot_be_recorded_as_a_file(tmp_path: Path):
-    """A root directory alias cannot become an immutable file destination."""
+    """A root directory alias cannot become an immutable file destination.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+    """
     app, wheelhouse, digest = _environment(tmp_path)
     _wheel(wheelhouse / "sample_dep-1.0-py3-none-any.whl", "sample-dep", "1.0", {".": b"invalid"})
 
@@ -131,7 +176,15 @@ def test_wheel_root_cannot_be_recorded_as_a_file(tmp_path: Path):
 def test_expected_installation_maps_all_supported_external_schemes(
     tmp_path: Path, scheme: str, member: str, content: bytes, installed: str
 ):
-    """Header, data, and script entries map to bounded venv-relative targets."""
+    """Header, data, and script entries map to bounded venv-relative targets.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+        scheme: Wheel installation scheme under test.
+        member: Wheel payload member name.
+        content: Expected installed file bytes.
+        installed: Relative installed destination expected from the mapping.
+    """
     app, wheelhouse, digest = _environment(tmp_path)
     name, version = "sample-dep", "1.0"
     path = _data_path(name, version, scheme, member)
@@ -157,7 +210,12 @@ def test_expected_installation_maps_all_supported_external_schemes(
 def test_external_script_verifier_allows_only_exact_installer_rewrite(
     tmp_path: Path, first_line: bytes
 ):
-    """The original wheel digest is retained while only the shebang is rewritten."""
+    """The original wheel digest is retained while only the shebang is rewritten.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+        first_line: Original script shebang to verify.
+    """
     app, wheelhouse, digest = _environment(tmp_path)
     original = first_line + b"print('from wheel')\n"
     source = _data_path("script-owner", "2.0", "scripts", "tool")
@@ -200,7 +258,13 @@ def test_external_script_verifier_allows_only_exact_installer_rewrite(
 def test_expected_installation_rejects_unsafe_or_unknown_scheme_paths(
     tmp_path: Path, scheme: str, member: str
 ):
-    """Only canonical paths under recognized wheel schemes are admitted."""
+    """Only canonical paths under recognized wheel schemes are admitted.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+        scheme: Wheel installation scheme under test.
+        member: Wheel payload member name.
+    """
     app, wheelhouse, digest = _environment(tmp_path)
     path = _data_path("sample-dep", "1.0", scheme, member)
     _wheel(
@@ -234,7 +298,12 @@ def test_expected_installation_rejects_unsafe_or_unknown_scheme_paths(
 def test_expected_installation_rejects_duplicate_colliding_and_reserved_targets(
     tmp_path: Path, members: dict[str, bytes]
 ):
-    """Different wheel paths cannot shadow one installed target or runtime file."""
+    """Different wheel paths cannot shadow one installed target or runtime file.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+        members: Wheel member paths and bytes to write.
+    """
     app, wheelhouse, digest = _environment(tmp_path)
     _wheel(wheelhouse / "sample_dep-1.0-py3-none-any.whl", "sample-dep", "1.0", members)
 
@@ -243,7 +312,11 @@ def test_expected_installation_rejects_duplicate_colliding_and_reserved_targets(
 
 
 def test_legacy_site_only_parser_remains_strict_for_external_records(tmp_path: Path):
-    """Legacy site-only APIs never silently discard a wheel's external payload."""
+    """Legacy site-only APIs never silently discard a wheel's external payload.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+    """
     app, wheelhouse, digest = _environment(tmp_path)
     source = _data_path("sample-dep", "1.0", "headers", "site/python3.14/sample_dep/x.h")
     dependency = _wheel(
@@ -262,7 +335,11 @@ def test_legacy_site_only_parser_remains_strict_for_external_records(tmp_path: P
 def test_expected_installation_rejects_cross_wheel_site_data_target_collision(
     tmp_path: Path,
 ):
-    """A .data/data target cannot shadow the active site-packages tree."""
+    """A .data/data target cannot shadow the active site-packages tree.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+    """
     app, wheelhouse, digest = _environment(tmp_path)
     _wheel(
         wheelhouse / "first_lib-1.0-py3-none-any.whl",
@@ -288,7 +365,11 @@ def test_expected_installation_rejects_cross_wheel_site_data_target_collision(
 
 
 def test_expected_installation_rejects_repeated_record_self_entry(tmp_path: Path):
-    """RECORD may contain exactly one unhashed self-entry."""
+    """RECORD may contain exactly one unhashed self-entry.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+    """
     app, wheelhouse, digest = _environment(tmp_path)
     _wheel(
         wheelhouse / "sample_dep-1.0-py3-none-any.whl",
@@ -308,7 +389,12 @@ def test_expected_installation_rejects_repeated_record_self_entry(tmp_path: Path
 def test_expected_installation_rejects_recorded_non_regular_zip_members(
     tmp_path: Path, entry_mode: int
 ):
-    """A RECORD row cannot bless a symlink or directory ZIP member as a file."""
+    """A RECORD row cannot bless a symlink or directory ZIP member as a file.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+        entry_mode: ZIP mode bits for the recorded member.
+    """
     app, wheelhouse, digest = _environment(tmp_path)
     member = "sample_dep/payload.bin"
     _wheel(
@@ -326,7 +412,11 @@ def test_expected_installation_rejects_recorded_non_regular_zip_members(
 def test_expected_installation_accepts_regular_zip_member_with_mode_zero(
     tmp_path: Path,
 ):
-    """A ZIP entry without Unix file-type bits remains a normal wheel file."""
+    """A ZIP entry without Unix file-type bits remains a normal wheel file.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+    """
     app, wheelhouse, digest = _environment(tmp_path)
     member = "sample_dep/payload.bin"
     _wheel(
@@ -343,7 +433,11 @@ def test_expected_installation_accepts_regular_zip_member_with_mode_zero(
 
 
 def test_identical_cross_wheel_external_records_are_deduplicated(tmp_path: Path):
-    """Identical installed bytes shared by distributions produce one record."""
+    """Identical installed bytes shared by distributions produce one record.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+    """
     app, wheelhouse, digest = _environment(tmp_path)
     content = b"common header\n"
     for name, version in (("first-lib", "1.0"), ("second-lib", "2.0")):
@@ -371,7 +465,14 @@ def test_identical_cross_wheel_external_records_are_deduplicated(tmp_path: Path)
 def test_unique_exact_dependent_wins_external_collision_independent_of_filename_order(
     tmp_path: Path, owner: str, base: str, requires: str
 ):
-    """A direct exact pin selects the dependent's bytes in either sort order."""
+    """A direct exact pin selects the dependent's bytes in either sort order.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+        owner: Distribution selected as the unique exact dependent.
+        base: Distribution whose external payload collides.
+        requires: Dependency declarations for the synthetic wheel.
+    """
     app, wheelhouse, digest = _environment(
         tmp_path, (f"{owner}==2.0",)
     )
@@ -405,7 +506,12 @@ def test_unique_exact_dependent_wins_external_collision_independent_of_filename_
 def test_external_collision_requires_one_unconditional_exact_owner(
     tmp_path: Path, scenario: str
 ):
-    """Ambiguous, conditional, extras, and cyclic edges cannot pick a winner."""
+    """Ambiguous, conditional, extras, and cyclic edges cannot pick a winner.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+        scenario: Collision scenario expected to fail closed.
+    """
     owner_requires = {
         "unrelated": (),
         "conditional": ("base-lib==1.0; python_version < '4'",),
@@ -451,7 +557,12 @@ def test_external_collision_requires_one_unconditional_exact_owner(
 def test_duplicate_distribution_identity_is_rejected(
     tmp_path: Path, wheels: tuple[tuple[str, str], tuple[str, str]]
 ):
-    """One environment cannot admit multiple wheel identities for one project."""
+    """One environment cannot admit multiple wheel identities for one project.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+        wheels: Wheel identities to submit together.
+    """
     app, wheelhouse, digest = _environment(tmp_path)
     for version, tag in wheels:
         _wheel(

@@ -26,13 +26,21 @@ from scripts.installation import content_inspection
 
 
 def _inventory(value):
-    """Encode a public synthetic inventory in the guest report format."""
+    """Encode a public synthetic inventory in the guest report format.
+
+    Args:
+        value: Inventory or manifest value to encode.
+    """
     raw = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
     return base64.b64encode(zlib.compress(raw, 9)).decode()
 
 
 def _expectation(kind):
-    """Create a small, well-formed expectation without host or guest state."""
+    """Create a small, well-formed expectation without host or guest state.
+
+    Args:
+        kind: Content kind or scenario exercised by the test.
+    """
     common = {"schema": 1, "kind": kind, "iso_sha256": "a" * 64}
     extras = {
         "assets": {
@@ -80,7 +88,12 @@ def _expectation(kind):
 
 
 def _report(kind, **changes):
-    """Create a passing public synthetic report for one content kind."""
+    """Create a passing public synthetic report for one content kind.
+
+    Args:
+        kind: Content kind or scenario exercised by the test.
+        **changes: Additional keyword arguments passed to the test double.
+    """
     values = {
         "assets": {
             "source_digest": "c" * 64,
@@ -128,7 +141,11 @@ def _runtime_fixture_helper():
 
 
 def _decode_guest_program(command):
-    """Decode the bounded source embedded in a generated guest command."""
+    """Decode the bounded source embedded in a generated guest command.
+
+    Args:
+        command: Command argument vector passed to the simulated process.
+    """
     compressed = re.search(r'(b64|b85)decode\("([^"\r\n]+)"\)', command)
     assert compressed is not None
     return zlib.decompress(getattr(base64, compressed[1] + "decode")(compressed[2])).decode()
@@ -193,7 +210,12 @@ def _prepare_fixture():
 
 
 def _write_synthetic_wheel(path, members):
-    """Write a tiny wheel with a real RECORD for the shared verifier."""
+    """Write a tiny wheel with a real RECORD for the shared verifier.
+
+    Args:
+        path: Filesystem path used by the isolated fixture.
+        members: Wheel member paths and bytes to write.
+    """
     rows = []
     for name, content in members.items():
         digest = base64.urlsafe_b64encode(hashlib.sha256(content).digest()).decode().rstrip("=")
@@ -209,7 +231,15 @@ def _write_synthetic_wheel(path, members):
 
 
 def _site_archive(path, records, wheel_members, *, corrupt=False, extra=False):
-    """Archive the signed wheel members as installed site-packages files."""
+    """Archive the signed wheel members as installed site-packages files.
+
+    Args:
+        path: Filesystem path used by the isolated fixture.
+        records: Source-bound installed file records.
+        wheel_members: Wheel member paths and bytes for the archive.
+        corrupt: Whether to alter a recorded file hash.
+        extra: Whether to add an unrecorded installed file.
+    """
     with tarfile.open(path, "w") as archive:
         emitted = 0
         for members in wheel_members:
@@ -230,7 +260,11 @@ def _site_archive(path, records, wheel_members, *, corrupt=False, extra=False):
 
 
 def test_shared_python_payload_verifier_accepts_exact_wheels_and_rejects_drift(tmp_path):
-    """Exercise the real RECORD comparator used by installed Python inspection."""
+    """Exercise the real RECORD comparator used by installed Python inspection.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+    """
     app_members = {
         "atlaso/__init__.py": b"VERSION = '1.2.3'\n",
         "atlaso-1.2.3.dist-info/METADATA": b"Name: atlaso\nVersion: 1.2.3\n",
@@ -289,7 +323,11 @@ def test_prepare_content_inputs_binds_expectations_to_admitted_files():
 
 @pytest.mark.parametrize("tamper", ["source-bytes", "file-hash"])
 def test_prepare_content_inputs_rejects_source_not_bound_to_manifest(tamper):
-    """A claimed shared source cannot drift from the admitted ISO inventory."""
+    """A claimed shared source cannot drift from the admitted ISO inventory.
+
+    Args:
+        tamper: Source mutation used to test rejection.
+    """
     base, manifest, sources = _prepare_fixture()
     if tamper == "source-bytes":
         sources["source/image/common/scripts/provision-atlaso.sh"] += b"# changed\n"
@@ -318,7 +356,12 @@ def test_guest_program_refuses_unreviewed_filesystem_profile():
 
 
 def test_rpm_guest_loader_admits_only_original_helper_bytes(monkeypatch, tmp_path):
-    """Execute the real generated loader, including imports and byte admission."""
+    """Execute the real generated loader, including imports and byte admission.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+    """
     root = tmp_path / "atlaso"
     member = "image/common/scripts/verify-photon-package-state.py"
     helper = root / member
@@ -354,7 +397,11 @@ def test_prepare_content_inputs_requires_original_shared_photon_contract():
 
 @pytest.mark.parametrize("kind", content_inspection.KINDS)
 def test_validate_content_report_accepts_only_expected_public_measurements(kind):
-    """Valid reports retain their exact media identity and expected fields."""
+    """Valid reports retain their exact media identity and expected fields.
+
+    Args:
+        kind: Content kind or scenario exercised by the test.
+    """
     expected = _expectation(kind)
 
     result = content_inspection.validate_content_report(
@@ -372,7 +419,12 @@ def test_validate_content_report_accepts_only_expected_public_measurements(kind)
 @pytest.mark.parametrize("kind", content_inspection.KINDS)
 @pytest.mark.parametrize("defect", ["extra-field", "wrong-media", "wrong-schema", "bool-schema"])
 def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect):
-    """Reports fail closed on schema extensions and identity mismatches."""
+    """Reports fail closed on schema extensions and identity mismatches.
+
+    Args:
+        kind: Content kind or scenario exercised by the test.
+        defect: Report defect to introduce.
+    """
     value = _report(kind)
     if defect == "extra-field":
         value["private_path"] = "/guest/path"
@@ -410,7 +462,11 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
     ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "runtime-mail-spool", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
 )
 def test_validate_content_report_rejects_unverified_rpm_closure(changes):
-    """The installed RPM identities must satisfy the signed allowed closure."""
+    """The installed RPM identities must satisfy the signed allowed closure.
+
+    Args:
+        changes: Values that intentionally alter the report or fixture.
+    """
     with pytest.raises(ValueError):
         content_inspection.validate_content_report(
             json.dumps(_report("rpm", **changes), separators=(",", ":")).encode(),
@@ -433,7 +489,12 @@ def test_validate_content_report_rejects_unverified_rpm_closure(changes):
     ids=["bool-count", "wrong-deployed-count", "zero-count", "large-count", "python-bool", "module-count", "notices-failed", "bad-digest"],
 )
 def test_validate_content_report_rejects_failed_or_malformed_checks(kind, changes):
-    """Booleans cannot masquerade as counts, and check failures stay failures."""
+    """Booleans cannot masquerade as counts, and check failures stay failures.
+
+    Args:
+        kind: Content kind or scenario exercised by the test.
+        changes: Values that intentionally alter the report or fixture.
+    """
     with pytest.raises(ValueError):
         content_inspection.validate_content_report(
             json.dumps(_report(kind, **changes), separators=(",", ":")).encode(),
@@ -443,7 +504,12 @@ def test_validate_content_report_rejects_failed_or_malformed_checks(kind, change
 
 @pytest.mark.parametrize("kind", content_inspection.KINDS)
 def test_guest_content_program_uses_bounded_ascii_console_command(kind, tmp_path):
-    """Generated console payload uses injectable fixture paths and a hard size cap."""
+    """Generated console payload uses injectable fixture paths and a hard size cap.
+
+    Args:
+        kind: Content kind or scenario exercised by the test.
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+    """
     atlaso = tmp_path / "atlaso"
     software = tmp_path / "software"
     temporary = tmp_path / "runtime"
@@ -495,7 +561,14 @@ def test_guest_content_program_uses_bounded_ascii_console_command(kind, tmp_path
     ],
 )
 def test_guest_program_bootstraps_and_reaches_first_read(kind, first_path, monkeypatch, tmp_path):
-    """Run generated source only until an intercepted first guest file read."""
+    """Run generated source only until an intercepted first guest file read.
+
+    Args:
+        kind: Content kind or scenario exercised by the test.
+        first_path: Expected path of the first attempted guest read.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+    """
     command = content_inspection.guest_content_program(
         _expectation(kind),
         atlaso_root="/fixture/atlaso",
@@ -507,7 +580,13 @@ def test_guest_program_bootstraps_and_reaches_first_read(kind, first_path, monke
     observed = []
 
     def stop_before_read(path, *_args, **_kwargs):
-        """Record the intended file and stop before touching the filesystem."""
+        """Record the intended file and stop before touching the filesystem.
+
+        Args:
+            path: Filesystem path used by the isolated fixture.
+            *_args: Additional positional arguments passed to the test double.
+            **_kwargs: Additional keyword arguments passed to the test double.
+        """
         observed.append(Path(path))
         raise OSError("synthetic boundary: no guest filesystem access")
 
@@ -540,7 +619,14 @@ def test_guest_program_bootstraps_and_reaches_first_read(kind, first_path, monke
 def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
     failure_phase, expected_stage, capsys, tmp_path
 ):
-    """Run the actual generated RPM AST with safe failing command stubs."""
+    """Run the actual generated RPM AST with safe failing command stubs.
+
+    Args:
+        failure_phase: Command phase where the test injects a failure.
+        expected_stage: Expected fixed public diagnostic stage.
+        capsys: Pytest fixture for capturing public output.
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+    """
     command = content_inspection.guest_content_program(
         _expectation("rpm"),
         atlaso_root=tmp_path / "atlaso",
@@ -557,11 +643,23 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
     sentinel = "private-rpm-diagnostic-sentinel"
 
     def checked(path, _key):
+        """Admit only the checked helper bytes before the generated command runs.
+
+        Args:
+            path: Filesystem path used by the isolated fixture.
+            _key: Expected source key used for helper admission.
+        """
         if failure_phase == "helper":
             raise SystemExit(sentinel)
         return Path(path), b"verified public helper bytes"
 
     def run(arguments, _timeout=60):
+        """Return synthetic command output or inject the selected failure.
+
+        Args:
+            arguments: Command argument vector supplied to the stub.
+            _timeout: Timeout passed to the command stub.
+        """
         command_parts = [str(part) for part in arguments]
         if failure_phase == "package-state" and any(Path(part).name == "verify-photon-package-state.py" for part in command_parts):
             raise SystemExit(sentinel)
@@ -639,7 +737,18 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     owner_output, owner_name, verify_path, metadata_mode, expected_stage,
     capsys, monkeypatch, tmp_path
 ):
-    """Private diagnostics fingerprint valid owner names without exposing them."""
+    """Private diagnostics fingerprint valid owner names without exposing them.
+
+    Args:
+        owner_output: Stubbed RPM owner-query output.
+        owner_name: Package owner identity returned by the stub.
+        verify_path: Verifier path used to trigger diagnostics.
+        metadata_mode: Mode bits returned by the isolated metadata probe.
+        expected_stage: Expected fixed public diagnostic stage.
+        capsys: Pytest fixture for capturing public output.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+    """
     command = content_inspection.guest_content_program(
         _expectation("rpm"),
         atlaso_root=tmp_path / "atlaso",
@@ -659,6 +768,11 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     namespace = {}
 
     def safe_lstat(path):
+        """Expose metadata only for the expected public diagnostic path.
+
+        Args:
+            path: Filesystem path used by the isolated fixture.
+        """
         name = Path(path).as_posix()
         lstat_calls.append(name)
         if name == verify_path and metadata_mode is not None:
@@ -670,9 +784,21 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     monkeypatch.setattr(Path, "lstat", safe_lstat)
 
     def checked(path, _key):
+        """Admit the fixture helper without reading its host path.
+
+        Args:
+            path: Filesystem path used by the isolated fixture.
+            _key: Expected source key used for helper admission.
+        """
         return Path(path), b"verified public helper bytes"
 
     def run(arguments, _timeout=60):
+        """Return synthetic RPM output or inject the selected failure.
+
+        Args:
+            arguments: Command argument vector supplied to the stub.
+            _timeout: Timeout passed to the command stub.
+        """
         command_parts = [str(part) for part in arguments]
         if "-Va" in command_parts:
             result = SimpleNamespace(
@@ -750,7 +876,19 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
 def test_rpm_runtime_proc_check_retains_package_failures(
     rows, returncode, stderr, mount, mode, uid, gid, failure, monkeypatch
 ):
-    """Reconcile only a proven proc mount's mode, retaining every other failure."""
+    """Reconcile only a proven proc mount's mode, retaining every other failure.
+
+    Args:
+        rows: Synthetic mountinfo rows to inspect.
+        returncode: Status returned by the simulated command.
+        stderr: Private command error bytes to ensure they stay hidden.
+        mount: Mount metadata returned by the runtime fixture.
+        mode: File or directory mode in the simulated metadata.
+        uid: Owner ID in the simulated metadata.
+        gid: Group ID in the simulated metadata.
+        failure: Failure condition injected into the isolated operation.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     generated = ast.parse(_decode_guest_program(
         content_inspection.guest_content_program(_expectation("rpm"))
     ))
@@ -775,14 +913,32 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         mountinfo += f"29 1 0:6 / /run rw - {run_type} tmpfs rw\n"
 
     def read(path, limit):
+        """Provide the synthetic mount table to the generated runtime check.
+
+        Args:
+            path: Filesystem path used by the isolated fixture.
+            limit: Maximum bytes accepted by the bounded reader.
+        """
         assert path.as_posix() == "/proc/self/mountinfo"
         assert limit == 1048576
         return mountinfo.encode()
 
     def checked(path, _key):
+        """Admit the fixture helper without reading its host path.
+
+        Args:
+            path: Filesystem path used by the isolated fixture.
+            _key: Expected source key used for helper admission.
+        """
         return Path(path), b"verified public helper bytes"
 
     def run(arguments, _timeout=60):
+        """Return synthetic verification output for the generated RPM command.
+
+        Args:
+            arguments: Command argument vector supplied to the stub.
+            _timeout: Timeout passed to the command stub.
+        """
         nonlocal firmware_checked
         if "-V" in arguments and "linux-firmware" in arguments:
             firmware_checked = True
@@ -797,6 +953,11 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         return b""
 
     def lstat(path):
+        """Expose metadata for the isolated runtime paths.
+
+        Args:
+            path: Filesystem path used by the isolated fixture.
+        """
         name = path.as_posix()
         if name in {"/var/log/btmp", "/var/log/wtmp"}:
             native_mode = 0o660 if name.endswith("/btmp") else 0o664
@@ -855,7 +1016,11 @@ def test_rpm_diagnostic_packages_returns_exact_source_inventory_names():
 
 @pytest.mark.parametrize("kind", ["assets", "python", "powercli", "notices"])
 def test_rpm_diagnostic_packages_omits_names_for_non_rpm_checks(kind):
-    """Other content kinds cannot receive RPM ownership candidates."""
+    """Other content kinds cannot receive RPM ownership candidates.
+
+    Args:
+        kind: Content kind or scenario exercised by the test.
+    """
     assert content_inspection.rpm_diagnostic_packages(_expectation(kind)) == []
 
 
@@ -900,7 +1065,15 @@ def test_rpm_diagnostic_packages_rejects_invalid_rpm_expectation():
 def test_generated_python_classifier_uses_stages_without_exposing_checker_errors(
     error, record_names, expected_stage, capsys, tmp_path
 ):
-    """Execute only the generated try node that classifies the shared checker."""
+    """Execute only the generated try node that classifies the shared checker.
+
+    Args:
+        error: Private checker error raised by the generated classifier node.
+        record_names: Source-bound paths that can receive a fingerprint.
+        expected_stage: Expected fixed public diagnostic stage.
+        capsys: Pytest fixture for capturing public output.
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+    """
     command = content_inspection.guest_content_program(
         _expectation("python"),
         atlaso_root=tmp_path / "atlaso",
@@ -911,6 +1084,11 @@ def test_generated_python_classifier_uses_stages_without_exposing_checker_errors
     generated = ast.parse(_decode_guest_program(command))
 
     def checks_shared_site_archive(node):
+        """Locate the generated shared archive verifier call.
+
+        Args:
+            node: Generated AST node for the shared verifier call.
+        """
         return any(
             isinstance(statement, ast.Expr)
             and isinstance(statement.value, ast.Call)
@@ -928,6 +1106,11 @@ def test_generated_python_classifier_uses_stages_without_exposing_checker_errors
 
     class Checker:
         def _verify_site_packages_archive(self, *_args):
+            """Raise the private checker error used by the classification test.
+
+            Args:
+                *_args: Additional positional arguments passed to the test double.
+            """
             raise SystemExit(error)
 
     isolated = ast.Module(body=[candidates[0]], type_ignores=[])
@@ -961,7 +1144,11 @@ def test_generated_python_classifier_uses_stages_without_exposing_checker_errors
     base64.b64encode(zlib.compress(b"{}") + b"trailing").decode(),
 ])
 def test_rpm_inventory_decoder_rejects_bombs_and_trailing_data(encoded):
-    """Compressed guest inventories have strict decoded and stream bounds."""
+    """Compressed guest inventories have strict decoded and stream bounds.
+
+    Args:
+        encoded: Compressed inventory bytes to validate.
+    """
     expected = _expectation("rpm")
     expected["allowed_inventory"] = encoded
     value = _report("rpm")

@@ -192,7 +192,12 @@ def test_development_manifest_requires_stable_semver(
 
 
 def _signed_wheel(path: Path, value: str) -> tuple[str, str]:
-    """Write one small valid wheel and return its requirement/hash identity."""
+    """Write one small valid wheel and return its requirement/hash identity.
+
+    Args:
+        path: Filesystem path used by the isolated fixture.
+        value: Inventory or manifest value to encode.
+    """
     name = "atlaso_seed_probe"
     version = "1.0.0"
     dist_info = f"{name}-{version}.dist-info"
@@ -249,7 +254,12 @@ def _signed_dependency_install_tokens() -> list[str]:
 def test_signed_provisioning_install_replaces_same_version_seed_wheel(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """The signed locked wheel must replace a different preinstalled same-version wheel."""
+    """The signed locked wheel must replace a different preinstalled same-version wheel.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     atlaso_home = tmp_path / "atlaso"
     environment = atlaso_home / ".venv"
     environment_python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")

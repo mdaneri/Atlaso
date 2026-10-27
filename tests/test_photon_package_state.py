@@ -391,7 +391,16 @@ def _mountinfo(
     duplicate_proc: bool = False,
     duplicate_run: bool = False,
 ) -> str:
-    """Build a small public mountinfo sample for the two protected mounts."""
+    """Build a small public mountinfo sample for the two protected mounts.
+
+    Args:
+        proc_type: Filesystem type for the simulated proc mount.
+        proc_root: Mount root for the simulated proc mount.
+        run_type: Filesystem type for the simulated run mount.
+        run_root: Mount root for the simulated run mount.
+        duplicate_proc: Whether to include a duplicate proc mount.
+        duplicate_run: Whether to include a duplicate run mount.
+    """
     proc = f"31 25 0:26 {proc_root} /proc rw,nosuid,nodev,noexec - {proc_type} proc rw\n"
     run = f"32 25 0:27 {run_root} /run rw,nosuid,nodev - {run_type} tmpfs rw\n"
     return proc * (2 if duplicate_proc else 1) + run * (2 if duplicate_run else 1)
@@ -409,10 +418,21 @@ def _runtime_paths() -> dict[str, SimpleNamespace]:
 
 
 def _runtime_verifier(monkeypatch, mountinfo: str, paths: dict[str, SimpleNamespace]):
-    """Load the package verifier with isolated mount, metadata, and group reads."""
+    """Load the package verifier with isolated mount, metadata, and group reads.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        mountinfo: Synthetic mountinfo content to provide to the verifier.
+        paths: Synthetic lstat results for protected runtime paths.
+    """
     group_queries = []
 
     def getgrnam(name: str):
+        """Record the group lookup made by the runtime metadata check.
+
+        Args:
+            name: Public package or parameter name used by the helper.
+        """
         group_queries.append(name)
         if name != "utmp":
             raise KeyError(name)
@@ -423,10 +443,20 @@ def _runtime_verifier(monkeypatch, mountinfo: str, paths: dict[str, SimpleNamesp
     mount_reads = []
 
     def read_mountinfo(path=Path("/proc/self/mountinfo")):
+        """Provide the synthetic mount table to the runtime metadata check.
+
+        Args:
+            path: Filesystem path used by the isolated fixture.
+        """
         mount_reads.append(path)
         return mountinfo
 
     def fake_lstat(path: Path):
+        """Return metadata only for paths in the isolated fixture.
+
+        Args:
+            path: Filesystem path used by the isolated fixture.
+        """
         entry = paths.get(path.as_posix())
         if entry is None:
             raise AssertionError(f"unexpected metadata path: {path}")
@@ -438,7 +468,11 @@ def _runtime_verifier(monkeypatch, mountinfo: str, paths: dict[str, SimpleNamesp
 
 
 def test_installation_runtime_metadata_accepts_exact_photon_state(monkeypatch):
-    """Accept the expected proc/run mounts and protected login/mail metadata."""
+    """Accept the expected proc/run mounts and protected login/mail metadata.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     paths = _runtime_paths()
     verifier, mount_reads, group_queries = _runtime_verifier(
         monkeypatch, _mountinfo(), paths
@@ -489,7 +523,12 @@ def test_installation_runtime_metadata_accepts_exact_photon_state(monkeypatch):
 def test_installation_runtime_metadata_rejects_mount_and_path_drift(
     monkeypatch, mutation: str
 ):
-    """Reject mount topology, type, ownership, group, link, and mode defects."""
+    """Reject mount topology, type, ownership, group, link, and mode defects.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+        mutation: Runtime metadata change to reject.
+    """
     paths = _runtime_paths()
     mountinfo = _mountinfo()
     if mutation == "malformed-table":
@@ -530,7 +569,11 @@ def test_installation_runtime_metadata_rejects_mount_and_path_drift(
 
 
 def test_installation_runtime_metadata_rejects_unknown_filesystem_profile(monkeypatch):
-    """Unknown signed media never triggers runtime filesystem inspection."""
+    """Unknown signed media never triggers runtime filesystem inspection.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
     paths = _runtime_paths()
     verifier, mount_reads, group_queries = _runtime_verifier(
         monkeypatch, _mountinfo(), paths
@@ -544,7 +587,11 @@ def test_installation_runtime_metadata_rejects_unknown_filesystem_profile(monkey
 
 
 def test_mountinfo_reader_rejects_input_over_one_mib(tmp_path: Path):
-    """Mountinfo input is bounded before it can drive topology checks."""
+    """Mountinfo input is bounded before it can drive topology checks.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+    """
     verifier = load_verifier()
     oversized = tmp_path / "mountinfo"
     oversized.write_bytes(b"x" * (1024 * 1024 + 1))
@@ -555,7 +602,12 @@ def test_mountinfo_reader_rejects_input_over_one_mib(tmp_path: Path):
 
 @pytest.mark.parametrize("link_kind", ["symlink", "hardlink"])
 def test_mountinfo_reader_rejects_links(tmp_path: Path, link_kind: str):
-    """Mountinfo must be read from an ordinary single-link file."""
+    """Mountinfo must be read from an ordinary single-link file.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated filesystem fixtures.
+        link_kind: Link type to exercise.
+    """
     if link_kind == "symlink" and not getattr(os, "O_NOFOLLOW", 0):
         pytest.skip("host does not provide an O_NOFOLLOW open flag")
     verifier = load_verifier()

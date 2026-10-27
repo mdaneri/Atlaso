@@ -108,7 +108,8 @@ def test_shared_provisioning_follows_native_grub_generation(monkeypatch, tmp_pat
 
 
 def test_prompt_masks_secret_and_does_not_invoke_native_confirmation_lookup(monkeypatch):
-    """
+    """Verify prompt masking without probing native confirmation state.
+
     Args:
         monkeypatch: Pytest fixture for replacing controlled dependencies.
     """
@@ -117,7 +118,8 @@ def test_prompt_masks_secret_and_does_not_invoke_native_confirmation_lookup(monk
 
     class Reader:
         def __init__(self, *args):
-            """
+            """Capture arguments passed to the fake native input reader.
+
             Args:
                 *args: Args used by this test case.
             """
@@ -271,7 +273,8 @@ def test_cancelled_native_layout_page_aborts_review(monkeypatch):
 
 
 def test_environment_value_round_trips_posix_shell_metacharacters(monkeypatch, tmp_path):
-    """
+    """Round-trip shell metacharacters through the environment helper.
+
     Args:
         monkeypatch: Pytest fixture for replacing controlled dependencies.
         tmp_path: Temporary directory for this test's filesystem fixtures.
@@ -322,14 +325,16 @@ Args:
 
     class Backend:
         def __init__(self, **_kwargs):
-            """
+            """Capture native backend constructor settings without target mutation.
+
             Args:
                 **_kwargs: Additional keyword arguments supplied to the test double.
             """
             self.photon_root = str(target)
 
         def configure(self, config):
-            """
+            """Record configuration passed to the fake native backend.
+
             Args:
                 config: Installer configuration passed to the fake backend.
             """
@@ -356,7 +361,8 @@ Args:
 
 
 def test_native_completion_callback_applies_chosen_credentials_only_after_boot_setup(monkeypatch, tmp_path):
-    """
+    """Apply credentials only after native boot setup completes.
+
     Args:
         monkeypatch: Pytest fixture for replacing controlled dependencies.
         tmp_path: Temporary directory for this test's filesystem fixtures.
@@ -371,7 +377,8 @@ def test_native_completion_callback_applies_chosen_credentials_only_after_boot_s
     chpasswd = []
 
     def run(command, *, input, **kwargs):
-        """
+        """Record the password command without running a subprocess.
+
         Args:
             command: Subprocess argument vector received by the test double.
             input: Standard input supplied to the mocked subprocess.
@@ -422,7 +429,8 @@ def test_native_completion_callback_applies_chosen_credentials_only_after_boot_s
 def test_native_failure_before_completion_callback_preserves_no_profile(
     monkeypatch, tmp_path, failure_stage
 ):
-    """
+    """Preserve the target when native setup fails before completion.
+
     Args:
         monkeypatch: Pytest fixture for replacing controlled dependencies.
         tmp_path: Temporary directory for this test's filesystem fixtures.
@@ -457,7 +465,8 @@ def test_native_failure_before_completion_callback_preserves_no_profile(
 
 
 def test_cancelled_prompt_returns_no_consent(monkeypatch):
-    """
+    """Return no consent when the native prompt is cancelled.
+
     Args:
         monkeypatch: Pytest fixture for replacing controlled dependencies.
     """
@@ -470,7 +479,8 @@ def test_cancelled_prompt_returns_no_consent(monkeypatch):
 
 @pytest.mark.parametrize("size_gib", [4, 63, 64, 128])
 def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatch, size_gib):
-    """
+    """Stop before password handling when disk review is cancelled.
+
     Args:
         monkeypatch: Pytest fixture for replacing controlled dependencies.
         size_gib: Selected disk capacity, including the minimum boundary.
@@ -483,7 +493,8 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
             return 25, 80
 
         def bkgd(self, *_args):
-            """
+            """Accept a native background-paint call without changing state.
+
             Args:
                 *_args: Additional positional arguments supplied to the test double.
             """
@@ -491,7 +502,8 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
 
     class SelectDisk:
         def __init__(self, _height, _width, config):
-            """
+            """Retain the configuration passed to the fake selection window.
+
             Args:
                 _height: Console height supplied to the fake UI callback.
                 _width: Console width supplied to the fake UI callback.
@@ -553,7 +565,8 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
     monkeypatch.setitem(sys.modules, "confirmwindow", SimpleNamespace(ConfirmWindow=ConfirmWindow))
 
     def prompt(_height, _width, title, _message, *, secret=False, validator=None):
-        """
+        """Capture prompt arguments for the fake native reader.
+
         Args:
             _height: Console height supplied to the fake UI callback.
             _width: Console width supplied to the fake UI callback.
@@ -704,7 +717,8 @@ def test_small_default_disk_refusal_returns_to_native_disk_selection(monkeypatch
 
 
 def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partition(monkeypatch):
-    """
+    """Map each selected disk through the native adapter.
+
     Args:
         monkeypatch: Pytest fixture for replacing controlled dependencies.
     """
@@ -716,7 +730,8 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
             return 30, 100
 
         def bkgd(self, *_args):
-            """
+            """Accept a native background-paint call without changing state.
+
             Args:
                 *_args: Additional positional arguments supplied to the test double.
             """
@@ -724,7 +739,8 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
 
     class Device:
         def __init__(self, _model, path, _size):
-            """
+            """Retain the selected disk path in the native UI double.
+
             Args:
                 _model: Model string supplied to the fake disk record.
                 path: Path to the fixture or file being tested.
@@ -736,7 +752,8 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
         selected = iter(("/dev/nvme0n1", "/dev/nvme0n1", "/dev/nvme0n1", "/dev/sdb"))
 
         def __init__(self, _height, _width, selection):
-            """
+            """Retain the disk selection passed to the fake native selector.
+
             Args:
                 _height: Console height supplied to the fake UI callback.
                 _width: Console width supplied to the fake UI callback.
@@ -764,7 +781,8 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
 
     class CustomPartition:
         def __init__(self, _height, _width, config):
-            """
+            """Retain the configuration passed to the fake partition form.
+
             Args:
                 _height: Console height supplied to the fake UI callback.
                 _width: Console width supplied to the fake UI callback.
@@ -790,7 +808,8 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
             return SimpleNamespace(success=True)
 
         def validate_partition(self, _values):
-            """
+            """Accept partition validation in the isolated UI double.
+
             Args:
                 _values: Partition fields passed to the fake validator.
             """
@@ -862,7 +881,8 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
     monkeypatch.setitem(sys.modules, "confirmwindow", SimpleNamespace(ConfirmWindow=ConfirmWindow))
 
     def prompt(_height, _width, title, message, *, secret=False, validator=None):
-        """
+        """Capture prompt layout and validation arguments for the fake native UI.
+
         Args:
             _height: Console height supplied to the fake UI callback.
             _width: Console width supplied to the fake UI callback.
@@ -946,10 +966,22 @@ def test_large_custom_disk_review_pages_identities_and_layout_before_cancellable
             return 25, 80
 
         def bkgd(self, *_args):
+            """Accept a native background-paint call without changing state.
+
+            Args:
+                *_args: Additional positional arguments passed to the test double.
+            """
             pass
 
     class SelectDisk:
         def __init__(self, _height, _width, config):
+            """Retain the configuration passed to the fake disk selector.
+
+            Args:
+                _height: Console height passed to the fake UI callback.
+                _width: Console width passed to the fake UI callback.
+                config: Installation configuration supplied by the adapter.
+            """
             self.config = config
 
         def display(self):
@@ -958,6 +990,13 @@ def test_large_custom_disk_review_pages_identities_and_layout_before_cancellable
 
     class CustomPartition:
         def __init__(self, _height, _width, config):
+            """Retain the configuration passed to the fake capacity dialog.
+
+            Args:
+                _height: Console height passed to the fake UI callback.
+                _width: Console width passed to the fake UI callback.
+                config: Installation configuration supplied by the adapter.
+            """
             self.config = config
             self.install_config = {"partitions": partitions}
 
@@ -972,6 +1011,17 @@ def test_large_custom_disk_review_pages_identities_and_layout_before_cancellable
 
     class ConfirmWindow:
         def __init__(self, height, width, maxy, maxx, starty, message, info=False):
+            """Capture the native confirmation geometry and message.
+
+            Args:
+                height: Dialog height supplied to the fake confirmation window.
+                width: Dialog width supplied to the fake confirmation window.
+                maxy: Terminal height supplied to the fake confirmation window.
+                maxx: Terminal width supplied to the fake confirmation window.
+                starty: Menu start row supplied to the fake confirmation window.
+                message: Confirmation text supplied by the installer.
+                info: Whether the confirmation window is informational.
+            """
             assert_native_confirmation_geometry(height, width, maxy, maxx, starty, message)
             dialogs.append({"message": message, "info": info})
             self.menu = SimpleNamespace(position=0)
@@ -1026,7 +1076,8 @@ def test_large_custom_disk_review_pages_identities_and_layout_before_cancellable
 
 
 def test_changed_disk_prevents_native_partition_call(monkeypatch, tmp_path):
-    """
+    """Avoid partitioning after the selected disk changes.
+
     Args:
         monkeypatch: Pytest fixture for replacing controlled dependencies.
         tmp_path: Temporary directory for this test's filesystem fixtures.
@@ -1036,14 +1087,16 @@ def test_changed_disk_prevents_native_partition_call(monkeypatch, tmp_path):
 
     class Backend:
         def __init__(self, **kwargs):
-            """
+            """Accept backend construction without changing installation state.
+
             Args:
                 **kwargs: Additional subprocess options received by the test double.
             """
             pass
 
         def configure(self, value):
-            """
+            """Record the configuration passed to the fake backend.
+
             Args:
                 value: Value supplied to the test case.
             """
@@ -1068,7 +1121,8 @@ def test_changed_disk_prevents_native_partition_call(monkeypatch, tmp_path):
 
 
 def test_custom_boot_only_disk_has_capacity_before_native_efi_insertion(monkeypatch, tmp_path):
-    """
+    """Check boot-only disk capacity before native EFI insertion.
+
     Args:
         monkeypatch: Pytest fixture for replacing controlled dependencies.
         tmp_path: Temporary directory for this test's filesystem fixtures.
@@ -1078,14 +1132,16 @@ def test_custom_boot_only_disk_has_capacity_before_native_efi_insertion(monkeypa
 
     class Backend:
         def __init__(self, **_kwargs):
-            """
+            """Accept backend construction without changing installation state.
+
             Args:
                 **_kwargs: Additional keyword arguments supplied to the test double.
             """
             pass
 
         def configure(self, config):
-            """
+            """Record configuration before returning simulated disk sizes.
+
             Args:
                 config: Installer configuration passed to the fake backend.
             """
@@ -1110,7 +1166,8 @@ def test_custom_boot_only_disk_has_capacity_before_native_efi_insertion(monkeypa
 
 @pytest.mark.parametrize("failure", ["native", "docker"])
 def test_native_failure_cannot_continue_or_use_network_fallback(monkeypatch, tmp_path, failure):
-    """
+    """Stop failed native provisioning without a network fallback.
+
     Args:
         monkeypatch: Pytest fixture for replacing controlled dependencies.
         tmp_path: Temporary directory for this test's filesystem fixtures.
@@ -1121,14 +1178,16 @@ def test_native_failure_cannot_continue_or_use_network_fallback(monkeypatch, tmp
 
     class Backend:
         def __init__(self, **kwargs):
-            """
+            """Accept backend construction without changing installation state.
+
             Args:
                 **kwargs: Additional subprocess options received by the test double.
             """
             pass
 
         def configure(self, value):
-            """
+            """Record the configuration passed to the fake backend.
+
             Args:
                 value: Value supplied to the test case.
             """
@@ -1151,7 +1210,8 @@ def test_native_failure_cannot_continue_or_use_network_fallback(monkeypatch, tmp
 
 
 def test_iso_identity_initialization_preserves_chosen_credentials(monkeypatch):
-    """
+    """Preserve selected credentials during ISO identity initialization.
+
     Args:
         monkeypatch: Pytest fixture for replacing controlled dependencies.
     """
@@ -1173,7 +1233,8 @@ def test_iso_identity_initialization_preserves_chosen_credentials(monkeypatch):
 
 
 def test_bad_installation_receipt_blocks_identity_changes(monkeypatch):
-    """
+    """Reject identity changes when installation receipt validation fails.
+
     Args:
         monkeypatch: Pytest fixture for replacing controlled dependencies.
     """
@@ -1183,7 +1244,8 @@ def test_bad_installation_receipt_blocks_identity_changes(monkeypatch):
     monkeypatch.setenv("ATLASO_STORAGE_PROFILE", "installation")
 
     def fail(command, **kwargs):
-        """
+        """Simulate password-command failure before identity changes.
+
         Args:
             command: Subprocess argument vector received by the test double.
             **kwargs: Additional subprocess options received by the test double.
