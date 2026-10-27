@@ -74,6 +74,11 @@ shorten the upload-time cutoff to obtain a newer dependency, including for a sec
 satisfies the input declarations, change the input constraint through a reviewed dependency update or wait until the
 required release reaches seven full days.
 
+The appliance bootstrap pins setuptools to `84.1.0`, which fixes the upstream Windows legacy wheel-installation
+path escape described in [GHSA-xmj3-9gf7-h52w](https://github.com/pypa/setuptools/security/advisories/GHSA-xmj3-9gf7-h52w).
+The development extra also requires this patched minimum so its transitive setuptools selection remains safe.
+Regenerate both appliance and development locks when updating this dependency.
+
 The Windows candidate job installs the release-tools and virtualization-smoke locks into one interpreter. Their input
 manifests therefore pin shared runtime packages compatibly so the second installation cannot replace part of the
 already validated release-tool environment.
