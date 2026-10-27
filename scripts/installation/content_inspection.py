@@ -37,7 +37,7 @@ PHOTON_AUDIT_SHA256 = "e55fac7b24b2f7546485f0b8b37fb7b105be764436dd4b139ccaa88e6
 # e41e6109d7be89ae83da63ef8021ef9a0e053ecd4fe1f47ae73dd79270d688c7.
 # The LDAP directories and unit are from openldap-servers-2.6.4-6.ph5,
 # SHA-256 11b4af044b7418ba9af5cf6762e2cbe5add5b3463774d20f6be89b8ff98c47dc.
-# The kernel boot configuration is from linux-6.12.113-5.ph5, SHA-256
+# The kernel boot configuration and module alias index are from linux-6.12.113-5.ph5, SHA-256
 # 2987a19840476e522f2d19431b60b5e146b3a03fab17287ec211f1cf7e6e8bd4.
 RPM_DIAGNOSTIC_PATHS = (
     "/bin",
@@ -164,6 +164,7 @@ RPM_DIAGNOSTIC_PATHS = (
     "/var/lib/openldap",
     "/var/run/openldap",
     "/boot/linux-6.12.113-5.ph5.cfg",
+    "/lib/modules/6.12.113-5.ph5/modules.alias",
 )
 SOURCE_MEMBERS = (
     "source/image/common/scripts/provision-atlaso.sh",
@@ -465,14 +466,14 @@ def checked(rel,key):
  p=a/rel;b=read(p,1048576)
  if hashlib.sha256(b).hexdigest()!=e[key]: raise ValueError()
  return p,b
-class PrivateCommandFailure(Exception):
+class CommandError(Exception):
  def __init__(self,result):
   super().__init__();self.result=result
 
 def run(args,timeout=60):
  c=subprocess.run(args,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout)
  if len(c.stdout)+len(c.stderr)>1048576: raise ValueError()
- if c.returncode: raise PrivateCommandFailure(c)
+ if c.returncode: raise CommandError(c)
  return c.stdout
 '''
     if kind in {"assets", "python", "rpm"}:
@@ -639,7 +640,7 @@ stage="system-rpm-files"
 absent=set()
 try:
  run(["rpm","--noplugins","-Va","--noscripts","--nodeps","--noconfig","--noghost"],90)
-except PrivateCommandFailure as failure:
+except CommandError as failure:
  lines=failure.result.stdout.decode("utf-8").splitlines()
  bad=[]
  for line in lines:

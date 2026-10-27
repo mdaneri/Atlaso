@@ -1017,8 +1017,18 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
             b"linux\n", "linux", "/boot/linux-unknown.cfg", None,
             "system-rpm-files-package-" + hashlib.sha256(b"linux").hexdigest(),
         ),
+        (
+            b"linux\n", "linux", "/lib/modules/6.12.113-5.ph5/modules.alias",
+            stat.S_IFREG | 0o644,
+            "system-rpm-files-package-" + hashlib.sha256(b"linux").hexdigest()
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/lib/modules/6.12.113-5.ph5/modules.alias')}-f0644-v.......T.",
+        ),
+        (
+            b"linux\n", "linux", "/lib/modules/6.12.113-5.ph5/private-state", None,
+            "system-rpm-files-package-" + hashlib.sha256(b"linux").hexdigest(),
+        ),
     ],
-    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata", "fixed-missing-entry", "journal-metadata", "remote-journal-metadata", "audit-directory-metadata", "private-audit-file", "rpcbind-directory-metadata", "private-rpcbind-file", "efi-boot-file", "efi-revocations-file", "private-efi-file", "ldap-unit", "ldap-data-directory", "ldap-runtime-directory", "private-ldap-child", "kernel-boot-config", "unknown-kernel-config"],
+    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata", "fixed-missing-entry", "journal-metadata", "remote-journal-metadata", "audit-directory-metadata", "private-audit-file", "rpcbind-directory-metadata", "private-rpcbind-file", "efi-boot-file", "efi-revocations-file", "private-efi-file", "ldap-unit", "ldap-data-directory", "ldap-runtime-directory", "private-ldap-child", "kernel-boot-config", "unknown-kernel-config", "kernel-module-alias", "unknown-kernel-child"],
 )
 def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     owner_output, owner_name, verify_path, metadata_mode, expected_stage,
@@ -1093,7 +1103,7 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
                 stderr=sentinel,
                 returncode=1,
             )
-            raise namespace["PrivateCommandFailure"](result)
+            raise namespace["CommandError"](result)
         if "-qf" in command_parts:
             return owner_output
         if "-qa" in command_parts:
@@ -1270,7 +1280,7 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         if "-V" in arguments and "linux-firmware" in arguments:
             firmware_checked = True
         if "-Va" in arguments and returncode:
-            raise namespace["PrivateCommandFailure"](SimpleNamespace(
+            raise namespace["CommandError"](SimpleNamespace(
                 stdout=rows.encode(), stderr=stderr, returncode=returncode
             ))
         if "-qa" in arguments:
