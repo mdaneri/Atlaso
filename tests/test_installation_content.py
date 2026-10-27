@@ -72,6 +72,7 @@ def _expectation(kind):
             "audit_sha256": content_inspection.PHOTON_AUDIT_SHA256,
             "rpcbind_sha256": content_inspection.PHOTON_RPCBIND_SHA256,
             "openssh_sha256": content_inspection.PHOTON_OPENSSH_SHA256,
+            "openldap_sha256": content_inspection.PHOTON_OPENLDAP_SHA256,
             "shim_sha256": content_inspection.PHOTON_SHIM_SHA256,
             "grub_efi_sha256": content_inspection.PHOTON_GRUB_EFI_SHA256,
             "allowed_inventory": _inventory({
@@ -131,6 +132,7 @@ def _report(kind, **changes):
             "runtime_journal_metadata_verified": True,
             "runtime_audit_metadata_verified": True,
             "runtime_openssh_metadata_verified": True,
+            "runtime_openldap_metadata_verified": True,
             "runtime_rpcbind_metadata_verified": True,
             "runtime_efi_metadata_verified": True,
             "runtime_media_directories_absent": 0,
@@ -155,11 +157,13 @@ def _runtime_fixture_helper():
                            INSTALLATION_AUDIT_SHA256=content_inspection.PHOTON_AUDIT_SHA256,
                            INSTALLATION_RPCBIND_SHA256=content_inspection.PHOTON_RPCBIND_SHA256,
                            INSTALLATION_OPENSSH_SHA256=content_inspection.PHOTON_OPENSSH_SHA256,
+                           INSTALLATION_OPENLDAP_SHA256=content_inspection.PHOTON_OPENLDAP_SHA256,
                            INSTALLATION_SHIM_SHA256=content_inspection.PHOTON_SHIM_SHA256,
                            INSTALLATION_GRUB_EFI_SHA256=content_inspection.PHOTON_GRUB_EFI_SHA256,
                            verify_installation_metadata=lambda *_checksums: {**fields, "runtime_journal_metadata_verified": True,
                                                                             "runtime_audit_metadata_verified": True,
                                                                             "runtime_openssh_metadata_verified": True,
+                                                                            "runtime_openldap_metadata_verified": True,
                                                                             "runtime_rpcbind_metadata_verified": True, "runtime_efi_metadata_verified": True})
 
 
@@ -229,6 +233,9 @@ def _prepare_fixture():
     records.append({"path": "rpms/openssh.rpm", "sha256": content_inspection.PHOTON_OPENSSH_SHA256})
     rpms.append({"file": "openssh.rpm", "name": "openssh-server", "version": "10.0p1-3.ph5", "architecture": "x86_64",
                  "sha256": content_inspection.PHOTON_OPENSSH_SHA256})
+    records.append({"path": "rpms/openldap.rpm", "sha256": content_inspection.PHOTON_OPENLDAP_SHA256})
+    rpms.append({"file": "openldap.rpm", "name": "openldap-servers", "version": "2.6.4-6.ph5", "architecture": "x86_64",
+                 "sha256": content_inspection.PHOTON_OPENLDAP_SHA256})
     records.append({"path": "rpms/shim.rpm", "sha256": content_inspection.PHOTON_SHIM_SHA256})
     rpms.append({"file": "shim.rpm", "name": "shim-signed", "version": "16.1-1.ph5", "architecture": "x86_64",
                  "sha256": content_inspection.PHOTON_SHIM_SHA256})
@@ -360,6 +367,7 @@ def test_prepare_content_inputs_binds_expectations_to_admitted_files():
         "linux": ["6.1-1.ph5", "x86_64"],
         "python3": ["3.14-2.ph5", "x86_64"],
         "openssh-server": ["10.0p1-3.ph5", "x86_64"],
+        "openldap-servers": ["2.6.4-6.ph5", "x86_64"],
         "rpcbind": ["1.2.6-6.ph5", "x86_64"],
         "shim-signed": ["16.1-1.ph5", "x86_64"],
         "systemd": ["257.13-5.ph5", "x86_64"],
@@ -449,7 +457,7 @@ def test_prepare_content_inputs_rejects_source_not_bound_to_manifest(tamper):
         content_inspection.prepare_content_inputs(base, manifest, sources)
 
 
-@pytest.mark.parametrize("package", ["filesystem", "systemd", "audit", "rpcbind", "openssh", "shim", "grub_efi"])
+@pytest.mark.parametrize("package", ["filesystem", "systemd", "audit", "rpcbind", "openssh", "openldap", "shim", "grub_efi"])
 def test_prepare_content_inputs_refuses_unreviewed_runtime_profile(package):
     """A different authenticated RPM cannot inherit the known mutable profile.
 
@@ -458,13 +466,13 @@ def test_prepare_content_inputs_refuses_unreviewed_runtime_profile(package):
     """
     base, manifest, sources = _prepare_fixture()
     next(item for item in manifest["files"] if item["path"] == f"rpms/{package}.rpm")["sha256"] = "0" * 64
-    name = {"shim": "shim-signed", "grub_efi": "grub2-efi-image", "openssh": "openssh-server"}.get(package, package)
+    name = {"shim": "shim-signed", "grub_efi": "grub2-efi-image", "openssh": "openssh-server", "openldap": "openldap-servers"}.get(package, package)
     next(item for item in manifest["rpm_inventory"] if item["name"] == name)["sha256"] = "0" * 64
     with pytest.raises(ValueError, match="reviewed runtime metadata profile"):
         content_inspection.prepare_content_inputs(base, manifest, sources)
 
 
-@pytest.mark.parametrize("package", ["filesystem", "systemd", "audit", "rpcbind", "openssh", "shim", "grub_efi"])
+@pytest.mark.parametrize("package", ["filesystem", "systemd", "audit", "rpcbind", "openssh", "openldap", "shim", "grub_efi"])
 def test_guest_program_refuses_unreviewed_runtime_profile(package):
     """Unknown runtime profiles stop preparation before any guest command exists.
 
@@ -597,6 +605,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"runtime_audit_metadata_verified": False},
         {"runtime_rpcbind_metadata_verified": False},
         {"runtime_openssh_metadata_verified": False},
+        {"runtime_openldap_metadata_verified": False},
         {"runtime_efi_metadata_verified": False},
         {"runtime_media_directories_absent": True},
         {"runtime_media_directories_absent": 3},
@@ -606,7 +615,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"], "rogue": ["1.0", "noarch"]})},
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"]})},
     ],
-    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "runtime-mail-spool", "runtime-journal-metadata", "runtime-audit-metadata", "runtime-rpcbind-metadata", "runtime-openssh-metadata", "runtime-efi-metadata", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
+    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "runtime-mail-spool", "runtime-journal-metadata", "runtime-audit-metadata", "runtime-rpcbind-metadata", "runtime-openssh-metadata", "runtime-openldap-metadata", "runtime-efi-metadata", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
 )
 def test_validate_content_report_rejects_unverified_rpm_closure(changes):
     """The installed RPM identities must satisfy the signed allowed closure.
@@ -1100,6 +1109,10 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
 @pytest.mark.parametrize(
     ("rows", "returncode", "stderr", "mount", "mode", "uid", "gid", "failure"),
     [
+        ("missing /var/run/openldap\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        ("missing /var/run/openldap\n", 1, b"", "ldaprace", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        ("missing /var/run/openldap/private-state\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        (".M....... /var/run/openldap\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         ("......G.. /usr/share/empty.sshd\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
         ("......G.. /usr/share/empty.sshd\n", 1, b"", "sshrace", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
         (".M....G.. /usr/share/empty.sshd\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
@@ -1337,6 +1350,21 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         return {"runtime_openssh_metadata_verified": True}
 
     monkeypatch.setattr(helper, "verify_installation_openssh_metadata", verify_ssh)
+    ldap_checks = []
+
+    def verify_ldap(checksum):
+        """Prove the initial disabled service's absence before and after comparison.
+
+        Args:
+            checksum: Media-admitted OpenLDAP RPM checksum.
+        """
+        assert checksum == helper.INSTALLATION_OPENLDAP_SHA256
+        ldap_checks.append(checksum)
+        if mount == "ldaprace" and firmware_checked:
+            raise ValueError("private LDAP runtime drift")
+        return {"runtime_openldap_metadata_verified": True}
+
+    monkeypatch.setattr(helper, "verify_installation_openldap_metadata", verify_ldap)
     efi_checks = []
 
     def verify_efi(checksum, grub_checksum):
@@ -1385,6 +1413,8 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         assert len(rpc_checks) == 2
         assert report["runtime_openssh_metadata_verified"] is True
         assert len(ssh_checks) == 2
+        assert report["runtime_openldap_metadata_verified"] is True
+        assert len(ldap_checks) == 2
         assert report["runtime_media_directories_absent"] == rows.count("missing /run/media/")
         assert report["rpm_files_verified"] is True
 

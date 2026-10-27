@@ -1175,6 +1175,124 @@ def test_installation_sys_directory_rejects_unknown_package_before_metadata(monk
 
 
 @pytest.mark.parametrize("defect", [
+    None, "package", "unit-bytes", "unit-reader", "mount-filesystem", "mount-subroot", "mount-mode",
+    "parent-mode", "parent-owner", "parent-group", "alias-type", "alias-owner", "alias-group", "alias-links",
+    "alias-target", "alias-missing", "directory-present", "alias-directory-present",
+    "enabled", "active", "substate", "unloaded", "duplicate", "unknown", "malformed",
+    "stderr", "returncode", "timeout", "oserror", "huge",
+])
+def test_initial_openldap_profile_requires_proven_disabled_volatile_absence(monkeypatch, defect):
+    """Admit absence only under the pinned native mount, alias, unit and service.
+
+    Args:
+        monkeypatch: Replace fixed public observations without reading LDAP data.
+        defect: Native policy, mount, alias, directory or service drift to reject.
+    """
+    verifier = load_verifier()
+    unit = b"[Service]\nExecStart=/usr/sbin/slapd -u ldap\n"
+    monkeypatch.setattr(verifier, "INSTALLATION_OPENLDAP_UNIT_SHA256", hashlib.sha256(unit).hexdigest())
+    observations = []
+
+    def policy(path, mode, maximum, name):
+        """Reuse the authenticated ordinary-file reader at its fixed public unit.
+
+        Args:
+            path: Public unit path selected by the profile.
+            mode: Admitted native file permissions.
+            maximum: Bounded public policy read limit.
+            name: Fixed diagnostic policy name.
+        """
+        observations.append("policy")
+        assert path == Path("/usr/lib/systemd/system/slapd.service")
+        assert (mode, maximum, name) == (0o644, 4096, "OpenLDAP")
+        if defect == "unit-reader":
+            raise ValueError("public policy fixture unavailable")
+        return unit + (b"changed" if defect == "unit-bytes" else b"")
+
+    monkeypatch.setattr(verifier, "_read_installation_tmpfiles", policy)
+    filesystem = "ext4" if defect == "mount-filesystem" else "tmpfs"
+    subroot = "/private" if defect == "mount-subroot" else "/"
+    monkeypatch.setattr(verifier, "_read_installation_mountinfo",
+                        lambda: f"20 1 0:22 {subroot} /run rw - {filesystem} tmpfs rw\n")
+
+    def metadata(path):
+        """Observe only the fixed mount, native alias and absent volatile entry.
+
+        Args:
+            path: Fixed public path under test.
+        """
+        value = path.as_posix()
+        observations.append(value)
+        if value == "/run":
+            return SimpleNamespace(st_mode=stat.S_IFDIR | (0o700 if defect == "mount-mode" else 0o755),
+                                   st_uid=0, st_gid=0)
+        if value == "/var":
+            return SimpleNamespace(st_mode=stat.S_IFDIR | (0o700 if defect == "parent-mode" else 0o755),
+                                   st_uid=1 if defect == "parent-owner" else 0,
+                                   st_gid=1 if defect == "parent-group" else 0)
+        if value == "/var/run":
+            if defect == "alias-missing":
+                raise FileNotFoundError()
+            return SimpleNamespace(st_mode=(stat.S_IFDIR if defect == "alias-type" else stat.S_IFLNK) | 0o777,
+                                   st_uid=1 if defect == "alias-owner" else 0,
+                                   st_gid=1 if defect == "alias-group" else 0,
+                                   st_nlink=2 if defect == "alias-links" else 1)
+        if value in {"/run/openldap", "/var/run/openldap"}:
+            if (value == "/run/openldap" and defect == "directory-present"
+                    or value == "/var/run/openldap" and defect == "alias-directory-present"):
+                return SimpleNamespace(st_mode=stat.S_IFDIR | 0o755)
+            raise FileNotFoundError()
+        raise AssertionError("LDAP profile inspected a child or unreviewed path")
+
+    def target(path):
+        """Resolve only the public filesystem package's declared alias.
+
+        Args:
+            path: Exact native alias being checked.
+        """
+        assert path == Path("/var/run")
+        return Path("/other" if defect == "alias-target" else "../run")
+
+    def service(arguments, **options):
+        """Return public fixed service properties, never configuration or data.
+
+        Args:
+            arguments: Exact read-only systemctl show request.
+            **options: Bounded subprocess capture settings.
+        """
+        observations.append("service")
+        assert arguments == ["/usr/bin/systemctl", "show", "slapd.service", "--no-pager", "--property=LoadState",
+                             "--property=ActiveState", "--property=SubState", "--property=UnitFileState"]
+        assert options == {"check": False, "capture_output": True, "text": True, "timeout": 10}
+        if defect == "timeout":
+            raise subprocess.TimeoutExpired(arguments, 10)
+        if defect == "oserror":
+            raise OSError("public service fixture unavailable")
+        states = {"LoadState": "not-found" if defect == "unloaded" else "loaded",
+                  "ActiveState": "active" if defect == "active" else "inactive",
+                  "SubState": "failed" if defect == "substate" else "dead",
+                  "UnitFileState": "enabled" if defect == "enabled" else "disabled"}
+        output = "".join(f"{key}={value}\n" for key, value in states.items())
+        output += {"duplicate": "ActiveState=inactive\n", "unknown": "Unexpected=value\n",
+                   "malformed": "invalid-row\n", "huge": "x" * 2049}.get(defect, "")
+        return SimpleNamespace(stdout=output, stderr="private-fixture" if defect == "stderr" else "",
+                               returncode=1 if defect == "returncode" else 0)
+
+    monkeypatch.setattr(Path, "lstat", metadata)
+    monkeypatch.setattr(Path, "readlink", target)
+    monkeypatch.setattr(verifier.subprocess, "run", service)
+    checksum = "0" * 64 if defect == "package" else verifier.INSTALLATION_OPENLDAP_SHA256
+    if defect:
+        with pytest.raises(ValueError):
+            verifier.verify_installation_openldap_metadata(checksum)
+    else:
+        assert verifier.verify_installation_openldap_metadata(checksum) == {"runtime_openldap_metadata_verified": True}
+        assert observations == ["policy", "/run", "/var", "/var/run", "/run/openldap", "/var/run/openldap", "service"]
+    if defect == "package":
+        assert observations == []
+
+
+@pytest.mark.parametrize("defect", [
     None, "package", "grub-package", "layout-identity", "layout-filesystem", "missing-mount", "duplicate-mount", "subroot",
     "filesystem", "nested-mount", "mask", "duplicate-mask", "root-mode", "root-owner", "root-group", "root-type",
     "file-mode", "file-owner", "file-group", "file-type", "file-link", "size", "bytes", "timestamp", "fraction",

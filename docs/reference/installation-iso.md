@@ -382,6 +382,12 @@ The OpenSSH server profile reuses the same directory validator for its pinned in
 only the real privilege-separation directory at `/usr/share/empty.sshd` to have uid 0, sys gid 2 and mode
 `0711` before and after comparison. Only that directory's group-only RPM discrepancy is reconciled;
 missing entries, changed ownership or permissions, child paths and other flags still fail. SSH keys are never read.
+The initial OpenLDAP profile binds its exact admitted server RPM and native service-unit bytes. It reuses the
+runtime mount and public-policy readers, requires the native root-owned `/var/run -> ../run` alias over verified
+tmpfs, and requires `slapd.service` to be loaded, inactive, dead and disabled. Only the absent volatile
+`/var/run/openldap` directory is reconciled, before and after comparison. Atlaso's existing LDAP helper creates
+its runtime directory when LDAP is enabled. A running or enabled service, changed unit or mount, present entry,
+private child, or other verification flag fails this initial-installation profile. No LDAP data or configuration is read.
 The host checks those package pins before generating the console command, which reuses the authenticated shared
 helper's constants to keep the transport within its fixed size limit.
 The shared Photon verifier is authenticated against the original media and must match the host's supported contract.

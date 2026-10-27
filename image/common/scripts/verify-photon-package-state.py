@@ -32,6 +32,9 @@ INSTALLATION_RPCBIND_SHA256 = "2c3d001aca71e6c6c81377a7bfc7ec9c3d26ee7a9891b4a70
 INSTALLATION_RPCBIND_PATH = Path("/var/lib/rpcbind")
 INSTALLATION_OPENSSH_SHA256 = "cf1bace04bca67f58536b2cc241754bcdb3bb7e2b38c518bc283f3c90c16a2d8"
 INSTALLATION_OPENSSH_PATH = Path("/usr/share/empty.sshd")
+INSTALLATION_OPENLDAP_SHA256 = "11b4af044b7418ba9af5cf6762e2cbe5add5b3463774d20f6be89b8ff98c47dc"
+INSTALLATION_OPENLDAP_UNIT_PATH = Path("/usr/lib/systemd/system/slapd.service")
+INSTALLATION_OPENLDAP_UNIT_SHA256 = "203aafa5cb6c16defe0fae0100bc89b9cbf65d666e7d73a9b510f8fb8b94c8cf"
 INSTALLATION_SHIM_SHA256 = "e41e6109d7be89ae83da63ef8021ef9a0e053ecd4fe1f47ae73dd79270d688c7"
 INSTALLATION_GRUB_EFI_SHA256 = "516e63a3c609abecf4a4bf3ef2661d4f1bed26729a612f73e0bfcb530727e91f"
 INSTALLATION_LAYOUT_HELPER_PATH = Path(__file__).resolve().parents[3] / "scripts/installation/layout.py"
@@ -260,6 +263,26 @@ def _installation_mount_rows() -> list[tuple[list[str], list[str]]]:
     return mounts
 
 
+def _verify_installation_runtime_mount(
+    mounts: list[tuple[list[str], list[str]]], name: str, filesystem: str, mode: int
+) -> None:
+    """Require one native runtime mount with the admitted root metadata.
+
+    Args:
+        mounts: Bounded mount rows from the existing private reader.
+        name: Fixed mount point selected by an installation profile.
+        filesystem: Native filesystem required by that profile.
+        mode: Expected native mount-point permission bits.
+    """
+    metadata = Path(name).lstat()
+    if (not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != mode
+            or metadata.st_uid != 0 or metadata.st_gid != 0):
+        raise ValueError("installation runtime mount metadata differs")
+    rows = [row for row in mounts if row[0][4] == name]
+    if len(rows) != 1 or rows[0][0][3] != "/" or rows[0][1][0] != filesystem:
+        raise ValueError("installation runtime mount identity differs")
+
+
 def verify_installation_runtime_metadata(filesystem_sha256: str) -> dict[str, bool]:
     """Verify native runtime metadata that shadows the admitted empty payload.
 
@@ -277,13 +300,7 @@ def verify_installation_runtime_metadata(filesystem_sha256: str) -> dict[str, bo
 
     mounts = _installation_mount_rows()
     for name, filesystem, mode in (("/proc", "proc", 0o555), ("/run", "tmpfs", 0o755)):
-        metadata = Path(name).lstat()
-        if (not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != mode
-                or metadata.st_uid != 0 or metadata.st_gid != 0):
-            raise ValueError("installation runtime mount metadata differs")
-        rows = [row for row in mounts if row[0][4] == name]
-        if len(rows) != 1 or rows[0][0][3] != "/" or rows[0][1][0] != filesystem:
-            raise ValueError("installation runtime mount identity differs")
+        _verify_installation_runtime_mount(mounts, name, filesystem, mode)
     utmp_gid = getgrnam("utmp").gr_gid
     for name, mode in (("/var/log/btmp", 0o660), ("/var/log/wtmp", 0o664)):
         metadata = Path(name).lstat()
@@ -510,6 +527,60 @@ def verify_installation_openssh_metadata(openssh_sha256: str) -> dict[str, bool]
     return {"runtime_openssh_metadata_verified": True}
 
 
+def verify_installation_openldap_metadata(openldap_sha256: str) -> dict[str, bool]:
+    """Prove the initial disabled LDAP service's volatile directory is absent.
+
+    Args:
+        openldap_sha256: Original OpenLDAP server RPM checksum admitted from the ISO.
+
+    Reuse the bounded public policy reader and runtime mount validator. The
+    native unit declares no RuntimeDirectory; Atlaso's existing LDAP helper
+    creates /run/openldap when enabling LDAP. This profile applies only to the
+    inactive, disabled initial service and reads no LDAP configuration or data.
+    """
+    if openldap_sha256 != INSTALLATION_OPENLDAP_SHA256:
+        raise ValueError("OpenLDAP runtime metadata profile is not admitted")
+    unit = _read_installation_tmpfiles(INSTALLATION_OPENLDAP_UNIT_PATH, 0o644, 4096, "OpenLDAP")
+    if hashlib.sha256(unit).hexdigest() != INSTALLATION_OPENLDAP_UNIT_SHA256:
+        raise ValueError("installation OpenLDAP unit differs from native policy")
+    _verify_installation_runtime_mount(_installation_mount_rows(), "/run", "tmpfs", 0o755)
+    try:
+        parent, alias = Path("/var").lstat(), Path("/var/run").lstat()
+        if (not stat.S_ISDIR(parent.st_mode) or stat.S_IMODE(parent.st_mode) != 0o755
+                or parent.st_uid != 0 or parent.st_gid != 0
+                or not stat.S_ISLNK(alias.st_mode) or alias.st_nlink != 1
+                or alias.st_uid != 0 or alias.st_gid != 0
+                or Path("/var/run").readlink().as_posix() != "../run"):
+            raise ValueError("installation OpenLDAP runtime alias differs from native policy")
+    except OSError as exc:
+        raise ValueError("installation OpenLDAP runtime alias is unavailable") from exc
+    for path in (Path("/run/openldap"), Path("/var/run/openldap")):
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            continue
+        raise ValueError("installation initial OpenLDAP runtime directory must be absent")
+    try:
+        completed = subprocess.run(
+            ["/usr/bin/systemctl", "show", "slapd.service", "--no-pager", "--property=LoadState",
+             "--property=ActiveState", "--property=SubState", "--property=UnitFileState"],
+            check=False, capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError("installation OpenLDAP service state is unavailable") from exc
+    if completed.returncode or completed.stderr or len(completed.stdout) > 2048:
+        raise ValueError("installation OpenLDAP service state is unavailable")
+    states = {}
+    for row in completed.stdout.splitlines():
+        key, separator, value = row.partition("=")
+        if not separator or key in states:
+            raise ValueError("installation OpenLDAP service state is malformed")
+        states[key] = value
+    if states != {"LoadState": "loaded", "ActiveState": "inactive", "SubState": "dead", "UnitFileState": "disabled"}:
+        raise ValueError("installation OpenLDAP service is not in its initial disabled state")
+    return {"runtime_openldap_metadata_verified": True}
+
+
 def _verified_installation_layout() -> dict:
     """Authenticate and reuse the installed-layout verifier before mount observation.
 
@@ -574,7 +645,7 @@ def verify_installation_efi_metadata(shim_sha256: str, grub_efi_sha256: str) -> 
 
 def verify_installation_metadata(
     filesystem_sha256: str, systemd_sha256: str, audit_sha256: str, rpcbind_sha256: str,
-    shim_sha256: str, grub_efi_sha256: str, openssh_sha256: str
+    shim_sha256: str, grub_efi_sha256: str, openssh_sha256: str, openldap_sha256: str
 ) -> dict[str, bool]:
     """Reuse the admitted native profiles before or after package comparison.
 
@@ -586,12 +657,14 @@ def verify_installation_metadata(
         shim_sha256: Original Photon shim RPM checksum.
         grub_efi_sha256: Original Photon GRUB EFI-image RPM checksum.
         openssh_sha256: Original Photon OpenSSH server RPM checksum.
+        openldap_sha256: Original Photon OpenLDAP server RPM checksum.
     """
     result = verify_installation_runtime_metadata(filesystem_sha256)
     result.update(verify_installation_journal_metadata(systemd_sha256))
     result.update(verify_installation_audit_metadata(audit_sha256))
     result.update(verify_installation_rpcbind_metadata(rpcbind_sha256))
     result.update(verify_installation_openssh_metadata(openssh_sha256))
+    result.update(verify_installation_openldap_metadata(openldap_sha256))
     result.update(verify_installation_efi_metadata(shim_sha256, grub_efi_sha256))
     return result
 
