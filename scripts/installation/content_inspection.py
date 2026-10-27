@@ -404,7 +404,12 @@ except PrivateCommandFailure as failure:
   owners=run(["rpm","--noplugins","-qf","--qf","%{NAME}\\n",path],3).decode("utf-8").splitlines()
   valid_owners=sorted(owner for owner in set(owners) if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+._:-]{0,127}",owner))
   if valid_owners:
-   stage+="-package-"+hashlib.sha256(valid_owners[0].encode("utf-8")).hexdigest();break
+   stage+="-package-"+hashlib.sha256(valid_owners[0].encode("utf-8")).hexdigest()
+   fixed={"/root":"root","/tmp":"tmp","/var/tmp":"vartmp","/run":"run","/var/run":"varrun","/var/lock":"varlock","/bin":"bin","/sbin":"sbin","/lib":"lib","/lib64":"lib64","/usr/local/lib64":"locallib64","/boot":"boot","/boot/efi":"efi","/opt":"opt","/home":"home","/dev":"dev","/dev/pts":"devpts","/dev/shm":"shm","/var/cache":"cache","/var/lib":"varlib","/var/log":"varlog","/usr":"usr","/usr/local":"local","/usr/local/share":"localshare"}
+   if path in fixed:
+    z=Path(path).lstat();kind="d" if stat.S_ISDIR(z.st_mode) else "l" if stat.S_ISLNK(z.st_mode) else "f" if stat.S_ISREG(z.st_mode) else "o"
+    stage+="-"+fixed[path]+"-"+kind+format(stat.S_IMODE(z.st_mode),"04o")
+   break
  raise
 stage="system-rpm-firmware"
 run(["rpm","--noplugins","-V","--noscripts","--nodeps","linux-firmware"],60)

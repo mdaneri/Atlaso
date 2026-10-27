@@ -9,6 +9,7 @@ import io
 import json
 import os
 import re
+import stat
 import tarfile
 import zlib
 from pathlib import Path, PurePosixPath
@@ -60,6 +61,7 @@ def _expectation(kind):
                 "python3": ["3.14-2.ph5", "x86_64"],
                 "optional-tool": ["1.0-1.ph5", "noarch"],
                 "pip": ["26.2.1-1.ph5", "noarch"],
+                "filesystem": ["1.1-11.ph5", "x86_64"],
             }),
             "required_packages": _inventory(["linux", "python3"]),
         },
@@ -498,26 +500,46 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
 
 
 @pytest.mark.parametrize(
-    ("owner_output", "owner_name", "expected_stage"),
+    ("owner_output", "owner_name", "verify_path", "metadata_mode", "expected_stage"),
     [
         (
             b"pip\n",
             "pip",
+            "/usr/lib/python3.14/site-packages/pip/_internal/commands/list.py",
+            None,
             "system-rpm-files-package-" + hashlib.sha256(b"pip").hexdigest(),
         ),
         (
             b"private-unknown-package\n",
             "private-unknown-package",
+            "/var/lib/private/service.db",
+            None,
             "system-rpm-files-package-"
             + hashlib.sha256(b"private-unknown-package").hexdigest(),
         ),
-        (b"", "", "system-rpm-files"),
-        (b"private invalid owner\n", "private invalid owner", "system-rpm-files"),
+        (b"", "", "/var/lib/private/service.db", None, "system-rpm-files"),
+        (
+            b"private invalid owner\n",
+            "private invalid owner",
+            "/var/lib/private/service.db",
+            None,
+            "system-rpm-files",
+        ),
+        (
+            b"filesystem\n",
+            "filesystem",
+            "/root",
+            stat.S_IFDIR | 0o700,
+            "system-rpm-files-package-"
+            + hashlib.sha256(b"filesystem").hexdigest()
+            + "-root-d0700",
+        ),
     ],
-    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner"],
+    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata"],
 )
 def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
-    owner_output, owner_name, expected_stage, capsys, tmp_path
+    owner_output, owner_name, verify_path, metadata_mode, expected_stage,
+    capsys, monkeypatch, tmp_path
 ):
     """Private diagnostics fingerprint valid owner names without exposing them."""
     command = content_inspection.guest_content_program(
@@ -534,11 +556,18 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
         if not isinstance(node, ast.FunctionDef) or node.name not in {"checked", "run"}
     ]
     sentinel = b"private-rpm-file-path-and-stderr-sentinel"
-    verify_output = (
-        b".......T. /usr/lib/python3.14/site-packages/"
-        b"pip/_internal/commands/list.py\n"
-    )
+    verify_output = f".......T. {verify_path}\n".encode()
+    lstat_calls = []
     namespace = {}
+
+    def safe_lstat(path):
+        name = Path(path).as_posix()
+        lstat_calls.append(name)
+        if name == "/root" and metadata_mode is not None:
+            return SimpleNamespace(st_mode=metadata_mode)
+        raise AssertionError("diagnostic attempted metadata access outside its fixed path")
+
+    monkeypatch.setattr(Path, "lstat", safe_lstat)
 
     def checked(path, _key):
         return Path(path), b"verified public helper bytes"
@@ -570,6 +599,8 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     assert verify_output.decode() not in output.getvalue()
     if owner_name:
         assert owner_name not in output.getvalue()
+    assert verify_path not in output.getvalue()
+    assert lstat_calls == ([verify_path] if metadata_mode is not None else [])
     captured = capsys.readouterr()
     assert sentinel.decode() not in captured.out
     assert sentinel.decode() not in captured.err
@@ -580,6 +611,7 @@ def test_rpm_diagnostic_packages_returns_exact_source_inventory_names():
     expected = _expectation("rpm")
 
     assert content_inspection.rpm_diagnostic_packages(expected) == [
+        "filesystem",
         "linux",
         "optional-tool",
         "pip",

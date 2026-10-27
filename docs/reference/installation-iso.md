@@ -161,7 +161,7 @@ procedure for each. `Auto` obtains administrator and root credentials through th
 credential bridge and sends them only to concealed installer prompts; do not put passwords in command lines or logs.
 `CancelReview` selects the target and accepts the default **No** at the native **Erase selected disks?** confirmation.
 The same confirmation displays the selected disks and proposed layout; no typed acknowledgement is required.
-Long custom layouts use native review pages before that final confirmation. `Insufficient`
+Large disk-identity summaries and custom layouts use native review pages before that final confirmation. `Insufficient`
 selects the fixture's four-GiB disk and requires the exact capacity refusal for that disk before consent. Both
 scenarios use no credentials and compare both disks with their pre-boot baselines after stopping the VM.
 The native capacity dialog identifies the selected disk and its size. Enter returns to explicit disk selection;
@@ -335,8 +335,9 @@ RPM failures distinguish helper admission, package-state checks, inventory, pack
 failures distinguish source inputs, inventory, generation, and comparison. These fixed categories keep command output
 private and retain the original verification requirements.
 For an RPM file failure, a package identifier can be reported only after its name matches the original media inventory.
-The identifier hashes that public package name. File paths, file contents, and raw verification errors stay private,
-and the check still fails.
+The identifier hashes that public package name. Fixed public filesystem directories can also be identified by a short
+label, entry type and permission mode. Arbitrary paths, file contents and raw verification errors stay private, and
+the check still fails.
 
 Use `-CollisionSuffix inspection-a` and `-CollisionSuffix inspection-b` for two fresh installations in separate
 canonical VM directories. The wrappers reuse the shared identity helper to preserve the PR number while giving each

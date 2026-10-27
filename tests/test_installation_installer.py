@@ -923,6 +923,108 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
     assert pane.lines[3].startswith("/dev/sdb")
 
 
+def test_large_custom_disk_review_pages_identities_and_layout_before_cancellable_confirmation(monkeypatch):
+    """Review every selected identity and layout before a bounded No-default confirmation.
+
+    Args:
+        monkeypatch: Fixture for replacing Photon controls and disk access.
+    """
+    module = load_installer(monkeypatch)
+    paths = [f"/dev/sd{letter}" for letter in "abcdefg"]
+    initial = {
+        path: {"size": 128 * 1024**3, "model": f"Model {index}", "serial": f"serial-{index}"}
+        for index, path in enumerate(paths, start=1)
+    }
+    mountpoints = ["/", *(f"/mnt/atlaso-volume-{index}" for index in range(1, len(paths)))]
+    partitions = [
+        {"mountpoint": mountpoint, "filesystem": "ext4", "size": 1024, "disk": path}
+        for path, mountpoint in zip(paths, mountpoints, strict=True)
+    ]
+
+    class Screen:
+        def getmaxyx(self):
+            return 25, 80
+
+        def bkgd(self, *_args):
+            pass
+
+    class SelectDisk:
+        def __init__(self, _height, _width, config):
+            self.config = config
+
+        def display(self):
+            self.config.update({"disk": paths[0], "autopartition": False})
+            return SimpleNamespace(success=True)
+
+    class CustomPartition:
+        def __init__(self, _height, _width, config):
+            self.config = config
+            self.install_config = {"partitions": partitions}
+
+        def display(self):
+            self.partition_disks = {index: path for index, path in enumerate(paths)}
+            result = self.next()
+            self.config.update(self.install_config)
+            return result
+
+        def next(self):
+            return SimpleNamespace(success=True)
+
+    class ConfirmWindow:
+        def __init__(self, height, width, maxy, maxx, starty, message, info=False):
+            assert_native_confirmation_geometry(height, width, maxy, maxx, starty, message)
+            dialogs.append({"message": message, "info": info})
+            self.menu = SimpleNamespace(position=0)
+
+        def do_action(self):
+            dialogs[-1]["default"] = self.menu.position
+            return SimpleNamespace(success=True, result={"yes": False})
+
+    dialogs = []
+    custompartition = SimpleNamespace(CustomPartition=CustomPartition, PartitionPane=object)
+    monkeypatch.setitem(sys.modules, "custompartition", custompartition)
+    monkeypatch.setitem(sys.modules, "device", SimpleNamespace(Device=type("Device", (), {})))
+    monkeypatch.setitem(sys.modules, "partitionpane", SimpleNamespace(PartitionPane=object))
+    monkeypatch.setitem(sys.modules, "selectdisk", SimpleNamespace(SelectDisk=SelectDisk))
+    monkeypatch.setitem(sys.modules, "confirmwindow", SimpleNamespace(ConfirmWindow=ConfirmWindow))
+    monkeypatch.setattr(module, "disk_inventory", lambda: initial)
+    monkeypatch.setattr(module, "selected_disks", lambda _config: paths)
+    monkeypatch.setattr(module, "revalidate_disks", lambda *_args: None)
+    monkeypatch.setattr(module, "prompt", lambda *_args, **_kwargs: pytest.fail("credentials must follow consent"))
+    writes = []
+    monkeypatch.setattr(module, "install", lambda *_args: writes.append("install"))
+    for name, value in (
+        ("COLOR_WHITE", 1),
+        ("COLOR_BLUE", 2),
+        ("COLOR_BLACK", 3),
+        ("COLOR_GREEN", 4),
+        ("COLOR_RED", 5),
+    ):
+        monkeypatch.setattr(module.curses, name, value, raising=False)
+    monkeypatch.setattr(module.curses, "init_pair", lambda *_args: None, raising=False)
+    monkeypatch.setattr(module.curses, "curs_set", lambda *_args: None, raising=False)
+    monkeypatch.setattr(module.curses, "color_pair", lambda *_args: 0, raising=False)
+
+    with pytest.raises(module.Cancelled):
+        module.configure_console(Screen(), initial)
+
+    information = [dialog["message"] for dialog in dialogs if dialog["info"]]
+    assert len(information) >= 4
+    rendered_review = "\n".join(information)
+    for index, path in enumerate(paths, start=1):
+        assert f"{path}: Model {index} 128 GiB" in rendered_review
+        assert f"Serial/WWN: serial-{index}" in rendered_review
+        assert f"{path} planned layout:" in rendered_review
+        assert mountpoints[index - 1] in rendered_review
+    destructive = [dialog for dialog in dialogs if not dialog["info"]]
+    assert len(destructive) == 1
+    assert destructive[0]["default"] == 1
+    assert "ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST." in destructive[0]["message"]
+    assert "Select Yes to continue or No to cancel." in destructive[0]["message"]
+    assert len(destructive[0]["message"].splitlines()) + 7 <= 25
+    assert writes == []
+
+
 def test_changed_disk_prevents_native_partition_call(monkeypatch, tmp_path):
     """
     Args:

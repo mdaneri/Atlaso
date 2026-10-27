@@ -683,11 +683,11 @@ function Wait-InstallationConsoleState {
             $plain = [regex]::Replace($text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>su]', '')
             $plain = [regex]::Replace($plain, '\^?\[\[[0-9]{1,2};[0-9]{1,2}R', '')
             if ($ReadInspectionReport) {
-                $inspectionFailure = [regex]::Match($plain, 'ATLASO-INSPECTION-FAILED(?::(?<stage>initialization|source-helpers|software-staging|software-verification|application-payload|public-identities|system-(?:assets(?:-(?:profile|helper|source|powershell-profile|deployed|trust))?|python(?:-(?:helpers|software|expected|site|scratch|archive|files|external|bytecode|extra|changed(?:-[0-9a-f]{64})?|missing))?|powercli|rpm(?:-(?:helper|package-state|inventory|files(?:-package-[0-9a-f]{64})?|firmware))?|notices(?:-(?:inputs|inventory|generate|compare))?)))?[\r\n]+')
+                $inspectionFailure = [regex]::Match($plain, 'ATLASO-INSPECTION-FAILED(?::(?<stage>initialization|source-helpers|software-staging|software-verification|application-payload|public-identities|system-(?:assets(?:-(?:profile|helper|source|powershell-profile|deployed|trust))?|python(?:-(?:helpers|software|expected|site|scratch|archive|files|external|bytecode|extra|changed(?:-[0-9a-f]{64})?|missing))?|powercli|rpm(?:-(?:helper|package-state|inventory|files(?:-package-[0-9a-f]{64}(?:-(?:root|tmp|vartmp|run|varrun|varlock|bin|sbin|lib|lib64|locallib64|boot|efi|opt|home|dev|devpts|shm|cache|varlib|varlog|usr|local|localshare)-[dlfo][0-7]{4})?)?|firmware))?|notices(?:-(?:inputs|inventory|generate|compare))?)))?[\r\n]+')
                 if ($inspectionFailure.Success) {
                     $inspectionStage = $inspectionFailure.Groups['stage'].Value
                     if ($inspectionStage.StartsWith('system-rpm-files-package-', [StringComparison]::Ordinal) -and
-                        -not $allowedPackageHashes.Contains($inspectionStage.Substring('system-rpm-files-package-'.Length))) {
+                        -not $allowedPackageHashes.Contains($inspectionStage.Substring('system-rpm-files-package-'.Length, 64))) {
                         $inspectionStage = 'system-rpm-files'
                     }
                     if ($inspectionStage) { throw ('Installed inspection failed at public stage: ' + $inspectionStage + '.') }

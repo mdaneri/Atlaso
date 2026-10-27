@@ -110,13 +110,14 @@ def confirm_installation(maxy: int, maxx: int, message: str) -> bool:
     return bool(result.success and result.result and result.result.get("yes") is True)
 
 
-def show_layout_review_pages(maxy: int, maxx: int, lines: list[str]) -> None:
-    """Show every long custom-layout line in native informational pages.
+def show_layout_review_pages(maxy: int, maxx: int, lines: list[str], *, heading: str = "Planned installation layout") -> None:
+    """Show every long review line in native informational pages.
 
     Args:
         maxy: Available terminal height in rows.
         maxx: Available terminal width in columns.
-        lines: Complete layout summary lines, without truncation.
+        lines: Complete review lines, without truncation.
+        heading: Short page heading identifying the review content.
     """
     from confirmwindow import ConfirmWindow
 
@@ -128,7 +129,7 @@ def show_layout_review_pages(maxy: int, maxx: int, lines: list[str]) -> None:
         raise ValueError("installation review exceeds the console page size")
     pages = [wrapped[index:index + page_capacity] for index in range(0, len(wrapped), page_capacity)]
     for index, page in enumerate(pages, start=1):
-        message = "Planned installation layout ({}/{})\n{}".format(index, len(pages), "\n".join(page))
+        message = "{} ({}/{})\n{}".format(heading, index, len(pages), "\n".join(page))
         height = len(message.splitlines()) + 7
         starty = (maxy - height) // 2 + height - 4
         result = ConfirmWindow(height, width, maxy, maxx, starty, message, info=True).do_action()
@@ -302,9 +303,11 @@ def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tup
         "", "ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.", "Select Yes to continue or No to cancel."
     ]
     if len(confirmation_lines) > maxy - 10:
+        show_layout_review_pages(maxy, maxx, summary_lines[1:], heading="Selected disk identities")
         show_layout_review_pages(maxy, maxx, layout_lines)
-        confirmation_lines = wrapped_summary + [
-            "", "Planned layout is shown above.", "ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.",
+        confirmation_lines = [
+            "Erase selected disks?", "Selected disk identities and planned layouts were reviewed above.",
+            "", "ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.",
             "Select Yes to continue or No to cancel.",
         ]
     if not confirm_installation(maxy, maxx, "\n".join(confirmation_lines)):
