@@ -30,7 +30,7 @@ Use the tabs inside **VCF Helper** to choose a workflow:
 | --- | --- |
 | Deployment | Generated VCF FQDNs, Add SDDC Manager OVA, Deploy SDDC Manager, Configure VCF Offline Depot |
 | Credentials | Import passwords into a vault |
-| Certificates | VCF Certificate Trust, Appliance Certificate Replacement |
+| Certificates | VCF Certificate Trust, Appliance Certificate Replacement, Certificate Renewal |
 | LDAP | Managed LDAP for VCF, Generate LDAP Test Directory |
 | Lab | Lab / Non-production Overrides |
 
@@ -60,6 +60,105 @@ If a task outcome is uncertain, use **Reconcile status** and follow the displaye
 reservation remains held while remote state is unresolved. Do not create another CSR or repeat an uncertain install.
 For certificate requirements and the verified 9.1 lab coverage, see
 [Appliance Certificates](appliance-certificates.md).
+
+### Certificate Renewal
+
+**Certificate Renewal** provides an experimental Atlaso-managed renewal workflow for vCenter Machine SSL on the
+VCF Operations 9.1.1 contract. Native appliance acceptance is pending. This workflow does not change VCF Operations'
+own **Auto Renewal** status. Other certificate roles, VCF Operations 9.1.0, linked vCenters, vCenter HA, unsupported
+topology, root rotation, and STS identities are outside this first supported target.
+
+The source contract is the repository's locked `vcf-sdk==9.1.1.0`, specifically its Operations fleet certificate,
+CSR, workflow and version models. The client validates the numeric version and required response capabilities;
+missing or ambiguous target and request identities stop the operation. Broadcom's
+[external-chain replacement API](https://developer.broadcom.com/xapis/vcf-operations-api/latest/suite-api/api/fleet-management/certificate-management/certificates/certificateId/put/)
+documents `EXTERNAL_CA`, a public PEM chain, and an asynchronous workflow response. That page is unpinned `latest`;
+it does not establish availability or successful behavior on an installed build. No VCF 9.1.0 compatibility is inferred.
+
+Start in **VCF Helper → Certificates → Certificate Renewal**. The certificate list is read-only: use it to inspect
+target identity, issuer, expiry, renewal state, last and next attempt, and task history. The task link selects the newest
+bound scheduled check, manual check, or certificate operation, including failed checks. The shared **Tasks** view holds
+workflow progress and results; the certificate row reports the current per-target state.
+
+Scheduled discovery rechecks the enrolling administrator's access. Explicit preparation and replacement tasks recheck
+the approving administrator instead, so another authorized administrator can prepare a proposal after the original
+enrollment owner loses access. If an approver loses access before dispatch, the task fails with a recoverable
+checkpoint. After that approver is authorized again, **Reconcile status** unwinds undispatched work without repeating
+certificate writes; preparation can then be reviewed again.
+
+To enroll a target, confirm the VCF Operations HTTPS fingerprint and select its saved **Vault** credential. Also
+independently compare the target vCenter's displayed observed TLS fingerprint with a trusted source and confirm that
+exact fingerprint. Select a separate saved **Vault** credential for the target vCenter's authenticated read-only
+checks. This credential is used only for native permissions, topology, DNS, time, and health inspection before and
+after replacement. It does not authorize or perform CSR generation or certificate replacement; those writes use the
+VCF Operations APIs. Both credential selections are required. Enable Atlaso-managed renewal for the selected vCenter
+Machine SSL certificate; enrollment defaults off. Set the renewal threshold (30 days by default) and schedule (daily
+at 02:00 UTC by default, with a configurable cron schedule and timezone), then save the policy. Confirm the target and
+policy in the read-only certificate list.
+
+After an Operations password rotation or TLS certificate change, select the **Saved Operations connection** and choose
+**Reconfirm connection**. Select its current Vault credential, verify the same server and port, independently confirm
+the freshly observed TLS fingerprint, and save. Atlaso authenticates before updating that existing connection; it does
+not rebind the enrolled targets or repeat native requests. Pending or running certificate write tasks must finish
+first. Prepared and recovery operations retain their checkpoints and reservations, and any prepared replacement
+requires a fresh review after reconfirmation. Use **Reconcile status** to observe a retained native workflow.
+
+If the separate vCenter health password rotates, use the target row's **Reconfirm health access** action. Select its
+current saved Vault credential, read the target fingerprint, independently confirm it, and authenticate. The endpoint
+stays bound to that vCenter; only the enrolled leaf or the exact issued replacement is accepted, with strict TLS for
+the replacement. This read-only authentication repair does not require a ready CA/profile or green health, does not
+repeat certificate writes, and preserves retained material and native request checkpoints. A pending or running write
+task must finish first, and prepared replacements require a fresh approval afterward. Reconcile an existing native
+request rather than starting another replacement.
+
+To stop scheduled checks, choose the certificate row's **Disable enrollment** action. Disabling uses only the saved
+local policy and its schedule, so it remains available during a VCF outage or when the CA/profile is disabled. Saved
+target, credential, profile and timing bindings are retained; disabling does not apply other wizard edits. A proposal
+can be cancelled this way, but an already prepared, running, or uncertain renewal must be finished or reconciled first.
+
+Scheduled and per-target workflow checks read fleet metadata but probe only the enrolled target's TLS endpoint.
+This avoids repeating unrelated target timeouts during checks, preparation, and replacement. Use **Refresh inventory**
+to explicitly inspect the whole fleet.
+
+The schedule and **Check now** perform discovery and propose due work. They do not generate a CSR, sign a certificate,
+install a certificate, or replace VCF Operations' native scheduler. When renewal is due, an administrator starts the
+explicit workflow:
+
+1. Select **Prepare renewal** for the reviewed target. Acknowledge that the native VCF workflow will generate a fresh
+   CSR and Atlaso will sign that request. The target retains its private key.
+2. Follow the preparation task. Resolve any prerequisite or validation issue before proceeding to replacement.
+3. When the issued replacement is ready, open **Review replacement**. This review is bound to the administrator,
+   the exact target and certificate, and expires after ten minutes. Atlaso revalidates its issued-certificate record
+   at review, approval, and immediately before dispatch; revoked, disabled, missing, or changed material is refused.
+4. Verify the review again and select **Approve replacement** to submit the replacement through VCF Operations'
+   asynchronous **EXTERNAL_CA** certificate workflow.
+5. Follow the task to completion. VCF's certificate status of `NORMAL` is not a component-health result. Atlaso
+   reports success only after a fresh strict-TLS connection serves the exact reviewed leaf and authenticated
+   read-only checks against the target vCenter confirm health.
+
+An uncertain native request or installation keeps its target reservation. Use **Reconcile status** and resolve the
+recorded task before starting another renewal. Do not issue another CSR or repeat a replacement while the prior native
+outcome is unresolved. Review upcoming expiry, the last attempt, task details and audit history to diagnose failures;
+resume only from the recorded recovery guidance.
+
+A web-service restart leaves the independent renewal worker and its checkpoints running. After a worker restart,
+**Reconcile status** can restore a durably prepared certificate for review without generating another CSR or signing
+again. The retained target reservation stays in place until the separately approved replacement is verified.
+
+Renewal policies and checkpoint state are stored on the appliance and excluded from settings archives. Restore
+preserves uncertain operation and reservation records, but does not export or recreate renewal schedules or Vault
+entries; after restore, reconcile outstanding operations and restore the required credentials before re-enrolling any
+schedule. Restore does not trigger certificate writes. If the VCF replacement request ID is lost, the operation remains
+`needs_recovery` even when the new leaf is visible: strict TLS alone cannot establish that VCF's coordinating workflow
+is terminal. Follow the supported native vCenter recovery procedure and reconcile the workflow before resuming.
+
+Atlaso-managed renewal and VCF-native auto-renewal have separate owners and statuses. A certificate imported or
+replaced outside this workflow is not evidence of Atlaso-managed enrollment. This experimental integration has not
+completed live VCF Operations 9.1.1 acceptance; see the
+[certificate guide](appliance-certificates.md#atlaso-managed-certificate-renewal) and the
+[MSCA compatibility investigation](../reference/vcf-msca-compatibility.md). The Microsoft CA path is deferred to
+[Release 1.1, issue #1053](https://github.com/mdaneri/Atlaso/issues/1053); no interoperability or vendor-support claim
+is implied.
 
 ## Lab / Non-production Overrides
 

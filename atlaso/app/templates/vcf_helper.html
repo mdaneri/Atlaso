@@ -115,6 +115,7 @@
           </button>
           {% if not identity.has_role('admin') %}<p class="muted" id="vcf-appliance-certificate-admin-reason">Administrator access is required to replace appliance certificates.</p>{% endif %}
         </div>
+        {% include "partials/vcf_certificate_renewal.html" %}
       </div>
       <div class="tab-panel" id="vcf-helper-ldap" role="tabpanel" aria-labelledby="vcf-helper-ldap-tab" hidden>
         <h3>LDAP</h3>
@@ -158,6 +159,7 @@
 {% include "partials/vcf_ldap_modal.html" %}
 {% include "partials/vcf_vault_import_modal.html" %}
 {% include "partials/vcf_appliance_certificate_modal.html" %}
+{% include "partials/vcf_certificate_renewal_dialogs.html" %}
 <script id="vcf-vault-credential-options" type="application/json">{{ vcf_vault_credential_options | tojson }}</script>
 <noscript><style>#vcf-fqdn-modal:not([open]) { display: block; position: static; width: min(100%, 70rem); margin: 1rem auto; }</style></noscript>
 <noscript><style>.vcf-helper-subjects > .tab-panel[hidden] { display: grid; } .vcf-helper-tabs { display: none; }</style></noscript>
@@ -259,4 +261,5 @@
 <script src="/static/vcf-lab-overrides.js?v=issue-873-6" defer></script>
 <script src="/static/vcf-helper-tabs.js?v=issue-1027-1" defer></script>
 <script src="/static/vcf-appliance-certificates.js?v=issue-1038-6" defer></script>
+<script src="/static/vcf-certificate-renewal.js?v=issue-1052-4" defer></script>
 {% endblock %}

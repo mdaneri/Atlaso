@@ -30,6 +30,17 @@ class EnrollmentError(ValueError):
     """A bounded, secret-free vCenter enrollment failure."""
 
 
+MISSING_CLIENT_CERTIFICATE_GUIDANCE = (
+    "No active vCenter KMIP client certificate is configured for this cluster. "
+    "In vCenter, open Configure > Security > Key Providers and select the existing standard provider. "
+    "Use Establish Trust > Make KMS trust vCenter > vCenter Certificate. "
+    "Create a client certificate only if one is missing and complete the workflow to activate it; "
+    "generation alone is insufficient. Keep the private key in vCenter. "
+    "Return to this Atlaso wizard and click Next to retry inspection, review and approve the public "
+    "fingerprint, then run global Appliance Apply for KMS. Verify trust in both directions."
+)
+
+
 @dataclass(frozen=True)
 class DiscoveredClient:
     """Public certificate and checked vCenter endpoint metadata."""
@@ -442,6 +453,8 @@ def discover_vcenter_client(
         )
     if not isinstance(certificate, str):
         raise EnrollmentError("vCenter returned no public KMIP client certificate.")
+    if not certificate.strip():
+        raise EnrollmentError(MISSING_CLIENT_CERTIFICATE_GUIDANCE)
     try:
         parsed = parse_public_certificate(certificate)
     except ValueError as exc:

@@ -276,6 +276,22 @@ Desktop and responsive captures and keyboard/browser checks cover the deployed f
 and health passed independently on SRM and vCenter 9.1.1; SDDC Manager 9.x target selection is captured, while native
 SDDC validation remains pending an admitted lab endpoint.
 
+### VCF Helper managed certificate renewal (#1052)
+
+`partials/vcf_certificate_renewal.html` renders the inventory fallback.
+`partials/vcf_certificate_renewal_dialogs.html` supplies `vcf-renewal-connection-dialog`, `vcf-renewal-policy-dialog`,
+`vcf-renewal-health-dialog`, `vcf-renewal-prepare-dialog`, and `vcf-renewal-review-dialog` alongside the existing
+VCF Helper dialogs. Synthetic browser checks cover credential/fingerprint wizard loading, narrow content layout,
+and Escape dismissal; deployed-appliance validation remains pending.
+
+The renewal workspace uses the read-only Tabulator contract from **Tasks** for certificate inventory and status. Its
+per-target policy and guarded replacement workflow use the shared wizard contract from **Automation Schedules** and
+the existing **Appliance Certificate Replacement** workflow. Enrollment is opt-in; scheduled and manual discovery
+only propose work. CSR generation/signing and replacement require separate administrator actions, including a
+single-use ten-minute review before VCF Operations' asynchronous EXTERNAL_CA workflow. Native vCenter Machine SSL
+acceptance on VCF Operations 9.1.1 remains pending. Record native acceptance only after the exact installed leaf,
+fresh strict TLS, and health are verified; the UI must not imply Atlaso changes VCF's own renewal status.
+
 ### VCF lab overrides (#849, #873)
 
 `partials/vcf_lab_overrides.html` uses the approved custom/other VCF Certificate Trust tile/modal reference,

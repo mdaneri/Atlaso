@@ -56,6 +56,9 @@ from atlaso.app.routers.ui.vcf_certificates import (
 from atlaso.app.routers.ui.vcf_lab_overrides import (
     register_routes as register_lab_routes,
 )
+from atlaso.app.routers.ui.vcf_renewals import (
+    register_routes as register_renewal_routes,
+)
 from atlaso.app.secrets import decrypt_secret
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services import log_viewer
@@ -466,6 +469,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
     verify_csrf = dependencies.verify_csrf
     register_lab_routes(router, verify_csrf)
     register_certificate_routes(router, verify_csrf)
+    register_renewal_routes(router, verify_csrf)
 
     @router.get("/https-repository", response_model=None)
     def legacy_https_repository_redirect(
