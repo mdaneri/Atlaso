@@ -344,8 +344,9 @@ def guest_content_program(
     """
     kind = _validate_expected(expected)
     command_expected = {key: value for key, value in expected.items() if key not in {"allowed_inventory", "required_packages"}}
-    prelude = '''import base64,hashlib,importlib.metadata,json,os,re,shutil,stat,subprocess,tarfile,tempfile,types,zlib
-from pathlib import Path,PurePosixPath
+    imports = ("import base64,hashlib,json,os,re,stat,subprocess,zlib\nfrom pathlib import Path\n" if kind == "rpm" else
+               "import base64,hashlib,importlib.metadata,json,os,re,shutil,stat,subprocess,tarfile,tempfile,types,zlib\nfrom pathlib import Path,PurePosixPath\n")
+    prelude = imports + '''
 def read(p,n=16777216):
  fd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW)
  with os.fdopen(fd,"rb") as f:
@@ -373,11 +374,12 @@ def run(args,timeout=60):
     if kind == "assets":
         prelude += '''def digest(d):return hashlib.sha256("".join(k+"\\0"+d[k]+"\\n" for k in sorted(d)).encode()).hexdigest()
 '''
-    declarations = ("e=" + repr(command_expected) + "\na=Path(" + repr(str(atlaso_root)) + ")\ns=Path(" +
-                    repr(str(software_root)) + ")\nt=Path(" + repr(str(temporary_root)) + ")\nsite_override=" +
-                    repr(str(site_root) if site_root is not None else None) + "\nprofile_data=" + repr(PROFILE.encode()) + "\n")
+    declarations = "e=" + repr(command_expected) + "\na=Path(" + repr(str(atlaso_root)) + ")\n"
+    if kind != "rpm":
+        declarations += ("s=Path(" + repr(str(software_root)) + ")\nt=Path(" + repr(str(temporary_root)) + ")\nsite_override=" +
+                         repr(str(site_root) if site_root is not None else None) + "\nprofile_data=" + repr(PROFILE.encode()) + "\n")
     if kind == "rpm":
-        prelude += _RPM_PROC_CHECK
+        prelude += _RPM_RUNTIME_CHECK
         declarations += "fixed_rpm_paths=" + repr(RPM_DIAGNOSTIC_PATHS) + "\n"
     body = 'stage="system-' + kind + '"\n' + prelude + declarations + _PROGRAMS[kind]
     body += '\nr.update(schema=1,kind=e["kind"],iso_sha256=e["iso_sha256"])\nx=json.dumps(r,sort_keys=True,separators=(",",":")).encode()\nif len(x)>4096: raise ValueError()\nprint("ATLASO-INSPECTION:"+base64.b64encode(x).decode()+":END")'
@@ -404,7 +406,7 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
         "assets": {"source_digest", "source_file_count", "deployed_files", "trust_digest", "trust_keys"},
         "python": {"python_payload_sha256", "python_files", "python_distributions", "python_external_files"},
         "powercli": {"powercli_lock_sha256", "module_count"},
-        "rpm": {"installed_inventory", "firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified"},
+        "rpm": {"installed_inventory", "firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_media_directories_absent"},
         "notices": {"notices_sha256", "notice_inputs_verified"},
     }[kind]
     if (not isinstance(value, dict) or set(value) != _COMMON_KEYS | keys or type(value.get("schema")) is not int or value["schema"] != 1
@@ -433,7 +435,8 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
         if (not isinstance(actual, dict) or not 1 <= len(actual) <= 1024 or not isinstance(allowed, dict)
                 or not isinstance(required, list) or not set(required) <= actual.keys()
                 or any(name not in allowed or identity != allowed[name] for name, identity in actual.items())
-                or any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified"))):
+                or any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified"))
+                or type(value["runtime_media_directories_absent"]) is not int or not 0 <= value["runtime_media_directories_absent"] <= 2):
             raise ValueError("installed RPM closure or file verification differs from media")
         value = {key: field for key, field in value.items() if key != "installed_inventory"}
         value.update(installed_rpms=len(actual), rpm_inventory_sha256=hashlib.sha256(json.dumps(actual,sort_keys=True,separators=(",", ":")).encode()).hexdigest())
@@ -445,11 +448,15 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
 # The kernel's proc root shadows the RPM-owned empty directory (0755 in the
 # admitted Photon filesystem package). Measure that mount independently; only
 # its mode-only RPM discrepancy may be reconciled, never package file changes.
-_RPM_PROC_CHECK = '''def verify_proc():
- z=Path("/proc").lstat()
- if not stat.S_ISDIR(z.st_mode) or stat.S_IMODE(z.st_mode)!=0o555 or z.st_uid or z.st_gid: raise ValueError()
- rows=[v.split(" - ",1) for v in read(Path("/proc/self/mountinfo"),1048576).decode().splitlines() if v.split()[4]=="/proc"]
- if len(rows)!=1 or rows[0][0].split()[3]!="/" or rows[0][1].split()[0]!="proc": raise ValueError()
+# The same signed RPM contains only empty directories for /run/media/cdrom and
+# /run/media/floppy. Their absence is runtime state only after proving /run tmpfs.
+_RPM_RUNTIME_CHECK = '''def verify_runtime():
+ mounts=read(Path("/proc/self/mountinfo"),1048576).decode().splitlines()
+ for path,fs,mode in (("/proc","proc",0o555),("/run","tmpfs",0o755)):
+  z=Path(path).lstat()
+  if not stat.S_ISDIR(z.st_mode) or stat.S_IMODE(z.st_mode)!=mode or z.st_uid or z.st_gid: raise ValueError()
+  rows=[v.split(" - ",1) for v in mounts if v.split()[4]==path]
+  if len(rows)!=1 or rows[0][0].split()[3]!="/" or rows[0][1].split()[0]!=fs: raise ValueError()
  return True
 '''
 
@@ -530,13 +537,21 @@ for row in rows:
  installed[name]=[version,arch]
  if len(installed)>1024: raise ValueError()
 stage="system-rpm-runtime"
-proc_verified=verify_proc()
+proc_verified=verify_runtime()
 stage="system-rpm-files"
+absent=set()
 try:
  run(["rpm","--noplugins","-Va","--noscripts","--nodeps","--noconfig","--noghost"],90)
 except PrivateCommandFailure as failure:
  lines=failure.result.stdout.decode("utf-8").splitlines()
- remaining=[line for line in lines if not re.fullmatch(r"\.M\.{7}\s+/proc",line)]
+ remaining=[]
+ for line in lines:
+  if re.fullmatch(r"\.M\.{7}\s+/proc",line): continue
+  m=re.fullmatch(r"missing\s+(/run/media/(?:cdrom|floppy))",line)
+  if m:
+   try: Path(m[1]).lstat()
+   except FileNotFoundError: absent.add(m[1]);continue
+  remaining.append(line)
  if failure.result.returncode!=1 or failure.result.stderr or not lines: remaining=lines or [""]
  candidates=[]
  for line in remaining:
@@ -559,7 +574,7 @@ except PrivateCommandFailure as failure:
  if remaining: raise
 stage="system-rpm-firmware"
 run(["rpm","--noplugins","-V","--noscripts","--nodeps","linux-firmware"],60)
-r=dict(installed_inventory=base64.b64encode(zlib.compress(json.dumps(installed,sort_keys=True,separators=(",", ":")).encode(),9)).decode(),firmware_verified=True,rpm_files_verified=True,package_state_verified=True,runtime_proc_verified=proc_verified)
+r=dict(installed_inventory=base64.b64encode(zlib.compress(json.dumps(installed,sort_keys=True,separators=(",", ":")).encode(),9)).decode(),firmware_verified=True,rpm_files_verified=True,package_state_verified=True,runtime_proc_verified=proc_verified,runtime_run_verified=proc_verified,runtime_media_directories_absent=len(absent))
 ''',
     "assets": r'''
 stage="system-assets-profile"

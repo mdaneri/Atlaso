@@ -101,6 +101,8 @@ def _report(kind, **changes):
             "rpm_files_verified": True,
             "package_state_verified": True,
             "runtime_proc_verified": True,
+            "runtime_run_verified": True,
+            "runtime_media_directories_absent": 0,
         },
         "notices": {"notices_sha256": "a" * 64, "notice_inputs_verified": True},
     }
@@ -323,13 +325,16 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"rpm_files_verified": False},
         {"package_state_verified": False},
         {"runtime_proc_verified": False},
+        {"runtime_run_verified": False},
+        {"runtime_media_directories_absent": True},
+        {"runtime_media_directories_absent": 3},
         {"installed_inventory": _inventory({"linux": ["wrong", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"]})},
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "aarch64"], "python3": ["3.14-2.ph5", "x86_64"]})},
         {"installed_inventory": _inventory({"linux": "6.1-1.ph5", "python3": ["3.14-2.ph5", "x86_64"]})},
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"], "rogue": ["1.0", "noarch"]})},
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"]})},
     ],
-    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
+    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
 )
 def test_validate_content_report_rejects_unverified_rpm_closure(changes):
     """The installed RPM identities must satisfy the signed allowed closure."""
@@ -383,8 +388,9 @@ def test_guest_content_program_uses_bounded_ascii_console_command(kind, tmp_path
     assert "/opt/atlaso/.venv/bin/python -B -I -c 'exec(" in command
     program = _decode_guest_program(command)
     assert repr(str(atlaso)) in program
-    assert repr(str(software)) in program
-    assert repr(str(temporary)) in program
+    if kind != "rpm":
+        assert repr(str(software)) in program
+        assert repr(str(temporary)) in program
     if kind == "python":
         assert repr(str(site)) in program
     if kind == "rpm":
@@ -465,7 +471,7 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
     outer.body = [
         node
         for node in outer.body
-        if not isinstance(node, ast.FunctionDef) or node.name not in {"checked", "run", "verify_proc"}
+        if not isinstance(node, ast.FunctionDef) or node.name not in {"checked", "run", "verify_runtime"}
     ]
     sentinel = "private-rpm-diagnostic-sentinel"
 
@@ -488,7 +494,7 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
             return b"example\t1-1\tx86_64\n"
         return b""
 
-    namespace = {"checked": checked, "run": run, "verify_proc": lambda: True}
+    namespace = {"checked": checked, "run": run, "verify_runtime": lambda: True}
     isolated = ast.Module(body=[outer], type_ignores=[])
     with contextlib.redirect_stdout(io.StringIO()) as output:
         exec(compile(isolated, "<generated-rpm-program>", "exec"), namespace)
@@ -539,11 +545,11 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
         (
             b"filesystem\n",
             "filesystem",
-            "/run/media/cdrom",
+            "/usr/local/share/man/man8",
             -1,
             "system-rpm-files-package-"
             + hashlib.sha256(b"filesystem").hexdigest()
-            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/run/media/cdrom')}-missing",
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/usr/local/share/man/man8')}-missing",
         ),
     ],
     ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata", "fixed-missing-entry"],
@@ -564,7 +570,7 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     outer.body = [
         node
         for node in outer.body
-        if not isinstance(node, ast.FunctionDef) or node.name not in {"checked", "run", "verify_proc"}
+        if not isinstance(node, ast.FunctionDef) or node.name not in {"checked", "run", "verify_runtime"}
     ]
     sentinel = b"private-rpm-file-path-and-stderr-sentinel"
     verify_output = f".......T. {verify_path}\n".encode()
@@ -600,7 +606,7 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
             return b"example\t1-1\tx86_64\n"
         return b""
 
-    namespace.update(checked=checked, run=run, verify_proc=lambda: True)
+    namespace.update(checked=checked, run=run, verify_runtime=lambda: True)
     isolated = ast.Module(body=[outer], type_ignores=[])
     with contextlib.redirect_stdout(io.StringIO()) as output:
         exec(compile(isolated, "<generated-rpm-file-diagnostic>", "exec"), namespace)
@@ -624,6 +630,10 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     [
         (".M....... /proc\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
         ("", 0, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        ("missing /run/media/cdrom\nmissing /run/media/floppy\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        ("missing /run/media/cdrom\n", 1, b"", "presentmedia", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("missing /run/media/other\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("..5...... /run/media/cdrom\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         (".M....... /proc\n..5...... /usr/bin/managed\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         ("..5...... /proc\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         (".M....... /proc/sys\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
@@ -635,6 +645,10 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
         (".M....... /proc\n", 1, b"", "duplicate", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
         (".M....... /proc\n", 1, b"", "subroot", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
         (".M....... /proc\n", 1, b"", "absent", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        ("missing /run/media/cdrom\n", 1, b"", "wrongrun", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        ("missing /run/media/cdrom\n", 1, b"", "missingrun", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        ("missing /run/media/cdrom\n", 1, b"", "runmode", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        ("missing /run/media/cdrom\n", 1, b"", "runuid", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
         (".M....... /proc\n", 1, b"", "proc", stat.S_IFDIR | 0o700, 0, 0, "runtime"),
         (".M....... /proc\n", 1, b"", "proc", stat.S_IFREG | 0o555, 0, 0, "runtime"),
         (".M....... /proc\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 1, 0, "runtime"),
@@ -659,6 +673,9 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         mountinfo *= 2
     if mount == "absent":
         mountinfo = "28 1 0:5 / /private-fixture rw - proc proc rw\n"
+    if mount != "missingrun":
+        run_type = "ext4" if mount == "wrongrun" else "tmpfs"
+        mountinfo += f"29 1 0:6 / /run rw - {run_type} tmpfs rw\n"
 
     def read(path, limit):
         assert path.as_posix() == "/proc/self/mountinfo"
@@ -680,7 +697,14 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         return b""
 
     def lstat(path):
-        assert path.as_posix() == "/proc"
+        name = path.as_posix()
+        if name == "/run":
+            return SimpleNamespace(st_mode=stat.S_IFDIR | (0o700 if mount == "runmode" else 0o755), st_uid=int(mount == "runuid"), st_gid=0)
+        if name in {"/run/media/cdrom", "/run/media/floppy"}:
+            if mount == "presentmedia":
+                return SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0, st_gid=0)
+            raise FileNotFoundError()
+        assert name == "/proc"
         return SimpleNamespace(st_mode=mode, st_uid=uid, st_gid=gid)
 
     monkeypatch.setattr(Path, "lstat", lstat)
@@ -699,6 +723,8 @@ def test_rpm_runtime_proc_check_retains_package_failures(
             base64.b64decode(encoded[1]), _expectation("rpm")
         )
         assert report["runtime_proc_verified"] is True
+        assert report["runtime_run_verified"] is True
+        assert report["runtime_media_directories_absent"] == rows.count("missing /run/media/")
         assert report["rpm_files_verified"] is True
 
 
