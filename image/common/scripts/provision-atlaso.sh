@@ -360,6 +360,12 @@ stage_guest_agent_packages() {
 
 write_third_party_notices() {
   log_step "writing third-party notices"
+  notice_dependency_lock="$ATLASO_HOME/requirements-appliance.lock"
+  if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then
+    # The selected signed software can precede the installer source commit.
+    # Use the same authenticated dependency set that the offline pip path installs.
+    notice_dependency_lock="/tmp/atlaso-software/requirements-appliance.lock"
+  fi
   notice_rpm_inventory="$(mktemp)"
   {
     rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{LICENSE}\t%{URL}\n'
@@ -371,7 +377,7 @@ write_third_party_notices() {
   "$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/scripts/generate_third_party_notices.py" \
     --version "$ATLASO_RELEASE_VERSION" \
     --output /usr/share/doc/atlaso/THIRD_PARTY_NOTICES.md \
-    --lock "$ATLASO_HOME/requirements-appliance.lock" \
+    --lock "$notice_dependency_lock" \
     --python-environment "$ATLASO_HOME/.venv" \
     --rpm-inventory "$notice_rpm_inventory"
   rm -f "$notice_rpm_inventory"

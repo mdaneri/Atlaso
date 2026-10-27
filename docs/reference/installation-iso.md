@@ -326,6 +326,10 @@ Add `-InspectContent` alongside `-InspectInstalled` to run five additional check
 - **Notices:** regenerate the notices from the original source inputs and installed package inventories in RAM,
   then compare them with the installed document.
 
+Offline notices use the authenticated software release's dependency lock, matching the installed wheelhouse.
+The development installer's source commit may have a newer lock; that checkout lock does not replace the selected
+software release's dependency set. Missing or changed signed lock inputs fail instead of using another repository.
+
 For a subsequent resume, append these options to the receipt-bound `LoginInstalled` invocation above:
 
 ```powershell

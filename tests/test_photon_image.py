@@ -28,6 +28,55 @@ def load_lifecycle_runner():
     return module
 
 
+@pytest.mark.parametrize("offline", [False, True])
+def test_notices_lock_selection(tmp_path: Path, offline: bool) -> None:
+    """Execute shared notice selection without touching host paths.
+
+    Args:
+        tmp_path: Isolated source, software and command-output fixtures.
+        offline: Select the authenticated offline software release.
+    """
+    shell = shutil.which("sh")
+    if os.name == "nt":
+        shell = str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe")
+    if not shell or not Path(shell).is_file():
+        pytest.skip("A POSIX shell is required for provisioning validation")
+    script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    function = "write_third_party_notices() {" + script.split("write_third_party_notices() {", 1)[1].split("\n}\n", 1)[0] + "\n}\n"
+    home, software = tmp_path / "home", tmp_path / "software"
+    binary = home / ".venv/bin/python"
+    binary.parent.mkdir(parents=True)
+    software.mkdir()
+    (home / "requirements-appliance.lock").write_text("authlib==1.9.1\n")
+    (software / "requirements-appliance.lock").write_text("authlib==1.8.0\n")
+    binary.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$TEST_NOTICE_ARGS"\n', newline='\n')
+    binary.chmod(0o755)
+    arguments = tmp_path / "arguments.txt"
+    environment = {
+        **os.environ,
+        "ATLASO_HOME": home.as_posix(),
+        "ATLASO_RELEASE_VERSION": "0.9.464",
+        "ATLASO_INSTALLATION_MEDIA": "1" if offline else "",
+        "GUEST_AGENT_STAGING": (tmp_path / "guest-staging").as_posix(),
+        "TEST_NOTICE_ARGS": arguments.as_posix(),
+        "TEST_RPM_INVENTORY": (tmp_path / "rpms.tsv").as_posix(),
+    }
+    function = function.replace("/tmp/atlaso-software", software.as_posix())
+    completed = subprocess.run(
+        [shell, "-s"], input=(
+            "set -eu\nlog_step() { :; }\ninstall() { :; }\nchmod() { :; }\n"
+            "find() { :; }\nrm() { :; }\n"
+            'mktemp() { printf "%s\\n" "$TEST_RPM_INVENTORY"; }\n'
+            "rpm() { printf 'fixture\\t1-1\\tMIT\\thttps://example.invalid/rpm\\n'; }\n"
+            + function + "write_third_party_notices\n"
+        ), env=environment, capture_output=True, text=True, check=False, timeout=30,
+    )
+    assert completed.returncode == 0, completed.stderr
+    argv = arguments.read_text().splitlines()
+    selected = software if offline else home
+    assert argv[argv.index("--lock") + 1] == (selected / "requirements-appliance.lock").as_posix()
+
+
 def load_nocloud_seed_helper():
     """Return the NoCloud seed helper module."""
     path = Path("scripts/interop/create_nocloud_seed_iso.py")

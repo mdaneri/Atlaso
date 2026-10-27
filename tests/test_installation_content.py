@@ -183,6 +183,7 @@ def _prepare_fixture():
         "source/scripts/generate_third_party_notices.py": b"# Notice generator fixture\n",
         "source/scripts/third_party_notices.json": b"{}\n",
         "source/requirements-appliance.lock": b"# Public lock fixture\n",
+        "software/requirements-appliance.lock": b"# Authenticated software dependency lock\n",
         "source/image/common/update-trust/atlaso-release-test.pem": b"public test key\n",
         "source/scripts/example.py": b"print('installed')\n",
         "rpms/linux.rpm": b"public RPM fixture A",
@@ -342,9 +343,71 @@ def test_prepare_content_inputs_binds_expectations_to_admitted_files():
         "systemd": ["257.13-5.ph5", "x86_64"],
     }
     assert expectations[0]["source_file_count"] == 10
+    assert expectations[4]["notice_lock_sha256"] == hashlib.sha256(
+        b"# Authenticated software dependency lock\n"
+    ).hexdigest()
     assert expectations[2]["powercli_lock_sha256"] == hashlib.sha256(
         sources["source/image/common/powershell/powercli-lock.json"]
     ).hexdigest()
+
+
+def test_notices_refuse_missing_release_lock():
+    """Do not replace a missing signed software lock with the checkout lock."""
+    base, manifest, sources = _prepare_fixture()
+    manifest["files"] = [item for item in manifest["files"] if item["path"] != "software/requirements-appliance.lock"]
+    with pytest.raises(ValueError, match="admitted signed software lock"):
+        content_inspection.prepare_content_inputs(base, manifest, sources)
+
+
+@pytest.mark.parametrize("defect", [None, "changed", "missing"])
+def test_notice_lock_authentication(tmp_path, defect):
+    """Use only the media-bound software lock before reading installed inventories.
+
+    Args:
+        tmp_path: Isolated symbolic source and software paths.
+        defect: Missing or altered software lock to reject.
+    """
+    raw = b"authlib==1.8.0\n"
+    expected = _expectation("notices")
+    expected["notice_lock_sha256"] = hashlib.sha256(raw).hexdigest()
+    software = tmp_path / "software"
+    generated = ast.parse(_decode_guest_program(content_inspection.guest_content_program(
+        expected, atlaso_root=tmp_path / "source", software_root=software,
+    )))
+    outer = next(node for node in generated.body if isinstance(node, ast.Try))
+    outer.body = [node for node in outer.body if not isinstance(node, ast.FunctionDef)
+                  or node.name not in {"checked", "read", "run"}]
+    reads, commands = [], []
+
+    def read(path, _maximum):
+        """Expose only the selected release lock, never the checkout lock.
+
+        Args:
+            path: Requested dependency lock path.
+            _maximum: Read limit passed by the adapter.
+        """
+        assert path == software / "requirements-appliance.lock"
+        reads.append(path)
+        if defect == "missing":
+            raise FileNotFoundError("private missing lock details")
+        return b"private changed lock bytes" if defect else raw
+
+    def run(arguments):
+        """Stop at the inventory boundary after successful lock authentication.
+
+        Args:
+            arguments: Inventory command selected by the adapter.
+        """
+        commands.append(arguments)
+        raise ValueError("private inventory boundary")
+
+    namespace = {"read": read, "run": run, "checked": lambda path, _key: (Path(path), b"admitted")}
+    with contextlib.redirect_stdout(io.StringIO()) as output:
+        exec(compile(ast.Module(body=[outer], type_ignores=[]), "<notice-lock-fixture>", "exec"), namespace)
+    stage = "inputs" if defect else "inventory"
+    assert output.getvalue() == f"ATLASO-INSPECTION-FAILED:system-notices-{stage}\n"
+    assert reads == [software / "requirements-appliance.lock"]
+    assert len(commands) == (0 if defect else 1)
 
 
 @pytest.mark.parametrize("tamper", ["source-bytes", "file-hash"])

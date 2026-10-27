@@ -242,6 +242,9 @@ def prepare_content_inputs(base: dict[str, Any], manifest: dict, sources: dict[s
                                    "image/common/scripts/verify-photon-package-state.py").read_bytes()).hexdigest()
     if state_digest != files[SOURCE_MEMBERS[3]]:
         raise ValueError("content adapter requires the original shared Photon runtime contract")
+    notice_lock_sha256 = files.get("software/requirements-appliance.lock")
+    if not isinstance(notice_lock_sha256, str) or not _DIGEST.fullmatch(notice_lock_sha256):
+        raise ValueError("content notices require the admitted signed software lock")
     removals = re.findall(r'run_tdnf "Build-only package removal" --noautoremove remove ([^\r\n]+)', sources[SOURCE_MEMBERS[0]].decode())
     if len(removals) != 1 or not all(_PACKAGE.fullmatch(name) for name in removals[0].split()):
         raise ValueError("shared build-only package removal is ambiguous")
@@ -313,7 +316,7 @@ def prepare_content_inputs(base: dict[str, Any], manifest: dict, sources: dict[s
                 "filesystem_sha256": filesystem_sha256, "systemd_sha256": systemd_sha256, "audit_sha256": audit_sha256, "rpcbind_sha256": rpcbind_sha256},
         "notices": {"notice_generator_sha256": files["source/scripts/generate_third_party_notices.py"],
                     "notice_config_sha256": files["source/scripts/third_party_notices.json"],
-                    "notice_lock_sha256": files["source/requirements-appliance.lock"], "version": base["version"]},
+                    "notice_lock_sha256": notice_lock_sha256, "version": base["version"]},
     }
     return [{"schema": 1, "kind": kind, "iso_sha256": base["iso_sha256"], **specifications[kind]} for kind in KINDS]
 
@@ -670,7 +673,8 @@ r=dict(source_digest=digest(records),source_file_count=len(records),deployed_fil
 stage="system-notices-inputs"
 p,b=checked("scripts/generate_third_party_notices.py","notice_generator_sha256")
 checked("scripts/third_party_notices.json","notice_config_sha256")
-lock,lb=checked("requirements-appliance.lock","notice_lock_sha256")
+lock=s/"requirements-appliance.lock";lb=read(lock,1048576)
+if hashlib.sha256(lb).hexdigest()!=e["notice_lock_sha256"]: raise ValueError()
 stage="system-notices-inventory"
 inventory=run(["rpm","--noplugins","-qa","--qf","%{NAME}\\t%{VERSION}-%{RELEASE}\\t%{LICENSE}\\t%{URL}\\n"])
 with tempfile.TemporaryDirectory(prefix="atlaso-inspection-",dir=t) as d:
