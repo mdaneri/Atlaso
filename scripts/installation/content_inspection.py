@@ -198,6 +198,17 @@ def _validate_expected(expected: dict[str, Any]) -> str:
     return kind
 
 
+def rpm_diagnostic_packages(expected: dict[str, Any]) -> list[str]:
+    """Bind public diagnostic package names to the admitted media inventory.
+
+    Args:
+        expected: Original ISO-derived content expectation.
+    """
+    if _validate_expected(expected) != "rpm":
+        return []
+    return sorted(_package_inventory(_decode_inventory(expected["allowed_inventory"])))
+
+
 def guest_content_program(
     expected: dict[str, Any], *, atlaso_root: str | Path = "/opt/atlaso",
     software_root: str | Path = "/var/lib/atlaso/installation-inspection/software",
@@ -228,9 +239,14 @@ def checked(rel,key):
  return p,b
 def load(rel,key,n):
  p,b=checked(rel,key);m=types.ModuleType(n);m.__file__=str(p);exec(compile(b,str(p),"exec"),m.__dict__);return m
+class PrivateCommandFailure(Exception):
+ def __init__(self,result):
+  super().__init__("private command failed");self.result=result
+
 def run(args,timeout=60):
  c=subprocess.run(args,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout)
- if c.returncode or len(c.stdout)+len(c.stderr)>1048576: raise ValueError()
+ if len(c.stdout)+len(c.stderr)>1048576: raise ValueError()
+ if c.returncode: raise PrivateCommandFailure(c)
  return c.stdout
 def digest(d):return hashlib.sha256("".join(k+"\\0"+d[k]+"\\n" for k in sorted(d)).encode()).hexdigest()
 '''
@@ -376,7 +392,20 @@ for row in rows:
  installed[name]=[version,arch]
  if len(installed)>1024: raise ValueError()
 stage="system-rpm-files"
-run(["rpm","--noplugins","-Va","--noscripts","--nodeps","--noconfig","--noghost"],90)
+try:
+ run(["rpm","--noplugins","-Va","--noscripts","--nodeps","--noconfig","--noghost"],90)
+except PrivateCommandFailure as failure:
+ candidates=[]
+ for line in failure.result.stdout.decode("utf-8").splitlines():
+  match=re.fullmatch(r"(?:[SM5DLUGTP?.]{9}|missing)\s+(?:[a-z?]\s+)?(/[^\x00\r\n]+)",line)
+  if match: candidates.append(match[1])
+  if len(candidates)==16: break
+ for path in candidates:
+  owners=run(["rpm","--noplugins","-qf","--qf","%{NAME}\\n",path],3).decode("utf-8").splitlines()
+  valid_owners=sorted(owner for owner in set(owners) if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+._:-]{0,127}",owner))
+  if valid_owners:
+   stage+="-package-"+hashlib.sha256(valid_owners[0].encode("utf-8")).hexdigest();break
+ raise
 stage="system-rpm-firmware"
 run(["rpm","--noplugins","-V","--noscripts","--nodeps","linux-firmware"],60)
 r=dict(installed_inventory=base64.b64encode(zlib.compress(json.dumps(installed,sort_keys=True,separators=(",", ":")).encode(),9)).decode(),firmware_verified=True,rpm_files_verified=True,package_state_verified=True)

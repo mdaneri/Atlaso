@@ -356,9 +356,11 @@ def main() -> int:
             if args.content:
                 from scripts.installation.content_inspection import (
                     guest_content_program,
+                    rpm_diagnostic_packages,
                 )
 
-                result["content"] = [{"expected": check, "command": guest_content_program(check)} for check in checks]
+                result["content"] = [{"expected": check, "command": guest_content_program(check),
+                                      "diagnostic_packages": rpm_diagnostic_packages(check)} for check in checks]
         elif args.operation == "validate-content":
             from scripts.installation.content_inspection import validate_content_report
 

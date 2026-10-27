@@ -1419,11 +1419,15 @@ try {
 }
 finally { if ($inspectionPair) { Close-InstallationTestPipePair -Pair $inspectionPair } }
 
+$pipPackageHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes('pip'))).ToLowerInvariant()
 foreach ($fixture in @(
     @{ Text = "ATLASO-INSPECTION-FAILED`r`nprivate-error-details`r`n"; Error = 'Installed identity or application payload inspection failed.' },
     @{ Text = "`rATLASO-INSPECTION-FAILED:software-staging`r`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: software-staging.' },
     @{ Text = "ATLASO-INSPECTION-FAILED:system-rpm`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-rpm.' },
     @{ Text = "ATLASO-INSPECTION-FAILED:system-rpm-files`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-rpm-files.' },
+    @{ Text = ("ATLASO-INSPECTION-FAILED:system-rpm-files-package-" + $pipPackageHash + "`r`nprivate-error-details`r`n"); AllowedRpmPackages = @('pip'); Error = ('Installed inspection failed at public stage: system-rpm-files-package-' + $pipPackageHash + '.') },
+    @{ Text = ("ATLASO-INSPECTION-FAILED:system-rpm-files-package-" + ('a' * 64) + "`r`nprivate-error-details`r`n"); AllowedRpmPackages = @('pip'); Error = 'Installed inspection failed at public stage: system-rpm-files.' },
+    @{ Text = ("ATLASO-INSPECTION-FAILED:system-rpm-files-package-" + $pipPackageHash + "`r`nprivate-error-details`r`n"); Error = 'Installed inspection failed at public stage: system-rpm-files.' },
     @{ Text = "ATLASO-INSPECTION-FAILED:system-notices-compare`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-notices-compare.' },
     @{ Text = "ATLASO-INSPECTION-FAILED:system-assets-deployed`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-assets-deployed.' },
     @{ Text = "ATLASO-INSPECTION-FAILED:system-python-external`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-python-external.' },
@@ -1437,9 +1441,11 @@ foreach ($fixture in @(
         $inspectionPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
         $inspectionSender = [AtlasoInstallationPipeTestWriter]::Start($inspectionPair.Client, [string[]]@($fixture.Text))
         $inspectionRefused = $false
+        $allowedFixturePackages = @()
+        if ($fixture.ContainsKey('AllowedRpmPackages')) { $allowedFixturePackages = @($fixture.AllowedRpmPackages) }
         try {
             $null = Wait-InstallationConsoleState -Pipe $inspectionPair.Server -Pattern '' `
-                -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadInspectionReport
+                -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadInspectionReport -AllowedRpmPackages $allowedFixturePackages
         } catch { $inspectionRefused = $_.Exception.Message -ceq $fixture.Error }
         Assert-InstallationVmCondition $inspectionRefused 'Invalid inspection output must fail with a fixed public error.'
         Assert-InstallationVmCondition ($inspectionSender.Wait(5000)) 'Inspection refusal writer did not finish.'

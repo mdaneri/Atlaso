@@ -603,9 +603,17 @@ Require a known installed shell prompt for this account and refuse password-chan
 Exact public fixture disk whose four-GiB capacity refusal is expected before consent.
 .PARAMETER ReadInspectionReport
 Return only one bounded encoded inspection record for independent schema validation.
+.PARAMETER AllowedRpmPackages
+Public package names derived from the original ISO, admitted before reporting candidate package identifiers.
 #>
 function Wait-InstallationConsoleState {
-    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [switch]$ReadLoginProgress, [ValidateSet('', 'root', 'admin')][string]$ShellAccount = '', [string]$ExpectedCapacityDisk = '', [hashtable]$CursorState, [switch]$ReadInspectionReport)
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [switch]$ReadLoginProgress, [ValidateSet('', 'root', 'admin')][string]$ShellAccount = '', [string]$ExpectedCapacityDisk = '', [hashtable]$CursorState, [switch]$ReadInspectionReport, [string[]]$AllowedRpmPackages = @())
+    if ($AllowedRpmPackages.Count -gt 1024) { throw 'Diagnostic package set exceeds its bound.' }
+    $allowedPackageHashes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($name in $AllowedRpmPackages) {
+        if ($name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9+._:-]{0,127}$') { throw 'Invalid public diagnostic package name.' }
+        $null = $allowedPackageHashes.Add([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($name))).ToLowerInvariant())
+    }
     $buffer = [byte[]]::new(4096)
     $text = ''
     $failureDeadline = $null
@@ -675,9 +683,13 @@ function Wait-InstallationConsoleState {
             $plain = [regex]::Replace($text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>su]', '')
             $plain = [regex]::Replace($plain, '\^?\[\[[0-9]{1,2};[0-9]{1,2}R', '')
             if ($ReadInspectionReport) {
-                $inspectionFailure = [regex]::Match($plain, 'ATLASO-INSPECTION-FAILED(?::(?<stage>initialization|source-helpers|software-staging|software-verification|application-payload|public-identities|system-(?:assets(?:-(?:profile|helper|source|powershell-profile|deployed|trust))?|python(?:-(?:helpers|software|expected|site|scratch|archive|files|external|bytecode|extra|changed(?:-[0-9a-f]{64})?|missing))?|powercli|rpm(?:-(?:helper|package-state|inventory|files|firmware))?|notices(?:-(?:inputs|inventory|generate|compare))?)))?[\r\n]+')
+                $inspectionFailure = [regex]::Match($plain, 'ATLASO-INSPECTION-FAILED(?::(?<stage>initialization|source-helpers|software-staging|software-verification|application-payload|public-identities|system-(?:assets(?:-(?:profile|helper|source|powershell-profile|deployed|trust))?|python(?:-(?:helpers|software|expected|site|scratch|archive|files|external|bytecode|extra|changed(?:-[0-9a-f]{64})?|missing))?|powercli|rpm(?:-(?:helper|package-state|inventory|files(?:-package-[0-9a-f]{64})?|firmware))?|notices(?:-(?:inputs|inventory|generate|compare))?)))?[\r\n]+')
                 if ($inspectionFailure.Success) {
                     $inspectionStage = $inspectionFailure.Groups['stage'].Value
+                    if ($inspectionStage.StartsWith('system-rpm-files-package-', [StringComparison]::Ordinal) -and
+                        -not $allowedPackageHashes.Contains($inspectionStage.Substring('system-rpm-files-package-'.Length))) {
+                        $inspectionStage = 'system-rpm-files'
+                    }
                     if ($inspectionStage) { throw ('Installed inspection failed at public stage: ' + $inspectionStage + '.') }
                     throw 'Installed identity or application payload inspection failed.'
                 }
@@ -1265,6 +1277,11 @@ if ($InspectInstalled) {
                 $check.command -cmatch '[^\x20-\x7e]' -or $check.command.Contains('ATLASO-INSPECTION')) {
                 throw 'Content inspection command failed its console boundary.'
             }
+            $packages = @($check.diagnostic_packages)
+            if ($packages.Count -gt 1024 -or ($packages.Count -gt 0 -and $check.expected.kind -cne 'rpm') -or
+                @($packages | Where-Object { $_ -isnot [string] -or $_ -cnotmatch '^[A-Za-z0-9][A-Za-z0-9+._:-]{0,127}$' }).Count) {
+                throw 'Prepared diagnostic package names failed their public source boundary.'
+            }
         }
     }
 } elseif ($InspectionPythonPath) {
@@ -1440,7 +1457,7 @@ try {
                         $contentDeadline = [DateTimeOffset]::UtcNow.AddSeconds(180)
                         if ($contentDeadline -gt $deadline) { $contentDeadline = $deadline }
                         $contentRecord = Wait-InstallationConsoleState -Pipe $pipe -Pattern '' -Deadline $contentDeadline `
-                            -ReadInspectionReport -ReadLoginProgress -CursorState $cursorState
+                            -ReadInspectionReport -ReadLoginProgress -CursorState $cursorState -AllowedRpmPackages @($check.diagnostic_packages)
                         $contentExpected = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(
                             ($check.expected | ConvertTo-Json -Compress -Depth 8)))
                         $contentReport = Invoke-AtlasoBoundedProcess -FilePath $InspectionPythonPath `

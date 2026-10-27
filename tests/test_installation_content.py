@@ -12,6 +12,7 @@ import re
 import tarfile
 import zlib
 from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
@@ -58,6 +59,7 @@ def _expectation(kind):
                 "linux": ["6.1-1.ph5", "x86_64"],
                 "python3": ["3.14-2.ph5", "x86_64"],
                 "optional-tool": ["1.0-1.ph5", "noarch"],
+                "pip": ["26.2.1-1.ph5", "noarch"],
             }),
             "required_packages": _inventory(["linux", "python3"]),
         },
@@ -493,6 +495,111 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
     captured = capsys.readouterr()
     assert sentinel not in captured.out
     assert sentinel not in captured.err
+
+
+@pytest.mark.parametrize(
+    ("owner_output", "owner_name", "expected_stage"),
+    [
+        (
+            b"pip\n",
+            "pip",
+            "system-rpm-files-package-" + hashlib.sha256(b"pip").hexdigest(),
+        ),
+        (
+            b"private-unknown-package\n",
+            "private-unknown-package",
+            "system-rpm-files-package-"
+            + hashlib.sha256(b"private-unknown-package").hexdigest(),
+        ),
+        (b"", "", "system-rpm-files"),
+        (b"private invalid owner\n", "private invalid owner", "system-rpm-files"),
+    ],
+    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner"],
+)
+def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
+    owner_output, owner_name, expected_stage, capsys, tmp_path
+):
+    """Private diagnostics fingerprint valid owner names without exposing them."""
+    command = content_inspection.guest_content_program(
+        _expectation("rpm"),
+        atlaso_root=tmp_path / "atlaso",
+        software_root=tmp_path / "software",
+        temporary_root=tmp_path / "runtime",
+    )
+    generated = ast.parse(_decode_guest_program(command))
+    outer = next(node for node in generated.body if isinstance(node, ast.Try))
+    outer.body = [
+        node
+        for node in outer.body
+        if not isinstance(node, ast.FunctionDef) or node.name not in {"checked", "run"}
+    ]
+    sentinel = b"private-rpm-file-path-and-stderr-sentinel"
+    verify_output = (
+        b".......T. /usr/lib/python3.14/site-packages/"
+        b"pip/_internal/commands/list.py\n"
+    )
+    namespace = {}
+
+    def checked(path, _key):
+        return Path(path), b"verified public helper bytes"
+
+    def run(arguments, _timeout=60):
+        command_parts = [str(part) for part in arguments]
+        if "-Va" in command_parts:
+            result = SimpleNamespace(
+                stdout=verify_output,
+                stderr=sentinel,
+                returncode=1,
+            )
+            raise namespace["PrivateCommandFailure"](result)
+        if "-qf" in command_parts:
+            return owner_output
+        if "-qa" in command_parts:
+            return b"example\t1-1\tx86_64\n"
+        return b""
+
+    namespace.update(checked=checked, run=run)
+    isolated = ast.Module(body=[outer], type_ignores=[])
+    with contextlib.redirect_stdout(io.StringIO()) as output:
+        exec(compile(isolated, "<generated-rpm-file-diagnostic>", "exec"), namespace)
+
+    assert output.getvalue().splitlines() == [
+        f"ATLASO-INSPECTION-FAILED:{expected_stage}"
+    ]
+    assert sentinel.decode() not in output.getvalue()
+    assert verify_output.decode() not in output.getvalue()
+    if owner_name:
+        assert owner_name not in output.getvalue()
+    captured = capsys.readouterr()
+    assert sentinel.decode() not in captured.out
+    assert sentinel.decode() not in captured.err
+
+
+def test_rpm_diagnostic_packages_returns_exact_source_inventory_names():
+    """Host diagnostic attribution receives names only from admitted RPM inputs."""
+    expected = _expectation("rpm")
+
+    assert content_inspection.rpm_diagnostic_packages(expected) == [
+        "linux",
+        "optional-tool",
+        "pip",
+        "python3",
+    ]
+
+
+@pytest.mark.parametrize("kind", ["assets", "python", "powercli", "notices"])
+def test_rpm_diagnostic_packages_omits_names_for_non_rpm_checks(kind):
+    """Other content kinds cannot receive RPM ownership candidates."""
+    assert content_inspection.rpm_diagnostic_packages(_expectation(kind)) == []
+
+
+def test_rpm_diagnostic_packages_rejects_invalid_rpm_expectation():
+    """The host allowlist is not derived from an incomplete RPM expectation."""
+    expected = _expectation("rpm")
+    del expected["allowed_inventory"]
+
+    with pytest.raises(ValueError):
+        content_inspection.rpm_diagnostic_packages(expected)
 
 
 @pytest.mark.parametrize(

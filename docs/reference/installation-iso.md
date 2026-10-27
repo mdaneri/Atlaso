@@ -334,6 +334,9 @@ the signed payload comparison.
 RPM failures distinguish helper admission, package-state checks, inventory, package files, and firmware. Notice
 failures distinguish source inputs, inventory, generation, and comparison. These fixed categories keep command output
 private and retain the original verification requirements.
+For an RPM file failure, a package identifier can be reported only after its name matches the original media inventory.
+The identifier hashes that public package name. File paths, file contents, and raw verification errors stay private,
+and the check still fails.
 
 Use `-CollisionSuffix inspection-a` and `-CollisionSuffix inspection-b` for two fresh installations in separate
 canonical VM directories. The wrappers reuse the shared identity helper to preserve the PR number while giving each
