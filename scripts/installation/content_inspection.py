@@ -28,6 +28,8 @@ PHOTON_AUDIT_SHA256 = "e55fac7b24b2f7546485f0b8b37fb7b105be764436dd4b139ccaa88e6
 # e55fac7b24b2f7546485f0b8b37fb7b105be764436dd4b139ccaa88e6c3e374f.
 # The rpcbind state directory is from rpcbind-1.2.6-6.ph5, SHA-256
 # 2c3d001aca71e6c6c81377a7bfc7ec9c3d26ee7a9891b4a706a8205657bc31ba.
+# The EFI files are from shim-signed-16.1-1.ph5, SHA-256
+# e41e6109d7be89ae83da63ef8021ef9a0e053ecd4fe1f47ae73dd79270d688c7.
 RPM_DIAGNOSTIC_PATHS = (
     "/bin",
     "/boot",
@@ -147,6 +149,8 @@ RPM_DIAGNOSTIC_PATHS = (
     "/var/log/journal/remote",
     "/var/log/audit",
     "/var/lib/rpcbind",
+    "/boot/efi/EFI/BOOT/bootx64.efi",
+    "/boot/efi/EFI/BOOT/revocations.efi",
 )
 SOURCE_MEMBERS = (
     "source/image/common/scripts/provision-atlaso.sh",

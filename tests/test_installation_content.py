@@ -899,8 +899,31 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
             None,
             "system-rpm-files-package-" + hashlib.sha256(b"rpcbind").hexdigest(),
         ),
+        (
+            b"shim-signed\n",
+            "shim-signed",
+            "/boot/efi/EFI/BOOT/bootx64.efi",
+            stat.S_IFREG | 0o755,
+            "system-rpm-files-package-" + hashlib.sha256(b"shim-signed").hexdigest()
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/boot/efi/EFI/BOOT/bootx64.efi')}-f0755-v.......T.",
+        ),
+        (
+            b"shim-signed\n",
+            "shim-signed",
+            "/boot/efi/EFI/BOOT/revocations.efi",
+            stat.S_IFREG | 0o755,
+            "system-rpm-files-package-" + hashlib.sha256(b"shim-signed").hexdigest()
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/boot/efi/EFI/BOOT/revocations.efi')}-f0755-v.......T.",
+        ),
+        (
+            b"shim-signed\n",
+            "shim-signed",
+            "/boot/efi/EFI/BOOT/private-state",
+            None,
+            "system-rpm-files-package-" + hashlib.sha256(b"shim-signed").hexdigest(),
+        ),
     ],
-    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata", "fixed-missing-entry", "journal-metadata", "remote-journal-metadata", "audit-directory-metadata", "private-audit-file", "rpcbind-directory-metadata", "private-rpcbind-file"],
+    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata", "fixed-missing-entry", "journal-metadata", "remote-journal-metadata", "audit-directory-metadata", "private-audit-file", "rpcbind-directory-metadata", "private-rpcbind-file", "efi-boot-file", "efi-revocations-file", "private-efi-file"],
 )
 def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     owner_output, owner_name, verify_path, metadata_mode, expected_stage,

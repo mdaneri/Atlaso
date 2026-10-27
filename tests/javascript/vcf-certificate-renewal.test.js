@@ -48,8 +48,14 @@ function createHarness({ admin = true, connection = false, health = false, fetch
   const gridElement = element();
   const reconfirmSelect = element();
   const reconfirmOpen = element();
-  const fields = Object.fromEntries(["connection_id", "name", "address", "port", "credential_vault_id", "credential_entry_id", "confirm_fingerprint", "policy_id", "health_credential_vault_id", "health_credential_entry_id", "confirm_health_fingerprint"].map((name) => [name, { ...element(), value: "", checked: false }]));
+  const fields = Object.fromEntries(["connection_id", "name", "address", "port", "credential_vault_id", "credential_entry_id", "confirm_fingerprint", "policy_id", "health_credential_vault_id", "health_credential_entry_id", "confirm_health_fingerprint", "approve_replacement"].map((name) => [name, { ...element(), value: "", checked: false }]));
   const form = { ...element(), elements: { namedItem: (name) => fields[name] }, querySelector: () => null };
+  const reviewSummary = element();
+  const reviewError = element();
+  reviewError.classList.add("hidden");
+  const reviewForm = { ...element(), elements: { namedItem: (name) => fields[name] }, querySelector: (selector) => selector.includes("dialog-error") ? reviewError : selector.includes("approve_replacement") ? fields.approve_replacement : selector === "[type='submit']" ? reviewApprove : null, reset() { fields.approve_replacement.checked = false; } };
+  const reviewApprove = { ...element(), disabled: true };
+  const reviewDialog = { ...element(), open: false, querySelectorAll: () => [], querySelector: (selector) => selector.includes("review-form") ? reviewForm : selector.includes("review-summary") ? reviewSummary : null, showModal() { this.open = true; }, close() { this.open = false; this.events.close?.(); } };
   const fingerprint = element();
   const probe = element();
   const explanation = element();
@@ -66,6 +72,7 @@ function createHarness({ admin = true, connection = false, health = false, fetch
       if (id === "vcf-renewal-grid") return gridElement;
       if (id === "vcf-renewal-connection-dialog" && connection) return dialog;
       if (id === "vcf-renewal-health-dialog" && health) return dialog;
+      if (id === "vcf-renewal-review-dialog") return reviewDialog;
       return null;
     },
     createElement: () => element(),
@@ -83,8 +90,209 @@ function createHarness({ admin = true, connection = false, health = false, fetch
   root.querySelector = (selector) => selector.includes("message") ? status : selector.includes("task") ? link : connection && selector.includes("reconfirm-select") ? reconfirmSelect : connection && selector.includes("reconfirm-open") ? reconfirmOpen : null;
   const context = vm.createContext({ document, window, fetch: fetchImpl, encodeURIComponent, JSON, String, Boolean, Number, Map, Array, Error });
   vm.runInContext(source, context);
-  return { context, gridConfig, status, link, grid, wizardConfig, wizard, fields, probe, reconfirmSelect, reconfirmOpen, explanation };
+  return { context, gridConfig, status, link, grid, wizardConfig, wizard, fields, probe, reconfirmSelect, reconfirmOpen, explanation, reviewDialog, reviewForm, reviewApprove, reviewSummary, reviewError };
 }
+
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+test("review approval readiness follows the current checkbox and exact review token in either order", async () => {
+  let resolveReview;
+  const harness = createHarness({ fetchImpl: (url) => url.endsWith("/review") ? new Promise((resolve) => { resolveReview = resolve; }) : Promise.resolve({ ok: true, json: async () => ({}) }) });
+  const open = harness.gridConfig.rowActions.find((action) => action.label === "Review replacement").action;
+  open(null, { getData: () => ({ operation_id: "operation-1", proposal_state: "prepared" }) });
+  assert.equal(harness.reviewApprove.disabled, true);
+  harness.fields.approve_replacement.checked = true;
+  harness.fields.approve_replacement.events.change({ target: harness.fields.approve_replacement });
+  assert.equal(harness.reviewApprove.disabled, true);
+  resolveReview({ ok: true, json: async () => ({ review_token: "review-token-1", summary: { target: "vc.example.test" } }) });
+  await tick();
+  assert.equal(harness.reviewApprove.disabled, false);
+  assert.match(harness.reviewSummary.textContent, /vc\.example\.test/);
+
+  harness.reviewDialog.close();
+  open(null, { getData: () => ({ operation_id: "operation-2", proposal_state: "prepared" }) });
+  resolveReview({ ok: true, json: async () => ({ review_token: "review-token-2", summary: "Second exact review" }) });
+  await tick();
+  assert.equal(harness.reviewApprove.disabled, true);
+  harness.fields.approve_replacement.checked = true;
+  harness.fields.approve_replacement.events.change({ target: harness.fields.approve_replacement });
+  assert.equal(harness.reviewApprove.disabled, false);
+});
+
+test("an invalid review response stays closed to approval and reports failure", async () => {
+  const harness = createHarness({ fetchImpl: async (url) => url.endsWith("/review") ? ({ ok: true, json: async () => ({ summary: "Exact details, but no token" }) }) : ({ ok: true, json: async () => ({}) }) });
+  harness.gridConfig.rowActions.find((action) => action.label === "Review replacement").action(null, { getData: () => ({ operation_id: "operation-1" }) });
+  harness.fields.approve_replacement.checked = true;
+  harness.fields.approve_replacement.events.change();
+  await tick();
+  assert.equal(harness.reviewApprove.disabled, true);
+  assert.equal(harness.reviewSummary.textContent, "Review details could not be loaded.");
+  assert.match(harness.reviewError.textContent, /approval token/);
+});
+
+test("review request failures and malformed tokens stay disabled and clear when a fresh review opens", async () => {
+  for (const response of [
+    { ok: false, status: 503, json: async () => ({ detail: "Review service unavailable." }) },
+    { ok: true, json: async () => ({ review_token: { value: "not-a-token" }, summary: "Malformed token" }) },
+    { ok: true, json: async () => ({ review_token: "   ", summary: "Blank token" }) },
+  ]) {
+    const harness = createHarness({ fetchImpl: async (url) => url.endsWith("/review") ? response : ({ ok: true, json: async () => ({}) }) });
+    const open = harness.gridConfig.rowActions.find((action) => action.label === "Review replacement").action;
+    open(null, { getData: () => ({ operation_id: "operation-1" }) });
+    harness.fields.approve_replacement.checked = true;
+    harness.fields.approve_replacement.events.change();
+    await tick();
+    assert.equal(harness.reviewApprove.disabled, true);
+    assert.equal(harness.reviewError.classList.contains("hidden"), false);
+    open(null, { getData: () => ({ operation_id: "operation-2" }) });
+    assert.equal(harness.reviewError.textContent, "");
+    assert.equal(harness.reviewError.classList.contains("hidden"), true);
+    assert.equal(harness.fields.approve_replacement.checked, false);
+    assert.equal(harness.reviewApprove.disabled, true);
+  }
+});
+
+test("an execute failure consumes the token and checkbox toggles cannot retry it", async () => {
+  const calls = [];
+  const harness = createHarness({ fetchImpl: async (url, options = {}) => {
+    if (url.endsWith("/review")) return { ok: true, json: async () => ({ review_token: "one-use-token", summary: "Exact review" }) };
+    if (url.endsWith("/execute")) {
+      calls.push(JSON.parse(options.body));
+      return { ok: false, status: 409, json: async () => ({ detail: "Approval expired." }) };
+    }
+    return { ok: true, json: async () => ({}) };
+  } });
+  const open = harness.gridConfig.rowActions.find((action) => action.label === "Review replacement").action;
+  open(null, { getData: () => ({ operation_id: "operation-1" }) });
+  await tick();
+  harness.fields.approve_replacement.checked = true;
+  harness.fields.approve_replacement.events.change();
+  await harness.reviewForm.events.submit({ preventDefault() {} });
+  assert.equal(calls.length, 1);
+  assert.equal(harness.reviewApprove.disabled, true);
+  assert.match(harness.reviewError.textContent, /Approval expired/);
+  harness.fields.approve_replacement.checked = false;
+  harness.fields.approve_replacement.events.change();
+  harness.fields.approve_replacement.checked = true;
+  harness.fields.approve_replacement.events.change();
+  await harness.reviewForm.events.submit({ preventDefault() {} });
+  assert.equal(calls.length, 1);
+  assert.equal(harness.reviewApprove.disabled, true);
+
+  harness.reviewDialog.close();
+  assert.equal(harness.reviewApprove.disabled, true);
+  open(null, { getData: () => ({ operation_id: "operation-2" }) });
+  assert.equal(harness.reviewApprove.disabled, true);
+  assert.equal(harness.fields.approve_replacement.checked, false);
+});
+
+test("closing and reopening invalidates a delayed review response", async () => {
+  let resolveOld;
+  let resolveCurrent;
+  const harness = createHarness({ fetchImpl: (url, options) => url.endsWith("/review") ? new Promise((resolve) => {
+    if (JSON.parse(options.body).operation_id === "old") resolveOld = resolve;
+    else resolveCurrent = resolve;
+  }) : Promise.resolve({ ok: true, json: async () => ({}) }) });
+  const open = harness.gridConfig.rowActions.find((action) => action.label === "Review replacement").action;
+  open(null, { getData: () => ({ operation_id: "old" }) });
+  harness.reviewDialog.close();
+  open(null, { getData: () => ({ operation_id: "current" }) });
+  resolveOld({ ok: true, json: async () => ({ review_token: "stale", summary: "Stale summary" }) });
+  await tick();
+  assert.equal(harness.reviewApprove.disabled, true);
+  assert.equal(harness.reviewSummary.textContent, "Loading exact replacement details…");
+  harness.fields.approve_replacement.checked = true;
+  harness.fields.approve_replacement.events.change();
+  resolveCurrent({ ok: true, json: async () => ({ review_token: "current-token", summary: "Current summary" }) });
+  await tick();
+  assert.equal(harness.reviewApprove.disabled, false);
+  assert.equal(harness.reviewSummary.textContent, "Current summary");
+});
+
+test("a rejected stale review cannot replace the current review state", async () => {
+  let rejectOld;
+  let resolveCurrent;
+  const harness = createHarness({ fetchImpl: (url, options) => url.endsWith("/review") ? new Promise((resolve, reject) => {
+    if (JSON.parse(options.body).operation_id === "old") rejectOld = reject;
+    else resolveCurrent = resolve;
+  }) : Promise.resolve({ ok: true, json: async () => ({}) }) });
+  const open = harness.gridConfig.rowActions.find((action) => action.label === "Review replacement").action;
+  open(null, { getData: () => ({ operation_id: "old" }) });
+  open(null, { getData: () => ({ operation_id: "current" }) });
+  resolveCurrent({ ok: true, json: async () => ({ review_token: "current-token", summary: "Current summary" }) });
+  await tick();
+  rejectOld(new Error("stale failure"));
+  await tick();
+  harness.fields.approve_replacement.checked = true;
+  harness.fields.approve_replacement.events.change();
+  assert.equal(harness.reviewApprove.disabled, false);
+  assert.equal(harness.reviewSummary.textContent, "Current summary");
+  assert.equal(harness.reviewError.classList.contains("hidden"), true);
+});
+
+test("execution requires the explicit checkbox, submits the current exact token once and clears it on completion", async () => {
+  const calls = [];
+  let resolveExecute;
+  const harness = createHarness({ fetchImpl: (url, options = {}) => {
+    if (url.endsWith("/review")) return Promise.resolve({ ok: true, json: async () => ({ review_token: "current-token", summary: "Current summary" }) });
+    if (url.endsWith("/execute")) {
+      calls.push(JSON.parse(options.body));
+      return new Promise((resolve) => { resolveExecute = resolve; });
+    }
+    return Promise.resolve({ ok: true, json: async () => ({}) });
+  } });
+  harness.gridConfig.rowActions.find((action) => action.label === "Review replacement").action(null, { getData: () => ({ operation_id: "operation-1" }) });
+  await tick();
+  const submit = () => harness.reviewForm.events.submit({ preventDefault() {} });
+  await submit();
+  assert.equal(calls.length, 0);
+  harness.fields.approve_replacement.checked = true;
+  harness.fields.approve_replacement.events.change();
+  const pending = submit();
+  assert.deepEqual(calls, [{ operation_id: "operation-1", review_token: "current-token" }]);
+  assert.equal(harness.reviewApprove.disabled, true);
+  await submit();
+  assert.equal(calls.length, 1);
+  resolveExecute({ ok: true, json: async () => ({ job_id: "job-1" }) });
+  await pending;
+  assert.equal(harness.reviewDialog.open, false);
+  assert.equal(harness.reviewApprove.disabled, true);
+  assert.equal(harness.link.href, "/ui/management/tasks?job_id=job-1");
+});
+
+test("stale execution success or failure cannot alter a reopened review", async () => {
+  for (const outcome of ["success", "failure"]) {
+    let reviewCount = 0;
+    let finishExecute;
+    const harness = createHarness({ fetchImpl: (url) => {
+      if (url.endsWith("/review")) {
+        reviewCount += 1;
+        const number = reviewCount;
+        return Promise.resolve({ ok: true, json: async () => ({ review_token: `token-${number}`, summary: `summary-${number}` }) });
+      }
+      if (url.endsWith("/execute")) return new Promise((resolve, reject) => { finishExecute = outcome === "success" ? resolve : reject; });
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    } });
+    const open = harness.gridConfig.rowActions.find((action) => action.label === "Review replacement").action;
+    open(null, { getData: () => ({ operation_id: "operation-1" }) });
+    await tick();
+    harness.fields.approve_replacement.checked = true;
+    harness.fields.approve_replacement.events.change();
+    const submit = harness.reviewForm.events.submit({ preventDefault() {} });
+    harness.reviewDialog.close();
+    open(null, { getData: () => ({ operation_id: "operation-2" }) });
+    await tick();
+    harness.fields.approve_replacement.checked = true;
+    harness.fields.approve_replacement.events.change();
+    if (outcome === "success") finishExecute({ ok: true, json: async () => ({ job_id: "stale-job" }) });
+    else finishExecute(new Error("stale execution failure"));
+    await submit;
+    assert.equal(harness.reviewDialog.open, true);
+    assert.equal(harness.reviewSummary.textContent, "summary-2");
+    assert.equal(harness.reviewApprove.disabled, false);
+    assert.equal(harness.link.href, undefined);
+  }
+});
 
 test("non-admin browser state never initializes the renewal grid", () => {
   const harness = createHarness({ admin: false });

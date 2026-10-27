@@ -414,6 +414,9 @@ journal and audit records remain private. Differences are not accepted by this r
 Known entries may also include the nine fixed RPM verification flags. The RPM command uses Python's standard Base85
 transport to keep the complete public registry within the existing console limit; encoded data is checked for safe
 quoting, and reports retain their existing Base64 format. Other inspection commands retain their existing transport.
+The registry includes the two EFI files from the admitted `shim-signed` RPM. Their type, mode and verification flags
+can identify boot-file discrepancies without reading private console output. This diagnostic does not accept a changed
+boot file or relax the RPM comparison.
 
 Use `-CollisionSuffix inspection-a` and `-CollisionSuffix inspection-b` for two fresh installations in separate
 canonical VM directories. The wrappers reuse the shared identity helper to preserve the PR number while giving each
