@@ -964,8 +964,39 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
             None,
             "system-rpm-files-package-" + hashlib.sha256(b"shim-signed").hexdigest(),
         ),
+        (
+            b"openldap-servers\n",
+            "openldap-servers",
+            "/usr/lib/systemd/system/slapd.service",
+            stat.S_IFREG | 0o644,
+            "system-rpm-files-package-" + hashlib.sha256(b"openldap-servers").hexdigest()
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/usr/lib/systemd/system/slapd.service')}-f0644-v.......T.",
+        ),
+        (
+            b"openldap-servers\n",
+            "openldap-servers",
+            "/var/lib/openldap",
+            stat.S_IFDIR | 0o755,
+            "system-rpm-files-package-" + hashlib.sha256(b"openldap-servers").hexdigest()
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/var/lib/openldap')}-d0755-v.......T.",
+        ),
+        (
+            b"openldap-servers\n",
+            "openldap-servers",
+            "/var/run/openldap",
+            stat.S_IFDIR | 0o755,
+            "system-rpm-files-package-" + hashlib.sha256(b"openldap-servers").hexdigest()
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/var/run/openldap')}-d0755-v.......T.",
+        ),
+        (
+            b"openldap-servers\n",
+            "openldap-servers",
+            "/var/lib/openldap/private-database",
+            None,
+            "system-rpm-files-package-" + hashlib.sha256(b"openldap-servers").hexdigest(),
+        ),
     ],
-    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata", "fixed-missing-entry", "journal-metadata", "remote-journal-metadata", "audit-directory-metadata", "private-audit-file", "rpcbind-directory-metadata", "private-rpcbind-file", "efi-boot-file", "efi-revocations-file", "private-efi-file"],
+    ids=["known-owner-candidate", "unknown-owner-candidate", "empty-owner", "invalid-owner", "fixed-root-metadata", "fixed-missing-entry", "journal-metadata", "remote-journal-metadata", "audit-directory-metadata", "private-audit-file", "rpcbind-directory-metadata", "private-rpcbind-file", "efi-boot-file", "efi-revocations-file", "private-efi-file", "ldap-unit", "ldap-data-directory", "ldap-runtime-directory", "private-ldap-child"],
 )
 def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
     owner_output, owner_name, verify_path, metadata_mode, expected_stage,

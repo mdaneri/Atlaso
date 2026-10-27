@@ -421,6 +421,9 @@ quoting, and reports retain their existing Base64 format. Other inspection comma
 The registry includes the two EFI files from the admitted `shim-signed` RPM. Their type, mode and verification flags
 can identify boot-file discrepancies without reading private console output. This diagnostic does not accept a changed
 boot file or relax the RPM comparison.
+The admitted OpenLDAP server package contributes only its public service unit and two declared directories to this
+registry. Their fixed indices can identify missing entries, modes and verification flags. LDAP databases, configuration
+values and private children are never read or emitted, and the diagnostic does not accept a discrepancy.
 
 The EFI profile separately binds both the admitted `shim-signed` and `grub2-efi-image` RPMs and their three boot files'
 hashes, sizes and modification times. It authenticates and reuses

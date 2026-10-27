@@ -34,6 +34,8 @@ PHOTON_AUDIT_SHA256 = "e55fac7b24b2f7546485f0b8b37fb7b105be764436dd4b139ccaa88e6
 # 2c3d001aca71e6c6c81377a7bfc7ec9c3d26ee7a9891b4a706a8205657bc31ba.
 # The EFI files are from shim-signed-16.1-1.ph5, SHA-256
 # e41e6109d7be89ae83da63ef8021ef9a0e053ecd4fe1f47ae73dd79270d688c7.
+# The LDAP directories and unit are from openldap-servers-2.6.4-6.ph5,
+# SHA-256 11b4af044b7418ba9af5cf6762e2cbe5add5b3463774d20f6be89b8ff98c47dc.
 RPM_DIAGNOSTIC_PATHS = (
     "/bin",
     "/boot",
@@ -155,6 +157,9 @@ RPM_DIAGNOSTIC_PATHS = (
     "/var/lib/rpcbind",
     "/boot/efi/EFI/BOOT/bootx64.efi",
     "/boot/efi/EFI/BOOT/revocations.efi",
+    "/usr/lib/systemd/system/slapd.service",
+    "/var/lib/openldap",
+    "/var/run/openldap",
 )
 SOURCE_MEMBERS = (
     "source/image/common/scripts/provision-atlaso.sh",
