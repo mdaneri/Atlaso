@@ -285,6 +285,9 @@ function New-InstallationVmConfiguration {
         'pciBridge0.present = "TRUE"', 'firmware = "efi"', 'uefi.secureBoot.enabled = "FALSE"',
         "displayName = $(ConvertTo-InstallationVmxString $Name)", 'guestOS = "other5xlinux-64"',
         "workingDir = $(ConvertTo-InstallationVmxString $WorkingDirectory)",
+        # Photon reads its RTC as UTC. Workstation otherwise initializes it from the
+        # host's local zone, which can make freshly signed offline RPMs not yet valid.
+        'rtc.diffFromUTC = "0"',
         'memsize = "4096"', 'numvcpus = "2"', 'floppy0.present = "FALSE"',
         'scsi0.present = "TRUE"', 'scsi0.virtualDev = "lsilogic"',
         'scsi0:0.present = "TRUE"', "scsi0:0.fileName = $(ConvertTo-InstallationVmxString $TargetDisk)", 'scsi0:0.deviceType = "scsi-hardDisk"',

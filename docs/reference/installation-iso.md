@@ -140,6 +140,11 @@ build host’s default compression format. Repository configuration uses UTF-8 w
 The installed runtime uses the same current Photon 4096-bit RPM key as the shared repository initializer, with
 signature checking enabled. Legacy keys remain available to the pinned native installer where required.
 
+The VMware harness initializes its RTC from host UTC (`rtc.diffFromUTC = "0"`) because Photon reads the hardware clock
+as UTC. Verify that the host clock is correct before starting a disconnected installation. A clock behind the RPM
+signature creation time can cause native package verification to reject an otherwise authentic package; retain signature
+checks and correct the clock before retrying with a fresh installation fixture.
+
 The VMware harness creates an isolated EFI VM with no network adapters, two blank SCSI disks, and a private serial
 console. Its VMX configuration uses UTF-8 to preserve non-ASCII worktree, ISO, and output paths.
 Hash the generated ISO and use the exact owning pull request number. `Probe` checks that the native Photon disk
