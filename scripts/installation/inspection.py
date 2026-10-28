@@ -25,6 +25,22 @@ _MAX_MANIFEST = 16 * 1024 * 1024
 _MAX_ISO = 16 * 1024 * 1024 * 1024
 _MAX_REPORT = 4096
 _MAX_PROGRAM = 3500
+# The bounded process runner publishes exit codes, never private input/stderr.
+# Map only exact validator-owned messages; unknown failures retain generic 2.
+_CONTENT_FAILURE_CODES = {
+    "content report exceeds its bound": 20,
+    "content report schema or media identity differs": 21,
+    "content inventory exceeds its encoded bound": 22,
+    "content inventory exceeds its decoded bound": 22,
+    "content package inventory is invalid": 22,
+    "content RPM expectation inventory is invalid": 23,
+    "required content package set is invalid": 23,
+    "installed RPM required package set is incomplete": 24,
+    "installed RPM identity differs from media": 25,
+    "installed RPM native verification is incomplete": 26,
+    "installed RPM absent directory count is invalid": 27,
+    "encoded inspection input exceeds the bound": 31,
+}
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 _VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\Z")
@@ -376,8 +392,16 @@ def main() -> int:
         sys.stdout.write(encoded + "\n")
         return 0
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, base64.binascii.Error,
-            pycdlib.pycdlibexception.PyCdlibException):
+            pycdlib.pycdlibexception.PyCdlibException) as exc:
         sys.stderr.write("Installed inspection could not validate its bounded inputs.\n")
+        if args.operation == "validate-content":
+            if isinstance(exc, json.JSONDecodeError):
+                return 28
+            if isinstance(exc, base64.binascii.Error):
+                return 29
+            if isinstance(exc, UnicodeError):
+                return 30
+            return _CONTENT_FAILURE_CODES.get(str(exc), 2)
         return 2
 
 

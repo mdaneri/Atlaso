@@ -452,6 +452,11 @@ quoting, and reports retain their existing Base64 format. Other inspection comma
 The reader admits up to 5,464 Base64 characters for a report while enforcing the producer's unchanged 4,096-byte
 decoded limit. This accommodates the complete RPM inventory; schema, media identity, and every content check remain
 mandatory after transport decoding.
+Host content-validation failures expose fixed exit codes through the bounded runner, without printing the private
+report or validator errors. Codes `20`–`23` identify report size, schema/media identity, inventory encoding/shape, and
+RPM expectation shape respectively. Codes `24`–`27` identify missing required RPMs, unadmitted RPM identities,
+incomplete native verification, and invalid absent-directory counts. Codes `28`–`31` identify malformed JSON, Base64,
+Unicode, and oversized CLI inputs. Other failures retain generic code `2`; every nonzero result stops inspection.
 The registry includes the two EFI files from the admitted `shim-signed` RPM. Their type, mode and verification flags
 can identify boot-file discrepancies without reading private console output. This diagnostic does not accept a changed
 boot file or relax the RPM comparison.

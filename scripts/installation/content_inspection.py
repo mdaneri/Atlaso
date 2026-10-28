@@ -554,12 +554,16 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
         actual = _package_inventory(_decode_inventory(value["installed_inventory"]))
         allowed = _decode_inventory(expected["allowed_inventory"])
         required = _decode_inventory(expected["required_packages"])
-        if (not isinstance(actual, dict) or not 1 <= len(actual) <= 1024 or not isinstance(allowed, dict)
-                or not isinstance(required, list) or not set(required) <= actual.keys()
-                or any(name not in allowed or identity != allowed[name] for name, identity in actual.items())
-                or any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified", "runtime_audit_metadata_verified", "runtime_rpcbind_metadata_verified", "runtime_openssh_metadata_verified", "runtime_openldap_metadata_verified", "runtime_efi_metadata_verified", "runtime_module_indexes_verified"))
-                or type(value["runtime_media_directories_absent"]) is not int or not 0 <= value["runtime_media_directories_absent"] <= 2):
-            raise ValueError("installed RPM closure or file verification differs from media")
+        if not isinstance(allowed, dict) or not isinstance(required, list):
+            raise ValueError("content RPM expectation inventory is invalid")
+        if not set(required) <= actual.keys():
+            raise ValueError("installed RPM required package set is incomplete")
+        if any(name not in allowed or identity != allowed[name] for name, identity in actual.items()):
+            raise ValueError("installed RPM identity differs from media")
+        if any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified", "runtime_audit_metadata_verified", "runtime_rpcbind_metadata_verified", "runtime_openssh_metadata_verified", "runtime_openldap_metadata_verified", "runtime_efi_metadata_verified", "runtime_module_indexes_verified")):
+            raise ValueError("installed RPM native verification is incomplete")
+        if type(value["runtime_media_directories_absent"]) is not int or not 0 <= value["runtime_media_directories_absent"] <= 2:
+            raise ValueError("installed RPM absent directory count is invalid")
         value = {key: field for key, field in value.items() if key != "installed_inventory"}
         value.update(installed_rpms=len(actual), rpm_inventory_sha256=hashlib.sha256(json.dumps(actual,sort_keys=True,separators=(",", ":")).encode()).hexdigest())
     if kind == "notices" and value["notice_inputs_verified"] is not True:

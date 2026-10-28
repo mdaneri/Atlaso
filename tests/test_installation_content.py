@@ -22,7 +22,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pytest
 
 from scripts import verify_virtualization_guest_wheel
-from scripts.installation import content_inspection
+from scripts.installation import content_inspection, inspection
 
 
 def _inventory(value):
@@ -677,6 +677,73 @@ def test_validate_content_report_rejects_unverified_rpm_closure(changes):
             json.dumps(_report("rpm", **changes), separators=(",", ":")).encode(),
             _expectation("rpm"),
         )
+
+
+@pytest.mark.parametrize(
+    ("changes", "code"),
+    [
+        ({"private-field": "private diagnostic sentinel"}, 21),
+        ({"installed_inventory": _inventory({})}, 22),
+        ({"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"]})}, 24),
+        ({"installed_inventory": _inventory({"linux": ["wrong", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"]})}, 25),
+        ({"runtime_module_indexes_verified": False}, 26),
+        ({"runtime_media_directories_absent": True}, 27),
+    ],
+)
+def test_content_cli_classifies_rpm_refusal_without_private_output(changes, code, monkeypatch, capsys):
+    """Bounded runner exit codes distinguish refusals without exposing inputs.
+
+    Args:
+        changes: Independent invalid report fields.
+        code: Fixed public failure category.
+        monkeypatch: Pytest CLI argument override.
+        capsys: Captured CLI output.
+    """
+    expected = base64.b64encode(json.dumps(_expectation("rpm")).encode()).decode()
+    report = base64.b64encode(json.dumps(_report("rpm", **changes)).encode()).decode()
+    monkeypatch.setattr(sys, "argv", ["inspection", "validate-content", "--expected", expected, "--report", report])
+
+    assert inspection.main() == code
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Installed inspection could not validate its bounded inputs.\n"
+
+
+@pytest.mark.parametrize(("raw", "code"), [(b" " * 4097, 20), (b"not-json-private-sentinel", 28), (b"\xff", 30)])
+def test_content_cli_classifies_invalid_private_encoding(raw, code, monkeypatch, capsys):
+    """Malformed private report bytes produce only a fixed public category.
+
+    Args:
+        raw: Malformed private input bytes.
+        code: Expected public failure category.
+        monkeypatch: Pytest CLI argument override.
+        capsys: Captured CLI output.
+    """
+    expected = base64.b64encode(json.dumps(_expectation("rpm")).encode()).decode()
+    report = base64.b64encode(raw).decode()
+    monkeypatch.setattr(sys, "argv", ["inspection", "validate-content", "--expected", expected, "--report", report])
+    assert inspection.main() == code
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Installed inspection could not validate its bounded inputs.\n"
+
+
+@pytest.mark.parametrize(("report", "code"), [("private-invalid-base64", 29), ("A" * 8193, 31)])
+def test_content_cli_classifies_invalid_transport(report, code, monkeypatch, capsys):
+    """Invalid CLI transport stays bounded and never becomes printed output.
+
+    Args:
+        report: Invalid encoded CLI argument.
+        code: Expected public failure category.
+        monkeypatch: Pytest CLI argument override.
+        capsys: Captured CLI output.
+    """
+    expected = base64.b64encode(json.dumps(_expectation("rpm")).encode()).decode()
+    monkeypatch.setattr(sys, "argv", ["inspection", "validate-content", "--expected", expected, "--report", report])
+    assert inspection.main() == code
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Installed inspection could not validate its bounded inputs.\n"
 
 
 @pytest.mark.parametrize(
