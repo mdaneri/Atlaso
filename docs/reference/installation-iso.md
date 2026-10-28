@@ -388,6 +388,20 @@ tmpfs, and requires `slapd.service` to be loaded, inactive, dead and disabled. O
 `/var/run/openldap` directory is reconciled, before and after comparison. Atlaso's existing LDAP helper creates
 its runtime directory when LDAP is enabled. A running or enabled service, changed unit or mount, present entry,
 private child, or other verification flag fails this initial-installation profile. No LDAP data or configuration is read.
+The kernel-index profile binds the exact Linux, kmod and kmod-binary RPMs. It first admits the complete public module
+namespace from original package metadata before reading file contents, then compares all 1,235 immutable directory
+and file records through retained, no-follow descriptors. Missing, extra, linked or changed inputs fail.
+After ordinary RPM file verification, the profile reuses the authenticated native `kmod depmod` command with explicit
+input, configuration and output selectors. It writes only to private, descriptor-pinned scratch directories on verified
+`/run` tmpfs. All eleven generated indexes must match the installed bytes, ownership and permissions. Native binary,
+library, alias, configuration, filesystem and input identities are checked across execution; the proof repeats after
+the remaining firmware and metadata checks. Nonempty depmod overrides are refused without reading their contents.
+Only size, digest and modification-time flags for those eleven fixed generated paths are reconciled after this proof.
+Scratch creation and native output stay anchored to retained RAM directory descriptors. Successful proof removes only
+the verified files and empty creation-owned directories; failures preserve scratch for the receipt-bound VM stop.
+Missing indexes, other flags, private paths, changed module bytes and unsuccessful native generation still fail.
+This profile requires a freshly rebuilt ISO and installation for live acceptance; the earlier module-alias diagnostic
+and focused fixtures do not establish successful native derivation on an installed host.
 The host checks those package pins before generating the console command, which reuses the authenticated shared
 helper's constants to keep the transport within its fixed size limit.
 The shared Photon verifier is authenticated against the original media and must match the host's supported contract.

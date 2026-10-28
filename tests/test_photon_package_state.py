@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib.util
+import json
 import os
 import stat
 import subprocess
@@ -24,6 +26,192 @@ def load_verifier():
     sys.modules["verify_photon_package_state"] = module
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.mark.parametrize("change", [
+    "", "extra", "missing", "changed-bytes", "symlink", "root-mode",
+    "root-owner", "child-mode", "entry-race", "directory-race", "bad-name",
+    "missing-index", "wrong-count", "wrong-bytes", "wrong-digest", "post-admission-insertion",
+    "leaf-mode", "leaf-owner", "leaf-group", "hardlink", "nested-filesystem",
+])
+def test_installation_module_snapshot_requires_complete_original_namespace(change, monkeypatch):
+    """Exercise descriptor traversal with a bounded synthetic native namespace.
+
+    Args:
+        change: Independent drift introduced into the native package fixture.
+        monkeypatch: Isolate descriptor operations without host or guest access.
+    """
+    verifier = load_verifier()
+    root_fd, child_fd = 900001, 900002
+    contents = {"kernel.ko.xz": b"known module", "dracut/input.conf": b"public input"}
+    for name in verifier.INSTALLATION_MODULE_GENERATED:
+        contents[name] = b"generated index"
+    expected = [["dracut", "d", 0o755, 0, "", "root", "root"]]
+    expected += [[name, "f", 0o644, len(contents[name]), hashlib.sha256(contents[name]).hexdigest(), "root", "root"]
+                 for name in ("kernel.ko.xz", "dracut/input.conf")]
+    expected_digest = hashlib.sha256(json.dumps(sorted(expected), separators=(",", ":")).encode()).hexdigest()
+    namespace_rows = [row[:4] + [""] + row[5:] for row in expected]
+    namespace_digest = hashlib.sha256(json.dumps(sorted(namespace_rows), separators=(",", ":")).encode()).hexdigest()
+    monkeypatch.setattr(verifier, "INSTALLATION_MODULE_INPUT_COUNT", 3 + (change == "wrong-count"))
+    monkeypatch.setattr(verifier, "INSTALLATION_MODULE_INPUT_BYTES", 24 + (change == "wrong-bytes"))
+    monkeypatch.setattr(verifier, "INSTALLATION_MODULE_INPUT_SHA256", "0" * 64 if change == "wrong-digest" else expected_digest)
+    monkeypatch.setattr(verifier, "INSTALLATION_MODULE_NAMESPACE_SHA256", namespace_digest)
+    if change == "extra":
+        contents["unowned.ko.xz"] = b"private extra input"
+    elif change == "missing":
+        del contents["kernel.ko.xz"]
+    elif change == "changed-bytes":
+        contents["kernel.ko.xz"] = b"other module"
+    elif change == "bad-name":
+        contents["private name"] = b"private extra input"
+    elif change == "missing-index":
+        del contents[sorted(verifier.INSTALLATION_MODULE_GENERATED)[0]]
+    original_listdir, original_fstat = os.listdir, os.fstat
+    original_scandir = os.scandir
+    original_stat, original_open, original_close = os.stat, os.open, os.close
+    calls = {}
+    reads = []
+
+    def metadata(name, *, directory=False, raced=False):
+        """Return native root-owned metadata, including real directory allocation.
+
+        Args:
+            name: Fixture-relative object name.
+            directory: Whether this is one of the ordinary directories.
+            raced: Whether the final identity has changed.
+        """
+        mode = (stat.S_IFDIR | 0o755) if directory else (stat.S_IFREG | 0o644)
+        if name == "" and change == "root-mode":
+            mode = stat.S_IFDIR | 0o777
+        if name == "dracut" and change == "child-mode":
+            mode = stat.S_IFDIR | 0o777
+        if name == "kernel.ko.xz" and change == "symlink":
+            mode = stat.S_IFLNK | 0o777
+        if name == "kernel.ko.xz" and change == "leaf-mode":
+            mode = stat.S_IFREG | 0o600
+        return SimpleNamespace(
+            st_dev=8 if name == "dracut" and change == "nested-filesystem" else 7,
+            st_ino=hash(name) + int(raced), st_mode=mode,
+            st_nlink=2 if directory or (name == "kernel.ko.xz" and change == "hardlink") else 1,
+            st_uid=int((name == "" and change == "root-owner") or (name == "kernel.ko.xz" and change == "leaf-owner")),
+            st_gid=int(name == "kernel.ko.xz" and change == "leaf-group"),
+            st_size=4096 if directory else len(contents[name]), st_mtime_ns=1, st_ctime_ns=1,
+        )
+
+    def listdir(path):
+        """Enumerate only fixture descriptors, preserving unrelated host behavior.
+
+        Args:
+            path: Descriptor or ordinary path supplied to the isolated reader.
+        """
+        if path == root_fd:
+            if change == "post-admission-insertion" and calls[root_fd] > 3:
+                contents["unowned.ko.xz"] = b"private extra input"
+            return ["dracut", *[name for name in contents if "/" not in name]]
+        if path == child_fd:
+            return ["input.conf"]
+        return original_listdir(path)
+
+    def fstat(descriptor):
+        """Keep descriptor metadata stable unless the selected race is injected.
+
+        Args:
+            descriptor: Fixture or unrelated host descriptor.
+        """
+        if descriptor not in {root_fd, child_fd}:
+            return original_fstat(descriptor)
+        calls[descriptor] = calls.get(descriptor, 0) + 1
+        name = "" if descriptor == root_fd else "dracut"
+        return metadata(name, directory=True, raced=change == "directory-race" and descriptor == root_fd and calls[descriptor] > 2)
+
+    def scandir(path):
+        """Provide bounded iterator entries for the retained fixture descriptor.
+
+        Args:
+            path: Fixture descriptor or unrelated host path.
+        """
+        if path in {root_fd, child_fd}:
+            return contextlib.nullcontext(iter(SimpleNamespace(name=name) for name in listdir(path)))
+        return original_scandir(path)
+
+    def stat_child(path, *args, dir_fd=None, **kwargs):
+        """Observe leaves relative to their retained fixture parent.
+
+        Args:
+            path: Relative child path or unrelated host pathname.
+            *args: Ordinary stat positional arguments.
+            dir_fd: Pinned parent descriptor selected by the real traversal.
+            **kwargs: Ordinary stat keyword arguments.
+        """
+        if dir_fd not in {root_fd, child_fd}:
+            return original_stat(path, *args, dir_fd=dir_fd, **kwargs)
+        name = str(path) if dir_fd == root_fd else "dracut/" + str(path)
+        calls[name] = calls.get(name, 0) + 1
+        return metadata(name, directory=name == "dracut", raced=change == "entry-race" and name == "kernel.ko.xz" and calls[name] > 1)
+
+    def open_child(path, flags, *args, dir_fd=None, **kwargs):
+        """Admit only the declared no-follow nested-directory transition.
+
+        Args:
+            path: Public relative fixture child.
+            flags: Native descriptor flags requested by the verifier.
+            *args: Ordinary open positional arguments.
+            dir_fd: Retained parent descriptor.
+            **kwargs: Ordinary open keyword arguments.
+        """
+        if dir_fd == root_fd:
+            assert path == "dracut" and flags & os.O_NOFOLLOW and flags & os.O_DIRECTORY
+            return child_fd
+        return original_open(path, flags, *args, dir_fd=dir_fd, **kwargs)
+
+    def close(descriptor):
+        """Release fixture descriptors without touching a real host handle.
+
+        Args:
+            descriptor: Fixture or unrelated host descriptor.
+        """
+        if descriptor not in {root_fd, child_fd}:
+            original_close(descriptor)
+
+    def read(path, mode, maximum_bytes, policy_name, *, directory_fd=None, allow_empty=False):
+        """Provide only the fixed fixture bytes through the existing reader seam.
+
+        Args:
+            path: Public relative file selected by traversal.
+            mode: Required ordinary-file permission bits.
+            maximum_bytes: Existing reader's explicit input bound.
+            policy_name: Fixed non-secret reader category.
+            directory_fd: Retained parent rather than an ancestor-following path.
+            allow_empty: Explicit admission for generated native indexes.
+        """
+        assert directory_fd in {root_fd, child_fd}
+        assert mode == 0o644 and maximum_bytes == 8 * 1024 * 1024 and policy_name == "module input"
+        name = str(path) if directory_fd == root_fd else "dracut/" + str(path)
+        assert allow_empty == (directory_fd == root_fd and name in verifier.INSTALLATION_MODULE_GENERATED)
+        reads.append(name)
+        return contents[name]
+
+    monkeypatch.setattr(os, "O_NOFOLLOW", getattr(os, "O_NOFOLLOW", 0x20000), raising=False)
+    monkeypatch.setattr(os, "O_DIRECTORY", getattr(os, "O_DIRECTORY", 0x10000), raising=False)
+    monkeypatch.setattr(os, "O_NONBLOCK", getattr(os, "O_NONBLOCK", 0x800), raising=False)
+    monkeypatch.setattr(os, "listdir", listdir)
+    monkeypatch.setattr(os, "scandir", scandir)
+    monkeypatch.setattr(os, "supports_fd", {*os.supports_fd, scandir})
+    monkeypatch.setattr(os, "fstat", fstat)
+    monkeypatch.setattr(os, "stat", stat_child)
+    monkeypatch.setattr(os, "open", open_child)
+    monkeypatch.setattr(os, "close", close)
+    monkeypatch.setattr(verifier, "_read_installation_tmpfiles", read)
+    if change:
+        with pytest.raises(ValueError, match="installation module"):
+            verifier._installation_module_snapshot(root_fd)
+        assert "unowned.ko.xz" not in reads and "private name" not in reads
+        if change in {"extra", "missing", "bad-name", "wrong-count", "wrong-bytes"}:
+            assert reads == []
+    else:
+        stamps, indexes = verifier._installation_module_snapshot(root_fd)
+        assert len(stamps) == 15
+        assert set(indexes) == verifier.INSTALLATION_MODULE_GENERATED
 
 
 def write_release_state(root: Path) -> tuple[Path, Path, Path]:

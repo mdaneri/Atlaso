@@ -135,6 +135,7 @@ def _report(kind, **changes):
             "runtime_openldap_metadata_verified": True,
             "runtime_rpcbind_metadata_verified": True,
             "runtime_efi_metadata_verified": True,
+            "runtime_module_indexes_verified": True,
             "runtime_media_directories_absent": 0,
         },
         "notices": {"notices_sha256": "a" * 64, "notice_inputs_verified": True},
@@ -160,6 +161,8 @@ def _runtime_fixture_helper():
                            INSTALLATION_OPENLDAP_SHA256=content_inspection.PHOTON_OPENLDAP_SHA256,
                            INSTALLATION_SHIM_SHA256=content_inspection.PHOTON_SHIM_SHA256,
                            INSTALLATION_GRUB_EFI_SHA256=content_inspection.PHOTON_GRUB_EFI_SHA256,
+                           INSTALLATION_MODULE_GENERATED_PATHS=frozenset({"/lib/modules/6.12.113-5.ph5/modules.alias"}),
+                           verify_installation_module_indexes=lambda: {"runtime_module_indexes_verified": True},
                            verify_installation_metadata=lambda *_checksums: {**fields, "runtime_journal_metadata_verified": True,
                                                                             "runtime_audit_metadata_verified": True,
                                                                             "runtime_openssh_metadata_verified": True,
@@ -242,6 +245,16 @@ def _prepare_fixture():
     records.append({"path": "rpms/grub_efi.rpm", "sha256": content_inspection.PHOTON_GRUB_EFI_SHA256})
     rpms.append({"file": "grub_efi.rpm", "name": "grub2-efi-image", "version": "2.12-2.ph5", "architecture": "x86_64",
                  "sha256": content_inspection.PHOTON_GRUB_EFI_SHA256})
+    for name, version in (("linux", "6.12.113-5.ph5"), ("kmod", "34.1-3.ph5"), ("kmod-binary", "34.1-3.ph5")):
+        checksum = content_inspection.PHOTON_MODULE_RPMS[name]
+        if name == "linux":
+            next(item for item in records if item["path"] == "rpms/linux.rpm")["sha256"] = checksum
+            item = next(item for item in rpms if item["name"] == "linux")
+            item.update(version=version, sha256=checksum)
+        else:
+            records.append({"path": f"rpms/{name}.rpm", "sha256": checksum})
+            rpms.append({"file": f"{name}.rpm", "name": name, "version": version,
+                         "architecture": "x86_64", "sha256": checksum})
     records.append({"path": "source/scripts/installation/layout.py", "sha256": content_inspection.PHOTON_LAYOUT_HELPER_SHA256})
     manifest = {
         "files": records,
@@ -364,7 +377,9 @@ def test_prepare_content_inputs_binds_expectations_to_admitted_files():
         "audit": ["4.1.3-3.ph5", "x86_64"],
         "filesystem": ["1.1-11.ph5", "x86_64"],
         "grub2-efi-image": ["2.12-2.ph5", "x86_64"],
-        "linux": ["6.1-1.ph5", "x86_64"],
+        "linux": ["6.12.113-5.ph5", "x86_64"],
+        "kmod": ["34.1-3.ph5", "x86_64"],
+        "kmod-binary": ["34.1-3.ph5", "x86_64"],
         "python3": ["3.14-2.ph5", "x86_64"],
         "openssh-server": ["10.0p1-3.ph5", "x86_64"],
         "openldap-servers": ["2.6.4-6.ph5", "x86_64"],
@@ -379,6 +394,38 @@ def test_prepare_content_inputs_binds_expectations_to_admitted_files():
     assert expectations[2]["powercli_lock_sha256"] == hashlib.sha256(
         sources["source/image/common/powershell/powercli-lock.json"]
     ).hexdigest()
+
+
+@pytest.mark.parametrize("package", ["linux", "kmod", "kmod-binary"])
+@pytest.mark.parametrize("missing", [False, True])
+def test_module_derivation_requires_original_media_packages(package, missing):
+    """Reject a different native generator or module package before guest use.
+
+    Args:
+        package: Independently pinned native package.
+        missing: Remove the package instead of substituting its admitted digest.
+    """
+    base, manifest, sources = _prepare_fixture()
+    entry = next(item for item in manifest["rpm_inventory"] if item["name"] == package)
+    if missing:
+        manifest["rpm_inventory"].remove(entry)
+    else:
+        entry["sha256"] = "0" * 64
+        next(item for item in manifest["files"] if item["path"] == "rpms/" + entry["file"])["sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="original Linux and kmod RPMs"):
+        content_inspection.prepare_content_inputs(base, manifest, sources)
+
+
+def test_module_media_pins_match_the_shared_native_verifier():
+    """Keep host media admission and the shared immutable-input proof aligned."""
+    spec = importlib.util.spec_from_file_location("_public_module_pin_fixture", "image/common/scripts/verify-photon-package-state.py")
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    assert content_inspection.PHOTON_MODULE_RPMS == {
+        "linux": helper.INSTALLATION_LINUX_SHA256,
+        "kmod": helper.INSTALLATION_KMOD_SHA256,
+        "kmod-binary": helper.INSTALLATION_KMOD_BINARY_SHA256,
+    }
 
 
 def test_notices_refuse_missing_release_lock():
@@ -608,6 +655,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"runtime_openssh_metadata_verified": False},
         {"runtime_openldap_metadata_verified": False},
         {"runtime_efi_metadata_verified": False},
+        {"runtime_module_indexes_verified": False},
         {"runtime_media_directories_absent": True},
         {"runtime_media_directories_absent": 3},
         {"installed_inventory": _inventory({"linux": ["wrong", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"]})},
@@ -616,7 +664,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"], "rogue": ["1.0", "noarch"]})},
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"]})},
     ],
-    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "runtime-mail-spool", "runtime-journal-metadata", "runtime-audit-metadata", "runtime-rpcbind-metadata", "runtime-openssh-metadata", "runtime-openldap-metadata", "runtime-efi-metadata", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
+    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "runtime-mail-spool", "runtime-journal-metadata", "runtime-audit-metadata", "runtime-rpcbind-metadata", "runtime-openssh-metadata", "runtime-openldap-metadata", "runtime-efi-metadata", "native-module-indexes", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
 )
 def test_validate_content_report_rejects_unverified_rpm_closure(changes):
     """The installed RPM identities must satisfy the signed allowed closure.
@@ -699,7 +747,7 @@ def test_guest_content_program_uses_bounded_ascii_console_command(kind, tmp_path
         assert repr(str(site)) in program
     if kind == "rpm":
         for package in ("FILESYSTEM", "SYSTEMD", "AUDIT", "RPCBIND"):
-            assert f"h.INSTALLATION_{package}_SHA256" in program
+            assert "h.verify_installation_metadata()" in program
             assert f"e[\"{package.lower()}_sha256\"]" not in program
         constants = [
             node.value
@@ -773,6 +821,7 @@ def test_guest_program_bootstraps_and_reaches_first_read(kind, first_path, monke
         ("package-state", "system-rpm-package-state"),
         ("inventory", "system-rpm-inventory"),
         ("files", "system-rpm-files"),
+        ("native-indexes", "system-rpm-runtime"),
         ("firmware", "system-rpm-firmware"),
     ],
 )
@@ -833,6 +882,12 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
             return b"example\t1-1\tx86_64\n"
         return b""
 
+    def verify_native_indexes():
+        """Keep a native derivation failure inside its fixed public phase."""
+        if failure_phase == "native-indexes":
+            raise SystemExit(sentinel)
+        return {"runtime_module_indexes_verified": True}
+
     def load(path, key, _name):
         """Preserve the real loader's checksum admission in the phase fixture.
 
@@ -842,7 +897,9 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
             _name: Private module name supplied by the generated command.
         """
         checked(path, key)
-        return _runtime_fixture_helper()
+        helper = _runtime_fixture_helper()
+        helper.verify_installation_module_indexes = verify_native_indexes
+        return helper
 
     namespace = {"checked": checked, "run": run, "load": load}
     isolated = ast.Module(body=[outer], type_ignores=[])
@@ -1174,6 +1231,15 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
         ("missing /var/log/journal\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         (".M....G.. /var/log/journal\n", 1, b"private-error", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         ("", 0, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        ("S.5....T. /lib/modules/6.12.113-5.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        ("S.5....T. /lib/modules/6.12.113-5.ph5/modules.alias\n", 1, b"", "modulefail", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        ("S.5....T. /lib/modules/6.12.113-5.ph5/modules.alias\n", 1, b"", "modulerace", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        (".M....... /lib/modules/6.12.113-5.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("......G.. /lib/modules/6.12.113-5.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("S.5....T. /lib/modules/6.12.113-5.ph5/kernel/private.ko.xz\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("missing /lib/modules/6.12.113-5.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("S.5....T. /lib/modules/6.12.113-5.ph5/modules.alias\n", 1, b"private-error", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("S.5....T. /lib/modules/6.12.113-5.ph5/modules.alias\n", 2, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         ("SM5...GT. /var/log/btmp\nSM5...GT. /var/log/wtmp\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
         ("SM5..UGT. /var/log/btmp\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         ("SM5...GTP /var/log/btmp\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
@@ -1405,6 +1471,16 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         return {"runtime_efi_metadata_verified": True}
 
     monkeypatch.setattr(helper, "verify_installation_efi_metadata", verify_efi)
+    module_checks = []
+
+    def verify_modules():
+        """Require native derivation after package guards and repeat after firmware."""
+        module_checks.append(firmware_checked)
+        if mount == "modulefail" or (mount == "modulerace" and firmware_checked):
+            raise ValueError("private native module derivation differs")
+        return {"runtime_module_indexes_verified": True}
+
+    monkeypatch.setattr(helper, "verify_installation_module_indexes", verify_modules)
     monkeypatch.setattr(helper, "verify_installation_rpcbind_metadata", verify_rpc)
     monkeypatch.setattr(helper, "verify_installation_audit_metadata", verify_audit)
     monkeypatch.setattr(helper, "verify_installation_journal_metadata", verify_journal)
@@ -1428,6 +1504,8 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         assert report["runtime_mail_spool_verified"] is True
         assert report["runtime_journal_metadata_verified"] is True
         assert report["runtime_efi_metadata_verified"] is True
+        assert report["runtime_module_indexes_verified"] is True
+        assert module_checks == [False, True]
         assert len(efi_checks) == 2
         assert len(journal_checks) == 2
         assert report["runtime_audit_metadata_verified"] is True

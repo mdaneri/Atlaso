@@ -24,6 +24,11 @@ PHOTON_RPCBIND_SHA256 = "2c3d001aca71e6c6c81377a7bfc7ec9c3d26ee7a9891b4a706a8205
 PHOTON_OPENLDAP_SHA256 = "11b4af044b7418ba9af5cf6762e2cbe5add5b3463774d20f6be89b8ff98c47dc"
 PHOTON_OPENSSH_SHA256 = "cf1bace04bca67f58536b2cc241754bcdb3bb7e2b38c518bc283f3c90c16a2d8"
 PHOTON_AUDIT_SHA256 = "e55fac7b24b2f7546485f0b8b37fb7b105be764436dd4b139ccaa88e6c3e374f"
+PHOTON_MODULE_RPMS = {
+    "linux": "2987a19840476e522f2d19431b60b5e146b3a03fab17287ec211f1cf7e6e8bd4",
+    "kmod": "b7614a76f7a17b832e2158fe90413cf2af719b1d1e9d85bfae7195e4905a7850",
+    "kmod-binary": "ee872a0ddff939b69e87beec32090dc98d1882e9028f4bd5729b9a2b858aaaeb",
+}
 # Public-name diagnostics only, never RPM acceptance exceptions. These names
 # come from filesystem-1.1-11.ph5.x86_64.rpm, SHA-256
 # 7f5bba3e84f6eb50f6e5e311325089bc642549469d83793e0ba5f40d74ec6024.
@@ -320,6 +325,9 @@ def prepare_content_inputs(base: dict[str, Any], manifest: dict, sources: dict[s
         raise ValueError("admitted Photon shim requires a reviewed runtime metadata profile")
     if grub_efi_sha256 != PHOTON_GRUB_EFI_SHA256:
         raise ValueError("admitted Photon GRUB EFI requires a reviewed runtime metadata profile")
+    module_rpms = {item["name"]: item["sha256"] for item in rpms if item["name"] in PHOTON_MODULE_RPMS}
+    if module_rpms != PHOTON_MODULE_RPMS:
+        raise ValueError("admitted Photon module inputs require the original Linux and kmod RPMs")
     if files.get("source/scripts/installation/layout.py") != PHOTON_LAYOUT_HELPER_SHA256:
         raise ValueError("admitted installation layout requires the original shared verifier contract")
     required = sorted(set(packages) - removed)
@@ -520,7 +528,7 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
         "assets": {"source_digest", "source_file_count", "deployed_files", "trust_digest", "trust_keys"},
         "python": {"python_payload_sha256", "python_files", "python_distributions", "python_external_files"},
         "powercli": {"powercli_lock_sha256", "module_count"},
-        "rpm": {"installed_inventory", "firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_media_directories_absent", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified", "runtime_audit_metadata_verified", "runtime_rpcbind_metadata_verified", "runtime_openssh_metadata_verified", "runtime_openldap_metadata_verified", "runtime_efi_metadata_verified"},
+        "rpm": {"installed_inventory", "firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_media_directories_absent", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified", "runtime_audit_metadata_verified", "runtime_rpcbind_metadata_verified", "runtime_openssh_metadata_verified", "runtime_openldap_metadata_verified", "runtime_efi_metadata_verified", "runtime_module_indexes_verified"},
         "notices": {"notices_sha256", "notice_inputs_verified"},
     }[kind]
     if (not isinstance(value, dict) or set(value) != _COMMON_KEYS | keys or type(value.get("schema")) is not int or value["schema"] != 1
@@ -549,7 +557,7 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
         if (not isinstance(actual, dict) or not 1 <= len(actual) <= 1024 or not isinstance(allowed, dict)
                 or not isinstance(required, list) or not set(required) <= actual.keys()
                 or any(name not in allowed or identity != allowed[name] for name, identity in actual.items())
-                or any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified", "runtime_audit_metadata_verified", "runtime_rpcbind_metadata_verified", "runtime_openssh_metadata_verified", "runtime_openldap_metadata_verified", "runtime_efi_metadata_verified"))
+                or any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified", "runtime_audit_metadata_verified", "runtime_rpcbind_metadata_verified", "runtime_openssh_metadata_verified", "runtime_openldap_metadata_verified", "runtime_efi_metadata_verified", "runtime_module_indexes_verified"))
                 or type(value["runtime_media_directories_absent"]) is not int or not 0 <= value["runtime_media_directories_absent"] <= 2):
             raise ValueError("installed RPM closure or file verification differs from media")
         value = {key: field for key, field in value.items() if key != "installed_inventory"}
@@ -635,7 +643,7 @@ for row in rows:
  installed[name]=[version,arch]
  if len(installed)>1024: raise ValueError()
 stage="system-rpm-runtime"
-runtime=h.verify_installation_metadata(h.INSTALLATION_FILESYSTEM_SHA256,h.INSTALLATION_SYSTEMD_SHA256,h.INSTALLATION_AUDIT_SHA256,h.INSTALLATION_RPCBIND_SHA256,h.INSTALLATION_SHIM_SHA256,h.INSTALLATION_GRUB_EFI_SHA256,h.INSTALLATION_OPENSSH_SHA256,h.INSTALLATION_OPENLDAP_SHA256)
+runtime=h.verify_installation_metadata()
 stage="system-rpm-files"
 absent=set()
 try:
@@ -654,6 +662,8 @@ except CommandError as failure:
   if m:
    try: Path(m[1]).lstat()
    except FileNotFoundError: absent.add(m[1]);continue
+  derived=re.fullmatch(r"[S.]\.[5.]\.{4}[T.]\.\s+(/[^\x00\r\n]+)",line)
+  if derived and derived[1] in h.INSTALLATION_MODULE_GENERATED_PATHS: continue
   bad.append(line)
  if failure.result.returncode!=1 or failure.result.stderr or not lines: bad=lines or [""]
  entries=[]
@@ -676,10 +686,13 @@ except CommandError as failure:
     if re.fullmatch(r"[SM5DLUGTP?.]{9}",flags): stage+="-v"+flags
    break
  if bad: raise
+stage="system-rpm-runtime"
+runtime.update(h.verify_installation_module_indexes())
 stage="system-rpm-firmware"
 run(["rpm","--noplugins","-V","--noscripts","--nodeps","linux-firmware"],60)
 stage="system-rpm-runtime"
-runtime=h.verify_installation_metadata(h.INSTALLATION_FILESYSTEM_SHA256,h.INSTALLATION_SYSTEMD_SHA256,h.INSTALLATION_AUDIT_SHA256,h.INSTALLATION_RPCBIND_SHA256,h.INSTALLATION_SHIM_SHA256,h.INSTALLATION_GRUB_EFI_SHA256,h.INSTALLATION_OPENSSH_SHA256,h.INSTALLATION_OPENLDAP_SHA256)
+runtime=h.verify_installation_metadata()
+runtime.update(h.verify_installation_module_indexes())
 r=dict(installed_inventory=base64.b64encode(zlib.compress(json.dumps(installed,sort_keys=True,separators=(",", ":")).encode(),9)).decode(),firmware_verified=True,rpm_files_verified=True,package_state_verified=True,runtime_media_directories_absent=len(absent),**runtime)
 ''',
     "assets": r'''
