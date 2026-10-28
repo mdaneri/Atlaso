@@ -272,6 +272,68 @@ def _prepare_fixture():
     return base, manifest, sources
 
 
+def _bootstrap_pip_fixture(*, remove_setuptools=True):
+    """Model the reviewed native bootstrap pair and original shared cleanup.
+
+    Args:
+        remove_setuptools: Whether shared provisioning removes the pip dependency.
+    """
+    base, manifest, sources = _prepare_fixture()
+    for name, checksum in content_inspection.PHOTON_BOOTSTRAP_PIP_RPMS.items():
+        manifest["packages"].append(name)
+        manifest["files"].append({"path": f"rpms/{name}.rpm", "sha256": checksum})
+        manifest["rpm_inventory"].append({"file": f"{name}.rpm", "name": name, "version": "1.0-1.ph5",
+                                          "architecture": "noarch", "sha256": checksum})
+    if remove_setuptools:
+        member = content_inspection.SOURCE_MEMBERS[0]
+        sources[member] = sources[member].replace(b"remove linux-firmware", b"remove linux-firmware python3-setuptools")
+        next(item for item in manifest["files"] if item["path"] == member)["sha256"] = hashlib.sha256(sources[member]).hexdigest()
+    return base, manifest, sources
+
+
+@pytest.mark.parametrize("remove_setuptools", [False, True])
+def test_required_rpms_follow_reviewed_native_bootstrap_cleanup(remove_setuptools):
+    """Only original dependency cleanup excludes system pip from runtime needs.
+
+    Args:
+        remove_setuptools: Whether the admitted shared cleanup removes setuptools.
+    """
+    base, manifest, sources = _bootstrap_pip_fixture(remove_setuptools=remove_setuptools)
+    expected = next(item for item in content_inspection.prepare_content_inputs(base, manifest, sources) if item["kind"] == "rpm")
+    required = content_inspection._decode_inventory(expected["required_packages"])
+    allowed = content_inspection._decode_inventory(expected["allowed_inventory"])
+    assert ("python3-pip" not in required) == remove_setuptools
+    assert ("python3-setuptools" not in required) == remove_setuptools
+    assert set(content_inspection.PHOTON_BOOTSTRAP_PIP_RPMS) <= allowed.keys()
+    installed = {name: allowed[name] for name in required}
+    raw = json.dumps(_report("rpm", installed_inventory=_inventory(installed))).encode()
+    assert content_inspection.validate_content_report(raw, expected)["installed_rpms"] == len(required)
+    installed.pop("python3")
+    with pytest.raises(content_inspection.MissingRequiredRpms):
+        content_inspection.validate_content_report(json.dumps(_report("rpm", installed_inventory=_inventory(installed))).encode(), expected)
+
+
+@pytest.mark.parametrize("package", content_inspection.PHOTON_BOOTSTRAP_PIP_RPMS)
+@pytest.mark.parametrize("defect", ["changed", "missing"])
+def test_bootstrap_cleanup_refuses_unreviewed_native_rpms(package, defect):
+    """An altered bootstrap pair cannot silently relax required-package checks.
+
+    Args:
+        package: One original bootstrap RPM.
+        defect: Changed checksum or missing package.
+    """
+    base, manifest, sources = _bootstrap_pip_fixture()
+    item = next(item for item in manifest["rpm_inventory"] if item["name"] == package)
+    record = next(item for item in manifest["files"] if item["path"] == f"rpms/{package}.rpm")
+    if defect == "changed":
+        item["sha256"] = record["sha256"] = "c" * 64
+    else:
+        manifest["rpm_inventory"].remove(item)
+        manifest["files"].remove(record)
+    with pytest.raises(ValueError, match="bootstrap pip cleanup requires reviewed RPMs"):
+        content_inspection.prepare_content_inputs(base, manifest, sources)
+
+
 def _write_synthetic_wheel(path, members):
     """Write a tiny wheel with a real RECORD for the shared verifier.
 

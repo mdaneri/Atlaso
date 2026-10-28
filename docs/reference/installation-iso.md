@@ -352,6 +352,13 @@ stay under `/run` and are removed on normal exit. This mode does not run provisi
 or change installed content. RPM configuration files and ghost entries are outside its file comparison, and application
 or dependency equality alone does not prove whole-system equality. Keep the five results with the original VM receipts.
 
+Required installed RPMs reflect shared provisioning's final cleanup. The checksum-pinned native
+`python3-pip-26.2.1-1.ph5` requires `python3-setuptools-80.9.0-5.ph5`; removing that build package also removes system pip.
+The adapter excludes system pip from the required installed set only when the original cleanup explicitly removes
+setuptools and both admitted RPM checksums match this reviewed pair. A different pair fails preparation pending review.
+Both RPMs remain in the admitted media inventory. The protected application Python environment, installed RPM
+identities, firmware, files and native runtime metadata retain their separate mandatory checks.
+
 The RPM check reuses the shared Photon package-state verifier to measure runtime metadata. The live `/proc` mount
 must be one root-owned proc filesystem mounted at `/proc`,
 with its filesystem root `/` and directory mode `0555`. That kernel mount shadows the package's empty `0755` directory.

@@ -24,6 +24,13 @@ PHOTON_RPCBIND_SHA256 = "2c3d001aca71e6c6c81377a7bfc7ec9c3d26ee7a9891b4a706a8205
 PHOTON_OPENLDAP_SHA256 = "11b4af044b7418ba9af5cf6762e2cbe5add5b3463774d20f6be89b8ff98c47dc"
 PHOTON_OPENSSH_SHA256 = "cf1bace04bca67f58536b2cc241754bcdb3bb7e2b38c518bc283f3c90c16a2d8"
 PHOTON_AUDIT_SHA256 = "e55fac7b24b2f7546485f0b8b37fb7b105be764436dd4b139ccaa88e6c3e374f"
+# The original native pip RPM requires setuptools. Shared provisioning removes
+# setuptools after creating the protected application venv, so tdnf also erases
+# system pip. Admit that bootstrap-only transition only for these reviewed bytes.
+PHOTON_BOOTSTRAP_PIP_RPMS = {
+    "python3-pip": "758f649ebad0db9c591278ee7d4a0f69ca8e0c368388c314f1f9adde447df039",
+    "python3-setuptools": "b0adce2fba217f99ee6c97ac74d20f6f2e52029c323037e901c2aba5e3c0dab0",
+}
 PHOTON_MODULE_RPMS = {
     "linux": "2987a19840476e522f2d19431b60b5e146b3a03fab17287ec211f1cf7e6e8bd4",
     "kmod": "b7614a76f7a17b832e2158fe90413cf2af719b1d1e9d85bfae7195e4905a7850",
@@ -343,7 +350,13 @@ def prepare_content_inputs(base: dict[str, Any], manifest: dict, sources: dict[s
         raise ValueError("admitted Photon module inputs require the original Linux and kmod RPMs")
     if files.get("source/scripts/installation/layout.py") != PHOTON_LAYOUT_HELPER_SHA256:
         raise ValueError("admitted installation layout requires the original shared verifier contract")
-    required = sorted(set(packages) - removed)
+    bootstrap_removed = set()
+    if "python3-pip" in packages and "python3-setuptools" in removed:
+        bootstrap_pins = {item["name"]: item["sha256"] for item in rpms if item["name"] in PHOTON_BOOTSTRAP_PIP_RPMS}
+        if bootstrap_pins != PHOTON_BOOTSTRAP_PIP_RPMS:
+            raise ValueError("admitted Photon bootstrap pip cleanup requires reviewed RPMs")
+        bootstrap_removed.add("python3-pip")
+    required = sorted(set(packages) - removed - bootstrap_removed)
     if not required or not set(required) <= allowed.keys():
         raise ValueError("required runtime package set is incomplete")
     lock = json.loads(sources[SOURCE_MEMBERS[2]])
