@@ -457,6 +457,9 @@ report or validator errors. Codes `20`–`23` identify report size, schema/media
 RPM expectation shape respectively. Codes `24`–`27` identify missing required RPMs, unadmitted RPM identities,
 incomplete native verification, and invalid absent-directory counts. Codes `28`–`31` identify malformed JSON, Base64,
 Unicode, and oversized CLI inputs. Other failures retain generic code `2`; every nonzero result stops inspection.
+For code `24`, the console driver separately reports zero-based positions in the admitted, sorted required-package
+list, then rethrows the original failure. This diagnostic does not emit guest package names, private inventory or
+console bytes, and does not establish successful RPM validation.
 The registry includes the two EFI files from the admitted `shim-signed` RPM. Their type, mode and verification flags
 can identify boot-file discrepancies without reading private console output. This diagnostic does not accept a changed
 boot file or relax the RPM comparison.

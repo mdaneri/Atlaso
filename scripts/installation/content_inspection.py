@@ -196,6 +196,19 @@ _EXPECTED_EXTRA = {
 }
 
 
+class MissingRequiredRpms(ValueError):
+    """Retain only public positions in the admitted required-package list."""
+
+    def __init__(self, indices: list[int]) -> None:
+        """Record the missing admitted package positions.
+
+        Args:
+            indices: Sorted positions derived solely from the admitted expectation.
+        """
+        super().__init__("installed RPM required package set is incomplete")
+        self.indices = indices
+
+
 def _canonical_digest(records: dict[str, str]) -> str:
     """Hash a public path/content inventory using the existing module convention.
 
@@ -557,7 +570,7 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
         if not isinstance(allowed, dict) or not isinstance(required, list):
             raise ValueError("content RPM expectation inventory is invalid")
         if not set(required) <= actual.keys():
-            raise ValueError("installed RPM required package set is incomplete")
+            raise MissingRequiredRpms([i for i, name in enumerate(required) if name not in actual])
         if any(name not in allowed or identity != allowed[name] for name, identity in actual.items()):
             raise ValueError("installed RPM identity differs from media")
         if any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified", "runtime_audit_metadata_verified", "runtime_rpcbind_metadata_verified", "runtime_openssh_metadata_verified", "runtime_openldap_metadata_verified", "runtime_efi_metadata_verified", "runtime_module_indexes_verified")):

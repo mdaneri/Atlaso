@@ -746,6 +746,41 @@ def test_content_cli_classifies_invalid_transport(report, code, monkeypatch, cap
     assert captured.err == "Installed inspection could not validate its bounded inputs.\n"
 
 
+@pytest.mark.parametrize("missing", [False, True])
+def test_missing_rpm_diagnostic_emits_only_admitted_positions(missing, monkeypatch, capsys):
+    """A separate diagnostic reveals required-list positions, never report bytes.
+
+    Args:
+        missing: Whether the synthetic required Python package is absent.
+        monkeypatch: Pytest CLI argument override.
+        capsys: Captured CLI output.
+    """
+    expected = base64.b64encode(json.dumps(_expectation("rpm")).encode()).decode()
+    changes = {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"]})} if missing else {}
+    report = base64.b64encode(json.dumps(_report("rpm", **changes)).encode()).decode()
+    monkeypatch.setattr(sys, "argv", ["inspection", "diagnose-missing-rpms", "--expected", expected, "--report", report])
+    assert inspection.main() == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {"missing_required_indices": [1] if missing else []}
+    assert captured.err == ""
+
+
+def test_missing_rpm_diagnostic_refuses_unknown_report_fields(monkeypatch, capsys):
+    """The diagnostic retains schema checks before revealing any positions.
+
+    Args:
+        monkeypatch: Pytest CLI argument override.
+        capsys: Captured CLI output.
+    """
+    expected = base64.b64encode(json.dumps(_expectation("rpm")).encode()).decode()
+    report = base64.b64encode(json.dumps(_report("rpm", private="private-sentinel")).encode()).decode()
+    monkeypatch.setattr(sys, "argv", ["inspection", "diagnose-missing-rpms", "--expected", expected, "--report", report])
+    assert inspection.main() == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Installed inspection could not validate its bounded inputs.\n"
+
+
 @pytest.mark.parametrize(
     ("kind", "changes"),
     [

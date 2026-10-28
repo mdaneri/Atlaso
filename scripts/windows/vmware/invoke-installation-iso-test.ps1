@@ -1517,9 +1517,33 @@ try {
                             -ReadInspectionReport -ReadLoginProgress -CursorState $cursorState -AllowedRpmPackages @($check.diagnostic_packages)
                         $contentExpected = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(
                             ($check.expected | ConvertTo-Json -Compress -Depth 8)))
-                        $contentReport = Invoke-AtlasoBoundedProcess -FilePath $InspectionPythonPath `
-                            -ArgumentList ($inspectionArguments + @('validate-content', '--expected', $contentExpected, '--report', $contentRecord)) `
-                            -TimeoutSeconds 30 -Action 'Installed content record validation'
+                        try {
+                            $contentReport = Invoke-AtlasoBoundedProcess -FilePath $InspectionPythonPath `
+                                -ArgumentList ($inspectionArguments + @('validate-content', '--expected', $contentExpected, '--report', $contentRecord)) `
+                                -TimeoutSeconds 30 -Action 'Installed content record validation'
+                        }
+                        catch {
+                            if ($check.expected.kind -ceq 'rpm' -and
+                                $_.Exception.Message -ceq 'Installed content record validation failed with exit code 24.') {
+                                # This separate diagnostic emits only positions in
+                                # the ISO-admitted public required-package list.
+                                # Always rethrow the original validation failure.
+                                $diagnostic = Invoke-AtlasoBoundedProcess -FilePath $InspectionPythonPath `
+                                    -ArgumentList ($inspectionArguments + @('diagnose-missing-rpms', '--expected', $contentExpected, '--report', $contentRecord)) `
+                                    -TimeoutSeconds 30 -Action 'Missing required RPM diagnostic'
+                                if ($diagnostic.Length -gt 8192) { throw 'Missing required RPM diagnostic exceeded its public contract.' }
+                                $missing = $diagnostic | ConvertFrom-Json -AsHashtable
+                                if ($missing -isnot [hashtable] -or $missing.Count -ne 1 -or
+                                    -not $missing.ContainsKey('missing_required_indices') -or
+                                    $missing.missing_required_indices -isnot [array] -or
+                                    $missing.missing_required_indices.Count -gt 1024 -or
+                                    @($missing.missing_required_indices | Where-Object { ($_ -isnot [long] -and $_ -isnot [int]) -or $_ -lt 0 -or $_ -gt 1023 }).Count) {
+                                    throw 'Missing required RPM diagnostic exceeded its public contract.'
+                                }
+                                Write-Host ('Missing required RPM indices: ' + ($missing.missing_required_indices -join ','))
+                            }
+                            throw
+                        }
                         if ($contentReport.Length -gt 8192) { throw 'Validated content report exceeded its bound.' }
                         Write-Host ('Installed content ' + $check.expected.kind + ': ' + $contentReport.Trim())
                     }

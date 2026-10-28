@@ -361,6 +361,9 @@ def main() -> int:
     content_validate = sub.add_parser("validate-content")
     content_validate.add_argument("--expected", required=True)
     content_validate.add_argument("--report", required=True)
+    missing_diagnostic = sub.add_parser("diagnose-missing-rpms")
+    missing_diagnostic.add_argument("--expected", required=True)
+    missing_diagnostic.add_argument("--report", required=True)
     args = parser.parse_args()
     try:
         if args.operation == "prepare":
@@ -377,11 +380,24 @@ def main() -> int:
 
                 result["content"] = [{"expected": check, "command": guest_content_program(check),
                                       "diagnostic_packages": rpm_diagnostic_packages(check)} for check in checks]
-        elif args.operation == "validate-content":
-            from scripts.installation.content_inspection import validate_content_report
+        elif args.operation in {"validate-content", "diagnose-missing-rpms"}:
+            from scripts.installation.content_inspection import (
+                MissingRequiredRpms,
+                validate_content_report,
+            )
 
             expected = json.loads(_decode(args.expected))
-            result = validate_content_report(_decode(args.report), expected)
+            if args.operation == "diagnose-missing-rpms" and (not isinstance(expected, dict) or expected.get("kind") != "rpm"):
+                raise ValueError("missing RPM diagnostic requires RPM expectations")
+            try:
+                result = validate_content_report(_decode(args.report), expected)
+            except MissingRequiredRpms as exc:
+                if args.operation != "diagnose-missing-rpms":
+                    raise
+                result = {"missing_required_indices": exc.indices}
+            else:
+                if args.operation == "diagnose-missing-rpms":
+                    result = {"missing_required_indices": []}
         else:
             expected = json.loads(_decode(args.expected))
             result = validate_report(_decode(args.report), expected)

@@ -39,6 +39,56 @@ function Assert-InstallationVmCondition {
     if (-not $Condition) { throw $Message }
 }
 
+& {
+    $validationTries = @($driverAst.FindAll({ param($node)
+        $node -is [System.Management.Automation.Language.TryStatementAst] -and
+        @($node.CatchClauses | Where-Object { $_.Body.Extent.Text.Contains("'diagnose-missing-rpms'") }).Count -eq 1
+    }, $true))
+    Assert-InstallationVmCondition ($validationTries.Count -eq 1) 'The content consumer must have one missing-package diagnostic boundary.'
+    $validation = [scriptblock]::Create($validationTries[0].Extent.Text)
+    <#
+    .SYNOPSIS
+    Simulate the bounded host validator without credentials or a VM.
+    .PARAMETER FilePath
+    Unused public interpreter fixture.
+    .PARAMETER ArgumentList
+    Selects strict validation or its separate diagnostic.
+    .PARAMETER TimeoutSeconds
+    Unused public timeout fixture.
+    .PARAMETER Action
+    Unused public action fixture.
+    #>
+    function Invoke-AtlasoBoundedProcess {
+        param([string]$FilePath, [string[]]$ArgumentList, [int]$TimeoutSeconds, [string]$Action)
+        if ('diagnose-missing-rpms' -in $ArgumentList) { return $diagnosticFixture }
+        throw 'Installed content record validation failed with exit code 24.'
+    }
+    $InspectionPythonPath = 'public-interpreter'
+    $inspectionArguments = @()
+    $contentExpected = 'public-expected'
+    $contentRecord = 'private-record-must-not-surface'
+    $check = @{ expected = @{ kind = 'rpm' } }
+    foreach ($diagnosticFixture in @('{"missing_required_indices":[1,4]}',
+            '{"missing_required_indices":["private-sentinel"]}',
+            '{"missing_required_indices":[1024]}',
+            '{"missing_required_indices":null}')) {
+        $observed = [Collections.Generic.List[string]]::new()
+        $failure = $null
+        try { & $validation 6>&1 | ForEach-Object { $observed.Add($_.ToString()) } }
+        catch { $failure = $_ }
+        Assert-InstallationVmCondition ($null -ne $failure) 'A diagnostic must never turn failed RPM validation into success.'
+        Assert-InstallationVmCondition (($observed -join '').Contains('private') -eq $false) 'Private diagnostic fields must never become output.'
+        if ($diagnosticFixture -ceq '{"missing_required_indices":[1,4]}') {
+            Assert-InstallationVmCondition ($failure.Exception.Message -ceq 'Installed content record validation failed with exit code 24.' -and
+                ($observed -join '') -ceq 'Missing required RPM indices: 1,4') 'Valid public positions must retain the original refusal.'
+        }
+        else {
+            Assert-InstallationVmCondition ($observed.Count -eq 0 -and
+                $failure.Exception.Message -ceq 'Missing required RPM diagnostic exceeded its public contract.') 'Invalid positions must fail before output.'
+        }
+    }
+}
+
 Import-Module (Join-Path $repositoryRoot 'scripts/windows/vmware/Atlaso.VmwareTestIdentity.psm1') -Force
 $identityA = New-AtlasoVmwareTestIdentity -PullRequestNumber 1036 -Purpose installation-iso -CollisionSuffix inspection-a
 $identityB = New-AtlasoVmwareTestIdentity -PullRequestNumber 1036 -Purpose installation-iso -CollisionSuffix inspection-b
