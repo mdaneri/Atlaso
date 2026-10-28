@@ -100,8 +100,11 @@ def test_guest_network_command_is_read_only_and_suppresses_raw_failures(default_
         assert kwargs == {"capture_output": True, "timeout": 5, "check": True}
         calls.append(arguments)
         if "addr" in arguments:
-            value = [{"ifname": "eth0", "address": _MAC,
+            value = [{"ifname": "eth0",
                       "addr_info": [{"family": "inet", "scope": "global", "local": "192.168.84.20", "prefixlen": 24}]}]
+            # Native ip -4 omits link-layer fields even when IPv4 is present.
+            if "-4" not in arguments:
+                value[0]["address"] = _MAC
         else:
             assert arguments in [["ip", "-j", "-4", "route", "show", "default"], ["ip", "-j", "-6", "route", "show", "default"]]
             value = [{"dst": "default", "private": "private-sentinel"}] if default_route else []

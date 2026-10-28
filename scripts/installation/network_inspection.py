@@ -131,7 +131,7 @@ stage="system-network-addresses"
 try:
  end=time.monotonic()+90
  while True:
-  c=subprocess.run(["ip","-j","-4","addr","show","scope","global"],capture_output=True,timeout=5,check=True)
+  c=subprocess.run(["ip","-j","addr","show","scope","global"],capture_output=True,timeout=5,check=True)
   if len(c.stdout)+len(c.stderr)>65536 or c.stderr: raise ValueError()
   rows=json.loads(c.stdout);candidates=[]
   if not isinstance(rows,list) or len(rows)>32: raise ValueError()

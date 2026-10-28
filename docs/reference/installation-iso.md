@@ -554,7 +554,9 @@ DHCP. NAT, extra adapters, ambiguous MAC assignments, and non-private subnets fa
 keeps its original requirement for an isolated installer with connected media.
 
 After ordinary installed identity verification, the guest reads one private IPv4 address and the existing HTTPS leaf
-certificate through the owned serial console. Both IPv4 and IPv6 default routes must be absent. The host validator
+certificate through the owned serial console. It reads family-unspecified `ip` address JSON, retaining link-layer MAC
+fields omitted by `ip -4`, and explicitly selects only IPv4 address records. Both IPv4 and IPv6 default routes must be
+absent. The host validator
 requires the observed MAC, subnet and prefix to match native admission before printing a bounded public record.
 Missing addressing or HTTPS readiness fails at a fixed public stage; console text and private key material stay private.
 
