@@ -449,6 +449,9 @@ journal and audit records remain private. Differences are not accepted by this r
 Known entries may also include the nine fixed RPM verification flags. The RPM command uses Python's standard Base85
 transport to keep the complete public registry within the existing console limit; encoded data is checked for safe
 quoting, and reports retain their existing Base64 format. Other inspection commands retain their existing transport.
+The reader admits up to 5,464 Base64 characters for a report while enforcing the producer's unchanged 4,096-byte
+decoded limit. This accommodates the complete RPM inventory; schema, media identity, and every content check remain
+mandatory after transport decoding.
 The registry includes the two EFI files from the admitted `shim-signed` RPM. Their type, mode and verification flags
 can identify boot-file discrepancies without reading private console output. This diagnostic does not accept a changed
 boot file or relax the RPM comparison.

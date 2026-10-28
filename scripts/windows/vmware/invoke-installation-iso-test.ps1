@@ -713,9 +713,19 @@ function Wait-InstallationConsoleState {
                 }
                 # Admit only a complete output line. The encoded command sent to
                 # the shell contains no contiguous marker and cannot echo proof.
-                $records = [regex]::Matches($plain, '(?:^|[\r\n])ATLASO-INSPECTION:([A-Za-z0-9+/=]{1,4096}):END(?=[\r\n]|$)')
+                # A 4096-byte decoded report occupies at most 5464 Base64 characters.
+                $records = [regex]::Matches($plain, '(?:^|[\r\n])ATLASO-INSPECTION:([A-Za-z0-9+/=]{1,5464}):END(?=[\r\n]|$)')
                 if ($records.Count -gt 1) { throw 'Installed inspection returned duplicate records.' }
-                if ($records.Count -eq 1) { return $records[0].Groups[1].Value }
+                if ($records.Count -eq 1) {
+                    $decoded = $null
+                    try {
+                        try { $decoded = [Convert]::FromBase64String($records[0].Groups[1].Value) }
+                        catch { throw 'Installed inspection report encoding is invalid.' }
+                        if ($decoded.Length -gt 4096) { throw 'Installed inspection report exceeds its decoded bound.' }
+                        return $records[0].Groups[1].Value
+                    }
+                    finally { if ($null -ne $decoded) { [Array]::Clear($decoded, 0, $decoded.Length) } }
+                }
                 if ($plain.Length -gt 16384) { throw 'Installed inspection console output exceeded its bound.' }
             }
             if ($ReadLoginProgress) {

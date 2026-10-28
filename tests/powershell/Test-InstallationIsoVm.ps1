@@ -1489,6 +1489,25 @@ try {
 }
 finally { if ($inspectionPair) { Close-InstallationTestPipePair -Pair $inspectionPair } }
 
+$maximumInspectionJson = '{"fixture":"' + ('x' * 4082) + '"}'
+$maximumInspectionEncoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($maximumInspectionJson))
+foreach ($fragmentedReport in @($false, $true)) {
+    $inspectionPair = $null
+    try {
+        $inspectionPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+        $wire = "ATLASO-INSPECTION:${maximumInspectionEncoded}:END`r`n"
+        $fragments = if ($fragmentedReport) { [string[]]@($wire.Substring(0, 4096), $wire.Substring(4096)) }
+            else { [string[]]@($wire) }
+        $inspectionSender = [AtlasoInstallationPipeTestWriter]::Start($inspectionPair.Client, $fragments)
+        $inspectionRecord = Wait-InstallationConsoleState -Pipe $inspectionPair.Server -Pattern '' `
+            -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ReadInspectionReport
+        Assert-InstallationVmCondition ($maximumInspectionJson.Length -eq 4096 -and $maximumInspectionEncoded.Length -eq 5464 -and
+            $inspectionRecord -ceq $maximumInspectionEncoded) 'The complete decoded report bound must fit its Base64 wire envelope.'
+        Assert-InstallationVmCondition ($inspectionSender.Wait(5000)) 'Maximum inspection report writer did not finish.'
+    }
+    finally { if ($inspectionPair) { Close-InstallationTestPipePair -Pair $inspectionPair } }
+}
+
 $pipPackageHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes('pip'))).ToLowerInvariant()
 foreach ($fixture in @(
     @{ Text = "ATLASO-INSPECTION-FAILED`r`nprivate-error-details`r`n"; Error = 'Installed identity or application payload inspection failed.' },
@@ -1521,6 +1540,8 @@ foreach ($fixture in @(
     @{ Text = "ATLASO-INSPECTION-FAILED:system-python-bytecode`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-python-bytecode.' },
     @{ Text = ("ATLASO-INSPECTION-FAILED:system-python-changed-" + ('a' * 64) + "`r`nprivate-error-details`r`n"); Error = ('Installed inspection failed at public stage: system-python-changed-' + ('a' * 64) + '.') },
     @{ Text = "ATLASO-INSPECTION:e30=:END`r`nATLASO-INSPECTION:e30=:END`r`n"; Error = 'Installed inspection returned duplicate records.' },
+    @{ Text = "ATLASO-INSPECTION:AA=:END`r`n"; Error = 'Installed inspection report encoding is invalid.' },
+    @{ Text = ('ATLASO-INSPECTION:' + [Convert]::ToBase64String([byte[]]::new(4097)) + ":END`r`n"); Error = 'Installed inspection report exceeds its decoded bound.' },
     @{ Text = ('x' * 17000); Error = 'Installed inspection console output exceeded its bound.' }
 )) {
     $inspectionPair = $null
