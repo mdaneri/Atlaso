@@ -885,7 +885,8 @@ def test_photon_kickstart_generator_is_canonical_and_provider_specific(tmp_path)
         template = template_path.read_text(encoding="utf-8")
         assert "templatefile(" not in template
         assert 'ssh_password_stdin_base64    = base64encode("${var.ssh_password}\\n")' in template
-        assert template.count("${local.ssh_password_stdin_base64}") == 2
+        # Shutdown, ordinary provisioning, RPM capture and module capture use stdin.
+        assert template.count("${local.ssh_password_stdin_base64}") == 4
         assert "echo '${var.ssh_password}'" not in template
         assert "systemd-run --quiet --unit=atlaso-image-build-finalize" in template
         assert "/opt/atlaso/bin/atlaso-finalize-image-build ${var.ssh_username}" in template

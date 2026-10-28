@@ -73,6 +73,13 @@ def test_package_selection_reuses_shared_packages_and_adds_offline_boot_assets(t
     assert packages == sorted(set(packages))
 
 
+def test_repository_package_selection_contains_networking_runtime() -> None:
+    """Capture the shared networking tools needed by diagnostics and the console."""
+    repository = Path(__file__).resolve().parents[1]
+
+    assert "iproute2" in build.package_selection(repository)
+
+
 @pytest.mark.parametrize(
     "text",
     [

@@ -259,6 +259,7 @@ def test_package_cleanup_transaction_preserves_runtime_with_noautoremove(
         "rpm",
         "tdnf",
         "python3",
+        "iproute2",
         "powershell",
         "ntpsec",
         "python3-ntp",
@@ -311,15 +312,15 @@ def test_package_cleanup_transaction_preserves_runtime_with_noautoremove(
     assert not {"rpm-build", "glib-devel", "systemd-devel", "pkg-config"} & installed
 
 
-@pytest.mark.parametrize("missing_package", ["ntpsec", "python3-ntp"])
-def test_package_cleanup_rejects_missing_ntpsec_runtime(
+@pytest.mark.parametrize("missing_package", ["ntpsec", "python3-ntp", "iproute2"])
+def test_package_cleanup_rejects_missing_required_runtime(
     tmp_path: Path, missing_package: str
 ) -> None:
-    """Reject an image that lost either required NTPsec runtime package.
+    """Reject an image that lost a required time or networking runtime package.
 
     Args:
         tmp_path: Temporary filesystem root for the package transaction.
-        missing_package: Required NTPsec package omitted from the image.
+        missing_package: Required runtime package omitted from the image.
     """
 
     verifier = load_verifier()
@@ -330,6 +331,7 @@ def test_package_cleanup_rejects_missing_ntpsec_runtime(
         "rpm",
         "tdnf",
         "python3",
+        "iproute2",
         "powershell",
         "ntpsec",
         "python3-ntp",
@@ -381,6 +383,7 @@ def test_package_cleanup_rejects_installed_cloud_init(tmp_path: Path) -> None:
         "rpm",
         "tdnf",
         "python3",
+        "iproute2",
         "powershell",
         "ntpsec",
         "python3-ntp",
@@ -441,6 +444,7 @@ def test_package_cleanup_rejects_cloud_init_runtime_path(
         "rpm",
         "tdnf",
         "python3",
+        "iproute2",
         "powershell",
         "ntpsec",
         "python3-ntp",

@@ -80,6 +80,7 @@ REQUIRED_RUNTIME_PACKAGES = (
     "rpm",
     "tdnf",
     "python3",
+    "iproute2",
     "powershell",
     "ntpsec",
     "python3-ntp",

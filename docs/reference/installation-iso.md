@@ -24,7 +24,9 @@ boot image and native installer flow. The Atlaso deployment source comes from an
 selected full commit. The signed software release, its exact application wheel, locked CPython wheelhouse, shared
 provisioning inputs, PowerCLI modules, trust material, notices, firmware, and a signed offline Photon RPM repository
 are embedded and inventoried. Dependency closure is resolved during authorized ISO preparation; installation does
-not use network package repositories. The boot package selection includes Photon’s native `initramfs` package and
+not use network package repositories. Shared provisioning explicitly installs `iproute2` for the console and diagnostics;
+the final package-state verifier requires it. The complete captured RPM closure must include its dependencies.
+The boot package selection includes Photon’s native `initramfs` package and
 its resolved dependencies. Installation requires the kernel and initrd selected by Photon’s GRUB environment to
 exist before applying chosen credentials or reporting completion.
 
@@ -612,9 +614,11 @@ from development media source `151b76dbe63db5c7acfb83861e5f5b4b957d30be`, inspec
 20 deployed shared assets, 66 Python distributions, 37 PowerCLI modules, 217 installed RPMs, native runtime/file/firmware
 verification, and reproduced notices. Their signed application software was 0.9.465. Public identities were unique
 between them; the first VM's identity and application measurement stayed stable across five boot/resume observations.
-Host-facing OpenAPI, disconnected update/rollback, custom/fault scenarios, and preservation of disks carrying old Atlaso
-labels remain
-outstanding. Do not describe the installer as validated or claim physical support while these gates are
+The subsequent host-only network check exposed a missing prerequisite: none of that media's 241 RPMs provides `ip` or
+`ss`. Those tools are required by Atlaso's console and diagnostics. That media remains partial evidence; the package
+selection correction requires a fresh complete capture, ISO, and independent installed-system tests. Host-facing
+OpenAPI, disconnected update/rollback, custom/fault scenarios, and preservation of disks carrying old Atlaso labels
+remain outstanding. Do not describe the installer as validated or claim physical support while these gates are
 outstanding. Secure Boot is disabled for phase one; this reference makes no Secure Boot or ARM support claim.
 
 An earlier extended content run matched all 1,299 copied source files, 20 deployed shared assets and the public
