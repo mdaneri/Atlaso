@@ -463,6 +463,10 @@ function ConvertFrom-InstallationConsoleFrame {
                             }
                         }
                         { $_ -cin 'h', 'l' } {
+                            # Native curses resets insertion with CSI 4 l. The public
+                            # frame already overwrites cells; this reset moves no cursor.
+                            # Preserve any uncertainty from an earlier unsupported mode.
+                            if (-not $private -and $numbers.Count -eq 1 -and $numbers[0] -eq 4 -and $ch -ceq 'l') { break }
                             if (-not $private -or $numbers.Count -ne 1) {
                                 $state.ModesKnown = $false; Set-ConsoleCursorUnknown -State $state
                                 break
@@ -499,7 +503,8 @@ function ConvertFrom-InstallationConsoleFrame {
                 10 { Move-ConsoleCursorLine -State $state -Frame $frame; $state.WrapPending = $false }
                 8 { if ($state.ColumnKnown) { $state.Column = [Math]::Max(0, $state.Column - 1) }; $state.WrapPending = $false }
                 9 { if ($state.ColumnKnown) { $state.Column = [Math]::Min(79, (($state.Column + 8) -band -8)) }; $state.WrapPending = $false }
-                { $_ -cin 0, 7, 127 } { }
+                # SI/SO select character sets without moving the cursor or consuming pending wrap.
+                { $_ -cin 0, 7, 14, 15, 127 } { }
                 default { $control = $false }
             }
             if ($control) { continue }

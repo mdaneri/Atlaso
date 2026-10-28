@@ -754,6 +754,13 @@ $cursorRows = @(Get-InstallationConsoleDiskOptions -Text ("`e[2J`e[5;1HSelect a 
 Assert-InstallationVmCondition ($cursorRows.Count -eq 2 -and $cursorRows[0].DiskPath -ceq '/dev/sda' -and
     $cursorRows[1].DiskPath -ceq '/dev/sdb' -and $cursorRows[1].Index -eq 1) `
     'Cursor-addressed native rows must use visible order rather than arrival order.'
+$nativeModeRows = @(Get-InstallationConsoleDiskOptions -Text ("`e[?1049h`e[1;25r`e[4l`e[?1h`e[?25l`e[H" +
+    "`e[5;6H" + [char]14 + 'lqqqqk' + [char]15 + 'Select a disk' +
+    "`e[11;22H" + [char]15 + 'VMware Virtual S - 64 GiB @ /dev/sdb' +
+    "`e[12;22H" + [char]15 + 'VMware Virtual S - 4 GiB @ /dev/sda'))
+Assert-InstallationVmCondition ($nativeModeRows.Count -eq 2 -and $nativeModeRows[0].DiskPath -ceq '/dev/sdb' -and
+    $nativeModeRows[0].SizeGiB -eq 64 -and $nativeModeRows[1].DiskPath -ceq '/dev/sda' -and
+    $nativeModeRows[1].SizeGiB -eq 4) 'Native overwrite reset and character-set shifts must preserve both visible disk rows.'
 $erasedRows = @(Get-InstallationConsoleDiskOptions -Text ("`e[11;1H32 GiB @ /dev/sdc`r`e[2K" +
     "4 GiB @ /dev/sda`e[1B`r64 GiB @ /dev/sdb"))
 Assert-InstallationVmCondition ($erasedRows.Count -eq 2 -and $erasedRows[0].DiskPath -ceq '/dev/sda' -and
@@ -1252,6 +1259,17 @@ $harmlessModesState = @{}
 $harmlessModes = @(ConvertFrom-InstallationConsoleFrame -Text "`e[?25l`e[?1h`e[?2004h`e=`e>`e[4;8H`e[6n" -CursorState $harmlessModesState -CursorOnly)
 Assert-InstallationVmCondition ($harmlessModes[0].Known -and $harmlessModes[0].Row -eq 4 -and $harmlessModes[0].Column -eq 8) `
     'Visibility, application-cursor, bracketed-paste and keypad modes must preserve cursor certainty.'
+$nativeShiftState = @{}
+$null = ConvertFrom-InstallationConsoleFrame -Text "`e[4" -CursorState $nativeShiftState -CursorOnly
+$nativeShiftPosition = @(ConvertFrom-InstallationConsoleFrame -Text ("l`e[8;80HX" + [char]14 + [char]15 + "Y`e[6n") `
+    -CursorState $nativeShiftState -CursorOnly)
+Assert-InstallationVmCondition ($nativeShiftPosition[0].Known -and $nativeShiftPosition[0].Row -eq 9 -and
+    $nativeShiftPosition[0].Column -eq 2) 'Fragmented overwrite reset and nonmoving shifts must preserve pending autowrap.'
+$unsupportedInsertState = @{}
+$unsupportedInsertPosition = @(ConvertFrom-InstallationConsoleFrame -Text "`e[4h`e[4l`e[3;4H`e[6n" `
+    -CursorState $unsupportedInsertState -CursorOnly)
+Assert-InstallationVmCondition (-not $unsupportedInsertPosition[0].Known) `
+    'A supported overwrite reset must not clear uncertainty from an unsupported insert-mode transition.'
 $oscState = @{}
 $null = ConvertFrom-InstallationConsoleFrame -Text "`e]0;private-fixture-title" -CursorState $oscState -CursorOnly
 $oscStateText = $oscState | ConvertTo-Json -Compress

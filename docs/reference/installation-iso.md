@@ -147,6 +147,9 @@ checks and correct the clock before retrying with a fresh installation fixture.
 
 The VMware harness creates an isolated EFI VM with no network adapters, two blank SCSI disks, and a private serial
 console. Its VMX configuration uses UTF-8 to preserve non-ASCII worktree, ISO, and output paths.
+The serial reader recognizes the native menu's overwrite-mode reset and nonmoving character-set shifts when
+reconstructing visible disk rows. Unsupported modes still invalidate cursor certainty; a supported reset does not
+erase that uncertainty or authorize a guessed cursor-position reply.
 Hash the generated ISO and use the exact owning pull request number. `Probe` checks that the native Photon disk
 selection screen exposes both blank fixture disks, and `Cancel` checks cancellation before disk writes. `Auto` exercises
 the single-disk Auto installation path. Reboot, persistence, and Appliance Update checks remain separate follow-up tests:
