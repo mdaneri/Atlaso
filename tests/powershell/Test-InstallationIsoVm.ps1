@@ -685,8 +685,14 @@ public static class AtlasoInstallationPipeTestWriter
 
     public static Task Start(NamedPipeClientStream pipe, string[] fragments)
     {
+        return Start(pipe, fragments, null);
+    }
+
+    public static Task Start(NamedPipeClientStream pipe, string[] fragments, ManualResetEventSlim ready)
+    {
         return Task.Run(() =>
         {
+            ready?.Set();
             foreach (var fragment in fragments)
             {
                 var bytes = Encoding.ASCII.GetBytes(fragment);
@@ -930,13 +936,18 @@ Assert-InstallationVmCondition (-not [AtlasoInstallationPipePeer]::MatchesExpect
 
 $pipePair = $null
 $failureSender = $null
+$failureReady = $null
 try {
     $pipePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+    $failureReady = [Threading.ManualResetEventSlim]::new()
     $failureSender = [AtlasoInstallationPipeTestWriter]::Start($pipePair.Client,
-        [string[]]@("Traceback (most recent call last):`nPublicSyntheticSensitiveFixture"))
+        [string[]]@("Traceback (most recent call last):`nPublicSyntheticSensitiveFixture"), $failureReady)
+    # Start the writer before the shorter outer deadline without waiting for
+    # pipe drain, which requires the concurrent server read.
+    Assert-InstallationVmCondition ($failureReady.Wait(5000)) 'Public failure fixture writer did not start.'
     $failureObserved = $false
     try {
-        Wait-InstallationConsoleState -Pipe $pipePair.Server -Pattern 'Select a disk' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5))
+        Wait-InstallationConsoleState -Pipe $pipePair.Server -Pattern 'Select a disk' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(1))
     }
     catch { $failureObserved = $_.Exception.Message -ceq 'The installer reported a Python failure before the expected console state.' }
     Assert-InstallationVmCondition $failureObserved 'Python console failure did not fail promptly with only its public classification.'
@@ -944,6 +955,7 @@ try {
 }
 finally {
     if ($pipePair) { Close-InstallationTestPipePair -Pair $pipePair }
+    if ($failureReady) { $failureReady.Dispose() }
 }
 
 Write-Host 'Installation console pipe contract checks passed.'
@@ -1367,6 +1379,7 @@ foreach ($capacityFixture in @(
     @{ Disk = '/dev/sda'; Bytes = '4294967296'; Pass = $false; LegacyTraceback = $true; ExpectedFailure = 'reported a Python failure' }
 )) {
     $capacityPair = $null
+    $capacityReady = $null
     try {
         $capacityPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
         if ($capacityFixture.LegacyTraceback) {
@@ -1395,11 +1408,19 @@ foreach ($capacityFixture in @(
                 $capacityFragments = [string[]]@($capacityDialog + "`r`n")
             }
         }
-        $capacitySender = [AtlasoInstallationPipeTestWriter]::Start($capacityPair.Client, $capacityFragments)
+        $capacityWaitSeconds = 5
+        if ($capacityFixture.Malformed) {
+            $capacityReady = [Threading.ManualResetEventSlim]::new()
+            $capacitySender = [AtlasoInstallationPipeTestWriter]::Start($capacityPair.Client, $capacityFragments, $capacityReady)
+            Assert-InstallationVmCondition ($capacityReady.Wait(5000)) 'The incomplete capacity writer did not start.'
+            $capacityWaitSeconds = 1
+        } else {
+            $capacitySender = [AtlasoInstallationPipeTestWriter]::Start($capacityPair.Client, $capacityFragments)
+        }
         $capacityAccepted = $false
         $capacityFailure = ''
         try {
-            $null = @(Wait-InstallationConsoleState -Pipe $capacityPair.Server -Pattern 'default installation requires a disk of at least 64 GiB' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -ExpectedCapacityDisk '/dev/sda' 6>&1)
+            $null = @(Wait-InstallationConsoleState -Pipe $capacityPair.Server -Pattern 'default installation requires a disk of at least 64 GiB' -Deadline ([DateTimeOffset]::UtcNow.AddSeconds($capacityWaitSeconds)) -ExpectedCapacityDisk '/dev/sda' 6>&1)
             $capacityAccepted = $true
         } catch {
             $capacityFailure = $_.Exception.Message
@@ -1412,7 +1433,10 @@ foreach ($capacityFixture in @(
         }
         Assert-InstallationVmCondition ($capacitySender.Wait(5000)) 'The capacity fixture writer did not finish.'
     }
-    finally { if ($capacityPair) { Close-InstallationTestPipePair -Pair $capacityPair } }
+    finally {
+        if ($capacityPair) { Close-InstallationTestPipePair -Pair $capacityPair }
+        if ($capacityReady) { $capacityReady.Dispose() }
+    }
 }
 
 $panicPair = $null

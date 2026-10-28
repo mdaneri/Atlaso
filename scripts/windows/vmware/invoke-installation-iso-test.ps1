@@ -893,6 +893,10 @@ function Wait-InstallationConsoleState {
             }
             if ($text.Length -gt 131072) { $text = $text.Substring($text.Length - 65536) }
         }
+        # Preserve an observed public failure if the overall wait or rounded
+        # remaining-read interval ends before its fragmentation grace deadline.
+        if ($failureDeadline) { throw 'The installer reported a Python failure before the expected console state.' }
+        if ($capacityDialogDeadline) { throw 'The installer did not display a complete native capacity refusal.' }
         if ($bootFailureDeadline) { throw 'The installed system reported a kernel panic before login.' }
         if ($ReadLoginProgress) {
             $activity = if (-not $loginActivity) { 'no-console-activity' }

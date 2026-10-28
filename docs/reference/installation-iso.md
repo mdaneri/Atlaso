@@ -270,6 +270,8 @@ contents nor establish successful authentication; the account-identity challenge
 Initial installation also reports fixed disk-selection/completion phases and known boot categories. During
 provisioning, only stage labels admitted from the checked-in provisioner are forwarded, once per recognized stage;
 raw console messages remain private. A launcher failure stops the wait instead of consuming the whole test deadline.
+An observed Python failure or incomplete capacity refusal keeps its fixed public classification when the overall
+wait expires before fragmented output completes.
 Startup uses the same bounded cursor-only parser as login, answering a terminal-position query only after observed
 controls establish its position. This permits a startup profile to finish its terminal sizing before disk selection.
 At a login deadline, fixed categories distinguish no activity, control-only activity, and unrecognized activity without
