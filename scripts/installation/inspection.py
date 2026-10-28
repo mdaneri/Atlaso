@@ -6,6 +6,7 @@ import argparse
 import base64
 import contextlib
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -355,6 +356,7 @@ def main() -> int:
     prepare.add_argument("--iso", type=Path, required=True)
     prepare.add_argument("--iso-sha256", required=True)
     prepare.add_argument("--content", action="store_true")
+    prepare.add_argument("--network", action="store_true")
     validate = sub.add_parser("validate")
     validate.add_argument("--expected", required=True)
     validate.add_argument("--report", required=True)
@@ -364,6 +366,16 @@ def main() -> int:
     missing_diagnostic = sub.add_parser("diagnose-missing-rpms")
     missing_diagnostic.add_argument("--expected", required=True)
     missing_diagnostic.add_argument("--report", required=True)
+    network_validate = sub.add_parser("validate-network")
+    network_validate.add_argument("--iso-sha256", required=True)
+    network_validate.add_argument("--mac", required=True)
+    network_validate.add_argument("--subnet", required=True)
+    network_validate.add_argument("--prefixlen", type=int, required=True)
+    network_validate.add_argument("--report", required=True)
+    host_probe = sub.add_parser("probe-openapi")
+    host_probe.add_argument("--address", required=True)
+    host_probe.add_argument("--certificate-sha256", required=True)
+    host_probe.add_argument("--version", required=True)
     args = parser.parse_args()
     try:
         if args.operation == "prepare":
@@ -380,6 +392,20 @@ def main() -> int:
 
                 result["content"] = [{"expected": check, "command": guest_content_program(check),
                                       "diagnostic_packages": rpm_diagnostic_packages(check)} for check in checks]
+            if args.network:
+                from scripts.installation.network_inspection import (
+                    guest_network_program,
+                )
+
+                result["network_command"] = guest_network_program(expected["iso_sha256"])
+        elif args.operation == "validate-network":
+            from scripts.installation.network_inspection import validate_network_report
+
+            result = validate_network_report(_decode(args.report), args.iso_sha256, args.mac, args.subnet, args.prefixlen)
+        elif args.operation == "probe-openapi":
+            from scripts.installation.network_inspection import probe_openapi
+
+            result = probe_openapi(args.address, args.certificate_sha256, args.version)
         elif args.operation in {"validate-content", "diagnose-missing-rpms"}:
             from scripts.installation.content_inspection import (
                 MissingRequiredRpms,
@@ -403,11 +429,13 @@ def main() -> int:
             result = validate_report(_decode(args.report), expected)
         encoded = json.dumps(result, sort_keys=True, separators=(",", ":"))
         limit = 32768 if args.operation == "prepare" and args.content else _MAX_REPORT
+        if args.operation == "prepare" and args.network:
+            limit = 32768
         if len(encoded) > limit:
             raise ValueError("inspection output exceeds the bound")
         sys.stdout.write(encoded + "\n")
         return 0
-    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, base64.binascii.Error,
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, base64.binascii.Error, http.client.HTTPException,
             pycdlib.pycdlibexception.PyCdlibException) as exc:
         sys.stderr.write("Installed inspection could not validate its bounded inputs.\n")
         if args.operation == "validate-content":

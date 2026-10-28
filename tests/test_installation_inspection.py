@@ -18,6 +18,7 @@ from pathlib import Path
 import pycdlib
 import pytest
 
+from scripts.installation import inspection
 from scripts.installation.inspection import (
     expected_inputs,
     guest_program,
@@ -424,3 +425,27 @@ def test_guest_rejects_changed_payload_helpers_and_invalid_public_identity(tmp_p
              "machine-id": "public-identities", "host-key": "public-identities"}[corruption]
     assert result.stdout.strip() == ("ATLASO-INSPECTION-FAILED:" + phase).encode()
     assert result.stderr == b""
+
+
+def test_network_preparation_preserves_complete_iso_admission(tmp_path, monkeypatch, capsys):
+    """Network observation commands require the original complete media check.
+
+    Args:
+        tmp_path: Owned synthetic ISO fixture directory.
+        monkeypatch: Set bounded public CLI arguments.
+        capsys: Capture only admitted preparation or the fixed refusal.
+    """
+    media = tmp_path / "network.iso"
+    digest = _iso(media)
+    monkeypatch.setattr(sys, "argv", ["inspection", "prepare", "--iso", str(media), "--iso-sha256", digest, "--network"])
+    assert inspection.main() == 0
+    captured = capsys.readouterr()
+    prepared = json.loads(captured.out)
+    assert prepared["expected"]["iso_sha256"] == digest
+    assert 1 <= len(prepared["network_command"]) <= 3500 and "ATLASO-INSPECTION" not in prepared["network_command"]
+    assert captured.err == ""
+    with media.open("ab") as stream:
+        stream.write(b"changed media")
+    assert inspection.main() == 2
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == "Installed inspection could not validate its bounded inputs.\n"

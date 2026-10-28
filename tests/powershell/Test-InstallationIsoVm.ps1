@@ -187,6 +187,7 @@ function Get-InstallationVmFunctionText {
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmDiskBindings')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Read-InstallationRunningVmxText')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationConsoleBindings')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationNetworkBindings')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationConsoleDiskIdentities')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmRunning')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationSerialPipePath')))
@@ -251,6 +252,39 @@ foreach ($unsafeConsoleLines in $unsafeConsoleFixtures) {
     try { $null = Assert-InstallationConsoleBindings -VmxLines $unsafeConsoleLines -Context $bindingContext -IsoPath 'C:\offline media\atlaso.iso' }
     catch { $unsafeConsoleRejected = $true }
     Assert-InstallationVmCondition $unsafeConsoleRejected 'Console admission must reject changed isolation, storage, media, and serial bindings.'
+}
+
+$networkLines = @((ConvertTo-InstallationDiskBootConfiguration -Text $configuration).Split("`n") | ForEach-Object {
+        if ($_ -ceq 'ethernet0.present = "FALSE"') { 'ethernet0.present = "TRUE"' } else { $_ }
+    }) + @('ethernet0.connectionType = "custom"', 'ethernet0.vnet = "vmnet2"', 'ethernet0.virtualDev = "vmxnet3"',
+    'ethernet0.startConnected = "TRUE"', 'ethernet0.addressType = "generated"', 'ethernet0.generatedAddress = "00:0c:29:12:34:56"')
+$networkText = [string]::Join("`n", $networkLines)
+$hostNetworks = "Total host networks: 1`nINDEX NAME TYPE DHCP SUBNET MASK`n2 vmnet2 hostOnly true 192.168.84.0 255.255.255.0`n"
+$network = Assert-InstallationNetworkBindings -VmxLines $networkLines -Context $bindingContext -IsoPath 'C:\offline media\atlaso.iso' -Vmnet vmnet2 -NetworkInventory $hostNetworks
+Assert-InstallationVmCondition ($network.Mac -ceq '00:0c:29:12:34:56' -and $network.Subnet -ceq '192.168.84.0' -and
+    $network.PrefixLength -eq 24 -and $network.SerialPipePath -ceq $pipe) 'Network admission must bind the original serial endpoint and exact native host-only adapter.'
+$legacyConsoleRefused = $false
+try { $null = Assert-InstallationConsoleBindings -VmxLines $networkLines -Context $bindingContext -IsoPath 'C:\offline media\atlaso.iso' }
+catch { $legacyConsoleRefused = $true }
+Assert-InstallationVmCondition $legacyConsoleRefused 'Initial installer/VNC console admission must continue refusing a network adapter.'
+foreach ($fixture in @(
+        @{ Text = $networkText.Replace('sata0:0.present = "FALSE"', 'sata0:0.present = "TRUE"'); Inventory = $hostNetworks },
+        @{ Text = $networkText + "`nethernet0.generatedAddress = `"malformed-duplicate`""; Inventory = $hostNetworks },
+        @{ Text = $networkText + "`nethernet1.present = `"TRUE`""; Inventory = $hostNetworks },
+        @{ Text = $networkText + "`nethernet0.address = `"00:50:56:00:00:01`""; Inventory = $hostNetworks },
+        @{ Text = $networkText.Replace('vmnet2', 'vmnet3'); Inventory = $hostNetworks },
+        @{ Text = $networkText.Replace('pipe.endPoint = "client"', 'pipe.endPoint = "server"'); Inventory = $hostNetworks },
+        @{ Text = $networkText; Inventory = $hostNetworks.Replace('hostOnly', 'nat') },
+        @{ Text = $networkText; Inventory = $hostNetworks.Replace(' true ', ' false ') },
+        @{ Text = $networkText; Inventory = $hostNetworks + "2 vmnet2 nat true 192.168.84.0 255.255.255.0`n" },
+        @{ Text = $networkText; Inventory = $hostNetworks.Replace('255.255.255.0', '255.0.255.0') },
+        @{ Text = $networkText; Inventory = $hostNetworks.Replace('192.168.84.0', '192.168.84.2') },
+        @{ Text = $networkText; Inventory = $hostNetworks.Replace('192.168.84.0', '203.0.113.0') }
+    )) {
+    $refused = $false
+    try { $null = Assert-InstallationNetworkBindings -VmxLines ($fixture.Text -split "`n") -Context $bindingContext -IsoPath 'C:\offline media\atlaso.iso' -Vmnet vmnet2 -NetworkInventory $fixture.Inventory }
+    catch { $refused = $true }
+    Assert-InstallationVmCondition $refused 'Network admission must refuse ambiguous devices, media, MACs, vmnets and isolation.'
 }
 
 $unicodeSegment = [string][char]0x00E9 + 'preuve-' + [string][char]0x65E5 + [string][char]0x672C
@@ -515,7 +549,7 @@ Assert-InstallationVmCondition (-not $source.Contains("'compare', '-s'")) 'Logic
 Assert-InstallationVmCondition ($source.Contains('-Kind installation-baseline')) 'The baseline record must use its dedicated ownership-receipt kind.'
 Assert-InstallationVmCondition ($ownershipSource.Contains("'installation-baseline', 'installation-boot', 'installation-resume')")) 'The immutable ownership publisher must admit the baseline record kind.'
 Assert-InstallationVmCondition ($cleanupSource.Contains("'Confirm-AtlasoWorkstationVmInactive'")) 'The guarded VM stop helper must be available to the verification mode.'
-$verifyMode = $source.IndexOf('if ($Mode -in @(''AdmitConsole'', ''Verify'', ''BootInstalled'', ''ResumeInstalled''))', [StringComparison]::Ordinal)
+$verifyMode = $source.IndexOf('if ($Mode -in @(''AdmitConsole'', ''AdmitNetwork'', ''Verify'', ''BootInstalled'', ''ResumeInstalled''))', [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($verifyMode -ge 0) 'The harness must expose receipt-bound disk verification.'
 $verifyOriginalRead = $source.IndexOf('Read-AtlasoTestVmSealedRecord -Context $context -Path $OriginalReceiptPath', $verifyMode, [StringComparison]::Ordinal)
 $verifyBaselineRead = $source.IndexOf('Read-AtlasoTestVmSealedRecord -Context $context -Path $BaselineReceiptPath', $verifyMode, [StringComparison]::Ordinal)
@@ -524,13 +558,13 @@ $verifyCompare = $source.IndexOf('Assert-InstallationDiskUnchanged -Disk', $veri
 Assert-InstallationVmCondition ($verifyOriginalRead -gt $verifyMode -and $verifyBaselineRead -gt $verifyOriginalRead -and $verifyStop -gt $verifyBaselineRead -and $verifyCompare -gt $verifyStop) 'Verification must validate both bound receipts before stopping the VM and compare only after stop.'
 Assert-InstallationVmCondition ($source.Contains("`$roles = @('unselected')") -and $source.Contains('if ($VerifyTarget) { $roles += ''target'' }')) 'Verification must always check the unselected disk and optionally check the target for cancellation.'
 Assert-InstallationVmCondition ($source.Contains("Invoke-AtlasoBoundedProcess -FilePath `$QemuImg -ArgumentList @('info', '--output=json', `$Path)")) 'qemu-img metadata inspection must use the existing bounded process helper.'
-Assert-InstallationVmCondition ($source.Contains("[ValidateSet('Create', 'AdmitConsole', 'Verify', 'BootInstalled', 'ResumeInstalled', 'Cleanup')]") -and
+Assert-InstallationVmCondition ($source.Contains("[ValidateSet('Create', 'AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'ResumeInstalled', 'Cleanup')]") -and
     $source.Contains('Console admission requires an enabled task-owned VM receipt context.')) `
     'AdmitConsole must be an explicit task-owned mode.'
 $admitConsoleBranches = @($ast.FindAll({
     param($node)
     $node -is [System.Management.Automation.Language.IfStatementAst] -and
-    $node.Extent.Text.StartsWith("if (`$Mode -eq 'AdmitConsole')", [StringComparison]::Ordinal) -and
+    $node.Extent.Text.StartsWith("if (`$Mode -in @('AdmitConsole', 'AdmitNetwork'))", [StringComparison]::Ordinal) -and
     $node.Extent.Text.Contains('SerialPipePath = $serialPath')
 }, $true))
 Assert-InstallationVmCondition ($admitConsoleBranches.Count -eq 1) 'Expected one dedicated read-only console-admission result branch.'
@@ -1126,7 +1160,7 @@ $resumeStart = $source.IndexOf('Start-InstallationIsoVm -VmrunPath', $resumePubl
 Assert-InstallationVmCondition ($resumePublish -gt $verifyCompare -and $resumeStart -gt $resumePublish) 'Installed resume must compare disks and publish its immutable operation receipt before starting the VM.'
 $resumeBranches = @($ast.FindAll({
     param($node)
-    $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith("if (`$Mode -in @('AdmitConsole', 'Verify', 'BootInstalled', 'ResumeInstalled'))", [StringComparison]::Ordinal)
+    $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith("if (`$Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'ResumeInstalled'))", [StringComparison]::Ordinal)
 }, $true))
 Assert-InstallationVmCondition ($resumeBranches.Count -eq 1) 'Expected exactly one shared installed-VM admission branch.'
 $missingResumeReceiptRefused = $false
@@ -1143,6 +1177,19 @@ try {
     $missingResumeReceiptRefused = $_.Exception.Message -ceq 'ResumeInstalled requires the independently preserved installed-boot receipt and SHA-256.'
 }
 Assert-InstallationVmCondition $missingResumeReceiptRefused 'Resume must refuse a missing original boot receipt before ownership reads or provider mutation.'
+$missingNetworkReceiptRefused = $false
+try {
+    & {
+        param([string]$Branch)
+        $Mode = 'AdmitNetwork'; $NetworkVmnet = 'vmnet2'
+        $BootReceiptPath = ''; $BootReceiptSha256 = ''
+        $context = [pscustomobject]@{}
+        & ([scriptblock]::Create($Branch))
+    } $resumeBranches[0].Extent.Text
+} catch {
+    $missingNetworkReceiptRefused = $_.Exception.Message -ceq 'AdmitNetwork requires original installed-boot selectors and an explicit host-only vmnet.'
+}
+Assert-InstallationVmCondition $missingNetworkReceiptRefused 'Network admission must refuse a missing original boot receipt before provider or credential activity.'
 
 $installedLogin = $driverSource.IndexOf("foreach (`$account in @('root', 'admin'))", [StringComparison]::Ordinal)
 $shellWait = $driverSource.IndexOf('-Pattern $accountProbe.Prompt', $installedLogin, [StringComparison]::Ordinal)
@@ -1585,6 +1632,9 @@ foreach ($fixture in @(
     @{ Text = ("ATLASO-INSPECTION-FAILED:system-rpm-files-package-" + ('a' * 64) + "`r`nprivate-error-details`r`n"); AllowedRpmPackages = @('pip'); Error = 'Installed inspection failed at public stage: system-rpm-files.' },
     @{ Text = ("ATLASO-INSPECTION-FAILED:system-rpm-files-package-" + $pipPackageHash + "`r`nprivate-error-details`r`n"); Error = 'Installed inspection failed at public stage: system-rpm-files.' },
     @{ Text = "ATLASO-INSPECTION-FAILED:system-notices-compare`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-notices-compare.' },
+    @{ Text = "ATLASO-INSPECTION-FAILED:system-network-addresses`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-network-addresses.' },
+    @{ Text = "ATLASO-INSPECTION-FAILED:system-network-routes`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-network-routes.' },
+    @{ Text = "ATLASO-INSPECTION-FAILED:system-network-https`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-network-https.' },
     @{ Text = "ATLASO-INSPECTION-FAILED:system-assets-deployed`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-assets-deployed.' },
     @{ Text = "ATLASO-INSPECTION-FAILED:system-python-external`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-python-external.' },
     @{ Text = "ATLASO-INSPECTION-FAILED:system-python-bytecode`r`nprivate-error-details`r`n"; Error = 'Installed inspection failed at public stage: system-python-bytecode.' },

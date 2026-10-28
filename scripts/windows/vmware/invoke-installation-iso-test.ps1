@@ -42,6 +42,10 @@ Whole test and console deadline.
 Measure public machine identity and installed application bytes after root authentication.
 .PARAMETER InspectContent
 Also reuse locked Python, PowerCLI, RPM, firmware, shared-asset and notice checks on the installed guest.
+.PARAMETER InspectNetwork
+Read the installed guest's private IPv4 address and public HTTPS leaf through the owned console after native host-only admission.
+.PARAMETER InspectionVmnet
+Exact existing DHCP-enabled host-only vmnet required with InspectNetwork. This script never attaches a NIC or changes networks.
 .PARAMETER InspectionPythonPath
 Existing absolute Python executable with the locked ISO inspection dependencies installed.
 .PARAMETER Child
@@ -82,6 +86,8 @@ param(
     [ValidateRange(60, 14400)][int]$TimeoutSeconds = 3600,
     [switch]$InspectInstalled,
     [switch]$InspectContent,
+    [switch]$InspectNetwork,
+    [string]$InspectionVmnet = '',
     [string]$InspectionPythonPath = '',
     [switch]$Child,
     [ValidateSet('', 'admin', 'root')][string]$VncAccount = '',
@@ -106,10 +112,11 @@ if (-not $Child) {
         '-OriginalReceiptPath', $OriginalReceiptPath, '-OriginalReceiptSha256', $OriginalReceiptSha256,
         '-BaselineReceiptPath', $BaselineReceiptPath, '-BaselineReceiptSha256', $BaselineReceiptSha256,
         '-BootReceiptPath', $BootReceiptPath, '-BootReceiptSha256', $BootReceiptSha256,
-        '-InspectionPythonPath', $InspectionPythonPath
+        '-InspectionPythonPath', $InspectionPythonPath, '-InspectionVmnet', $InspectionVmnet
     )
     if ($InspectInstalled) { $childArguments += '-InspectInstalled' }
     if ($InspectContent) { $childArguments += '-InspectContent' }
+    if ($InspectNetwork) { $childArguments += '-InspectNetwork' }
     $childArguments += @('-VncAccount', $VncAccount, '-VncPort', [string]$VncPort,
         '-VncScreenPath', $VncScreenPath, '-VncScreenSha256', $VncScreenSha256,
         '-VncFieldRectangle', $VncFieldRectangle, '-VncPythonPath', $VncPythonPath,
@@ -695,7 +702,7 @@ function Wait-InstallationConsoleState {
             $plain = [regex]::Replace($text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>su]', '')
             $plain = [regex]::Replace($plain, '\^?\[\[[0-9]{1,2};[0-9]{1,2}R', '')
             if ($ReadInspectionReport) {
-                $inspectionFailure = [regex]::Match($plain, 'ATLASO-INSPECTION-FAILED(?::(?<stage>initialization|source-helpers|software-staging|software-verification|application-payload|public-identities|system-(?:assets(?:-(?:profile|helper|source|powershell-profile|deployed|trust))?|python(?:-(?:helpers|software|expected|site|scratch|archive|files|external|bytecode|extra|changed(?:-[0-9a-f]{64})?|missing))?|powercli|rpm(?:-(?:helper|package-state|inventory|runtime|files(?:-package-[0-9a-f]{64}(?:-(?:root|tmp|vartmp|run|varrun|varlock|bin|sbin|lib|lib64|locallib64|boot|efi|opt|home|dev|devpts|shm|cache|varlib|varlog|usr|local|localshare|entry[0-9]{1,3})-(?:[dlfo][0-7]{4}|missing)(?:-v[SM5DLUGTP?.]{9})?)?)?|firmware))?|notices(?:-(?:inputs|inventory|generate|compare))?)))?[\r\n]+')
+                $inspectionFailure = [regex]::Match($plain, 'ATLASO-INSPECTION-FAILED(?::(?<stage>initialization|source-helpers|software-staging|software-verification|application-payload|public-identities|system-(?:assets(?:-(?:profile|helper|source|powershell-profile|deployed|trust))?|python(?:-(?:helpers|software|expected|site|scratch|archive|files|external|bytecode|extra|changed(?:-[0-9a-f]{64})?|missing))?|powercli|rpm(?:-(?:helper|package-state|inventory|runtime|files(?:-package-[0-9a-f]{64}(?:-(?:root|tmp|vartmp|run|varrun|varlock|bin|sbin|lib|lib64|locallib64|boot|efi|opt|home|dev|devpts|shm|cache|varlib|varlog|usr|local|localshare|entry[0-9]{1,3})-(?:[dlfo][0-7]{4}|missing)(?:-v[SM5DLUGTP?.]{9})?)?)?|firmware))?|network(?:-(?:addresses|routes|https))?|notices(?:-(?:inputs|inventory|generate|compare))?)))?[\r\n]+')
                 if ($inspectionFailure.Success) {
                     $inspectionStage = $inspectionFailure.Groups['stage'].Value
                     if ($inspectionStage.StartsWith('system-rpm-files-package-', [StringComparison]::Ordinal) -and
@@ -1234,7 +1241,7 @@ try {
 Assert-AtlasoTestVmCheckoutSource -Context $sourceContext
 if ($Scenario -eq 'VncCredential') {
     try {
-        if ($InspectInstalled -or $InspectContent -or $InspectionPythonPath -or $BootReceiptPath -or $BootReceiptSha256) {
+        if ($InspectInstalled -or $InspectContent -or $InspectNetwork -or $InspectionVmnet -or $InspectionPythonPath -or $BootReceiptPath -or $BootReceiptSha256) {
             throw 'VncCredential is restricted to an initial concealed installer field.'
         }
         $vncOptions = @{ Account = $VncAccount; Port = $VncPort; ScreenPath = $VncScreenPath
@@ -1287,6 +1294,10 @@ $inspection = $null
 $inspectionArguments = @()
 $encodedExpectations = ''
 if ($InspectContent -and -not $InspectInstalled) { throw 'InspectContent requires InspectInstalled.' }
+if ($InspectNetwork -and (-not $InspectInstalled -or $Scenario -ne 'LoginInstalled' -or $InspectionVmnet -notmatch '^vmnet[0-9]{1,3}$')) {
+    throw 'InspectNetwork requires InspectInstalled, LoginInstalled and an explicit host-only InspectionVmnet.'
+}
+if ($InspectionVmnet -and -not $InspectNetwork) { throw 'InspectionVmnet requires InspectNetwork.' }
 if ($InspectInstalled) {
     if ($Scenario -notin @('AutoReboot', 'BootInstalled', 'LoginInstalled')) {
         throw 'Installed inspection requires AutoReboot, BootInstalled or LoginInstalled.'
@@ -1301,10 +1312,11 @@ if ($InspectInstalled) {
         'import sys;sys.path.insert(0,sys.argv.pop(1));from scripts.installation.inspection import main;raise SystemExit(main())', $worktree)
     $prepareArguments = @('prepare', '--iso', $IsoPath, '--iso-sha256', $IsoSha256)
     if ($InspectContent) { $prepareArguments += '--content' }
+    if ($InspectNetwork) { $prepareArguments += '--network' }
     $prepared = Invoke-AtlasoBoundedProcess -FilePath $InspectionPythonPath `
         -ArgumentList ($inspectionArguments + $prepareArguments) `
         -TimeoutSeconds 120 -Action 'Installation inspection ISO admission'
-    if ($prepared.Length -gt $(if ($InspectContent) { 32768 } else { 16384 })) { throw 'Installation inspection preparation exceeded its bound.' }
+    if ($prepared.Length -gt $(if ($InspectContent -or $InspectNetwork) { 32768 } else { 16384 })) { throw 'Installation inspection preparation exceeded its bound.' }
     $inspection = $prepared | ConvertFrom-Json -AsHashtable
     if ($inspection.command -isnot [string] -or $inspection.command.Length -gt 3500 -or
         $inspection.command -cmatch '[^\x20-\x7e]' -or $inspection.command.Contains('ATLASO-INSPECTION')) {
@@ -1312,6 +1324,10 @@ if ($InspectInstalled) {
     }
     $encodedExpectations = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(
         ($inspection.expected | ConvertTo-Json -Compress -Depth 8)))
+    if ($InspectNetwork -and ($inspection.network_command -isnot [string] -or $inspection.network_command.Length -gt 3500 -or
+            $inspection.network_command -cmatch '[^\x20-\x7e]' -or $inspection.network_command.Contains('ATLASO-INSPECTION'))) {
+        throw 'Installation network observation failed its console boundary.'
+    }
     if ($InspectContent) {
         if (@($inspection.content).Count -ne 5 -or
             (@($inspection.content | ForEach-Object { $_.expected.kind }) -join ',') -cne 'assets,python,powercli,rpm,notices') {
@@ -1404,6 +1420,16 @@ try {
     ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | ForEach-Object { [IO.Path]::GetFullPath($_) }
     if (-not [AtlasoInstallationPipePeer]::MatchesExpectedProcess($peerId, [string[]]$providerImages, $vmxPath)) {
         throw 'The private console peer is not the receipt-bound VMware guest.'
+    }
+    $networkAdmission = $null
+    if ($InspectNetwork) {
+        $networkAdmission = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
+            -Mode AdmitNetwork -NetworkVmnet $InspectionVmnet -Worktree $worktree `
+            -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix `
+            -OriginalReceiptPath $vm.ReceiptPath -OriginalReceiptSha256 $vm.ReceiptSha256 `
+            -BaselineReceiptPath $vm.BaselineReceiptPath -BaselineReceiptSha256 $vm.BaselineReceiptSha256 `
+            -BootReceiptPath $BootReceiptPath -BootReceiptSha256 $BootReceiptSha256 -Confirm:$false
     }
     $cursorState = @{}
     if ($Scenario -notin @('LoginInstalled', 'BootInstalled')) {
@@ -1508,6 +1534,32 @@ try {
                     -TimeoutSeconds 30 -Action 'Installed inspection record validation'
                 if ($publicReport.Length -gt 8192) { throw 'Validated installation inspection exceeded its bound.' }
                 Write-Host ('Installed public identity and application payload: ' + $publicReport.Trim())
+                if ($InspectNetwork) {
+                    Send-InstallationConsoleText -Pipe $pipe -Text ($inspection.network_command + "`n")
+                    $networkDeadline = [DateTimeOffset]::UtcNow.AddSeconds(180)
+                    if ($networkDeadline -gt $deadline) { $networkDeadline = $deadline }
+                    $networkRecord = Wait-InstallationConsoleState -Pipe $pipe -Pattern '' -Deadline $networkDeadline `
+                        -ReadInspectionReport -ReadLoginProgress -CursorState $cursorState
+                    $networkReport = Invoke-AtlasoBoundedProcess -FilePath $InspectionPythonPath `
+                        -ArgumentList ($inspectionArguments + @('validate-network', '--iso-sha256', $IsoSha256,
+                            '--mac', $networkAdmission.Network.Mac, '--subnet', $networkAdmission.Network.Subnet,
+                            '--prefixlen', [string]$networkAdmission.Network.PrefixLength, '--report', $networkRecord)) `
+                        -TimeoutSeconds 30 -Action 'Installed network observation validation'
+                    if ($networkReport.Length -gt 8192) { throw 'Validated network observation exceeded its bound.' }
+                    Write-Host ('Installed public network observation: ' + $networkReport.Trim())
+                    $observedNetwork = $networkReport | ConvertFrom-Json -AsHashtable
+                    # Probe while the exact admitted guest is still running;
+                    # the ordinary final Verify below stops it afterward.
+                    for ($sample = 1; $sample -le 3; $sample++) {
+                        $hostApi = Invoke-AtlasoBoundedProcess -FilePath $InspectionPythonPath `
+                            -ArgumentList ($inspectionArguments + @('probe-openapi', '--address', $observedNetwork.address,
+                                '--certificate-sha256', $observedNetwork.certificate_sha256, '--version', $inspection.expected.version)) `
+                            -TimeoutSeconds 30 -Action 'Host-facing OpenAPI probe'
+                        if ($hostApi.Length -gt 8192) { throw 'Host-facing OpenAPI measurement exceeded its bound.' }
+                        Write-Host ('Host-facing OpenAPI sample ' + $sample + ': ' + $hostApi.Trim())
+                        if ($sample -lt 3) { Start-Sleep -Milliseconds 1000 }
+                    }
+                }
                 if ($InspectContent) {
                     foreach ($check in $inspection.content) {
                         Send-InstallationConsoleText -Pipe $pipe -Text ($check.command + "`n")

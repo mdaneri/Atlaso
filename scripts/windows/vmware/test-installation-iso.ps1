@@ -7,11 +7,15 @@ no network adapters, and a serial named-pipe endpoint supplied by the caller. Be
 first start it records logical-content baselines for both disks. Verify stops the
 receipt-bound VM if needed and compares selected disk contents against those baselines.
 .PARAMETER Mode
-Select Create, AdmitConsole, Verify, BootInstalled, ResumeInstalled, or Cleanup. AdmitConsole admits an already-running,
+Select Create, AdmitConsole, AdmitNetwork, Verify, BootInstalled, ResumeInstalled, or Cleanup. AdmitConsole admits an already-running,
 receipt-bound VM for a local console observer and returns its public VMX, ISO identity, original receipt selectors, and
 local serial endpoint. It does not stop the VM or inspect disk contents. BootInstalled verifies disks, records the stopped-VM transition,
 disconnects the pinned ISO, and starts the installed system with its existing private serial endpoint.
 ResumeInstalled reuses the original boot receipt and verified disconnected configuration without editing the VMX.
+AdmitNetwork is a separate read-only installed-VM admission requiring the original boot receipt and exactly one
+adapter on an existing DHCP-enabled host-only vmnet. It never attaches an adapter or changes host networks.
+.PARAMETER NetworkVmnet
+Exact existing host-only vmnet name required only for AdmitNetwork.
 .PARAMETER Worktree
 Exact clean Atlaso worktree used to bind ownership.
 .PARAMETER OutputDirectory
@@ -61,7 +65,8 @@ Optional exact qemu-img executable path used for logical disk comparisons.
 #>
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('Create', 'AdmitConsole', 'Verify', 'BootInstalled', 'ResumeInstalled', 'Cleanup')][string]$Mode = 'Create',
+    [ValidateSet('Create', 'AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'ResumeInstalled', 'Cleanup')][string]$Mode = 'Create',
+    [string]$NetworkVmnet = '',
     [string]$Worktree = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path,
     [string]$OutputDirectory = '',
     [string]$ValidationRootReceiptPath = '',
@@ -659,6 +664,87 @@ function Assert-InstallationConsoleBindings {
 
 <#
 .SYNOPSIS
+Admit one installed fixture adapter against current native host-only network inventory.
+.PARAMETER VmxLines
+Stable VMX snapshot for the receipt-bound running VM.
+.PARAMETER Context
+Original canonical VM name and disk paths.
+.PARAMETER IsoPath
+Original pinned ISO path; its drive must remain disconnected.
+.PARAMETER Vmnet
+Explicit existing host-only vmnet selected for this acceptance.
+.PARAMETER NetworkInventory
+Bounded public output from native vmrun listHostNetworks.
+#>
+function Assert-InstallationNetworkBindings {
+    param([string[]]$VmxLines, [psobject]$Context, [string]$IsoPath, [string]$Vmnet, [string]$NetworkInventory)
+    if ($Vmnet -notmatch '^vmnet[0-9]{1,3}$' -or $NetworkInventory.Length -gt 65536) {
+        throw 'Installed network admission requires a bounded explicit vmnet.'
+    }
+    Assert-InstallationVmDiskBindings -VmxLines $VmxLines -Context $Context -IsoPath $IsoPath
+    $text = [string]::Join("`n", $VmxLines)
+    foreach ($assignment in @('firmware = "efi"', 'uefi.secureBoot.enabled = "FALSE"',
+            'scsi0:0.present = "TRUE"', 'scsi0:1.present = "TRUE"',
+            'sata0:0.present = "FALSE"', 'sata0:0.startConnected = "FALSE"', 'sata0:0.deviceType = "cdrom-image"',
+            'serial0.present = "TRUE"', 'serial0.fileType = "pipe"', 'serial0.pipe.endPoint = "client"',
+            'ethernet0.present = "TRUE"', 'ethernet0.startConnected = "TRUE"',
+            'ethernet0.connectionType = "custom"', 'ethernet0.virtualDev = "vmxnet3"', 'ethernet0.addressType = "generated"')) {
+        $key = $assignment.Split('=')[0].Trim()
+        $linesForKey = @([regex]::Matches($text, '(?m)^' + [regex]::Escape($key) + '\s*=.*$'))
+        if ($linesForKey.Count -ne 1 -or $linesForKey[0].Value.TrimEnd("`r") -cne $assignment) {
+            throw 'Installed network admission requires the exact disconnected EFI and serial fixture.'
+        }
+    }
+    if ([regex]::IsMatch($text, '(?im)^\s*ethernet[1-9][0-9]*\.present\s*=\s*"TRUE"') -or
+        [regex]::IsMatch($text, '(?im)^\s*(?!scsi0:[01]\.|sata0:0\.)(?:scsi|sata|ide|nvme)[0-9]+:[0-9]+\.present\s*=\s*"TRUE"') -or
+        [regex]::IsMatch($text, '(?im)^\s*ethernet0\.address\s*=')) {
+        throw 'Installed network admission refuses additional devices or a static MAC override.'
+    }
+    foreach ($key in @('ethernet0.vnet', 'ethernet0.generatedAddress', 'serial0.fileName')) {
+        if (@([regex]::Matches($text, '(?im)^\s*' + [regex]::Escape($key) + '\s*=.*$')).Count -ne 1) {
+            throw 'Installed network admission refuses ambiguous adapter or serial assignments.'
+        }
+    }
+    $vmnetLines = @([regex]::Matches($text, '(?im)^ethernet0\.vnet\s*=\s*"(?<vmnet>vmnet[0-9]{1,3})"\s*$'))
+    $macLines = @([regex]::Matches($text, '(?im)^ethernet0\.generatedAddress\s*=\s*"(?<mac>(?:[0-9a-f]{2}:){5}[0-9a-f]{2})"\s*$'))
+    $pipeLines = @([regex]::Matches($text, '(?m)^serial0\.fileName\s*=\s*"(?<pipe>[^"\r\n]+)"\s*$'))
+    if ($vmnetLines.Count -ne 1 -or $vmnetLines[0].Groups['vmnet'].Value -ine $Vmnet -or
+        $macLines.Count -ne 1 -or $pipeLines.Count -ne 1) {
+        throw 'Installed network adapter or private serial identity differs from its explicit plan.'
+    }
+    $serial = $pipeLines[0].Groups['pipe'].Value
+    Assert-InstallationSerialPipePath -Path $serial
+    if (@([regex]::Matches($NetworkInventory, '(?im)^\s*[0-9]+\s+' + [regex]::Escape($Vmnet) + '\s+.*$')).Count -ne 1) {
+        throw 'The selected vmnet identity is absent or ambiguous in native inventory.'
+    }
+    $rows = @([regex]::Matches($NetworkInventory, '(?im)^\s*[0-9]+\s+' + [regex]::Escape($Vmnet) + '\s+hostOnly\s+true\s+(?<subnet>[0-9.]+)\s+(?<mask>[0-9.]+)\s*$'))
+    if ($rows.Count -ne 1) { throw 'The selected vmnet is not one current DHCP-enabled host-only network.' }
+    $subnet = $null; $mask = $null
+    if (-not [Net.IPAddress]::TryParse($rows[0].Groups['subnet'].Value, [ref]$subnet) -or
+        -not [Net.IPAddress]::TryParse($rows[0].Groups['mask'].Value, [ref]$mask) -or
+        $subnet.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork -or
+        $mask.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork -or
+        $subnet.ToString() -cne $rows[0].Groups['subnet'].Value -or $mask.ToString() -cne $rows[0].Groups['mask'].Value) {
+        throw 'The selected vmnet IPv4 subnet is invalid.'
+    }
+    $maskBits = -join ($mask.GetAddressBytes() | ForEach-Object { [Convert]::ToString($_, 2).PadLeft(8, '0') })
+    if ($maskBits -cnotmatch '^(?<ones>1{8,30})0{2,24}$') { throw 'The selected vmnet mask is invalid.' }
+    $prefix = $Matches['ones'].Length
+    $octets = $subnet.GetAddressBytes(); $maskOctets = $mask.GetAddressBytes()
+    for ($i = 0; $i -lt 4; $i++) {
+        if (($octets[$i] -band $maskOctets[$i]) -ne $octets[$i]) { throw 'The selected vmnet subnet has host bits set.' }
+    }
+    if (-not (($octets[0] -eq 10) -or
+            ($octets[0] -eq 172 -and $octets[1] -ge 16 -and $octets[1] -le 31 -and $prefix -ge 12) -or
+            ($octets[0] -eq 192 -and $octets[1] -eq 168 -and $prefix -ge 16))) {
+        throw 'The selected vmnet must remain within one RFC 1918 network.'
+    }
+    return [pscustomobject]@{ SerialPipePath = $serial; Vmnet = $Vmnet.ToLowerInvariant()
+        Mac = $macLines[0].Groups['mac'].Value.ToLowerInvariant(); Subnet = $subnet.ToString(); PrefixLength = $prefix }
+}
+
+<#
+.SYNOPSIS
 Pin the two receipt-bound VMDK identities without comparing or restricting guest writes.
 .PARAMETER Baseline
 Validated disk-baseline receipt containing target and unselected roles.
@@ -779,7 +865,8 @@ $context = New-InstallationVmContext -Root $resolvedWorktree -Destination $resol
 # The external-root lease must also close on early preflight failures and returns.
 try {
 
-if ($Mode -in @('AdmitConsole', 'Verify', 'BootInstalled', 'ResumeInstalled')) {
+if ($NetworkVmnet -and $Mode -ne 'AdmitNetwork') { throw 'NetworkVmnet is valid only for read-only AdmitNetwork.' }
+if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'ResumeInstalled')) {
     $vmxPin = $null
     $rootPin = $null
     $isoPin = $null
@@ -787,6 +874,10 @@ if ($Mode -in @('AdmitConsole', 'Verify', 'BootInstalled', 'ResumeInstalled')) {
     try {
         if ($Mode -eq 'ResumeInstalled' -and (-not $BootReceiptPath -or $BootReceiptSha256 -cnotmatch '^[0-9a-f]{64}$')) {
             throw 'ResumeInstalled requires the independently preserved installed-boot receipt and SHA-256.'
+        }
+        if ($Mode -eq 'AdmitNetwork' -and (-not $BootReceiptPath -or $BootReceiptSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+                $NetworkVmnet -notmatch '^vmnet[0-9]{1,3}$')) {
+            throw 'AdmitNetwork requires original installed-boot selectors and an explicit host-only vmnet.'
         }
         if (-not $OriginalReceiptPath -or $OriginalReceiptSha256 -notmatch '^[0-9a-f]{64}$' -or
             -not $BaselineReceiptPath -or $BaselineReceiptSha256 -notmatch '^[0-9a-f]{64}$') {
@@ -819,7 +910,7 @@ if ($Mode -in @('AdmitConsole', 'Verify', 'BootInstalled', 'ResumeInstalled')) {
             throw 'Installation VM artifact directory no longer matches its creation receipt.'
         }
         $admittedVmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($context.VmxPath)
-        $vmxPin = if ($Mode -eq 'AdmitConsole') {
+        $vmxPin = if ($Mode -in @('AdmitConsole', 'AdmitNetwork')) {
             [Atlaso.WorkstationFileIdentity]::PinOrdinaryMutableFile($context.VmxPath)
         } else {
             [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($context.VmxPath, $true)
@@ -840,13 +931,14 @@ if ($Mode -in @('AdmitConsole', 'Verify', 'BootInstalled', 'ResumeInstalled')) {
         if ([Atlaso.WorkstationFileIdentity]::Get($context.OutputDirectory) -cne [string]$original.original_identities.directory) {
             throw 'Installation VM artifact directory changed while its verification pin was acquired.'
         }
-        if ($Mode -ne 'AdmitConsole') {
+        if ($Mode -notin @('AdmitConsole', 'AdmitNetwork')) {
             $cleanupIdentity = Get-AtlasoTestVmOwnershipCleanupIdentity -VmxPath $context.VmxPath
             if ((Get-AtlasoTestVmOwnershipCleanupIdentityHash -Value $cleanupIdentity) -cne [string]$original.persistent_vm_identity_sha256) {
                 throw 'Installation VM persistent ownership identity differs from its creation receipt.'
             }
         }
-        if ($Mode -eq 'AdmitConsole') {
+        if ($Mode -in @('AdmitConsole', 'AdmitNetwork')) {
+            if (-not $context.Enabled) { throw 'Console admission requires an enabled task-owned VM receipt context.' }
             Assert-AtlasoTestVmCheckoutSource -Context $context
             if ([string]$original.installation_iso.filesystem_identity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$' -or
                 [long]$original.installation_iso.size -lt 64MB) {
@@ -863,7 +955,26 @@ if ($Mode -in @('AdmitConsole', 'Verify', 'BootInstalled', 'ResumeInstalled')) {
             $vmxText = Read-InstallationRunningVmxText -Path $context.VmxPath `
                 -ExpectedIdentity $admittedVmxIdentity
             $vmxLines = @($vmxText -split "`r?`n")
-            $serialPath = Assert-InstallationConsoleBindings -VmxLines $vmxLines -Context $context -IsoPath $isoPath
+            $networkBinding = $null
+            if ($Mode -eq 'AdmitNetwork') {
+                $boot = Read-AtlasoTestVmSealedRecord -Context $context -Path $BootReceiptPath -Sha256 $BootReceiptSha256 `
+                    -Phase 'installation-boot-without-media'
+                if ($boot.original_receipt_path -cne $OriginalReceiptPath -or $boot.original_receipt_sha256 -cne $OriginalReceiptSha256 -or
+                    $boot.baseline_receipt_path -cne $BaselineReceiptPath -or $boot.baseline_receipt_sha256 -cne $BaselineReceiptSha256 -or
+                    $boot.original_directory_identity -cne $original.original_identities.directory -or
+                    $boot.persistent_vm_identity_sha256 -cne $original.persistent_vm_identity_sha256) {
+                    throw 'Installed network admission is not bound to the original disconnected-media transition.'
+                }
+                $vmrun = Resolve-InstallationVmTool -Path $VmrunPath -FileName 'vmrun.exe'
+                $networkInventory = Invoke-AtlasoBoundedProcess -FilePath $vmrun -ArgumentList @('-T', 'ws', 'listHostNetworks') `
+                    -TimeoutSeconds 30 -Action 'Read existing host-only network inventory'
+                $networkBinding = Assert-InstallationNetworkBindings -VmxLines $vmxLines -Context $context -IsoPath $isoPath `
+                    -Vmnet $NetworkVmnet -NetworkInventory $networkInventory
+                $serialPath = $networkBinding.SerialPipePath
+            }
+            else {
+                $serialPath = Assert-InstallationConsoleBindings -VmxLines $vmxLines -Context $context -IsoPath $isoPath
+            }
             Assert-InstallationConsoleDiskIdentities -Baseline $baseline -Context $context -Pins $storagePins
             $cleanupIdentityLines = @($vmxLines | Where-Object { $_ -match '^\s*guestinfo\.atlaso\.test_vm_cleanup_identity\s*=' })
             $cleanupIdentityMatch = if ($cleanupIdentityLines.Count -eq 1) {
@@ -883,7 +994,7 @@ if ($Mode -in @('AdmitConsole', 'Verify', 'BootInstalled', 'ResumeInstalled')) {
             if ([Atlaso.WorkstationFileIdentity]::Get($context.OutputDirectory) -cne [string]$original.original_identities.directory) {
                 throw 'Installation VM artifact directory changed during console admission.'
             }
-            [pscustomobject]@{
+            $admissionResult = [ordered]@{
                 VmxPath = $context.VmxPath
                 SerialPipePath = $serialPath
                 IsoIdentity = [pscustomobject]@{
@@ -899,6 +1010,8 @@ if ($Mode -in @('AdmitConsole', 'Verify', 'BootInstalled', 'ResumeInstalled')) {
                 BootReceiptPath = $BootReceiptPath
                 BootReceiptSha256 = $BootReceiptSha256
             }
+            if ($Mode -eq 'AdmitNetwork') { $admissionResult['Network'] = $networkBinding }
+            [pscustomobject]$admissionResult
             return
         }
         $vmxLines = @((Read-InstallationVmxText -Path $context.VmxPath) -split "`r?`n")

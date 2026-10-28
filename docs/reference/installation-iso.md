@@ -323,7 +323,7 @@ Keep each report with that VM's original creation and resume receipts. Compare t
 stability, and compare separately installed, receipt-owned VMs for identity uniqueness. These checks read the public
 machine ID and Ed25519 public host key; they do not read private keys or appliance secrets. Application wheel equality
 does not establish equality of all installed RPMs, PowerShell modules, trust material, or notices. Network isolation
-remains in effect, so this option does not establish host-facing API or Appliance Update acceptance.
+remains in effect by default, so this option alone does not establish host-facing API or Appliance Update acceptance.
 
 Add `-InspectContent` alongside `-InspectInstalled` to run five additional checks against that same original ISO:
 
@@ -509,7 +509,7 @@ The development `Probe` and `Cancel` scenarios passed earlier. A disconnected `A
 the receipt-bound VM for source commit `960621fdd0e6c1babcc707e2ca0ca2896539876e`. After stopping the VM,
 receipt-bound verification confirmed the unselected disk's logical contents matched its pre-boot baseline. Fresh
 machine identity uniqueness and application wheel equality subsequently passed on two independent installations from
-the source commit recorded above. Broader payload equality, the host-facing `/openapi.json`, Appliance Update success
+the source commit recorded above. The host-facing `/openapi.json`, Appliance Update success
 and rollback persistence, and physical acceptance remain outstanding. A serial-enabled boot attempt exposed a missing
 initramfs package. After adding its resolved RPM
 closure, the corrected development image completed disconnected installation and booted without media through systemd
@@ -527,11 +527,50 @@ Publication is a separate, explicit workflow dispatch after the exact ISO has be
 success and rollback persistence, and unselected-disk preservation were tested. The workflow requires that checksum
 to match the signed draft index before publishing, then downloads and verifies the published assets again. The
 development ISO has completed disconnected Auto installation, boot without media, chosen-account login challenges,
-and the unselected-disk comparison. Public identity uniqueness and application wheel equality also passed. Full payload
-equality and Appliance Update checks remain
-unrecorded, so this result does not establish
+and the unselected-disk comparison. Public identity uniqueness, application wheel equality and all five bounded
+installed-content checks also passed. Host-facing API and Appliance Update checks remain
+unrecorded, so these results do not establish
 full installer acceptance or authorize publication. Do not publish or describe the installer as validated before the
 remaining acceptance evidence exists.
+
+### Inspect a separately admitted host-only connection
+
+Finish disconnected installation, media removal, account and content checks before this separate network phase.
+Preserve the original VM, baseline and boot receipts and the stopped unselected-disk comparison. Before changing the
+owned VM's adapter, record the exact VMX identity, current source, selected existing host-only vmnet and backed-up
+configuration transition in durable task evidence. Use the supported Workstation configuration tool on the stopped,
+receipt-bound VM. This phase does not create or change host networks, configure a CA, or issue certificates.
+
+For a subsequent receipt-bound `LoginInstalled` invocation, use:
+
+```powershell
+  -InspectInstalled -InspectNetwork -InspectionVmnet <EXISTING-HOST-ONLY-VMNET> -InspectionPythonPath <ABSOLUTE-PREPARED-PYTHON-EXECUTABLE>
+```
+
+Before submitting a console password, the driver uses the separate read-only `AdmitNetwork` mode. It requires the
+original installed-boot selectors, unchanged disk and private-pipe identities, disconnected ISO, exactly one
+`vmxnet3` adapter, and a current native `vmrun listHostNetworks` entry identifying the selected vmnet as host-only with
+DHCP. NAT, extra adapters, ambiguous MAC assignments, and non-private subnets fail admission. Initial `AdmitConsole`
+keeps its original requirement for an isolated installer with connected media.
+
+After ordinary installed identity verification, the guest reads one private IPv4 address and the existing HTTPS leaf
+certificate through the owned serial console. Both IPv4 and IPv6 default routes must be absent. The host validator
+requires the observed MAC, subnet and prefix to match native admission before printing a bounded public record.
+Missing addressing or HTTPS readiness fails at a fixed public stage; console text and private key material stay private.
+
+Use the observed address and leaf digest with the signed installed software version to read host-facing OpenAPI:
+
+```text
+python -B -m scripts.installation.inspection probe-openapi --address <OBSERVED-PRIVATE-IPV4> --certificate-sha256 <CONSOLE-OBSERVED-LEAF-SHA256> --version <INSTALLED-SOFTWARE-VERSION>
+```
+
+The driver runs this probe three times through the bounded process runner with a 30-second deadline before its final
+VM stop. A standalone diagnostic invocation also requires that same bounded runner. It verifies the exact console-observed
+TLS leaf before sending an unauthenticated `GET /openapi.json`, bounds the JSON body, and requires HTTP 200 and the
+expected software version. Retain the three consecutive successful measurements with the network observation and original
+VM selectors. This uses the existing leaf as a lab pin without changing host CA trust. It does not establish certificate
+handoff address-control acceptance. Finish with owning `Verify`, retain the stopped disk comparison, and restore the
+original absent-adapter configuration before returning the VM to isolated inspection.
 
 ## Verify a release
 
@@ -565,13 +604,18 @@ are recorded. Native VM evidence alone does not establish physical support or co
 VMware path supports receipt-bound blank-disk ISO and installer-console tests. Probe, Cancel, capacity refusal,
 and disconnected Auto installations have passed. Two independently installed VMs booted without media,
 authenticated both chosen account passwords, passed separate root/admin challenges, matched the ISO-bound application
-wheel, and preserved their unselected disks. Public identities were unique between them and stable across resumes
-of the first VM. Broader installed-content equality, host-facing OpenAPI, disconnected update/rollback, custom/fault
-scenarios, preservation of disks carrying old Atlaso labels, and the default serial installer boot path remain
+wheel, and preserved their unselected disks. The default native serial path also completed two independent installations
+from development media source `151b76dbe63db5c7acfb83861e5f5b4b957d30be`, inspected with host source
+`a02ccd3142aeed560a8e3b68ac676279e79f9942`. Their five bounded content measurements matched: 1,316 copied source files,
+20 deployed shared assets, 66 Python distributions, 37 PowerCLI modules, 217 installed RPMs, native runtime/file/firmware
+verification, and reproduced notices. Their signed application software was 0.9.465. Public identities were unique
+between them; the first VM's identity and application measurement stayed stable across five boot/resume observations.
+Host-facing OpenAPI, disconnected update/rollback, custom/fault scenarios, and preservation of disks carrying old Atlaso
+labels remain
 outstanding. Do not describe the installer as validated or claim physical support while these gates are
 outstanding. Secure Boot is disabled for phase one; this reference makes no Secure Boot or ARM support claim.
 
-The first extended content run also matched all 1,299 copied source files, 20 deployed shared assets and the public
+An earlier extended content run matched all 1,299 copied source files, 20 deployed shared assets and the public
 update trust key. Its Python check exposed unsupported wheel installation schemes in the older shared inspector;
 that run does not establish installed dependency equality. Retain it as partial evidence with its original media
 checksum and stopped-VM disk verification.
