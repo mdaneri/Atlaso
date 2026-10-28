@@ -688,7 +688,7 @@ function Assert-InstallationNetworkBindings {
             'sata0:0.present = "FALSE"', 'sata0:0.startConnected = "FALSE"', 'sata0:0.deviceType = "cdrom-image"',
             'serial0.present = "TRUE"', 'serial0.fileType = "pipe"', 'serial0.pipe.endPoint = "client"',
             'ethernet0.present = "TRUE"', 'ethernet0.startConnected = "TRUE"',
-            'ethernet0.connectionType = "custom"', 'ethernet0.virtualDev = "vmxnet3"', 'ethernet0.addressType = "generated"')) {
+            'ethernet0.connectionType = "custom"', 'ethernet0.virtualDev = "e1000"', 'ethernet0.addressType = "generated"')) {
         $key = $assignment.Split('=')[0].Trim()
         $linesForKey = @([regex]::Matches($text, '(?m)^' + [regex]::Escape($key) + '\s*=.*$'))
         if ($linesForKey.Count -ne 1 -or $linesForKey[0].Value.TrimEnd("`r") -cne $assignment) {

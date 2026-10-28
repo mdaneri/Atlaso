@@ -549,7 +549,7 @@ For a subsequent receipt-bound `LoginInstalled` invocation, use:
 
 Before submitting a console password, the driver uses the separate read-only `AdmitNetwork` mode. It requires the
 original installed-boot selectors, unchanged disk and private-pipe identities, disconnected ISO, exactly one
-`vmxnet3` adapter, and a current native `vmrun listHostNetworks` entry identifying the selected vmnet as host-only with
+`e1000` adapter, and a current native `vmrun listHostNetworks` entry identifying the selected vmnet as host-only with
 DHCP. NAT, extra adapters, ambiguous MAC assignments, and non-private subnets fail admission. Initial `AdmitConsole`
 keeps its original requirement for an isolated installer with connected media.
 

@@ -256,7 +256,7 @@ foreach ($unsafeConsoleLines in $unsafeConsoleFixtures) {
 
 $networkLines = @((ConvertTo-InstallationDiskBootConfiguration -Text $configuration).Split("`n") | ForEach-Object {
         if ($_ -ceq 'ethernet0.present = "FALSE"') { 'ethernet0.present = "TRUE"' } else { $_ }
-    }) + @('ethernet0.connectionType = "custom"', 'ethernet0.vnet = "vmnet2"', 'ethernet0.virtualDev = "vmxnet3"',
+    }) + @('ethernet0.connectionType = "custom"', 'ethernet0.vnet = "vmnet2"', 'ethernet0.virtualDev = "e1000"',
     'ethernet0.startConnected = "TRUE"', 'ethernet0.addressType = "generated"', 'ethernet0.generatedAddress = "00:0c:29:12:34:56"')
 $networkText = [string]::Join("`n", $networkLines)
 $hostNetworks = "Total host networks: 1`nINDEX NAME TYPE DHCP SUBNET MASK`n2 vmnet2 hostOnly true 192.168.84.0 255.255.255.0`n"
@@ -269,6 +269,7 @@ catch { $legacyConsoleRefused = $true }
 Assert-InstallationVmCondition $legacyConsoleRefused 'Initial installer/VNC console admission must continue refusing a network adapter.'
 foreach ($fixture in @(
         @{ Text = $networkText.Replace('sata0:0.present = "FALSE"', 'sata0:0.present = "TRUE"'); Inventory = $hostNetworks },
+        @{ Text = $networkText.Replace('virtualDev = "e1000"', 'virtualDev = "vmxnet3"'); Inventory = $hostNetworks },
         @{ Text = $networkText + "`nethernet0.generatedAddress = `"malformed-duplicate`""; Inventory = $hostNetworks },
         @{ Text = $networkText + "`nethernet1.present = `"TRUE`""; Inventory = $hostNetworks },
         @{ Text = $networkText + "`nethernet0.address = `"00:50:56:00:00:01`""; Inventory = $hostNetworks },
