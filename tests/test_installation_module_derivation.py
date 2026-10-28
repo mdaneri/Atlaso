@@ -2,17 +2,49 @@
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import hashlib
 import importlib.util
 import json
 import os
+import shutil
 import stat
 import subprocess
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
 import pytest
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Native kmod compatibility dispatcher")
+def test_native_kmod_dispatch_uses_production_argv_without_mocking():
+    """Exercise the actual compatibility dispatcher using the production prefix.
+
+    Help exits before module discovery or writes. Keeping both production prefix
+    arguments catches the invalid kmod-subcommand form as well as the correct
+    executable-basename entry point. The descriptor and byte proof is covered by
+    the independent native-tree fixtures.
+    """
+    executable = shutil.which("kmod")
+    if executable is None:
+        pytest.skip("Native kmod executable is not installed")
+    source = Path("image/common/scripts/verify-photon-package-state.py").read_text(encoding="utf-8")
+    module = ast.parse(source)
+    function = next(node for node in module.body if isinstance(node, ast.FunctionDef)
+                    and node.name == "verify_installation_module_indexes")
+    calls = [node for node in ast.walk(function) if isinstance(node, ast.Call)
+             and isinstance(node.func, ast.Attribute) and node.func.attr == "run"
+             and isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess"]
+    assert len(calls) == 1 and isinstance(calls[0].args[0], ast.List)
+    arguments = [ast.literal_eval(node) for node in calls[0].args[0].elts[:2]]
+    result = subprocess.run(
+        [*arguments, "--help"], executable=executable, check=False, timeout=10,
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        env={"PATH": os.defpath, "LANG": "C", "LC_ALL": "C"},
+    )
+    assert result.returncode == 0 and not result.stderr
+    assert 0 < len(result.stdout) <= 65536 and b"depmod" in result.stdout.lower()
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Native POSIX descriptor-relative filesystem operations")
@@ -462,10 +494,10 @@ def test_native_module_derivation_requires_exact_inputs_and_owned_output(change,
             **kwargs: Explicit process isolation and bounds.
         """
         tree.runs += 1
-        assert arguments[:8] == ["/usr/bin/kmod", "depmod", "-a", "-b", "/", "-m", "/usr/lib/modules", "-o"]
-        assert tree.lookup(arguments[8]) is tree.lookup(tree.stage)
-        assert arguments[9:] == ["-C", "/dev/null", "6.12.113-5.ph5"]
-        assert kwargs == dict(cwd="/", env={"PATH": "/usr/sbin:/usr/bin", "LANG": "C", "LC_ALL": "C"},
+        assert arguments[:7] == ["depmod", "-a", "-b", "/", "-m", "/usr/lib/modules", "-o"]
+        assert tree.lookup(arguments[7]) is tree.lookup(tree.stage)
+        assert arguments[8:] == ["-C", "/dev/null", "6.12.113-5.ph5"]
+        assert kwargs == dict(executable="/usr/bin/kmod", cwd="/", env={"PATH": "/usr/sbin:/usr/bin", "LANG": "C", "LC_ALL": "C"},
                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               timeout=60, check=False, umask=0o022)
         if change == "native-timeout":

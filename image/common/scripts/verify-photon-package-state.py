@@ -932,8 +932,9 @@ def verify_installation_module_indexes() -> dict[str, bool]:
             raise ValueError("installation native mounts changed")
         try:
             result = subprocess.run(
-                ["/usr/bin/kmod", "depmod", "-a", "-b", "/", "-m", "/usr/lib/modules",
+                ["depmod", "-a", "-b", "/", "-m", "/usr/lib/modules",
                  "-o", "/proc/" + str(os.getpid()) + "/fd/" + str(output_fd), "-C", "/dev/null", INSTALLATION_MODULE_ROOT.name],
+                executable="/usr/bin/kmod",
                 cwd="/", env={"PATH": "/usr/sbin:/usr/bin", "LANG": "C", "LC_ALL": "C"},
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 timeout=60, check=False, umask=0o022,

@@ -391,8 +391,9 @@ private child, or other verification flag fails this initial-installation profil
 The kernel-index profile binds the exact Linux, kmod and kmod-binary RPMs. It first admits the complete public module
 namespace from original package metadata before reading file contents, then compares all 1,235 immutable directory
 and file records through retained, no-follow descriptors. Missing, extra, linked or changed inputs fail.
-After ordinary RPM file verification, the profile reuses the authenticated native `kmod depmod` command with explicit
-input, configuration and output selectors. It writes only to private, descriptor-pinned scratch directories on verified
+After ordinary RPM file verification, the profile invokes the authenticated `kmod` executable as `depmod`, selecting
+its native compatibility entry point with explicit input, configuration and output selectors. It writes only to
+private, descriptor-pinned scratch directories on verified
 `/run` tmpfs. All eleven generated indexes must match the installed bytes, ownership and permissions. Native binary,
 library, alias, configuration, filesystem and input identities are checked across execution; the proof repeats after
 the remaining firmware and metadata checks. Nonempty depmod overrides are refused without reading their contents.
