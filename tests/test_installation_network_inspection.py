@@ -117,9 +117,19 @@ def test_guest_network_command_is_read_only_and_suppresses_raw_failures(default_
             return self
 
         def __exit__(self, *args):
+            """Leave the controlled TLS connection without suppressing failures.
+
+            Args:
+                *args: Exception details supplied by the context-manager protocol.
+            """
             return False
 
         def getpeercert(self, *, binary_form):
+            """Return the fixture's public certificate bytes.
+
+            Args:
+                binary_form: Whether the caller requested the DER certificate.
+            """
             assert binary_form is True
             return _CERT
 
@@ -127,9 +137,20 @@ def test_guest_network_command_is_read_only_and_suppresses_raw_failures(default_
         """Observe the producer's local certificate-read connection."""
 
         def __init__(self, protocol):
+            """Require the producer's explicit TLS client protocol.
+
+            Args:
+                protocol: TLS protocol selected by the real producer.
+            """
             assert protocol == ssl.PROTOCOL_TLS_CLIENT
 
         def wrap_socket(self, peer, *, server_hostname):
+            """Wrap the controlled guest-local connection.
+
+            Args:
+                peer: Connected fixture socket passed to the TLS context.
+                server_hostname: Optional SNI name, absent for this address probe.
+            """
             assert isinstance(peer, Peer) and server_hostname is None
             return Peer()
 
@@ -171,6 +192,14 @@ def test_host_probe_pins_tls_before_http_and_bounds_public_schema(defect, monkey
         """Track the real probe's TLS, HTTP and close ordering."""
 
         def __init__(self, address, port, *, timeout, context):
+            """Admit the probe's fixed endpoint and bounded TLS transport.
+
+            Args:
+                address: Observed guest address under test.
+                port: HTTPS service port selected by the probe.
+                timeout: Transport deadline in seconds.
+                context: TLS context supplied by the real probe.
+            """
             assert (address, port, timeout) == ("192.168.84.20", 443, 10)
             self.sock = SimpleNamespace(getpeercert=lambda **kwargs: b"different public certificate" if defect == "certificate" else _CERT)
 
@@ -178,6 +207,13 @@ def test_host_probe_pins_tls_before_http_and_bounds_public_schema(defect, monkey
             calls.append("tls")
 
         def request(self, method, path, *, headers):
+            """Record only the expected unauthenticated OpenAPI request.
+
+            Args:
+                method: HTTP method submitted after TLS admission.
+                path: Requested public endpoint.
+                headers: Request headers checked for credential absence.
+            """
             assert (method, path) == ("GET", "/openapi.json") and "Authorization" not in headers
             calls.append("http")
 
