@@ -376,6 +376,11 @@ def main() -> int:
     host_probe.add_argument("--address", required=True)
     host_probe.add_argument("--certificate-sha256", required=True)
     host_probe.add_argument("--version", required=True)
+    readiness = sub.add_parser("wait-openapi")
+    readiness.add_argument("--address", required=True)
+    readiness.add_argument("--certificate-sha256", required=True)
+    readiness.add_argument("--version", required=True)
+    readiness.add_argument("--timeout-seconds", type=int, default=45)
     args = parser.parse_args()
     try:
         if args.operation == "prepare":
@@ -406,6 +411,10 @@ def main() -> int:
             from scripts.installation.network_inspection import probe_openapi
 
             result = probe_openapi(args.address, args.certificate_sha256, args.version)
+        elif args.operation == "wait-openapi":
+            from scripts.installation.network_inspection import wait_for_openapi
+
+            result = wait_for_openapi(args.address, args.certificate_sha256, args.version, args.timeout_seconds)
         elif args.operation in {"validate-content", "diagnose-missing-rpms"}:
             from scripts.installation.content_inspection import (
                 MissingRequiredRpms,

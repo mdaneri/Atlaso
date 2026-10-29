@@ -1558,6 +1558,15 @@ try {
                     if ($networkReport.Length -gt 8192) { throw 'Validated network observation exceeded its bound.' }
                     Write-Host ('Installed public network observation: ' + $networkReport.Trim())
                     $observedNetwork = $networkReport | ConvertFrom-Json -AsHashtable
+                    # TLS can be live while nginx still returns a boot-time 502.
+                    # Admit API readiness separately before the three strict samples.
+                    $readiness = Invoke-AtlasoBoundedProcess -FilePath $InspectionPythonPath `
+                        -ArgumentList ($inspectionArguments + @('wait-openapi', '--address', $observedNetwork.address,
+                            '--certificate-sha256', $observedNetwork.certificate_sha256, '--version', $inspection.expected.version,
+                            '--timeout-seconds', '45')) `
+                        -TimeoutSeconds 60 -Action 'Host-facing API readiness'
+                    if ($readiness.Length -gt 8192) { throw 'Host-facing API readiness exceeded its bound.' }
+                    Write-Host ('Host-facing API ready: ' + $readiness.Trim())
                     # Probe while the exact admitted guest is still running;
                     # the ordinary final Verify below stops it afterward.
                     for ($sample = 1; $sample -le 3; $sample++) {

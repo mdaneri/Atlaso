@@ -236,3 +236,133 @@ def test_host_probe_pins_tls_before_http_and_bounds_public_schema(defect, monkey
         assert result["status"] == 200 and result["version"] == "0.9.465" and result["path_count"] == 1
     assert calls[-1] == "closed"
     assert ("http" not in calls) == (defect == "certificate")
+
+
+@pytest.mark.parametrize("case", ["ready", "warming", "deadline", "late-ready", "changed-peer", "wrong-version", "forbidden"])
+def test_host_readiness_requires_pinned_valid_api_before_deadline(case, monkeypatch):
+    """Retry only transient upstream statuses and recheck the TLS peer each time.
+
+    Args:
+        case: Startup recovery or an independently fatal admission failure.
+        monkeypatch: Replace transport and clock without waiting or opening sockets.
+    """
+    responses = {
+        "ready": [(200, _CERT, "0.9.465")],
+        "warming": [(502, _CERT, "0.9.465"), (503, _CERT, "0.9.465"), (504, _CERT, "0.9.465"), (200, _CERT, "0.9.465")],
+        "deadline": [(502, _CERT, "0.9.465")] * 2,
+        "late-ready": [(200, _CERT, "0.9.465")],
+        "changed-peer": [(502, _CERT, "0.9.465"), (200, b"different public leaf", "0.9.465")],
+        "wrong-version": [(502, _CERT, "0.9.465"), (200, _CERT, "9.9.9")],
+        "forbidden": [(403, _CERT, "0.9.465")],
+    }[case]
+    clock = [0.0]
+    calls = []
+
+    def sleep(seconds):
+        """Advance the controlled clock by the requested bounded delay.
+
+        Args:
+            seconds: Retry delay selected by the readiness loop.
+        """
+        assert 0 < seconds <= 1
+        clock[0] += seconds
+
+    class Connection:
+        """Exercise real leaf and response validation over a sequenced transport."""
+
+        def __init__(self, address, port, *, timeout, context):
+            """Admit only the fixed public endpoint and transport deadline.
+
+            Args:
+                address: Originally observed private address.
+                port: HTTPS listener selected by the real probe.
+                timeout: Existing per-connection timeout.
+                context: TLS configuration used for explicit public-leaf pinning.
+            """
+            assert (address, port, timeout) == ("192.168.84.20", 443, 10)
+            assert context.verify_mode == ssl.CERT_NONE and not context.check_hostname
+            self.index = len(calls)
+            self.response = responses[self.index]
+            calls.append([])
+            self.sock = SimpleNamespace(getpeercert=lambda **kwargs: self.response[1])
+
+        def connect(self):
+            calls[self.index].append("tls")
+
+        def request(self, method, path, *, headers):
+            """Record an unauthenticated request after the real certificate check.
+
+            Args:
+                method: Public GET method.
+                path: Exact OpenAPI path.
+                headers: Bounded public headers without credentials.
+            """
+            assert (method, path) == ("GET", "/openapi.json") and "Authorization" not in headers
+            calls[self.index].append("http")
+
+        def getresponse(self):
+            if case == "late-ready":
+                clock[0] += 3
+            raw = json.dumps({"openapi": "3.1.0", "info": {"version": self.response[2]}, "paths": {"/api/v1/health": {}}}).encode()
+            return SimpleNamespace(status=self.response[0], getheader=lambda *args: "application/json", read=lambda size: raw)
+
+        def close(self):
+            calls[self.index].append("closed")
+
+    monkeypatch.setattr(network_inspection.http.client, "HTTPSConnection", Connection)
+    monkeypatch.setattr(network_inspection.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(network_inspection.time, "sleep", sleep)
+    if case in {"ready", "warming"}:
+        result = network_inspection.wait_for_openapi("192.168.84.20", hashlib.sha256(_CERT).hexdigest(), "0.9.465", 5)
+        assert result["status"] == 200 and result["version"] == "0.9.465"
+        assert result["readiness_attempts"] == len(responses)
+    else:
+        with pytest.raises(ValueError):
+            network_inspection.wait_for_openapi("192.168.84.20", hashlib.sha256(_CERT).hexdigest(), "0.9.465", 2)
+    assert len(calls) == len(responses)
+    assert all(call[0] == "tls" and call[-1] == "closed" for call in calls)
+    assert ("http" not in calls[-1]) == (case == "changed-peer")
+
+
+@pytest.mark.parametrize("bound", [0, 46, True, 1.5])
+def test_readiness_refuses_invalid_bounds_before_transport(bound, monkeypatch):
+    """An invalid readiness window never opens a transport.
+
+    Args:
+        bound: Invalid or non-integral caller-supplied deadline.
+        monkeypatch: Reject any attempted transport before admission.
+    """
+    def unexpected(*args):
+        """Refuse an unexpected transport call.
+
+        Args:
+            *args: Public probe arguments that must remain unused.
+        """
+        pytest.fail("invalid readiness bounds must not reach the network")
+
+    monkeypatch.setattr(network_inspection, "probe_openapi", unexpected)
+    with pytest.raises(ValueError, match="readiness bound is invalid"):
+        network_inspection.wait_for_openapi("192.168.84.20", hashlib.sha256(_CERT).hexdigest(), "0.9.465", bound)
+
+
+def test_readiness_cli_preserves_non_disclosing_failure(monkeypatch, capsys):
+    """The actual readiness CLI suppresses private exceptions like other inspections.
+
+    Args:
+        monkeypatch: Select the readiness operation and replace its bounded probe.
+        capsys: Capture only the CLI's public success or refusal contract.
+    """
+    def fail(*args):
+        """Raise a synthetic detail that must remain private.
+
+        Args:
+            *args: Public readiness arguments supplied by the CLI.
+        """
+        raise ValueError("PrivateSyntheticReadinessDetail")
+
+    monkeypatch.setattr(network_inspection, "wait_for_openapi", fail)
+    monkeypatch.setattr(sys, "argv", ["inspection", "wait-openapi", "--address", "192.168.84.20",
+                                    "--certificate-sha256", hashlib.sha256(_CERT).hexdigest(), "--version", "0.9.465"])
+    assert inspection.main() == 2
+    captured = capsys.readouterr()
+    assert not captured.out and captured.err == "Installed inspection could not validate its bounded inputs.\n"

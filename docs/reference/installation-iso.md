@@ -572,8 +572,12 @@ Use the observed address and leaf digest with the signed installed software vers
 python -B -m scripts.installation.inspection probe-openapi --address <OBSERVED-PRIVATE-IPV4> --certificate-sha256 <CONSOLE-OBSERVED-LEAF-SHA256> --version <INSTALLED-SOFTWARE-VERSION>
 ```
 
-The driver runs this probe three times through the bounded process runner with a 30-second deadline before its final
-VM stop. A standalone diagnostic invocation also requires that same bounded runner. It verifies the exact console-observed
+The driver first admits API readiness in a separate 60-second bounded child with a fixed 45-second readiness window.
+TLS alone can be available while nginx still returns a boot-time HTTP 502. Readiness retries only HTTP 502, 503, and
+504; every attempt verifies the original console-observed leaf before sending HTTP. Certificate, version, JSON,
+and other response failures remain immediate refusals, and a late response never satisfies readiness.
+The driver then runs the strict probe three times through the bounded process runner with a 30-second deadline before
+its final VM stop. A standalone diagnostic invocation also requires that same bounded runner. It verifies the exact console-observed
 TLS leaf before sending an unauthenticated `GET /openapi.json`, bounds the JSON body, and requires HTTP 200 and the
 expected software version. Retain the three consecutive successful measurements with the network observation and original
 VM selectors. This uses the existing leaf as a lab pin without changing host CA trust. It does not establish certificate
@@ -624,10 +628,14 @@ machine and SSH identities were unique between the installations.
 The first VM subsequently retained its identity and application measurement across a host-only network boot. Its
 initial native host API probe failed; a later unchanged probe succeeded, followed by three consecutive bounded,
 certificate-pinned OpenAPI responses with HTTP 200, version 0.9.465, 162 paths, and identical response digests.
-These measurements establish steady-state host API access; the initial failure remains unresolved. The adapter was
+These measurements establish steady-state host API access. A subsequent fresh-boot diagnostic reproduced the first
+probe failure and recorded 25 consecutive certificate-matched HTTP 502 responses while TLS was already available.
+The host driver now waits separately for a valid API before its three strict samples; fresh native validation of this
+readiness correction is still required. The adapter was
 restored to its absent state after owning stopped-disk verification. A separate capacity diagnostic found all four
 exact refusal lines inside native panel borders, which the earlier host reader incorrectly compared as full rows;
-both disks remained unchanged. Retain the failed run and require fresh native validation of the reader correction.
+both disks remained unchanged. A fresh native capacity run with host source `cebf4ffbf3af0127cf96a166d69fe891affe1828`
+passed the complete refusal check and verified both stopped disks unchanged. Retain the earlier failed run.
 
 Initial API readiness, disconnected update/rollback, custom/fault scenarios, certificate address-control acceptance,
 and preservation of disks carrying old Atlaso labels remain outstanding. Do not describe the installer as validated

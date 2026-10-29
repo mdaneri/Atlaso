@@ -10,12 +10,17 @@ import ipaddress
 import json
 import re
 import ssl
+import time
 import zlib
 from typing import Any
 
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _PRIVATE_NETWORKS = tuple(ipaddress.IPv4Network(value) for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 _MAX_OPENAPI = 16 * 1024 * 1024
+
+
+class OpenAPIReadinessPending(ValueError):
+    """The pinned HTTPS peer has not exposed a ready API upstream yet."""
 
 
 def _private_address(value: Any) -> str:
@@ -108,6 +113,8 @@ def probe_openapi(address: str, certificate_sha256: str, version: str) -> dict[s
             raise ValueError("host API certificate differs from the owned console observation")
         connection.request("GET", "/openapi.json", headers={"Accept": "application/json", "Connection": "close"})
         response = connection.getresponse()
+        if response.status in {502, 503, 504}:
+            raise OpenAPIReadinessPending("host API upstream is not ready")
         if response.status != 200 or response.getheader("Content-Type", "").split(";")[0].strip() != "application/json":
             raise ValueError("host API did not return JSON with HTTP 200")
         raw = response.read(_MAX_OPENAPI + 1)
@@ -123,6 +130,39 @@ def probe_openapi(address: str, certificate_sha256: str, version: str) -> dict[s
                 "certificate_sha256": certificate_sha256}
     finally:
         connection.close()
+
+
+def wait_for_openapi(address: str, certificate_sha256: str, version: str, timeout_seconds: int = 45) -> dict[str, Any]:
+    """Wait for a valid pinned API, retrying only transient upstream statuses.
+
+    The caller's bounded process owns the hard wall-clock limit. A response that
+    arrives after this readiness deadline never becomes successful evidence.
+
+    Args:
+        address: Original console-observed private IPv4 address.
+        certificate_sha256: Exact public leaf digest required on every attempt.
+        version: Signed installed version required before readiness is admitted.
+        timeout_seconds: Fixed readiness window, at most 45 seconds.
+    """
+    if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= 45:
+        raise ValueError("host API readiness bound is invalid")
+    deadline = time.monotonic() + timeout_seconds
+    attempts = 0
+    while True:
+        if time.monotonic() >= deadline:
+            raise ValueError("host API readiness deadline exceeded")
+        attempts += 1
+        try:
+            measurement = probe_openapi(address, certificate_sha256, version)
+        except OpenAPIReadinessPending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError("host API readiness deadline exceeded") from None
+            time.sleep(min(1, remaining))
+        else:
+            if time.monotonic() >= deadline:
+                raise ValueError("host API readiness deadline exceeded")
+            return {**measurement, "readiness_attempts": attempts}
 
 
 _GUEST_PROGRAM = r'''
