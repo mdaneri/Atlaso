@@ -411,7 +411,7 @@
       .filter((item) => fleetSourceIds.has(String(item.summary?.source_id || "")) && item.summary?.service)
       .map((item) => {
         const service = item.summary.service;
-        return `${service.address || ""}:${service.port || ""}${service.base_path || ""} · ${service.key || ""}${service.fingerprint ? ` · SHA-256 ${service.fingerprint}` : ""}${service.version ? ` · ${service.version}` : ""}`;
+        return `${service.address || ""}:${service.port || ""}${serviceBasePath(service.base_path)} · ${service.key || ""}${service.fingerprint ? ` · SHA-256 ${service.fingerprint}` : ""}${service.version ? ` · ${service.version}` : ""}`;
       });
     if (discoveredServices.length) {
       appendReviewSection(container, "Discovered Fleet LCM service", discoveredServices.map((value) => ["Service details", value]));
@@ -506,10 +506,10 @@
     if (group.kind === "vcenter") rows.push(settingComparison("Backup parts", "parts", current, proposed));
     return rows;
   }
-  function appendReviewSection(container, title, rows) {
-    const section = document.createElement("section");
-    section.className = "settings-list compact-settings-list";
-    const heading = document.createElement("h4");
+  function appendReviewSection(container, title, rows, collapsible = false) {
+    const section = document.createElement(collapsible ? "details" : "section");
+    section.className = "settings-list compact-settings-list validation-settings-list";
+    const heading = document.createElement(collapsible ? "summary" : "h4");
     heading.textContent = title;
     section.append(heading);
     rows.forEach(([label, value]) => {
@@ -632,6 +632,7 @@
       const source = inspectedSources.find((item) => members.some((component) => String(component.source_id) === String(item.request.source_id)));
       const kind = source?.request.source_kind || "";
       const report = reports.get(String(group.id || ""));
+      let currentSettings = null;
       const rows = [["Latest checkpoint", checkpointLabel(report?.checkpoint || group.checkpoint)]];
       if (report) {
         rows.push(["Native configuration task", nativeStateLabel(report.native_configuration?.state)]);
@@ -642,13 +643,13 @@
         const warnings = [report.warning, report.native_configuration?.warning, report.native_backup?.warning].filter((value, offset, values) => typeof value === "string" && value && values.indexOf(value) === offset);
         if (warnings.length) rows.push(["Native read-back warnings", warnings.join(" · ")]);
         if (current) {
-          const settingRows = groupCurrentSettings(kind, current);
-          appendReviewSection(container, `${names.join(", ") || `Native backup group ${index + 1}`} — latest native settings`, settingRows);
+          currentSettings = groupCurrentSettings(kind, current);
         }
       } else if (reportRows.length) {
         rows.push(["Native read-back", "No reconciliation report matched this group."]);
       }
       appendReviewSection(container, `${names.join(", ") || `Native backup group ${index + 1}`} — operation status`, rows);
+      if (currentSettings) appendReviewSection(container, "Latest native settings", currentSettings, true);
     });
     if (reportRows.length && !groups?.length) {
       reportRows.forEach((_report, index) => appendReviewSection(container, `Native backup group ${index + 1} — reconciliation`, [["Native read-back", "The group could not be matched to its public operation status."]]));
@@ -884,6 +885,7 @@
       else if (body) body.scrollTop = 0;
       if (step.id === "discovery") renderComponents();
       syncOperationView();
+      if (!operationStarted) setStatus("");
     },
     onNext: async ({step}) => {
       if (step.id === "server") {

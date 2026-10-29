@@ -57,12 +57,12 @@
           <p class="muted" data-vcf-backup-grid-status role="status" aria-live="polite">Inspect a source to discover supported backup components.</p>
           <div class="hidden" data-vcf-backup-grid aria-label="Discovered VCF backup components"></div>
           <div data-vcf-backup-grid-fallback><p class="muted">Discovered components will appear here after inspection.</p><div class="table-scroll"><table class="data-table fallback-table"><thead><tr><th>Select</th><th>Component</th><th>Product / version</th><th>Current state</th><th>Coverage</th></tr></thead><tbody data-vcf-backup-grid-fallback-rows><tr><td colspan="5">No components discovered.</td></tr></tbody></table></div></div>
-          <div class="settings-list compact-settings-list" data-vcf-backup-source-summaries></div>
+          <div class="settings-list compact-settings-list validation-settings-list" data-vcf-backup-source-summaries></div>
           <div class="alert error hidden" data-vcf-backup-discovery-blockers role="alert"></div>
         </section>
 
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="settings">
-          <div class="settings-list compact-settings-list"><div><span>Backup receiver</span><strong data-vcf-backup-receiver>Not loaded</strong></div><div><span>SSH host key</span><strong class="mono-text" data-vcf-backup-host-key>Not loaded</strong></div></div>
+          <div class="settings-list compact-settings-list validation-settings-list"><div><span>Backup receiver</span><strong data-vcf-backup-receiver>Not loaded</strong></div><div><span>SSH host key</span><strong class="mono-text" data-vcf-backup-host-key>Not loaded</strong></div></div>
           <div class="form-grid">
             <label><span>Destination password reference</span><select name="sftp_secret_ref" data-vcf-backup-secret-select required><option value="">Choose saved Vault secret</option>{% for option in vcf_backup_secret_options | default([], true) %}<option value="{{ option.vault_id }}:{{ option.entry_id }}">{{ option.label }}</option>{% endfor %}</select></label>
             <label><span>Backup-encryption passphrase reference</span><select name="encryption_secret_ref" data-vcf-backup-secret-select required><option value="">Choose saved Vault secret</option>{% for option in vcf_backup_secret_options | default([], true) %}<option value="{{ option.vault_id }}:{{ option.entry_id }}">{{ option.label }}</option>{% endfor %}</select></label>
@@ -83,7 +83,7 @@
 
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review">
           <div data-vcf-backup-review-form>
-            <div class="settings-list compact-settings-list" data-vcf-backup-review></div>
+            <div class="settings-list compact-settings-list validation-settings-list" data-vcf-backup-review></div>
             <div class="alert error hidden" data-vcf-backup-coverage role="alert"></div>
             <label class="switch-field"><span>I am ready to recover the appliance and have recorded the backup-encryption passphrase in the approved escrow.</span><input type="checkbox" name="recovery_ready" required></label>
             <label class="switch-field"><span>I approve replacing any selected existing backup policy after reviewing its current state.</span><input type="checkbox" name="replacements_confirmed" required></label>
@@ -91,13 +91,13 @@
           </div>
           <section class="panel hidden" data-vcf-backup-operation aria-live="polite">
             <h4>Operation status</h4>
-            <div class="settings-list compact-settings-list"><div><span>Operation ID</span><strong class="mono-text" data-vcf-backup-operation-id>Not loaded</strong></div></div>
+            <div class="settings-list compact-settings-list validation-settings-list"><div><span>Operation ID</span><strong class="mono-text" data-vcf-backup-operation-id>Not loaded</strong></div></div>
             <p class="status-badge" data-vcf-backup-operation-state>Task status</p>
-            <p data-vcf-backup-operation-detail></p>
             <p class="alert error hidden" data-vcf-backup-operation-error role="alert"></p>
             <p class="alert warning hidden" data-vcf-backup-native-running-warning role="status"></p>
+            <div data-vcf-backup-operation-detail></div>
             <progress max="100" value="0" aria-label="Backup verification progress" data-vcf-backup-progress></progress>
-            <div class="settings-list compact-settings-list" data-vcf-backup-operation-sources></div>
+            <div class="settings-list compact-settings-list validation-settings-list" data-vcf-backup-operation-sources></div>
             <div class="form-stack" data-vcf-backup-recovery-credentials></div>
             <p><a class="button ghost hidden" data-vcf-backup-task-link href="{{ management_ui_root }}/tasks">Open task</a></p>
             <p class="muted" data-vcf-backup-recovery-guidance>Reconcile checks current native settings and backup status without repeating native writes.</p>

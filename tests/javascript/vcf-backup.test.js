@@ -230,6 +230,13 @@ test('Operation status renders reconciliation settings, native progress, verific
   );
   const visible = (node) => [node.textContent || '', ...(node.children || []).map(visible)].join(' ');
   const text = visible(container);
+  const sections = container.children.filter((child) => ['section', 'details'].includes(child.tagName));
+  assert.equal(sections[0].tagName, 'section');
+  assert.match(visible(sections[0]), /Native configuration task Running/);
+  assert.equal(sections[1].tagName, 'details');
+  assert.equal(sections[1].children[0].tagName, 'summary');
+  assert.equal(sections[1].children[0].textContent, 'Latest native settings');
+  assert.match(sections[1].className, /validation-settings-list/);
   assert.match(text, /SDDC Manager — operation status/);
   assert.match(text, /Latest checkpoint: Initial backup submitted to the native appliance/);
   assert.match(text, /Native configuration task Running/);
@@ -358,9 +365,9 @@ test('Schedule controls appear only for selected native products that use them',
 
 test('The updated backup script URL and service worker cache version stay aligned', () => {
   const worker = fs.readFileSync(path.join(__dirname, '../../atlaso/app/static/service-worker.js'), 'utf8');
-  assert.match(helper, /vcf-backup\.js\?v=issue-1066-7/);
-  assert.match(worker, /ATLASO_CACHE_PREFIX\}398/);
-  assert.match(worker, /vcf-backup\.js\?v=issue-1066-7/);
+  assert.match(helper, /vcf-backup\.js\?v=issue-1066-8/);
+  assert.match(worker, /ATLASO_CACHE_PREFIX\}399/);
+  assert.match(worker, /vcf-backup\.js\?v=issue-1066-8/);
 });
 
 test('Review binds the selected component IDs, source credentials, policy, and saved secret references', () => {
