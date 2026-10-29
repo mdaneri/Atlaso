@@ -58,6 +58,9 @@ class FakeBackend:
         self.backup_starts: list[tuple[str, list[str]]] = []
         self.validations: list[tuple[str, dict[str, Any]]] = []
         self.validation_result: dict[str, Any] = {"supported": True, "valid": True}
+        self.require_prepared_directory = False
+        self.prepared_directories: set[str] = set()
+        self.fail_prepare = False
         self.after_validate: Any = None
         self.inventory_drift = False
         self.artifact_components: set[str] | None = None
@@ -156,6 +159,8 @@ class FakeNative:
 
     def validate(self, group: str, proposed: dict[str, Any], *_secrets: str) -> dict[str, Any]:
         self.backend.validations.append((group, dict(proposed)))
+        if self.backend.require_prepared_directory and proposed["directory"] not in self.backend.prepared_directories:
+            return {"supported": True, "valid": False, "diagnostics": ["MISSING_RECEIVER_DIRECTORY"]}
         if self.backend.after_validate is not None:
             self.backend.after_validate()
         return dict(self.backend.validation_result)
@@ -217,8 +222,10 @@ class FakeReceiverSession:
     def __exit__(self, *_args: Any) -> None:
         return None
 
-    def prepare(self, _directory: str) -> None:
-        return None
+    def prepare(self, directory: str) -> None:
+        if self.backend.fail_prepare:
+            raise workflow.ReceiverError("receiver directory preparation failed")
+        self.backend.prepared_directories.add(directory)
 
     def manifest(self, _directory: str) -> dict[str, tuple[int, int]]:
         return dict(self.backend.files)
@@ -481,6 +488,39 @@ def test_native_validation_failure_blocks_every_write(harness):
         state = read_operation(db, inspected["operation_id"])
         assert state["state"] == "needs_recovery"
         assert len(harness["backend"].validations) == 1
+        assert harness["backend"].config_writes == []
+        assert harness["backend"].backup_starts == []
+
+
+def test_receiver_directory_is_prepared_before_native_validation(harness):
+    harness["backend"].require_prepared_directory = True
+    with SessionLocal() as db:
+        inspected, source = inspect_operation(db)
+        reviewed = review_operation(db, inspected, source)
+        _, dispatcher = execute_operation(db, inspected, source, reviewed)
+        dispatcher.run()
+
+        state = read_operation(db, inspected["operation_id"])
+        destination = reviewed["review"]["components"][0]["receiver_directory"]
+        assert state["state"] == "succeeded"
+        assert destination in harness["backend"].prepared_directories
+        assert harness["backend"].validations
+        assert len(harness["backend"].config_writes) == 1
+        assert len(harness["backend"].backup_starts) == 1
+
+
+def test_receiver_preparation_failure_blocks_native_preflight_and_writes(harness):
+    harness["backend"].fail_prepare = True
+    with SessionLocal() as db:
+        inspected, source = inspect_operation(db)
+        reviewed = review_operation(db, inspected, source)
+        _, dispatcher = execute_operation(db, inspected, source, reviewed)
+        dispatcher.run()
+
+        state = read_operation(db, inspected["operation_id"])
+        assert state["state"] == "needs_recovery"
+        assert "receiver directory preparation failed" in state["error"]
+        assert harness["backend"].validations == []
         assert harness["backend"].config_writes == []
         assert harness["backend"].backup_starts == []
 

@@ -98,6 +98,9 @@ Atlaso does not claim native NSX retention; plan and verify any external retenti
 
 ## Verify tasks and recover interrupted work
 
+After task authorization, Atlaso prepares the reviewed directories on the pinned SFTP receiver before native
+destination validation. All native preflight checks must succeed before any appliance backup settings are changed.
+
 Follow the operation under [Tasks](../operate/tasks.md). A task is successful only when the native backup operation
 reports success and Atlaso observes fresh, non-empty files on the applied SFTP receiver for every selected component.
 The task records artifact paths, sizes, and modification times; a native success state without matching new receiver

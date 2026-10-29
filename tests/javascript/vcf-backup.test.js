@@ -365,9 +365,9 @@ test('Schedule controls appear only for selected native products that use them',
 
 test('The updated backup script URL and service worker cache version stay aligned', () => {
   const worker = fs.readFileSync(path.join(__dirname, '../../atlaso/app/static/service-worker.js'), 'utf8');
-  assert.match(helper, /vcf-backup\.js\?v=issue-1066-8/);
-  assert.match(worker, /ATLASO_CACHE_PREFIX\}399/);
-  assert.match(worker, /vcf-backup\.js\?v=issue-1066-8/);
+  assert.match(helper, /vcf-backup\.js\?v=issue-1066-9/);
+  assert.match(worker, /ATLASO_CACHE_PREFIX\}400/);
+  assert.match(worker, /vcf-backup\.js\?v=issue-1066-9/);
 });
 
 test('Review binds the selected component IDs, source credentials, policy, and saved secret references', () => {
@@ -429,6 +429,7 @@ test('An operation ID reloads safe durable sources and collects manual passwords
   assert.match(modal, /data-vcf-backup-load-operation/);
   assert.match(js, /async function loadOperation\(\)[\s\S]*?call\(`\/operations\/\$\{encodeURIComponent\(requestedId\)\}`\)/);
   assert.match(js, /function hydrateOperation\(result\)[\s\S]*?inspectedSources = \(result\.sources \|\| \[\]\)\.map\(buildRecoverySource\)[\s\S]*?wizard\.showStep\("review", \{force: true\}\)/);
+  assert.match(js, /wizard\.setSkippedSteps\(inspectedSources\.length && inspectedSources\.every\(\(\{credentialMode\}\) => credentialMode === "vault"\) \? \["login"\] : \[\]\)/);
   assert.match(js, /function buildRecoverySource\(source\)[\s\S]*?credential_reference \|\| \{\}[\s\S]*?confirmed_tls_fingerprint: source\.fingerprint[\s\S]*?credential_uri: reference\.uri/);
   assert.match(js, /function renderRecoveryCredentials\(\)[\s\S]*?if \(credentialMode === "manual"\)[\s\S]*?input\.type = "password"[\s\S]*?request\.password = input\.value/);
   assert.doesNotMatch(js, /credential_reference[^\n]*revision/);

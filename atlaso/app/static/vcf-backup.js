@@ -732,6 +732,7 @@
     receiver = result.receiver || receiver;
     renderOperation(result);
     node("[data-vcf-backup-recovery-id]").value = operationId;
+    wizard.setSkippedSteps(inspectedSources.length && inspectedSources.every(({credentialMode}) => credentialMode === "vault") ? ["login"] : []);
     wizard.setHighestStep("review");
     wizard.showStep("review", {force: true});
     setStatus("Status loaded. Recovery can inspect or reconcile this operation; it cannot repeat native writes.");

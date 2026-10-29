@@ -815,6 +815,11 @@ def run_job(job_id: str, manual: dict[str, Any] | None = None) -> None:
             credentials = _worker_inputs(db, state, manual or {})
             sftp_password, passphrase = _secret(db, state["sftp_secret"]), _secret(db, state["encryption_secret"])
             _validate_shared_encryption_passphrase(passphrase)
+            # Native validation checks whether each destination already exists
+            # on the receiver, so prepare every reviewed path before preflight.
+            with ReceiverSession(receiver, sftp_password) as receiver_preflight:
+                for group in state["plan"]:
+                    receiver_preflight.prepare(group["receiver_directory"])
             # Recheck the entire plan before the first native write.
             for source in state["sources"]:
                 with NativeBackup(source, credentials[source["source_id"]]) as native:
