@@ -22,6 +22,24 @@ from scripts.check_docs import (
 from scripts.overlay_docs_site import overlay
 
 
+def test_kmip_recovery_documents_settings_boundary_before_import() -> None:
+    """Keep the archive scope warning ahead of import and link its canonical procedure."""
+    root = Path(__file__).resolve().parents[1]
+    guide = (root / "docs/operate/kmip-recovery.md").read_text(encoding="utf-8")
+    restore = guide.split("## Restore onto an empty target\n", 1)[1].split("\n## ", 1)[0]
+    import_position = restore.index("**Import KMIP recovery offline**")
+    for collection in (
+        "vsphere_key_providers",
+        "vsphere_trusted_vcenters",
+        "vsphere_trusted_vcenter_certificates",
+    ):
+        assert restore.index(f"`{collection}`") < import_position
+    assert "(../services/ntp.md)" in restore[:import_position]
+    assert "(../services/vsphere-key-providers.md)" in restore[import_position:]
+    backup = (root / "docs/operate/backup-restore.md").read_text(encoding="utf-8")
+    assert "(kmip-recovery.md#restore-onto-an-empty-target)" in backup
+
+
 def test_documentation_homepage_preserves_paths_and_popular_guides() -> None:
     """Verify that the homepage keeps section paths and a focused operator guide list."""
     root = Path(__file__).resolve().parents[1]
