@@ -4366,20 +4366,36 @@ A rejected archive releases its service checkpoint only after the prior service 
 recovery journal exists, so a corrected archive can be submitted. Uncertain restoration retains the checkpoint.</p>
 <h2 id="restore-onto-an-empty-target">Restore onto an empty target<a class="headerlink" href="#restore-onto-an-empty-target" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Prepare a separate appliance. Preserve the source appliance and every provider/key record. Do not reset or delete
-   the source store to simulate appliance loss.</li>
-<li>Restore appropriate appliance settings separately, then configure the target's management reachability, clock
-   authority, and server certificate through their supported workflows. Avoid restoring unrelated provider/trust
-   records before the KMIP import: its target must be empty.</li>
+<li>Prepare a separate, clean appliance. Preserve the source appliance and every provider/key record. Do not reset or
+   delete the source store to simulate appliance loss.</li>
+<li>Do not restore a full source-appliance settings archive as part of KMIP recovery, either before or after importing
+   the bundle. Ordinary settings archives include the public desired-state collections
+   <code>vsphere_key_providers</code>, <code>vsphere_trusted_vcenters</code>, and <code>vsphere_trusted_vcenter_certificates</code>, including public
+   certificates. Settings restore replaces those collections; it does not restore or reconcile the operational keys
+   in the KMIP bundle. The import requires an empty provider/trust target, and a later settings restore could replace
+   the exact public relationship graph recovered from the bundle. Use the archive only as a reference while
+   reconfiguring remaining desired state through supported workflows.</li>
+<li>Establish only the prerequisites needed to reach the target and perform the offline import: configure management
+   reachability through the <a href="../appliance-console/#recover-management-networking">appliance console</a> or the supported
+   <a href="../networking/">networking workflow</a>, and select a valid clock source through its supported workflow. Do not create
+   provider, trusted vCenter, or trusted certificate rows. Preserve the mutually exclusive appliance clock-source
+   rule: use either Atlaso's NTP client or VMware Tools, according to the supported
+   <a href="../../services/ntp/">time-source procedure</a>.</li>
 <li>Open <strong>Maintenance &gt; KMIP recovery</strong>. Select the <code>.atkmip</code> bundle, enter its passphrase, and confirm
-   <strong>Import KMIP recovery offline</strong>.</li>
-<li>Atlaso authenticates and validates the complete candidate before publication. Nonempty native or legacy stores,
+   <strong>Import KMIP recovery offline</strong>. Import authenticates and validates the complete candidate before publication.
+   Nonempty native or legacy stores,
    wrong passphrases, corruption, unsupported schemas, duplicate identifiers or provider-scoped vCenter names,
    incomplete trust, and inconsistent KEK custody fail closed. Existing keys are never migrated or regenerated.</li>
-<li>Imported provider/vCenter records are disabled and have no applied baseline. The listener remains offline.
-   On <strong>vSphere Key Providers</strong>, review the restored provider UUIDs and exact public-client fingerprints against
-   independent records. Enable only the reviewed original relationships. Expired certificates remain preserved as
-   evidence and do not become valid because of import.</li>
+<li>Imported provider and trusted-vCenter records are disabled. The provider applied baseline is cleared, and the
+   listener remains offline. On <strong>vSphere Key Providers</strong>, review the restored provider UUIDs and exact public-client
+   fingerprints against independent records. The imported public certificate rows remain as evidence; expired
+   certificates do not become valid because of import. Then configure the target's CA-managed KMIP server identity
+   and listener: enable the Certificate Authority, set the KMS hostname and selected listener interfaces, and enable
+   only the reviewed original provider/vCenter relationships. Atlaso automatically issues the shared server
+   certificate from its internal CA when KMS is enabled. These are desired-state changes; continue to the next step
+   for Appliance Apply to deploy the identity and listener. See <a href="../../services/certificate-authority/">Certificate Authority</a>
+   and <a href="../../services/vsphere-key-providers/">vSphere Key Providers</a> for the supported settings and automatic
+   server-identity behavior.</li>
 <li>Review and submit global <strong>Appliance Apply</strong>. The helper requires the original enabled provider/fingerprint graph
    and binds startup authorization to the exact installed configuration and imported store identity. It retains the
    pending journal through listener stability verification.</li>
@@ -4387,6 +4403,9 @@ recovery journal exists, so a corrected archive can be submitted. Uncertain rest
    authenticated lifecycle evidence. Independently verify access to a workload encrypted before the export before
    retiring any original appliance or backup.</li>
 </ol>
+<p>If a full settings archive has already been restored to the intended recovery target, preserve that target and its
+state. Do not delete providers or edit the database or archive to clear the import guard. Begin recovery on another
+clean appliance and follow this sequence.</p>
 <p>The restore changes the target's wrapping-master custody to work with that target's appliance credential while
 preserving the original wrapped-key rows and encrypted KEK bytes. It does not require copying the source appliance's
 application secret.</p>
