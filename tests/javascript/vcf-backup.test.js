@@ -7,6 +7,7 @@ const vm = require('node:vm');
 const js = fs.readFileSync(path.join(__dirname, '../../atlaso/app/static/vcf-backup.js'), 'utf8');
 const helper = fs.readFileSync(path.join(__dirname, '../../atlaso/app/templates/vcf_helper.html'), 'utf8');
 const modal = fs.readFileSync(path.join(__dirname, '../../atlaso/app/templates/partials/vcf_backup_modal.html'), 'utf8');
+const statusModal = fs.readFileSync(path.join(__dirname, '../../atlaso/app/templates/partials/vcf_backup_status_modal.html'), 'utf8');
 
 function functionDeclaration(name) {
   return js.match(new RegExp(`function ${name}\\([^]*?\\n  \\}`))?.[0] || '';
@@ -19,19 +20,24 @@ test('Backup is a separate VCF Helper tab and readiness gates the launcher with 
   assert.match(helper, /vcf_backup_wizard\.reason/);
   assert.match(helper, /href="\{\{ management_ui_root \}\}\/vcf-backups"/);
   assert.match(helper, /partials\/vcf_backup_modal\.html/);
+  assert.match(helper, /partials\/vcf_backup_status_modal\.html/);
+  assert.match(helper, /\{% if identity\.has_role\('admin'\) %\}[\s\S]*?data-vcf-backup-resume[\s\S]*?Resume Existing Backup Operation[\s\S]*?\{% endif %\}/);
+  assert.doesNotMatch(helper.match(/data-vcf-backup-resume[\s\S]*?aria-controls="vcf-backup-status-modal"/)?.[0] || '', /disabled/);
+  assert.match(modal, /data-vcf-backup-form[^>]*data-setup-ready="\{% if vcf_backup_wizard is defined and vcf_backup_wizard\.ready %\}true\{% else %\}false\{% endif %\}"/);
+  assert.match(js, /const receiverReady = form\.dataset\.setupReady === "true"/);
+  assert.match(js, /!receiverReady \|\| !\["succeeded", "reconciled"\]\.includes\(operationState\)/);
 });
 
-test('Recovery lookup stays in Credential and ongoing status replaces Review without sticky panels', () => {
-  const credentialAt = modal.indexOf('data-atlaso-wizard-step="credential"');
-  const lookupAt = modal.indexOf('data-vcf-backup-recovery-lookup');
-  const reviewAt = modal.indexOf('data-atlaso-wizard-step="review"');
-  const statusAt = modal.indexOf('data-vcf-backup-operation aria-live');
-  assert.ok(credentialAt >= 0 && lookupAt > credentialAt && lookupAt < modal.indexOf('data-atlaso-wizard-step="server"'));
-  assert.ok(reviewAt >= 0 && statusAt > reviewAt, 'active task status is contained in the final Review step');
-  assert.match(modal, /data-vcf-backup-review-form/);
-  assert.match(modal, /data-vcf-backup-operation-id/);
-  assert.doesNotMatch(modal, /detail-panel/);
-  assert.match(js, /function syncOperationView\(\)[\s\S]*?data-vcf-backup-review-form[\s\S]*?data-vcf-backup-operation[\s\S]*?setNavigationLocked/);
+test('Resume opens a standalone status popup instead of the configuration wizard', () => {
+  assert.match(helper, /data-vcf-backup-resume[^>]*aria-controls="vcf-backup-status-modal"/);
+  assert.match(statusModal, /<dialog id="vcf-backup-status-modal"[^>]*task-modal/);
+  assert.match(statusModal, /data-vcf-backup-recovery-id/);
+  assert.match(statusModal, /data-vcf-backup-load-operation/);
+  assert.match(statusModal, /data-vcf-backup-operation/);
+  assert.doesNotMatch(modal, /data-vcf-backup-recovery-id|data-vcf-backup-operation/);
+  assert.doesNotMatch(statusModal, /data-atlaso-wizard-step|data-atlaso-wizard/);
+  assert.match(js, /document\.querySelector\("\[data-vcf-backup-resume\]"\)[\s\S]*?openOperationStatus\(operationStarted && operationId \? operationId : ""\)/);
+  assert.match(js, /document\.querySelector\("\[data-vcf-backup-open\]"\)[\s\S]*?if \(operationStarted && operationId\) \{\s+openOperationStatus\(operationId\)/);
 });
 
 test('Wizard follows the required credential, server, explicit fingerprint, login, discovery, settings, review order', () => {
@@ -182,6 +188,61 @@ test('Review presents exact current and proposed native settings with operator l
   assert.match(js, /appendReviewSection\(container, "Current backup state"/);
 });
 
+test('Fleet review and readback show generic SSH pins, including historical records', () => {
+  const declarations = ['publicValue', 'formatReviewValue', 'settingComparison', 'fleetSshFingerprint', 'retentionValue', 'retentionMode', 'groupSettingRows', 'groupCurrentSettings'].map(functionDeclaration).join('\n');
+  const context = vm.createContext({});
+  vm.runInContext(declarations, context);
+  const preservedStartTime = '2026-03-19T02:30:45-07:00';
+  const current = {
+    ssh_fingerprint: 'SHA256:verified-rsa',
+    fleet_schedule: {
+      fullSchedule: {enabled: true, schedule: {days: ['THU'], startTime: preservedStartTime}},
+      incrementalSchedule: {enabled: true, interval: 240, fallbackToFull: false},
+    },
+  };
+  const proposed = {
+    ssh_fingerprint: 'SHA256:verified-ecdsa',
+    fleet_schedule: {
+      fullSchedule: {enabled: true, schedule: {days: ['THU'], startTime: preservedStartTime}},
+      incrementalSchedule: {enabled: true, interval: 240, fallbackToFull: false},
+    },
+  };
+  const rows = context.groupSettingRows({kind: 'fleet', current, proposed});
+  assert.equal(rows.find(([label]) => label === 'SSH host-key fingerprint')[1], 'Current: SHA256:verified-rsa → Proposed: SHA256:verified-ecdsa');
+  assert.equal(rows.find(([label]) => label === 'Full schedule start time (RFC 3339)')[1], `Current: ${preservedStartTime} → Proposed: ${preservedStartTime}`);
+  assert.equal(rows.find(([label]) => label === 'Incremental fallback to full backup')[1], 'Current: false → Proposed: false');
+  assert.equal(context.groupCurrentSettings('fleet', current).find(([label]) => label === 'SSH host-key fingerprint')[1], 'SHA256:verified-rsa');
+  assert.equal(context.fleetSshFingerprint({ecdsa_fingerprint: 'SHA256:historical'}), 'SHA256:historical');
+  assert.equal(context.fleetSshFingerprint({ssh_fingerprint: null, ecdsa_fingerprint: 'SHA256:historical'}), 'Not set');
+  assert.ok(context.groupSettingRows({kind: 'sddc', current: {}, proposed: {}}).some(([label]) => label === 'ECDSA host-key fingerprint'));
+});
+
+test('Disabled Operations recurrence intent remains in the human review', () => {
+  const declarations = [
+    'publicValue', 'formatReviewValue', 'settingComparison', 'fleetSshFingerprint', 'retentionValue', 'retentionMode', 'groupSettingRows',
+    'renderReview',
+  ].map(functionDeclaration).join('\n');
+  const sections = [];
+  const container = {replaceChildren() {}};
+  const coverage = {textContent: '', classList: {toggle() {}}};
+  const context = vm.createContext({
+    review: {components: [{kind: 'fleet', source_id: 'operations-source', names: ['Operations']}]},
+    inspectedSources: [], fleetScheduleMode: () => 'disabled',
+    node: (selector) => selector === '[data-vcf-backup-review]' ? container : coverage,
+    appendReviewSection: (_container, title, rows) => sections.push([title, rows]),
+    groupConfigurationState: () => 'Configured', sourceKindLabel: (kind) => kind,
+    coverageText: (value) => value, sideEffectText: (value) => value,
+  });
+  vm.runInContext(declarations, context);
+  context.renderReview();
+  const intent = sections.find(([title]) => title === 'VCF Operations recurring backups');
+  assert.ok(intent);
+  assert.equal(intent[1].find(([label]) => label === 'Scheduling intent')?.[1], 'Disable recurring backups');
+  const settings = sections.find(([title]) => title === 'Operations');
+  assert.equal(settings[1].find(([label]) => label === 'Full schedule start time (RFC 3339)')[1], 'Current: Not set → Proposed: Not set');
+  assert.equal(settings[1].find(([label]) => label === 'Incremental fallback to full backup')[1], 'Current: Not set → Proposed: Not set');
+});
+
 test('Current review matrix uses compact configured labels and operation state/checkpoints are operator friendly', () => {
   const declarations = ['groupConfigurationState', 'operationStateLabel', 'checkpointLabel', 'nativeStateLabel'].map(functionDeclaration).join('\n');
   const context = vm.createContext({});
@@ -201,7 +262,7 @@ test('Current review matrix uses compact configured labels and operation state/c
 test('Operation status renders reconciliation settings, native progress, verification, and all warnings safely', () => {
   const declarations = [
     'groupConfigurationState', 'formatReviewValue', 'publicValue', 'retentionMode', 'retentionValue',
-    'appendReviewSection', 'sourceKindLabel', 'checkpointLabel', 'nativeStateLabel', 'groupCurrentSettings', 'renderOperationGroups',
+    'appendReviewSection', 'sourceKindLabel', 'checkpointLabel', 'nativeStateLabel', 'nativeOperationRunning', 'groupCurrentSettings', 'renderOperationGroups',
   ].map(functionDeclaration).join('\n');
   const makeElement = (tagName) => ({tagName, children: [], textContent: '', className: '',
     append(...children) { this.children.push(...children); },
@@ -220,12 +281,14 @@ test('Operation status renders reconciliation settings, native progress, verific
     group_id: 'opaque-group-hash', checkpoint: 'backup_submitted',
     current: {configured: true, host: 'backup.example', port: 22, user: 'atlaso', directory: '/backups/vcf', schedule_enabled: true, full_time: '02:00', days: ['MONDAY'], state_change: true, sddc_most_recent: 10, sddc_hourly_days: 2, sddc_daily_days: 15, secret_configured: true, sftp_secret_configured: true},
     native_configuration: {state: 'running', warning: 'Native configuration poll returned HTTP 503.'},
-    native_backup: {state: 'running', warning: 'Native backup history poll returned HTTP 503.', artifacts: [{path: '/private/artifact.zip'}]},
+    native_backup: {state: 'running', native_task_state: 'succeeded', native_task_terminal: true, warning: 'Native backup history poll returned HTTP 503.', artifacts: [{path: '/private/artifact.zip'}]},
+    artifacts_verified: true,
+    configuration_matches_review: false,
     verified: false,
     warning: 'Initial artifacts exist, but the native policy no longer matches the reviewed configuration.',
   };
   context.renderOperationGroups(
-    [{id: 'opaque-group-hash', component_ids: ['component-1'], checkpoint: 'backup_submitted'}],
+    [{id: 'opaque-group-hash', component_ids: ['component-1'], checkpoint: 'verified'}],
     'backup_submitted', [nativeReadback],
   );
   const visible = (node) => [node.textContent || '', ...(node.children || []).map(visible)].join(' ');
@@ -240,42 +303,68 @@ test('Operation status renders reconciliation settings, native progress, verific
   assert.match(text, /SDDC Manager — operation status/);
   assert.match(text, /Latest checkpoint: Initial backup submitted to the native appliance/);
   assert.match(text, /Native configuration task Running/);
-  assert.match(text, /Initial backup task Running/);
-  assert.match(text, /Atlaso backup verification Not verified/);
+  assert.match(text, /Initial backup task Succeeded/);
+  assert.match(text, /Backup artifact verification Verified/);
+  assert.match(text, /Reviewed configuration Changed since review/);
+  assert.match(visible(sections[0]), /Latest checkpoint Native backup completion verified/);
   assert.match(text, /Current backup configuration Configured/);
   assert.match(text, /Destination host backup\.example/);
   assert.match(text, /Native configuration poll returned HTTP 503/);
   assert.match(text, /Native backup history poll returned HTTP 503/);
   assert.match(text, /native policy no longer matches/);
   assert.doesNotMatch(text, /opaque-group-hash|secret_configured|private\/artifact\.zip/);
+  assert.equal(context.nativeOperationRunning({...nativeReadback, native_configuration: {state: 'succeeded'}}), false, 'terminal backup task is no longer reported as running while evidence polling continues');
+  assert.equal(context.nativeOperationRunning(nativeReadback), true, 'a separate native configuration task that is still running remains visible');
+  assert.equal(context.nativeOperationRunning({native_backup: {state: 'running', native_task_terminal: false}}), true);
+  assert.equal(context.nativeOperationRunning({native_configuration: {state: 'running'}}), true);
+  context.renderOperationGroups(
+    [{id: 'opaque-group-hash', component_ids: ['component-1'], checkpoint: 'backup_submitted'}],
+    'backup_submitted', [{...nativeReadback, native_backup: {...nativeReadback.native_backup, native_task_status: 'COMPLETED_WITH_WARNINGS'}}],
+  );
+  assert.match(visible(container), /Initial backup task Completed With Warnings/);
+  assert.match(visible(container), /Backup artifact verification Verified/);
+  assert.match(visible(container), /Reviewed configuration Changed since review/);
+  const legacyReadback = {...nativeReadback};
+  delete legacyReadback.artifacts_verified;
+  delete legacyReadback.configuration_matches_review;
+  context.renderOperationGroups(
+    [{id: 'opaque-group-hash', component_ids: ['component-1'], checkpoint: 'verified'}],
+    'verified', [legacyReadback],
+  );
+  assert.match(visible(container), /Atlaso backup verification Not verified/);
 });
 
-test('An active operation hides plan acknowledgements and locks every prior wizard step', () => {
-  const declarations = functionDeclaration('syncOperationView');
-  const makeElement = () => ({
-    hidden: false, disabled: false, attributes: {},
-    classList: {toggle(name, value) { this[name] = value; }, add(name) { this[name] = true; }},
-    setAttribute(name, value) { this.attributes[name] = value; },
+test('Operation status renders in the standalone popup without the former wizard wrapper', () => {
+  const elements = new Map();
+  let renderedGroups = false;
+  const context = vm.createContext({
+    operationId: 'saved-operation', operationState: '', canCloseWithoutCredentials: false, receiverReady: true,
+    window: {clearTimeout() {}}, pollTimer: null,
+    node: (selector) => {
+      if (selector === '[data-vcf-backup-operation]') return null;
+      if (!elements.has(selector)) elements.set(selector, {textContent: '', classList: {toggle() {}, add() {}, remove() {}}, replaceChildren() {}});
+      return elements.get(selector);
+    },
+    syncOperationView() {}, operationStateLabel: (state) => state,
+    safeText: (value, fallback) => value || fallback,
+    nativeOperationRunning: () => false,
+    renderOperationGroups: () => { renderedGroups = true; },
+    renderOperationSources() {}, clearManualPasswords() {}, form: {dataset: {tasksRoot: '/tasks'}},
   });
-  const reviewForm = makeElement();
-  const operation = makeElement();
-  const title = makeElement(); const description = makeElement();
-  const back = makeElement(); const next = makeElement(); const submit = makeElement();
-  const nav = makeElement();
-  const elements = new Map([
-    ['[data-vcf-backup-review-form]', reviewForm], ['[data-vcf-backup-operation]', operation],
-    ['[data-atlaso-wizard-back]', back], ['[data-atlaso-wizard-next]', next], ['[data-atlaso-wizard-submit]', submit],
-    ['[data-atlaso-wizard-title]', title], ['[data-atlaso-wizard-description]', description],
-  ]);
-  const context = vm.createContext({operationStarted: true, node: (selector) => elements.get(selector), wizard: {setNavigationLocked(value) { nav.disabled = value; }}});
+  vm.runInContext(`${functionDeclaration('reconciliationStatusText')}\n${functionDeclaration('renderOperation')}`, context);
+  context.renderOperation({operation_id: 'saved-operation', state: 'succeeded', progress_percent: 100, groups: []});
+  assert.equal(elements.get('[data-vcf-backup-operation-state]').textContent, 'succeeded');
+  assert.equal(elements.get('[data-vcf-backup-operation-id]').textContent, 'saved-operation');
+  assert.equal(renderedGroups, true);
+});
+
+test('An active operation locks the configuration wizard after the status popup takes over', () => {
+  const declarations = functionDeclaration('syncOperationView');
+  let navigationLocked = false;
+  const context = vm.createContext({operationStarted: true, wizard: {setNavigationLocked(value) { navigationLocked = value; }}});
   vm.runInContext(declarations, context);
   context.syncOperationView();
-  assert.equal(reviewForm.classList.hidden, true);
-  assert.equal(operation.classList.hidden, false);
-  assert.equal(title.textContent, 'Backup status');
-  assert.match(description.textContent, /verify the initial backup/);
-  assert.equal(nav.disabled, true);
-
+  assert.equal(navigationLocked, true);
 });
 
 test('Discovery refresh restores only matching eligible IDs and drops unsupported or stale choices', () => {
@@ -354,7 +443,17 @@ test('Header selection only selects supported rows; unsupported row controls and
 });
 
 test('Schedule controls appear only for selected native products that use them', () => {
-  assert.match(js, /const daily = \["fleet", "sddc", "vcenter"\]\.some\(\(kind\) => kinds\.has\(kind\)\)/);
+  assert.match(modal, /data-vcf-backup-fleet-schedule-mode-select/);
+  assert.match(modal, /Preserve existing schedule/);
+  assert.match(modal, /Daily recurring backups/);
+  assert.match(modal, /Disable recurring backups/);
+  assert.match(js, /fleet_schedule_mode: fleetScheduleMode\(\)/);
+  assert.match(js, /function selectedSourceKinds\(\)/);
+  assert.match(js, /const directDailySelected = \["sddc", "vcenter"\]\.some\(\(kind\) => selectedKinds\.has\(kind\)\)/);
+  assert.match(js, /const operationsDaily = operationsSelected && fleetScheduleMode\(\) === "daily"/);
+  assert.match(js, /if \(operationsGroups\.length\)[\s\S]*?VCF Operations recurring backups/);
+  assert.match(js, /Scheduling intent/);
+  assert.match(js, /Initial backup[\s\S]*?Runs once in every mode/);
   assert.match(js, /const nsx = kinds\.has\("nsx"\)/);
   assert.match(js, /const stateChange = nsx \|\| kinds\.has\("sddc"\)/);
   assert.match(js, /const generalRetention = kinds\.has\("fleet"\) \|\| kinds\.has\("vcenter"\)/);
@@ -363,11 +462,82 @@ test('Schedule controls appear only for selected native products that use them',
   assert.doesNotMatch(modal, /hourly NSX/);
 });
 
+test('Operations recurrence controls follow selected components and preserve permits no daily time', () => {
+  const declarations = ['selectedSourceKinds', 'fleetScheduleMode', 'updateSourceFields', 'settingsAreValid'].map(functionDeclaration).join('\n');
+  const components = [
+    {id: 'ops-1', source_id: 'ops-source'},
+    {id: 'sddc-1', source_id: 'sddc-source'},
+    {id: 'nsx-1', source_id: 'nsx-source'},
+    {id: 'vcenter-1', source_id: 'vcenter-source'},
+  ];
+  let selectedIds = ['ops-1'];
+  const sources = [
+    {request: {source_id: 'ops-source', source_kind: 'fleet'}, summary: {source_id: 'ops-source'}},
+    {request: {source_id: 'sddc-source', source_kind: 'sddc'}, summary: {source_id: 'sddc-source'}},
+    {request: {source_id: 'nsx-source', source_kind: 'nsx'}, summary: {source_id: 'nsx-source'}},
+    {request: {source_id: 'vcenter-source', source_kind: 'vcenter'}, summary: {source_id: 'vcenter-source'}},
+  ];
+  const fields = new Map([
+    ['fleet_schedule_mode', {value: 'preserve'}], ['full_time', {value: ''}],
+    ['nsx_interval_minutes', {value: '60'}], ['state_change', {checked: false}],
+    ['retention_value', {value: '14'}], ['sddc_most_recent', {value: '10'}],
+    ['sddc_hourly_days', {value: '2'}], ['sddc_daily_days', {value: '15'}],
+    ['sftp_secret_ref', {value: 'vault:destination'}], ['encryption_secret_ref', {value: 'vault:passphrase'}],
+    ['address', {readOnly: false}],
+  ]);
+  const nodes = new Map();
+  const node = (selector) => {
+    if (!nodes.has(selector)) nodes.set(selector, {hidden: false, textContent: '', classList: {toggle(name, value) { if (name === 'hidden') this.hidden = value; }}});
+    return nodes.get(selector);
+  };
+  const context = vm.createContext({
+    components, inspectedSources: sources, selectedComponentIds: () => selectedIds,
+    field: (name) => fields.get(name), node, entrySelect: null, mode: null,
+    secrets: [{}],
+  });
+  vm.runInContext(declarations, context);
+  context.updateSourceFields();
+  assert.equal(node('[data-vcf-backup-fleet-schedule-mode]').classList.hidden, false);
+  assert.equal(node('[data-vcf-backup-daily-time]').classList.hidden, true);
+  assert.equal(context.settingsAreValid(), true, 'preserving an unconfigured Operations schedule permits destination and initial backup only');
+
+  fields.get('fleet_schedule_mode').value = 'daily';
+  context.updateSourceFields();
+  assert.equal(node('[data-vcf-backup-daily-time]').classList.hidden, false);
+  assert.equal(context.settingsAreValid(), false, 'Daily mode requires a recurring backup time');
+  fields.get('full_time').value = '02:00';
+  assert.equal(context.settingsAreValid(), true);
+
+  selectedIds = ['sddc-1'];
+  fields.get('full_time').value = '';
+  context.updateSourceFields();
+  assert.equal(node('[data-vcf-backup-fleet-schedule-mode]').classList.hidden, true);
+  assert.equal(node('[data-vcf-backup-daily-time]').classList.hidden, false, 'selected direct products continue to show their native schedule controls');
+  assert.equal(node('[data-vcf-backup-daily-time] span').textContent, 'Daily full backup time (UTC for SDDC Manager)');
+  assert.equal(context.settingsAreValid(), false);
+
+  selectedIds = ['vcenter-1'];
+  context.updateSourceFields();
+  assert.equal(node('[data-vcf-backup-daily-time] span').textContent, 'Daily full backup time (appliance timezone for vCenter)');
+
+  selectedIds = ['sddc-1', 'vcenter-1'];
+  context.updateSourceFields();
+  assert.equal(node('[data-vcf-backup-daily-time] span').textContent, 'Daily full backup time (UTC for SDDC Manager; appliance timezone for vCenter)');
+
+  selectedIds = ['ops-1', 'vcenter-1'];
+  context.updateSourceFields();
+  assert.equal(node('[data-vcf-backup-daily-time] span').textContent, 'Daily full backup time (UTC for Operations; appliance timezone for vCenter)');
+
+  selectedIds = ['nsx-1'];
+  context.updateSourceFields();
+  assert.equal(node('[data-vcf-backup-daily-time]').classList.hidden, true);
+});
+
 test('The updated backup script URL and service worker cache version stay aligned', () => {
   const worker = fs.readFileSync(path.join(__dirname, '../../atlaso/app/static/service-worker.js'), 'utf8');
-  assert.match(helper, /vcf-backup\.js\?v=issue-1066-10/);
-  assert.match(worker, /ATLASO_CACHE_PREFIX\}401/);
-  assert.match(worker, /vcf-backup\.js\?v=issue-1066-10/);
+  assert.match(helper, /vcf-backup\.js\?v=issue-1066-15/);
+  assert.match(worker, /ATLASO_CACHE_PREFIX\}406/);
+  assert.match(worker, /vcf-backup\.js\?v=issue-1066-15/);
 });
 
 test('Review binds the selected component IDs, source credentials, policy, and saved secret references', () => {
@@ -400,21 +570,54 @@ test('Configuration executes only with a fresh review and explicit recovery, rep
   assert.match(modal, /name="acknowledged" required/);
   assert.match(js, /function lockSubmitAfterOperation\(\)[\s\S]*?window\.setTimeout\(\(\) => \{\s+if \(operationStarted\) node\("\[data-atlaso-wizard-submit\]"\)\.disabled = true;/);
   assert.match(js, /onStepChange: \(\{step\}\) => \{\s+const body = node\("\.vcf-sddc-wizard-body"\);[\s\S]*?if \(step\.id === "discovery"\) renderComponents\(\);\s+syncOperationView\(\);/);
-  assert.match(js, /function syncOperationView\(\)[\s\S]*?wizard\?\.setNavigationLocked\(active\)/);
+  assert.match(js, /function syncOperationView\(\)[\s\S]*?wizard\?\.setNavigationLocked\(operationStarted\)/);
 });
 
 test('Task polling reads operation state while reconcile remains a separate read-only action', () => {
-  assert.match(js, /call\(`\/operations\/\$\{encodeURIComponent\(operationId\)\}`\)/);
-  assert.match(js, /const closeReviewed = field\("close_recovery"\)\.checked;[\s\S]*?call\("\/reconcile", \{operation_id: operationId, sources: inspectedSources\.map\(\(\{request\}\) => request\), close_reviewed: closeReviewed\}\)/);
+  assert.match(js, /call\(`\/operations\/\$\{encodeURIComponent\(requestedId\)\}`\)/);
+  assert.match(js, /const closeReviewed = field\("close_recovery"\)\.checked;[\s\S]*?call\("\/reconcile", \{operation_id: requestedId, sources: inspectedSources\.map\(\(\{request\}\) => request\), close_reviewed: closeReviewed\}\)/);
+  assert.match(js, /function invalidateStatusView\(\)[\s\S]*?statusViewEpoch \+= 1;\s+busy = false/);
+  assert.match(js, /function isCurrentStatusView\(epoch, id\)[\s\S]*?statusDialog\.open && statusViewEpoch === epoch && operationId === id/);
+  assert.match(js, /statusDialog\.addEventListener\("close", \(\) => \{\s+if \(!statusDialog\.open\) invalidateStatusView\(\);/);
   assert.match(js, /schedulePoll\(1800\)/);
-  assert.match(modal, /data-vcf-backup-reconcile/);
-  assert.match(modal, /data-vcf-backup-task-link/);
-  assert.match(modal, /data-vcf-backup-recovery-guidance/);
-  assert.match(modal, /data-vcf-backup-native-running-warning/);
-  assert.match(modal, /After checking native status, finish recovery so I can review a new plan\./);
+  assert.match(statusModal, /data-vcf-backup-reconcile/);
+  assert.match(statusModal, /data-vcf-backup-task-link/);
+  assert.match(statusModal, /data-vcf-backup-recovery-guidance/);
+  assert.match(statusModal, /data-vcf-backup-native-running-warning/);
+  assert.match(statusModal, /data-vcf-backup-reconciliation-status/);
+  assert.match(statusModal, /After checking native status, finish recovery so I can review a new plan\./);
   assert.match(js, /error\.textContent = result\.error \|\| ""/);
   assert.match(js, /guidance\.textContent = result\.recovery_warning \|\|/);
   assert.match(js, /renderOperationGroups\(result\.groups, result\.checkpoint, reconciliation\)/);
+  assert.match(js, /\["queued", "pending", "running"\]\.includes\(String\(result\.state \|\| ""\)\.toLowerCase\(\)\) \|\| reconciliationActive/);
+});
+
+test('Read-only reconciliation progress remains visible and polls after the native operation is terminal', () => {
+  const declarations = ['reconciliationStatusText', 'renderOperation', 'schedulePoll'].map(functionDeclaration).join('\n');
+  const elements = new Map();
+  const node = (selector) => {
+    if (!elements.has(selector)) elements.set(selector, {
+      textContent: '', hidden: false, disabled: false, href: '', value: 0,
+      classList: {toggle() {}, add() {}, remove() {}}, replaceChildren() {}, removeAttribute() {},
+    });
+    return elements.get(selector);
+  };
+  let pollDelay = 0;
+  const context = vm.createContext({
+    operationId: 'op-1', operationState: '', canCloseWithoutCredentials: false, receiverReady: true,
+    window: {clearTimeout() {}, setTimeout(_callback, delay) { pollDelay = delay; }}, pollTimer: null,
+    node, syncOperationView() {}, operationStateLabel: (state) => state,
+    safeText: (value, fallback) => value || fallback, nativeOperationRunning: () => false,
+    renderOperationGroups() {}, renderOperationSources() {}, clearManualPasswords() {},
+    form: {dataset: {tasksRoot: '/tasks'}},
+  });
+  vm.runInContext(declarations, context);
+  context.renderOperation({operation_id: 'op-1', state: 'succeeded', progress_percent: 100, groups: [], reconciliation_state: 'running', reconciliation_job_id: 'job-opaque'});
+  assert.equal(node('[data-vcf-backup-reconciliation-status]').textContent, 'Read-only reconciliation is running. Native settings and backup status are being checked.');
+  assert.equal(node('[data-vcf-backup-reconcile]').disabled, true);
+  assert.equal(pollDelay, 1800);
+  assert.match(context.reconciliationStatusText({reconciliation_state: 'failed', reconciliation_error: 'Reconciliation worker failed safely.'}), /failed safely/);
+  assert.equal(context.reconciliationStatusText({reconciliation_state: 'succeeded'}), 'Read-only reconciliation completed.');
 });
 
 test('Final submission delegates constraints to the active wizard step, not hidden Login controls', () => {
@@ -434,6 +637,7 @@ test('Manual recovery credentials are bypassed only for an explicitly allowed cl
     let body;
     const context = vm.createContext({
       operationId: 'op-1', busy: false, canCloseWithoutCredentials: capability,
+      statusDialog: {open: true}, statusViewEpoch: 1, isCurrentStatusView: () => true,
       inspectedSources: [{request: {password: ''}, credentialMode: 'manual'}],
       field: () => ({checked: closeReviewed}),
       renderRecoveryCredentials: () => { prompted += 1; },
@@ -453,6 +657,221 @@ test('Manual recovery credentials are bypassed only for an explicitly allowed cl
   assert.deepEqual(await run(false, true), {calls: 0, prompted: 1, body: undefined});
 });
 
+test('Late operation lookups cannot replace the operation selected afterward', async () => {
+  const declaration = functionDeclaration('openOperationStatus');
+  const pending = new Map();
+  const hydrated = [];
+  const statuses = [];
+  const genericNode = () => ({
+    value: '', checked: false, textContent: '', href: '', childElementCount: 0,
+    classList: {add() {}, remove() {}, toggle() {}},
+    replaceChildren() {}, querySelectorAll: () => [],
+  });
+  const nodes = new Map();
+  const statusDialog = {open: false};
+  const context = vm.createContext({
+    operationId: '', statusViewEpoch: 0, busy: false, pollTimer: null,
+    statusDialog, window: {clearTimeout() {}},
+    node: (selector) => { if (!nodes.has(selector)) nodes.set(selector, genericNode()); return nodes.get(selector); },
+    showStatusDialog: () => { statusDialog.open = true; },
+    setStatus: (message, error) => statuses.push([message, error]), clearManualPasswords() {}, hydrateOperation: (result) => hydrated.push(result.operation_id),
+    field: () => ({checked: false}),
+    call: (path) => new Promise((resolve) => pending.set(path, resolve)),
+    invalidateStatusView: () => { context.statusViewEpoch += 1; context.busy = false; return context.statusViewEpoch; },
+    isCurrentStatusView: (epoch, id) => statusDialog.open && context.statusViewEpoch === epoch && context.operationId === id,
+  });
+  const open = vm.runInContext(`(async ${declaration})`, context);
+  const oldLookup = open('old-operation');
+  const currentLookup = open('current-operation');
+  pending.get('/operations/current-operation')({operation_id: 'current-operation'});
+  await currentLookup;
+  assert.equal(statusDialog.open, true);
+  assert.equal(context.operationId, 'current-operation');
+  assert.equal(context.isCurrentStatusView(context.statusViewEpoch, 'current-operation'), true);
+  assert.deepEqual(statuses, [['Loading operation status…', undefined], ['Loading operation status…', undefined]]);
+  pending.get('/operations/old-operation')({operation_id: 'old-operation'});
+  await oldLookup;
+  assert.deepEqual(hydrated, ['current-operation']);
+  assert.equal(context.operationId, 'current-operation');
+});
+
+test('Late poll and reconciliation results are ignored after selection or popup close', async () => {
+  const pollDeclaration = functionDeclaration('pollOperation');
+  const reconcileDeclaration = functionDeclaration('reconcile');
+  const deferred = () => {
+    let resolve;
+    const promise = new Promise((done) => { resolve = done; });
+    return {promise, resolve};
+  };
+
+  const pollResults = [];
+  const pollCalls = [];
+  let pollContext;
+  pollContext = vm.createContext({
+    operationId: 'old-operation', statusViewEpoch: 1, statusDialog: {open: true}, busy: false,
+    isCurrentStatusView: (epoch, id) => pollContext.statusDialog.open && pollContext.statusViewEpoch === epoch && pollContext.operationId === id,
+    call(path) { const request = deferred(); pollCalls.push({path, ...request}); return request.promise; },
+    renderOperation: (result) => pollResults.push(result.operation_id),
+  });
+  pollContext.pollOperation = vm.runInContext(`(async ${pollDeclaration})`, pollContext);
+  const oldPoll = pollContext.pollOperation();
+  pollContext.statusViewEpoch = 2;
+  pollContext.operationId = 'new-operation';
+  pollContext.busy = false;
+  const newPoll = pollContext.pollOperation();
+  pollCalls[0].resolve({operation_id: 'old-operation'});
+  await oldPoll;
+  assert.equal(pollContext.busy, true, 'an old finally block must not release a newer request lock');
+  pollCalls[1].resolve({operation_id: 'new-operation'});
+  await newPoll;
+  assert.deepEqual(pollResults, ['new-operation']);
+  assert.equal(pollContext.busy, false);
+
+  const reconcileResult = deferred();
+  let reconciliationRendered = false;
+  let statusChanged = false;
+  let reconcileContext;
+  reconcileContext = vm.createContext({
+    operationId: 'operation-to-close', statusViewEpoch: 4, statusDialog: {open: true}, busy: false,
+    isCurrentStatusView: (epoch, id) => reconcileContext.statusDialog.open && reconcileContext.statusViewEpoch === epoch && reconcileContext.operationId === id,
+    canCloseWithoutCredentials: false, inspectedSources: [], field: () => ({checked: false}),
+    call: () => reconcileResult.promise, renderOperation: () => { reconciliationRendered = true; },
+    setStatus: () => { statusChanged = true; }, renderRecoveryCredentials() {},
+  });
+  const reconciliation = vm.runInContext(`(async ${reconcileDeclaration})()`, reconcileContext);
+  reconcileContext.statusDialog.open = false;
+  reconcileContext.statusViewEpoch += 1;
+  reconcileContext.busy = false;
+  reconcileResult.resolve({operation_id: 'operation-to-close', state: 'reconciled'});
+  await reconciliation;
+  assert.equal(reconciliationRendered, false);
+  assert.equal(statusChanged, false);
+  assert.equal(reconcileContext.busy, false);
+});
+
+test('Hydrating an operation feeds the standalone status view without wizard navigation', () => {
+  const lookup = {value: ''};
+  let rendered = null;
+  const context = vm.createContext({
+    operationId: '', operationStarted: false, inspectionRevision: '', inspectedSources: [], components: [], receiver: null,
+    invalidateReview: () => {}, buildRecoverySource: (source) => source,
+    renderOperation: (result) => { rendered = result; }, node: () => lookup, setStatus: () => {},
+  });
+  vm.runInContext(functionDeclaration('hydrateOperation'), context);
+  const result = {operation_id: 'saved-operation', revision: 'revision', state: 'running', sources: [], components: []};
+  context.hydrateOperation(result);
+  assert.equal(rendered, result);
+  assert.equal(lookup.value, 'saved-operation');
+  assert.equal(context.operationStarted, true);
+});
+
+test('Backup Operations list uses the shared read-only grid and opens selected operation status', () => {
+  const declarations = ['operationStateLabel', 'operationSourceSummary', 'operationCell', 'initializeOperationsGrid'].map(functionDeclaration).join('\n');
+  let gridConfig;
+  let openedOperation = '';
+  const table = {on() {}};
+  const gridElement = {};
+  const context = vm.createContext({
+    document: {querySelector: (selector) => selector === '[data-vcf-backup-operations-grid]' ? gridElement : {}},
+    window: {AtlasoUiPatterns: {createGrid(config) { gridConfig = config; return {table, setError() {}}; }}},
+    operationsInitialized: false, operationsGrid: null,
+    openOperationStatus(id) { openedOperation = id; },
+    sourceKindLabel: (kind) => kind,
+    safeText: (value, fallback = 'Not recorded') => value === undefined || value === null || value === '' ? fallback : String(value),
+    operationStateLabel: (value) => value,
+    documentCreateElement: () => ({textContent: ''}),
+  });
+  context.document.createElement = context.documentCreateElement;
+  vm.runInContext(declarations, context);
+  context.initializeOperationsGrid();
+  assert.equal(gridConfig.pattern, 'read-only');
+  assert.deepEqual(Array.from(gridConfig.options.columns, (column) => column.field), ['created_at', 'operation_id', 'state', 'component_count', 'sources']);
+  gridConfig.onOpenRow({operation_id: 'operation-123'});
+  assert.equal(openedOperation, 'operation-123');
+  assert.match(js, /call\(`\/operations\/\$\{encodeURIComponent\(requestedId\)\}`\)/);
+  assert.match(js, /call\(`\/operations\?\$\{query\.toString\(\)\}`\)/);
+});
+
+test('Backup Operations list loads the bounded first page and follows its cursor', async () => {
+  const declarations = ['operationCell', 'operationSourceSummary', 'loadOperations'].map(functionDeclaration).join('\n');
+  const requests = [];
+  const pages = [
+    {items: [{operation_id: 'first'}], next_cursor: 'opaque-cursor'},
+    {items: [{operation_id: 'second'}], next_cursor: null},
+  ];
+  const data = [];
+  const status = {textContent: ''};
+  const refresh = {disabled: false};
+  const more = {disabled: false, hidden: true, classList: {toggle(_name, hidden) { more.hidden = hidden; }}};
+  const table = {
+    async setData(items) { data.splice(0, data.length, ...items); },
+    async addData(items) { data.push(...items); },
+    getDataCount: () => data.length,
+    getData: () => data,
+  };
+  const context = vm.createContext({
+    operationsGrid: {table, setError() {}}, operationsLoading: false, operationsCursor: '',
+    URLSearchParams,
+    document: {querySelector: (selector) => ({
+      '[data-vcf-backup-operations-status]': status,
+      '[data-vcf-backup-operations-refresh]': refresh,
+      '[data-vcf-backup-operations-more]': more,
+    }[selector])},
+    call: async (path) => { requests.push(path); return pages.shift(); },
+    safeText: (value, fallback = 'Not recorded') => value === undefined || value === null || value === '' ? fallback : String(value),
+  });
+  const loadDeclaration = functionDeclaration('loadOperations');
+  vm.runInContext(declarations.replace(loadDeclaration, ''), context);
+  context.loadOperations = vm.runInContext(`(async ${loadDeclaration})`, context);
+  await context.loadOperations(false);
+  assert.equal(requests[0], '/operations?limit=25');
+  assert.equal(data.length, 1);
+  assert.equal(more.hidden, false);
+  await context.loadOperations(true);
+  assert.equal(requests[1], '/operations?limit=25&cursor=opaque-cursor');
+  assert.equal(data.length, 2);
+  assert.equal(more.hidden, true);
+});
+
+test('Start New Plan requires ready receiver and a terminal operation', () => {
+  const newPlan = functionDeclaration('startNewPlan');
+  for (const state of [{receiverReady: false, operationState: 'succeeded'}, {receiverReady: true, operationState: 'running'}]) {
+    let reset = false;
+    const isolated = vm.createContext({
+      receiverReady: state.receiverReady, operationState: state.operationState,
+      window: {clearTimeout() {}}, pollTimer: 0,
+      clearManualPasswords() { reset = true; },
+    });
+    vm.runInContext(`(${newPlan})()`, isolated);
+    assert.equal(reset, false);
+  }
+  assert.match(js, /if \(!receiverReady \|\| !\["succeeded", "reconciled"\]\.includes\(operationState\)\) return;/);
+});
+
+test('Successful reconciliation clears stale status but leaves native errors visible', async () => {
+  const declaration = functionDeclaration('reconcile');
+  const run = async (result) => {
+    let status = 'Enter the source password(s) required for read-only reconciliation.';
+    let passwordsCleared = false;
+    const context = vm.createContext({
+      operationId: 'op-1', busy: false, canCloseWithoutCredentials: false,
+      statusDialog: {open: true}, statusViewEpoch: 1, isCurrentStatusView: () => true,
+      inspectedSources: [], field: () => ({checked: false}),
+      call: async () => result, renderOperation: (value) => { context.rendered = value; },
+      renderRecoveryCredentials() {}, clearManualPasswords() { passwordsCleared = true; }, setStatus(value) { status = value; },
+    });
+    await vm.runInContext(`(async ${declaration})()`, context);
+    return {status, rendered: context.rendered, passwordsCleared};
+  };
+  assert.equal((await run({state: 'reconciled'})).status, '');
+  const errored = await run({state: 'reconciled', error: 'Native backup verification failed.'});
+  assert.equal(errored.status, '');
+  assert.equal(errored.rendered.error, 'Native backup verification failed.');
+  const queued = await run({state: 'needs_recovery', reconciliation_state: 'queued'});
+  assert.equal(queued.passwordsCleared, true);
+  assert.match(queued.status, /Read-only reconciliation started/);
+});
+
 test('Closing the dialog clears every request-local manual password', () => {
   assert.match(js, /inspectedSources\.push\(\{request: sourceRequest, credentialMode: request\.credential_vault_id \? "vault" : "manual"/);
   assert.match(js, /function clearManualPasswords\(\) \{[\s\S]*?inspectedSources\.forEach\(\(\{request, credentialMode\}\) => \{\s+if \(credentialMode === "manual"\) request\.password = "";/);
@@ -461,15 +880,15 @@ test('Closing the dialog clears every request-local manual password', () => {
 });
 
 test('An operation ID reloads safe durable sources and collects manual passwords only in memory', () => {
-  assert.match(modal, /name="recovery_operation_id" data-vcf-backup-recovery-id/);
-  assert.match(modal, /data-vcf-backup-load-operation/);
-  assert.match(js, /async function loadOperation\(\)[\s\S]*?call\(`\/operations\/\$\{encodeURIComponent\(requestedId\)\}`\)/);
-  assert.match(js, /function hydrateOperation\(result\)[\s\S]*?inspectedSources = \(result\.sources \|\| \[\]\)\.map\(buildRecoverySource\)[\s\S]*?wizard\.showStep\("review", \{force: true\}\)/);
-  assert.match(js, /wizard\.setSkippedSteps\(inspectedSources\.length && inspectedSources\.every\(\(\{credentialMode\}\) => credentialMode === "vault"\) \? \["login"\] : \[\]\)/);
+  assert.match(statusModal, /name="recovery_operation_id" data-vcf-backup-recovery-id/);
+  assert.match(statusModal, /data-vcf-backup-load-operation/);
+  assert.match(js, /async function loadOperation\(\)[\s\S]*?openOperationStatus\(requestedId\)/);
+  assert.match(js, /function hydrateOperation\(result\)[\s\S]*?inspectedSources = \(result\.sources \|\| \[\]\)\.map\(buildRecoverySource\)[\s\S]*?renderOperation\(result\)/);
+  assert.doesNotMatch(js, /hydrateOperation\(result\)[\s\S]*?wizard\.showStep\("review"/);
   assert.match(js, /function buildRecoverySource\(source\)[\s\S]*?credential_reference \|\| \{\}[\s\S]*?confirmed_tls_fingerprint: source\.fingerprint[\s\S]*?credential_uri: reference\.uri/);
   assert.match(js, /function renderRecoveryCredentials\(\)[\s\S]*?if \(credentialMode === "manual"\)[\s\S]*?input\.type = "password"[\s\S]*?request\.password = input\.value/);
   assert.doesNotMatch(js, /credential_reference[^\n]*revision/);
-  assert.match(modal, /data-vcf-backup-operation-id/);
+  assert.match(statusModal, /data-vcf-backup-operation-id/);
   assert.match(js, /Enter the source password\(s\) required for read-only reconciliation/);
   assert.match(js, /data-vcf-backup-operation-error/);
 });
@@ -483,7 +902,7 @@ test('Review highlights native side effects and operation results prioritize err
 });
 
 test('Terminal operations can be explicitly cleared before a fresh plan', () => {
-  assert.match(modal, /data-vcf-backup-new-plan/);
-  assert.match(js, /function startNewPlan\(\) \{\s+if \(!\["succeeded", "reconciled"\]\.includes\(operationState\)\) return;[\s\S]*?operationId = "";[\s\S]*?operationStarted = false;/);
-  assert.match(js, /wizard\.reset\(\)/);
+  assert.match(statusModal, /data-vcf-backup-new-plan/);
+  assert.match(js, /function startNewPlan\(\) \{\s+if \(!receiverReady \|\| !\["succeeded", "reconciled"\]\.includes\(operationState\)\) return;[\s\S]*?operationId = "";[\s\S]*?operationStarted = false;/);
+  assert.match(js, /statusDialog\.close\(\);[\s\S]*?wizard\.open\(\{launcher: document\.querySelector\("\[data-vcf-backup-open\]"\), step: "credential", highestStep: "credential"\}\)/);
 });

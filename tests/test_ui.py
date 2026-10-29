@@ -1039,7 +1039,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}401`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}406`;' in service_worker.text
     assert "/static/vcf-certificate-renewal.js?v=issue-1052-4" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
@@ -18436,9 +18436,11 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert "Lab / Non-production Overrides requires JavaScript." in fallback
     assert "No changes are made by opening this page." in fallback
     assert "Review DNS" not in visible_workspace
-    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 10
+    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 12
+    assert "Configure VCF Backup" in visible_workspace
+    assert "Resume Existing Backup Operation" in visible_workspace
     assert "Import passwords into a vault" in visible_workspace
-    assert visible_workspace.count('class="vcf-helper-action-bands"') == 5
+    assert visible_workspace.count('class="vcf-helper-action-bands"') == 6
     groups = {key: visible_workspace.split(f'id="vcf-helper-{key}" role="tabpanel"', 1)[1].split('class="tab-panel', 1)[0] for key in ("deployment", "credentials", "certificates", "ldap", "lab")}
     assert "Import passwords into a vault" in groups["credentials"]
     assert "VCF Certificate Trust" in groups["certificates"]

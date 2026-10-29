@@ -147,11 +147,28 @@
               <span class="vcf-helper-action-copy"><span class="vcf-helper-action-title">Configure VCF Backup</span><span class="muted">Discover supported VCF components, review backup schedules and retention, then configure the SFTP target and run an initial backup.</span></span>
             </button>
           </div>
+          {% if identity.has_role('admin') %}
+            <button class="info-band vcf-helper-action-band" type="button" data-vcf-backup-resume aria-haspopup="dialog" aria-controls="vcf-backup-status-modal">
+              <span class="vcf-helper-action-copy"><span class="vcf-helper-action-title">Resume Existing Backup Operation</span><span class="muted">Review status or reconcile a previous operation. This does not start a new backup.</span></span>
+            </button>
+          {% endif %}
           {% if not (vcf_backup_wizard is defined and vcf_backup_wizard.ready and identity.has_role('admin')) %}
             <p class="muted" id="vcf-backup-launcher-reason">{% if not (vcf_backup_wizard is defined and vcf_backup_wizard.ready) %}{{ vcf_backup_wizard.reason if vcf_backup_wizard is defined else 'VCF Backup SFTP readiness has not been provided.' }}{% else %}Administrator access is required to configure VCF Backups.{% endif %} <a href="{{ management_ui_root }}/vcf-backups">Review VCF Backup SFTP settings and Apply status.</a></p>
           {% endif %}
           <noscript><p class="muted">Enable JavaScript to inspect VCF backup targets and review a configuration. <a href="{{ management_ui_root }}/vcf-backups">Open VCF Backup SFTP settings.</a></p></noscript>
         </div>
+        {% if identity.has_role('admin') %}
+          <section class="panel" data-vcf-backup-operations-section aria-labelledby="vcf-backup-operations-title">
+            <div class="panel-head compact">
+              <div><h3 id="vcf-backup-operations-title">Backup Operations</h3><p class="muted">Review and reconcile previous backup operations. Opening an operation does not repeat native writes.</p></div>
+              <button class="button secondary" type="button" data-vcf-backup-operations-refresh>Refresh</button>
+            </div>
+            <p class="muted" data-vcf-backup-operations-status role="status" aria-live="polite">Open Backup to load recent operations.</p>
+            <div class="hidden" data-vcf-backup-operations-grid aria-label="VCF backup operations"></div>
+            <div data-vcf-backup-operations-fallback><div class="table-scroll"><table class="data-table fallback-table"><thead><tr><th>Created</th><th>Operation</th><th>Status</th><th>Components</th><th>Sources</th></tr></thead><tbody><tr><td colspan="5">No backup operations loaded.</td></tr></tbody></table></div></div>
+            <button class="button ghost hidden" type="button" data-vcf-backup-operations-more>Load more operations</button>
+          </section>
+        {% endif %}
       </div>
       <div class="tab-panel" id="vcf-helper-lab" role="tabpanel" aria-labelledby="vcf-helper-lab-tab" hidden>
         <h3>Lab</h3>
@@ -178,7 +195,8 @@
 <script id="vcf-vault-credential-options" type="application/json">{{ vcf_vault_credential_options | tojson }}</script>
 <script id="vcf-backup-secret-options" type="application/json">{{ vcf_backup_secret_options | default([], true) | tojson }}</script>
 {% include "partials/vcf_backup_modal.html" %}
-<script src="/static/vcf-backup.js?v=issue-1066-10" defer></script>
+{% include "partials/vcf_backup_status_modal.html" %}
+<script src="/static/vcf-backup.js?v=issue-1066-15" defer></script>
 <noscript><style>#vcf-fqdn-modal:not([open]) { display: block; position: static; width: min(100%, 70rem); margin: 1rem auto; }</style></noscript>
 <noscript><style>.vcf-helper-subjects > .tab-panel[hidden] { display: grid; } .vcf-helper-tabs { display: none; }</style></noscript>
 

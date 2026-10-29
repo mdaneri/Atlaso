@@ -11,14 +11,16 @@ import json
 import re
 import secrets
 import time
+from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from typing import Any, Protocol
-from urllib.parse import urlsplit
+from unicodedata import category
+from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
 from itsdangerous import BadData, URLSafeTimedSerializer
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -105,6 +107,11 @@ def _actor(db: Session, actor: str) -> None:
 def _serializer() -> URLSafeTimedSerializer:
     """Bind short-lived reviews to this appliance's application key."""
     return URLSafeTimedSerializer(get_settings().secret_key, salt="vcf-backup-review-v1")
+
+
+def _operation_cursor_serializer() -> URLSafeTimedSerializer:
+    """Sign actor-bound cursors for bounded backup operation listings."""
+    return URLSafeTimedSerializer(get_settings().secret_key, salt="vcf-backup-operation-list-v1")
 
 
 def _endpoint(address: Any, port: Any, fingerprint: Any = "0" * 64) -> Target:
@@ -255,7 +262,10 @@ def _policy(values: Any) -> dict[str, Any]:
         raise BackupOperationError("Review a backup policy first.")
     result: dict[str, Any] = {"full_time": str(values.get("full_time", "02:00")),
               "retention_mode": str(values.get("retention_mode", "count")),
-              "state_change": values.get("state_change", True)}
+              "state_change": values.get("state_change", True),
+              "fleet_schedule_mode": values.get("fleet_schedule_mode", "preserve")}
+    if not isinstance(result["fleet_schedule_mode"], str) or result["fleet_schedule_mode"] not in {"preserve", "daily", "disabled"}:
+        raise BackupOperationError("Choose whether to preserve, enable, or disable Operations recurring backups.")
     if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", result["full_time"]):
         raise BackupOperationError("Enter a daily full-backup time as HH:MM.")
     if result["retention_mode"] not in {"count", "days"} or not isinstance(result["state_change"], bool):
@@ -372,6 +382,10 @@ def operation_status(db: Session, actor: str, operation_id: str) -> dict[str, An
     _actor(db, actor)
     _, state = _state(db, actor, operation_id)
     result: dict[str, Any] = {key: state[key] for key in ("operation_id", "state", "checkpoint", "job_id", "progress_percent", "error", "coverage_gaps") if key in state}
+    result.update({key: state[key] for key in (
+        "reconciliation_state", "reconciliation_job_id", "reconciliation_error",
+        "reconciliation_finished_at", "recovery_warning",
+    ) if key in state})
     result["can_close_without_credentials"] = can_close_without_credentials(state)
     result.update(receiver=state["receiver"], revision=_revision(state),
                   sources=[{key: source[key] for key in ("source_id", "kind", "address", "port", "fingerprint", "fleet_address", "fleet_port", "fleet_fingerprint") if key in source} for source in state["sources"]],
@@ -383,13 +397,17 @@ def operation_status(db: Session, actor: str, operation_id: str) -> dict[str, An
         public["credential_reference"] = {key: reference[key] for key in ("mode", "username", "vault_id", "entry_id", "uri") if key in reference}
         if source["inventory"].get("service"):
             public["service"] = source["inventory"]["service"]
-    if state.get("reconciliation"):
+    if "reconciliation" in state:
         result["reconciliation"] = state["reconciliation"]
     return result
 
 
 def can_close_without_credentials(state: dict[str, Any]) -> bool:
-    """Report whether durable checkpoints prove native dispatch never began."""
+    """Report whether durable checkpoints prove native dispatch never began.
+
+    Args:
+        state: Durable operation and per-group dispatch checkpoints.
+    """
     plan = state.get("plan", [])
     return bool(plan) and state.get("checkpoint") in {"reviewed", "queued"} and all(
         group.get("checkpoint") == "reviewed"
@@ -397,6 +415,109 @@ def can_close_without_credentials(state: dict[str, Any]) -> bool:
         and group.get("backup_reference") is None
         for group in plan
     )
+
+
+def _utc_iso(value: datetime | None) -> str | None:
+    """Serialize database timestamps as explicit UTC instants, including SQLite values.
+
+    Args:
+        value: Optional database timestamp; naive stored values represent UTC.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.isoformat()
+
+
+def list_operations(db: Session, actor: str, *, limit: int = 25, cursor: str | None = None) -> dict[str, Any]:
+    """List this administrator's admitted backup jobs using bounded keyset pages.
+
+    Args:
+        db: Session containing admitted jobs and their operation checkpoints.
+        actor: Enabled administrator whose operations may be listed.
+        limit: Maximum number of results, from one through twenty-five.
+        cursor: Optional signed actor-bound continuation from the preceding page.
+    """
+    _actor(db, actor)
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 25:
+        raise BackupOperationError("Choose a page size from 1 to 25 operations.")
+    statement = select(Job).where(Job.type == JOB_TYPE, Job.created_by == actor)
+    if cursor is not None:
+        if not isinstance(cursor, str) or not cursor or len(cursor) > 2048:
+            raise BackupOperationError("The operation list cursor is invalid. Refresh the list.")
+        try:
+            payload = _operation_cursor_serializer().loads(cursor, max_age=30 * 24 * 60 * 60)
+            if not isinstance(payload, dict) or payload.get("actor") != actor:
+                raise ValueError
+            created_at = datetime.fromisoformat(str(payload["created_at"]))
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            last_job_id = payload["job_id"]
+            if not isinstance(last_job_id, str) or not 1 <= len(last_job_id) <= 40:
+                raise ValueError
+        except (BadData, KeyError, TypeError, ValueError):
+            raise BackupOperationError("The operation list cursor is invalid or expired. Refresh the list.") from None
+        statement = statement.where(
+            or_(Job.created_at < created_at, and_(Job.created_at == created_at, Job.id < last_job_id))
+        )
+    jobs = list(db.scalars(statement.order_by(Job.created_at.desc(), Job.id.desc()).limit(limit + 1)))
+    has_more = len(jobs) > limit
+    page_jobs = jobs[:limit]
+    items: list[dict[str, Any]] = []
+    for job in page_jobs:
+        try:
+            task = json.loads(job.task_config_json)
+            operation_id = task.get("operation_id") if isinstance(task, dict) else None
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(operation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", operation_id):
+            continue
+        row = db.scalar(select(Setting).where(Setting.key == PREFIX + operation_id))
+        if row is None:
+            continue
+        try:
+            state = json.loads(row.value)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(state, dict) or state.get("actor") != actor or state.get("job_id") != job.id:
+            continue
+        sources = [
+            {"kind": source["kind"], "address": source["address"], "port": source["port"]}
+            for source in state.get("sources", [])
+            if isinstance(source, dict)
+            and isinstance(source.get("kind"), str)
+            and isinstance(source.get("address"), str)
+            and type(source.get("port")) is int
+        ]
+        component_count = sum(
+            len(group.get("component_ids", []))
+            for group in state.get("plan", [])
+            if isinstance(group, dict) and isinstance(group.get("component_ids"), list)
+        )
+        items.append({
+            "operation_id": operation_id,
+            "state": state.get("state"),
+            "checkpoint": state.get("checkpoint"),
+            "job_id": job.id,
+            "sources": sources,
+            "component_count": component_count,
+            "created_at": _utc_iso(job.created_at),
+            "updated_at": _utc_iso(row.updated_at),
+            "started_at": _utc_iso(job.started_at),
+            "finished_at": _utc_iso(job.finished_at),
+        })
+    next_cursor = None
+    if has_more and page_jobs:
+        last = page_jobs[-1]
+        next_cursor = _operation_cursor_serializer().dumps({
+            "actor": actor,
+            "created_at": _utc_iso(last.created_at),
+            "job_id": last.id,
+        })
+    return {"items": items, "next_cursor": next_cursor}
 
 
 def _source_inputs(db: Session, state: dict[str, Any], values: dict[str, Any]) -> dict[str, tuple[dict[str, Any], Credentials]]:
@@ -423,8 +544,49 @@ def _source_inputs(db: Session, state: dict[str, Any], values: dict[str, Any]) -
     return mapped
 
 
+def _recovery_source_inputs(db: Session, state: dict[str, Any], values: dict[str, Any]) -> dict[str, tuple[dict[str, Any], Credentials]]:
+    """Resolve refreshed credentials for read-only reconciliation at the approved identity.
+
+    Args:
+        db: Session containing encrypted Vault credentials.
+        state: Recorded source endpoints, TLS pins, and credential identities.
+        values: Explicit recovery credential selections or ephemeral manual values.
+    """
+    supplied = values.get("sources")
+    if not isinstance(supplied, list) or len(supplied) != len(state["sources"]):
+        raise BackupOperationError("Supply the exact inspected source connections.")
+    mapped: dict[str, tuple[dict[str, Any], Credentials]] = {}
+    for source in state["sources"]:
+        matches = [item for item in supplied if isinstance(item, dict) and item.get("source_id") == source["source_id"]]
+        if len(matches) != 1:
+            raise BackupOperationError("A source credential is missing or duplicated.")
+        item = matches[0]
+        normalized = _source(item, confirmed=True)
+        if any(normalized.get(key) != source.get(key) for key in normalized):
+            raise BackupOperationError("A source address or confirmed fingerprint changed.")
+        approved = source["credential_reference"]
+        current = _reference(db, item, source)
+        if current["mode"] != approved["mode"] or current["username"] != approved["username"]:
+            raise BackupOperationError("Use the approved source credential identity to reconcile this task.")
+        if current["mode"] == "manual":
+            mapped[source["source_id"]] = (source, Credentials(current["username"], str(item["password"])))
+            continue
+        if current["uri"] != approved["uri"]:
+            raise BackupOperationError("Use a saved source credential for the same confirmed URI to reconcile this task.")
+        entry = db.get(VaultEntry, current["entry_id"], populate_existing=True)
+        if entry is None or not entry.encrypted_value:
+            raise BackupOperationError("The selected Vault credential is unavailable.")
+        mapped[source["source_id"]] = (source, Credentials(current["username"], decrypt_secret(entry.encrypted_value)))
+    return mapped
+
+
 def _native_tasks_terminal(plan: list[dict[str, Any]], reports: list[dict[str, Any]]) -> bool:
-    """Require every recorded native task reference to have a terminal readback."""
+    """Require every recorded native task reference to have a terminal readback.
+
+    Args:
+        plan: Reviewed groups and their durable native task references.
+        reports: Corresponding read-only native task status reports.
+    """
     for group, report in zip(plan, reports, strict=True):
         for reference_key, status_key in (
             ("configuration_reference", "native_configuration"),
@@ -433,7 +595,13 @@ def _native_tasks_terminal(plan: list[dict[str, Any]], reports: list[dict[str, A
             if group.get(reference_key) is None:
                 continue
             status = report.get(status_key)
-            if not isinstance(status, dict) or status.get("state") not in {"succeeded", "failed"}:
+            if not isinstance(status, dict):
+                return False
+            if status_key == "native_backup" and "native_task_terminal" in status:
+                terminal = status.get("native_task_terminal") is True and status.get("native_task_state") in {"succeeded", "failed"}
+            else:
+                terminal = status.get("state") in {"succeeded", "failed"}
+            if not terminal:
                 return False
     return True
 
@@ -448,6 +616,43 @@ def _current_inventory(native: NativeBackup, source: dict[str, Any]) -> None:
     latest = _inventory(native.discover(), source["source_id"])
     if latest != source["inventory"]:
         raise BackupOperationError("Native inventory or backup settings changed. Inspect that source again before reviewing.")
+
+
+def _current_native_identity(native: NativeBackup, source: dict[str, Any]) -> None:
+    """Recheck appliance and advertised service identity while allowing config readback changes.
+
+    Args:
+        native: Authenticated pinned adapter used for the actual dispatch connection.
+        source: Reviewed appliance inventory and discovered service identity.
+    """
+    latest = _inventory(native.discover(), source["source_id"])
+    reviewed = source["inventory"]
+
+    def identity_projection(inventory: dict[str, Any]) -> dict[str, Any]:
+        """Select immutable native identity fields without mutable configuration.
+
+        Args:
+            inventory: Validated current or reviewed capability inventory.
+        """
+        return {
+            "identity": inventory["identity"],
+            "version": inventory["version"],
+            "service": inventory.get("service"),
+            "groups": sorted(({
+                "id": group["id"],
+                "product": group.get("product"),
+                "component_ids": group.get("component_ids", []),
+                "native_identity": {key: value for key, value in group.get("native_identity", {}).items() if key != "exists"},
+                "reservation_keys": group.get("reservation_keys", []),
+            } for group in inventory["groups"]), key=lambda group: group["id"]),
+            "components": sorted(({
+                key: component.get(key)
+                for key in ("native_id", "native_group_id", "product", "version", "supported")
+            } for component in inventory["components"]), key=lambda component: component["native_id"]),
+        }
+
+    if identity_projection(latest) != identity_projection(reviewed):
+        raise BackupOperationError("The native appliance or advertised service identity changed after review; inspect again before dispatch.")
 
 
 def _review(db: Session, actor: str, row: Setting, state: dict[str, Any], values: dict[str, Any]) -> dict[str, Any]:
@@ -501,8 +706,7 @@ def _review(db: Session, actor: str, row: Setting, state: dict[str, Any], values
                 eligible = set(group["component_ids"])
                 if source["kind"] == "fleet" and {item["native_id"] for item in members} != eligible:
                     raise BackupOperationError("Fleet LCM schedules cover the complete lifecycle-manager group; select every eligible component in that group.")
-                service_identity = (source["inventory"].get("service") or {}).get("fingerprint", source["fingerprint"])
-                asset = _digest([source["kind"], service_identity, str(group["id"])])
+                asset = _digest([source["kind"], source["inventory"]["identity"], str(group["id"])])
                 reservation_assets = [asset, *[_digest(["native", key]) for key in group.get("reservation_keys", [])]]
                 if any(key in seen_assets for key in reservation_assets):
                     raise BackupOperationError("The same native scheduler was selected through multiple connections.")
@@ -536,7 +740,7 @@ def _review(db: Session, actor: str, row: Setting, state: dict[str, Any], values
                        "coverage_gaps": gaps, "secret_labels": {"sftp": sftp_secret["label"], "encryption": encryption_secret["label"]},
                        "warnings": list(dict.fromkeys([warning for item in all_components if item["id"] in selected for warning in item.get("warnings", [])])) +
                                    ["Existing secret values cannot be read back; selected destinations will use the reviewed Vault keys.",
-                                    "Native products own schedule execution. Operations schedules use UTC; direct products use their configured appliance time zones.",
+                                    "Native products own schedule execution. Operations and SDDC Manager schedules use UTC; vCenter uses its configured appliance time zone.",
                                     "NSX native backups do not enforce a retention limit; arrange and verify external retention."]}}
 
 
@@ -586,7 +790,7 @@ def _dispatch(db: Session, actor: str, action: str, values: dict[str, Any], back
     _actor(db, actor)
     if action == "reconcile":
         row, state = _state(db, actor, str(values.get("operation_id", "")))
-        return _reconcile(db, actor, row, state, values)
+        return _admit_reconciliation(db, actor, row, state, values, background)
     receiver = receiver_revision(require_receiver(db))
     if action == "probe":
         source = _source(values, confirmed=False)
@@ -744,8 +948,54 @@ def _matches(current: dict[str, Any], proposed: dict[str, Any]) -> bool:
         proposed: Reviewed public configuration, excluding write-only secrets.
     """
     ignored = {"password_configured", "encryption_configured", "password_changed", "encryption_changed",
-               "secret_configured", "sftp_secret_configured", "host_key"}
+               "secret_configured", "sftp_secret_configured", "host_key", "fleet_schedule_mode"}
     return all(current.get(key) == value for key, value in proposed.items() if key not in ignored)
+
+
+def _fleet_artifact_path(path: str, group: dict[str, Any]) -> PurePosixPath | None:
+    """Normalize a Fleet SFTP artifact URI only for its reviewed receiver.
+
+    Args:
+        path: Native-reported file path or SFTP URI.
+        group: Reviewed receiver authority and exact artifact directory.
+    """
+    try:
+        if any(category(char) == "Cc" for char in path) or "\\" in path or "?" in path or "#" in path:
+            return None
+        parsed = urlsplit(path)
+        proposed = group["proposed"]
+        expected_host = str(proposed["host"]).strip("[]").casefold()
+        host = (parsed.hostname or "").casefold()
+        if (
+            parsed.scheme.casefold() != "sftp"
+            or not parsed.netloc
+            or parsed.netloc.count("@") != 1
+            or "%" in parsed.netloc
+            or parsed.password is not None
+            or parsed.username != proposed["user"]
+            or host != expected_host
+            or parsed.port != int(proposed["port"])
+            or parsed.query
+            or parsed.fragment
+            or not parsed.path.startswith("/")
+            or re.search(r"%(?![0-9A-Fa-f]{2})", parsed.path)
+        ):
+            return None
+
+        decoded = unquote(parsed.path, errors="strict")
+        if "%" in decoded:
+            return None
+        if "\\" in decoded or any(category(char) == "Cc" for char in decoded):
+            return None
+        if any(segment in {".", ".."} for segment in decoded.split("/")):
+            return None
+        candidate = PurePosixPath(decoded)
+        root = PurePosixPath(group["receiver_directory"])
+        if not candidate.is_absolute() or candidate != root and root not in candidate.parents:
+            return None
+        return candidate
+    except (KeyError, TypeError, ValueError, UnicodeDecodeError):
+        return None
 
 
 def _verified_artifacts(group: dict[str, Any], native_state: dict[str, Any],
@@ -773,9 +1023,18 @@ def _verified_artifacts(group: dict[str, Any], native_state: dict[str, Any],
             if not isinstance(record, dict) or record.get("component_id") != component:
                 continue
             path = record.get("path")
-            if not isinstance(path, str) or not path or "://" in path or "\\" in path or any(ord(char) < 32 for char in path):
+            if not isinstance(path, str) or not path:
                 continue
-            candidate = PurePosixPath(path)
+            if "://" in path:
+                if group["kind"] != "fleet":
+                    continue
+                candidate = _fleet_artifact_path(path, group)
+                if candidate is None:
+                    continue
+            else:
+                if "\\" in path or any(category(char) == "Cc" for char in path):
+                    continue
+                candidate = PurePosixPath(path)
             if ".." in candidate.parts:
                 continue
             candidate = candidate if candidate.is_absolute() else root / candidate
@@ -793,7 +1052,11 @@ def _verified_artifacts(group: dict[str, Any], native_state: dict[str, Any],
 
 
 def _validate_shared_encryption_passphrase(value: str) -> None:
-    """Enforce the stricter passphrase policy shared by every native product."""
+    """Enforce the stricter passphrase policy shared by every native product.
+
+    Args:
+        value: Request-local encryption passphrase, never included in errors.
+    """
     if (
         not isinstance(value, str)
         or not 12 <= len(value) <= 20
@@ -809,7 +1072,12 @@ def _validate_shared_encryption_passphrase(value: str) -> None:
 
 
 def _fail_unfinished_steps(job: Job, message: str) -> None:
-    """Finish pending work after a job fails without overwriting completed steps."""
+    """Finish pending work after a job fails without overwriting completed steps.
+
+    Args:
+        job: Failed task whose pending or running component steps need final states.
+        message: Sanitized public failure reason for unfinished steps.
+    """
     for step in job.steps:
         if step.status in {"pending", "running"}:
             step.status = "failed"
@@ -871,7 +1139,7 @@ def run_job(job_id: str, manual: dict[str, Any] | None = None) -> None:
                         step.status, step.started_at = "running", utcnow()
                     with NativeBackup(source, credentials[source["source_id"]]) as native:
                         native.login()
-                        native.discover()
+                        _current_inventory(native, source)
                         if native.current(group["native_group_id"]) != group["current"]:
                             raise BackupOperationError("Native backup settings changed after preflight. Reconcile before a new review.")
                         _checkpoint(db, row, state, group, "configuration_dispatch_pending")
@@ -889,6 +1157,9 @@ def run_job(job_id: str, manual: dict[str, Any] | None = None) -> None:
                             raise BackupOperationError("Native configuration remains uncertain after one hour. Reconcile before retrying.")
                         if not _matches(native.current(group["native_group_id"]), group["proposed"]):
                             raise BackupOperationError("Native configuration readback differs from the reviewed changes.")
+                        _current_native_identity(native, source)
+                        if not _matches(native.current(group["native_group_id"]), group["proposed"]):
+                            raise BackupOperationError("Native backup settings changed before backup dispatch. Reconcile before a new review.")
                         _checkpoint(db, row, state, group, "backup_dispatch_pending")
                         group["backup_reference"] = native.start_backup(group["native_group_id"], group["native_component_ids"])
                         _checkpoint(db, row, state, group, "backup_submitted")
@@ -896,6 +1167,13 @@ def run_job(job_id: str, manual: dict[str, Any] | None = None) -> None:
                         while time.monotonic() < deadline:
                             _actor(db, state["actor"])
                             native_state = native.backup_status(group["native_group_id"], group["backup_reference"].get("reference", group["backup_reference"]))
+                            if native_state.get("native_task_terminal") is True:
+                                native_task_state = native_state.get("native_task_state")
+                                native_task_status = str(native_state.get("native_task_status", "")).upper()
+                                if native_task_state == "failed":
+                                    raise BackupOperationError("The native initial backup task failed. Reconcile this task without repeating it.")
+                                if native_task_status == "COMPLETED_WITH_WARNINGS" and native_state.get("state") != "succeeded":
+                                    raise BackupOperationError("The native initial backup completed with warnings but did not verify every component. Reconcile this task without repeating it.")
                             if native_state["state"] == "failed":
                                 raise BackupOperationError("The native initial backup failed. Reconcile this task without repeating it.")
                             if native_state["state"] == "succeeded":
@@ -924,7 +1202,7 @@ def run_job(job_id: str, manual: dict[str, Any] | None = None) -> None:
                 source = next(item for item in state["sources"] if item["source_id"] == group["source_id"])
                 with NativeBackup(source, credentials[source["source_id"]]) as native:
                     native.login()
-                    native.discover()
+                    _current_native_identity(native, source)
                     if not _matches(native.current(group["native_group_id"]), group["proposed"]):
                         raise BackupOperationError("A configured native policy changed before final verification. Reconcile the operation.")
             state.update(state="succeeded", checkpoint="verified", error="", progress_percent=100)
@@ -949,6 +1227,90 @@ def run_job(job_id: str, manual: dict[str, Any] | None = None) -> None:
                          resource_id=job_id, success=state["state"] == "succeeded",
                          detail=_json({"operation_id": operation_id, "checkpoint": state["checkpoint"]}), post_commit_best_effort=True)
             db.commit()
+
+
+def _admit_reconciliation(
+    db: Session, actor: str, row: Setting, state: dict[str, Any],
+    values: dict[str, Any], background: Dispatcher,
+) -> dict[str, Any]:
+    """Queue one read-only reconciliation without holding a browser request open.
+
+    Args:
+        db: Request database session.
+        actor: Enabled operation owner.
+        row: Owner-bound durable operation row.
+        state: Current public operation checkpoint.
+        values: Request-local credentials and explicit closure choice.
+        background: One-shot dispatcher retaining credentials only in memory.
+    """
+    job = db.get(Job, state.get("job_id", ""))
+    if job is not None and job.status in {"pending", "running"}:
+        return operation_status(db, actor, state["operation_id"])
+    if state.get("reconciliation_state") in {"queued", "running"}:
+        return operation_status(db, actor, state["operation_id"])
+    if state["state"] not in {"needs_recovery", "succeeded", "reconciled"}:
+        raise BackupOperationError("Only an admitted backup operation can be reconciled.")
+    credential_free = values.get("close_reviewed") is True and can_close_without_credentials(state)
+    if values.get("close_reviewed") is True and any(
+        group.get("checkpoint") in {"configuration_dispatch_pending", "backup_dispatch_pending"}
+        for group in state.get("plan", [])
+    ):
+        raise BackupOperationError("A native dispatch has no recorded outcome. Its reservation must remain held until the native product provides verifiable task reconciliation.")
+    if not credential_free:
+        _recovery_source_inputs(db, state, values)
+    # Copy only supported scalar inputs into this invocation's memory. Neither
+    # manual credentials nor resolved Vault values enter durable task metadata.
+    supplied = [{key: source[key] for key in (
+        "source_id", "source_kind", "kind", "address", "port", "confirmed",
+        "confirmed_tls_fingerprint", "username", "password", "credential_vault_id",
+        "credential_entry_id", "credential_uri",
+    ) if key in source} for source in ([] if credential_free else values["sources"])]
+    request_values = {"sources": supplied, "close_reviewed": values.get("close_reviewed") is True}
+    original = row.value
+    acquire_network_objects_write_lock(db)
+    db.refresh(row)
+    if row.value != original:
+        raise BackupOperationError("This operation changed during reconciliation admission. Reload its status.")
+    run_id = "reconcile_" + uuid4().hex
+    state.update(reconciliation_job_id=run_id, reconciliation_state="queued", reconciliation_error="")
+    state.pop("reconciliation_finished_at", None)
+    _save(db, row, state)
+    background.add_task(run_reconciliation, actor, state["operation_id"], run_id, request_values)
+    return operation_status(db, actor, state["operation_id"])
+
+
+def run_reconciliation(actor: str, operation_id: str, run_id: str, values: dict[str, Any]) -> None:
+    """Complete one owner-bound read-only run independently of the browser.
+
+    Args:
+        actor: Administrator that admitted the run.
+        operation_id: Exact durable backup operation.
+        run_id: Single-use reconciliation generation.
+        values: Invocation-local source credentials, never persisted.
+    """
+    with SessionLocal() as db:
+        row, state = _state(db, actor, operation_id)
+        if state.get("reconciliation_job_id") != run_id or state.get("reconciliation_state") != "queued":
+            return
+        state["reconciliation_state"] = "running"
+        _save(db, row, state)
+        message = ""
+        try:
+            _actor(db, actor)
+            _reconcile(db, actor, row, state, values)
+        except Exception as exc:  # noqa: BLE001 - persist a safe read-only failure without replaying native writes.
+            db.rollback()
+            message = str(exc) if isinstance(exc, (BackupOperationError, ReceiverError, RemoteError)) else "Read-only reconciliation was interrupted. Reload status before trying again."
+        row, latest = _state(db, actor, operation_id)
+        if latest.get("reconciliation_job_id") != run_id or latest.get("reconciliation_state") != "running":
+            return
+        latest.update(reconciliation_state="failed" if message else "succeeded",
+                      reconciliation_error=message, reconciliation_finished_at=utcnow().isoformat())
+        _save(db, row, latest)
+        record_audit(db, actor=actor, action="reconcile_vcf_backup_complete", resource_type=JOB_TYPE,
+                     resource_id=operation_id, success=not message,
+                     detail=_json({"reconciliation_job_id": run_id}), post_commit_best_effort=True)
+        db.commit()
 
 
 def _reconcile(db: Session, actor: str, row: Setting, state: dict[str, Any], values: dict[str, Any]) -> dict[str, Any]:
@@ -985,7 +1347,7 @@ def _reconcile(db: Session, actor: str, row: Setting, state: dict[str, Any], val
     if close_reviewed and any(group.get("checkpoint") in {"configuration_dispatch_pending", "backup_dispatch_pending"}
                               for group in plan):
         raise BackupOperationError("A native dispatch has no recorded outcome. Its reservation must remain held until the native product provides verifiable task reconciliation.")
-    inputs = _source_inputs(db, state, values)
+    inputs = _recovery_source_inputs(db, state, values)
     reports: list[dict[str, Any]] = []
     for group in state.get("plan", []):
         source, credential = inputs[group["source_id"]]
@@ -993,6 +1355,7 @@ def _reconcile(db: Session, actor: str, row: Setting, state: dict[str, Any], val
             native.login()
             native.discover()
             report = {"group_id": group["id"], "checkpoint": group["checkpoint"], "current": native.current(group["native_group_id"])}
+            report["configuration_matches_review"] = _matches(report["current"], group["proposed"])
             reference = group.get("backup_reference")
             if reference:
                 report["native_backup"] = native.backup_status(group["native_group_id"], reference.get("reference", reference))
@@ -1019,7 +1382,8 @@ def _reconcile(db: Session, actor: str, row: Setting, state: dict[str, Any], val
                 for group, report in zip(plan, reports, strict=True):
                     if report.get("native_backup", {}).get("state") == "succeeded":
                         verified = _verified_artifacts(group, report["native_backup"], storage.manifest(group["receiver_directory"]))
-                        if verified and _matches(report["current"], group["proposed"]):
+                        report["artifacts_verified"] = bool(verified)
+                        if verified and report["configuration_matches_review"]:
                             group["verified_components"] = verified
                             group["checkpoint"] = "verified"
                             group["artifacts"] = list({item["path"]: item for artifacts in verified.values() for item in artifacts}.values())
@@ -1038,12 +1402,14 @@ def _reconcile(db: Session, actor: str, row: Setting, state: dict[str, Any], val
         for report in successful_backups:
             report["verified"] = False
             report["warning"] = receiver_warning
+    _actor(db, actor)
     acquire_network_objects_write_lock(db)
     db.refresh(row)
     latest = json.loads(row.value)
     if row.value != original or latest.get("job_id") != state.get("job_id") or latest["state"] not in {"needs_recovery", "succeeded", "reconciled"}:
         raise BackupOperationError("This operation changed during reconciliation.")
     state["reconciliation"] = reports
+    state["recovery_warning"] = receiver_warning or "Reconciliation is read-only. Unknown native writes are never repeated; inspect a fresh plan before another configuration attempt."
     if reports and all(report.get("verified") for report in reports):
         state.update(state="succeeded", checkpoint="verified", progress_percent=100, error="")
         if job is not None:
@@ -1086,5 +1452,13 @@ def recover_interrupted_jobs(db: Session) -> int:
         job.status, job.error, job.finished_at = "failed", state["error"], utcnow()
         _fail_unfinished_steps(job, state["error"])
         count += 1
+    for row in db.scalars(select(Setting).where(Setting.key.startswith(PREFIX))):
+        state = json.loads(row.value)
+        if state.get("reconciliation_state") in {"queued", "running"}:
+            state.update(reconciliation_state="failed",
+                         reconciliation_error="Atlaso restarted during read-only reconciliation. Reload status and reconcile again.",
+                         reconciliation_finished_at=utcnow().isoformat())
+            row.value = _json(state)
+            count += 1
     db.commit()
     return count

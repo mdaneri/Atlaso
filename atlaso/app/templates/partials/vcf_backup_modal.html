@@ -1,5 +1,5 @@
 <dialog id="vcf-backup-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="vcf-backup-title" aria-describedby="vcf-backup-description">
-  <form class="confirm-modal-panel vcf-sddc-wizard-panel" data-atlaso-wizard data-vcf-backup-form data-endpoint="{{ management_ui_root }}/vcf-helper/backups" data-tasks-root="{{ management_ui_root }}/tasks" data-csrf="{{ csrf_token }}" novalidate>
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" data-atlaso-wizard data-vcf-backup-form data-setup-ready="{% if vcf_backup_wizard is defined and vcf_backup_wizard.ready %}true{% else %}false{% endif %}" data-endpoint="{{ management_ui_root }}/vcf-helper/backups" data-tasks-root="{{ management_ui_root }}/tasks" data-csrf="{{ csrf_token }}" novalidate>
     <aside class="vcf-sddc-wizard-rail" aria-label="VCF Backup configuration steps">
       <p class="kicker">VCF Helper</p>
       <h2 id="vcf-backup-title">Configure VCF Backup</h2>
@@ -15,13 +15,6 @@
         <div class="alert error hidden" data-atlaso-wizard-error></div>
         <p class="muted" data-vcf-backup-status role="status" aria-live="polite">Credentials and TLS confirmations stay in this open wizard only.</p>
         <section class="vcf-sddc-step-page" data-atlaso-wizard-step="credential">
-          <details class="panel" data-vcf-backup-recovery-lookup>
-            <summary>Resume an existing operation</summary>
-            <div class="form-grid">
-              <label><span>Operation ID</span><input name="recovery_operation_id" data-vcf-backup-recovery-id autocomplete="off"></label>
-              <button class="button secondary" type="button" data-vcf-backup-load-operation>Load status</button>
-            </div>
-          </details>
           <div class="form-grid">
             <label><span>Credential source</span><select name="credential_mode" data-vcf-backup-credential-mode><option value="manual">Manual credentials</option><option value="vault">Saved Vault credential</option></select></label>
             <label><span>Vault</span><select name="credential_vault_id" data-vcf-backup-vault><option value="">Choose a Vault</option></select></label>
@@ -69,6 +62,8 @@
           </div>
           <p class="muted">Select stored secret references only. Secret values never enter this page. Choose a passphrase escrowed in your approved recovery process. For compatibility with vCenter, use 12–20 visible ASCII characters with uppercase, lowercase, two digits, and a symbol.</p>
           <fieldset class="form-stack"><legend>Backup schedule</legend>
+            <label class="hidden" data-vcf-backup-fleet-schedule-mode><span>VCF Operations recurring backups</span><select name="fleet_schedule_mode" data-vcf-backup-fleet-schedule-mode-select><option value="preserve" selected>Preserve existing schedule</option><option value="daily">Daily recurring backups</option><option value="disabled">Disable recurring backups</option></select></label>
+            <p class="muted hidden" data-vcf-backup-fleet-schedule-help>Initial backup runs once in every mode. Preserving an unconfigured schedule leaves recurring backups disabled.</p>
             <label data-vcf-backup-daily-time><span>Daily full backup time (appliance timezone)</span><input name="full_time" type="time" value="02:00"></label>
             <label data-vcf-backup-nsx-interval><span>Direct NSX backup interval in minutes</span><input name="nsx_interval_minutes" type="number" min="5" max="1440" value="60"></label>
             <label class="switch-field" data-vcf-backup-state-change><span>Back up on state change</span><input name="state_change" type="checkbox" checked></label>
@@ -78,7 +73,7 @@
             <label><span>Retention count or age in days</span><input name="retention_value" type="number" min="1" max="365" value="14"></label>
           </fieldset>
           <fieldset class="form-stack hidden" data-vcf-backup-sddc-retention><legend>SDDC Manager retention bands</legend><div class="form-grid"><label><span>Most recent backups</span><input name="sddc_most_recent" type="number" min="1" max="600" value="10"></label><label><span>Hourly retention in days</span><input name="sddc_hourly_days" type="number" min="0" max="14" value="2"></label><label><span>Daily retention in days</span><input name="sddc_daily_days" type="number" min="0" max="30" value="15"></label></div></fieldset>
-          <ul class="muted"><li>Operations schedules use UTC; direct native products use their configured appliance timezone.</li><li>Direct NSX retention is not enforced by Atlaso.</li><li>Discovery warnings and image-only coverage gaps remain visible in the review.</li></ul>
+          <ul class="muted"><li>Operations and SDDC Manager schedules use UTC; vCenter uses its configured appliance timezone.</li><li>Direct NSX retention is not enforced by Atlaso.</li><li>Discovery warnings and image-only coverage gaps remain visible in the review.</li></ul>
         </section>
 
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review">
@@ -89,22 +84,6 @@
             <label class="switch-field"><span>I approve replacing any selected existing backup policy after reviewing its current state.</span><input type="checkbox" name="replacements_confirmed" required></label>
             <label class="switch-field"><span>I approve configuring the reviewed VCF backup settings and starting the initial backup task.</span><input type="checkbox" name="acknowledged" required></label>
           </div>
-          <section class="panel hidden" data-vcf-backup-operation aria-live="polite">
-            <h4>Operation status</h4>
-            <div class="settings-list compact-settings-list validation-settings-list"><div><span>Operation ID</span><strong class="mono-text" data-vcf-backup-operation-id>Not loaded</strong></div></div>
-            <p class="status-badge" data-vcf-backup-operation-state>Task status</p>
-            <p class="alert error hidden" data-vcf-backup-operation-error role="alert"></p>
-            <p class="alert warning hidden" data-vcf-backup-native-running-warning role="status"></p>
-            <div data-vcf-backup-operation-detail></div>
-            <progress max="100" value="0" aria-label="Backup verification progress" data-vcf-backup-progress></progress>
-            <div class="settings-list compact-settings-list validation-settings-list" data-vcf-backup-operation-sources></div>
-            <div class="form-stack" data-vcf-backup-recovery-credentials></div>
-            <p><a class="button ghost hidden" data-vcf-backup-task-link href="{{ management_ui_root }}/tasks">Open task</a></p>
-            <p class="muted" data-vcf-backup-recovery-guidance>Reconcile checks current native settings and backup status without repeating native writes.</p>
-            <label class="switch-field" data-vcf-backup-close-control><span>After checking native status, finish recovery so I can review a new plan.</span><input type="checkbox" name="close_recovery"></label>
-            <button class="button secondary" type="button" data-vcf-backup-reconcile>Reconcile (read-only)</button>
-            <button class="button ghost hidden" type="button" data-vcf-backup-new-plan>Start a new plan</button>
-          </section>
         </section>
       </div>
       <div class="confirm-modal-actions vcf-sddc-wizard-actions"><button class="button ghost" type="button" data-atlaso-wizard-cancel>Close</button><button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button><button class="button primary" type="button" data-atlaso-wizard-next>Next</button><button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Configure and start initial backup</button></div>

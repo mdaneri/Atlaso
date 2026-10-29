@@ -41,6 +41,9 @@ algorithm as well as an ECDSA host-key algorithm. These are separate requirement
 prove that SSH negotiation can complete. See Broadcom [KB 438943](https://knowledge.broadcom.com/external/article/438943)
 for the VCF 9.x SFTP fingerprint and algorithm requirements.
 
+Fleet LCM may report the receiver's RSA fingerprint. Atlaso matches the reported fingerprint to a locally verified
+RSA or ECDSA public key before reviewing or submitting it; it does not trust the remote thumbprint alone.
+
 ## Inspect and review VCF sources
 
 1. Open **VCF Helper → Backup → Configure VCF Backup**. This is an administrator-only workflow. For Fleet LCM,
@@ -64,8 +67,13 @@ for the VCF 9.x SFTP fingerprint and algorithm requirements.
    Source API credentials may be manual and request-local or resolved from a Vault entry. Secret values never appear in
    the page, durable task settings, logs, or audit details; durable workflow state stores only bounded source and Vault
    references.
-5. Edit the schedule and retention values supported by the discovered native product. VCF Operations Fleet daily
-   full-backup schedules run at 02:00 UTC; direct appliance schedules use their appliance's configured timezone. The
+5. Edit the schedule and retention values supported by the discovered native product. For **Operations recurring
+   backups**, the default **Preserve existing schedule** keeps the reviewed full and incremental recurrence, including
+   its exact time and timezone. When no schedule exists, this choice leaves recurrence disabled. Choose **Daily
+   recurring backups** to create a daily full-backup schedule at the selected UTC time, or **Disable recurring backups**
+   to explicitly disable both full and incremental recurrence. Every choice still starts one initial backup after
+   configuration. These recurrence choices currently apply to VCF Operations; direct appliance schedules retain their
+   existing daily/interval controls. SDDC Manager uses UTC; vCenter uses its configured appliance timezone. The
    state-change control applies only where that native API supports it. Retention settings are product-specific: NSX
    has no native retention policy, and SDDC Manager exposes separate most-recent, hourly-day, and daily-day values.
    SDDC Manager backup settings also affect the NSX destination and cadence for co-managed NSX appliances. Configure
@@ -109,16 +117,30 @@ files is not completion evidence.
 Configuration and initial-backup verification each have a one-hour bound. Temporary HTTP 503 responses during
 read-only status checks keep the recorded native reference and continue polling within that bound. Native writes are
 never automatically repeated.
+Fleet polling can refresh an expired API token once through Operations after HTTP 401. The discovered service identity
+must still match the reviewed service before the same read is retried.
 
 If a task fails, the process restarts, or the native write outcome is uncertain, use **Reconcile (read-only)** on that
-operation. To reopen it, expand **Resume an existing operation** in the Credential step, enter the operation ID from
-the status view or task result, and select **Load status**. The status view shows the latest native read-back and
-verification warnings. Reconciliation rereads native settings and the recorded backup status; it never resubmits
+operation. The **Backup Operations** list shows your admitted runs; double-click a row to open its status. Alternatively,
+select **Resume Existing Backup Operation**, enter the operation ID, and select **Load status**. This opens a standalone
+status popup, without configuration steps. Closing it or the browser does not stop an admitted backup or reconciliation.
+Read-only reconciliation is admitted promptly and continues in the background; the popup shows queued, running,
+completed, or failed status independently of the original backup outcome. Reopening the operation loads that durable
+status. Repeated clicks while reconciliation is active reuse the same run. If Atlaso restarts during reconciliation,
+the read is marked interrupted and can be requested again; native work is never replayed. Manual source passwords
+remain only in that background invocation's memory and must be entered again for a later read.
+The status view distinguishes verified backup artifacts from whether the current native policy still matches the
+reviewed configuration. A later policy change does not erase a previously successful backup; it appears as a separate
+read-back warning. Reconciliation rereads native settings
+and the recorded backup status; it never resubmits
 configuration or starts another backup. The scheduler reservation remains held while the outcome is unresolved. An unresolved
 `dispatch_pending` operation without a native task reference cannot be explicitly closed or have its reservation
 released until a verifiable native outcome is available. Reconciliation may adopt success only after native completion
 is confirmed and fresh receiver files are matched to every selected component. Then inspect a fresh plan before
 attempting another configuration. Do not retry an uncertain native write from the original review.
+
+Fleet restore-point locations may be SFTP URLs. Atlaso accepts them for file verification only when their server,
+port, account, and directory match the reviewed receiver. Fresh non-empty files are still required for every component.
 
 If the recorded checkpoints prove that no native write was attempted, you can explicitly finish recovery even when
 the reviewed receiver credentials no longer work. This releases the operation's reservations without contacting the

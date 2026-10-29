@@ -4,12 +4,15 @@
 
   const form = document.querySelector("[data-vcf-backup-form]");
   const dialog = document.getElementById("vcf-backup-modal");
-  if (!form || !dialog || !window.AtlasoUiPatterns) return;
+  const statusDialog = document.getElementById("vcf-backup-status-modal");
+  if (!form || !dialog || !statusDialog || !window.AtlasoUiPatterns) return;
 
-  const field = (name) => form.elements.namedItem(name);
-  const node = (selector) => form.querySelector(selector);
+  const field = (name) => form.elements.namedItem(name) || statusDialog.querySelector(`[name="${name}"]`);
+  const node = (selector) => form.querySelector(selector) || statusDialog.querySelector(selector) || document.querySelector(selector);
   const endpoint = form.dataset.endpoint || "";
-  const status = node("[data-vcf-backup-status]");
+  const receiverReady = form.dataset.setupReady === "true";
+  const setupStatus = form.querySelector("[data-vcf-backup-status]");
+  const operationStatus = statusDialog.querySelector("[data-vcf-backup-status]");
   const mode = node("[data-vcf-backup-credential-mode]");
   const vaultSelect = node("[data-vcf-backup-vault]");
   const entrySelect = node("[data-vcf-backup-entry]");
@@ -36,11 +39,17 @@
   let operationState = "";
   let canCloseWithoutCredentials = false;
   let grid = null;
+  let operationsGrid = null;
+  let operationsCursor = "";
+  let operationsLoading = false;
+  let operationsInitialized = false;
   let selectAllSupportedCheckbox = null;
   let busy = false;
   let pollTimer = null;
+  let statusViewEpoch = 0;
 
   const setStatus = (message, error = false) => {
+    const status = statusDialog.open ? operationStatus : setupStatus;
     if (!status) return;
     status.textContent = message;
     status.dataset.state = error ? "error" : "ready";
@@ -81,6 +90,14 @@
     reviewToken = "";
     review = null;
   }
+  function invalidateStatusView() {
+    statusViewEpoch += 1;
+    busy = false;
+    return statusViewEpoch;
+  }
+  function isCurrentStatusView(epoch, id) {
+    return statusDialog.open && statusViewEpoch === epoch && operationId === id;
+  }
   function selectedVaultEntry() {
     const selected = entrySelect?.selectedOptions?.[0];
     if (!selected?.value) return null;
@@ -114,13 +131,24 @@
   }
   function updateSourceFields() {
     const kinds = new Set(inspectedSources.map((item) => item.request.source_kind));
-    const daily = ["fleet", "sddc", "vcenter"].some((kind) => kinds.has(kind));
+    const selectedKinds = selectedSourceKinds();
+    const operationsSelected = selectedKinds.has("fleet");
+    const directDailySelected = ["sddc", "vcenter"].some((kind) => selectedKinds.has(kind));
+    const operationsDaily = operationsSelected && fleetScheduleMode() === "daily";
+    const daily = directDailySelected || operationsDaily;
     const nsx = kinds.has("nsx");
     const stateChange = nsx || kinds.has("sddc");
     const generalRetention = kinds.has("fleet") || kinds.has("vcenter");
+    node("[data-vcf-backup-fleet-schedule-mode]")?.classList.toggle("hidden", !operationsSelected);
+    node("[data-vcf-backup-fleet-schedule-help]")?.classList.toggle("hidden", !operationsSelected);
     node("[data-vcf-backup-daily-time]")?.classList.toggle("hidden", !daily);
     const dailyLabel = node("[data-vcf-backup-daily-time] span");
-    if (dailyLabel) dailyLabel.textContent = kinds.has("fleet") ? "Daily full backup time (UTC for Operations; appliance timezone for direct sources)" : "Daily full backup time (appliance timezone)";
+    const utcProducts = [operationsDaily ? "Operations" : "", selectedKinds.has("sddc") ? "SDDC Manager" : ""].filter(Boolean);
+    const timezoneDetails = [
+      utcProducts.length ? `UTC for ${utcProducts.join(" and ")}` : "",
+      selectedKinds.has("vcenter") ? "appliance timezone for vCenter" : "",
+    ].filter(Boolean).join("; ");
+    if (dailyLabel) dailyLabel.textContent = `${operationsDaily && !directDailySelected ? "Daily recurring backup time" : "Daily full backup time"} (${timezoneDetails || "appliance timezone"})`;
     node("[data-vcf-backup-nsx-interval]")?.classList.toggle("hidden", !nsx);
     node("[data-vcf-backup-state-change]")?.classList.toggle("hidden", !stateChange);
     node("[data-vcf-backup-general-retention]")?.classList.toggle("hidden", !generalRetention);
@@ -223,6 +251,7 @@
   }
   function policyPayload() {
     return {
+      fleet_schedule_mode: fleetScheduleMode(),
       full_time: field("full_time").value,
       nsx_interval_minutes: Number(field("nsx_interval_minutes").value),
       state_change: field("state_change").checked,
@@ -233,9 +262,19 @@
       sddc_daily_days: Number(field("sddc_daily_days").value),
     };
   }
+  function selectedSourceKinds() {
+    const selectedIds = new Set(selectedComponentIds());
+    return new Set(components
+      .filter((component) => selectedIds.has(String(component.id)))
+      .map((component) => inspectedSources.find((item) => String(item.summary?.source_id || item.request.source_id || "") === String(component.source_id || ""))?.request.source_kind)
+      .filter(Boolean));
+  }
+  function fleetScheduleMode() {
+    return field("fleet_schedule_mode")?.value || "preserve";
+  }
   function settingsAreValid() {
-    const kinds = new Set(inspectedSources.map((item) => item.request.source_kind));
-    const requiresDaily = ["fleet", "sddc", "vcenter"].some((kind) => kinds.has(kind));
+    const kinds = selectedSourceKinds();
+    const requiresDaily = ["sddc", "vcenter"].some((kind) => kinds.has(kind)) || (kinds.has("fleet") && fleetScheduleMode() === "daily");
     const requiresRetention = kinds.has("fleet") || kinds.has("vcenter");
     const hasNSX = kinds.has("nsx");
     const hasSDDC = kinds.has("sddc");
@@ -334,6 +373,7 @@
       grid?.table?.on?.("rowSelectionChanged", () => {
         invalidateReview();
         if (grid?.table) syncSupportedSelectionHeader(grid.table);
+        updateSourceFields();
       });
     }
     if (!grid?.table) {
@@ -392,6 +432,15 @@
       (group.names || []).join(", ") || sourceKindLabel(group.kind),
       groupConfigurationState(group),
     ]));
+    const operationsGroups = (review.components || []).filter((group) => group.kind === "fleet");
+    if (operationsGroups.length) {
+      const intent = {preserve: "Preserve existing schedule", daily: "Daily recurring backups", disabled: "Disable recurring backups"}[fleetScheduleMode()];
+      appendReviewSection(container, "VCF Operations recurring backups", [
+        ["Scheduling intent", intent || "Preserve existing schedule"],
+        ["Initial backup", "Runs once in every mode"],
+        ["Unconfigured schedule", "Preserve leaves recurring backups disabled when no schedule exists."],
+      ]);
+    }
     const sideEffects = (review.components || []).flatMap((group) => {
       const effects = Array.isArray(group.side_effects) ? group.side_effects : group.side_effects ? [group.side_effects] : [];
       const title = (group.names || []).join(", ") || sourceKindLabel(group.kind);
@@ -434,7 +483,7 @@
     if (!current || typeof current !== "object") return "Not configured";
     if (typeof current.configured === "boolean") return current.configured ? "Configured" : "Not configured";
     const hasValue = (value) => Array.isArray(value) ? value.length > 0 : value !== null && value !== undefined && value !== "";
-    const destinationFields = ["host", "user", "directory", "ecdsa_fingerprint"];
+    const destinationFields = ["host", "user", "directory", "ecdsa_fingerprint", "ssh_fingerprint"];
     const scheduleFields = ["full_time", "days", "interval_minutes", "retention_mode", "retention_value", "schedule_timezone", "sddc_most_recent", "sddc_hourly_days", "sddc_daily_days", "parts"];
     const enabledFields = ["schedule_enabled", "incremental_enabled", "state_change"];
     return [...destinationFields, ...scheduleFields].some((key) => hasValue(current[key]))
@@ -453,6 +502,10 @@
   }
   function settingComparison(label, key, current, proposed, formatter = formatReviewValue) {
     return [label, `Current: ${publicValue(current, key, formatter)} → Proposed: ${publicValue(proposed, key, formatter)}`];
+  }
+  function fleetSshFingerprint(settings) {
+    const key = settings && Object.prototype.hasOwnProperty.call(settings, "ssh_fingerprint") ? "ssh_fingerprint" : "ecdsa_fingerprint";
+    return publicValue(settings, key);
   }
   function retentionValue(settings) {
     if (!settings || !Object.prototype.hasOwnProperty.call(settings, "retention_value")) return "Not returned";
@@ -478,6 +531,8 @@
     ];
     if (group.kind === "vcenter") {
       rows.push(["ECDSA host-key pin", "Current: Not supported by native vCenter API → Proposed: Not supported by native vCenter API"]);
+    } else if (group.kind === "fleet") {
+      rows.push(["SSH host-key fingerprint", `Current: ${fleetSshFingerprint(current)} → Proposed: ${fleetSshFingerprint(proposed)}`]);
     } else {
       rows.push(settingComparison("ECDSA host-key fingerprint", "ecdsa_fingerprint", current, proposed));
     }
@@ -496,6 +551,13 @@
       rows.push(settingComparison("Daily backup retention (days)", "sddc_daily_days", current, proposed));
     }
     if (group.kind === "fleet") {
+      const exactFleetValue = (value) => value === null || value === undefined || value === "" ? "Not set" : String(value);
+      const currentStartTime = {value: current.fleet_schedule?.fullSchedule?.schedule?.startTime};
+      const proposedStartTime = {value: proposed.fleet_schedule?.fullSchedule?.schedule?.startTime};
+      const currentFallback = {value: current.fleet_schedule?.incrementalSchedule?.fallbackToFull};
+      const proposedFallback = {value: proposed.fleet_schedule?.incrementalSchedule?.fallbackToFull};
+      rows.push(settingComparison("Full schedule start time (RFC 3339)", "value", currentStartTime, proposedStartTime, exactFleetValue));
+      rows.push(settingComparison("Incremental fallback to full backup", "value", currentFallback, proposedFallback, exactFleetValue));
       rows.push(settingComparison("Schedule timezone", "schedule_timezone", current, proposed));
       rows.push(settingComparison("Incremental schedule", "incremental_enabled", current, proposed));
       rows.push(settingComparison("Incremental interval (minutes)", "interval_minutes", current, proposed));
@@ -547,13 +609,19 @@
     const labels = {running: "Running", succeeded: "Succeeded", success: "Succeeded", complete: "Complete", completed: "Complete", failed: "Failed", pending: "Pending", queued: "Queued", canceled: "Canceled", cancelled: "Canceled"};
     return labels[state] || (state ? state.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : "No native task status returned");
   }
+  function nativeOperationRunning(report) {
+    const configurationRunning = String(report?.native_configuration?.state || "").toLowerCase() === "running";
+    const backupRunning = String(report?.native_backup?.state || "").toLowerCase() === "running" && report.native_backup.native_task_terminal !== true;
+    return configurationRunning || backupRunning;
+  }
   function groupCurrentSettings(groupKind, current) {
     const settings = current && typeof current === "object" ? current : {};
     const rows = [
       ["Backup schedule", "schedule_enabled"], ["Destination host", "host"], ["Destination port", "port"],
       ["Destination account", "user"], ["Destination directory", "directory"],
     ].map(([label, key]) => [label, publicValue(settings, key)]);
-    if (groupKind !== "vcenter") rows.push(["ECDSA host-key fingerprint", publicValue(settings, "ecdsa_fingerprint")]);
+    if (groupKind === "fleet") rows.push(["SSH host-key fingerprint", fleetSshFingerprint(settings)]);
+    else if (groupKind !== "vcenter") rows.push(["ECDSA host-key fingerprint", publicValue(settings, "ecdsa_fingerprint")]);
     if (groupKind !== "nsx") {
       rows.push(["Daily backup time", publicValue(settings, "full_time")]);
       rows.push(["Backup days", publicValue(settings, "days")]);
@@ -580,13 +648,7 @@
     return rows;
   }
   function syncOperationView() {
-    const active = operationStarted;
-    node("[data-vcf-backup-review-form]")?.classList.toggle("hidden", active);
-    node("[data-vcf-backup-operation]")?.classList.toggle("hidden", !active);
-    wizard?.setNavigationLocked(active);
-    if (!active) return;
-    node("[data-atlaso-wizard-title]").textContent = "Backup status";
-    node("[data-atlaso-wizard-description]").textContent = "Follow native configuration and verify the initial backup.";
+    wizard?.setNavigationLocked(operationStarted);
   }
   function renderOperationSources() {
     const container = node("[data-vcf-backup-operation-sources]");
@@ -612,6 +674,14 @@
       }
     });
   }
+  function reconciliationStatusText(result) {
+    const state = String(result.reconciliation_state || "").toLowerCase();
+    if (state === "queued") return "Read-only reconciliation is queued. Native settings and backup status are being checked.";
+    if (state === "running") return "Read-only reconciliation is running. Native settings and backup status are being checked.";
+    if (state === "succeeded") return "Read-only reconciliation completed.";
+    if (state === "failed") return result.reconciliation_error || "Read-only reconciliation failed. Review the operation status before trying again.";
+    return "";
+  }
   function renderOperationGroups(groups, checkpoint, reconciliation) {
     const container = node("[data-vcf-backup-operation-detail]");
     if (!container) return;
@@ -634,11 +704,16 @@
       const kind = source?.request.source_kind || "";
       const report = reports.get(String(group.id || ""));
       let currentSettings = null;
-      const rows = [["Latest checkpoint", checkpointLabel(report?.checkpoint || group.checkpoint)]];
+      const rows = [["Latest checkpoint", checkpointLabel(group.checkpoint || report?.checkpoint)]];
       if (report) {
         rows.push(["Native configuration task", nativeStateLabel(report.native_configuration?.state)]);
-        rows.push(["Initial backup task", nativeStateLabel(report.native_backup?.state)]);
-        rows.push(["Atlaso backup verification", report.verified === true ? "Verified" : report.verified === false ? "Not verified" : "Not confirmed"]);
+        rows.push(["Initial backup task", nativeStateLabel(report.native_backup?.native_task_status || report.native_backup?.native_task_state || report.native_backup?.state)]);
+        if (typeof report.artifacts_verified === "boolean" || typeof report.configuration_matches_review === "boolean") {
+          rows.push(["Backup artifact verification", report.artifacts_verified === true ? "Verified" : report.artifacts_verified === false ? "Not verified" : "Not confirmed"]);
+          rows.push(["Reviewed configuration", report.configuration_matches_review === true ? "Matches reviewed policy" : report.configuration_matches_review === false ? "Changed since review" : "Not confirmed"]);
+        } else {
+          rows.push(["Atlaso backup verification", report.verified === true ? "Verified" : report.verified === false ? "Not verified" : "Not confirmed"]);
+        }
         const current = report.current && typeof report.current === "object" ? report.current : null;
         rows.push(["Current backup configuration", current ? groupConfigurationState({current}) : "No native settings read-back returned"]);
         const warnings = [report.warning, report.native_configuration?.warning, report.native_backup?.warning].filter((value, offset, values) => typeof value === "string" && value && values.indexOf(value) === offset);
@@ -657,8 +732,6 @@
     }
   }
   function renderOperation(result) {
-    const box = node("[data-vcf-backup-operation]");
-    if (!box) return;
     syncOperationView();
     operationState = String(result.state || "").toLowerCase();
     canCloseWithoutCredentials = result.can_close_without_credentials === true;
@@ -670,14 +743,24 @@
     if (guidance) { guidance.textContent = result.recovery_warning || "Reconcile checks current native settings and backup status without repeating native writes."; guidance.classList.toggle("hidden", !result.recovery_warning); }
     const runningWarning = node("[data-vcf-backup-native-running-warning]");
     const reconciliation = Array.isArray(result.reconciliation) ? result.reconciliation : [];
-    const nativeRunning = reconciliation.some((report) => report.native_backup?.state === "running" || report.native_configuration?.state === "running");
+    const nativeRunning = reconciliation.some(nativeOperationRunning);
     if (runningWarning) { runningWarning.textContent = "A native configuration or backup task is still running. Check its status again before finishing recovery."; runningWarning.classList.toggle("hidden", !nativeRunning); }
+    const reconciliationStatus = node("[data-vcf-backup-reconciliation-status]");
+    const reconciliationState = String(result.reconciliation_state || "").toLowerCase();
+    const reconciliationActive = ["queued", "running"].includes(reconciliationState);
+    if (reconciliationStatus) {
+      reconciliationStatus.textContent = reconciliationStatusText(result);
+      reconciliationStatus.hidden = !reconciliationStatus.textContent;
+      reconciliationStatus.classList.toggle("alert", reconciliationState === "failed");
+      reconciliationStatus.classList.toggle("error", reconciliationState === "failed");
+    }
     renderOperationGroups(result.groups, result.checkpoint, reconciliation);
     renderOperationSources();
     if (["succeeded", "reconciled"].includes(operationState)) {
       clearManualPasswords();
       node("[data-vcf-backup-recovery-credentials]")?.replaceChildren();
     }
+    else if (reconciliationActive) node("[data-vcf-backup-recovery-credentials]")?.replaceChildren();
     else if ((operationState === "needs_recovery" || result.recovery_warning || result.error) && !node("[data-vcf-backup-recovery-credentials]")?.childElementCount) renderRecoveryCredentials();
     const progress = node("[data-vcf-backup-progress]");
     if (progress) {
@@ -689,10 +772,12 @@
     const link = node("[data-vcf-backup-task-link]");
     if (link && result.job_id) { link.href = `${form.dataset.tasksRoot}?job_id=${encodeURIComponent(result.job_id)}`; link.classList.remove("hidden"); }
     else link?.classList.add("hidden");
-    node("[data-vcf-backup-new-plan]")?.classList.toggle("hidden", !["succeeded", "reconciled"].includes(operationState));
+    node("[data-vcf-backup-new-plan]")?.classList.toggle("hidden", !receiverReady || !["succeeded", "reconciled"].includes(operationState));
     node("[data-vcf-backup-close-control]")?.classList.toggle("hidden", operationState !== "needs_recovery");
-    node("[data-vcf-backup-reconcile]")?.classList.toggle("hidden", ["succeeded", "reconciled"].includes(operationState));
-    if (["queued", "pending", "running"].includes(String(result.state || "").toLowerCase())) schedulePoll(1800);
+    const reconcileButton = node("[data-vcf-backup-reconcile]");
+    reconcileButton?.classList.toggle("hidden", ["succeeded", "reconciled"].includes(operationState));
+    if (reconcileButton) reconcileButton.disabled = reconciliationActive;
+    if (["queued", "pending", "running"].includes(String(result.state || "").toLowerCase()) || reconciliationActive) schedulePoll(1800);
     else window.clearTimeout(pollTimer);
   }
   function renderRecoveryCredentials() {
@@ -734,18 +819,140 @@
     receiver = result.receiver || receiver;
     renderOperation(result);
     node("[data-vcf-backup-recovery-id]").value = operationId;
-    wizard.setSkippedSteps(inspectedSources.length && inspectedSources.every(({credentialMode}) => credentialMode === "vault") ? ["login"] : []);
-    wizard.setHighestStep("review");
-    wizard.showStep("review", {force: true});
     setStatus("Status loaded. Recovery can inspect or reconcile this operation; it cannot repeat native writes.");
+  }
+  async function openOperationStatus(requestedId) {
+    const viewEpoch = invalidateStatusView();
+    window.clearTimeout(pollTimer);
+    pollTimer = null;
+    if (requestedId) node("[data-vcf-backup-recovery-id]").value = requestedId;
+    showStatusDialog();
+    if (!requestedId) {
+      setStatus("Enter an operation ID or choose an operation from the list.");
+      return;
+    }
+    if (requestedId !== operationId) {
+      clearManualPasswords();
+      inspectedSources = [];
+      components = [];
+      receiver = null;
+      operationStarted = false;
+      operationState = "";
+      canCloseWithoutCredentials = false;
+      node("[data-vcf-backup-recovery-credentials]").replaceChildren();
+      node("[data-vcf-backup-operation-detail]").replaceChildren();
+      node("[data-vcf-backup-operation-sources]").replaceChildren();
+      node("[data-vcf-backup-operation-error]").classList.add("hidden");
+      node("[data-vcf-backup-native-running-warning]").classList.add("hidden");
+      node("[data-vcf-backup-task-link]").classList.add("hidden");
+      node("[data-vcf-backup-new-plan]").classList.add("hidden");
+      field("close_recovery").checked = false;
+    }
+    operationId = requestedId;
+    node("[data-vcf-backup-operation-id]").textContent = requestedId;
+    setStatus("Loading operation status…");
+    try {
+      const result = await call(`/operations/${encodeURIComponent(requestedId)}`);
+      if (!isCurrentStatusView(viewEpoch, requestedId)) return;
+      hydrateOperation(result);
+    } catch (error) {
+      if (!isCurrentStatusView(viewEpoch, requestedId)) return;
+      const message = error?.message || "The operation status could not be loaded.";
+      setStatus(message, true);
+      const panelError = node("[data-vcf-backup-operation-error]");
+      if (panelError) { panelError.textContent = message; panelError.classList.remove("hidden"); }
+    }
   }
   async function loadOperation() {
     const requestedId = node("[data-vcf-backup-recovery-id]").value.trim();
     if (!requestedId) throw new Error("Enter an operation ID first.");
-    const result = await call(`/operations/${encodeURIComponent(requestedId)}`);
-    hydrateOperation(result);
-    return result;
+    return openOperationStatus(requestedId);
   }
+  function showStatusDialog() {
+    if (!statusDialog.open) statusDialog.showModal();
+    window.requestAnimationFrame(() => node("[data-vcf-backup-recovery-id]")?.focus({preventScroll: true}));
+  }
+  function operationSourceSummary(sources) {
+    return (Array.isArray(sources) ? sources : []).map((source) => `${sourceKindLabel(source.kind)} · ${safeText(source.address)}:${safeText(source.port)}`).join("; ") || "Not recorded";
+  }
+  function operationCell(value, fallback = "Not recorded") {
+    const span = document.createElement("span");
+    span.textContent = safeText(value, fallback);
+    return span;
+  }
+  async function loadOperations(append = false) {
+    if (!operationsGrid?.table || operationsLoading) return;
+    operationsLoading = true;
+    const status = document.querySelector("[data-vcf-backup-operations-status]");
+    const refresh = document.querySelector("[data-vcf-backup-operations-refresh]");
+    const more = document.querySelector("[data-vcf-backup-operations-more]");
+    if (refresh) refresh.disabled = true;
+    if (more) more.disabled = true;
+    if (status) status.textContent = "Loading backup operations…";
+    const query = new URLSearchParams({limit: "25"});
+    if (append && operationsCursor) query.set("cursor", operationsCursor);
+    try {
+      const result = await call(`/operations?${query.toString()}`);
+      const items = Array.isArray(result.items) ? result.items : [];
+      if (append) await operationsGrid.table.addData(items);
+      else await operationsGrid.table.setData(items);
+      operationsCursor = result.next_cursor || "";
+      if (more) more.classList.toggle("hidden", !operationsCursor);
+      if (status) status.textContent = `Loaded ${operationsGrid.table.getDataCount?.("active") ?? operationsGrid.table.getData?.().length ?? items.length} backup operation(s).`;
+    } catch (error) {
+      const message = error?.message || "Backup operations could not be loaded.";
+      operationsGrid.setError(message);
+      if (status) status.textContent = message;
+    } finally {
+      operationsLoading = false;
+      if (refresh) refresh.disabled = false;
+      if (more) more.disabled = false;
+    }
+  }
+  function initializeOperationsGrid() {
+    const element = document.querySelector("[data-vcf-backup-operations-grid]");
+    if (operationsInitialized || !element) return;
+    operationsInitialized = true;
+    const rowAction = (item) => openOperationStatus(item.operation_id);
+    operationsGrid = window.AtlasoUiPatterns.createGrid({
+      element,
+      fallback: "[data-vcf-backup-operations-fallback]",
+      status: document.querySelector("[data-vcf-backup-operations-status]"),
+      pattern: "read-only",
+      loadingMessage: "Loading recent VCF backup operations…",
+      emptyMessage: "No backup operations have been recorded.",
+      errorMessage: "The backup operation list could not be displayed. Refresh to retry.",
+      onReady: () => window.requestAnimationFrame(() => loadOperations(false)),
+      onOpenRow: (item) => rowAction(item),
+      rowActions: [{label: "View status", action: (_event, row) => rowAction(row.getData())}],
+      options: {
+        data: [], index: "operation_id", layout: "fitColumns", responsiveLayout: "collapse",
+        pagination: true, paginationSize: 25, selectableRows: 1,
+        columns: [
+          {title: "Created", field: "created_at", minWidth: 170, formatter: (cell) => operationCell(cell.getValue())},
+          {title: "Operation", field: "operation_id", minWidth: 220, formatter: (cell) => operationCell(cell.getValue())},
+          {title: "Status", field: "state", minWidth: 140, formatter: (cell) => operationCell(operationStateLabel(cell.getValue()))},
+          {title: "Components", field: "component_count", width: 120, formatter: (cell) => operationCell(cell.getValue(), "0")},
+          {title: "Sources", field: "sources", minWidth: 240, formatter: (cell) => operationCell(operationSourceSummary(cell.getValue()))},
+        ],
+      },
+      permission: {allowed: true},
+    });
+    operationsGrid?.table?.on?.("rowClick", (_event, row) => rowAction(row.getData()));
+    if (!operationsGrid?.table) operationsGrid?.setError?.("The backup operation list could not be initialized. Refresh to retry.");
+  }
+  const backupTab = document.getElementById("vcf-helper-backup");
+  const backupTabButton = document.querySelector('[data-tab-target="vcf-helper-backup"]');
+  const initializeVisibleOperationsGrid = () => {
+    if (backupTab && !backupTab.hidden) initializeOperationsGrid();
+  };
+  backupTabButton?.addEventListener("click", () => window.requestAnimationFrame(initializeVisibleOperationsGrid));
+  if (backupTab && !backupTab.hidden) initializeOperationsGrid();
+  document.querySelector("[data-vcf-backup-operations-refresh]")?.addEventListener("click", () => {
+    operationsCursor = "";
+    loadOperations(false);
+  });
+  document.querySelector("[data-vcf-backup-operations-more]")?.addEventListener("click", () => loadOperations(true));
   function clearManualPasswords() {
     inspectedSources.forEach(({request, credentialMode}) => {
       if (credentialMode === "manual") request.password = "";
@@ -754,7 +961,8 @@
     field("password").value = "";
   }
   function startNewPlan() {
-    if (!["succeeded", "reconciled"].includes(operationState)) return;
+    if (!receiverReady || !["succeeded", "reconciled"].includes(operationState)) return;
+    invalidateStatusView();
     window.clearTimeout(pollTimer);
     clearManualPasswords();
     grid?.table?.deselectRow?.();
@@ -767,21 +975,21 @@
     operationState = "";
     canCloseWithoutCredentials = false;
     invalidateReview();
-    wizard.reset();
     resetCurrentSource();
     renderComponents();
     renderSourceSummaries();
-    node("[data-vcf-backup-operation]").classList.add("hidden");
-    node("[data-vcf-backup-new-plan]").classList.add("hidden");
+    node("[data-vcf-backup-new-plan]")?.classList.add("hidden");
     node("[data-vcf-backup-recovery-id]").value = "";
     node("[data-vcf-backup-recovery-credentials]").replaceChildren();
     node("[data-atlaso-wizard-submit]").disabled = false;
     node("[data-vcf-backup-task-link]").classList.add("hidden");
     setStatus("Start a fresh inspection and review for the new plan.");
+    statusDialog.close();
+    wizard.open({launcher: document.querySelector("[data-vcf-backup-open]"), step: "credential", highestStep: "credential"});
   }
   function schedulePoll(delay) {
     window.clearTimeout(pollTimer);
-    pollTimer = window.setTimeout(() => { if (dialog.open && operationId) pollOperation().catch(() => {}); }, delay);
+    pollTimer = window.setTimeout(() => { if (statusDialog.open && operationId) pollOperation().catch(() => {}); }, delay);
   }
   function lockSubmitAfterOperation() {
     window.setTimeout(() => {
@@ -789,13 +997,20 @@
     }, 0);
   }
   async function pollOperation() {
-    if (!operationId || busy) return;
+    if (!operationId || busy || !statusDialog.open) return;
+    const requestedId = operationId;
+    const viewEpoch = statusViewEpoch;
     busy = true;
-    try { renderOperation(await call(`/operations/${encodeURIComponent(operationId)}`)); }
-    finally { busy = false; }
+    try {
+      const result = await call(`/operations/${encodeURIComponent(requestedId)}`);
+      if (isCurrentStatusView(viewEpoch, requestedId)) renderOperation(result);
+    }
+    finally { if (statusViewEpoch === viewEpoch && operationId === requestedId) busy = false; }
   }
   async function reconcile() {
-    if (!operationId || busy) return;
+    if (!operationId || busy || !statusDialog.open) return;
+    const requestedId = operationId;
+    const viewEpoch = statusViewEpoch;
     const closeReviewed = field("close_recovery").checked;
     if (!(closeReviewed && canCloseWithoutCredentials) && inspectedSources.some(({request, credentialMode}) => credentialMode === "manual" && !request.password)) {
       renderRecoveryCredentials();
@@ -803,8 +1018,21 @@
       return;
     }
     busy = true;
-    try { renderOperation(await call("/reconcile", {operation_id: operationId, sources: inspectedSources.map(({request}) => request), close_reviewed: closeReviewed})); }
-    finally { busy = false; }
+    try {
+      const result = await call("/reconcile", {operation_id: requestedId, sources: inspectedSources.map(({request}) => request), close_reviewed: closeReviewed});
+      if (!isCurrentStatusView(viewEpoch, requestedId)) return;
+      renderOperation(result);
+      if (["queued", "running"].includes(String(result.reconciliation_state || "").toLowerCase())) {
+        clearManualPasswords();
+        setStatus("Read-only reconciliation started. You can close this popup; native settings will not be changed.");
+      } else if (String(result.reconciliation_state || "").toLowerCase() === "failed") {
+        setStatus(result.reconciliation_error || "Read-only reconciliation failed.", true);
+      } else setStatus("");
+    }
+    catch (error) {
+      if (isCurrentStatusView(viewEpoch, requestedId)) throw error;
+    }
+    finally { if (statusViewEpoch === viewEpoch && operationId === requestedId) busy = false; }
   }
   async function inspectCurrentSource() {
     if (!validProbes()) throw new Error("Probe and explicitly confirm every required TLS fingerprint before inspecting this source.");
@@ -882,7 +1110,7 @@
     onOpen: async () => {
       setError(""); setStatus("Credentials and TLS confirmations stay in this open wizard only.");
       updateCredentialMode(); updateSourceFields();
-      if (operationId && operationStarted) { try { hydrateOperation(await call(`/operations/${encodeURIComponent(operationId)}`)); } catch (error) { setStatus(error.message, true); } }
+      syncOperationView();
     },
     onStepChange: ({step}) => {
       const body = node(".vcf-sddc-wizard-body");
@@ -931,18 +1159,25 @@
         operationStarted = true;
         syncOperationView();
         lockSubmitAfterOperation();
-        renderOperation(result);
         wizard.markClean();
+        wizard.close("submit");
+        showStatusDialog();
+        renderOperation(result);
+        if (operationsGrid) loadOperations(false).catch(() => {});
         return {ok: true, close: false};
       } catch (error) {
         const outcomeMayBeUnknown = !error.status || error.status >= 500 || [408, 429].includes(error.status);
         if (!outcomeMayBeUnknown) return {ok: false, message: error.message};
         operationStarted = true;
         syncOperationView();
+        wizard.markClean();
+        wizard.close("submit");
+        showStatusDialog();
         renderOperation({operation_id: operationId, state: "needs_recovery", error: error.message});
         try { renderOperation(await call(`/operations/${encodeURIComponent(operationId)}`)); } catch { /* Keep the recovery action available when status is temporarily unreachable. */ }
         lockSubmitAfterOperation();
-        return {ok: false, message: `${error.message} Review and execution are locked until you reconcile this operation.`};
+        if (operationsGrid) loadOperations(false).catch(() => {});
+        return {ok: true, close: false};
       }
     },
     closeOnSubmit: false,
@@ -967,7 +1202,10 @@
       updateSourceFields(); invalidateReview(); tlsFingerprints.server = "";
       const checkbox = node('[data-vcf-backup-confirm="server"]'); if (checkbox) { checkbox.checked = false; checkbox.disabled = true; }
     }
-    if (event.target.closest("[data-atlaso-wizard-step='settings']")) invalidateReview();
+    if (event.target.closest("[data-atlaso-wizard-step='settings']")) {
+      updateSourceFields();
+      invalidateReview();
+    }
   });
   form.addEventListener("click", (event) => {
     const probeButton = event.target.closest("[data-vcf-backup-probe]");
@@ -990,8 +1228,14 @@
       setStatus("Add another source. Previously inspected source inputs remain only in this open wizard.");
       return;
     }
+  });
+  statusDialog.addEventListener("click", (event) => {
     if (event.target.closest("[data-vcf-backup-reconcile]")) {
-      event.preventDefault(); reconcile().catch((error) => {
+      event.preventDefault();
+      const requestedId = operationId;
+      const viewEpoch = statusViewEpoch;
+      reconcile().catch((error) => {
+        if (!isCurrentStatusView(viewEpoch, requestedId)) return;
         setStatus(error.message, true);
         const panelError = node("[data-vcf-backup-operation-error]");
         if (panelError) { panelError.textContent = error.message; panelError.classList.remove("hidden"); }
@@ -1003,13 +1247,28 @@
     if (event.target.closest("[data-vcf-backup-new-plan]")) {
       event.preventDefault(); startNewPlan();
     }
+    if (event.target.closest("[data-vcf-backup-status-close]")) {
+      event.preventDefault(); statusDialog.close();
+    }
   });
   node('[data-vcf-backup-confirm="server"]')?.addEventListener("change", invalidateReview);
   document.querySelector("[data-vcf-backup-open]")?.addEventListener("click", (event) => {
     if (!event.currentTarget.disabled) {
-      const resume = operationStarted ? "review" : operationId && inspectedSources.length ? "discovery" : "credential";
+      if (operationStarted && operationId) {
+        openOperationStatus(operationId);
+        return;
+      }
+      const resume = operationId && inspectedSources.length ? "discovery" : "credential";
       wizard.open({launcher: event.currentTarget, step: resume, highestStep: resume});
     }
+  });
+  document.querySelector("[data-vcf-backup-resume]")?.addEventListener("click", (event) => {
+    openOperationStatus(operationStarted && operationId ? operationId : "");
+  });
+  statusDialog.addEventListener("close", () => {
+    if (!statusDialog.open) invalidateStatusView();
+    window.clearTimeout(pollTimer); pollTimer = null;
+    clearManualPasswords();
   });
   dialog.addEventListener("close", () => {
     window.clearTimeout(pollTimer); pollTimer = null;

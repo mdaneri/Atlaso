@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import ipaddress
 import json
@@ -9,15 +11,18 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.parse import quote, urlsplit
+from uuid import UUID
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 
 from atlaso.app.services.vcf_certificate_remote import (
+    _VIM25_NAMESPACE,
     Credentials,
     PinnedHTTPS,
     RemoteError,
     Target,
+    _parse_vim25_xml,
 )
 
 _VERSION_RE = re.compile(r"^9\.1(?:\.\d+){0,3}$")
@@ -39,11 +44,14 @@ class NativeBackup:
     Public ``current`` and ``proposed`` settings use only ``host``, ``port``,
     ``user``, ``directory``, ``ecdsa_fingerprint``, ``schedule_enabled``,
     ``full_time``, ``interval_minutes``, ``state_change``, ``retention_mode``,
-    ``retention_value``, and secret-presence booleans. Fleet also returns and
-    proposes ``schedule_timezone`` so RFC3339 offsets remain reviewable. SDDC Manager may add
-    ``sddc_most_recent``, ``sddc_hourly_days``, and ``sddc_daily_days``.
-    NSX proposals may also carry the receiver's public ``host_key`` line for
-    the native host-key algorithm field.
+    ``retention_value``, and secret-presence booleans. Fleet additionally uses
+    ``schedule_timezone``, ``fleet_schedule_mode``, and the exact allowlisted
+    ``fleet_schedule`` snapshot so recurrence can be reviewed and preserved.
+    SDDC Manager may add ``sddc_most_recent``, ``sddc_hourly_days``, and
+    ``sddc_daily_days``.
+    Fleet proposals use ``ssh_fingerprint`` for the vendor-selected verified
+    RSA or ECDSA key. Fleet and NSX proposals also carry its public ``host_key``
+    line for verification or the native host-key algorithm field.
     SFTP/encryption secrets are sent only in native request bodies and never
     cached or included in results or raised errors.
     """
@@ -55,6 +63,13 @@ class NativeBackup:
         *,
         transport_factory: Callable[[Target], Any] = PinnedHTTPS,
     ) -> None:
+        """Initialize a native adapter for one confirmed product endpoint.
+
+            Args:
+                source: Confirmed native endpoint identity and connection metadata.
+                credentials: Request-local credentials for the selected native API.
+                transport_factory: Factory that creates the fingerprint-pinned transport for a resolved target.
+        """
         self.source = dict(source)
         self.credentials = credentials
         self.kind = str(source.get("kind", ""))
@@ -73,12 +88,18 @@ class NativeBackup:
         self._sddc_appliance_info: dict[str, Any] | None = None
         self._sddc_manager: dict[str, Any] | None = None
         self._nsx_cluster_id: str | None = None
+        self._vcenter_instance_uuid: str | None = None
         self._inventory: dict[str, Any] | None = None
         self._fleet_backup_baseline: dict[str, set[tuple[str, str]]] = {}
         self._nsx_backup_baseline: dict[str, set[str]] = {}
 
     @staticmethod
     def _validate_target(source: dict[str, Any]) -> None:
+        """Reject incomplete or conflicting native target details.
+
+            Args:
+                source: Target fields that must identify a previously confirmed native endpoint.
+        """
         for key in ("address", "fingerprint"):
             if not isinstance(source.get(key), str) or not source[key]:
                 raise ValueError("A confirmed native API target is required")
@@ -93,6 +114,12 @@ class NativeBackup:
     def _new_transport_for(
         target_data: dict[str, Any], factory: Callable[[Target], Any]
     ) -> Any:
+        """Create a transport for a confirmed TLS-pinned native target.
+
+            Args:
+                target_data: Confirmed host, port, and certificate fingerprint.
+                factory: Constructor called with the validated Target.
+        """
         target = Target(
             host=str(target_data["address"]),
             port=int(target_data.get("port", 443)),
@@ -101,12 +128,22 @@ class NativeBackup:
         return factory(target)
 
     def _new_transport(self, target_data: dict[str, Any]) -> Any:
+        """Create this adapter’s transport for the confirmed native target.
+
+            Args:
+                target_data: Confirmed connection data used to construct this adapter’s transport.
+        """
         return self._new_transport_for(target_data, self._factory)
 
     def __enter__(self) -> NativeBackup:
         return self
 
     def __exit__(self, *_error: Any) -> None:
+        """Clear request authentication state when leaving the adapter context.
+
+            Args:
+                *_error: Context-manager exception details; authentication state is cleared regardless.
+        """
         self._session = None
         self._ops_token = None
         self._fleet_token = None
@@ -123,6 +160,18 @@ class NativeBackup:
         expected: set[int] | None = None,
         include_status: bool = False,
     ) -> Any:
+        """Send one bounded request through the pinned native transport.
+
+            Args:
+                transport: Pinned HTTPS transport that sends the request.
+                method: HTTP method for the native endpoint.
+                path: Relative path on the confirmed target.
+                credentials: Optional endpoint credentials.
+                header: Optional session or bearer header.
+                body: Optional JSON request body.
+                expected: Optional allowed HTTP status codes.
+                include_status: Whether to return status with the decoded response.
+        """
         status, result = transport.request(
             method,
             path,
@@ -269,6 +318,15 @@ class NativeBackup:
         self, method: str, path: str, body: Any = None, *, fleet: bool = False,
         include_status: bool = False,
     ) -> Any:
+        """Select the native service and send one API request.
+
+            Args:
+                method: HTTP method to send.
+                path: Relative native API path.
+                body: Optional JSON request body.
+                fleet: Whether to route through the discovered Fleet service.
+                include_status: Whether to return status with the response.
+        """
         transport = self._fleet_transport if fleet else self.transport
         if transport is None:
             raise RemoteError("Fleet LCM target is unavailable")
@@ -288,18 +346,67 @@ class NativeBackup:
             include_status=include_status,
         )
 
-    def _poll_call(self, path: str, *, fleet: bool = False) -> Any:
-        """Read a status endpoint while distinguishing only exact HTTP 503."""
+    def _refresh_fleet_poll_auth(self) -> None:
+        """Refresh Fleet credentials only if Operations still advertises the reviewed service."""
+        reviewed_service = dict(self._fleet_service or {})
+        inventory = self._inventory
+        version = self._version
+        inventory_service = inventory.get("service") if isinstance(inventory, dict) else None
+        if not reviewed_service or not isinstance(inventory_service, dict) or inventory_service != reviewed_service:
+            raise RemoteError("The reviewed Fleet LCM service identity is unavailable; review the source again")
+        try:
+            self._fleet_login()
+            if self._fleet_service != reviewed_service:
+                raise RemoteError("The Fleet LCM service identity changed; review the source again")
+        except Exception:
+            # Never let a token minted for a changed Operations registry entry
+            # reach a Fleet endpoint, and preserve only the last reviewed snapshot.
+            self._fleet_token = None
+            self._fleet_transport = None
+            self._fleet_service = None
+            self._version = version
+            self._inventory = inventory
+            raise
+        self._version = version
+        self._inventory = inventory
+
+    def _poll_call(
+        self, path: str, *, fleet: bool = False, fleet_auth_refresh: list[bool] | None = None,
+    ) -> Any:
+        """Read one poll endpoint with at most one Fleet credential refresh/retry.
+
+            Args:
+                path: Read-only endpoint being polled.
+                fleet: Whether this request uses Fleet authentication.
+                fleet_auth_refresh: Shared one-item marker limiting token refreshes for this poll.
+        """
         try:
             status, result = self._call("GET", path, fleet=fleet, include_status=True)
         except RemoteError as exc:
             # PinnedHTTPS raises this fixed, sanitized error before returning
-            # a response tuple. Never classify vendor text or auth/TLS errors.
+            # a response tuple. Never classify vendor text or TLS failures.
             if str(exc) == "Appliance API returned HTTP 503":
                 raise _TransientPollUnavailable from None
-            raise
+            if str(exc) == "Appliance API returned HTTP 401":
+                status, result = 401, None
+            else:
+                raise
+        if status == 401 and fleet and fleet_auth_refresh is not None and not fleet_auth_refresh[0]:
+            fleet_auth_refresh[0] = True
+            self._refresh_fleet_poll_auth()
+            try:
+                status, result = self._call("GET", path, fleet=True, include_status=True)
+            except RemoteError as exc:
+                if str(exc) == "Appliance API returned HTTP 503":
+                    raise _TransientPollUnavailable from None
+                if str(exc) == "Appliance API returned HTTP 401":
+                    status, result = 401, None
+                else:
+                    raise
         if status == 503:
             raise _TransientPollUnavailable
+        if status == 401:
+            raise RemoteError("Native backup status poll returned HTTP 401")
         if not 200 <= status < 300:
             raise RemoteError(f"Native backup status poll returned HTTP {status}")
         return result
@@ -337,14 +444,28 @@ class NativeBackup:
         self._version = version
         return version
 
-    def _pages(self, path: str, *, fleet: bool = False, poll: bool = False) -> list[dict[str, Any]]:
+    def _pages(
+        self, path: str, *, fleet: bool = False, poll: bool = False,
+        fleet_auth_refresh: list[bool] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch all bounded pages from a documented native collection.
+
+            Args:
+                path: Collection endpoint whose pages are read.
+                fleet: Whether the collection belongs to Fleet LCM.
+                poll: Whether this read is part of transient-aware status polling.
+                fleet_auth_refresh: Shared marker limiting token refresh across all pages.
+        """
         collected: list[dict[str, Any]] = []
         for page in range(1, _MAX_PAGES + 1):
             separator = "&" if "?" in path else "?"
             page_number = page if fleet else page - 1
             page_size = 100 if fleet else 50
             page_path = f"{path}{separator}pageNumber={page_number}&pageSize={page_size}"
-            payload = self._poll_call(page_path, fleet=fleet) if poll else self._call("GET", page_path, fleet=fleet)
+            payload = (
+                self._poll_call(page_path, fleet=fleet, fleet_auth_refresh=fleet_auth_refresh)
+                if poll else self._call("GET", page_path, fleet=fleet)
+            )
             if isinstance(payload, list):
                 items: Any = payload
                 has_more = len(items) == 100
@@ -378,20 +499,33 @@ class NativeBackup:
 
     def _fleet_backup_records(
         self, group: str, component_id: str, *, poll: bool = False,
+        fleet_auth_refresh: list[bool] | None = None,
     ) -> list[dict[str, Any]]:
+        """Read backup history for one eligible Fleet component.
+
+            Args:
+                group: Reviewed SDDC-LCM group identifier.
+                component_id: Eligible component whose backup records are requested.
+                poll: Whether this history read is part of status polling.
+                fleet_auth_refresh: Shared one-refresh marker for the Fleet token.
+        """
         return self._pages(
             f"/v1/sddc-lcms/{quote(group, safe='')}/backups?componentId={quote(component_id, safe='')}",
-            fleet=True, poll=poll,
+            fleet=True, poll=poll, fleet_auth_refresh=fleet_auth_refresh,
         )
 
     def _fleet_current(self, group: str) -> dict[str, Any]:
-        """Read group settings and prove an omitted config is unconfigured."""
+        """Read group settings and prove an omitted config is unconfigured.
+
+            Args:
+                group: Selected SDDC-LCM group whose settings are inspected.
+        """
         raw = self._call("GET", f"/v1/sddc-lcms/{quote(group, safe='')}", fleet=True)
         if not isinstance(raw, dict) or self._pick(raw, "id", "sddcLcmId") != group:
             raise RemoteError("Fleet LCM did not return the selected SDDC-LCM configuration")
         config = raw.get("backupConfig")
         if isinstance(config, dict):
-            normalized = self._safe_settings(config)
+            normalized = self._safe_fleet_settings(config)
             schedule = config.get("fullSchedule")
             schedule = schedule if isinstance(schedule, dict) else {}
             schedule_spec = schedule.get("schedule")
@@ -404,7 +538,11 @@ class NativeBackup:
                 normalized["full_time"], normalized["schedule_timezone"] = parsed_time
             else:
                 normalized["schedule_timezone"] = None
-            return {**normalized, "configured": True}
+            return {
+                **normalized,
+                "fleet_schedule": self._safe_fleet_schedule(config),
+                "configured": True,
+            }
         if config is not None:
             raise RemoteError("Fleet LCM returned an unreadable backup configuration")
 
@@ -417,19 +555,192 @@ class NativeBackup:
         )
         matching_ids = [self._pick(item, "id", "sddcLcmId") for item in matches]
         if matching_ids.count(group) == 1:
-            return {**self._safe_settings({}), "schedule_timezone": None, "configured": False}
+            return {
+                **self._safe_fleet_settings({}), "schedule_timezone": None,
+                "fleet_schedule": {}, "configured": False,
+            }
         raise RemoteError(
             "Fleet LCM omitted this group's backup configuration and could not prove it has no existing schedule or storage; refusing configuration changes"
         )
 
     @staticmethod
+    def _safe_fleet_settings(raw: Any) -> dict[str, Any]:
+        """Remove secrets and unsupported fields from Fleet backup settings.
+
+            Args:
+                raw: Fleet response reduced to public backup fields.
+        """
+        normalized = NativeBackup._safe_settings(raw)
+        normalized["ssh_fingerprint"] = normalized.pop("ecdsa_fingerprint", None)
+        return normalized
+
+    @staticmethod
+    def _safe_fleet_schedule(raw: Any) -> dict[str, Any]:
+        """Return the complete allowlisted Fleet schedule without normalizing it.
+
+            Args:
+                raw: Native schedule object whose documented fields are validated and retained exactly.
+        """
+        if not isinstance(raw, dict):
+            raise RemoteError("Fleet LCM returned an unreadable backup schedule")
+        result: dict[str, Any] = {}
+        full = raw.get("fullSchedule")
+        if full is not None:
+            if not isinstance(full, dict) or set(full) - {"enabled", "schedule"}:
+                raise RemoteError("Fleet LCM returned an unsupported full backup schedule")
+            if "enabled" in full and not isinstance(full["enabled"], bool):
+                raise RemoteError("Fleet LCM returned an invalid full backup schedule state")
+            safe_full: dict[str, Any] = {}
+            if "enabled" in full:
+                safe_full["enabled"] = full["enabled"]
+            schedule = full.get("schedule")
+            if schedule is not None:
+                if not isinstance(schedule, dict) or set(schedule) - {"days", "startTime"}:
+                    raise RemoteError("Fleet LCM returned an unsupported full backup schedule")
+                safe_schedule: dict[str, Any] = {}
+                if "days" in schedule:
+                    days = schedule["days"]
+                    if (
+                        not isinstance(days, list)
+                        or not days
+                        or any(
+                            not isinstance(day, str)
+                            or day not in {"MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"}
+                            for day in days
+                        )
+                        or len(set(days)) != len(days)
+                    ):
+                        raise RemoteError("Fleet LCM returned invalid full backup schedule days")
+                    safe_schedule["days"] = list(days)
+                if "startTime" in schedule:
+                    start_time = schedule["startTime"]
+                    if not isinstance(start_time, str) or _fleet_time_parts(start_time) is None:
+                        raise RemoteError("Fleet LCM returned an invalid full backup schedule time")
+                    safe_schedule["startTime"] = start_time
+                if full.get("enabled") is True and not {"days", "startTime"} <= set(safe_schedule):
+                    raise RemoteError("Fleet LCM omitted an enabled full backup schedule")
+                safe_full["schedule"] = safe_schedule
+            elif full.get("enabled") is True:
+                raise RemoteError("Fleet LCM omitted an enabled full backup schedule")
+            result["fullSchedule"] = safe_full
+
+        incremental = raw.get("incrementalSchedule")
+        if incremental is not None:
+            if not isinstance(incremental, dict) or set(incremental) - {"enabled", "interval", "fallbackToFull"}:
+                raise RemoteError("Fleet LCM returned an unsupported incremental backup schedule")
+            if "enabled" in incremental and not isinstance(incremental["enabled"], bool):
+                raise RemoteError("Fleet LCM returned an invalid incremental backup schedule state")
+            if "fallbackToFull" in incremental and not isinstance(incremental["fallbackToFull"], bool):
+                raise RemoteError("Fleet LCM returned an invalid incremental backup fallback policy")
+            if "interval" in incremental and (
+                not isinstance(incremental["interval"], int)
+                or isinstance(incremental["interval"], bool)
+                or incremental["interval"] < 1
+            ):
+                raise RemoteError("Fleet LCM returned an invalid incremental backup interval")
+            if incremental.get("enabled") is True and "interval" not in incremental:
+                raise RemoteError("Fleet LCM omitted the enabled incremental backup interval")
+            result["incrementalSchedule"] = dict(incremental)
+
+        if (
+            result.get("incrementalSchedule", {}).get("enabled") is True
+            and result.get("fullSchedule", {}).get("enabled") is not True
+        ):
+            raise RemoteError("Fleet LCM returned incremental backups without enabled full backups")
+        return result
+
+    def _fleet_receiver_key(self, receiver: dict[str, Any]) -> tuple[str, str]:
+        """Bind Fleet's advertised SSH thumbprint to one locally verified receiver key.
+
+            Args:
+                receiver: Confirmed receiver endpoint and verified public SSH keys.
+        """
+        host = receiver.get("host")
+        port = receiver.get("port", 22)
+        if not isinstance(host, str) or not host or not isinstance(port, int) or isinstance(port, bool):
+            raise ValueError("Fleet backup receiver address is invalid")
+        ecdsa_key = receiver.get("host_key")
+        rsa_key = receiver.get("rsa_host_key")
+        candidates: list[tuple[str, str]] = []
+        if isinstance(ecdsa_key, str):
+            ecdsa_fingerprint = _openssh_sha256_fingerprint(ecdsa_key, "ecdsa-sha2-nistp256")
+            if receiver.get("ecdsa_fingerprint") != ecdsa_fingerprint:
+                raise ValueError("The verified receiver ECDSA key does not match its fingerprint")
+            candidates.append((ecdsa_fingerprint, ecdsa_key))
+        if isinstance(rsa_key, str):
+            rsa_fingerprint = _openssh_sha256_fingerprint(rsa_key, "ssh-rsa")
+            candidates.append((rsa_fingerprint, rsa_key))
+        if not candidates:
+            raise ValueError("The verified receiver has no supported SSH host key")
+        observed = self._fleet_ssh_thumbprint(host, port)
+        matches = [(fingerprint, key) for fingerprint, key in candidates if fingerprint == observed]
+        if len(matches) != 1:
+            raise RemoteError("Fleet LCM SSH thumbprint does not match a verified receiver host key")
+        return matches[0]
+
+    def _fleet_ssh_thumbprint(self, host: str, port: int) -> str:
+        """Ask Fleet to verify the selected receiver SSH key.
+
+            Args:
+                host: Receiver hostname sent to Fleet for thumbprint lookup.
+                port: Receiver SSH port paired with that hostname.
+        """
+        result = self._call(
+            "POST", "/v1/address-attributes?type=SSH_THUMBPRINT",
+            [{"address": host, "port": port}], fleet=True,
+        )
+        if not isinstance(result, list) or len(result) != 1 or not isinstance(result[0], dict):
+            raise RemoteError("Fleet LCM returned an ambiguous SSH thumbprint response")
+        record = result[0]
+        if record.get("address") != host or record.get("port") != port or record.get("error") is not None:
+            raise RemoteError("Fleet LCM could not verify the selected receiver SSH thumbprint")
+        observed = record.get("value")
+        if not isinstance(observed, str) or not re.fullmatch(r"SHA256:[A-Za-z0-9+/]{43}", observed):
+            raise RemoteError("Fleet LCM returned an unsupported SSH thumbprint format")
+        return observed
+
+    def _fleet_require_reviewed_key(self, proposed: dict[str, Any]) -> None:
+        """Ensure Fleet will use the reviewed, verified receiver key.
+
+            Args:
+                proposed: Reviewed Fleet destination and host-key selection.
+        """
+        host = proposed.get("host")
+        port = proposed.get("port")
+        key = proposed.get("host_key")
+        if (
+            not isinstance(host, str) or not host
+            or not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535
+            or not isinstance(key, str)
+        ):
+            raise ValueError("Reviewed Fleet backup receiver key details are invalid")
+        key_type = key.split(None, 1)[0] if key.split() else ""
+        if key_type not in {"ecdsa-sha2-nistp256", "ssh-rsa"}:
+            raise ValueError("Reviewed Fleet backup receiver key algorithm is unsupported")
+        fingerprint = _openssh_sha256_fingerprint(key, key_type)
+        observed = self._fleet_ssh_thumbprint(host, port)
+        if proposed.get("ssh_fingerprint") != fingerprint or observed != fingerprint:
+            raise RemoteError("Fleet LCM receiver SSH thumbprint changed after review")
+
+    @staticmethod
     def _public_id(value: Any) -> str:
+        """Validate and bound an identifier before using it in a native path.
+
+            Args:
+                value: Native identifier that must satisfy the bounded public-ID format.
+        """
         if not isinstance(value, str) or not _SAFE_ID.fullmatch(value):
             raise RemoteError("Native backup inventory has an invalid identifier")
         return value
 
     @staticmethod
     def _pick(item: dict[str, Any], *keys: str) -> Any:
+        """Select the first present native response field alias.
+
+            Args:
+                item: Response object being searched.
+                *keys: Ordered response-field aliases to check.
+        """
         for key in keys:
             if key in item:
                 return item[key]
@@ -437,6 +748,11 @@ class NativeBackup:
 
     @staticmethod
     def _safe_settings(raw: Any) -> dict[str, Any]:
+        """Normalize a native backup response into the public settings allowlist.
+
+            Args:
+                raw: Native backup response reduced to non-secret wizard settings.
+        """
         if not isinstance(raw, dict):
             return {}
         for key, label in (
@@ -673,6 +989,8 @@ class NativeBackup:
                            if product == "nsx" and isinstance(entry.get("nativeId"), str) and entry["nativeId"] else {}),
                     })
         elif self.kind == "vcenter":
+            instance_uuid = self._vcenter_instance_identity()
+            reservation_key = f"vcenter-instance-uuid:{instance_uuid}"
             schedules = self._vcenter_schedule_map()
             parts = self._call("GET", "/api/appliance/recovery/backup/parts")
             if not isinstance(parts, list) or not parts or len(parts) > 100:
@@ -690,13 +1008,13 @@ class NativeBackup:
                     raise RemoteError("vCenter backup schedule inventory is invalid")
                 current = self._safe_vcenter_schedule(raw)
                 component = "vcenter"
-                components.append({"id": component, "group_id": sid, "name": "vCenter Appliance", "product": component, "version": version, "supported": True, "current": current, "warnings": ["vCenter Recovery API has no SSH host-key fingerprint field; Atlaso verifies the receiver's ECDSA key locally, but native SFTP destination checks cannot enforce that pin."], "coverage_gap": "Native vCenter does not bind the configured SFTP ECDSA fingerprint."})
-                groups.append({"id": sid, "product": component, "component_ids": [component], "current": current, "native_identity": {"schedule_id": sid, "exists": True}})
+                components.append({"id": component, "group_id": sid, "name": "vCenter Appliance", "product": component, "version": version, "supported": True, "current": current, "warnings": ["vCenter Recovery API has no SSH host-key fingerprint field; Atlaso verifies the receiver's ECDSA key locally, but native SFTP destination checks cannot enforce that pin."], "coverage_gap": "Native vCenter does not bind the configured SFTP ECDSA fingerprint.", "native_identity": {"instance_uuid": instance_uuid}, "reservation_keys": [reservation_key]})
+                groups.append({"id": sid, "product": component, "component_ids": [component], "current": current, "native_identity": {"schedule_id": sid, "exists": True, "instance_uuid": instance_uuid}, "reservation_keys": [reservation_key]})
             if not schedule_ids:
                 sid = "atlaso-vcf-backup"
                 current = self._safe_vcenter_schedule({})
-                components.append({"id": "vcenter", "group_id": sid, "name": "vCenter Appliance", "product": "vcenter", "version": version, "supported": True, "current": current, "warnings": ["vCenter Recovery API has no SSH host-key fingerprint field; Atlaso verifies the receiver's ECDSA key locally, but native SFTP destination checks cannot enforce that pin."]})
-                groups.append({"id": sid, "product": "vcenter", "component_ids": ["vcenter"], "current": current, "native_identity": {"schedule_id": sid, "exists": False}})
+                components.append({"id": "vcenter", "group_id": sid, "name": "vCenter Appliance", "product": "vcenter", "version": version, "supported": True, "current": current, "warnings": ["vCenter Recovery API has no SSH host-key fingerprint field; Atlaso verifies the receiver's ECDSA key locally, but native SFTP destination checks cannot enforce that pin."], "native_identity": {"instance_uuid": instance_uuid}, "reservation_keys": [reservation_key]})
+                groups.append({"id": sid, "product": "vcenter", "component_ids": ["vcenter"], "current": current, "native_identity": {"schedule_id": sid, "exists": False, "instance_uuid": instance_uuid}, "reservation_keys": [reservation_key]})
                 gaps.append({"product": "vcenter", "reason": "Native API has no SFTP ECDSA host-key fingerprint field and job status has no artifact path; verify the receiver key locally and match new files independently."})
             for group in groups:
                 group["backup_parts"] = part_ids
@@ -725,6 +1043,8 @@ class NativeBackup:
             if self.kind == "sddc" and self._sddc_system
             else self._nsx_cluster_id
             if self.kind == "nsx"
+            else self._vcenter_instance_uuid
+            if self.kind == "vcenter"
             else None
         )
         if self.kind == "fleet":
@@ -761,8 +1081,45 @@ class NativeBackup:
             normalized[self._public_id(raw_id)] = schedule
         return normalized
 
+    def _vcenter_instance_identity(self) -> str:
+        """Read stable vCenter identity from the documented vSphere SOAP ServiceContent."""
+        if self._vcenter_instance_uuid is not None:
+            return self._vcenter_instance_uuid
+        envelope = (
+            f'<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" '
+            f'xmlns:vim25="{_VIM25_NAMESPACE}"><soapenv:Body>'
+            '<vim25:RetrieveServiceContent><_this type="ServiceInstance">ServiceInstance</_this>'
+            '</vim25:RetrieveServiceContent></soapenv:Body></soapenv:Envelope>'
+        )
+        _status, content = self.transport.request(
+            "POST", "/sdk", xml_body=envelope, soap_namespace="vim25"
+        )
+        if not isinstance(content, str):
+            raise RemoteError("vCenter service content did not include a stable instance identity")
+        response = _parse_vim25_xml(content, "RetrieveServiceContentResponse")
+        about = next(
+            (node for node in response.iter() if node.tag.rsplit("}", 1)[-1] == "about"),
+            None,
+        )
+        instance_uuid = next(
+            (node for node in about.iter() if node.tag.rsplit("}", 1)[-1] == "instanceUuid"),
+            None,
+        ) if about is not None else None
+        raw_value = (instance_uuid.text or "").strip() if instance_uuid is not None else ""
+        try:
+            normalized = str(UUID(raw_value))
+        except (ValueError, AttributeError):
+            raise RemoteError("vCenter service content did not include a valid instance identity") from None
+        self._vcenter_instance_uuid = normalized
+        return normalized
+
     @staticmethod
     def _safe_vcenter_schedule(raw: dict[str, Any]) -> dict[str, Any]:
+        """Normalize the documented vCenter Recovery schedule fields.
+
+            Args:
+                raw: vCenter schedule response to normalize without exposing secrets.
+        """
         recurrence = raw.get("recurrence_info") or raw.get("recurrenceInfo") or {}
         retention = raw.get("retention_info") or raw.get("retentionInfo") or {}
         if not isinstance(recurrence, dict):
@@ -794,6 +1151,11 @@ class NativeBackup:
 
     @staticmethod
     def _safe_nsx(raw: Any) -> dict[str, Any]:
+        """Normalize the documented NSX backup configuration fields.
+
+            Args:
+                raw: NSX backup configuration response to normalize without exposing credentials.
+        """
         if not isinstance(raw, dict):
             raise RemoteError("NSX backup configuration is invalid")
         server = raw.get("remote_file_server", raw.get("remoteFileServer", {})) or {}
@@ -829,7 +1191,13 @@ class NativeBackup:
         }
 
     def proposed(self, group: str, policy: dict[str, Any], receiver: dict[str, Any]) -> dict[str, Any]:
-        """Build a normalized public proposal; secret values are accepted only by configure."""
+        """Build a normalized public proposal; secret values are accepted only by configure.
+
+            Args:
+                group: Selected native backup group.
+                policy: Operator choices for recurrence and retention.
+                receiver: Applied receiver endpoint and verified public SSH keys.
+        """
         current_group = self._group(group)
         product = current_group["product"]
         retention_mode = None if product == "nsx" else policy.get("retention_mode", "count")
@@ -867,11 +1235,42 @@ class NativeBackup:
         elif product == "nsx":
             value["full_time"] = None
         elif product == "fleet":
-            value["interval_minutes"] = current_group["current"].get("interval_minutes")
-            value["incremental_enabled"] = current_group["current"].get("incremental_enabled")
+            current_schedule = current_group["current"].get("fleet_schedule", {})
+            value["fleet_schedule_mode"] = policy.get("fleet_schedule_mode", "preserve")
+            if (
+                not isinstance(value["fleet_schedule_mode"], str)
+                or value["fleet_schedule_mode"] not in {"preserve", "daily", "disabled"}
+            ):
+                raise ValueError("Fleet schedule mode must be preserve, daily, or disabled")
+            current_full = current_schedule.get("fullSchedule", {}) if isinstance(current_schedule, dict) else {}
+            current_full_schedule = current_full.get("schedule", {}) if isinstance(current_full, dict) else {}
+            current_start = current_full_schedule.get("startTime") if isinstance(current_full_schedule, dict) else None
+            current_time = _fleet_time_parts(current_start) if isinstance(current_start, str) else None
+            value["schedule_timezone"] = (
+                "UTC" if value["fleet_schedule_mode"] == "daily"
+                else current_time[1] if current_time else None
+            )
             value["state_change"] = None
-            value["schedule_timezone"] = "UTC"
-            value["days"] = sorted(["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"])
+            value["ssh_fingerprint"], value["host_key"] = self._fleet_receiver_key(receiver)
+            value.pop("ecdsa_fingerprint", None)
+            schedule_proposal = {
+                **value,
+                "fleet_schedule": current_schedule,
+            }
+            value["fleet_schedule"] = self._fleet_schedule_spec(schedule_proposal)
+            full = value["fleet_schedule"].get("fullSchedule", {})
+            full_schedule = full.get("schedule", {}) if isinstance(full, dict) else {}
+            full_schedule = full_schedule if isinstance(full_schedule, dict) else {}
+            incremental = value["fleet_schedule"].get("incrementalSchedule", {})
+            incremental = incremental if isinstance(incremental, dict) else {}
+            raw_time = full_schedule.get("startTime")
+            parsed_time = _fleet_time_parts(raw_time) if isinstance(raw_time, str) else None
+            value["schedule_enabled"] = full.get("enabled") if isinstance(full, dict) else None
+            value["full_time"] = parsed_time[0] if parsed_time else None
+            value["schedule_timezone"] = parsed_time[1] if parsed_time else None
+            value["days"] = sorted(full_schedule.get("days", []))
+            value["interval_minutes"] = incremental.get("interval")
+            value["incremental_enabled"] = incremental.get("enabled")
         elif product == "vcenter":
             if retention_mode != "count":
                 raise ValueError("vCenter native retention supports backup count only")
@@ -880,7 +1279,7 @@ class NativeBackup:
             value["ecdsa_fingerprint"] = None
             value["parts"] = current_group["backup_parts"]
             value["days"] = sorted(["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"])
-        if isinstance(receiver.get("host_key"), str):
+        if product != "fleet" and isinstance(receiver.get("host_key"), str):
             value["host_key"] = receiver["host_key"][:1024]
         if product == "sddc_manager":
             limits = (("sddc_most_recent", 10, 1, 600), ("sddc_hourly_days", 2, 0, 14), ("sddc_daily_days", 15, 0, 30))
@@ -892,6 +1291,11 @@ class NativeBackup:
         return value
 
     def _group(self, group: str) -> dict[str, Any]:
+        """Find an inspected native backup group by its stable identifier.
+
+            Args:
+                group: Native group identifier to retrieve from inspected inventory.
+        """
         if self._inventory is None:
             self.discover()
         assert self._inventory is not None
@@ -901,6 +1305,11 @@ class NativeBackup:
         raise ValueError("Unknown native backup group")
 
     def current(self, group: str) -> dict[str, Any]:
+        """Perform the native backup operation described by this method name.
+
+            Args:
+                group: Native group whose current settings are read.
+        """
         item = self._group(group)
         if self.kind == "fleet":
             return self._fleet_current(group)
@@ -923,7 +1332,14 @@ class NativeBackup:
         return self._safe_vcenter_schedule(raw if isinstance(raw, dict) else {})
 
     def configure(self, group: str, proposed: dict[str, Any], sftp_password: str, encryption_passphrase: str) -> dict[str, Any]:
-        """Update only the selected native group's backup destination and schedule."""
+        """Update only the selected native group's backup destination and schedule.
+
+            Args:
+                group: Selected native group whose destination and policy are changed.
+                proposed: Reviewed public proposal bound to inspected state.
+                sftp_password: Transient receiver password sent only in the native write.
+                encryption_passphrase: Transient recovery passphrase sent only in the native write.
+        """
         item = self._group(group)
         self._load_version()
         if not isinstance(sftp_password, str) or not sftp_password or not isinstance(encryption_passphrase, str) or not encryption_passphrase:
@@ -933,6 +1349,7 @@ class NativeBackup:
             group_components = set(item["component_ids"])
             if set(proposed.get("component_ids", item["component_ids"])) != group_components:
                 raise ValueError("Fleet backup settings apply to every component in the selected SDDC-LCM group")
+            self._fleet_require_reviewed_key(proposed)
             body = self._fleet_config_body(proposed, sftp_password, encryption_passphrase)
             result = self._call("PATCH", f"/v1/sddc-lcms/{quote(group, safe='')}", {"backupConfigSpec": body}, fleet=True)
             task_id = _extract_task_id(result)
@@ -991,7 +1408,12 @@ class NativeBackup:
         raise RemoteError("Unsupported native backup product")
 
     def configuration_status(self, group: str, reference: dict[str, Any]) -> dict[str, Any]:
-        """Poll asynchronous Fleet configuration tasks; report sync writes complete."""
+        """Poll asynchronous Fleet configuration tasks; report sync writes complete.
+
+            Args:
+                group: Selected native group for the recorded configuration task.
+                reference: Persisted task reference from the single native configuration write.
+        """
         self._group(group)
         if (
             not isinstance(reference, dict)
@@ -1002,8 +1424,12 @@ class NativeBackup:
         task_id = reference.get("native_task_id")
         if self.kind != "fleet" or not isinstance(task_id, str):
             return {"state": "succeeded"}
+        fleet_auth_refresh = [False]
         try:
-            raw = self._poll_call(f"/v1/tasks/{quote(self._public_id(task_id), safe='')}", fleet=True)
+            raw = self._poll_call(
+                f"/v1/tasks/{quote(self._public_id(task_id), safe='')}",
+                fleet=True, fleet_auth_refresh=fleet_auth_refresh,
+            )
         except _TransientPollUnavailable:
             return {
                 "state": "running",
@@ -1013,6 +1439,13 @@ class NativeBackup:
 
     @staticmethod
     def _vcenter_schedule_spec(proposed: dict[str, Any], sftp_password: str, passphrase: str) -> dict[str, Any]:
+        """Build the vCenter Recovery schedule request body.
+
+            Args:
+                proposed: Reviewed vCenter destination, recurrence, and retention.
+                sftp_password: Transient SFTP password for the vCenter schedule.
+                passphrase: Transient backup encryption passphrase for the vCenter schedule.
+        """
         hour, minute = (int(part) for part in proposed["full_time"].split(":"))
         return {
             "parts": proposed["parts"],
@@ -1029,38 +1462,104 @@ class NativeBackup:
         }
 
     @staticmethod
+    def _fleet_schedule_spec(proposed: dict[str, Any]) -> dict[str, Any]:
+        """Build Fleet's reviewed recurring schedule payload from intent and its current snapshot.
+
+            Args:
+                proposed: Reviewed Fleet recurrence intent and inspected schedule snapshot.
+        """
+        schedule_mode = proposed.get("fleet_schedule_mode")
+        if schedule_mode is None:
+            # Legacy reviewed operations predate explicit schedule intent.
+            if proposed.get("schedule_timezone") != "UTC":
+                raise ValueError("Fleet backup schedule times must be reviewed and configured in UTC")
+            full_time = proposed.get("full_time")
+            if not isinstance(full_time, str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", full_time):
+                raise ValueError("Fleet backup time must use 24-hour HH:MM format")
+            schedule_spec: dict[str, Any] = {
+                "fullSchedule": {
+                    "enabled": True,
+                    "schedule": {
+                        "days": ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"],
+                        "startTime": str(proposed.get("full_time", "02:00")) + ":00Z",
+                    },
+                },
+            }
+            if isinstance(proposed.get("interval_minutes"), int) and isinstance(proposed.get("incremental_enabled"), bool):
+                schedule_spec["incrementalSchedule"] = {
+                    "enabled": proposed["incremental_enabled"],
+                    "interval": proposed["interval_minutes"],
+                    "fallbackToFull": True,
+                }
+        else:
+            if not isinstance(schedule_mode, str) or schedule_mode not in {"preserve", "daily", "disabled"}:
+                raise ValueError("Fleet schedule mode must be preserve, daily, or disabled")
+            current = NativeBackup._safe_fleet_schedule(proposed.get("fleet_schedule", {}))
+            if schedule_mode == "preserve":
+                schedule_spec = dict(current)
+                schedule_spec.setdefault("fullSchedule", {"enabled": False})
+                schedule_spec.setdefault("incrementalSchedule", {"enabled": False})
+            elif schedule_mode == "daily":
+                if proposed.get("schedule_timezone") != "UTC":
+                    raise ValueError("Fleet daily backup times must be reviewed and configured in UTC")
+                full_time = proposed.get("full_time")
+                if not isinstance(full_time, str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", full_time):
+                    raise ValueError("Fleet backup time must use 24-hour HH:MM format")
+                schedule_spec = {
+                    "fullSchedule": {
+                        "enabled": True,
+                        "schedule": {
+                            "days": ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"],
+                            "startTime": full_time + ":00Z",
+                        },
+                    },
+                }
+                if "incrementalSchedule" in current:
+                    schedule_spec["incrementalSchedule"] = current["incrementalSchedule"]
+            else:
+                full = dict(current.get("fullSchedule", {}))
+                full["enabled"] = False
+                schedule_spec = {"fullSchedule": full}
+                if "incrementalSchedule" in current:
+                    incremental = dict(current["incrementalSchedule"])
+                    incremental["enabled"] = False
+                    schedule_spec["incrementalSchedule"] = incremental
+                else:
+                    schedule_spec["incrementalSchedule"] = {"enabled": False}
+        return schedule_spec
+
+    @staticmethod
     def _fleet_config_body(proposed: dict[str, Any], sftp_password: str, passphrase: str) -> dict[str, Any]:
-        if proposed.get("schedule_timezone") != "UTC":
-            raise ValueError("Fleet backup schedule times must be reviewed and configured in UTC")
-        full_time = proposed.get("full_time")
-        if not isinstance(full_time, str) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", full_time):
-            raise ValueError("Fleet backup time must use 24-hour HH:MM format")
+        """Build the Fleet destination and recurrence write body.
+
+            Args:
+                proposed: Reviewed Fleet destination, recurrence, and retention.
+                sftp_password: Transient receiver password for the Fleet request body.
+                passphrase: Transient encryption passphrase for the Fleet request body.
+        """
+        schedule_spec = NativeBackup._fleet_schedule_spec(proposed)
         body: dict[str, Any] = {
             "encryptionPassphrase": passphrase,
             "storage": {"sftp": {
                 "host": proposed["host"], "port": str(proposed["port"]),
                 "username": proposed["user"], "password": sftp_password,
-                "directory": proposed["directory"], "thumbprint": proposed["ecdsa_fingerprint"],
+                "directory": proposed["directory"],
+                "thumbprint": proposed.get("ssh_fingerprint", proposed.get("ecdsa_fingerprint")),
             }},
-            "fullSchedule": {
-                "enabled": True,
-                "schedule": {
-                    "days": ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"],
-                    "startTime": full_time + ":00Z",
-                },
-            },
             "retention": ({"maxBackups": proposed["retention_value"]} if proposed["retention_mode"] == "count" else {"maxAgeBackups": proposed["retention_value"]}),
         }
-        if isinstance(proposed.get("interval_minutes"), int) and isinstance(proposed.get("incremental_enabled"), bool):
-            body["incrementalSchedule"] = {
-                "enabled": proposed["incremental_enabled"],
-                "interval": proposed["interval_minutes"],
-                "fallbackToFull": True,
-            }
+        body.update(schedule_spec)
         return body
 
     @staticmethod
     def _sddc_config_body(proposed: dict[str, Any], sftp_password: str, passphrase: str) -> dict[str, Any]:
+        """Build the SDDC Manager destination and schedule write body.
+
+            Args:
+                proposed: Reviewed SDDC Manager destination, recurrence, and retention.
+                sftp_password: Transient receiver password for the SDDC Manager request body.
+                passphrase: Transient encryption passphrase for the SDDC Manager request body.
+        """
         return {
             "encryption": {"passphrase": passphrase},
             "backupLocations": [{
@@ -1083,7 +1582,14 @@ class NativeBackup:
         }
 
     def validate(self, group: str, proposed: dict[str, Any], sftp_password: str, encryption_passphrase: str) -> dict[str, Any]:
-        """Run the vendor's documented non-mutating destination validation when available."""
+        """Run the vendor's documented non-mutating destination validation when available.
+
+            Args:
+                group: Selected native group to validate.
+                proposed: Reviewed destination settings to check without mutation.
+                sftp_password: Transient receiver password used only by the validation request.
+                encryption_passphrase: Transient backup passphrase used only by the validation request.
+        """
         self._group(group)
         self._load_version()
         if not sftp_password or not encryption_passphrase:
@@ -1103,13 +1609,24 @@ class NativeBackup:
                 "backup_password": encryption_passphrase,
             }
             return _validation_result(self._call("POST", "/api/appliance/recovery/backup?action=validate", body))
+        if self.kind == "fleet":
+            self._fleet_require_reviewed_key(proposed)
+            return {
+                "supported": False,
+                "warning": "Fleet LCM SSH thumbprint matches the reviewed receiver key; native destination authentication is not validated until the first backup.",
+            }
         return {
             "supported": False,
             "warning": "This product has no documented native destination-validation endpoint; its initial backup is the first end-to-end validation.",
         }
 
     def start_backup(self, group: str, component_ids: list[str]) -> dict[str, Any]:
-        """Start the explicitly selected native backup operation once."""
+        """Start the explicitly selected native backup operation once.
+
+            Args:
+                group: Selected native group for the one initial backup.
+                component_ids: Exact eligible component IDs included in the native request.
+        """
         item = self._group(group)
         self._load_version()
         allowed = set(item["component_ids"])
@@ -1167,6 +1684,12 @@ class NativeBackup:
         return {"reference": reference}
 
     def backup_status(self, group: str, reference: dict[str, Any]) -> dict[str, Any]:
+        """Perform the native backup operation described by this method name.
+
+            Args:
+                group: Selected native group being reconciled.
+                reference: Persisted task and artifact baseline for read-only status checks.
+        """
         if not isinstance(reference, dict) or reference.get("kind") not in (None, self.kind) or reference.get("group_id") not in (None, group):
             raise ValueError("Native backup reference does not match this group")
         item = self._group(group)
@@ -1192,16 +1715,51 @@ class NativeBackup:
             ):
                 raise ValueError("Fleet backup reference has an invalid artifact baseline")
             try:
-                raw = self._poll_call(f"/v1/tasks/{quote(ref, safe='')}", fleet=True)
+                fleet_auth_refresh = [False]
+                raw = self._poll_call(
+                    f"/v1/tasks/{quote(ref, safe='')}",
+                    fleet=True, fleet_auth_refresh=fleet_auth_refresh,
+                )
             except _TransientPollUnavailable:
-                return _pending_poll_result(ref, "Fleet backup status is temporarily unavailable (HTTP 503); polling will continue using the recorded task reference.")
-            state = _state(self._pick(raw, "status", "state")) if isinstance(raw, dict) else "running"
+                return {
+                    **_pending_poll_result(ref, "Fleet backup status is temporarily unavailable (HTTP 503); polling will continue using the recorded task reference."),
+                    "native_task_state": "running",
+                    "native_task_terminal": False,
+                    "native_task_status": None,
+                }
+            raw_task_status = self._pick(raw, "status", "state") if isinstance(raw, dict) else None
+            native_task_state = _state(raw_task_status)
+            task_status = str(raw_task_status or "").upper()
+            terminal_statuses = {
+                "SUCCEEDED", "SUCCESS", "COMPLETED", "COMPLETED_WITH_WARNINGS", "FINISHED",
+                "FAILED", "ERROR", "CANCELLED", "CANCELED",
+            }
+            native_task_terminal = task_status in terminal_statuses
+            public_task_status = task_status if task_status in terminal_statuses | {"RUNNING", "PENDING", "SCHEDULED", "QUEUED"} else None
+            state = native_task_state
+            if state == "failed":
+                return {
+                    "state": "failed",
+                    "native_task_state": native_task_state,
+                    "native_task_terminal": native_task_terminal,
+                    "native_task_status": public_task_status,
+                    "artifacts": [],
+                    "native_task_id": ref,
+                }
             records: list[dict[str, Any]] = []
             for component_id in item["component_ids"]:
                 try:
-                    entries = self._fleet_backup_records(group, component_id, poll=True)
+                    entries = self._fleet_backup_records(
+                        group, component_id, poll=True,
+                        fleet_auth_refresh=fleet_auth_refresh,
+                    )
                 except _TransientPollUnavailable:
-                    return _pending_poll_result(ref, "Fleet backup history is temporarily unavailable (HTTP 503); polling will continue using the recorded task reference.")
+                    return {
+                        **_pending_poll_result(ref, "Fleet backup history is temporarily unavailable (HTTP 503); polling will continue using the recorded task reference."),
+                        "native_task_state": native_task_state,
+                        "native_task_terminal": native_task_terminal,
+                        "native_task_status": public_task_status,
+                    }
                 for record in entries:
                     key = _fleet_record_identity(record)
                     baseline = {
@@ -1221,7 +1779,14 @@ class NativeBackup:
             covered = {record["component_id"] for record in records}
             if state != "failed" and not set(component_ids) <= covered:
                 state = "running"
-            return {"state": state, "artifacts": records, "native_task_id": ref}
+            return {
+                "state": state,
+                "native_task_state": native_task_state,
+                "native_task_terminal": native_task_terminal,
+                "native_task_status": public_task_status,
+                "artifacts": records,
+                "native_task_id": ref,
+            }
         if self.kind == "sddc":
             try:
                 raw = self._poll_call(f"/v1/tasks/{quote(ref, safe='')}")
@@ -1263,7 +1828,11 @@ class NativeBackup:
 
 
 def _fleet_service_metadata(value: dict[str, Any]) -> tuple[dict[str, Any], set[str]]:
-    """Validate Operations-discovered Fleet target metadata and its public cert chain."""
+    """Validate Operations-discovered Fleet target metadata and its public cert chain.
+
+        Args:
+            value: Operations-discovered Fleet descriptor whose endpoint and public certificate chain are checked.
+    """
     address = value.get("address")
     if value.get("addressType") != "FQDN" or not isinstance(address, str) or not 1 <= len(address) <= 253:
         raise RemoteError("VCF Operations returned an invalid Fleet LCM hostname")
@@ -1327,10 +1896,22 @@ def _fleet_service_metadata(value: dict[str, Any]) -> tuple[dict[str, Any], set[
 
 
 def _bounded_text(value: Any, limit: int = 1024) -> str | None:
+    """Sanitize an untrusted message and enforce its display bound.
+
+        Args:
+            value: Untrusted diagnostic text to sanitize and shorten.
+            limit: Maximum number of characters retained.
+    """
     return value[:limit] if isinstance(value, str) else None
 
 
 def _pending_poll_result(reference: str | None, warning: str) -> dict[str, Any]:
+    """Represent an unresolved status read without losing its task reference.
+
+        Args:
+            reference: Native task or history reference that remains unresolved.
+            warning: Sanitized explanation that the status read can be retried later.
+    """
     return {
         "state": "running",
         "artifacts": [],
@@ -1340,6 +1921,12 @@ def _pending_poll_result(reference: str | None, warning: str) -> dict[str, Any]:
 
 
 def _validate_encryption_passphrase(kind: str, value: str) -> None:
+    """Enforce the selected product’s backup passphrase constraints.
+
+        Args:
+            kind: Native product whose passphrase rules apply.
+            value: Transient passphrase to validate without returning or logging it.
+    """
     if kind == "vcenter":
         valid = (
             8 <= len(value) <= 20
@@ -1365,6 +1952,11 @@ def _validate_encryption_passphrase(kind: str, value: str) -> None:
 
 
 def _normalized_port(value: Any) -> int | None:
+    """Convert a native port value to an integer when valid.
+
+        Args:
+            value: Port field from a native response, possibly represented as text.
+    """
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     if isinstance(value, str) and value.isdecimal():
@@ -1373,6 +1965,11 @@ def _normalized_port(value: Any) -> int | None:
 
 
 def _normalized_time(value: Any) -> str | None:
+    """Normalize a supported appliance time string for display.
+
+        Args:
+            value: Appliance time-of-day string to normalize when supported.
+    """
     if not isinstance(value, str):
         return None
     match = re.fullmatch(r"([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d(?:\.\d+)?)?", value)
@@ -1380,7 +1977,11 @@ def _normalized_time(value: Any) -> str | None:
 
 
 def _fleet_time_parts(value: str) -> tuple[str, str] | None:
-    """Normalize RFC3339 full-time without losing its explicit offset."""
+    """Normalize RFC3339 full-time without losing its explicit offset.
+
+        Args:
+            value: Fleet time-of-day string whose clock and UTC offset are separated.
+    """
     match = re.fullmatch(
         r"([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d(?:\.\d+)?)?(Z|[+-](?:0\d|1\d|2[0-3]):[0-5]\d)?",
         value,
@@ -1400,11 +2001,21 @@ def _fleet_time_parts(value: str) -> tuple[str, str] | None:
 
 
 def _fleet_artifact_key(value: dict[str, Any]) -> str | None:
+    """Extract a bounded path identity from a Fleet artifact record.
+
+        Args:
+            value: Fleet record used to derive a bounded artifact identity.
+    """
     candidate = value.get("path") or value.get("filePath") or value.get("location")
     return candidate[:1024] if isinstance(candidate, str) and candidate else None
 
 
 def _fleet_valid_restore_points(value: dict[str, Any]) -> list[str]:
+    """Extract only Fleet’s documented restore-point strings.
+
+        Args:
+            value: Fleet record from which documented restore points are extracted.
+    """
     points = value.get("points")
     if not isinstance(points, list):
         return []
@@ -1417,6 +2028,11 @@ def _fleet_valid_restore_points(value: dict[str, Any]) -> list[str]:
 
 
 def _fleet_record_identity(value: dict[str, Any]) -> str | None:
+    """Build the stable identity used to compare Fleet backup records.
+
+        Args:
+            value: Fleet record reduced to a stable component-and-path identity.
+    """
     path = _fleet_artifact_key(value)
     if path is None:
         return None
@@ -1430,6 +2046,11 @@ def _fleet_record_identity(value: dict[str, Any]) -> str | None:
 
 
 def _fleet_record_succeeded(value: dict[str, Any]) -> bool:
+    """Check whether a Fleet record documents successful completion.
+
+        Args:
+            value: Fleet record whose documented completion status is interpreted.
+    """
     if _fleet_artifact_key(value) is None or not _fleet_valid_restore_points(value):
         return False
     if value.get("success") is False:
@@ -1441,6 +2062,11 @@ def _fleet_record_succeeded(value: dict[str, Any]) -> bool:
 
 
 def _extract_task_id(value: Any) -> str | None:
+    """Extract a safe task identifier from a native write response.
+
+        Args:
+            value: Native write response that may contain a task ID.
+    """
     if isinstance(value, dict):
         for key in ("id", "taskId", "task_id", "task", "taskId"):
             item = value.get(key)
@@ -1450,6 +2076,11 @@ def _extract_task_id(value: Any) -> str | None:
 
 
 def _state(value: Any) -> str:
+    """Map a native task status to the workflow state vocabulary.
+
+        Args:
+            value: Native state mapped to the bounded workflow-state vocabulary.
+    """
     normalized = str(value or "RUNNING").upper()
     if normalized in {"SUCCEEDED", "SUCCESS", "COMPLETED", "COMPLETED_WITH_WARNINGS", "FINISHED"}:
         return "succeeded"
@@ -1458,8 +2089,34 @@ def _state(value: Any) -> str:
     return "running"
 
 
+def _openssh_sha256_fingerprint(public_key: str, expected_algorithm: str) -> str:
+    """Compute the standard OpenSSH SHA256 fingerprint of an allowlisted host key.
+
+        Args:
+            public_key: OpenSSH public-key line whose key blob is fingerprinted.
+            expected_algorithm: Allowed algorithm required for the receiver key.
+    """
+    if not isinstance(public_key, str) or len(public_key) > 1024 or any(ord(char) < 0x20 for char in public_key):
+        raise ValueError("The receiver SSH host key is invalid")
+    parts = public_key.split()
+    if len(parts) < 2 or parts[0] != expected_algorithm:
+        raise ValueError("The receiver SSH host key algorithm is unsupported")
+    try:
+        key_blob = base64.b64decode(parts[1], validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("The receiver SSH host key encoding is invalid") from None
+    if not key_blob:
+        raise ValueError("The receiver SSH host key encoding is invalid")
+    digest = base64.b64encode(hashlib.sha256(key_blob).digest()).decode("ascii").rstrip("=")
+    return f"SHA256:{digest}"
+
+
 def _validation_result(value: Any) -> dict[str, Any]:
-    """Reduce validation responses to success plus non-sensitive status codes."""
+    """Reduce validation responses to success plus non-sensitive status codes.
+
+        Args:
+            value: Vendor response reduced to safe validation status and diagnostic codes.
+    """
     if value is None:
         return {
             "supported": True, "valid": False,
@@ -1505,6 +2162,11 @@ def _validation_result(value: Any) -> dict[str, Any]:
 
 
 def _vcenter_location(proposed: dict[str, Any]) -> str:
+    """Format the reviewed receiver as a vCenter SFTP location.
+
+        Args:
+            proposed: Reviewed receiver host, SSH port, and directory for the vCenter SFTP URL.
+    """
     host = str(proposed["host"])
     try:
         address = ipaddress.ip_address(host)
@@ -1519,6 +2181,11 @@ def _vcenter_location(proposed: dict[str, Any]) -> str:
 
 
 def _nsx_backup_status_entries(value: Any) -> list[dict[str, Any]]:
+    """Select NSX cluster-level backup history entries.
+
+        Args:
+            value: NSX history response from which cluster-level entries are selected.
+    """
     if not isinstance(value, dict):
         return []
     result: list[dict[str, Any]] = []
@@ -1531,6 +2198,11 @@ def _nsx_backup_status_entries(value: Any) -> list[dict[str, Any]]:
 
 
 def _nsx_backup_ids(value: Any) -> set[str]:
+    """Collect stable backup identifiers from NSX history.
+
+        Args:
+            value: NSX history response whose stable backup IDs are collected.
+    """
     return {
         item["backup_id"]
         for item in _nsx_backup_status_entries(value)
@@ -1543,6 +2215,12 @@ def _nsx_backup_ids(value: Any) -> set[str]:
 
 
 def _nsx_newest_state(value: Any, new_ids: set[str]) -> str:
+    """Return the state of the newest NSX backup created after baseline.
+
+        Args:
+            value: NSX history response containing candidate backup records.
+            new_ids: IDs created after the persisted history baseline.
+    """
     candidates = [
         item for item in _nsx_backup_status_entries(value)
         if item.get("backup_id", item.get("backupId")) in new_ids

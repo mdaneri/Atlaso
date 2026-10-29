@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -22,6 +24,12 @@ from atlaso.app.services.vcf_certificate_remote import Credentials, RemoteError
 
 class FakeTransport:
     def __init__(self, target: Any, responses: list[tuple[int, Any]]) -> None:
+        """Initialize a fake native connection with its target and response queue.
+
+            Args:
+                target: Pinned target for the fake connection, or None for isolated API cases.
+                responses: Ordered HTTP status and payload pairs returned to requests.
+        """
         self.target = target
         self.responses = list(responses)
         self.requests: list[tuple[str, str, Any, Any, Any]] = []
@@ -40,14 +48,34 @@ class FakeTransport:
         credentials: Any = None,
         session_header: Any = None,
         body: Any = None,
+        xml_body: str | None = None,
+        soap_namespace: str = "lookup",
+        capture_soap_cookie: bool = False,
     ) -> tuple[int, Any]:
-        self.requests.append((method, path, credentials, session_header, body))
+        """Record one request and return its queued native response.
+
+            Args:
+                method: HTTP method recorded by the fake.
+                path: Relative endpoint path recorded by the fake.
+                credentials: Optional credentials passed by the adapter.
+                session_header: Optional session header passed by the adapter.
+                body: Optional JSON body captured for assertions.
+                xml_body: Optional SOAP body from the vCenter path.
+                soap_namespace: SOAP namespace selected by the request caller.
+                capture_soap_cookie: Whether the test needs a SOAP session cookie.
+        """
+        self.requests.append((method, path, credentials, session_header, body if body is not None else xml_body))
         if not self.responses:
             raise AssertionError(f"Unexpected request {method} {path}")
         return self.responses.pop(0)
 
 
 def source(kind: str = "fleet") -> dict[str, Any]:
+    """Create synthetic confirmed target details for a native product.
+
+        Args:
+            kind: Native product represented by the synthetic target.
+    """
     base = {
         "kind": kind,
         "address": "ops.example.test",
@@ -61,7 +89,61 @@ def credentials() -> Credentials:
     return Credentials("svc-account", "top-secret-password")
 
 
+def ssh_public_key(algorithm: str, payload: bytes) -> str:
+    """Build an OpenSSH public-key line from synthetic key bytes.
+
+        Args:
+            algorithm: OpenSSH key algorithm in the fixture.
+            payload: Synthetic key bytes encoded in the fixture.
+    """
+    return f"{algorithm} {base64.b64encode(payload).decode('ascii')} receiver-test"
+
+
+def ssh_fingerprint(public_key: str) -> str:
+    """Compute the OpenSSH SHA-256 fingerprint for a test key.
+
+        Args:
+            public_key: OpenSSH public-key line whose fingerprint is computed.
+    """
+    key_blob = base64.b64decode(public_key.split()[1], validate=True)
+    digest = base64.b64encode(hashlib.sha256(key_blob).digest()).decode("ascii").rstrip("=")
+    return f"SHA256:{digest}"
+
+
+def fleet_thumbprint_response(host: str, port: int, fingerprint: str) -> tuple[int, Any]:
+    """Create a Fleet response with the requested receiver thumbprint.
+
+        Args:
+            host: Receiver hostname in the Fleet response.
+            port: Receiver SSH port in the Fleet response.
+            fingerprint: Expected SHA-256 fingerprint returned by Fleet.
+    """
+    return 200, [{"address": host, "port": port, "value": fingerprint, "error": None}]
+
+
+def vcenter_service_content(instance_uuid: str) -> str:
+    """Build SOAP service content containing the vCenter UUID.
+
+        Args:
+            instance_uuid: Stable UUID embedded in the synthetic SOAP response.
+    """
+    return (
+        '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" '
+        'xmlns:vim25="urn:vim25"><soapenv:Body>'
+        '<vim25:RetrieveServiceContentResponse><returnval>'
+        '<about type="AboutInfo"><name>vCenter Server</name>'
+        f'<instanceUuid>{instance_uuid}</instanceUuid>'
+        '</about></returnval></vim25:RetrieveServiceContentResponse>'
+        '</soapenv:Body></soapenv:Envelope>'
+    )
+
+
 def fleet_certificate(host: str = "fleet.example.test") -> tuple[str, str]:
+    """Generate a short-lived TLS certificate for Fleet tests.
+
+        Args:
+            host: Fleet service hostname placed in the certificate.
+    """
     now = datetime.now(timezone.utc)
     key = ec.generate_private_key(ec.SECP256R1())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, host)])
@@ -83,6 +165,12 @@ def fleet_certificate(host: str = "fleet.example.test") -> tuple[str, str]:
 
 
 def fleet_service(certificate: str, **overrides: Any) -> dict[str, Any]:
+    """Build an Operations registry descriptor for Fleet LCM.
+
+        Args:
+            certificate: PEM certificate advertised in the service descriptor.
+            **overrides: Descriptor fields modified for a specific registry case.
+    """
     return {
         "type": "VCF_FLEET_LCM",
         "key": "fleet-service-key",
@@ -102,6 +190,13 @@ def ops_responses(
     fleet_token: str = "fleet-token-value",
     services: list[dict[str, Any]] | None = None,
 ) -> list[tuple[int, Any]]:
+    """Queue Operations login and Fleet service discovery responses.
+
+        Args:
+            certificate: Fleet certificate advertised by Operations.
+            fleet_token: Bearer token returned by the service exchange.
+            services: Service descriptors returned by Operations discovery.
+    """
     return [
         (200, {"accessToken": "ops-token-value"}),
         (200, {"servicesDetails": services if services is not None else [fleet_service(certificate)]}),
@@ -110,6 +205,12 @@ def ops_responses(
 
 
 def attach_fleet_transport(adapter: NativeBackup, transport: FakeTransport) -> None:
+    """Initialize the adapter with an isolated fake Fleet connection.
+
+        Args:
+            adapter: Adapter whose Fleet service state is initialized.
+            transport: Fake Fleet transport recording API requests.
+    """
     adapter._fleet_transport = transport
     adapter._fleet_token = "fleet-token"
     adapter._fleet_service = {
@@ -118,11 +219,86 @@ def attach_fleet_transport(adapter: NativeBackup, transport: FakeTransport) -> N
     }
 
 
+def fleet_adapter_for_thumbprints(transport: FakeTransport) -> NativeBackup:
+    """Build a Fleet adapter with fake SSH thumbprint responses.
+
+        Args:
+            transport: Fake Fleet connection returning the queued thumbprint results.
+    """
+    adapter = NativeBackup(source(), credentials(), transport_factory=lambda _target: FakeTransport(None, []))
+    attach_fleet_transport(adapter, transport)
+    adapter._version = "9.1.1.0"
+    adapter._inventory = {
+        "groups": [{
+            "id": "lcm-1", "product": "fleet", "component_ids": ["comp-a"],
+            "current": {"interval_minutes": None, "incremental_enabled": None},
+        }]
+    }
+    return adapter
+
+
+def fleet_adapter_for_auth_refresh(
+    old_responses: list[tuple[int, Any]],
+    refreshed_responses: list[tuple[int, Any]],
+    *, service_overrides: dict[str, Any] | None = None,
+    refreshed_certificate: str | None = None,
+) -> tuple[NativeBackup, FakeTransport, FakeTransport, list[FakeTransport]]:
+    """Build fake Operations and Fleet connections for token-refresh tests.
+
+        Args:
+            old_responses: Results from the expired connection.
+            refreshed_responses: Results from the newly pinned connection.
+            service_overrides: Optional altered Operations descriptor fields.
+            refreshed_certificate: Optional certificate used to simulate a new service identity.
+    """
+    certificate, fingerprint = fleet_certificate()
+    certificate = refreshed_certificate or certificate
+    ops = FakeTransport(
+        None,
+        ops_responses(certificate, services=[fleet_service(certificate, **(service_overrides or {}))]),
+    )
+    refreshed_transports: list[FakeTransport] = []
+
+    def factory(target: Any) -> FakeTransport:
+        """Return a fake transport for the requested pinned target.
+
+            Args:
+                target: Pinned target for which the adapter requests a fake transport.
+        """
+        if target.host == "ops.example.test":
+            return ops
+        transport = FakeTransport(target, refreshed_responses)
+        refreshed_transports.append(transport)
+        return transport
+
+    old_transport = FakeTransport(None, old_responses)
+    adapter = NativeBackup(source(), credentials(), transport_factory=factory)
+    reviewed_service = {
+        "address": "fleet.example.test", "port": 443, "base_path": "fleet-lcm",
+        "key": "fleet-service-key", "version": "9.1.1.0100.25761871",
+        "fingerprint": fingerprint,
+    }
+    adapter._fleet_transport = old_transport
+    adapter._fleet_token = "expired-fleet-token"
+    adapter._fleet_service = dict(reviewed_service)
+    adapter._version = "9.1.1.0100.25761871"
+    adapter._inventory = {
+        "identity": "fleet:reviewed", "service": dict(reviewed_service),
+        "groups": [{"id": "lcm-1", "product": "fleet", "component_ids": ["a"]}],
+    }
+    return adapter, ops, old_transport, refreshed_transports
+
+
 def test_fleet_auth_is_discovered_and_pinned_through_operations_registry() -> None:
     certificate, fingerprint = fleet_certificate()
     transports: dict[str, FakeTransport] = {}
 
     def factory(target: Any) -> FakeTransport:
+        """Return a fake transport for the requested pinned target.
+
+            Args:
+                target: Pinned target for which the adapter requests a fake transport.
+        """
         host = target.host
         if host == "ops.example.test":
             transport = FakeTransport(target, ops_responses(certificate))
@@ -156,6 +332,11 @@ def test_fleet_auth_is_discovered_and_pinned_through_operations_registry() -> No
 
 @pytest.mark.parametrize("services", [[], None])
 def test_fleet_requires_exactly_one_operations_registry_service(services: list[dict[str, Any]] | None) -> None:
+    """Verify that Fleet requires exactly one operations registry service.
+
+        Args:
+            services: Operations descriptors used to simulate missing or duplicate Fleet entries.
+    """
     certificate, _ = fleet_certificate()
     rows = services if services is not None else [fleet_service(certificate), fleet_service(certificate)]
     ops = FakeTransport(None, ops_responses(certificate, services=rows))
@@ -181,6 +362,12 @@ def test_fleet_requires_exactly_one_operations_registry_service(services: list[d
     ],
 )
 def test_fleet_registry_rejects_unsafe_host_or_base_path_before_exchange(field: str, value: str) -> None:
+    """Verify that Fleet registry rejects unsafe host or base path before exchange.
+
+        Args:
+            field: Descriptor field replaced with an unsafe value.
+            value: Unsafe endpoint value expected to fail validation.
+    """
     certificate, _ = fleet_certificate()
     service = fleet_service(certificate)
     service[field] = value
@@ -197,6 +384,11 @@ def test_fleet_registry_certificate_mismatch_stops_before_token_exchange() -> No
     service_transports: list[FakeTransport] = []
 
     def factory(target: Any) -> FakeTransport:
+        """Return a fake transport for the requested pinned target.
+
+            Args:
+                target: Pinned target for which the adapter requests a fake transport.
+        """
         if target.host == "ops.example.test":
             return ops
         service_transport = FakeTransport(target, [])
@@ -227,6 +419,11 @@ def test_fleet_relogin_refreshes_registry_and_pinned_service_identity() -> None:
     service_transports: dict[str, FakeTransport] = {}
 
     def factory(target: Any) -> FakeTransport:
+        """Return a fake transport for the requested pinned target.
+
+            Args:
+                target: Pinned target for which the adapter requests a fake transport.
+        """
         if target.host == "ops.example.test":
             return ops
         service_transport = FakeTransport(target, [])
@@ -253,6 +450,11 @@ def test_fleet_service_uses_operations_advertised_dynamic_base_path() -> None:
     ops = FakeTransport(None, ops_responses(certificate, services=[service]))
 
     def factory(target: Any) -> FakeTransport:
+        """Return a fake transport for the requested pinned target.
+
+            Args:
+                target: Pinned target for which the adapter requests a fake transport.
+        """
         return ops if target.host == "ops.example.test" else FakeTransport(
             target, [(200, {"currentVersion": "9.1.1.0100.25761871"})]
         )
@@ -277,6 +479,11 @@ def test_fleet_discovery_and_trigger_require_whole_backup_group() -> None:
     transports: dict[str, FakeTransport] = {}
 
     def factory(target: Any) -> FakeTransport:
+        """Return a fake transport for the requested pinned target.
+
+            Args:
+                target: Pinned target for which the adapter requests a fake transport.
+        """
         if target.host == "ops.example.test":
             t = FakeTransport(target, ops_responses(certificate, fleet_token="fleet"))
         else:
@@ -308,6 +515,8 @@ def test_fleet_discovery_and_trigger_require_whole_backup_group() -> None:
     assert inventory["groups"][0]["component_ids"] == ["comp-a", "comp-b"]
     assert inventory["groups"][0]["current"]["host"] == "backup.example.test"
     assert inventory["groups"][0]["current"]["configured"] is True
+    assert inventory["groups"][0]["current"]["ssh_fingerprint"] == "SHA256:pin"
+    assert "ecdsa_fingerprint" not in inventory["groups"][0]["current"]
     assert inventory["groups"][0]["current"]["schedule_timezone"] == "UTC"
     assert "password" not in str(inventory)
     with pytest.raises(ValueError, match="every eligible component"):
@@ -328,6 +537,11 @@ def test_rejects_unsupported_version_before_any_write() -> None:
     transports: dict[str, FakeTransport] = {}
 
     def factory(target: Any) -> FakeTransport:
+        """Return a fake transport for the requested pinned target.
+
+            Args:
+                target: Pinned target for which the adapter requests a fake transport.
+        """
         if target.host == "ops.example.test":
             t = FakeTransport(target, ops_responses(certificate, fleet_token="fleet"))
         else:
@@ -349,6 +563,12 @@ def test_rejects_unsupported_version_before_any_write() -> None:
     ],
 )
 def test_accepts_vendor_91_build_version_suffixes(kind: str, version: str) -> None:
+    """Verify that accepts vendor 91 build version suffixes.
+
+        Args:
+            kind: Native product with the version string.
+            version: Vendor build-version string expected to pass.
+    """
     if kind == "sddc":
         transport = FakeTransport(
             None,
@@ -366,11 +586,13 @@ def test_accepts_vendor_91_build_version_suffixes(kind: str, version: str) -> No
 
 
 def test_vcenter_discovery_maps_schedule_resource_and_native_backup_parts() -> None:
+    instance_uuid = "501c2086-c303-e68b-1ad1-2d501cd818fc"
     transport = FakeTransport(
         None,
         [
             (201, "vc-session"),
             (200, {"version": "9.1.1.0"}),
+            (200, vcenter_service_content(instance_uuid)),
             (200, {}),
             (200, [{"id": "common"}, {"id": "seat"}, {"id": "supervisors"}]),
         ],
@@ -380,11 +602,14 @@ def test_vcenter_discovery_maps_schedule_resource_and_native_backup_parts() -> N
     )
     inventory = adapter.discover()
     assert inventory["version"] == "9.1.1.0"
+    assert inventory["identity"] == f"vcenter:{instance_uuid}"
     assert len(inventory["groups"]) == 1
     group = inventory["groups"][0]
     assert group["native_identity"] == {
-        "schedule_id": "atlaso-vcf-backup", "exists": False
+        "schedule_id": "atlaso-vcf-backup", "exists": False, "instance_uuid": instance_uuid
     }
+    assert group["reservation_keys"] == [f"vcenter-instance-uuid:{instance_uuid}"]
+    assert inventory["components"][0]["native_identity"] == {"instance_uuid": instance_uuid}
     assert group["backup_parts"] == ["common", "seat", "supervisors"]
     proposed = adapter.proposed(
         group["id"], {"full_time": "03:15", "retention_mode": "count", "retention_value": 14},
@@ -395,8 +620,64 @@ def test_vcenter_discovery_maps_schedule_resource_and_native_backup_parts() -> N
     assert proposed["days"] == [
         "FRIDAY", "MONDAY", "SATURDAY", "SUNDAY", "THURSDAY", "TUESDAY", "WEDNESDAY"
     ]
-    assert transport.requests[2][1] == "/api/appliance/recovery/backup/schedules"
-    assert transport.requests[3][1] == "/api/appliance/recovery/backup/parts"
+    assert transport.requests[2][0:2] == ("POST", "/sdk")
+    assert "RetrieveServiceContent" in transport.requests[2][4]
+    assert transport.requests[3][1] == "/api/appliance/recovery/backup/schedules"
+    assert transport.requests[4][1] == "/api/appliance/recovery/backup/parts"
+
+
+def _discover_vcenter_identity(address: str, instance_uuid: str) -> dict[str, Any]:
+    """Return SOAP identity data for vCenter discovery.
+
+        Args:
+            address: Confirmed vCenter host used for identity discovery.
+            instance_uuid: Expected UUID returned by ServiceContent.
+    """
+    transport = FakeTransport(
+        None,
+        [
+            (201, "vc-session"),
+            (200, {"version": "9.1.1.0"}),
+            (200, vcenter_service_content(instance_uuid)),
+            (200, {}),
+            (200, [{"id": "common"}]),
+        ],
+    )
+    target = source("vcenter")
+    target["address"] = address
+    return NativeBackup(target, credentials(), transport_factory=lambda _target: transport).discover()
+
+
+def test_vcenter_instance_identity_deduplicates_address_aliases() -> None:
+    instance_uuid = "501c2086-c303-e68b-1ad1-2d501cd818fc"
+    by_ip = _discover_vcenter_identity("192.0.2.10", instance_uuid)
+    by_fqdn = _discover_vcenter_identity("vc.example.test", instance_uuid.upper())
+
+    assert by_ip["identity"] == by_fqdn["identity"] == f"vcenter:{instance_uuid}"
+    assert by_ip["groups"][0]["reservation_keys"] == by_fqdn["groups"][0]["reservation_keys"]
+
+
+def test_vcenter_instance_identity_separates_servers_with_same_tls_certificate() -> None:
+    first = _discover_vcenter_identity("vc-a.example.test", "501c2086-c303-e68b-1ad1-2d501cd818fc")
+    second = _discover_vcenter_identity("vc-b.example.test", "601c2086-c303-e68b-1ad1-2d501cd818fc")
+
+    assert first["identity"] != second["identity"]
+    assert first["groups"][0]["reservation_keys"] != second["groups"][0]["reservation_keys"]
+
+
+def test_vcenter_discovery_fails_closed_without_valid_instance_identity() -> None:
+    transport = FakeTransport(
+        None,
+        [
+            (201, "vc-session"),
+            (200, {"version": "9.1.1.0"}),
+            (200, vcenter_service_content("not-a-uuid")),
+        ],
+    )
+    adapter = NativeBackup(source("vcenter"), credentials(), transport_factory=lambda _target: transport)
+
+    with pytest.raises(RemoteError, match="valid instance identity"):
+        adapter.discover()
 
 
 def test_public_config_allowlist_and_receiver_username_alias() -> None:
@@ -441,7 +722,11 @@ def test_validation_diagnostics_do_not_return_native_text_or_secret() -> None:
 
 def test_fleet_configuration_body_sends_secrets_only_to_native_write() -> None:
     root_transport = FakeTransport(None, [])
-    fleet_transport = FakeTransport(None, [(200, {"id": "task-config"})])
+    fleet_key = ssh_public_key("ssh-rsa", b"fleet-config-key")
+    fleet_pin = ssh_fingerprint(fleet_key)
+    fleet_transport = FakeTransport(
+        None, [fleet_thumbprint_response("backup.example.test", 22, fleet_pin), (200, {"id": "task-config"})]
+    )
     adapter = NativeBackup(
         source(), credentials(), transport_factory=lambda _target: root_transport
     )
@@ -452,7 +737,7 @@ def test_fleet_configuration_body_sends_secrets_only_to_native_write() -> None:
     }
     proposed = {
         "host": "backup.example.test", "port": 22, "user": "backup-user",
-        "directory": "/backups/vcf", "ecdsa_fingerprint": "SHA256:public-key-fingerprint",
+        "directory": "/backups/vcf", "ssh_fingerprint": fleet_pin, "host_key": fleet_key,
         "full_time": "02:30", "interval_minutes": 60, "state_change": True,
         "schedule_timezone": "UTC",
         "retention_mode": "count", "retention_value": 14, "component_ids": ["a", "b"],
@@ -462,19 +747,329 @@ def test_fleet_configuration_body_sends_secrets_only_to_native_write() -> None:
         "native_task_id": "task-config"
     }
     method, path, _credentials, _header, body = fleet_transport.requests[0]
-    assert (method, path) == ("PATCH", "/fleet-lcm/v1/sddc-lcms/lcm-1")
-    assert body["backupConfigSpec"]["storage"]["sftp"]["password"] == "sftp-secret"
-    assert body["backupConfigSpec"]["encryptionPassphrase"] == "SecureBackupPassAB12!"
-    assert body["backupConfigSpec"]["retention"] == {"maxBackups": 14}
-    assert body["backupConfigSpec"]["fullSchedule"]["schedule"]["startTime"] == "02:30:00Z"
-    assert "incrementalSchedule" not in body["backupConfigSpec"]
+    assert (method, path) == ("POST", "/fleet-lcm/v1/address-attributes?type=SSH_THUMBPRINT")
+    assert fleet_transport.requests[1][0:2] == ("PATCH", "/fleet-lcm/v1/sddc-lcms/lcm-1")
+    config_body = fleet_transport.requests[1][4]
+    assert config_body["backupConfigSpec"]["storage"]["sftp"]["password"] == "sftp-secret"
+    assert config_body["backupConfigSpec"]["encryptionPassphrase"] == "SecureBackupPassAB12!"
+    assert config_body["backupConfigSpec"]["storage"]["sftp"]["thumbprint"] == fleet_pin
+    assert config_body["backupConfigSpec"]["retention"] == {"maxBackups": 14}
+    assert config_body["backupConfigSpec"]["fullSchedule"]["schedule"]["startTime"] == "02:30:00Z"
+    assert "incrementalSchedule" not in config_body["backupConfigSpec"]
+
+
+def test_fleet_proposed_schedule_defaults_to_preserve_and_carries_exact_native_fields() -> None:
+    root_transport = FakeTransport(None, [])
+    fleet_key = ssh_public_key("ecdsa-sha2-nistp256", b"fleet-proposed-schedule-key")
+    fleet_pin = ssh_fingerprint(fleet_key)
+    schedule = {
+        "fullSchedule": {
+            "enabled": True,
+            "schedule": {"days": ["SUN", "MON"], "startTime": "02:30:45-07:00"},
+        },
+        "incrementalSchedule": {"enabled": True, "interval": 240, "fallbackToFull": False},
+    }
+    fleet_transport = FakeTransport(
+        None,
+        [
+            fleet_thumbprint_response("backup.example.test", 22, fleet_pin),
+            (200, {"id": "lcm-1", "backupConfig": schedule}),
+        ],
+    )
+    adapter = NativeBackup(source(), credentials(), transport_factory=lambda _target: root_transport)
+    attach_fleet_transport(adapter, fleet_transport)
+    adapter._inventory = {
+        "groups": [{
+            "id": "lcm-1", "product": "fleet", "component_ids": ["a"],
+            "current": {
+                "fleet_schedule": schedule, "interval_minutes": 240,
+                "incremental_enabled": True, "full_time": "02:30",
+                "schedule_timezone": "UTC-07:00",
+            },
+        }]
+    }
+
+    proposed = adapter.proposed("lcm-1", {}, {
+        "host": "backup.example.test", "port": 22, "username": "backup-user",
+        "directory": "/backups/vcf", "host_key": fleet_key,
+        "ecdsa_fingerprint": fleet_pin,
+    })
+
+    assert proposed["fleet_schedule_mode"] == "preserve"
+    assert proposed["fleet_schedule"] == schedule
+
+
+def test_fleet_current_exposes_exact_allowlisted_schedule_for_review() -> None:
+    schedule = {
+        "fullSchedule": {
+            "enabled": True,
+            "schedule": {"days": ["SUN", "MON"], "startTime": "02:30:45-07:00"},
+        },
+        "incrementalSchedule": {"enabled": True, "interval": 240, "fallbackToFull": False},
+    }
+    fleet_transport = FakeTransport(None, [(200, {"id": "lcm-1", "backupConfig": schedule})])
+    adapter = NativeBackup(source(), credentials(), transport_factory=lambda _target: FakeTransport(None, []))
+    attach_fleet_transport(adapter, fleet_transport)
+    adapter._version = "9.1.1.0"
+    adapter._inventory = {
+        "groups": [{"id": "lcm-1", "product": "fleet", "component_ids": ["a"]}]
+    }
+
+    current = adapter.current("lcm-1")
+
+    assert current["fleet_schedule"] == schedule
+    assert current["full_time"] == "02:30"
+    assert current["schedule_timezone"] == "UTC-07:00"
+
+
+def test_fleet_schedule_modes_preserve_disable_or_replace_only_full_schedule() -> None:
+    raw_schedule = {
+        "fullSchedule": {
+            "enabled": True,
+            "schedule": {"days": ["MON", "WED"], "startTime": "01:23:45+05:30"},
+        },
+        "incrementalSchedule": {"enabled": True, "interval": 360, "fallbackToFull": False},
+    }
+    shared = {
+        "host": "backup.example.test", "port": 22, "user": "backup-user",
+        "directory": "/backups/vcf", "ssh_fingerprint": "SHA256:verified",
+        "full_time": "02:30", "schedule_timezone": "UTC", "retention_mode": "count",
+        "retention_value": 14, "fleet_schedule": raw_schedule,
+    }
+
+    preserve = NativeBackup._fleet_config_body({**shared, "fleet_schedule_mode": "preserve"}, "sftp-secret", "SecureAB12!")
+    daily = NativeBackup._fleet_config_body({**shared, "fleet_schedule_mode": "daily"}, "sftp-secret", "SecureAB12!")
+    disabled = NativeBackup._fleet_config_body({**shared, "fleet_schedule_mode": "disabled"}, "sftp-secret", "SecureAB12!")
+
+    assert preserve["fullSchedule"] == raw_schedule["fullSchedule"]
+    assert preserve["incrementalSchedule"] == raw_schedule["incrementalSchedule"]
+    assert preserve["fullSchedule"]["schedule"]["startTime"] == "01:23:45+05:30"
+    assert daily["fullSchedule"] == {
+        "enabled": True,
+        "schedule": {"days": ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"], "startTime": "02:30:00Z"},
+    }
+    assert daily["incrementalSchedule"] == raw_schedule["incrementalSchedule"]
+    assert disabled["fullSchedule"] == {**raw_schedule["fullSchedule"], "enabled": False}
+    assert disabled["incrementalSchedule"] == {**raw_schedule["incrementalSchedule"], "enabled": False}
+    assert raw_schedule["fullSchedule"]["enabled"] is True
+    assert raw_schedule["incrementalSchedule"]["enabled"] is True
+
+
+@pytest.mark.parametrize("mode", ["preserve", "daily", "disabled"])
+@pytest.mark.parametrize(
+    "schedule",
+    [
+        {
+            "fullSchedule": {
+                "enabled": True,
+                "schedule": {"days": ["MON", "WED"], "startTime": "01:23:45+05:30"},
+            },
+            "incrementalSchedule": {"enabled": True, "interval": 360, "fallbackToFull": False},
+        },
+        {
+            "fullSchedule": {
+                "enabled": True,
+                "schedule": {"days": ["MON"], "startTime": "02:30:45-07:00"},
+            },
+            "incrementalSchedule": {"enabled": True, "interval": 15, "fallbackToFull": False},
+        },
+        {},
+    ],
+)
+def test_fleet_proposal_roundtrips_actual_schedule_state(mode: str, schedule: dict[str, Any]) -> None:
+    """Verify that Fleet proposal roundtrips actual schedule state.
+
+        Args:
+            mode: Fleet recurrence intent exercised by the round-trip.
+            schedule: Existing schedule snapshot, or an empty new configuration.
+    """
+    receiver_key = ssh_public_key("ecdsa-sha2-nistp256", b"fleet-roundtrip-key")
+    receiver_pin = ssh_fingerprint(receiver_key)
+    fleet_transport = FakeTransport(
+        None,
+        [
+            (200, {"id": "lcm-1", "backupConfig": schedule}),
+            fleet_thumbprint_response("backup.example.test", 22, receiver_pin),
+        ],
+    )
+    adapter = NativeBackup(source(), credentials(), transport_factory=lambda _target: FakeTransport(None, []))
+    attach_fleet_transport(adapter, fleet_transport)
+    adapter._version = "9.1.1.0"
+    adapter._inventory = {
+        "groups": [{"id": "lcm-1", "product": "fleet", "component_ids": ["a"]}]
+    }
+    current_before = adapter.current("lcm-1")
+    adapter._inventory["groups"][0]["current"] = current_before
+
+    proposed = adapter.proposed("lcm-1", {"fleet_schedule_mode": mode, "full_time": "02:30"}, {
+        "host": "backup.example.test", "port": 22, "username": "backup-user",
+        "directory": "/backups/vcf", "host_key": receiver_key,
+        "ecdsa_fingerprint": receiver_pin,
+    })
+    body = NativeBackup._fleet_config_body(proposed, "sftp-secret", "SecureAB12!")
+    fleet_transport.responses.append((200, {"id": "lcm-1", "backupConfig": body}))
+    current_after = adapter.current("lcm-1")
+
+    mismatches = {
+        key: (value, current_after.get(key))
+        for key, value in proposed.items()
+        if key not in {"fleet_schedule_mode", "host_key"} and current_after.get(key) != value
+    }
+    assert mismatches == {}
+
+
+def test_fleet_preserve_without_current_schedule_disables_both_recurrences() -> None:
+    body = NativeBackup._fleet_config_body({
+        "host": "backup.example.test", "port": 22, "user": "backup-user",
+        "directory": "/backups/vcf", "ssh_fingerprint": "SHA256:verified",
+        "retention_mode": "count", "retention_value": 14,
+        "fleet_schedule_mode": "preserve", "fleet_schedule": {},
+    }, "sftp-secret", "SecureAB12!")
+
+    assert body["fullSchedule"] == {"enabled": False}
+    assert body["incrementalSchedule"] == {"enabled": False}
+
+
+@pytest.mark.parametrize(
+    "schedule",
+    [
+        {"fullSchedule": {"enabled": "yes"}},
+        {"fullSchedule": {"enabled": True, "schedule": {"days": ["MON"], "startTime": "25:30:45Z"}}},
+        {"fullSchedule": {"enabled": True, "schedule": {"days": ["MON", "MON"], "startTime": "02:30:45Z"}}},
+        {"fullSchedule": {"enabled": True, "schedule": {"days": ["MON"], "startTime": "02:30:45Z", "timezone": "UTC"}}},
+        {"fullSchedule": {"enabled": True, "schedule": {"days": [{}], "startTime": "02:30:45Z"}}},
+        {"incrementalSchedule": {"enabled": True, "interval": 0}},
+        {"incrementalSchedule": {"enabled": True, "fallbackToFull": "yes", "interval": 240}},
+        {"incrementalSchedule": {"enabled": True, "interval": 240, "fallbackToFull": True, "extra": False}},
+        {
+            "fullSchedule": {"enabled": False},
+            "incrementalSchedule": {"enabled": True, "interval": 240},
+        },
+    ],
+)
+def test_fleet_schedule_snapshot_fails_closed_on_unreviewable_fields(schedule: dict[str, Any]) -> None:
+    """Verify that Fleet schedule snapshot fails closed on unreviewable fields.
+
+        Args:
+            schedule: Malformed Fleet schedule payload expected to fail closed.
+    """
+    with pytest.raises(RemoteError, match="Fleet LCM"):
+        NativeBackup._safe_fleet_schedule(schedule)
+
+
+@pytest.mark.parametrize("algorithm", ["ecdsa-sha2-nistp256", "ssh-rsa"])
+def test_fleet_proposal_selects_only_the_verified_key_matching_native_thumbprint(algorithm: str) -> None:
+    """Verify that Fleet proposal selects only the verified key matching native thumbprint.
+
+        Args:
+            algorithm: Algorithm of the host key Fleet reports for the receiver.
+    """
+    ecdsa_key = ssh_public_key("ecdsa-sha2-nistp256", b"verified-ecdsa-key")
+    rsa_key = ssh_public_key("ssh-rsa", b"verified-rsa-key")
+    selected_key = ecdsa_key if algorithm == "ecdsa-sha2-nistp256" else rsa_key
+    selected_pin = ssh_fingerprint(selected_key)
+    transport = FakeTransport(
+        None, [fleet_thumbprint_response("backup.example.test", 22, selected_pin)]
+    )
+    adapter = fleet_adapter_for_thumbprints(transport)
+
+    proposed = adapter.proposed(
+        "lcm-1", {}, {
+            "host": "backup.example.test", "port": 22, "username": "backup-user",
+            "directory": "/backups/vcf", "host_key": ecdsa_key,
+            "ecdsa_fingerprint": ssh_fingerprint(ecdsa_key), "rsa_host_key": rsa_key,
+        },
+    )
+
+    assert proposed["ssh_fingerprint"] == selected_pin
+    assert proposed["host_key"] == selected_key
+    assert "ecdsa_fingerprint" not in proposed
+    assert transport.requests[0][0:2] == (
+        "POST", "/fleet-lcm/v1/address-attributes?type=SSH_THUMBPRINT"
+    )
+    assert transport.requests[0][4] == [{"address": "backup.example.test", "port": 22}]
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        (200, []),
+        (200, [
+            {"address": "backup.example.test", "port": 22, "value": "SHA256:" + "A" * 43, "error": None},
+            {"address": "backup.example.test", "port": 22, "value": "SHA256:" + "A" * 43, "error": None},
+        ]),
+        (200, [{"address": "other.example.test", "port": 22, "value": "SHA256:" + "A" * 43, "error": None}]),
+        (200, [{"address": "backup.example.test", "port": 23, "value": "SHA256:" + "A" * 43, "error": None}]),
+        (200, [{"address": "backup.example.test", "port": 22, "value": "SHA256:" + "A" * 43, "error": {"code": "FAILED"}}]),
+        (200, [{"address": "backup.example.test", "port": 22, "value": "SHA256:" + "A" * 43, "error": None}]),
+    ],
+)
+def test_fleet_proposal_rejects_ambiguous_or_unmatched_thumbprint(response: tuple[int, Any]) -> None:
+    """Verify that Fleet proposal rejects ambiguous or unmatched thumbprint.
+
+        Args:
+            response: Malformed or unmatched response from Fleet thumbprint lookup.
+    """
+    ecdsa_key = ssh_public_key("ecdsa-sha2-nistp256", b"verified-ecdsa-key")
+    rsa_key = ssh_public_key("ssh-rsa", b"verified-rsa-key")
+    adapter = fleet_adapter_for_thumbprints(FakeTransport(None, [response]))
+
+    with pytest.raises(RemoteError, match="Fleet LCM"):
+        adapter.proposed(
+            "lcm-1", {}, {
+                "host": "backup.example.test", "port": 22, "username": "backup-user",
+                "directory": "/backups/vcf", "host_key": ecdsa_key,
+                "ecdsa_fingerprint": ssh_fingerprint(ecdsa_key), "rsa_host_key": rsa_key,
+            },
+        )
+
+
+def test_fleet_validate_rejects_thumbprint_drift_after_review() -> None:
+    ecdsa_key = ssh_public_key("ecdsa-sha2-nistp256", b"verified-ecdsa-key")
+    rsa_key = ssh_public_key("ssh-rsa", b"verified-rsa-key")
+    transport = FakeTransport(
+        None, [fleet_thumbprint_response("backup.example.test", 22, ssh_fingerprint(ecdsa_key))]
+    )
+    adapter = fleet_adapter_for_thumbprints(transport)
+    proposed = {
+        "host": "backup.example.test", "port": 22, "user": "backup-user",
+        "directory": "/backups/vcf", "host_key": rsa_key,
+        "ssh_fingerprint": ssh_fingerprint(rsa_key), "schedule_timezone": "UTC",
+        "full_time": "02:00", "retention_mode": "count", "retention_value": 14,
+    }
+
+    with pytest.raises(RemoteError, match="changed after review"):
+        adapter.validate("lcm-1", proposed, "sftp-secret", "SecureBackupPassAB12!")
+    assert len(transport.requests) == 1
+
+
+def test_fleet_configure_rechecks_thumbprint_before_native_write() -> None:
+    ecdsa_key = ssh_public_key("ecdsa-sha2-nistp256", b"verified-ecdsa-key")
+    rsa_key = ssh_public_key("ssh-rsa", b"verified-rsa-key")
+    transport = FakeTransport(
+        None, [fleet_thumbprint_response("backup.example.test", 22, ssh_fingerprint(ecdsa_key))]
+    )
+    adapter = fleet_adapter_for_thumbprints(transport)
+    proposed = {
+        "host": "backup.example.test", "port": 22, "user": "backup-user",
+        "directory": "/backups/vcf", "host_key": rsa_key,
+        "ssh_fingerprint": ssh_fingerprint(rsa_key), "schedule_timezone": "UTC",
+        "full_time": "02:00", "retention_mode": "count", "retention_value": 14,
+    }
+
+    with pytest.raises(RemoteError, match="changed after review"):
+        adapter.configure("lcm-1", proposed, "sftp-secret", "SecureBackupPassAB12!")
+    assert [request[0] for request in transport.requests] == ["POST"]
 
 
 def test_fleet_configuration_status_503_then_success_never_replays_write() -> None:
     root_transport = FakeTransport(None, [])
+    rsa_key = ssh_public_key("ssh-rsa", b"workflow-rsa-key")
+    rsa_pin = ssh_fingerprint(rsa_key)
     fleet_transport = FakeTransport(
         None,
         [
+            fleet_thumbprint_response("backup.example.test", 22, rsa_pin),
             (202, {"id": "task-config"}),
             (503, {"detail": "transient service unavailable"}),
             (200, {"status": "SUCCEEDED"}),
@@ -488,7 +1083,7 @@ def test_fleet_configuration_status_503_then_success_never_replays_write() -> No
     }
     proposed = {
         "host": "backup.example.test", "port": 22, "user": "backup-user",
-        "directory": "/backups/vcf", "ecdsa_fingerprint": "SHA256:pin",
+        "directory": "/backups/vcf", "ssh_fingerprint": rsa_pin, "host_key": rsa_key,
         "schedule_timezone": "UTC", "full_time": "02:30", "days": ["MON"],
         "retention_mode": "count", "retention_value": 14, "component_ids": ["a"],
     }
@@ -502,10 +1097,168 @@ def test_fleet_configuration_status_503_then_success_never_replays_write() -> No
     assert "HTTP 503" in first_poll["warning"]
     assert second_poll == {"state": "succeeded"}
     assert [request[:2] for request in fleet_transport.requests] == [
+        ("POST", "/fleet-lcm/v1/address-attributes?type=SSH_THUMBPRINT"),
         ("PATCH", "/fleet-lcm/v1/sddc-lcms/lcm-1"),
         ("GET", "/fleet-lcm/v1/tasks/task-config"),
         ("GET", "/fleet-lcm/v1/tasks/task-config"),
     ]
+
+
+def test_fleet_poll_refreshes_expired_token_once_and_preserves_reviewed_state() -> None:
+    adapter, ops, old_transport, refreshed_transports = fleet_adapter_for_auth_refresh(
+        [(401, {"detail": "expired"})], [(200, {"status": "SUCCEEDED"})]
+    )
+    inventory = adapter._inventory
+    adapter._fleet_backup_baseline["lcm-1"] = {("a", "baseline")}
+
+    status = adapter.configuration_status(
+        "lcm-1", {"kind": "fleet", "group_id": "lcm-1", "native_task_id": "task-1"}
+    )
+
+    assert status == {"state": "succeeded"}
+    assert len(ops.requests) == 3
+    assert [request[:2] for request in old_transport.requests] == [
+        ("GET", "/fleet-lcm/v1/tasks/task-1")
+    ]
+    assert [request[:2] for request in refreshed_transports[0].requests] == [
+        ("GET", "/fleet-lcm/v1/tasks/task-1")
+    ]
+    assert adapter._inventory is inventory
+    assert adapter._fleet_backup_baseline["lcm-1"] == {("a", "baseline")}
+
+
+class Raising401Transport(FakeTransport):
+    def request(self, *args: Any, **kwargs: Any) -> tuple[int, Any]:
+        """Record one request and return its queued native response.
+
+            Args:
+                *args: Positional request arguments forwarded unchanged to FakeTransport.
+                **kwargs: Keyword request arguments forwarded unchanged to FakeTransport.
+        """
+        status, result = super().request(*args, **kwargs)
+        if status == 401:
+            raise RemoteError("Appliance API returned HTTP 401")
+        return status, result
+
+
+def test_fleet_poll_refresh_handles_pinned_transport_401_exception() -> None:
+    certificate, fingerprint = fleet_certificate()
+    ops = FakeTransport(None, ops_responses(certificate))
+    new_transport: FakeTransport | None = None
+
+    def factory(target: Any) -> FakeTransport:
+        """Return a fake transport for the requested pinned target.
+
+            Args:
+                target: Pinned target for which the adapter requests a fake transport.
+        """
+        nonlocal new_transport
+        if target.host == "ops.example.test":
+            return ops
+        new_transport = FakeTransport(target, [(200, {"status": "SUCCEEDED"})])
+        return new_transport
+
+    old_transport = Raising401Transport(None, [(401, {"detail": "expired"})])
+    adapter = NativeBackup(source(), credentials(), transport_factory=factory)
+    reviewed_service = {
+        "address": "fleet.example.test", "port": 443, "base_path": "fleet-lcm",
+        "key": "fleet-service-key", "version": "9.1.1.0100.25761871", "fingerprint": fingerprint,
+    }
+    adapter._fleet_transport = old_transport
+    adapter._fleet_token = "expired-token"
+    adapter._fleet_service = dict(reviewed_service)
+    adapter._version = "9.1.1.0100.25761871"
+    adapter._inventory = {
+        "service": dict(reviewed_service),
+        "groups": [{"id": "lcm-1", "product": "fleet", "component_ids": ["a"]}],
+    }
+
+    status = adapter.configuration_status(
+        "lcm-1", {"kind": "fleet", "group_id": "lcm-1", "native_task_id": "task-1"}
+    )
+
+    assert status == {"state": "succeeded"}
+    assert new_transport is not None
+    assert [request[:2] for request in new_transport.requests] == [
+        ("GET", "/fleet-lcm/v1/tasks/task-1")
+    ]
+
+
+@pytest.mark.parametrize("changed_field", ["address", "port", "basePath", "key", "version", "fingerprint"])
+def test_fleet_poll_refuses_auth_refresh_when_operations_service_identity_drifts(changed_field: str) -> None:
+    """Verify that Fleet poll refuses auth refresh when operations service identity drifts.
+
+        Args:
+            changed_field: Operations descriptor field changed before the token refresh.
+    """
+    new_certificate = None
+    overrides: dict[str, Any] = {}
+    if changed_field == "fingerprint":
+        new_certificate, _new_fingerprint = fleet_certificate()
+    else:
+        overrides[changed_field] = {
+            "address": "fleet-new.example.test", "port": 8443,
+            "basePath": "fleet-new", "key": "replacement-service-key",
+            "version": "9.1.1.1",
+        }[changed_field]
+    adapter, ops, old_transport, refreshed_transports = fleet_adapter_for_auth_refresh(
+        [(401, {})], [], service_overrides=overrides, refreshed_certificate=new_certificate,
+    )
+
+    with pytest.raises(RemoteError, match="service identity changed"):
+        adapter.configuration_status(
+            "lcm-1", {"kind": "fleet", "group_id": "lcm-1", "native_task_id": "task-1"}
+        )
+
+    assert len(ops.requests) == 3
+    assert [request[0] for request in old_transport.requests] == ["GET"]
+    assert refreshed_transports and refreshed_transports[0].requests == []
+    assert adapter._fleet_token is None
+    assert adapter._fleet_service is None
+
+
+def test_fleet_poll_fails_after_one_repeated_401_without_second_refresh() -> None:
+    adapter, ops, _old_transport, refreshed_transports = fleet_adapter_for_auth_refresh(
+        [(401, {})], [(401, {})]
+    )
+
+    with pytest.raises(RemoteError, match="status poll returned HTTP 401"):
+        adapter.configuration_status(
+            "lcm-1", {"kind": "fleet", "group_id": "lcm-1", "native_task_id": "task-1"}
+        )
+
+    assert len(ops.requests) == 3
+    assert [request[0] for request in refreshed_transports[0].requests] == ["GET"]
+
+
+def test_fleet_configuration_401_never_replays_mutating_patch() -> None:
+    root_transport = FakeTransport(None, [])
+    rsa_key = ssh_public_key("ssh-rsa", b"workflow-rsa-key")
+    fleet_transport = FakeTransport(
+        None,
+        [fleet_thumbprint_response("backup.example.test", 22, ssh_fingerprint(rsa_key)), (401, {})],
+    )
+    adapter = NativeBackup(source(), credentials(), transport_factory=lambda _target: root_transport)
+    attach_fleet_transport(adapter, fleet_transport)
+    adapter._version = "9.1.1.0"
+    adapter._inventory = {
+        "groups": [{"id": "lcm-1", "product": "fleet", "component_ids": ["a"]}]
+    }
+    proposed = {
+        "host": "backup.example.test", "port": 22, "user": "backup-user",
+        "directory": "/backups/vcf", "ssh_fingerprint": ssh_fingerprint(rsa_key),
+        "host_key": rsa_key, "schedule_timezone": "UTC", "full_time": "02:30",
+        "retention_mode": "count", "retention_value": 14,
+    }
+
+    with pytest.raises(RemoteError, match="no task reference"):
+        adapter.configure("lcm-1", proposed, "sftp-secret", "SecureBackupPassAB12!")
+
+    assert [request[0:2] for request in fleet_transport.requests] == [
+        ("POST", "/fleet-lcm/v1/address-attributes?type=SSH_THUMBPRINT"),
+        ("PATCH", "/fleet-lcm/v1/sddc-lcms/lcm-1"),
+    ]
+    assert root_transport.requests == []
 
 
 def test_fleet_backup_history_503_stays_running_without_artifacts_or_write_retry() -> None:
@@ -532,6 +1285,9 @@ def test_fleet_backup_history_503_stays_running_without_artifacts_or_write_retry
     assert status["state"] == "running"
     assert status["artifacts"] == []
     assert status["native_task_id"] == reference["native_task_id"] == "task-backup"
+    assert status["native_task_state"] == "succeeded"
+    assert status["native_task_terminal"] is True
+    assert status["native_task_status"] == "SUCCEEDED"
     assert "HTTP 503" in status["warning"]
     assert sum(request[0] == "POST" for request in fleet_transport.requests) == 1
 
@@ -545,7 +1301,7 @@ def test_fleet_configuration_status_auth_failure_is_not_treated_as_transient() -
         "groups": [{"id": "lcm-1", "product": "fleet", "component_ids": ["a"]}]
     }
 
-    with pytest.raises(RemoteError, match="HTTP 401") as failure:
+    with pytest.raises(RemoteError, match="service identity is unavailable") as failure:
         adapter.configuration_status(
             "lcm-1", {"kind": "fleet", "group_id": "lcm-1", "native_task_id": "task-config"}
         )
@@ -555,8 +1311,19 @@ def test_fleet_configuration_status_auth_failure_is_not_treated_as_transient() -
 
 @pytest.mark.parametrize("http_status", [503, 401])
 def test_configuration_poll_handles_raised_pinned_transport_status(http_status: int) -> None:
+    """Verify that configuration poll handles raised pinned transport status.
+
+        Args:
+            http_status: HTTP status raised by the pinned transport during polling.
+    """
     class RaisingTransport(FakeTransport):
         def request(self, *args: Any, **kwargs: Any) -> tuple[int, Any]:
+            """Record one request and return its queued native response.
+
+                Args:
+                    *args: Positional request arguments forwarded unchanged to FakeTransport.
+                    **kwargs: Keyword request arguments forwarded unchanged to FakeTransport.
+            """
             super().request(*args, **kwargs)
             raise RemoteError(f"Appliance API returned HTTP {http_status}")
 
@@ -573,7 +1340,7 @@ def test_configuration_poll_handles_raised_pinned_transport_status(http_status: 
         assert status["state"] == "running"
         assert "HTTP 503" in status["warning"]
     else:
-        with pytest.raises(RemoteError, match="HTTP 401"):
+        with pytest.raises(RemoteError, match="service identity is unavailable"):
             adapter.configuration_status("lcm-1", reference)
     assert [request[:2] for request in fleet_transport.requests] == [
         ("GET", "/fleet-lcm/v1/tasks/task-config")
@@ -631,6 +1398,12 @@ def test_fleet_current_time_and_days_normalize_rfc3339_time_shape() -> None:
 def test_fleet_time_readback_preserves_timezone_semantics(
     value: str, expected: tuple[str, str] | None,
 ) -> None:
+    """Verify that Fleet time readback preserves timezone semantics.
+
+        Args:
+            value: Fleet time string containing the clock and optional UTC offset.
+            expected: Expected normalized clock and timezone label.
+    """
     assert _fleet_time_parts(value) == expected
 
 
@@ -881,6 +1654,9 @@ def test_fleet_status_requires_and_uses_public_reference_dict() -> None:
     status = adapter.backup_status("lcm-1", reference)
     assert status == {
         "state": "succeeded",
+        "native_task_state": "succeeded",
+        "native_task_terminal": True,
+        "native_task_status": "SUCCEEDED",
         "artifacts": [{
             "component_id": "comp-a", "path": "/backups/vcf",
             "created_at": "2026-10-28T10-00-00Z",
@@ -909,6 +1685,9 @@ def test_fleet_task_warnings_do_not_complete_without_successful_artifact_per_com
     }
     status = adapter.backup_status("lcm-1", reference)
     assert status["state"] == "running"
+    assert status["native_task_state"] == "succeeded"
+    assert status["native_task_terminal"] is True
+    assert status["native_task_status"] == "COMPLETED_WITH_WARNINGS"
     assert [artifact["component_id"] for artifact in status["artifacts"]] == ["a"]
 
 
@@ -932,6 +1711,9 @@ def test_fleet_task_warnings_complete_only_with_successful_artifact_per_componen
     }
     status = adapter.backup_status("lcm-1", reference)
     assert status["state"] == "succeeded"
+    assert status["native_task_state"] == "succeeded"
+    assert status["native_task_terminal"] is True
+    assert status["native_task_status"] == "COMPLETED_WITH_WARNINGS"
     assert [artifact["component_id"] for artifact in status["artifacts"]] == ["a", "b"]
 
 
@@ -956,7 +1738,73 @@ def test_fleet_task_success_without_a_documented_restore_point_stays_running() -
     status = adapter.backup_status("lcm-1", reference)
 
     assert status["state"] == "running"
+    assert status["native_task_state"] == "succeeded"
+    assert status["native_task_terminal"] is True
+    assert status["native_task_status"] == "SUCCEEDED"
     assert status["artifacts"] == []
+
+
+def test_fleet_failed_task_is_terminal_even_without_artifact_metadata() -> None:
+    root_transport = FakeTransport(None, [])
+    fleet_transport = FakeTransport(None, [(200, {"status": "FAILED"})])
+    adapter = NativeBackup(source(), credentials(), transport_factory=lambda _target: root_transport)
+    attach_fleet_transport(adapter, fleet_transport)
+    adapter._inventory = {"groups": [{"id": "lcm-1", "product": "fleet", "component_ids": ["a"]}]}
+    reference = {
+        "kind": "fleet", "group_id": "lcm-1", "native_task_id": "task-1",
+        "component_ids": ["a"], "fleet_artifacts": [],
+        "started_at": "2026-10-28T10:00:00+00:00",
+    }
+
+    status = adapter.backup_status("lcm-1", reference)
+
+    assert status["state"] == "failed"
+    assert status["native_task_state"] == "failed"
+    assert status["native_task_terminal"] is True
+    assert status["native_task_status"] == "FAILED"
+    assert [request[0:2] for request in fleet_transport.requests] == [
+        ("GET", "/fleet-lcm/v1/tasks/task-1")
+    ]
+
+
+def test_fleet_task_get_503_does_not_claim_terminality() -> None:
+    root_transport = FakeTransport(None, [])
+    fleet_transport = FakeTransport(None, [(503, {"detail": "temporarily unavailable"})])
+    adapter = NativeBackup(source(), credentials(), transport_factory=lambda _target: root_transport)
+    attach_fleet_transport(adapter, fleet_transport)
+    adapter._inventory = {"groups": [{"id": "lcm-1", "product": "fleet", "component_ids": ["a"]}]}
+    reference = {
+        "kind": "fleet", "group_id": "lcm-1", "native_task_id": "task-1",
+        "component_ids": ["a"], "fleet_artifacts": [],
+        "started_at": "2026-10-28T10:00:00+00:00",
+    }
+
+    status = adapter.backup_status("lcm-1", reference)
+
+    assert status["state"] == "running"
+    assert status["native_task_terminal"] is False
+    assert status["native_task_status"] is None
+    assert status["native_task_state"] == "running"
+
+
+def test_fleet_running_task_is_not_native_terminal_without_artifact_metadata() -> None:
+    root_transport = FakeTransport(None, [])
+    fleet_transport = FakeTransport(None, [(200, {"status": "RUNNING"}), (200, {"backups": []})])
+    adapter = NativeBackup(source(), credentials(), transport_factory=lambda _target: root_transport)
+    attach_fleet_transport(adapter, fleet_transport)
+    adapter._inventory = {"groups": [{"id": "lcm-1", "product": "fleet", "component_ids": ["a"]}]}
+    reference = {
+        "kind": "fleet", "group_id": "lcm-1", "native_task_id": "task-1",
+        "component_ids": ["a"], "fleet_artifacts": [],
+        "started_at": "2026-10-28T10:00:00+00:00",
+    }
+
+    status = adapter.backup_status("lcm-1", reference)
+
+    assert status["state"] == "running"
+    assert status["native_task_state"] == "running"
+    assert status["native_task_terminal"] is False
+    assert status["native_task_status"] == "RUNNING"
 
 
 def test_fleet_detects_new_restorepoint_when_backup_directory_is_reused() -> None:
@@ -1034,6 +1882,11 @@ def test_fleet_missing_detail_config_without_filter_match_is_unreviewable() -> N
     ],
 )
 def test_sddc_configuration_rejects_unreviewable_destinations_or_schedules(config: dict[str, Any]) -> None:
+    """Verify that SDDC configuration rejects unreviewable destinations or schedules.
+
+        Args:
+            config: Malformed SDDC configuration that cannot be safely reviewed.
+    """
     with pytest.raises(RemoteError, match="Native backup configuration"):
         NativeBackup._safe_settings(config)
 
@@ -1041,6 +1894,12 @@ def test_sddc_configuration_rejects_unreviewable_destinations_or_schedules(confi
 @pytest.mark.parametrize("key", ["backupLocations", "backup_locations"])
 @pytest.mark.parametrize("value", [{"server": "backup.example.test"}, "unexpected", 1, None])
 def test_sddc_configuration_rejects_non_array_destination_fields(key: str, value: Any) -> None:
+    """Verify that SDDC configuration rejects non array destination fields.
+
+        Args:
+            key: Destination collection field name under test.
+            value: Invalid non-array value supplied for that field.
+    """
     with pytest.raises(RemoteError, match="invalid destinations"):
         NativeBackup._safe_settings({key: value})
 
@@ -1048,6 +1907,12 @@ def test_sddc_configuration_rejects_non_array_destination_fields(key: str, value
 @pytest.mark.parametrize("key", ["backupSchedules", "backup_schedules"])
 @pytest.mark.parametrize("value", [{"resourceType": "SDDC_MANAGER"}, "unexpected", 1, None])
 def test_sddc_configuration_rejects_non_array_schedule_fields(key: str, value: Any) -> None:
+    """Verify that SDDC configuration rejects non array schedule fields.
+
+        Args:
+            key: Schedule collection field name under test.
+            value: Invalid non-array value supplied for that field.
+    """
     with pytest.raises(RemoteError, match="invalid schedules"):
         NativeBackup._safe_settings({key: value})
 
@@ -1070,6 +1935,12 @@ def test_sddc_configuration_allows_absent_collection_fields() -> None:
     ("2001:db8::10", "sftp://[2001:db8::10]:22/backups/vcf"),
 ])
 def test_vcenter_native_schedule_create_uses_pinned_vapi_contract(host: str, location: str) -> None:
+    """Verify that vCenter native schedule create uses pinned vapi contract.
+
+        Args:
+            host: Receiver hostname encoded into the vCenter location.
+            location: Expected SFTP URI with receiver host, port, and directory.
+    """
     transport = FakeTransport(None, [(200, {}), (204, None)])
     adapter = NativeBackup(
         source("vcenter"), credentials(), transport_factory=lambda _target: transport
@@ -1252,6 +2123,11 @@ def test_vcenter_validation_uses_modern_backup_action_and_part_envelope() -> Non
     ],
 )
 def test_vcenter_passphrase_constraints_fail_before_remote_validation(passphrase: str) -> None:
+    """Verify that vCenter passphrase constraints fail before remote validation.
+
+        Args:
+            passphrase: Invalid passphrase expected to fail before a remote request.
+    """
     transport = FakeTransport(None, [])
     adapter = NativeBackup(
         source("vcenter"), credentials(), transport_factory=lambda _target: transport
@@ -1292,6 +2168,11 @@ def test_products_without_native_validation_report_gap_without_blocking() -> Non
 
 @pytest.mark.parametrize("payload", [None, {}, {"errors": []}, {"executionStatus": "COMPLETED"}])
 def test_unknown_native_validation_response_is_fail_closed(payload: Any) -> None:
+    """Verify that unknown native validation response is fail closed.
+
+        Args:
+            payload: Unrecognized validation response that must not count as success.
+    """
     result = _validation_result(payload)
     assert result["supported"] is True
     assert result["valid"] is False
@@ -1308,6 +2189,11 @@ def test_unknown_native_validation_response_is_fail_closed(payload: Any) -> None
     ],
 )
 def test_native_validation_execution_status_overrides_result_success(payload: dict[str, Any]) -> None:
+    """Verify that native validation execution status overrides result success.
+
+        Args:
+            payload: Conflicting native result and execution statuses under test.
+    """
     result = _validation_result(payload)
     assert result["supported"] is True
     assert result["valid"] is False
