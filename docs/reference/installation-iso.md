@@ -209,6 +209,8 @@ partition on the fixture's selected 64-GiB disk through the native **Create New*
 the complete review: that exact disk, only the native 10-MiB EFI partition and remaining-size root, the full erasure
 warning, and the default-No instruction. Additional disks or partitions, paged or incomplete reviews, and different
 filesystems fail this deliberately narrow scenario. The four-GiB disk remains independently unselected.
+Each public Custom phase has a 90-second limit clipped to the original overall deadline. Fixed phase checkpoints
+identify an incomplete native state without printing console contents or extending the test.
 Use a fresh receipt-bound VM directory for each scenario, with the same ISO identity and validation-root selectors
 as `Probe`. For a full Custom install, replace `-Scenario Probe` with `-Scenario CustomReboot` and append
 `-InspectInstalled -InspectContent -InspectionPythonPath <ABSOLUTE-PREPARED-PYTHON-EXECUTABLE>`.
@@ -308,6 +310,9 @@ Photon's full-screen login-profile probe. Fragmented controls and save/restore s
 Unknown positions or unsupported cursor modes receive no invented coordinates. Persistent state contains only
 cursor and control-parser metadata, with a 64-query session ceiling and absolute deadlines; console contents remain
 private and temporary.
+The adapter recognizes the native `screen` terminal's single nonprivate `CSI 34 h/l` control as
+[normal cursor visibility](https://www.gnu.org/software/screen/manual/screen.html#Control-Sequences).
+This control does not move the cursor or restore certainty lost to another unsupported mode or unknown character width.
 The fixed `cursor-position-query` diagnostic identifies requests without proving authentication; a shell can display
 its prompt before finishing terminal initialization. The separate account-identity challenge must still pass.
 For the administrator's PowerShell shell, the adapter waits for the cursor handshake after the prompt before sending

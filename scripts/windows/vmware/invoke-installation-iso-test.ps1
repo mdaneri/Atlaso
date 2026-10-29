@@ -476,6 +476,10 @@ function ConvertFrom-InstallationConsoleFrame {
                             # frame already overwrites cells; this reset moves no cursor.
                             # Preserve any uncertainty from an earlier unsupported mode.
                             if (-not $private -and $numbers.Count -eq 1 -and $numbers[0] -eq 4 -and $ch -ceq 'l') { break }
+                            # GNU screen's normal-cursor visibility changes no position.
+                            # Recognize only its single nonprivate mode; never restore
+                            # certainty lost to a different mode or character width.
+                            if (-not $private -and $numbers.Count -eq 1 -and $numbers[0] -eq 34) { break }
                             if (-not $private -or $numbers.Count -ne 1) {
                                 $state.ModesKnown = $false; Set-ConsoleCursorUnknown -State $state
                                 break
@@ -669,9 +673,12 @@ function Wait-InstallationCustomPublicState {
         [string]$ExpectedDisk = '')
     $buffer = [byte[]]::new(4096)
     $phaseStart = $State.Text.Length
+    $phaseDeadline = [DateTimeOffset]::UtcNow.AddSeconds(90)
+    if ($phaseDeadline -gt $Deadline) { $phaseDeadline = $Deadline }
+    Write-Host ('Public Custom phase: awaiting-' + $Kind)
     try {
-        while ([DateTimeOffset]::UtcNow -lt $Deadline) {
-            $remaining = [int][Math]::Min(30000, ($Deadline - [DateTimeOffset]::UtcNow).TotalMilliseconds)
+        while ([DateTimeOffset]::UtcNow -lt $phaseDeadline) {
+            $remaining = [int][Math]::Min(30000, ($phaseDeadline - [DateTimeOffset]::UtcNow).TotalMilliseconds)
             if ($remaining -le 0) { break }
             $cancel = [Threading.CancellationTokenSource]::new($remaining)
             try { $count = $Pipe.ReadAsync($buffer, 0, $buffer.Length, $cancel.Token).GetAwaiter().GetResult() }
@@ -691,13 +698,15 @@ function Wait-InstallationCustomPublicState {
                 $options = @(Get-InstallationConsoleDiskOptions -Text $State.Text)
                 if ($fresh.Contains('Select a disk', [StringComparison]::Ordinal) -and $options.Count -eq 2 -and
                     @($options | Where-Object SizeGiB -EQ 64).Count -eq 1 -and @($options | Where-Object SizeGiB -EQ 4).Count -eq 1) {
+                    Write-Host ('Public Custom phase ready: ' + $Kind)
                     return $options
                 }
             } elseif (Test-InstallationCustomPublicState -Text $State.Text -Kind $Kind -ExpectedDisk $ExpectedDisk) {
+                Write-Host ('Public Custom phase ready: ' + $Kind)
                 return
             }
         }
-        throw 'The complete public Custom state was not observed before its original deadline.'
+        throw ('The complete public Custom state was not observed before its bounded deadline. Phase: ' + $Kind + '.')
     }
     finally { [Array]::Clear($buffer, 0, $buffer.Length) }
 }

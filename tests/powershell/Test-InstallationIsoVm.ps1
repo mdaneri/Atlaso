@@ -821,7 +821,7 @@ $customReviewLines = @('Erase selected disks?', '/dev/sda: VMware Virtual S 64 G
     'Planned layout:', '/dev/sda planned layout:', '  /boot/efi vfat 10 MiB (Photon UEFI default)',
     '  / ext4 remaining MiB', '', 'ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.',
     'Select Yes to continue or No to cancel.', '', 'Yes        No')
-$customReview = "`e[2J`e[3;6H" + ($customReviewLines -join "`r`n     ")
+$customReview = "`e[2J`e[34h`e[3;6H" + ($customReviewLines -join "`r`n     ")
 Assert-InstallationVmCondition (Test-InstallationCustomPublicState -Text $customReview -Kind Review -ExpectedDisk '/dev/sda') `
     'A complete single-root review must admit exactly the selected 64 GiB disk and native EFI/root layout.'
 foreach ($invalidReview in @(
@@ -849,7 +849,7 @@ foreach ($invalidEmpty in @($customEmpty.Replace('Hty', 'Htx'), $customEmpty.Rep
     Assert-InstallationVmCondition (-not (Test-InstallationCustomPublicState -Text $invalidEmpty -Kind Empty)) `
         'Truncated or changed native refusals must not satisfy the negative Custom case.'
 }
-$customForm = "`e[2J`e[5;10HSize in MB: 65522 available`e[9;10HType: (ext3, ext4, xfs, btrfs, swap)`e[13;10HMountpoint:`e[16;10H<Cancel> <OK>"
+$customForm = "`e[2J`e[34h`e[5;10HSize in MB: 65522 available`e[9;10HType: (ext3, ext4, xfs, btrfs, swap)`e[13;10HMountpoint:`e[16;10H<Cancel> <OK>"
 Assert-InstallationVmCondition (Test-InstallationCustomPublicState -Text $customForm -Kind Form) 'All native public partition fields must be visible before typing.'
 Assert-InstallationVmCondition (-not (Test-InstallationCustomPublicState -Text $customForm.Replace('Mountpoint:', '') -Kind Form)) `
     'A partial native form must never receive queued partition input.'
@@ -864,13 +864,43 @@ try {
     $customCursor = @{}
     $null = @(ConvertFrom-InstallationConsoleFrame -Text '' -CursorState $customCursor -CursorOnly)
     $customCursor.QueryCount = 64
-    $customWriter = [AtlasoInstallationPipeTestWriter]::Start($customPair.Client, [string[]]@("`e[6n"))
+    $customWriter = [AtlasoInstallationPipeTestWriter]::Start($customPair.Client, [string[]]@("`e[34h`e[34l`e[6n"))
     $customFloodRefused = $false
     try { Wait-InstallationCustomPublicState -Pipe $customPair.Server -State @{ Text = '' } -CursorState $customCursor -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -Kind Empty }
     catch { $customFloodRefused = $_.Exception.Message -ceq 'Public Custom navigation exceeded its session cursor-query bound.' }
     Assert-InstallationVmCondition $customFloodRefused 'Custom waits must preserve the existing session-wide cursor-query ceiling.'
     Assert-InstallationVmCondition $customWriter.Wait(5000) 'The public Custom fixture writer must complete.'
 } finally { Close-InstallationTestPipePair -Pair $customPair }
+$visibilityCursor = @{}
+$visibilityQueries = @(ConvertFrom-InstallationConsoleFrame -Text "`e[3;5H`e[34h`e[34l`e[6n" -CursorOnly -CursorState $visibilityCursor)
+Assert-InstallationVmCondition ($visibilityQueries.Count -eq 1 -and $visibilityQueries[0].Known -and
+    $visibilityQueries[0].Row -eq 3 -and $visibilityQueries[0].Column -eq 5) `
+    'GNU screen normal-cursor visibility must preserve an established position without moving it.'
+foreach ($unsupported in @('4h', '?34h', '34;25h', '340h', '?69h')) {
+    $unknownVisibility = @{}
+    $queries = @(ConvertFrom-InstallationConsoleFrame -Text ("`e[" + $unsupported + "`e[34h`e[34l`e[3;5H`e[6n") -CursorOnly -CursorState $unknownVisibility)
+    Assert-InstallationVmCondition ($queries.Count -eq 1 -and -not $queries[0].Known) `
+        'Visibility changes must never clear uncertainty from unsupported modes or their private/combined variants.'
+}
+$highBitVisibility = @{}
+$queries = @(ConvertFrom-InstallationConsoleFrame -Text ("`e[3;5H" + [char]0xc3 + "`e[34h`e[34l`e[6n") -CursorOnly -CursorState $highBitVisibility)
+Assert-InstallationVmCondition ($queries.Count -eq 1 -and -not $queries[0].Known) `
+    'Visibility controls must never invent a coordinate after an unknown character width.'
+$deadlinePair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+$publicState = @{ Text = '' }
+try {
+    $deadlineWriter = [AtlasoInstallationPipeTestWriter]::Start($deadlinePair.Client, [string[]]@('PublicSyntheticSensitiveFixture'))
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $deadlineRefused = $false
+    $phaseOutput = @(& {
+        try { Wait-InstallationCustomPublicState -Pipe $deadlinePair.Server -State $publicState -CursorState @{} -Deadline ([DateTimeOffset]::UtcNow.AddMilliseconds(500)) -Kind Form }
+        catch { $script:deadlineRefused = $_.Exception.Message -ceq 'The complete public Custom state was not observed before its bounded deadline. Phase: Form.' }
+    } 6>&1) | Out-String
+    Assert-InstallationVmCondition ($deadlineRefused -and $timer.Elapsed.TotalSeconds -lt 5) `
+        'A Custom phase must be clipped to its earlier original deadline and report only its fixed phase.'
+    Assert-InstallationVmCondition (-not $phaseOutput.Contains('PublicSyntheticSensitiveFixture')) 'Custom progress must never echo unclassified console data.'
+    Assert-InstallationVmCondition $deadlineWriter.Wait(5000) 'The Custom deadline fixture writer must complete.'
+} finally { $publicState.Clear(); Close-InstallationTestPipePair -Pair $deadlinePair }
 Write-Host 'Custom public refusal, form and destructive-review checks passed.'
 
 $diskRowsTargetFirst = @(
