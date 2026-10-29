@@ -203,6 +203,18 @@ The native capacity dialog identifies the selected disk and its size. The consol
 rows inside the native panel border and still requires the exact selected disk and byte count. Enter returns to explicit
 disk selection;
 Escape cancels before credentials or disk writes.
+`CustomCancel` opens the native partition editor, requires its complete empty-layout refusal, then uses **Go Back**.
+It obtains no credentials and compares both stopped disks. `CustomReboot` creates one remaining-size `ext4` root
+partition on the fixture's selected 64-GiB disk through the native **Create New** form. Before consent it requires
+the complete review: that exact disk, only the native 10-MiB EFI partition and remaining-size root, the full erasure
+warning, and the default-No instruction. Additional disks or partitions, paged or incomplete reviews, and different
+filesystems fail this deliberately narrow scenario. The four-GiB disk remains independently unselected.
+Use a fresh receipt-bound VM directory for each scenario, with the same ISO identity and validation-root selectors
+as `Probe`. For a full Custom install, replace `-Scenario Probe` with `-Scenario CustomReboot` and append
+`-InspectInstalled -InspectContent -InspectionPythonPath <ABSOLUTE-PREPARED-PYTHON-EXECUTABLE>`.
+It uses the existing concealed credential bridge, media-free reboot, root/admin challenges and content checks below.
+These scenarios provide automation for their stated fixtures; adding them does not establish native or physical
+acceptance, multi-disk Custom coverage, Update persistence, or rollback coverage.
 Creation records a separate disk-baseline receipt before first boot. Retain both original receipt paths and their
 creation-time hashes from the console driver's ownership output. The console runner automatically verifies disks
 within its process deadline. To repeat verification afterward:

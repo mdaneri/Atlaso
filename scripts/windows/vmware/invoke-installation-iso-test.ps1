@@ -21,6 +21,8 @@ Exact owning pull request.
 Existing canonical identity suffix distinguishing independently installed test VMs.
 .PARAMETER Scenario
 Probe the native UI, cancel at disk/layout review, reject insufficient capacity, run Auto, or install and boot without media.
+CustomCancel verifies empty-layout refusal and cancels without credentials or consent.
+CustomReboot installs one native Custom remaining-size ext4 root and boots without media.
 LoginInstalled resumes an already installed, receipt-bound VM without repeating installation.
 BootInstalled completes a VNC-driven installation by disconnecting media and checking ordinary serial login.
 VncCredential submits one SDK account value at an operator-observed concealed installer field.
@@ -76,7 +78,7 @@ param(
     [string]$ValidationRootReceiptSha256 = '',
     [Parameter(Mandatory = $true)][ValidateRange(1, 2147483647)][int]$PullRequestNumber,
     [string]$CollisionSuffix = '',
-    [ValidateSet('Probe', 'Cancel', 'CancelReview', 'Insufficient', 'Auto', 'AutoReboot', 'BootInstalled', 'LoginInstalled', 'VncCredential')][string]$Scenario = 'Probe',
+    [ValidateSet('Probe', 'Cancel', 'CancelReview', 'Insufficient', 'Auto', 'AutoReboot', 'CustomCancel', 'CustomReboot', 'BootInstalled', 'LoginInstalled', 'VncCredential')][string]$Scenario = 'Probe',
     [string]$OriginalReceiptPath = '',
     [string]$OriginalReceiptSha256 = '',
     [string]$BaselineReceiptPath = '',
@@ -563,6 +565,184 @@ function Get-InstallationConsoleDiskOptions {
             $index++
         }
     }
+}
+
+<#
+.SYNOPSIS
+Recognize only complete public native Custom states before erasure consent.
+.PARAMETER Text
+Bounded public terminal history; never password or installed-console material.
+.PARAMETER Kind
+Native state required by the single-root Custom fixture.
+.PARAMETER ExpectedDisk
+Exact selected fixture disk for the destructive single-root review.
+#>
+function Test-InstallationCustomPublicState {
+    [OutputType([bool])]
+    param([string]$Text, [ValidateSet('Editor', 'Form', 'Empty', 'Review')][string]$Kind,
+        [string]$ExpectedDisk = '')
+    if ($Text.Length -gt 65536) { throw 'Public Custom history exceeds its bound.' }
+    $plain = [regex]::Replace($Text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>su]', '')
+    if ($plain -cmatch '(?:Set|Confirm) (?:admin|root) password|Password:|Traceback|curses\.error') {
+        throw 'Unexpected private or failed state in public Custom navigation.'
+    }
+    $rows = @(ConvertFrom-InstallationConsoleFrame -Text $Text)
+    if ($rows.Count -ne 25 -or @($rows | Where-Object Length -GT 80).Count) {
+        throw 'Public Custom viewport differs from the native fixture.'
+    }
+    $rows = @($rows | ForEach-Object { $_.PadRight(80) })
+    $frame = $rows -join "`n"
+    if ($Kind -eq 'Editor') {
+        return $plain.Contains('Current partitions:', [StringComparison]::Ordinal)
+    }
+    if ($Kind -eq 'Form') {
+        return ($frame.Contains('Size in MB:', [StringComparison]::Ordinal) -and
+            $frame.Contains('Type: (ext3, ext4, xfs, btrfs, swap)', [StringComparison]::Ordinal) -and
+            $frame.Contains('Mountpoint:', [StringComparison]::Ordinal) -and
+            $frame.Contains('<OK>', [StringComparison]::Ordinal) -and $frame.Contains('<Cancel>', [StringComparison]::Ordinal))
+    }
+    if ($Kind -eq 'Empty') {
+        # Photon's 35-column information window wraps the 37-character message.
+        # Locate its complete relative geometry rather than assuming a column.
+        $expected = 'Partition information cannot be empty'
+        $candidates = 0
+        for ($row = 2; $row -lt 24; $row++) {
+            $column = $rows[$row].IndexOf($expected.Substring(0, 35), [StringComparison]::Ordinal)
+            if ($column -ge 0 -and $column + 35 -le 80 -and
+                ($rows[$row].Substring($column, 35) + $rows[$row + 1].Substring($column, 2)) -ceq $expected -and
+                $rows[$row - 2].Contains('Confirm', [StringComparison]::Ordinal) -and
+                @($rows[($row + 2)..([Math]::Min(24, $row + 5))] | Where-Object { $_.Contains('OK', [StringComparison]::Ordinal) }).Count) {
+                $candidates++
+            }
+        }
+        return $candidates -eq 1
+    }
+    if ($ExpectedDisk -cnotmatch '^/dev/sd[a-z]$') { throw 'Custom review requires the exact fixture disk.' }
+    $start = -1; $column = -1; $end = -1
+    for ($row = 0; $row -lt 25; $row++) {
+        if ($rows[$row].Contains('Erase selected disks?', [StringComparison]::Ordinal)) {
+            if ($start -ge 0) { return $false }
+            $start = $row; $column = $rows[$row].IndexOf('Erase selected disks?', [StringComparison]::Ordinal)
+        }
+        if ($rows[$row].Contains('Select Yes to continue or No to cancel.', [StringComparison]::Ordinal)) { $end = $row }
+    }
+    if ($start -lt 0 -or $end -le $start -or $end -ge 24) { return $false }
+    $body = @($rows[$start..$end] | ForEach-Object {
+        # A side cell is separated from message text by native blank padding.
+        # Preserve punctuation attached to the message, notably its question mark.
+        ([regex]::Replace($_.Substring($column), ' +[?x|]+ *$', '')).TrimEnd(' ')
+    } | Where-Object { $_.Length })
+    # No additional disk, partition, omitted review page or partial warning can
+    # enter this exact one-selected-disk, two-partition consent boundary.
+    if ($body.Count -ne 9) { return $false }
+    $disk = [regex]::Escape($ExpectedDisk)
+    return ($body[0] -ceq 'Erase selected disks?' -and
+        $body[1] -cmatch ('^' + $disk + ': [\x20-\x7e]{1,48} 64 GiB$') -and
+        $body[2] -cmatch '^Serial/WWN: [\x20-\x7e]{1,56}$' -and
+        $body[3] -ceq 'Planned layout:' -and $body[4] -ceq ($ExpectedDisk + ' planned layout:') -and
+        $body[5] -ceq '  /boot/efi vfat 10 MiB (Photon UEFI default)' -and
+        $body[6] -ceq '  / ext4 remaining MiB' -and
+        $body[7] -ceq 'ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.' -and
+        $body[8] -ceq 'Select Yes to continue or No to cancel.' -and
+        @($rows[($end + 1)..24] | Where-Object { $_ -cmatch '(?:^|\s)Yes +No(?:\s|$)' }).Count -eq 1)
+}
+
+<#
+.SYNOPSIS
+Retain public native history and conservative numeric cursor state across Custom screens.
+.PARAMETER Pipe
+Receipt-bound private serial endpoint with a verified provider peer.
+.PARAMETER State
+Public history retained only until the caller finishes pre-consent navigation.
+.PARAMETER CursorState
+Session-wide numeric parser metadata; query counts are never reset by navigation.
+.PARAMETER Deadline
+Original absolute test deadline.
+.PARAMETER Kind
+Complete native public state required before sending the next keys.
+.PARAMETER ExpectedDisk
+Exact selected disk required by a Review state.
+#>
+function Wait-InstallationCustomPublicState {
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [hashtable]$State, [hashtable]$CursorState,
+        [DateTimeOffset]$Deadline, [ValidateSet('Disk', 'Editor', 'Form', 'Empty', 'Review')][string]$Kind,
+        [string]$ExpectedDisk = '')
+    $buffer = [byte[]]::new(4096)
+    $phaseStart = $State.Text.Length
+    try {
+        while ([DateTimeOffset]::UtcNow -lt $Deadline) {
+            $remaining = [int][Math]::Min(30000, ($Deadline - [DateTimeOffset]::UtcNow).TotalMilliseconds)
+            if ($remaining -le 0) { break }
+            $cancel = [Threading.CancellationTokenSource]::new($remaining)
+            try { $count = $Pipe.ReadAsync($buffer, 0, $buffer.Length, $cancel.Token).GetAwaiter().GetResult() }
+            catch [OperationCanceledException] { continue }
+            finally { $cancel.Dispose() }
+            if ($count -eq 0) { throw 'The owned serial endpoint closed during public Custom navigation.' }
+            $State.Text += [Text.Encoding]::ASCII.GetString($buffer, 0, $count)
+            if ($State.Text.Length -gt 65536) { throw 'Public Custom history exceeds its bound.' }
+            foreach ($query in @(ConvertFrom-InstallationConsoleFrame -Text ([Text.Encoding]::Latin1.GetString($buffer, 0, $count)) -CursorState $CursorState -CursorOnly)) {
+                if ($query.Exceeded) { throw 'Public Custom navigation exceeded its session cursor-query bound.' }
+                if ($query.Known) { Send-InstallationConsoleText -Pipe $Pipe -Text ("`e[{0};{1}R" -f $query.Row, $query.Column) }
+            }
+            [Array]::Clear($buffer, 0, $buffer.Length)
+            if ($Kind -eq 'Disk') {
+                $null = Test-InstallationCustomPublicState -Text $State.Text -Kind Editor
+                $fresh = $State.Text.Substring($phaseStart)
+                $options = @(Get-InstallationConsoleDiskOptions -Text $State.Text)
+                if ($fresh.Contains('Select a disk', [StringComparison]::Ordinal) -and $options.Count -eq 2 -and
+                    @($options | Where-Object SizeGiB -EQ 64).Count -eq 1 -and @($options | Where-Object SizeGiB -EQ 4).Count -eq 1) {
+                    return $options
+                }
+            } elseif (Test-InstallationCustomPublicState -Text $State.Text -Kind $Kind -ExpectedDisk $ExpectedDisk) {
+                return
+            }
+        }
+        throw 'The complete public Custom state was not observed before its original deadline.'
+    }
+    finally { [Array]::Clear($buffer, 0, $buffer.Length) }
+}
+
+<#
+.SYNOPSIS
+Navigate native Custom controls without credentials, returning only after strict plan admission or cancellation.
+.PARAMETER Pipe
+Receipt-bound private serial endpoint.
+.PARAMETER Deadline
+Original absolute test deadline.
+.PARAMETER CursorState
+Numeric state shared with all waits on this private pipe.
+.PARAMETER Cancel
+Verify empty-layout refusal and cancel instead of preparing a single-root install.
+#>
+function Invoke-InstallationCustomLayout {
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [DateTimeOffset]$Deadline, [hashtable]$CursorState, [switch]$Cancel)
+    $state = @{ Text = '' }
+    try {
+        $options = @(Wait-InstallationCustomPublicState -Pipe $Pipe -State $state -CursorState $CursorState -Deadline $Deadline -Kind Disk)
+        $target = @($options | Where-Object SizeGiB -EQ 64)[0]
+        Send-InstallationConsoleText -Pipe $Pipe -Text ("`eOA`eOA" + ("`eOB" * $target.Index) + "`eOD`n")
+        Wait-InstallationCustomPublicState -Pipe $Pipe -State $state -CursorState $CursorState -Deadline $Deadline -Kind Editor
+        if ($Cancel) {
+            Send-InstallationConsoleText -Pipe $Pipe -Text "`eOC`n"
+            Wait-InstallationCustomPublicState -Pipe $Pipe -State $state -CursorState $CursorState -Deadline $Deadline -Kind Empty
+            Send-InstallationConsoleText -Pipe $Pipe -Text "`n`eOD`eOD`n"
+            Wait-InstallationConsoleState -Pipe $Pipe -Pattern 'Installation cancelled' -Deadline $Deadline -ReadBootProgress -CursorState $CursorState
+            Write-Host 'Custom empty-layout refusal and pre-consent cancellation passed.'
+            return
+        }
+        Send-InstallationConsoleText -Pipe $Pipe -Text "`n"
+        $partitionOptions = @(Wait-InstallationCustomPublicState -Pipe $Pipe -State $state -CursorState $CursorState -Deadline $Deadline -Kind Disk)
+        $partitionTarget = @($partitionOptions | Where-Object SizeGiB -EQ 64)[0]
+        if ($partitionTarget.DiskPath -cne $target.DiskPath) { throw 'Custom partition disk differs from the selected boot disk.' }
+        Send-InstallationConsoleText -Pipe $Pipe -Text ("`eOA`eOA" + ("`eOB" * $partitionTarget.Index) + "`n")
+        Wait-InstallationCustomPublicState -Pipe $Pipe -State $state -CursorState $CursorState -Deadline $Deadline -Kind Form
+        # Leave Size blank (remaining), then fill only the two public fields.
+        # Queue Next for the native pane recreated after successful validation.
+        Send-InstallationConsoleText -Pipe $Pipe -Text "`eOBext4`eOB/`n`eOC`n"
+        Wait-InstallationCustomPublicState -Pipe $Pipe -State $state -CursorState $CursorState -Deadline $Deadline -Kind Review -ExpectedDisk $target.DiskPath
+        Write-Host 'Custom single-root native destructive review admitted before consent.'
+    }
+    finally { $state.Text = ''; $state.Clear() }
 }
 
 <#
@@ -1309,8 +1489,8 @@ if ($InspectNetwork -and (-not $InspectInstalled -or $Scenario -ne 'LoginInstall
 }
 if ($InspectionVmnet -and -not $InspectNetwork) { throw 'InspectionVmnet requires InspectNetwork.' }
 if ($InspectInstalled) {
-    if ($Scenario -notin @('AutoReboot', 'BootInstalled', 'LoginInstalled')) {
-        throw 'Installed inspection requires AutoReboot, BootInstalled or LoginInstalled.'
+    if ($Scenario -notin @('AutoReboot', 'CustomReboot', 'BootInstalled', 'LoginInstalled')) {
+        throw 'Installed inspection requires AutoReboot, CustomReboot, BootInstalled or LoginInstalled.'
     }
     if (-not [IO.Path]::IsPathFullyQualified($InspectionPythonPath) -or
         -not (Test-Path -LiteralPath $InspectionPythonPath -PathType Leaf)) {
@@ -1358,7 +1538,7 @@ if ($InspectInstalled) {
 } elseif ($InspectionPythonPath) {
     throw 'InspectionPythonPath requires InspectInstalled.'
 }
-if ($Scenario -in @('Auto', 'AutoReboot', 'BootInstalled', 'LoginInstalled')) {
+if ($Scenario -in @('Auto', 'AutoReboot', 'CustomReboot', 'BootInstalled', 'LoginInstalled')) {
     Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
     $selector = Resolve-AtlasoOnePasswordEnvironmentId -RepositoryRoot $worktree
     $token = Resolve-AtlasoOnePasswordServiceAccountTokenFile -RepositoryRoot $worktree `
@@ -1443,48 +1623,58 @@ try {
     }
     $cursorState = @{}
     if ($Scenario -notin @('LoginInstalled', 'BootInstalled')) {
-        Write-Host 'Public installer phase: awaiting-disk-selection'
-        $diskOptions = @(Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline -ReadBootProgress -CursorState $cursorState -ReadDiskSelection:($Scenario -in @('Probe', 'Auto', 'AutoReboot', 'CancelReview', 'Insufficient')))
-        Write-Host 'Public installer phase: disk-selection-ready'
-        Write-Host 'Installer reached the native Photon disk selection screen.'
-        if ($Scenario -eq 'Cancel') {
-            # The pinned serial getty uses TERM=screen with application cursor keys.
-            Send-InstallationConsoleText -Pipe $pipe -Text "`eOD`eOD`n"
-            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
-            Write-Host 'Installer cancellation returned without admitting disk writes.'
-        }
-        elseif ($Scenario -in @('Auto', 'AutoReboot', 'CancelReview', 'Insufficient')) {
-            # Native visual row order can differ from VMX SCSI order.
-            $selectedGiB = if ($Scenario -eq 'Insufficient') { 4 } else { 64 }
-            $target = @($diskOptions | Where-Object SizeGiB -EQ $selectedGiB)[0]
-            Write-Host ('Selecting public native disk row {0}: {1} ({2} GiB).' -f $target.Index, $target.DiskPath, $selectedGiB)
-            Send-InstallationConsoleText -Pipe $pipe -Text ("`eOA`eOA" + ("`eOB" * $target.Index) + "`n")
-            if ($Scenario -eq 'Insufficient') {
-                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'default installation requires a disk of at least 64 GiB' `
-                    -Deadline $deadline -ExpectedCapacityDisk $target.DiskPath
-            } else {
-                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Erase selected disks?' -Deadline $deadline
-                if ($Scenario -eq 'CancelReview') {
-                    # Photon's confirmation defaults to No; Enter declines erasure.
-                    Send-InstallationConsoleText -Pipe $pipe -Text "`n"
-                    Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
-                    Write-Host 'Planned-layout review cancelled before erasure consent.'
+        $readyForInstallation = $false
+        if ($Scenario -in @('CustomCancel', 'CustomReboot')) {
+            Invoke-InstallationCustomLayout -Pipe $pipe -Deadline $deadline -CursorState $cursorState -Cancel:($Scenario -eq 'CustomCancel')
+            $readyForInstallation = $Scenario -eq 'CustomReboot'
+        } else {
+            Write-Host 'Public installer phase: awaiting-disk-selection'
+            $diskOptions = @(Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline -ReadBootProgress -CursorState $cursorState -ReadDiskSelection:($Scenario -in @('Probe', 'Auto', 'AutoReboot', 'CancelReview', 'Insufficient')))
+            Write-Host 'Public installer phase: disk-selection-ready'
+            Write-Host 'Installer reached the native Photon disk selection screen.'
+            if ($Scenario -eq 'Cancel') {
+                # The pinned serial getty uses TERM=screen with application cursor keys.
+                Send-InstallationConsoleText -Pipe $pipe -Text "`eOD`eOD`n"
+                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
+                Write-Host 'Installer cancellation returned without admitting disk writes.'
+            }
+            elseif ($Scenario -in @('Auto', 'AutoReboot', 'CancelReview', 'Insufficient')) {
+                # Native visual row order can differ from VMX SCSI order.
+                $selectedGiB = if ($Scenario -eq 'Insufficient') { 4 } else { 64 }
+                $target = @($diskOptions | Where-Object SizeGiB -EQ $selectedGiB)[0]
+                Write-Host ('Selecting public native disk row {0}: {1} ({2} GiB).' -f $target.Index, $target.DiskPath, $selectedGiB)
+                Send-InstallationConsoleText -Pipe $pipe -Text ("`eOA`eOA" + ("`eOB" * $target.Index) + "`n")
+                if ($Scenario -eq 'Insufficient') {
+                    Wait-InstallationConsoleState -Pipe $pipe -Pattern 'default installation requires a disk of at least 64 GiB' `
+                        -Deadline $deadline -ExpectedCapacityDisk $target.DiskPath
                 } else {
-                    # The native horizontal Yes/No menu starts on No. Select Yes explicitly.
-                    Send-InstallationConsoleText -Pipe $pipe -Text "`eOD`n"
-                    foreach ($account in @('admin', 'root')) {
-                        $value = if ($account -eq 'admin') { $credentials.AdminPassword } else { $credentials.RootPassword }
-                        foreach ($verb in @('Set', 'Confirm')) {
-                            Wait-InstallationConsoleState -Pipe $pipe -Pattern "$verb $account password" -Deadline $deadline
-                            Send-InstallationConsoleSecret -Pipe $pipe -Value $value
-                        }
+                    Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Erase selected disks?' -Deadline $deadline
+                    if ($Scenario -eq 'CancelReview') {
+                        # Photon's confirmation defaults to No; Enter declines erasure.
+                        Send-InstallationConsoleText -Pipe $pipe -Text "`n"
+                        Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
+                        Write-Host 'Planned-layout review cancelled before erasure consent.'
+                    } else {
+                        $readyForInstallation = $true
                     }
-                    Write-Host 'Public installer phase: awaiting-installation-completion'
-                    Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Atlaso installation completed.' -Deadline $deadline `
-                        -KnownProvisioningStages $knownProvisioningStages
-                    Write-Host 'Disconnected Auto installation completed; reboot and persistence acceptance remain separate.'
                 }
             }
+        }
+        if ($readyForInstallation) {
+            # The native horizontal Yes/No menu starts on No. Select Yes only
+            # after Auto's native review or Custom's complete strict plan check.
+            Send-InstallationConsoleText -Pipe $pipe -Text "`eOD`n"
+            foreach ($account in @('admin', 'root')) {
+                $value = if ($account -eq 'admin') { $credentials.AdminPassword } else { $credentials.RootPassword }
+                foreach ($verb in @('Set', 'Confirm')) {
+                    Wait-InstallationConsoleState -Pipe $pipe -Pattern "$verb $account password" -Deadline $deadline
+                    Send-InstallationConsoleSecret -Pipe $pipe -Value $value
+                }
+            }
+            Write-Host 'Public installer phase: awaiting-installation-completion'
+            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Atlaso installation completed.' -Deadline $deadline `
+                -KnownProvisioningStages $knownProvisioningStages
+            Write-Host 'Disconnected installation completed; reboot and persistence acceptance remain separate.'
         }
         # Keep checked provider stop and disk comparison inside this runner's existing
         # whole-process-tree deadline, including the shared vmrun inactivity checks.
@@ -1494,10 +1684,10 @@ try {
             -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix `
             -OriginalReceiptPath $vm.ReceiptPath -OriginalReceiptSha256 $vm.ReceiptSha256 `
             -BaselineReceiptPath $vm.BaselineReceiptPath -BaselineReceiptSha256 $vm.BaselineReceiptSha256 `
-            -VerifyTarget:($Scenario -notin @('Auto', 'AutoReboot')) -Confirm:$false
+            -VerifyTarget:($Scenario -notin @('Auto', 'AutoReboot', 'CustomReboot')) -Confirm:$false
         Write-Host ('Installation disk verification: ' + ($verification | ConvertTo-Json -Depth 4 -Compress))
     }
-    if ($Scenario -eq 'AutoReboot') {
+    if ($Scenario -in @('AutoReboot', 'CustomReboot')) {
         $pipe.Disconnect()
         $connection = $pipe.WaitForConnectionAsync()
         $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
@@ -1514,7 +1704,7 @@ try {
         }
         $cursorState = @{}
     }
-    if ($Scenario -in @('AutoReboot', 'BootInstalled', 'LoginInstalled')) {
+    if ($Scenario -in @('AutoReboot', 'CustomReboot', 'BootInstalled', 'LoginInstalled')) {
         foreach ($account in @('root', 'admin')) {
             $accountProbe = Get-InstallationAccountProbe -Account $account
             $loginDeadline = [DateTimeOffset]::UtcNow.AddSeconds(180)

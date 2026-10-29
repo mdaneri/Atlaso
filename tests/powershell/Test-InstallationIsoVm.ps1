@@ -194,6 +194,8 @@ function Get-InstallationVmFunctionText {
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationProvisioningStages')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'ConvertFrom-InstallationConsoleFrame')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationConsoleDiskOptions')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Test-InstallationCustomPublicState')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Wait-InstallationCustomPublicState')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Test-InstallationShellPrompt')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Send-InstallationConsoleSecret')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Send-InstallationConsoleText')))
@@ -814,6 +816,62 @@ $knownStageFixture = @(Get-InstallationProvisioningStages -Text ([string]::Join(
     'log_step "Private $SECRET"', 'log_step "Unknown `expression`"'))))
 Assert-InstallationVmCondition ($knownStageFixture.Count -eq 1 -and $knownStageFixture[0] -ceq 'PublicKnownStage') `
     'Provisioning diagnostics must admit only fixed source labels and reject interpolation.'
+
+$customReviewLines = @('Erase selected disks?', '/dev/sda: VMware Virtual S 64 GiB', 'Serial/WWN: unavailable', '',
+    'Planned layout:', '/dev/sda planned layout:', '  /boot/efi vfat 10 MiB (Photon UEFI default)',
+    '  / ext4 remaining MiB', '', 'ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.',
+    'Select Yes to continue or No to cancel.', '', 'Yes        No')
+$customReview = "`e[2J`e[3;6H" + ($customReviewLines -join "`r`n     ")
+Assert-InstallationVmCondition (Test-InstallationCustomPublicState -Text $customReview -Kind Review -ExpectedDisk '/dev/sda') `
+    'A complete single-root review must admit exactly the selected 64 GiB disk and native EFI/root layout.'
+foreach ($invalidReview in @(
+        $customReview.Replace('/dev/sda planned layout:', '/dev/sdb planned layout:'),
+        $customReview.Replace('64 GiB', '4 GiB'),
+        $customReview.Replace('Planned layout:', "Planned layout:`r`n     /dev/sdb planned layout:"),
+        $customReview.Replace('  / ext4 remaining MiB', "  / ext4 remaining MiB`r`n       swap swap 1 MiB"),
+        $customReview.Replace('  / ext4 remaining MiB', '  / xfs remaining MiB'),
+        $customReview.Replace('vfat 10 MiB', 'vfat 100 MiB'),
+        $customReview.Replace('ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.', 'ALL EXISTING DATA'),
+        $customReview.Replace('Select Yes to continue or No to cancel.', 'Select Yes to continue'),
+        $customReview.Replace('  / ext4 remaining MiB', ''),
+        $customReview.Replace('Yes        No', 'Yes')
+    )) {
+    Assert-InstallationVmCondition (-not (Test-InstallationCustomPublicState -Text $invalidReview -Kind Review -ExpectedDisk '/dev/sda')) `
+        'Partial, changed, additional-disk or additional-partition Custom reviews must never admit consent.'
+}
+Assert-InstallationVmCondition (Test-InstallationCustomPublicState -Text ($customReview.Replace('/dev/sda', '/dev/sdb')) -Kind Review -ExpectedDisk '/dev/sdb') `
+    'Custom plan admission must bind the native selected disk rather than assuming sda.'
+$customEmpty = "`e[2J`e[9;55HConfirm`e[11;25HPartition information cannot be emp`e[12;25Hty`e[14;39H<OK>"
+Assert-InstallationVmCondition (Test-InstallationCustomPublicState -Text $customEmpty -Kind Empty) `
+    'The native 37-character refusal must be complete across its 35-column window at observed relative positions.'
+foreach ($invalidEmpty in @($customEmpty.Replace('Hty', 'Htx'), $customEmpty.Replace('Confirm', 'Review'),
+        $customEmpty.Replace('<OK>', ''), $customEmpty.Replace("`e[12;25Hty", ''))) {
+    Assert-InstallationVmCondition (-not (Test-InstallationCustomPublicState -Text $invalidEmpty -Kind Empty)) `
+        'Truncated or changed native refusals must not satisfy the negative Custom case.'
+}
+$customForm = "`e[2J`e[5;10HSize in MB: 65522 available`e[9;10HType: (ext3, ext4, xfs, btrfs, swap)`e[13;10HMountpoint:`e[16;10H<Cancel> <OK>"
+Assert-InstallationVmCondition (Test-InstallationCustomPublicState -Text $customForm -Kind Form) 'All native public partition fields must be visible before typing.'
+Assert-InstallationVmCondition (-not (Test-InstallationCustomPublicState -Text $customForm.Replace('Mountpoint:', '') -Kind Form)) `
+    'A partial native form must never receive queued partition input.'
+foreach ($privateInput in @('Set admin password', 'Confirm root password', 'Password:', 'Traceback')) {
+    $refused = $false
+    try { $null = Test-InstallationCustomPublicState -Text ($privateInput + ' PublicSyntheticSensitiveFixture') -Kind Form }
+    catch { $refused = -not $_.Exception.Message.Contains('PublicSyntheticSensitiveFixture') }
+    Assert-InstallationVmCondition $refused 'Public Custom readers must refuse private or failed phases without echoing their text.'
+}
+$customPair = New-InstallationTestPipePair -Name ('Atlaso-Test-' + [guid]::NewGuid().ToString('N'))
+try {
+    $customCursor = @{}
+    $null = @(ConvertFrom-InstallationConsoleFrame -Text '' -CursorState $customCursor -CursorOnly)
+    $customCursor.QueryCount = 64
+    $customWriter = [AtlasoInstallationPipeTestWriter]::Start($customPair.Client, [string[]]@("`e[6n"))
+    $customFloodRefused = $false
+    try { Wait-InstallationCustomPublicState -Pipe $customPair.Server -State @{ Text = '' } -CursorState $customCursor -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -Kind Empty }
+    catch { $customFloodRefused = $_.Exception.Message -ceq 'Public Custom navigation exceeded its session cursor-query bound.' }
+    Assert-InstallationVmCondition $customFloodRefused 'Custom waits must preserve the existing session-wide cursor-query ceiling.'
+    Assert-InstallationVmCondition $customWriter.Wait(5000) 'The public Custom fixture writer must complete.'
+} finally { Close-InstallationTestPipePair -Pair $customPair }
+Write-Host 'Custom public refusal, form and destructive-review checks passed.'
 
 $diskRowsTargetFirst = @(
     Get-InstallationConsoleDiskOptions -Text "Select a disk`r`n64 GiB @ /dev/sda`r`n4 GiB @ /dev/sdb"
