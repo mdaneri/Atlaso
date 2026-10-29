@@ -2,9 +2,9 @@
 .SYNOPSIS
 Create, admit, verify, or remove an owned, isolated VMware VM for Atlaso installation ISO testing.
 .DESCRIPTION
-Creates a receipt-bound, EFI-only VM with an installation ISO, two blank SCSI disks,
+Creates a receipt-bound, EFI-only VM with an installation ISO, the default two blank SCSI disks,
 no network adapters, and a serial named-pipe endpoint supplied by the caller. Before
-first start it records logical-content baselines for both disks. Verify stops the
+first start it records logical-content baselines for every disk. MultiDisk adds an 8 GiB selected data disk. Verify stops the
 receipt-bound VM if needed and compares selected disk contents against those baselines.
 .PARAMETER Mode
 Select Create, AdmitConsole, AdmitNetwork, Verify, BootInstalled, ResumeInstalled, or Cleanup. AdmitConsole admits an already-running,
@@ -62,6 +62,9 @@ Create the VM without starting it so a console host can attach to the serial pip
 Also compare the installation target disk with its pre-boot baseline during Verify.
 .PARAMETER QemuImgPath
 Optional exact qemu-img executable path used for logical disk comparisons.
+.PARAMETER FixtureProfile
+Creation-time fixed disk recipe. MultiDisk adds an 8 GiB selected data disk while retaining the 4 GiB unselected disk.
+Existing operations derive this from original sealed receipts; an explicit value must agree.
 #>
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
@@ -89,7 +92,8 @@ param(
     [string]$VdiskManagerPath = '',
     [string]$QemuImgPath = '',
     [switch]$NoStart,
-    [switch]$VerifyTarget
+    [switch]$VerifyTarget,
+    [ValidateSet('SingleDisk', 'MultiDisk')][string]$FixtureProfile = 'SingleDisk'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -97,6 +101,7 @@ Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 . (Join-Path $PSScriptRoot 'Atlaso.TestVmOwnership.ps1')
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.InstallationFixture.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot '..\virtualization\Atlaso.VirtualizationArtifacts.psm1') -Force
 
 <#
@@ -212,11 +217,14 @@ Refuse an installation VM operation when the containing volume lacks capacity.
 Exact task-owned VM directory, present only for a receipt-bound existing VM.
 .PARAMETER ExistingVm
 Select the fixed 6 GiB memory-backing and overhead allowance for read-only inspection of an existing VM.
+.PARAMETER FixtureProfile
+Fixed creation recipe whose complete virtual disk maxima must fit in addition to memory and overhead.
 #>
 function Assert-InstallationHostCapacity {
     param(
         [Parameter(Mandatory = $true)][string]$OutputDirectory,
-        [switch]$ExistingVm
+        [switch]$ExistingVm,
+        [ValidateSet('SingleDisk', 'MultiDisk')][string]$FixtureProfile = 'SingleDisk'
     )
     $volume = Get-InstallationHostVolumeInfo -OutputDirectory $OutputDirectory
     if (-not $volume -or -not $volume.IsReady -or $volume.AvailableFreeSpace -isnot [long] -or $volume.AvailableFreeSpace -lt 0) {
@@ -224,8 +232,10 @@ function Assert-InstallationHostCapacity {
     }
     $required = [long](4GB + 2GB)
     if (-not $ExistingVm) {
-        # Reserve both sparse VMDK maxima before creating any receipt or artifact.
-        $required += [long](64GB + 4GB)
+        # Reserve every sparse VMDK maximum before creating any receipt or artifact.
+        foreach ($disk in (Get-AtlasoInstallationFixture -FixtureProfile $FixtureProfile).Disks) {
+            $required += [long]$disk.SizeGiB * 1GB
+        }
     }
     if ([long]$volume.AvailableFreeSpace -lt $required) {
         $requiredGiB = [math]::Ceiling($required / 1GB)
@@ -279,12 +289,21 @@ Receipt-bound directory for VMware sidecar state.
 Caller-created local serial named-pipe endpoint.
 .PARAMETER CleanupIdentity
 Persistent non-secret cleanup identity.
+.PARAMETER FixtureProfile
+Fixed SingleDisk or MultiDisk storage recipe.
+.PARAMETER DataDisk
+Explicit 8 GiB data disk path, required only by MultiDisk.
 #>
 function New-InstallationVmConfiguration {
     param(
         [string]$Name, [string]$Iso, [string]$TargetDisk, [string]$UnselectedDisk, [string]$WorkingDirectory,
-        [string]$SerialPipe, [string]$CleanupIdentity
+        [string]$SerialPipe, [string]$CleanupIdentity,
+        [ValidateSet('SingleDisk', 'MultiDisk')][string]$FixtureProfile = 'SingleDisk', [string]$DataDisk = ''
     )
+    $FixtureProfile = (Get-AtlasoInstallationFixture -FixtureProfile $FixtureProfile).Profile
+    if (($FixtureProfile -ceq 'MultiDisk') -ne (-not [string]::IsNullOrWhiteSpace($DataDisk))) {
+        throw 'The data-disk path must be supplied exactly for the MultiDisk fixture.'
+    }
     $lines = @(
         '.encoding = "UTF-8"', 'config.version = "8"', 'virtualHW.version = "21"',
         'pciBridge0.present = "TRUE"', 'firmware = "efi"', 'uefi.secureBoot.enabled = "FALSE"',
@@ -303,6 +322,9 @@ function New-InstallationVmConfiguration {
         'serial0.pipe.endPoint = "client"', 'serial0.tryNoRxLoss = "FALSE"',
         'ethernet0.present = "FALSE"', ('guestinfo.atlaso.test_vm_cleanup_identity = ' + (ConvertTo-InstallationVmxString $CleanupIdentity))
     )
+    if ($FixtureProfile -ceq 'MultiDisk') {
+        $lines += @('scsi0:2.present = "TRUE"', "scsi0:2.fileName = $(ConvertTo-InstallationVmxString $DataDisk)", 'scsi0:2.deviceType = "scsi-hardDisk"')
+    }
     return $lines
 }
 
@@ -361,7 +383,8 @@ function Publish-InstallationVmOriginalReceipt {
         canonical_name = $Context.Name; output_directory = $Context.OutputDirectory; vmx_path = $Context.VmxPath
         original_identities = [ordered]@{ directory = $directoryIdentity; vmx = $vmxIdentity }
         persistent_vm_identity_sha256 = Get-AtlasoTestVmOwnershipCleanupIdentityHash -Value $CleanupIdentity
-        installation_iso = $Iso; intent_path = $Context.IntentPath; intent_sha256 = $Context.IntentSha256
+        installation_iso = $Iso; fixture_profile = (Get-AtlasoInstallationContextFixture -Context $Context).Profile
+        intent_path = $Context.IntentPath; intent_sha256 = $Context.IntentSha256
         cleanup_tool = 'scripts/windows/vmware/test-installation-iso.ps1 -Mode Cleanup -OriginalReceiptPath <original-path> -OriginalReceiptSha256 <creation-digest>'
         created_utc = [DateTimeOffset]::UtcNow.ToString('o')
     }
@@ -422,12 +445,15 @@ Newly created unselected VMDK.
 function Publish-InstallationDiskBaseline {
     param([psobject]$Context, [psobject]$Original, [string]$DiskTool, [string]$TargetDisk, [string]$UnselectedDisk)
     $entries = @()
-    foreach ($disk in @(
-            [pscustomobject]@{ role = 'target'; source = $TargetDisk; baseline = (Join-Path $Context.OutputDirectory 'target-64g.baseline.vmdk') },
-            [pscustomobject]@{ role = 'unselected'; source = $UnselectedDisk; baseline = (Join-Path $Context.OutputDirectory 'unselected-4g.baseline.vmdk') }
-        )) {
+    $fixture = Get-AtlasoInstallationContextFixture -Context $Context
+    if ($TargetDisk -cne (Join-Path $Context.OutputDirectory 'target-64g.vmdk') -or
+        $UnselectedDisk -cne (Join-Path $Context.OutputDirectory 'unselected-4g.vmdk')) { throw 'Baseline creation paths differ from the fixed fixture.' }
+    foreach ($recipe in $fixture.Disks) {
+        $disk = [pscustomobject]@{ role = $recipe.Role; source = (Join-Path $Context.OutputDirectory $recipe.Name)
+            baseline = (Join-Path $Context.OutputDirectory ($recipe.Name.Replace('.vmdk', '.baseline.vmdk'))) }
         if (Test-Path -LiteralPath $disk.baseline) { throw 'Installation disk baseline destination already exists.' }
         $sourceEvidence = Get-InstallationDiskEvidence -Path $disk.source -QemuImg $DiskTool
+        if ($sourceEvidence.virtual_size_bytes -ne [long]$recipe.SizeGiB * 1GB) { throw 'Installation disk size differs from its fixed recipe.' }
         $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $DiskTool -ArgumentList @(
             'convert', '-q', '-f', 'vmdk', '-O', 'vmdk', '-o', 'subformat=monolithicSparse', $disk.source, $disk.baseline
         ) -TimeoutSeconds 600 -Action 'Create installation test disk baseline' -DiscardOutput
@@ -446,7 +472,7 @@ function Publish-InstallationDiskBaseline {
         original_receipt_path = $Original.Path; original_receipt_sha256 = $Original.Sha256
         original_directory_identity = [string]$Original.Record.original_identities.directory
         persistent_vm_identity_sha256 = [string]$Original.Record.persistent_vm_identity_sha256
-        disks = $entries; created_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        fixture_profile = $fixture.Profile; disks = $entries; created_utc = [DateTimeOffset]::UtcNow.ToString('o')
     }
     $Context | Add-Member -NotePropertyName InvocationId -NotePropertyValue ([guid]::NewGuid().ToString('N')) -Force
     Publish-AtlasoTestVmOwnershipRecord -Context $Context -Record $record -Kind installation-baseline
@@ -458,7 +484,7 @@ Compare a current VM disk against its receipt-bound logical baseline.
 .PARAMETER Disk
 One disk's source and baseline evidence from the durable baseline record.
 .PARAMETER Role
-Expected disk role, target or unselected.
+Expected fixed disk role: target, unselected, or selected data.
 .PARAMETER OutputDirectory
 Exact receipt-bound VM artifact directory.
 .PARAMETER QemuImg
@@ -466,8 +492,10 @@ Resolved qemu-img executable used for logical comparison.
 #>
 function Assert-InstallationDiskUnchanged {
     param([psobject]$Disk, [string]$Role, [string]$OutputDirectory, [string]$QemuImg)
-    $expectedName = if ($Role -ceq 'target') { 'target-64g.vmdk' } else { 'unselected-4g.vmdk' }
-    $expectedBaselineName = if ($Role -ceq 'target') { 'target-64g.baseline.vmdk' } else { 'unselected-4g.baseline.vmdk' }
+    $recipe = @((Get-AtlasoInstallationFixture -FixtureProfile MultiDisk).Disks | Where-Object Role -CEQ $Role)
+    if ($recipe.Count -ne 1) { throw 'Unknown installation disk role.' }
+    $expectedName = $recipe[0].Name
+    $expectedBaselineName = $expectedName.Replace('.vmdk', '.baseline.vmdk')
     $sourcePath = Join-Path $OutputDirectory $expectedName
     $baselinePath = Join-Path $OutputDirectory $expectedBaselineName
     if ($Disk.role -cne $Role -or $Disk.source.path -cne $sourcePath -or $Disk.baseline.path -cne $baselinePath) {
@@ -476,7 +504,7 @@ function Assert-InstallationDiskUnchanged {
     foreach ($evidence in @($Disk.source, $Disk.baseline)) {
         if ([string]$evidence.file_identity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$' -or
             [string]$evidence.sha256 -cnotmatch '^[0-9a-f]{64}$' -or
-            [long]$evidence.virtual_size_bytes -le 0) { throw 'Installation disk baseline evidence is malformed.' }
+            [long]$evidence.virtual_size_bytes -ne [long]$recipe[0].SizeGiB * 1GB) { throw 'Installation disk baseline evidence is malformed.' }
     }
     $baselinePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($baselinePath, $true)
     $diskPin = $null
@@ -581,11 +609,9 @@ Pinned installation ISO path from the original VM receipt.
 #>
 function Assert-InstallationVmDiskBindings {
     param([string[]]$VmxLines, [psobject]$Context, [string]$IsoPath)
-    $assignments = @(
-        [pscustomobject]@{ key = 'scsi0:0.fileName'; expected = (Join-Path $Context.OutputDirectory 'target-64g.vmdk') },
-        [pscustomobject]@{ key = 'scsi0:1.fileName'; expected = (Join-Path $Context.OutputDirectory 'unselected-4g.vmdk') },
-        [pscustomobject]@{ key = 'sata0:0.fileName'; expected = $IsoPath }
-    )
+    $assignments = @((Get-AtlasoInstallationContextFixture -Context $Context).Disks | ForEach-Object {
+        [pscustomobject]@{ key = ($_.Device + '.fileName'); expected = (Join-Path $Context.OutputDirectory $_.Name) }
+    }) + @([pscustomobject]@{ key = 'sata0:0.fileName'; expected = $IsoPath })
     $storageLines = @($VmxLines | Where-Object { $_ -match '^\s*(?:scsi|sata|ide|nvme)\d+:\d+\.fileName\s*=' })
     if ($storageLines.Count -ne $assignments.Count) { throw 'Receipt-bound installation VMX storage-device set changed.' }
     foreach ($assignment in $assignments) {
@@ -654,7 +680,7 @@ function Assert-InstallationConsoleBindings {
     # This pure validator also refuses extra devices, network adapters, a changed
     # firmware mode, a detached ISO, or a non-local serial endpoint. Discarding
     # its transformed text keeps the running VMX entirely read-only.
-    $null = ConvertTo-InstallationDiskBootConfiguration -Text ([string]::Join("`n", $VmxLines))
+    $null = ConvertTo-InstallationDiskBootConfiguration -Text ([string]::Join("`n", $VmxLines)) -FixtureProfile (Get-AtlasoInstallationContextFixture -Context $Context).Profile
     $serialLines = @($VmxLines | Where-Object { $_ -cmatch '^serial0\.fileName\s*=\s*"(?<pipe>[^"\r\n]+)"$' })
     if ($serialLines.Count -ne 1) { throw 'The admitted installation serial endpoint is unavailable.' }
     $serialPath = [regex]::Match($serialLines[0], '^serial0\.fileName\s*=\s*"(?<pipe>[^"\r\n]+)"$').Groups['pipe'].Value
@@ -683,6 +709,13 @@ function Assert-InstallationNetworkBindings {
     }
     Assert-InstallationVmDiskBindings -VmxLines $VmxLines -Context $Context -IsoPath $IsoPath
     $text = [string]::Join("`n", $VmxLines)
+    $fixture = Get-AtlasoInstallationContextFixture -Context $Context
+    if ($fixture.Profile -ceq 'MultiDisk') {
+        $dataPresence = @($VmxLines | Where-Object { $_ -match '^\s*scsi0:2\.present\s*=' })
+        if ($dataPresence.Count -ne 1 -or $dataPresence[0] -cne 'scsi0:2.present = "TRUE"') {
+            throw 'Installed network admission requires its original selected data disk.'
+        }
+    }
     foreach ($assignment in @('firmware = "efi"', 'uefi.secureBoot.enabled = "FALSE"',
             'scsi0:0.present = "TRUE"', 'scsi0:1.present = "TRUE"',
             'sata0:0.present = "FALSE"', 'sata0:0.startConnected = "FALSE"', 'sata0:0.deviceType = "cdrom-image"',
@@ -695,8 +728,9 @@ function Assert-InstallationNetworkBindings {
             throw 'Installed network admission requires the exact disconnected EFI and serial fixture.'
         }
     }
+    $allowedSlots = if ($fixture.Profile -ceq 'MultiDisk') { '012' } else { '01' }
     if ([regex]::IsMatch($text, '(?im)^\s*ethernet[1-9][0-9]*\.present\s*=\s*"TRUE"') -or
-        [regex]::IsMatch($text, '(?im)^\s*(?!scsi0:[01]\.|sata0:0\.)(?:scsi|sata|ide|nvme)[0-9]+:[0-9]+\.present\s*=\s*"TRUE"') -or
+        [regex]::IsMatch($text, ('(?im)^\s*(?!scsi0:[' + $allowedSlots + ']\.|sata0:0\.)(?:scsi|sata|ide|nvme)[0-9]+:[0-9]+\.present\s*=\s*"TRUE"')) -or
         [regex]::IsMatch($text, '(?im)^\s*ethernet0\.address\s*=')) {
         throw 'Installed network admission refuses additional devices or a static MAC override.'
     }
@@ -759,16 +793,17 @@ function Assert-InstallationConsoleDiskIdentities {
         [psobject]$Context,
         [Collections.Generic.List[object]]$Pins
     )
-    foreach ($role in @('target', 'unselected')) {
+    foreach ($recipe in (Get-AtlasoInstallationContextFixture -Context $Context).Disks) {
+        $role = $recipe.Role
         $entries = @($Baseline.disks | Where-Object { [string]$_.role -ceq $role })
-        $fileName = if ($role -ceq 'target') { 'target-64g.vmdk' } else { 'unselected-4g.vmdk' }
+        $fileName = $recipe.Name
         $expectedPath = [IO.Path]::GetFullPath((Join-Path $Context.OutputDirectory $fileName))
         if ($entries.Count -ne 1 -or
             -not [IO.Path]::IsPathFullyQualified([string]$entries[0].source.path) -or
             -not ([IO.Path]::GetFullPath([string]$entries[0].source.path)).Equals($expectedPath, [StringComparison]::OrdinalIgnoreCase) -or
             [string]$entries[0].source.file_identity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$' -or
             [string]$entries[0].source.sha256 -cnotmatch '^[0-9a-f]{64}$' -or
-            [long]$entries[0].source.virtual_size_bytes -le 0) {
+            [long]$entries[0].source.virtual_size_bytes -ne [long]$recipe.SizeGiB * 1GB) {
             throw "Disk-baseline receipt must bind exactly one valid $role disk at its original path."
         }
         $pin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryMutableFile($expectedPath)
@@ -820,9 +855,12 @@ function Assert-InstallationVmRunning {
 Disconnect only the known installation CD drive without changing disks, networking, or the serial endpoint.
 .PARAMETER Text
 Stopped, receipt-bound VMX text read through its exclusive writer.
+.PARAMETER FixtureProfile
+Original sealed fixed disk recipe whose complete device set must remain connected.
 #>
 function ConvertTo-InstallationDiskBootConfiguration {
-    param([string]$Text)
+    param([string]$Text, [ValidateSet('SingleDisk', 'MultiDisk')][string]$FixtureProfile = 'SingleDisk')
+    $fixture = Get-AtlasoInstallationFixture -FixtureProfile $FixtureProfile
     foreach ($assignment in @(
         'firmware = "efi"', 'uefi.secureBoot.enabled = "FALSE"',
         'scsi0:0.present = "TRUE"', 'scsi0:1.present = "TRUE"',
@@ -836,8 +874,15 @@ function ConvertTo-InstallationDiskBootConfiguration {
             throw 'Installed boot requires the exact isolated EFI fixture with connected installation media.'
         }
     }
+    if ($fixture.Profile -ceq 'MultiDisk') {
+        $dataPresence = @([regex]::Matches($Text, '(?m)^\s*scsi0:2\.present\s*=.*$'))
+        if ($dataPresence.Count -ne 1 -or $dataPresence[0].Value.TrimEnd("`r") -cne 'scsi0:2.present = "TRUE"') {
+            throw 'Installed boot requires the original selected data disk.'
+        }
+    }
+    $allowedSlots = if ($fixture.Profile -ceq 'MultiDisk') { '012' } else { '01' }
     if ([regex]::IsMatch($Text, '(?im)^ethernet[1-9][0-9]*\.present\s*=\s*"TRUE"') -or
-        [regex]::IsMatch($Text, '(?im)^(?!scsi0:[01]\.|sata0:0\.)(?:scsi|sata|ide|nvme)[0-9]+:[0-9]+\.present\s*=\s*"TRUE"')) {
+        [regex]::IsMatch($Text, ('(?im)^(?!scsi0:[' + $allowedSlots + ']\.|sata0:0\.)(?:scsi|sata|ide|nvme)[0-9]+:[0-9]+\.present\s*=\s*"TRUE"'))) {
         throw 'Installed boot refuses additional network adapters or storage devices.'
     }
     $pipeLines = @([regex]::Matches($Text, '(?m)^serial0\.fileName\s*=\s*"(?<pipe>[^"\r\n]+)"\r?$'))
@@ -862,6 +907,7 @@ $name = if ($PullRequestNumber -gt 0) {
 }
 $context = New-InstallationVmContext -Root $resolvedWorktree -Destination $resolvedOutput -Name $name `
     -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256
+$context | Add-Member -NotePropertyName FixtureProfile -NotePropertyValue ((Get-AtlasoInstallationFixture -FixtureProfile $FixtureProfile).Profile) -Force
 # The external-root lease must also close on early preflight failures and returns.
 try {
 
@@ -887,6 +933,12 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
             -Phase 'original-installation-vm-created'
         $baseline = Read-AtlasoTestVmSealedRecord -Context $context -Path $BaselineReceiptPath -Sha256 $BaselineReceiptSha256 `
             -Phase 'installation-disk-baseline'
+        $fixture = Resolve-AtlasoInstallationReceiptFixture -Original $original -Baseline $baseline
+        if ($PSBoundParameters.ContainsKey('FixtureProfile') -and (Get-AtlasoInstallationFixture -FixtureProfile $FixtureProfile).Profile -cne $fixture.Profile) {
+            throw 'Explicit fixture profile differs from the original sealed receipts.'
+        }
+        $context.FixtureProfile = $fixture.Profile
+        Assert-AtlasoInstallationBaselineDisks -Fixture $fixture -Baseline $baseline -OutputDirectory $context.OutputDirectory
         if ($original.source_commit -cnotmatch '^[0-9a-f]{40}$' -or
             [string]$original.original_identities.directory -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$' -or
             [string]$original.persistent_vm_identity_sha256 -cnotmatch '^[0-9a-fA-F]{64}$' -or
@@ -899,12 +951,12 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
             [string]$baseline.source_commit -cne [string]$original.source_commit -or
             [string]$baseline.original_directory_identity -cne [string]$original.original_identities.directory -or
             [string]$baseline.persistent_vm_identity_sha256 -cne [string]$original.persistent_vm_identity_sha256 -or
-            @($baseline.disks).Count -ne 2) {
+            @($baseline.disks).Count -ne $fixture.Disks.Count) {
             throw 'Disk-baseline receipt is not bound to the selected original installation VM receipt.'
         }
         $baselineRoles = @($baseline.disks | ForEach-Object { [string]$_.role } | Sort-Object)
-        if (@(Compare-Object -ReferenceObject @('target', 'unselected') -DifferenceObject $baselineRoles).Count -ne 0) {
-            throw 'Disk-baseline receipt must bind exactly one target and one unselected disk.'
+        if (@(Compare-Object -ReferenceObject @($fixture.Disks.Role | Sort-Object) -DifferenceObject $baselineRoles).Count -ne 0) {
+            throw 'Disk-baseline receipt must bind every fixed role exactly once, including the unselected disk.'
         }
         if ([Atlaso.WorkstationFileIdentity]::Get($context.OutputDirectory) -cne [string]$original.original_identities.directory) {
             throw 'Installation VM artifact directory no longer matches its creation receipt.'
@@ -996,6 +1048,7 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
             }
             $admissionResult = [ordered]@{
                 VmxPath = $context.VmxPath
+                FixtureProfile = $fixture.Profile
                 SerialPipePath = $serialPath
                 IsoIdentity = [pscustomobject]@{
                     Path = $isoPath
@@ -1054,8 +1107,8 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
         $serialPath = [regex]::Match($serialLine[0], '^serial0\.fileName\s*=\s*"(?<pipe>[^"\r\n]+)"$').Groups['pipe'].Value
         Assert-InstallationSerialPipePath -Path $serialPath
         $qemuImg = Resolve-InstallationVmTool -Path $QemuImgPath -FileName 'qemu-img.exe'
-        $roles = @('unselected')
-        if ($VerifyTarget) { $roles += 'target' }
+        $roles = @(Get-AtlasoInstallationVerificationRoles -FixtureProfile $fixture.Profile -IncludeSelected:$VerifyTarget)
+        Assert-InstallationConsoleDiskIdentities -Baseline $baseline -Context $context -Pins $storagePins
         foreach ($role in $roles) {
             $disk = @($baseline.disks | Where-Object { $_.role -ceq $role })
             if ($disk.Count -ne 1) { throw "Disk-baseline receipt must contain exactly one $role disk." }
@@ -1076,7 +1129,7 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
                 $encoding = Get-InstallationVmxEncoding -Bytes $before
                 $text = $encoding.GetString($before)
                 Assert-InstallationVmDiskBindings -VmxLines ($text -split "`r?`n") -Context $context -IsoPath ([string]$original.installation_iso.path)
-                $after = $encoding.GetBytes((ConvertTo-InstallationDiskBootConfiguration -Text $text))
+                $after = $encoding.GetBytes((ConvertTo-InstallationDiskBootConfiguration -Text $text -FixtureProfile $fixture.Profile))
                 Assert-AtlasoTestVmCheckoutSource -Context $context
                 $transition = [ordered]@{
                     schema = 1; phase = 'installation-boot-without-media'; task_id = $context.TaskId
@@ -1189,6 +1242,15 @@ if ($Mode -eq 'Cleanup') {
             throw 'Original installation receipt does not match the admitted task and VM.'
         }
         Assert-AtlasoTestVmValidationRootBinding -Context $context -Record $record
+        if ($record.PSObject.Properties['fixture_profile']) {
+            if ($record.fixture_profile -isnot [string] -or $record.fixture_profile -cnotin @('SingleDisk', 'MultiDisk')) {
+                throw 'Original cleanup fixture profile is malformed.'
+            }
+        }
+        $recordProfile = if ($record.PSObject.Properties['fixture_profile']) { $record.fixture_profile } else { 'SingleDisk' }
+        if ($PSBoundParameters.ContainsKey('FixtureProfile') -and (Get-AtlasoInstallationFixture -FixtureProfile $FixtureProfile).Profile -cne $recordProfile) {
+            throw 'Explicit cleanup profile differs from the original receipt.'
+        }
         & git -C $context.Worktree merge-base --is-ancestor ([string]$record.source_commit) ([string]$context.SourceCommit) 2>$null
         if ($LASTEXITCODE -ne 0) { throw 'Original installation receipt source is not an ancestor of the admitted checkout.' }
         Assert-AtlasoTestVmCheckoutSource -Context $context
@@ -1225,7 +1287,7 @@ try {
     $iso = [ordered]@{ path = $isoResolved; filesystem_identity = [Atlaso.WorkstationFileIdentity]::Get($isoResolved); size = $isoItem.Length; sha256 = $IsoSha256.ToLowerInvariant() }
     if (-not $PSCmdlet.ShouldProcess($resolvedOutput, 'Create isolated receipt-bound installation ISO test VM')) { return }
 
-    Assert-InstallationHostCapacity -OutputDirectory $resolvedOutput
+    Assert-InstallationHostCapacity -OutputDirectory $resolvedOutput -FixtureProfile $context.FixtureProfile
     Assert-AtlasoTestVmCheckoutSource -Context $context
     $context | Add-Member -NotePropertyName InvocationId -NotePropertyValue ([guid]::NewGuid().ToString('N')) -Force
     $intent = [ordered]@{
@@ -1233,7 +1295,7 @@ try {
         source_branch = $context.Branch; source_commit = $context.SourceCommit; worktree = $context.Worktree
         pull_request_number = $context.PullRequestNumber; local_builder = $context.LocalBuilder; canonical_name = $context.Name
         output_directory = $context.OutputDirectory; vmx_path = $context.VmxPath; invocation_id = $context.InvocationId
-        installation_iso = $iso; cleanup_tool = 'scripts/windows/vmware/test-installation-iso.ps1 -Mode Cleanup'
+        installation_iso = $iso; fixture_profile = $context.FixtureProfile; cleanup_tool = 'scripts/windows/vmware/test-installation-iso.ps1 -Mode Cleanup'
         created_utc = [DateTimeOffset]::UtcNow.ToString('o')
     }
     $intentPublication = Publish-AtlasoTestVmOwnershipRecord -Context $context -Record $intent -Kind intent
@@ -1244,9 +1306,10 @@ try {
     $cleanupIdentity = [guid]::NewGuid().ToString('N')
     $targetDisk = Join-Path $resolvedOutput 'target-64g.vmdk'
     $unselectedDisk = Join-Path $resolvedOutput 'unselected-4g.vmdk'
+    $dataDisk = if ($context.FixtureProfile -ceq 'MultiDisk') { Join-Path $resolvedOutput 'data-8g.vmdk' } else { '' }
     $vmxLines = New-InstallationVmConfiguration -Name $context.Name -Iso $isoResolved -TargetDisk $targetDisk `
         -UnselectedDisk $unselectedDisk -WorkingDirectory $resolvedOutput `
-        -SerialPipe $SerialPipePath -CleanupIdentity $cleanupIdentity
+        -SerialPipe $SerialPipePath -CleanupIdentity $cleanupIdentity -FixtureProfile $context.FixtureProfile -DataDisk $dataDisk
     $vmxBytes = [Text.UTF8Encoding]::new($false, $true).GetBytes(($vmxLines -join "`n") + "`n")
     $vmxStream = [IO.File]::Open($context.VmxPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
     try {
@@ -1263,6 +1326,10 @@ try {
         -TimeoutSeconds 300 -Action 'Create receipt-bound installation target disk' -DiscardOutput
     $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $diskTool -ArgumentList @('-c', '-s', '4GB', '-a', 'lsilogic', '-t', '0', $unselectedDisk) `
         -TimeoutSeconds 300 -Action 'Create receipt-bound unselected disk' -DiscardOutput
+    if ($context.FixtureProfile -ceq 'MultiDisk') {
+        $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $diskTool -ArgumentList @('-c', '-s', '8GB', '-a', 'lsilogic', '-t', '0', $dataDisk) `
+            -TimeoutSeconds 300 -Action 'Create receipt-bound selected data disk' -DiscardOutput
+    }
     $qemuImg = Resolve-InstallationVmTool -Path $QemuImgPath -FileName 'qemu-img.exe'
     $baseline = Publish-InstallationDiskBaseline -Context $context -Original $original -DiskTool $qemuImg `
         -TargetDisk $targetDisk -UnselectedDisk $unselectedDisk
@@ -1279,6 +1346,7 @@ try {
     }
     [pscustomobject]@{
         ReceiptPath = $original.Path
+        FixtureProfile = $context.FixtureProfile
         ReceiptSha256 = $original.Sha256
         BaselineReceiptPath = $baseline.Path
         BaselineReceiptSha256 = $baseline.Sha256

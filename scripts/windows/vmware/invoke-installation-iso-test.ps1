@@ -23,6 +23,8 @@ Existing canonical identity suffix distinguishing independently installed test V
 Probe the native UI, cancel at disk/layout review, reject insufficient capacity, run Auto, or install and boot without media.
 CustomCancel verifies empty-layout refusal and cancels without credentials or consent.
 CustomReboot installs one native Custom remaining-size ext4 root and boots without media.
+MultiProbe admits the fixed three-disk menu without writes or credentials.
+CustomMultiReboot installs a root and separate 8 GiB /srv filesystem while preserving the third, unselected disk.
 LoginInstalled resumes an already installed, receipt-bound VM without repeating installation.
 BootInstalled completes a VNC-driven installation by disconnecting media and checking ordinary serial login.
 VncCredential submits one SDK account value at an operator-observed concealed installer field.
@@ -78,7 +80,7 @@ param(
     [string]$ValidationRootReceiptSha256 = '',
     [Parameter(Mandatory = $true)][ValidateRange(1, 2147483647)][int]$PullRequestNumber,
     [string]$CollisionSuffix = '',
-    [ValidateSet('Probe', 'Cancel', 'CancelReview', 'Insufficient', 'Auto', 'AutoReboot', 'CustomCancel', 'CustomReboot', 'BootInstalled', 'LoginInstalled', 'VncCredential')][string]$Scenario = 'Probe',
+    [ValidateSet('Probe', 'MultiProbe', 'Cancel', 'CancelReview', 'Insufficient', 'Auto', 'AutoReboot', 'CustomCancel', 'CustomReboot', 'CustomMultiReboot', 'BootInstalled', 'LoginInstalled', 'VncCredential')][string]$Scenario = 'Probe',
     [string]$OriginalReceiptPath = '',
     [string]$OriginalReceiptSha256 = '',
     [string]$BaselineReceiptPath = '',
@@ -104,6 +106,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.InstallationFixture.psm1') -Force
 if (-not $Child) {
     $childArguments = @(
         '-NoProfile', '-File', $PSCommandPath, '-Child', '-IsoPath', $IsoPath,
@@ -573,6 +576,26 @@ function Get-InstallationConsoleDiskOptions {
 
 <#
 .SYNOPSIS
+Require every public fixed-fixture disk exactly once before selecting native rows.
+.PARAMETER Options
+Complete decoded native disk rows.
+.PARAMETER FixtureProfile
+Creation-time fixed SingleDisk or MultiDisk profile.
+#>
+function Test-InstallationConsoleFixtureOptions {
+    [OutputType([bool])]
+    param([object[]]$Options, [ValidateSet('SingleDisk', 'MultiDisk')][string]$FixtureProfile = 'SingleDisk')
+    $fixture = Get-AtlasoInstallationFixture -FixtureProfile $FixtureProfile
+    if ($Options.Count -ne $fixture.Disks.Count -or @($Options | Where-Object DiskPath -CNotMatch '^/dev/sd[a-z]+$').Count -or
+        @($Options.DiskPath | Sort-Object -Unique).Count -ne $fixture.Disks.Count) { return $false }
+    foreach ($disk in $fixture.Disks) {
+        if (@($Options | Where-Object SizeGiB -EQ $disk.SizeGiB).Count -ne 1) { return $false }
+    }
+    return $true
+}
+
+<#
+.SYNOPSIS
 Recognize only complete public native Custom states before erasure consent.
 .PARAMETER Text
 Bounded public terminal history; never password or installed-console material.
@@ -580,11 +603,13 @@ Bounded public terminal history; never password or installed-console material.
 Native state required by the single-root Custom fixture.
 .PARAMETER ExpectedDisk
 Exact selected fixture disk for the destructive single-root review.
+.PARAMETER ExpectedDataDisk
+Exact separate 8 GiB selected data disk, required only for MultiReview.
 #>
 function Test-InstallationCustomPublicState {
     [OutputType([bool])]
-    param([string]$Text, [ValidateSet('Editor', 'Form', 'Empty', 'Review')][string]$Kind,
-        [string]$ExpectedDisk = '')
+    param([string]$Text, [ValidateSet('Editor', 'Form', 'Empty', 'Review', 'MultiReview')][string]$Kind,
+        [string]$ExpectedDisk = '', [string]$ExpectedDataDisk = '')
     if ($Text.Length -gt 65536) { throw 'Public Custom history exceeds its bound.' }
     $plain = [regex]::Replace($Text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>su]', '')
     if ($plain -cmatch '(?:Set|Confirm) (?:admin|root) password|Password:|Traceback|curses\.error') {
@@ -622,6 +647,14 @@ function Test-InstallationCustomPublicState {
         return $candidates -eq 1
     }
     if ($ExpectedDisk -cnotmatch '^/dev/sd[a-z]$') { throw 'Custom review requires the exact fixture disk.' }
+    $paths = @($ExpectedDisk)
+    if ($Kind -ceq 'MultiReview') {
+        if ($ExpectedDataDisk -cnotmatch '^/dev/sd[a-z]$' -or $ExpectedDataDisk -ceq $ExpectedDisk) {
+            throw 'Multi-disk review requires two distinct exact selected disks.'
+        }
+        $paths += $ExpectedDataDisk
+        [Array]::Sort($paths, [StringComparer]::Ordinal)
+    } elseif ($ExpectedDataDisk) { throw 'Single-disk review refuses an additional selected disk.' }
     $start = -1; $column = -1; $end = -1
     for ($row = 0; $row -lt 25; $row++) {
         if ($rows[$row].Contains('Erase selected disks?', [StringComparison]::Ordinal)) {
@@ -636,18 +669,26 @@ function Test-InstallationCustomPublicState {
         # Preserve punctuation attached to the message, notably its question mark.
         ([regex]::Replace($_.Substring($column), ' +[?x|]+ *$', '')).TrimEnd(' ')
     } | Where-Object { $_.Length })
-    # No additional disk, partition, omitted review page or partial warning can
-    # enter this exact one-selected-disk, two-partition consent boundary.
-    if ($body.Count -ne 9) { return $false }
-    $disk = [regex]::Escape($ExpectedDisk)
-    return ($body[0] -ceq 'Erase selected disks?' -and
-        $body[1] -cmatch ('^' + $disk + ': [\x20-\x7e]{1,48} 64 GiB$') -and
-        $body[2] -cmatch '^Serial/WWN: [\x20-\x7e]{1,56}$' -and
-        $body[3] -ceq 'Planned layout:' -and $body[4] -ceq ($ExpectedDisk + ' planned layout:') -and
-        $body[5] -ceq '  /boot/efi vfat 10 MiB (Photon UEFI default)' -and
-        $body[6] -ceq '  / ext4 remaining MiB' -and
-        $body[7] -ceq 'ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.' -and
-        $body[8] -ceq 'Select Yes to continue or No to cancel.' -and
+    # Admit only the complete fixed plan. The native producer sorts selected
+    # paths; neither device arrival order nor the unselected disk may enter it.
+    if ($body.Count -ne $(if ($paths.Count -eq 1) { 9 } else { 13 }) -or $body[0] -cne 'Erase selected disks?') { return $false }
+    $index = 1
+    foreach ($path in $paths) {
+        $size = if ($path -ceq $ExpectedDisk) { 64 } else { 8 }
+        if ($body[$index] -cnotmatch ('^' + [regex]::Escape($path) + ': [\x20-\x7e]{1,48} ' + $size + ' GiB$') -or
+            $body[$index + 1] -cnotmatch '^Serial/WWN: [\x20-\x7e]{1,56}$') { return $false }
+        $index += 2
+    }
+    if ($body[$index++] -cne 'Planned layout:') { return $false }
+    foreach ($path in $paths) {
+        if ($body[$index++] -cne ($path + ' planned layout:')) { return $false }
+        if ($path -ceq $ExpectedDisk) {
+            if ($body[$index++] -cne '  /boot/efi vfat 10 MiB (Photon UEFI default)' -or
+                $body[$index++] -cne '  / ext4 remaining MiB') { return $false }
+        } elseif ($body[$index++] -cne '  /srv ext4 remaining MiB') { return $false }
+    }
+    return ($body[$index++] -ceq 'ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.' -and
+        $body[$index] -ceq 'Select Yes to continue or No to cancel.' -and
         @($rows[($end + 1)..24] | Where-Object { $_ -cmatch '(?:^|\s)Yes +No(?:\s|$)' }).Count -eq 1)
 }
 
@@ -666,11 +707,16 @@ Original absolute test deadline.
 Complete native public state required before sending the next keys.
 .PARAMETER ExpectedDisk
 Exact selected disk required by a Review state.
+.PARAMETER ExpectedDataDisk
+Exact selected data disk required by MultiReview.
+.PARAMETER FixtureProfile
+Original fixed disk recipe used to admit every visible native row.
 #>
 function Wait-InstallationCustomPublicState {
     param([IO.Pipes.NamedPipeServerStream]$Pipe, [hashtable]$State, [hashtable]$CursorState,
-        [DateTimeOffset]$Deadline, [ValidateSet('Disk', 'Editor', 'Form', 'Empty', 'Review')][string]$Kind,
-        [string]$ExpectedDisk = '')
+        [DateTimeOffset]$Deadline, [ValidateSet('Disk', 'Editor', 'Form', 'Empty', 'Review', 'MultiReview')][string]$Kind,
+        [string]$ExpectedDisk = '', [string]$ExpectedDataDisk = '',
+        [ValidateSet('SingleDisk', 'MultiDisk')][string]$FixtureProfile = 'SingleDisk')
     $buffer = [byte[]]::new(4096)
     $phaseStart = $State.Text.Length
     $phaseDeadline = [DateTimeOffset]::UtcNow.AddSeconds(90)
@@ -696,12 +742,12 @@ function Wait-InstallationCustomPublicState {
                 $null = Test-InstallationCustomPublicState -Text $State.Text -Kind Editor
                 $fresh = $State.Text.Substring($phaseStart)
                 $options = @(Get-InstallationConsoleDiskOptions -Text $State.Text)
-                if ($fresh.Contains('Select a disk', [StringComparison]::Ordinal) -and $options.Count -eq 2 -and
-                    @($options | Where-Object SizeGiB -EQ 64).Count -eq 1 -and @($options | Where-Object SizeGiB -EQ 4).Count -eq 1) {
+                if ($fresh.Contains('Select a disk', [StringComparison]::Ordinal) -and
+                    (Test-InstallationConsoleFixtureOptions -Options $options -FixtureProfile $FixtureProfile)) {
                     Write-Host ('Public Custom phase ready: ' + $Kind)
                     return $options
                 }
-            } elseif (Test-InstallationCustomPublicState -Text $State.Text -Kind $Kind -ExpectedDisk $ExpectedDisk) {
+            } elseif (Test-InstallationCustomPublicState -Text $State.Text -Kind $Kind -ExpectedDisk $ExpectedDisk -ExpectedDataDisk $ExpectedDataDisk) {
                 Write-Host ('Public Custom phase ready: ' + $Kind)
                 return
             }
@@ -722,12 +768,17 @@ Original absolute test deadline.
 Numeric state shared with all waits on this private pipe.
 .PARAMETER Cancel
 Verify empty-layout refusal and cancel instead of preparing a single-root install.
+.PARAMETER MultiDisk
+Select the fixed 64/8/4 GiB fixture and add /srv on the separate selected data disk.
 #>
 function Invoke-InstallationCustomLayout {
-    param([IO.Pipes.NamedPipeServerStream]$Pipe, [DateTimeOffset]$Deadline, [hashtable]$CursorState, [switch]$Cancel)
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [DateTimeOffset]$Deadline, [hashtable]$CursorState, [switch]$Cancel, [switch]$MultiDisk)
     $state = @{ Text = '' }
+    if ($Cancel -and $MultiDisk) { throw 'The negative Custom case uses the original two-disk fixture.' }
+    $fixtureName = if ($MultiDisk) { 'MultiDisk' } else { 'SingleDisk' }
+    $common = @{ Pipe = $Pipe; State = $state; CursorState = $CursorState; Deadline = $Deadline; FixtureProfile = $fixtureName }
     try {
-        $options = @(Wait-InstallationCustomPublicState -Pipe $Pipe -State $state -CursorState $CursorState -Deadline $Deadline -Kind Disk)
+        $options = @(Wait-InstallationCustomPublicState @common -Kind Disk)
         $target = @($options | Where-Object SizeGiB -EQ 64)[0]
         Send-InstallationConsoleText -Pipe $Pipe -Text ("`eOA`eOA" + ("`eOB" * $target.Index) + "`eOD`n")
         Wait-InstallationCustomPublicState -Pipe $Pipe -State $state -CursorState $CursorState -Deadline $Deadline -Kind Editor
@@ -739,17 +790,29 @@ function Invoke-InstallationCustomLayout {
             Write-Host 'Custom empty-layout refusal and pre-consent cancellation passed.'
             return
         }
+        $partitions = @([pscustomobject]@{ SizeGiB = 64; Path = $target.DiskPath; Mount = '/' })
+        $dataDisk = ''
+        if ($MultiDisk) {
+            $dataDisk = @($options | Where-Object SizeGiB -EQ 8)[0].DiskPath
+            $partitions += [pscustomobject]@{ SizeGiB = 8; Path = $dataDisk; Mount = '/srv' }
+        }
         Send-InstallationConsoleText -Pipe $Pipe -Text "`n"
-        $partitionOptions = @(Wait-InstallationCustomPublicState -Pipe $Pipe -State $state -CursorState $CursorState -Deadline $Deadline -Kind Disk)
-        $partitionTarget = @($partitionOptions | Where-Object SizeGiB -EQ 64)[0]
-        if ($partitionTarget.DiskPath -cne $target.DiskPath) { throw 'Custom partition disk differs from the selected boot disk.' }
-        Send-InstallationConsoleText -Pipe $Pipe -Text ("`eOA`eOA" + ("`eOB" * $partitionTarget.Index) + "`n")
-        Wait-InstallationCustomPublicState -Pipe $Pipe -State $state -CursorState $CursorState -Deadline $Deadline -Kind Form
-        # Leave Size blank (remaining), then fill only the two public fields.
-        # Queue Next for the native pane recreated after successful validation.
-        Send-InstallationConsoleText -Pipe $Pipe -Text "`eOBext4`eOB/`n`eOC`n"
-        Wait-InstallationCustomPublicState -Pipe $Pipe -State $state -CursorState $CursorState -Deadline $Deadline -Kind Review -ExpectedDisk $target.DiskPath
-        Write-Host 'Custom single-root native destructive review admitted before consent.'
+        for ($index = 0; $index -lt $partitions.Count; $index++) {
+            $definition = $partitions[$index]
+            $partitionOptions = @(Wait-InstallationCustomPublicState @common -Kind Disk)
+            $partitionTarget = @($partitionOptions | Where-Object SizeGiB -EQ $definition.SizeGiB)[0]
+            if ($partitionTarget.DiskPath -cne $definition.Path) { throw 'Custom partition disk differs from its original native selection.' }
+            Send-InstallationConsoleText -Pipe $Pipe -Text (("`eOA" * $options.Count) + ("`eOB" * $partitionTarget.Index) + "`n")
+            Wait-InstallationCustomPublicState @common -Kind Form
+            # Native success recreates the pane on Create New. Queue either that
+            # public action or Next; malformed fields can never reach consent.
+            $next = if ($index + 1 -lt $partitions.Count) { "`n" } else { "`eOC`n" }
+            Send-InstallationConsoleText -Pipe $Pipe -Text ("`eOBext4`eOB" + $definition.Mount + "`n" + $next)
+        }
+        $review = if ($MultiDisk) { 'MultiReview' } else { 'Review' }
+        Wait-InstallationCustomPublicState @common -Kind $review -ExpectedDisk $target.DiskPath -ExpectedDataDisk $dataDisk
+        if ($MultiDisk) { Write-Host 'Custom multi-disk native destructive review admitted before consent.' }
+        else { Write-Host 'Custom single-root native destructive review admitted before consent.' }
     }
     finally { $state.Text = ''; $state.Clear() }
 }
@@ -813,9 +876,11 @@ Exact public fixture disk whose four-GiB capacity refusal is expected before con
 Return only one bounded encoded inspection record for independent schema validation.
 .PARAMETER AllowedRpmPackages
 Public package names derived from the original ISO, admitted before reporting candidate package identifiers.
+.PARAMETER FixtureProfile
+Fixed disk recipe used only when admitting native disk-selection rows.
 #>
 function Wait-InstallationConsoleState {
-    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [switch]$ReadLoginProgress, [ValidateSet('', 'root', 'admin')][string]$ShellAccount = '', [string]$ExpectedCapacityDisk = '', [hashtable]$CursorState, [switch]$ReadInspectionReport, [string[]]$AllowedRpmPackages = @())
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [switch]$ReadLoginProgress, [ValidateSet('', 'root', 'admin')][string]$ShellAccount = '', [string]$ExpectedCapacityDisk = '', [hashtable]$CursorState, [switch]$ReadInspectionReport, [string[]]$AllowedRpmPackages = @(), [ValidateSet('SingleDisk', 'MultiDisk')][string]$FixtureProfile = 'SingleDisk')
     if ($AllowedRpmPackages.Count -gt 1024) { throw 'Diagnostic package set exceeds its bound.' }
     $allowedPackageHashes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($name in $AllowedRpmPackages) {
@@ -1102,11 +1167,10 @@ function Wait-InstallationConsoleState {
             if (-not $ReadInspectionReport -and -not $ExpectedCapacityDisk -and -not $failureDeadline -and $matched) {
                 if ($ReadDiskSelection) {
                     $options = @(Get-InstallationConsoleDiskOptions -Text $text)
-                    if ($options.Count -lt 2) { continue }
-                    if ($options.Count -ne 2 -or @($options | Where-Object SizeGiB -EQ 64).Count -ne 1 -or
-                        @($options | Where-Object SizeGiB -EQ 4).Count -ne 1 -or
-                        @($options | Where-Object DiskPath -CNotMatch '^/dev/sd[a-z]+$').Count -ne 0) {
-                        throw 'Native disk menu does not match the receipt-bound 64 GiB target and 4 GiB unselected fixture.'
+                    if ($options.Count -lt (Get-AtlasoInstallationFixture -FixtureProfile $FixtureProfile).Disks.Count) { continue }
+                    if (-not (Test-InstallationConsoleFixtureOptions -Options $options -FixtureProfile $FixtureProfile)) {
+                        if ($FixtureProfile -ieq 'SingleDisk') { throw 'Native disk menu does not match the receipt-bound 64 GiB target and 4 GiB unselected fixture.' }
+                        throw 'Native disk menu does not match the receipt-bound 64/8/4 GiB fixture.'
                     }
                     return $options
                 }
@@ -1465,6 +1529,7 @@ if ($VncAccount -or $VncPort -or $VncScreenPath -or $VncScreenSha256 -or $VncFie
 $knownProvisioningStages = @(Get-InstallationProvisioningStages -Text (Get-Content -LiteralPath `
     (Join-Path $worktree 'image/common/scripts/provision-atlaso.sh') -Raw -Encoding utf8))
 $credentials = $null
+$creationFixture = Get-AtlasoInstallationFixture -FixtureProfile $(if ($Scenario -in @('MultiProbe', 'CustomMultiReboot')) { 'MultiDisk' } else { 'SingleDisk' })
 $resumeSelectors = @{}
 if ($Scenario -in @('LoginInstalled', 'BootInstalled')) {
     $requiredReceiptPairs = @(
@@ -1498,8 +1563,8 @@ if ($InspectNetwork -and (-not $InspectInstalled -or $Scenario -ne 'LoginInstall
 }
 if ($InspectionVmnet -and -not $InspectNetwork) { throw 'InspectionVmnet requires InspectNetwork.' }
 if ($InspectInstalled) {
-    if ($Scenario -notin @('AutoReboot', 'CustomReboot', 'BootInstalled', 'LoginInstalled')) {
-        throw 'Installed inspection requires AutoReboot, CustomReboot, BootInstalled or LoginInstalled.'
+    if ($Scenario -notin @('AutoReboot', 'CustomReboot', 'CustomMultiReboot', 'BootInstalled', 'LoginInstalled')) {
+        throw 'Installed inspection requires an installed-boot scenario.'
     }
     if (-not [IO.Path]::IsPathFullyQualified($InspectionPythonPath) -or
         -not (Test-Path -LiteralPath $InspectionPythonPath -PathType Leaf)) {
@@ -1547,7 +1612,7 @@ if ($InspectInstalled) {
 } elseif ($InspectionPythonPath) {
     throw 'InspectionPythonPath requires InspectInstalled.'
 }
-if ($Scenario -in @('Auto', 'AutoReboot', 'CustomReboot', 'BootInstalled', 'LoginInstalled')) {
+if ($Scenario -in @('Auto', 'AutoReboot', 'CustomReboot', 'CustomMultiReboot', 'BootInstalled', 'LoginInstalled')) {
     Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
     $selector = Resolve-AtlasoOnePasswordEnvironmentId -RepositoryRoot $worktree
     $token = Resolve-AtlasoOnePasswordServiceAccountTokenFile -RepositoryRoot $worktree `
@@ -1601,7 +1666,7 @@ try {
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
             -Mode Create -Worktree $worktree `
         -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix -IsoPath $IsoPath -IsoSha256 $IsoSha256 `
-        -SerialPipePath "\\.\pipe\$pipeName" -Confirm:$false
+        -SerialPipePath "\\.\pipe\$pipeName" -FixtureProfile $creationFixture.Profile -Confirm:$false
     }
     Write-Host ('Installation VM ownership: ' + ($vm | ConvertTo-Json -Compress))
     if (-not $connection.Wait(120000)) { throw 'The owned VM did not connect its private serial console.' }
@@ -1633,12 +1698,12 @@ try {
     $cursorState = @{}
     if ($Scenario -notin @('LoginInstalled', 'BootInstalled')) {
         $readyForInstallation = $false
-        if ($Scenario -in @('CustomCancel', 'CustomReboot')) {
-            Invoke-InstallationCustomLayout -Pipe $pipe -Deadline $deadline -CursorState $cursorState -Cancel:($Scenario -eq 'CustomCancel')
-            $readyForInstallation = $Scenario -eq 'CustomReboot'
+        if ($Scenario -in @('CustomCancel', 'CustomReboot', 'CustomMultiReboot')) {
+            Invoke-InstallationCustomLayout -Pipe $pipe -Deadline $deadline -CursorState $cursorState -Cancel:($Scenario -eq 'CustomCancel') -MultiDisk:($Scenario -eq 'CustomMultiReboot')
+            $readyForInstallation = $Scenario -in @('CustomReboot', 'CustomMultiReboot')
         } else {
             Write-Host 'Public installer phase: awaiting-disk-selection'
-            $diskOptions = @(Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline -ReadBootProgress -CursorState $cursorState -ReadDiskSelection:($Scenario -in @('Probe', 'Auto', 'AutoReboot', 'CancelReview', 'Insufficient')))
+            $diskOptions = @(Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline -ReadBootProgress -CursorState $cursorState -FixtureProfile $creationFixture.Profile -ReadDiskSelection:($Scenario -in @('Probe', 'MultiProbe', 'Auto', 'AutoReboot', 'CancelReview', 'Insufficient')))
             Write-Host 'Public installer phase: disk-selection-ready'
             Write-Host 'Installer reached the native Photon disk selection screen.'
             if ($Scenario -eq 'Cancel') {
@@ -1693,10 +1758,10 @@ try {
             -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix `
             -OriginalReceiptPath $vm.ReceiptPath -OriginalReceiptSha256 $vm.ReceiptSha256 `
             -BaselineReceiptPath $vm.BaselineReceiptPath -BaselineReceiptSha256 $vm.BaselineReceiptSha256 `
-            -VerifyTarget:($Scenario -notin @('Auto', 'AutoReboot', 'CustomReboot')) -Confirm:$false
+            -VerifyTarget:($Scenario -notin @('Auto', 'AutoReboot', 'CustomReboot', 'CustomMultiReboot')) -Confirm:$false
         Write-Host ('Installation disk verification: ' + ($verification | ConvertTo-Json -Depth 4 -Compress))
     }
-    if ($Scenario -in @('AutoReboot', 'CustomReboot')) {
+    if ($Scenario -in @('AutoReboot', 'CustomReboot', 'CustomMultiReboot')) {
         $pipe.Disconnect()
         $connection = $pipe.WaitForConnectionAsync()
         $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
@@ -1713,7 +1778,7 @@ try {
         }
         $cursorState = @{}
     }
-    if ($Scenario -in @('AutoReboot', 'CustomReboot', 'BootInstalled', 'LoginInstalled')) {
+    if ($Scenario -in @('AutoReboot', 'CustomReboot', 'CustomMultiReboot', 'BootInstalled', 'LoginInstalled')) {
         foreach ($account in @('root', 'admin')) {
             $accountProbe = Get-InstallationAccountProbe -Account $account
             $loginDeadline = [DateTimeOffset]::UtcNow.AddSeconds(180)

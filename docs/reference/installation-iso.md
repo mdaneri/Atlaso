@@ -217,6 +217,18 @@ as `Probe`. For a full Custom install, replace `-Scenario Probe` with `-Scenario
 It uses the existing concealed credential bridge, media-free reboot, root/admin challenges and content checks below.
 These scenarios provide automation for their stated fixtures; adding them does not establish native or physical
 acceptance, multi-disk Custom coverage, Update persistence, or rollback coverage.
+`MultiProbe` and `CustomMultiReboot` select an explicit three-disk fixture: the original 64-GiB boot/root disk,
+the original 4-GiB unselected disk, and an 8-GiB selected data disk. Creation requires **82 GiB** of host free space;
+the original two-disk gate remains **74 GiB**. The fixed profile is recorded in both original VM and baseline
+receipts before use. Existing operations derive it from those sealed receipts; missing legacy profile fields admit
+only the original two-disk recipe. Profiles are never inferred from a current VMX or transferred between VMs.
+`MultiProbe` obtains no credentials and verifies all three stopped disks against their original baselines.
+`CustomMultiReboot` creates a remaining-size `ext4` root on the 64-GiB disk and a remaining-size `ext4` `/srv` on the
+8-GiB disk. Its complete review must identify exactly those two disks and the native EFI/root/data partitions before
+Yes. The 4-GiB disk remains independently unselected and is compared after installation and media-free reboot.
+Use a fresh receipt-bound directory and `-Scenario CustomMultiReboot` with the same inspection options as above.
+Cancellation checks include every selected disk as well as the unselected disk. A mismatched profile, missing disk,
+extra disk or partition, changed path or size, truncated review, or additional device fails admission.
 Creation records a separate disk-baseline receipt before first boot. Retain both original receipt paths and their
 creation-time hashes from the console driver's ownership output. The console runner automatically verifies disks
 within its process deadline. To repeat verification afterward:
@@ -647,14 +659,21 @@ initial native host API probe failed; a later unchanged probe succeeded, followe
 certificate-pinned OpenAPI responses with HTTP 200, version 0.9.465, 162 paths, and identical response digests.
 These measurements establish steady-state host API access. A subsequent fresh-boot diagnostic reproduced the first
 probe failure and recorded 25 consecutive certificate-matched HTTP 502 responses while TLS was already available.
-The host driver now waits separately for a valid API before its three strict samples; fresh native validation of this
-readiness correction is still required. The adapter was
+The host driver now waits separately for a valid API before its three strict samples. Native validation with host
+source `3182f9ed7d86cabae911cea6e681b69e41714dd6` recovered on readiness attempt 18, followed by three strict HTTP 200
+samples with the expected version, 162 paths, and identical response and leaf digests. The adapter was
 restored to its absent state after owning stopped-disk verification. A separate capacity diagnostic found all four
 exact refusal lines inside native panel borders, which the earlier host reader incorrectly compared as full rows;
 both disks remained unchanged. A fresh native capacity run with host source `cebf4ffbf3af0127cf96a166d69fe891affe1828`
 passed the complete refusal check and verified both stopped disks unchanged. Retain the earlier failed run.
 
-Initial API readiness, disconnected update/rollback, custom/fault scenarios, certificate address-control acceptance,
+One fresh single-selected-disk Custom installation with host source `95f4669f32c9399b72f8be02b233014ebe74b84a` and
+the same immutable `7df968dc3` media passed its complete native review, media-free reboot, root/admin authentication
+and account challenges, all five content checks, and stopped unselected-disk comparison. Its content measurements
+equalled both earlier Auto installations, while machine and SSH identities differed. This is single-root Custom
+evidence; it does not establish multi-disk Custom or physical acceptance.
+
+Disconnected update/rollback, multi-disk Custom and fault scenarios, certificate address-control acceptance,
 and preservation of disks carrying old Atlaso labels remain outstanding. Do not describe the installer as validated
 or claim physical support while these gates are
 outstanding. Secure Boot is disabled for phase one; this reference makes no Secure Boot or ARM support claim.

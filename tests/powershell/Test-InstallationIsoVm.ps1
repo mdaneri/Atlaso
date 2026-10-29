@@ -90,6 +90,7 @@ function Assert-InstallationVmCondition {
 }
 
 Import-Module (Join-Path $repositoryRoot 'scripts/windows/vmware/Atlaso.VmwareTestIdentity.psm1') -Force
+Import-Module (Join-Path $repositoryRoot 'scripts/windows/vmware/Atlaso.InstallationFixture.psm1') -Force
 $identityA = New-AtlasoVmwareTestIdentity -PullRequestNumber 1036 -Purpose installation-iso -CollisionSuffix inspection-a
 $identityB = New-AtlasoVmwareTestIdentity -PullRequestNumber 1036 -Purpose installation-iso -CollisionSuffix inspection-b
 Assert-InstallationVmCondition ($identityA.Name -cne $identityB.Name -and
@@ -194,6 +195,7 @@ function Get-InstallationVmFunctionText {
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationProvisioningStages')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'ConvertFrom-InstallationConsoleFrame')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationConsoleDiskOptions')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Test-InstallationConsoleFixtureOptions')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Test-InstallationCustomPublicState')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Wait-InstallationCustomPublicState')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Test-InstallationShellPrompt')))
@@ -207,6 +209,81 @@ $lines = @(New-InstallationVmConfiguration -Name 'Atlaso-Test-installation-iso' 
     -UnselectedDisk 'C:\vm\unselected-4g.vmdk' -WorkingDirectory 'C:\vm' `
     -SerialPipe $pipe -CleanupIdentity '0123456789abcdef0123456789abcdef')
 $configuration = [string]::Join("`n", $lines)
+$multiLines = @(New-InstallationVmConfiguration -Name 'Atlaso-Test-installation-iso' -Iso 'C:\offline media\atlaso.iso' `
+    -TargetDisk 'C:\vm\target-64g.vmdk' -UnselectedDisk 'C:\vm\unselected-4g.vmdk' -DataDisk 'C:\vm\data-8g.vmdk' `
+    -FixtureProfile MultiDisk -WorkingDirectory 'C:\vm' -SerialPipe $pipe -CleanupIdentity '0123456789abcdef0123456789abcdef')
+$multiContext = [pscustomobject]@{ Name = 'Atlaso-Test-installation-iso'; OutputDirectory = 'C:\vm'; FixtureProfile = 'MultiDisk' }
+Assert-InstallationVmDiskBindings -VmxLines $multiLines -Context $multiContext -IsoPath 'C:\offline media\atlaso.iso'
+$multiBoot = ConvertTo-InstallationDiskBootConfiguration -Text ($multiLines -join "`n") -FixtureProfile MultiDisk
+Assert-InstallationVmCondition ($multiBoot.Contains('scsi0:2.present = "TRUE"') -and
+    $multiBoot.Contains('scsi0:1.fileName = "C:\vm\unselected-4g.vmdk"') -and
+    $multiBoot.Contains('sata0:0.present = "FALSE"')) 'Multi-disk boot must preserve all three original disks and detach only media.'
+foreach ($invalidProfile in @('SingleDisk', 'Unknown')) {
+    $refused = $false
+    try { $null = ConvertTo-InstallationDiskBootConfiguration -Text ($multiLines -join "`n") -FixtureProfile $invalidProfile } catch { $refused = $true }
+    Assert-InstallationVmCondition $refused 'A legacy or unsupported profile must never admit a third disk.'
+}
+foreach ($changedMulti in @(
+        @($multiLines | ForEach-Object { $_.Replace('C:\vm\data-8g.vmdk', 'C:\elsewhere\data-8g.vmdk') }),
+        @($multiLines + 'scsi0:3.fileName = "C:\vm\extra.vmdk"')
+    )) {
+    $refused = $false
+    try { Assert-InstallationVmDiskBindings -VmxLines $changedMulti -Context $multiContext -IsoPath 'C:\offline media\atlaso.iso' } catch { $refused = $true }
+    Assert-InstallationVmCondition $refused 'Changed or additional multi-disk storage bindings must fail before provider activity.'
+}
+$multiFixture = Get-AtlasoInstallationFixture -FixtureProfile MultiDisk
+Assert-InstallationVmCondition ($multiFixture.Disks.Count -eq 3 -and @($multiFixture.Disks | Where-Object { -not $_.Selected }).Count -eq 1 -and
+    @($multiFixture.Disks | Where-Object Selected).Count -eq 2) 'MultiDisk must retain a genuinely unselected third disk.'
+$baselineModel = [pscustomobject]@{ fixture_profile = 'MultiDisk'; disks = @($multiFixture.Disks | ForEach-Object {
+    [pscustomobject]@{ role = $_.Role; source = [pscustomobject]@{ path = (Join-Path 'C:\vm' $_.Name); virtual_size_bytes = ([long]$_.SizeGiB * 1GB); file_identity = 'ABCD1234:0000000000000001'; sha256 = ('a' * 64) }
+        baseline = [pscustomobject]@{ path = (Join-Path 'C:\vm' $_.Name.Replace('.vmdk', '.baseline.vmdk')); virtual_size_bytes = ([long]$_.SizeGiB * 1GB); file_identity = 'ABCD1234:0000000000000002'; sha256 = ('b' * 64) } }
+}) }
+$resolved = Resolve-AtlasoInstallationReceiptFixture -Original ([pscustomobject]@{ fixture_profile = 'MultiDisk' }) -Baseline $baselineModel
+Assert-AtlasoInstallationBaselineDisks -Fixture $resolved -Baseline $baselineModel -OutputDirectory 'C:\vm'
+foreach ($mutation in @('missing', 'duplicate', 'outside', 'size', 'unknown')) {
+    $bad = $baselineModel | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    switch ($mutation) {
+        'missing' { $bad.disks = @($bad.disks | Where-Object role -NE data) }
+        'duplicate' { $bad.disks[2].role = 'target' }
+        'outside' { $bad.disks[2].source.path = 'C:\other\data-8g.vmdk' }
+        'size' { $bad.disks[2].baseline.virtual_size_bytes = [long]4GB }
+        'unknown' { $bad.disks[2].role = 'other' }
+    }
+    $refused = $false
+    try { Assert-AtlasoInstallationBaselineDisks -Fixture $resolved -Baseline $bad -OutputDirectory 'C:\vm' } catch { $refused = $true }
+    Assert-InstallationVmCondition $refused 'Missing, duplicate, outside, wrong-size or unknown baseline roles must fail without filesystem activity.'
+}
+$legacy = Resolve-AtlasoInstallationReceiptFixture -Original ([pscustomobject]@{}) -Baseline ([pscustomobject]@{})
+Assert-InstallationVmCondition ($legacy.Profile -ceq 'SingleDisk' -and $legacy.Disks.Count -eq 2) 'Only the original two-disk recipe may be inferred for legacy receipts.'
+foreach ($pair in @(
+        @([pscustomobject]@{}, [pscustomobject]@{ fixture_profile = 'MultiDisk' }),
+        @([pscustomobject]@{ fixture_profile = 'MultiDisk' }, [pscustomobject]@{}),
+        @([pscustomobject]@{ fixture_profile = 'SingleDisk' }, [pscustomobject]@{ fixture_profile = 'MultiDisk' }),
+        @([pscustomobject]@{ fixture_profile = 'unknown' }, [pscustomobject]@{ fixture_profile = 'unknown' })
+    )) {
+    $refused = $false
+    try { $null = Resolve-AtlasoInstallationReceiptFixture -Original $pair[0] -Baseline $pair[1] } catch { $refused = $true }
+    Assert-InstallationVmCondition $refused 'Missing, changed or unsupported receipt profiles must never adopt an existing VM.'
+}
+& {
+    param([string]$CapacityFunction)
+    . ([scriptblock]::Create($CapacityFunction))
+    <#
+    .SYNOPSIS
+    Supply one public synthetic volume capacity without inspecting the host.
+    .PARAMETER OutputDirectory
+    Fixed synthetic fixture path; no filesystem operation is performed.
+    #>
+    function Get-InstallationHostVolumeInfo { param([string]$OutputDirectory) return [pscustomobject]@{ IsReady = $true; AvailableFreeSpace = [long]$available } }
+    foreach ($case in @(
+            @{ Profile = 'SingleDisk'; Free = [long](74GB - 1); Pass = $false }, @{ Profile = 'SingleDisk'; Free = [long]74GB; Pass = $true },
+            @{ Profile = 'MultiDisk'; Free = [long](82GB - 1); Pass = $false }, @{ Profile = 'MultiDisk'; Free = [long]82GB; Pass = $true }
+        )) {
+        $available = $case.Free; $passed = $true
+        try { Assert-InstallationHostCapacity -OutputDirectory 'C:\vm' -FixtureProfile $case.Profile } catch { $passed = $false }
+        Assert-InstallationVmCondition ($passed -eq $case.Pass) 'Host capacity must reserve every fixed disk maximum without reducing the legacy 74 GiB gate.'
+    }
+} (Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationHostCapacity')
 Assert-InstallationVmCondition ($configuration.Contains('floppy0.present = "FALSE"')) 'The fixed test VM must disable the implicit virtual floppy.'
 Assert-InstallationVmCondition ($configuration.Contains('firmware = "efi"')) 'EFI firmware must be enabled.'
 Assert-InstallationVmCondition ($configuration.Contains('.encoding = "UTF-8"')) 'New VMX files must declare UTF-8.'
@@ -559,7 +636,16 @@ $verifyBaselineRead = $source.IndexOf('Read-AtlasoTestVmSealedRecord -Context $c
 $verifyStop = $source.IndexOf('Confirm-AtlasoWorkstationVmInactive -VmrunPath', $verifyMode, [StringComparison]::Ordinal)
 $verifyCompare = $source.IndexOf('Assert-InstallationDiskUnchanged -Disk', $verifyMode, [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($verifyOriginalRead -gt $verifyMode -and $verifyBaselineRead -gt $verifyOriginalRead -and $verifyStop -gt $verifyBaselineRead -and $verifyCompare -gt $verifyStop) 'Verification must validate both bound receipts before stopping the VM and compare only after stop.'
-Assert-InstallationVmCondition ($source.Contains("`$roles = @('unselected')") -and $source.Contains('if ($VerifyTarget) { $roles += ''target'' }')) 'Verification must always check the unselected disk and optionally check the target for cancellation.'
+Assert-InstallationVmCondition ($source.Contains('Get-AtlasoInstallationVerificationRoles -FixtureProfile $fixture.Profile -IncludeSelected:$VerifyTarget')) `
+    'Verification must use the original profile and explicit cancellation selector for its comparison roles.'
+foreach ($fixtureName in @('SingleDisk', 'MultiDisk')) {
+    $ordinaryRoles = @(Get-AtlasoInstallationVerificationRoles -FixtureProfile $fixtureName)
+    $cancelRoles = @(Get-AtlasoInstallationVerificationRoles -FixtureProfile $fixtureName -IncludeSelected)
+    $expectedCancel = if ($fixtureName -ceq 'SingleDisk') { 'target,unselected' } else { 'data,target,unselected' }
+    Assert-InstallationVmCondition (($ordinaryRoles -join ',') -ceq 'unselected' -and
+        (($cancelRoles | Sort-Object) -join ',') -ceq $expectedCancel) `
+        'Both profiles must always compare the unselected disk; cancellation must also compare every selected disk.'
+}
 Assert-InstallationVmCondition ($source.Contains("Invoke-AtlasoBoundedProcess -FilePath `$QemuImg -ArgumentList @('info', '--output=json', `$Path)")) 'qemu-img metadata inspection must use the existing bounded process helper.'
 Assert-InstallationVmCondition ($source.Contains("[ValidateSet('Create', 'AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'ResumeInstalled', 'Cleanup')]") -and
     $source.Contains('Console admission requires an enabled task-owned VM receipt context.')) `
@@ -841,6 +927,64 @@ foreach ($invalidReview in @(
 }
 Assert-InstallationVmCondition (Test-InstallationCustomPublicState -Text ($customReview.Replace('/dev/sda', '/dev/sdb')) -Kind Review -ExpectedDisk '/dev/sdb') `
     'Custom plan admission must bind the native selected disk rather than assuming sda.'
+<#
+.SYNOPSIS
+Render only the fixed public multi-disk review fixture in native sorted disk order.
+.PARAMETER RootDisk
+Synthetic native 64 GiB boot/root disk path.
+.PARAMETER DataDisk
+Synthetic native 8 GiB data disk path.
+#>
+function New-InstallationTestMultiReview {
+    param([string]$RootDisk, [string]$DataDisk)
+    $paths = @($RootDisk, $DataDisk)
+    [Array]::Sort($paths, [StringComparer]::Ordinal)
+    $body = @('Erase selected disks?')
+    foreach ($path in $paths) {
+        $size = if ($path -ceq $RootDisk) { 64 } else { 8 }
+        $body += @("${path}: VMware Virtual S $size GiB", 'Serial/WWN: unavailable')
+    }
+    $body += @('', 'Planned layout:')
+    foreach ($path in $paths) {
+        $body += ($path + ' planned layout:')
+        if ($path -ceq $RootDisk) { $body += @('  /boot/efi vfat 10 MiB (Photon UEFI default)', '  / ext4 remaining MiB') }
+        else { $body += '  /srv ext4 remaining MiB' }
+    }
+    $body += @('', 'ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.', 'Select Yes to continue or No to cancel.', '', 'Yes        No')
+    return "`e[2J`e[34h`e[3;6H" + ($body -join "`r`n     ")
+}
+foreach ($diskPair in @(@('/dev/sda', '/dev/sdc'), @('/dev/sdc', '/dev/sda'))) {
+    $multiReview = New-InstallationTestMultiReview -RootDisk $diskPair[0] -DataDisk $diskPair[1]
+    Assert-InstallationVmCondition (Test-InstallationCustomPublicState -Text $multiReview -Kind MultiReview -ExpectedDisk $diskPair[0] -ExpectedDataDisk $diskPair[1]) `
+        'The exact multi-disk review must admit either native path ordering while binding root64/data8 and only their three partitions.'
+    foreach ($bad in @(
+            $multiReview.Replace('  /srv ext4 remaining MiB', '  /srv xfs remaining MiB'),
+            $multiReview.Replace('  /srv ext4 remaining MiB', '  /data ext4 remaining MiB'),
+            $multiReview.Replace('  /srv ext4 remaining MiB', ''),
+            $multiReview.Replace('  /srv ext4 remaining MiB', "  /srv ext4 remaining MiB`r`n       swap swap 1 MiB"),
+            $multiReview.Replace('8 GiB', '4 GiB'),
+            $multiReview.Replace('Planned layout:', "Planned layout:`r`n     /dev/sdb planned layout:"),
+            $multiReview.Replace('vfat 10 MiB', 'vfat 100 MiB'),
+            $multiReview.Replace('ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.', 'ALL EXISTING DATA'),
+            $multiReview.Replace('Yes        No', 'Yes')
+        )) {
+        Assert-InstallationVmCondition (-not (Test-InstallationCustomPublicState -Text $bad -Kind MultiReview -ExpectedDisk $diskPair[0] -ExpectedDataDisk $diskPair[1])) `
+            'Changed, incomplete or extra multi-disk review content must never admit Yes.'
+    }
+    Assert-InstallationVmCondition (-not (Test-InstallationCustomPublicState -Text $multiReview -Kind Review -ExpectedDisk $diskPair[0])) `
+        'A single-disk consent profile must refuse every multi-disk plan.'
+}
+$threeRows = @(Get-InstallationConsoleDiskOptions -Text "Select a disk`r`n8 GiB @ /dev/sda`r`n64 GiB @ /dev/sdb`r`n4 GiB @ /dev/sdc")
+Assert-InstallationVmCondition (Test-InstallationConsoleFixtureOptions -Options $threeRows -FixtureProfile MultiDisk) 'The three-disk fixture must admit all exact sizes and distinct native paths.'
+Assert-InstallationVmCondition (-not (Test-InstallationConsoleFixtureOptions -Options $threeRows -FixtureProfile SingleDisk)) 'The original fixture must still refuse a third disk.'
+foreach ($badRows in @(
+        @($threeRows | Where-Object SizeGiB -NE 4),
+        @(Get-InstallationConsoleDiskOptions -Text "Select a disk`r`n8 GiB @ /dev/sda`r`n64 GiB @ /dev/sdb`r`n8 GiB @ /dev/sdc"),
+        @($threeRows + [pscustomobject]@{ SizeGiB = 1; DiskPath = '/dev/sdd'; Index = 3 })
+    )) {
+    Assert-InstallationVmCondition (-not (Test-InstallationConsoleFixtureOptions -Options $badRows -FixtureProfile MultiDisk)) `
+        'Missing unselected disks, duplicate selected sizes and additional disks must fail the fixed profile.'
+}
 $customEmpty = "`e[2J`e[9;55HConfirm`e[11;25HPartition information cannot be emp`e[12;25Hty`e[14;39H<OK>"
 Assert-InstallationVmCondition (Test-InstallationCustomPublicState -Text $customEmpty -Kind Empty) `
     'The native 37-character refusal must be complete across its 35-column window at observed relative positions.'
