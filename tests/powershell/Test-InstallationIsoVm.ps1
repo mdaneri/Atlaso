@@ -997,6 +997,19 @@ $customForm = "`e[2J`e[34h`e[5;10HSize in MB: 65522 available`e[9;10HType: (ext3
 Assert-InstallationVmCondition (Test-InstallationCustomPublicState -Text $customForm -Kind Form) 'All native public partition fields must be visible before typing.'
 Assert-InstallationVmCondition (-not (Test-InstallationCustomPublicState -Text $customForm.Replace('Mountpoint:', '') -Kind Form)) `
     'A partial native form must never receive queued partition input.'
+$aliasMessage = 'Use /var/srv; /srv is a symlink.'
+$aliasRefusal = $customForm + "`e[5;36H" + $aliasMessage.Substring(0, 20) + "`e[6;9H" + $aliasMessage.Substring(20)
+Assert-InstallationVmCondition (Test-InstallationCustomPublicState -Text $aliasRefusal -Kind Alias) `
+    'The complete alias refusal must span the native window and retain all public form controls.'
+foreach ($invalidAlias in @($aliasRefusal.Replace('symlink.', 'symlinx.'),
+        $aliasRefusal.Replace("`e[6;9H" + $aliasMessage.Substring(20), ''),
+        $aliasRefusal.Replace('Mountpoint:', ''), $aliasRefusal.Replace('<Cancel>', ''),
+        $aliasRefusal.Replace('Type: (ext3, ext4, xfs, btrfs, swap)', ''),
+        $aliasRefusal.Replace("`e[6;9H", "`e[6;10H"),
+        ("`e[2J`e[5;36H" + $aliasMessage.Substring(0, 20) + "`e[6;9H" + $aliasMessage.Substring(20)))) {
+    Assert-InstallationVmCondition (-not (Test-InstallationCustomPublicState -Text $invalidAlias -Kind Alias)) `
+        'Changed, truncated, shifted or context-free alias messages must never admit the native refusal.'
+}
 foreach ($privateInput in @('Set admin password', 'Confirm root password', 'Password:', 'Traceback')) {
     $refused = $false
     try { $null = Test-InstallationCustomPublicState -Text ($privateInput + ' PublicSyntheticSensitiveFixture') -Kind Form }

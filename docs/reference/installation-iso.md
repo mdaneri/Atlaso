@@ -204,7 +204,10 @@ rows inside the native panel border and still requires the exact selected disk a
 disk selection;
 Escape cancels before credentials or disk writes.
 `CustomCancel` opens the native partition editor, requires its complete empty-layout refusal, then uses **Go Back**.
-It obtains no credentials and compares both stopped disks. `CustomReboot` creates one remaining-size `ext4` root
+It obtains no credentials and compares both stopped disks. `CustomAliasProbe` submits `/srv` in the native **Create New**
+form and requires the complete `Use /var/srv; /srv is a symlink.` refusal, including its native wrapped display and
+the form controls. It then stops the VM and compares both disks; it sends no credentials or erasure consent.
+`CustomReboot` creates one remaining-size `ext4` root
 partition on the fixture's selected 64-GiB disk through the native **Create New** form. Before consent it requires
 the complete review: that exact disk, only the native 10-MiB EFI partition and remaining-size root, the full erasure
 warning, and the default-No instruction. Additional disks or partitions, paged or incomplete reviews, and different
@@ -445,6 +448,8 @@ private child, or other verification flag fails this initial-installation profil
 The kernel-index profile binds the exact Linux, kmod and kmod-binary RPMs. It first admits the complete public module
 namespace from original package metadata before reading file contents, then compares all 1,235 immutable directory
 and file records through retained, no-follow descriptors. Missing, extra, linked or changed inputs fail.
+The current profile pins Linux `6.12.113-6.ph5`, with 37,950,548 immutable input bytes. Its complete native RPM-header
+audit retains the same 1,235 records and eleven generated index paths; kmod and kmod-binary inputs are unchanged.
 After ordinary RPM file verification, the profile invokes the authenticated `kmod` executable as `depmod`, selecting
 its native compatibility entry point with explicit input, configuration and output selectors. It writes only to
 private, descriptor-pinned scratch directories on verified
@@ -510,7 +515,7 @@ boot file or relax the RPM comparison.
 The admitted OpenLDAP server package contributes only its public service unit and two declared directories to this
 registry. Their fixed indices can identify missing entries, modes and verification flags. LDAP databases, configuration
 values and private children are never read or emitted, and the diagnostic does not accept a discrepancy.
-The pinned Linux package's `/boot/linux-6.12.113-5.ph5.cfg` and `/lib/modules/6.12.113-5.ph5/modules.alias` are also
+The pinned Linux package's `/boot/linux-6.12.113-6.ph5.cfg` and `/lib/modules/6.12.113-6.ph5/modules.alias` are also
 fixed public diagnostic entries. Only their indices, types, modes and RPM verification flags can be reported;
 contents stay private and any discrepancy still fails. The native kernel install script runs `depmod`; the diagnostic
 does not treat that fact alone as proof of correct generated indexes.

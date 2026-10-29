@@ -22,6 +22,7 @@ Existing canonical identity suffix distinguishing independently installed test V
 .PARAMETER Scenario
 Probe the native UI, cancel at disk/layout review, reject insufficient capacity, run Auto, or install and boot without media.
 CustomCancel verifies empty-layout refusal and cancels without credentials or consent.
+CustomAliasProbe requires the native /srv alias refusal without credentials or consent.
 CustomReboot installs one native Custom remaining-size ext4 root and boots without media.
 MultiProbe admits the fixed three-disk menu without writes or credentials.
 CustomMultiReboot installs a root and separate 8 GiB /var/srv filesystem while preserving the third, unselected disk.
@@ -80,7 +81,7 @@ param(
     [string]$ValidationRootReceiptSha256 = '',
     [Parameter(Mandatory = $true)][ValidateRange(1, 2147483647)][int]$PullRequestNumber,
     [string]$CollisionSuffix = '',
-    [ValidateSet('Probe', 'MultiProbe', 'Cancel', 'CancelReview', 'Insufficient', 'Auto', 'AutoReboot', 'CustomCancel', 'CustomReboot', 'CustomMultiReboot', 'BootInstalled', 'LoginInstalled', 'VncCredential')][string]$Scenario = 'Probe',
+    [ValidateSet('Probe', 'MultiProbe', 'Cancel', 'CancelReview', 'Insufficient', 'Auto', 'AutoReboot', 'CustomCancel', 'CustomAliasProbe', 'CustomReboot', 'CustomMultiReboot', 'BootInstalled', 'LoginInstalled', 'VncCredential')][string]$Scenario = 'Probe',
     [string]$OriginalReceiptPath = '',
     [string]$OriginalReceiptSha256 = '',
     [string]$BaselineReceiptPath = '',
@@ -608,7 +609,7 @@ Exact separate 8 GiB selected data disk, required only for MultiReview.
 #>
 function Test-InstallationCustomPublicState {
     [OutputType([bool])]
-    param([string]$Text, [ValidateSet('Editor', 'Form', 'Empty', 'Review', 'MultiReview')][string]$Kind,
+    param([string]$Text, [ValidateSet('Editor', 'Form', 'Empty', 'Alias', 'Review', 'MultiReview')][string]$Kind,
         [string]$ExpectedDisk = '', [string]$ExpectedDataDisk = '')
     if ($Text.Length -gt 65536) { throw 'Public Custom history exceeds its bound.' }
     $plain = [regex]::Replace($Text, '\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Z0-9]|\x1b[=>su]', '')
@@ -641,6 +642,30 @@ function Test-InstallationCustomPublicState {
                 ($rows[$row].Substring($column, 35) + $rows[$row + 1].Substring($column, 2)) -ceq $expected -and
                 $rows[$row - 2].Contains('Confirm', [StringComparison]::Ordinal) -and
                 @($rows[($row + 2)..([Math]::Min(24, $row + 5))] | Where-Object { $_.Contains('OK', [StringComparison]::Ordinal) }).Count) {
+                $candidates++
+            }
+        }
+        return $candidates -eq 1
+    }
+    if ($Kind -eq 'Alias') {
+        # Native ReadMulText has a 47-column window in this 80-column viewport.
+        # Its validation error starts at the first label's length and wraps to
+        # the window's left edge. Locate that geometry from the retained Form.
+        $expected = 'Use /var/srv; /srv is a symlink.'
+        $typeLabel = 'Type: (ext3, ext4, xfs, btrfs, swap)'
+        $candidates = 0
+        for ($row = 4; $row -lt 18; $row++) {
+            $labelColumn = $rows[$row].IndexOf($typeLabel, [StringComparison]::Ordinal)
+            $left = $labelColumn - 1
+            if ($left -lt 0 -or $left + 47 -gt 80) { continue }
+            if ($rows[$row - 4].Substring($labelColumn, 11) -cne 'Size in MB:' -or
+                $rows[$row + 4].Substring($labelColumn, 11) -cne 'Mountpoint:' -or
+                -not $rows[$row + 7].Substring($left, 47).Contains('<OK>', [StringComparison]::Ordinal) -or
+                -not $rows[$row + 7].Substring($left, 47).Contains('<Cancel>', [StringComparison]::Ordinal)) { continue }
+            $column = $left + 'Size in MB: 65536 available'.Length
+            $firstLength = $left + 47 - $column
+            if (($rows[$row - 4].Substring($column, $firstLength) +
+                    $rows[$row - 3].Substring($left, $expected.Length - $firstLength)) -ceq $expected) {
                 $candidates++
             }
         }
@@ -714,7 +739,7 @@ Original fixed disk recipe used to admit every visible native row.
 #>
 function Wait-InstallationCustomPublicState {
     param([IO.Pipes.NamedPipeServerStream]$Pipe, [hashtable]$State, [hashtable]$CursorState,
-        [DateTimeOffset]$Deadline, [ValidateSet('Disk', 'Editor', 'Form', 'Empty', 'Review', 'MultiReview')][string]$Kind,
+        [DateTimeOffset]$Deadline, [ValidateSet('Disk', 'Editor', 'Form', 'Empty', 'Alias', 'Review', 'MultiReview')][string]$Kind,
         [string]$ExpectedDisk = '', [string]$ExpectedDataDisk = '',
         [ValidateSet('SingleDisk', 'MultiDisk')][string]$FixtureProfile = 'SingleDisk')
     $buffer = [byte[]]::new(4096)
@@ -770,11 +795,14 @@ Numeric state shared with all waits on this private pipe.
 Verify empty-layout refusal and cancel instead of preparing a single-root install.
 .PARAMETER MultiDisk
 Select the fixed 64/8/4 GiB fixture and add /var/srv on the separate selected data disk.
+.PARAMETER AliasProbe
+Require the complete native /srv alias refusal without preparing an installation.
 #>
 function Invoke-InstallationCustomLayout {
-    param([IO.Pipes.NamedPipeServerStream]$Pipe, [DateTimeOffset]$Deadline, [hashtable]$CursorState, [switch]$Cancel, [switch]$MultiDisk)
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [DateTimeOffset]$Deadline, [hashtable]$CursorState, [switch]$Cancel, [switch]$MultiDisk, [switch]$AliasProbe)
     $state = @{ Text = '' }
     if ($Cancel -and $MultiDisk) { throw 'The negative Custom case uses the original two-disk fixture.' }
+    if ($AliasProbe -and ($Cancel -or $MultiDisk)) { throw 'The alias probe uses only the original two-disk fixture.' }
     $fixtureName = if ($MultiDisk) { 'MultiDisk' } else { 'SingleDisk' }
     $common = @{ Pipe = $Pipe; State = $state; CursorState = $CursorState; Deadline = $Deadline; FixtureProfile = $fixtureName }
     try {
@@ -804,6 +832,12 @@ function Invoke-InstallationCustomLayout {
             if ($partitionTarget.DiskPath -cne $definition.Path) { throw 'Custom partition disk differs from its original native selection.' }
             Send-InstallationConsoleText -Pipe $Pipe -Text (("`eOA" * $options.Count) + ("`eOB" * $partitionTarget.Index) + "`n")
             Wait-InstallationCustomPublicState @common -Kind Form
+            if ($AliasProbe) {
+                Send-InstallationConsoleText -Pipe $Pipe -Text "`eOBext4`eOB/srv`n"
+                Wait-InstallationCustomPublicState @common -Kind Alias
+                Write-Host 'Custom native filesystem-alias refusal admitted before consent.'
+                return
+            }
             # Native success recreates the pane on Create New. Queue either that
             # public action or Next; malformed fields can never reach consent.
             $next = if ($index + 1 -lt $partitions.Count) { "`n" } else { "`eOC`n" }
@@ -1698,8 +1732,8 @@ try {
     $cursorState = @{}
     if ($Scenario -notin @('LoginInstalled', 'BootInstalled')) {
         $readyForInstallation = $false
-        if ($Scenario -in @('CustomCancel', 'CustomReboot', 'CustomMultiReboot')) {
-            Invoke-InstallationCustomLayout -Pipe $pipe -Deadline $deadline -CursorState $cursorState -Cancel:($Scenario -eq 'CustomCancel') -MultiDisk:($Scenario -eq 'CustomMultiReboot')
+        if ($Scenario -in @('CustomCancel', 'CustomAliasProbe', 'CustomReboot', 'CustomMultiReboot')) {
+            Invoke-InstallationCustomLayout -Pipe $pipe -Deadline $deadline -CursorState $cursorState -Cancel:($Scenario -eq 'CustomCancel') -MultiDisk:($Scenario -eq 'CustomMultiReboot') -AliasProbe:($Scenario -eq 'CustomAliasProbe')
             $readyForInstallation = $Scenario -in @('CustomReboot', 'CustomMultiReboot')
         } else {
             Write-Host 'Public installer phase: awaiting-disk-selection'
