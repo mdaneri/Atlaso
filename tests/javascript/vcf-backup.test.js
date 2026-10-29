@@ -365,9 +365,9 @@ test('Schedule controls appear only for selected native products that use them',
 
 test('The updated backup script URL and service worker cache version stay aligned', () => {
   const worker = fs.readFileSync(path.join(__dirname, '../../atlaso/app/static/service-worker.js'), 'utf8');
-  assert.match(helper, /vcf-backup\.js\?v=issue-1066-9/);
-  assert.match(worker, /ATLASO_CACHE_PREFIX\}400/);
-  assert.match(worker, /vcf-backup\.js\?v=issue-1066-9/);
+  assert.match(helper, /vcf-backup\.js\?v=issue-1066-10/);
+  assert.match(worker, /ATLASO_CACHE_PREFIX\}401/);
+  assert.match(worker, /vcf-backup\.js\?v=issue-1066-10/);
 });
 
 test('Review binds the selected component IDs, source credentials, policy, and saved secret references', () => {
@@ -405,7 +405,7 @@ test('Configuration executes only with a fresh review and explicit recovery, rep
 
 test('Task polling reads operation state while reconcile remains a separate read-only action', () => {
   assert.match(js, /call\(`\/operations\/\$\{encodeURIComponent\(operationId\)\}`\)/);
-  assert.match(js, /call\("\/reconcile", \{operation_id: operationId, sources: inspectedSources\.map\(\(\{request\}\) => request\), close_reviewed: field\("close_recovery"\)\.checked\}\)/);
+  assert.match(js, /const closeReviewed = field\("close_recovery"\)\.checked;[\s\S]*?call\("\/reconcile", \{operation_id: operationId, sources: inspectedSources\.map\(\(\{request\}\) => request\), close_reviewed: closeReviewed\}\)/);
   assert.match(js, /schedulePoll\(1800\)/);
   assert.match(modal, /data-vcf-backup-reconcile/);
   assert.match(modal, /data-vcf-backup-task-link/);
@@ -415,6 +415,42 @@ test('Task polling reads operation state while reconcile remains a separate read
   assert.match(js, /error\.textContent = result\.error \|\| ""/);
   assert.match(js, /guidance\.textContent = result\.recovery_warning \|\|/);
   assert.match(js, /renderOperationGroups\(result\.groups, result\.checkpoint, reconciliation\)/);
+});
+
+test('Final submission delegates constraints to the active wizard step, not hidden Login controls', () => {
+  assert.match(modal, /<form[^>]*data-vcf-backup-form[^>]*novalidate/);
+  assert.match(js, /validateStep: \(\{step\}\) => \{[\s\S]*?if \(step\.id === "login"\) return Boolean\(field\("username"\)\.value\.trim\(\) && field\("password"\)\.value\);[\s\S]*?if \(step\.id === "review"\)/);
+});
+
+test('Manual recovery credentials are bypassed only for an explicitly allowed close action', async () => {
+  const declaration = functionDeclaration('reconcile');
+  assert.ok(declaration);
+  assert.match(js, /canCloseWithoutCredentials = result\.can_close_without_credentials === true/);
+  assert.match(js, /operationState = "";\s+canCloseWithoutCredentials = false;/);
+
+  const run = async (capability, closeReviewed) => {
+    let calls = 0;
+    let prompted = 0;
+    let body;
+    const context = vm.createContext({
+      operationId: 'op-1', busy: false, canCloseWithoutCredentials: capability,
+      inspectedSources: [{request: {password: ''}, credentialMode: 'manual'}],
+      field: () => ({checked: closeReviewed}),
+      renderRecoveryCredentials: () => { prompted += 1; },
+      setStatus: () => {},
+      call: async (_path, payload) => { calls += 1; body = payload; return {state: 'reconciled'}; },
+      renderOperation: () => {},
+    });
+    await vm.runInContext(`(async ${declaration})()`, context);
+    return {calls, prompted, body};
+  };
+
+  const allowedClose = await run(true, true);
+  assert.equal(allowedClose.calls, 1);
+  assert.equal(allowedClose.prompted, 0);
+  assert.equal(allowedClose.body.close_reviewed, true);
+  assert.deepEqual(await run(true, false), {calls: 0, prompted: 1, body: undefined});
+  assert.deepEqual(await run(false, true), {calls: 0, prompted: 1, body: undefined});
 });
 
 test('Closing the dialog clears every request-local manual password', () => {

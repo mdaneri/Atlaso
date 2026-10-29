@@ -971,6 +971,7 @@ def test_pre_dispatch_failure_can_close_without_stale_receiver_or_native_auth(ha
         failed = read_operation(db, inspected["operation_id"])
         assert failed["state"] == "needs_recovery"
         assert failed["checkpoint"] == "queued"
+        assert workflow.operation_status(db, "admin", inspected["operation_id"])["can_close_without_credentials"] is True
         assert backend.validations == []
         assert backend.config_writes == []
         assert backend.backup_starts == []
@@ -992,6 +993,7 @@ def test_pre_dispatch_failure_can_close_without_stale_receiver_or_native_auth(ha
         }, CapturedDispatcher())
         assert result["state"] == "reconciled"
         assert result["checkpoint"] == "closed_without_replay"
+        assert result["can_close_without_credentials"] is False
         assert result["reconciliation"] == []
         assert all(db.scalar(__import__("sqlalchemy").select(Setting).where(Setting.key == key)) is None for key in locks)
     assert backend.validations == []
@@ -1023,6 +1025,78 @@ def test_configuration_only_reconciliation_does_not_require_receiver_auth(harnes
         assert "native_backup" not in result["reconciliation"][0]
         for key in state["reservation_keys"]:
             assert db.scalar(__import__("sqlalchemy").select(Setting).where(Setting.key == key)) is None
+
+
+def test_receiver_drift_keeps_native_success_unverified(harness):
+    inspected, source, state = _leave_backup_submitted_for_recovery(harness)
+    backend = harness["backend"]
+    backend.native_state = "succeeded"
+    backend.receiver_expected_password = "rotated-sftp-password"
+    harness["monkeypatch"].setattr(
+        workflow,
+        "receiver_revision",
+        lambda receiver: {
+            **{key: receiver[key] for key in (
+                "host", "port", "username", "directory", "host_key",
+                "rsa_host_key", "ecdsa_fingerprint", "interfaces", "volume",
+            )},
+            "revision": "revision-2",
+        },
+    )
+    with SessionLocal() as db:
+        result = workflow.dispatch(db, "admin", "reconcile", {
+            "operation_id": inspected["operation_id"], "sources": [source],
+        }, CapturedDispatcher())
+        assert result["state"] == "needs_recovery"
+        assert result["reconciliation"][0]["native_backup"]["state"] == "succeeded"
+        assert result["reconciliation"][0]["verified"] is False
+        assert "receiver changed" in result["reconciliation"][0]["warning"]
+        assert "unverified" in result["recovery_warning"]
+        for key in state["reservation_keys"]:
+            assert db.scalar(__import__("sqlalchemy").select(Setting).where(Setting.key == key)) is not None
+
+
+def test_unready_receiver_returns_native_report_and_allows_terminal_close(harness):
+    inspected, source, state = _leave_backup_submitted_for_recovery(harness)
+    backend = harness["backend"]
+    backend.native_state = "succeeded"
+    backend.receiver_expected_password = "rotated-sftp-password"
+
+    def unavailable_receiver(_db):
+        raise workflow.ReceiverError("receiver is not ready")
+
+    harness["monkeypatch"].setattr(workflow, "require_receiver", unavailable_receiver)
+    with SessionLocal() as db:
+        result = workflow.dispatch(db, "admin", "reconcile", {
+            "operation_id": inspected["operation_id"], "sources": [source], "close_reviewed": True,
+        }, CapturedDispatcher())
+        assert result["state"] == "reconciled"
+        assert result["reconciliation"][0]["native_backup"]["state"] == "succeeded"
+        assert result["reconciliation"][0]["verified"] is False
+        assert "receiver is not ready" in result["recovery_warning"]
+        for key in state["reservation_keys"]:
+            assert db.scalar(__import__("sqlalchemy").select(Setting).where(Setting.key == key)) is None
+
+
+def test_changed_sftp_secret_returns_unverified_native_report(harness):
+    inspected, source, state = _leave_backup_submitted_for_recovery(harness)
+    backend = harness["backend"]
+    backend.native_state = "succeeded"
+
+    def changed_secret(_db, _reference):
+        raise workflow.BackupOperationError("The reviewed backup secret changed; review again.")
+
+    harness["monkeypatch"].setattr(workflow, "_secret", changed_secret)
+    with SessionLocal() as db:
+        result = workflow.dispatch(db, "admin", "reconcile", {
+            "operation_id": inspected["operation_id"], "sources": [source],
+        }, CapturedDispatcher())
+        assert result["state"] == "needs_recovery"
+        assert result["reconciliation"][0]["native_backup"]["state"] == "succeeded"
+        assert result["reconciliation"][0]["verified"] is False
+        assert "secret changed" in result["reconciliation"][0]["warning"]
+        for key in state["reservation_keys"]:
+            assert db.scalar(__import__("sqlalchemy").select(Setting).where(Setting.key == key)) is not None
 
 
 @pytest.mark.parametrize("revocation", ["stop-job", "disable-actor"])

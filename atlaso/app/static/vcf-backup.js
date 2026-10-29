@@ -34,6 +34,7 @@
   let review = null;
   let operationStarted = false;
   let operationState = "";
+  let canCloseWithoutCredentials = false;
   let grid = null;
   let selectAllSupportedCheckbox = null;
   let busy = false;
@@ -660,6 +661,7 @@
     if (!box) return;
     syncOperationView();
     operationState = String(result.state || "").toLowerCase();
+    canCloseWithoutCredentials = result.can_close_without_credentials === true;
     node("[data-vcf-backup-operation-state]").textContent = operationStateLabel(result.state);
     node("[data-vcf-backup-operation-id]").textContent = safeText(result.operation_id || operationId, "Not loaded");
     const error = node("[data-vcf-backup-operation-error]");
@@ -763,6 +765,7 @@
     receiver = null;
     operationStarted = false;
     operationState = "";
+    canCloseWithoutCredentials = false;
     invalidateReview();
     wizard.reset();
     resetCurrentSource();
@@ -793,13 +796,14 @@
   }
   async function reconcile() {
     if (!operationId || busy) return;
-    if (inspectedSources.some(({request, credentialMode}) => credentialMode === "manual" && !request.password)) {
+    const closeReviewed = field("close_recovery").checked;
+    if (!(closeReviewed && canCloseWithoutCredentials) && inspectedSources.some(({request, credentialMode}) => credentialMode === "manual" && !request.password)) {
       renderRecoveryCredentials();
       setStatus("Enter the source password(s) required for read-only reconciliation, then choose Reconcile again.", true);
       return;
     }
     busy = true;
-    try { renderOperation(await call("/reconcile", {operation_id: operationId, sources: inspectedSources.map(({request}) => request), close_reviewed: field("close_recovery").checked})); }
+    try { renderOperation(await call("/reconcile", {operation_id: operationId, sources: inspectedSources.map(({request}) => request), close_reviewed: closeReviewed})); }
     finally { busy = false; }
   }
   async function inspectCurrentSource() {

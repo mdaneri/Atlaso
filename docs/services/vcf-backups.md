@@ -123,6 +123,8 @@ attempting another configuration. Do not retry an uncertain native write from th
 If the recorded checkpoints prove that no native write was attempted, you can explicitly finish recovery even when
 the reviewed receiver credentials no longer work. This releases the operation's reservations without contacting the
 receiver or changing a native backup policy. Fresh artifact verification still requires receiver authentication.
+If the receiver changed or is unavailable, reconciliation can still report native outcomes. It keeps artifacts
+unverified and permits explicit closure only after recorded native tasks reach verified terminal states.
 
 Validate the workflow in a non-production VCF 9.1.x environment and separately test the resulting backup's
 documented restore procedure before relying on it for disaster recovery.
