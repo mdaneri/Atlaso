@@ -1505,7 +1505,17 @@ def _validation_result(value: Any) -> dict[str, Any]:
 
 
 def _vcenter_location(proposed: dict[str, Any]) -> str:
-    return f"sftp://{proposed['host']}:{proposed['port']}{proposed['directory']}"
+    host = str(proposed["host"])
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        if isinstance(address, ipaddress.IPv6Address):
+            if address.scope_id is not None:
+                raise ValueError("vCenter backup destinations require an IPv6 address without a zone identifier")
+            host = f"[{host}]"
+    return f"sftp://{host}:{proposed['port']}{proposed['directory']}"
 
 
 def _nsx_backup_status_entries(value: Any) -> list[dict[str, Any]]:

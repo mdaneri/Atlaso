@@ -61,6 +61,8 @@ class FakeBackend:
         self.require_prepared_directory = False
         self.prepared_directories: set[str] = set()
         self.fail_prepare = False
+        self.receiver_expected_password: str | None = None
+        self.reject_native_login = False
         self.after_validate: Any = None
         self.inventory_drift = False
         self.artifact_components: set[str] | None = None
@@ -124,6 +126,8 @@ class FakeNative:
         return None
 
     def login(self) -> None:
+        if self.backend.reject_native_login:
+            raise workflow.RemoteError("native authentication failed")
         self.logged_in = True
 
     def discover(self) -> dict[str, Any]:
@@ -212,10 +216,13 @@ class FakeNative:
 class FakeReceiverSession:
     backend: FakeBackend
 
-    def __init__(self, _receiver: dict[str, Any], _password: str) -> None:
+    def __init__(self, _receiver: dict[str, Any], password: str) -> None:
         self.backend = FakeReceiverSession.backend
+        self.password = password
 
     def __enter__(self):
+        if self.backend.receiver_expected_password is not None and self.password != self.backend.receiver_expected_password:
+            raise workflow.ReceiverError("receiver authentication failed")
         self.backend.files = dict(self.backend.baseline_files)
         return self
 
@@ -843,6 +850,7 @@ def test_running_native_backup_cannot_close_recovery(harness):
     inspected, source, _state = _leave_backup_submitted_for_recovery(harness)
     backend = harness["backend"]
     backend.native_state = "running"
+    backend.receiver_expected_password = "rotated-sftp-password"
     with pytest.raises(workflow.BackupOperationError, match="native task is still running"):
         with SessionLocal() as db:
             workflow.dispatch(db, "admin", "reconcile", {
@@ -852,6 +860,21 @@ def test_running_native_backup_cannot_close_recovery(harness):
     recovered = read_operation(SessionLocal(), inspected["operation_id"])
     assert recovered["state"] == "needs_recovery"
     assert recovered["checkpoint"] == "backup_submitted"
+
+
+def test_failed_native_backup_can_close_without_receiver_auth(harness):
+    inspected, source, state = _leave_backup_submitted_for_recovery(harness)
+    backend = harness["backend"]
+    backend.native_state = "failed"
+    backend.receiver_expected_password = "rotated-sftp-password"
+    with SessionLocal() as db:
+        result = workflow.dispatch(db, "admin", "reconcile", {
+            "operation_id": inspected["operation_id"], "sources": [source], "close_reviewed": True,
+        }, CapturedDispatcher())
+        assert result["state"] == "reconciled"
+        assert result["reconciliation"][0]["native_backup"]["state"] == "failed"
+        for key in state["reservation_keys"]:
+            assert db.scalar(__import__("sqlalchemy").select(Setting).where(Setting.key == key)) is None
 
 
 def test_reconciliation_cannot_adopt_success_after_policy_drift(harness):
@@ -923,6 +946,8 @@ def test_unknown_native_dispatch_cannot_release_recovery_reservation(harness, ch
         current["checkpoint"] = checkpoint
         workflow._save(db, row, current)
     counts = (len(harness["backend"].config_writes), len(harness["backend"].backup_starts))
+    harness["backend"].receiver_expected_password = "rotated-sftp-password"
+    harness["backend"].reject_native_login = True
     with SessionLocal() as db:
         with pytest.raises(workflow.BackupOperationError, match="no recorded outcome"):
             workflow.dispatch(db, "admin", "reconcile", {
@@ -933,6 +958,71 @@ def test_unknown_native_dispatch_cannot_release_recovery_reservation(harness, ch
         for key in state["reservation_keys"]:
             assert db.scalar(__import__("sqlalchemy").select(Setting).where(Setting.key == key)) is not None
     assert counts == (len(harness["backend"].config_writes), len(harness["backend"].backup_starts))
+
+
+def test_pre_dispatch_failure_can_close_without_stale_receiver_or_native_auth(harness):
+    backend = harness["backend"]
+    backend.receiver_expected_password = "rotated-sftp-password"
+    with SessionLocal() as db:
+        inspected, source = inspect_operation(db)
+        reviewed = review_operation(db, inspected, source)
+        queued, dispatcher = execute_operation(db, inspected, source, reviewed)
+        dispatcher.run()
+        failed = read_operation(db, inspected["operation_id"])
+        assert failed["state"] == "needs_recovery"
+        assert failed["checkpoint"] == "queued"
+        assert backend.validations == []
+        assert backend.config_writes == []
+        assert backend.backup_starts == []
+        assert backend.prepared_directories == set()
+        assert queued["state"] == "queued"
+        locks = list(failed["reservation_keys"])
+        assert locks
+        assert all(db.scalar(__import__("sqlalchemy").select(Setting).where(Setting.key == key)) is not None for key in locks)
+
+    # Neither stale receiver credentials nor native authentication are needed
+    # to close a task whose durable checkpoints prove that dispatch never began.
+    backend.reject_native_login = True
+    def stale_secret(_db, _reference):
+        raise workflow.BackupOperationError("The selected Vault key changed after review.")
+    harness["monkeypatch"].setattr(workflow, "_secret", stale_secret)
+    with SessionLocal() as db:
+        result = workflow.dispatch(db, "admin", "reconcile", {
+            "operation_id": inspected["operation_id"], "sources": [source], "close_reviewed": True,
+        }, CapturedDispatcher())
+        assert result["state"] == "reconciled"
+        assert result["checkpoint"] == "closed_without_replay"
+        assert result["reconciliation"] == []
+        assert all(db.scalar(__import__("sqlalchemy").select(Setting).where(Setting.key == key)) is None for key in locks)
+    assert backend.validations == []
+    assert backend.config_writes == []
+    assert backend.backup_starts == []
+    assert backend.prepared_directories == set()
+
+
+def test_configuration_only_reconciliation_does_not_require_receiver_auth(harness):
+    inspected, source, state = _leave_backup_submitted_for_recovery(harness)
+    with SessionLocal() as db:
+        row, current = workflow._state(db, "admin", inspected["operation_id"])
+        group = current["plan"][0]
+        group["checkpoint"] = "configuration_submitted"
+        group["configuration_reference"] = {"native_task_id": "configuration-task-1"}
+        group.pop("backup_reference", None)
+        current["checkpoint"] = "configuration_submitted"
+        workflow._save(db, row, current)
+
+    # Config task readback is still required, but no backup artifact lookup is
+    # possible or needed without a backup reference.
+    harness["backend"].receiver_expected_password = "rotated-sftp-password"
+    with SessionLocal() as db:
+        result = workflow.dispatch(db, "admin", "reconcile", {
+            "operation_id": inspected["operation_id"], "sources": [source], "close_reviewed": True,
+        }, CapturedDispatcher())
+        assert result["state"] == "reconciled"
+        assert result["reconciliation"][0]["native_configuration"]["state"] == "succeeded"
+        assert "native_backup" not in result["reconciliation"][0]
+        for key in state["reservation_keys"]:
+            assert db.scalar(__import__("sqlalchemy").select(Setting).where(Setting.key == key)) is None
 
 
 @pytest.mark.parametrize("revocation", ["stop-job", "disable-actor"])

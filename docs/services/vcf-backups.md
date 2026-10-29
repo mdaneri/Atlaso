@@ -120,6 +120,10 @@ released until a verifiable native outcome is available. Reconciliation may adop
 is confirmed and fresh receiver files are matched to every selected component. Then inspect a fresh plan before
 attempting another configuration. Do not retry an uncertain native write from the original review.
 
+If the recorded checkpoints prove that no native write was attempted, you can explicitly finish recovery even when
+the reviewed receiver credentials no longer work. This releases the operation's reservations without contacting the
+receiver or changing a native backup policy. Fresh artifact verification still requires receiver authentication.
+
 Validate the workflow in a non-production VCF 9.1.x environment and separately test the resulting backup's
 documented restore procedure before relying on it for disaster recovery.
 

@@ -15,6 +15,7 @@ from atlaso.app.services.vcf_backup_native import (
     NativeBackup,
     _fleet_time_parts,
     _validation_result,
+    _vcenter_location,
 )
 from atlaso.app.services.vcf_certificate_remote import Credentials, RemoteError
 
@@ -1063,7 +1064,12 @@ def test_sddc_configuration_allows_absent_collection_fields() -> None:
     assert current["schedule_enabled"] is None
 
 
-def test_vcenter_native_schedule_create_uses_pinned_vapi_contract() -> None:
+@pytest.mark.parametrize(("host", "location"), [
+    ("backup.example.test", "sftp://backup.example.test:22/backups/vcf"),
+    ("192.0.2.10", "sftp://192.0.2.10:22/backups/vcf"),
+    ("2001:db8::10", "sftp://[2001:db8::10]:22/backups/vcf"),
+])
+def test_vcenter_native_schedule_create_uses_pinned_vapi_contract(host: str, location: str) -> None:
     transport = FakeTransport(None, [(200, {}), (204, None)])
     adapter = NativeBackup(
         source("vcenter"), credentials(), transport_factory=lambda _target: transport
@@ -1078,7 +1084,7 @@ def test_vcenter_native_schedule_create_uses_pinned_vapi_contract() -> None:
         }]
     }
     proposed = {
-        "host": "backup.example.test", "port": 22, "user": "backup-user",
+        "host": host, "port": 22, "user": "backup-user",
         "directory": "/backups/vcf", "ecdsa_fingerprint": "SHA256:public-key",
         "full_time": "02:15", "retention_mode": "count", "retention_value": 14,
         "parts": ["seat"],
@@ -1095,7 +1101,10 @@ def test_vcenter_native_schedule_create_uses_pinned_vapi_contract() -> None:
     assert envelope["schedule"] == "atlaso-vcf-backup"
     body = envelope["spec"]
     assert session_header == ("vmware-api-session-id", "vc-session")
-    assert body["location"] == "sftp://backup.example.test:22/backups/vcf"
+    assert body["location"] == location
+    readback = NativeBackup._safe_vcenter_schedule(body)
+    assert readback["host"] == host
+    assert readback["port"] == 22
     assert body["recurrence_info"] == {
         "hour": 2, "minute": 15,
         "days": ["FRIDAY", "MONDAY", "SATURDAY", "SUNDAY", "THURSDAY", "TUESDAY", "WEDNESDAY"],
@@ -1105,6 +1114,11 @@ def test_vcenter_native_schedule_create_uses_pinned_vapi_contract() -> None:
     assert body["location_password"] == "sftp-secret"
     assert body["backup_password"] == "SecureAB12!"
     assert "ecdsa_fingerprint" not in body
+
+
+def test_vcenter_rejects_host_local_ipv6_zone_identifiers() -> None:
+    with pytest.raises(ValueError, match="without a zone identifier"):
+        _vcenter_location({"host": "fe80::1%eth0", "port": 22, "directory": "/backups/vcf"})
 
 
 def test_vcenter_first_schedule_creation_reads_back_authoritative_created_schedule() -> None:

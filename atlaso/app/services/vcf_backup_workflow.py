@@ -937,6 +937,36 @@ def _reconcile(db: Session, actor: str, row: Setting, state: dict[str, Any], val
     if job is not None and job.status in {"pending", "running"}:
         return operation_status(db, actor, state["operation_id"])
     original = row.value
+    close_reviewed = values.get("close_reviewed") is True and state["state"] != "succeeded"
+    plan = state.get("plan", [])
+    no_native_dispatch = (
+        bool(plan)
+        and state.get("checkpoint") in {"reviewed", "queued"}
+        and all(
+            group.get("checkpoint") == "reviewed"
+            and group.get("configuration_reference") is None
+            and group.get("backup_reference") is None
+            for group in plan
+        )
+    )
+    if close_reviewed and no_native_dispatch:
+        # A persisted reviewed checkpoint proves that no native mutation was
+        # attempted. Let an authorized actor release reservations even when the
+        # reviewed SFTP secret or native credentials can no longer authenticate.
+        acquire_network_objects_write_lock(db)
+        db.refresh(row)
+        latest = json.loads(row.value)
+        if row.value != original or latest.get("job_id") != state.get("job_id") or latest["state"] not in {"needs_recovery", "succeeded", "reconciled"}:
+            raise BackupOperationError("This operation changed during reconciliation.")
+        state["state"], state["checkpoint"] = "reconciled", "closed_without_replay"
+        state["reconciliation"] = []
+        _release(db, state)
+        _save(db, row, state)
+        return {**operation_status(db, actor, state["operation_id"]), "reconciliation": [],
+                "recovery_warning": "Reconciliation is read-only. Unknown native writes are never repeated; inspect a fresh plan before another configuration attempt."}
+    if close_reviewed and any(group.get("checkpoint") in {"configuration_dispatch_pending", "backup_dispatch_pending"}
+                              for group in plan):
+        raise BackupOperationError("A native dispatch has no recorded outcome. Its reservation must remain held until the native product provides verifiable task reconciliation.")
     inputs = _source_inputs(db, state, values)
     reports: list[dict[str, Any]] = []
     for group in state.get("plan", []):
@@ -954,20 +984,21 @@ def _reconcile(db: Session, actor: str, row: Setting, state: dict[str, Any], val
             reports.append(report)
     # A matching native completion and independently fresh SFTP metadata can
     # finish an interrupted task, but never dispatch another native operation.
-    with ReceiverSession(require_receiver(db), _secret(db, state["sftp_secret"])) as storage:
-        for group, report in zip(state.get("plan", []), reports, strict=True):
-            if "native_backup" in report:
-                verified = _verified_artifacts(group, report["native_backup"], storage.manifest(group["receiver_directory"]))
-                if verified and _matches(report["current"], group["proposed"]):
-                    group["verified_components"] = verified
-                    group["checkpoint"] = "verified"
-                    group["artifacts"] = list({item["path"]: item for artifacts in verified.values() for item in artifacts}.values())
-                    group["native_artifacts"] = report["native_backup"].get("artifacts", [])
-                    report["verified"] = True
-                    report["artifacts"] = group["artifacts"]
-                elif verified:
-                    report["verified"] = False
-                    report["warning"] = "Initial artifacts exist, but the native policy no longer matches the reviewed configuration."
+    if any(report.get("native_backup", {}).get("state") == "succeeded" for report in reports):
+        with ReceiverSession(require_receiver(db), _secret(db, state["sftp_secret"])) as storage:
+            for group, report in zip(state.get("plan", []), reports, strict=True):
+                if report.get("native_backup", {}).get("state") == "succeeded":
+                    verified = _verified_artifacts(group, report["native_backup"], storage.manifest(group["receiver_directory"]))
+                    if verified and _matches(report["current"], group["proposed"]):
+                        group["verified_components"] = verified
+                        group["checkpoint"] = "verified"
+                        group["artifacts"] = list({item["path"]: item for artifacts in verified.values() for item in artifacts}.values())
+                        group["native_artifacts"] = report["native_backup"].get("artifacts", [])
+                        report["verified"] = True
+                        report["artifacts"] = group["artifacts"]
+                    elif verified:
+                        report["verified"] = False
+                        report["warning"] = "Initial artifacts exist, but the native policy no longer matches the reviewed configuration."
     acquire_network_objects_write_lock(db)
     db.refresh(row)
     latest = json.loads(row.value)
@@ -989,9 +1020,6 @@ def _reconcile(db: Session, actor: str, row: Setting, state: dict[str, Any], val
     # Explicit closure releases reservations but never calls a native write or
     # claims that an uncertain dispatch succeeded. A new plan needs fresh inspect.
     if values.get("close_reviewed") is True and state["state"] != "succeeded":
-        if any(group.get("checkpoint") in {"configuration_dispatch_pending", "backup_dispatch_pending"}
-               for group in state.get("plan", [])):
-            raise BackupOperationError("A native dispatch has no recorded outcome. Its reservation must remain held until the native product provides verifiable task reconciliation.")
         if any(report.get(field, {}).get("state") == "running" for report in reports for field in ("native_backup", "native_configuration")):
             raise BackupOperationError("A native task is still running; wait before closing recovery.")
         state["state"], state["checkpoint"] = "reconciled", "closed_without_replay"
