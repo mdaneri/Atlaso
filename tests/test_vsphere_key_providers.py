@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -19,6 +20,7 @@ from atlaso.app.models import (
     VsphereTrustedVcenter,
     VsphereTrustedVcenterCertificate,
 )
+from atlaso.app.services import kmip_recovery
 from atlaso.app.services.settings_archive import (
     export_settings_archive,
     restore_settings_archive,
@@ -120,11 +122,12 @@ def _login(client) -> str:
 
 
 
-def test_settings_archive_round_trips_only_public_provider_desired_state(client) -> None:
+def test_settings_archive_round_trips_only_public_provider_desired_state(client, monkeypatch) -> None:
     """Verify settings archives preserve the provider graph without operational-key state.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to reject unexpected helper invocation.
     """
     public_pem, _private_pem = _public_client_certificate("vcsa-archive.atlaso.internal", expired=True)
     parsed = parse_public_certificate(public_pem, require_current=False)
@@ -164,6 +167,63 @@ def test_settings_archive_round_trips_only_public_provider_desired_state(client)
         assert restored.trusted_vcenters[0].certificates[0].id == certificate_id
         assert restored.trusted_vcenters[0].certificates[0].certificate_pem == public_pem
         assert certificate_status(restored.trusted_vcenters[0].certificates[0]) == "expired"
+
+        # A whole-appliance restore populates the import target even without operational keys.
+        monkeypatch.setattr(
+            kmip_recovery,
+            "_request",
+            lambda *_args: pytest.fail("settings-restored target reached recovery helper"),
+        )
+        with pytest.raises(kmip_recovery.RecoveryError, match="empty provider/trust target"):
+            kmip_recovery.import_archive(db, b"synthetic-bundle", "synthetic-passphrase")
+
+
+def test_kmip_recovery_on_clean_target_preserves_public_graph_for_review(client, monkeypatch) -> None:
+    """Keep empty-target import independent of a full settings restore.
+
+    Args:
+        client: HTTP test client providing an isolated clean appliance database.
+        monkeypatch: Pytest fixture replacing the privileged operational import.
+    """
+    public_pem, _private_pem = _public_client_certificate("vcsa-recovery.example.test")
+    parsed = parse_public_certificate(public_pem)
+    provider_id, vcenter_id, certificate_id = (str(uuid4()) for _ in range(3))
+    trust = {
+        "providers": [{"id": provider_id, "name": "Recovered provider", "description": "", "enabled": True}],
+        "vcenters": [{
+            "id": vcenter_id, "provider_id": provider_id, "name": "Recovered vCenter",
+            "hostname": "vcsa-recovery.example.test", "description": "", "enabled": True,
+        }],
+        "certificates": [{
+            "id": certificate_id, "trusted_vcenter_id": vcenter_id,
+            "certificate_pem": public_pem, "fingerprint_sha256": parsed["fingerprint_sha256"],
+        }],
+    }
+    calls = []
+
+    def import_offline(action, payload):
+        """Return synthetic public evidence after the offline helper succeeds.
+
+        Args:
+            action: Fixed helper action requested by the coordinator.
+            payload: Request-bound synthetic import input.
+        """
+        calls.append(action)
+        assert set(payload) == {"passphrase", "archive"}
+        return {"trust": trust}
+
+    monkeypatch.setattr(kmip_recovery, "_request", import_offline)
+    with SessionLocal() as db:
+        assert not any(kmip_recovery.public_trust(db).values())
+        kmip_recovery.import_archive(db, b"synthetic-bundle", "synthetic-passphrase")
+        db.commit()
+        restored = kmip_recovery.public_trust(db)
+        assert calls == ["recovery-import"]
+        assert restored["providers"] == [{**trust["providers"][0], "enabled": False}]
+        assert restored["vcenters"] == [{**trust["vcenters"][0], "enabled": False}]
+        assert restored["certificates"] == trust["certificates"]
+        assert db.get(VsphereKeyProvider, provider_id).applied_at is None
+        assert db.scalar(select(KmsSettings)).enabled is False
 
 
 
