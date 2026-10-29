@@ -462,6 +462,30 @@ test("createWizard locks future steps and supports async validation and review",
   assert.equal(fixture.controls[1].getAttribute("aria-invalid"), "true");
 });
 
+test("createWizard locks submitted navigation and submission until reset", async () => {
+  installBrowserGlobals();
+  const fixture = wizardFixture(["identity", "config", "review"]);
+  let submissions = 0;
+  const controller = createWizard({
+    form: fixture.form, dialog: fixture.dialog,
+    steps: ["identity", "config", "review"].map((id) => ({id})),
+    onSubmit: () => { submissions += 1; return {close: false}; },
+  });
+  controller.showStep("review", {force: true, unlock: true});
+  controller.setNavigationLocked(true);
+  assert.ok(fixture.nav.every((button) => button.disabled));
+  assert.equal(await controller.back(), false);
+  assert.equal(await controller.next(), false);
+  assert.equal(controller.showStep("identity"), false);
+  await fixture.nav[0].emit("click");
+  await fixture.form.emit("submit");
+  assert.equal(controller.currentStepId, "review");
+  assert.equal(submissions, 0);
+  controller.reset();
+  assert.equal(fixture.nav[0].disabled, false);
+  assert.equal(await controller.next(), true);
+});
+
 test("createWizard supports conditional next and back routing", async () => {
   installBrowserGlobals();
   const fixture = wizardFixture(["choice", "details", "review"]);

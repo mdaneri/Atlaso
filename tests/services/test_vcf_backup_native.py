@@ -1037,8 +1037,28 @@ def test_sddc_configuration_rejects_unreviewable_destinations_or_schedules(confi
         NativeBackup._safe_settings(config)
 
 
+@pytest.mark.parametrize("key", ["backupLocations", "backup_locations"])
+@pytest.mark.parametrize("value", [{"server": "backup.example.test"}, "unexpected", 1, None])
+def test_sddc_configuration_rejects_non_array_destination_fields(key: str, value: Any) -> None:
+    with pytest.raises(RemoteError, match="invalid destinations"):
+        NativeBackup._safe_settings({key: value})
+
+
+@pytest.mark.parametrize("key", ["backupSchedules", "backup_schedules"])
+@pytest.mark.parametrize("value", [{"resourceType": "SDDC_MANAGER"}, "unexpected", 1, None])
+def test_sddc_configuration_rejects_non_array_schedule_fields(key: str, value: Any) -> None:
+    with pytest.raises(RemoteError, match="invalid schedules"):
+        NativeBackup._safe_settings({key: value})
+
+
 def test_sddc_configuration_allows_empty_destination_and_schedule_lists() -> None:
     current = NativeBackup._safe_settings({"backupLocations": [], "backupSchedules": []})
+    assert current["host"] is None
+    assert current["schedule_enabled"] is None
+
+
+def test_sddc_configuration_allows_absent_collection_fields() -> None:
+    current = NativeBackup._safe_settings({})
     assert current["host"] is None
     assert current["schedule_enabled"] is None
 

@@ -108,8 +108,10 @@ read-only status checks keep the recorded native reference and continue polling 
 never automatically repeated.
 
 If a task fails, the process restarts, or the native write outcome is uncertain, use **Reconcile (read-only)** on that
-operation. Reconciliation rereads native settings and the recorded backup status; it never resubmits configuration or
-starts another backup. The scheduler reservation remains held while the outcome is unresolved. An unresolved
+operation. To reopen it, expand **Resume an existing operation** in the Credential step, enter the operation ID from
+the status view or task result, and select **Load status**. The status view shows the latest native read-back and
+verification warnings. Reconciliation rereads native settings and the recorded backup status; it never resubmits
+configuration or starts another backup. The scheduler reservation remains held while the outcome is unresolved. An unresolved
 `dispatch_pending` operation without a native task reference cannot be explicitly closed or have its reservation
 released until a verifiable native outcome is available. Reconciliation may adopt success only after native completion
 is confirmed and fresh receiver files are matched to every selected component. Then inspect a fresh plan before

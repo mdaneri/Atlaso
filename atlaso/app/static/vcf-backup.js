@@ -321,7 +321,7 @@
           columns: [
             {title: "Component", field: "name", minWidth: 180, formatter: (cell) => rowText(cell.getValue())},
             {title: "Product / version", field: "product", minWidth: 150, formatter: (cell) => rowText(`${safeText(cell.getValue())} ${safeText(cell.getRow().getData().version, "")}`)},
-            {title: "Current state", field: "current", minWidth: 180, formatter: (cell) => rowText(JSON.stringify(cell.getValue() || {}))},
+            {title: "Current state", field: "current", minWidth: 180, formatter: (cell) => rowText(groupConfigurationState({current: cell.getValue()}))},
             {title: "Coverage", field: "coverage_gap", minWidth: 180, formatter: (cell) => {
               const item = cell.getRow().getData();
               return rowText(item.supported === false ? `Not supported — ${safeText(item.coverage_gap || item.reason, "not eligible")}` : safeText(item.coverage_gap, "Supported"));
@@ -365,7 +365,7 @@
     }
     components.forEach((item) => {
       const row = document.createElement("tr");
-      ["Selection requires the interactive grid", item.name, `${safeText(item.product)} ${safeText(item.version, "")}`, JSON.stringify(item.current || {}), item.supported === false ? `Not supported — ${safeText(item.coverage_gap || item.reason, "not eligible")}` : item.coverage_gap || "Supported"].forEach((value) => { const cell = document.createElement("td"); cell.textContent = safeText(value); row.append(cell); });
+      ["Selection requires the interactive grid", item.name, `${safeText(item.product)} ${safeText(item.version, "")}`, groupConfigurationState(item), item.supported === false ? `Not supported — ${safeText(item.coverage_gap || item.reason, "not eligible")}` : item.coverage_gap || "Supported"].forEach((value) => { const cell = document.createElement("td"); cell.textContent = safeText(value); row.append(cell); });
       fallbackRows.append(row);
     });
   }
@@ -429,7 +429,16 @@
     if (coverage) { coverage.textContent = gaps.length ? `Coverage gaps: ${gaps.map(coverageText).join("; ")}` : "No coverage gaps were reported."; coverage.classList.toggle("hidden", !gaps.length); }
   }
   function groupConfigurationState(group) {
-    return group.current && typeof group.current === "object" && Object.keys(group.current).length ? "Configured" : "Not configured";
+    const current = group.current;
+    if (!current || typeof current !== "object") return "Not configured";
+    if (typeof current.configured === "boolean") return current.configured ? "Configured" : "Not configured";
+    const hasValue = (value) => Array.isArray(value) ? value.length > 0 : value !== null && value !== undefined && value !== "";
+    const destinationFields = ["host", "user", "directory", "ecdsa_fingerprint"];
+    const scheduleFields = ["full_time", "days", "interval_minutes", "retention_mode", "retention_value", "schedule_timezone", "sddc_most_recent", "sddc_hourly_days", "sddc_daily_days", "parts"];
+    const enabledFields = ["schedule_enabled", "incremental_enabled", "state_change"];
+    return [...destinationFields, ...scheduleFields].some((key) => hasValue(current[key]))
+      || enabledFields.some((key) => current[key] === true)
+      ? "Configured" : "Not configured";
   }
   function publicValue(settings, key, formatter = formatReviewValue) {
     if (!settings || typeof settings !== "object" || !Object.prototype.hasOwnProperty.call(settings, key)) return "Not returned";
@@ -532,16 +541,51 @@
     };
     return labels[String(value || "").toLowerCase()] || "Checkpoint not recorded";
   }
+  function nativeStateLabel(value) {
+    const state = String(value || "").toLowerCase();
+    const labels = {running: "Running", succeeded: "Succeeded", success: "Succeeded", complete: "Complete", completed: "Complete", failed: "Failed", pending: "Pending", queued: "Queued", canceled: "Canceled", cancelled: "Canceled"};
+    return labels[state] || (state ? state.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : "No native task status returned");
+  }
+  function groupCurrentSettings(groupKind, current) {
+    const settings = current && typeof current === "object" ? current : {};
+    const rows = [
+      ["Backup schedule", "schedule_enabled"], ["Destination host", "host"], ["Destination port", "port"],
+      ["Destination account", "user"], ["Destination directory", "directory"],
+    ].map(([label, key]) => [label, publicValue(settings, key)]);
+    if (groupKind !== "vcenter") rows.push(["ECDSA host-key fingerprint", publicValue(settings, "ecdsa_fingerprint")]);
+    if (groupKind !== "nsx") {
+      rows.push(["Daily backup time", publicValue(settings, "full_time")]);
+      rows.push(["Backup days", publicValue(settings, "days")]);
+    }
+    if (groupKind === "fleet") {
+      rows.push(["Schedule timezone", publicValue(settings, "schedule_timezone")]);
+      rows.push(["Incremental schedule", publicValue(settings, "incremental_enabled")]);
+      rows.push(["Incremental interval (minutes)", publicValue(settings, "interval_minutes")]);
+      rows.push(["Retention mode", publicValue(settings, "retention_mode", retentionMode)]);
+      rows.push(["Retention count or age", retentionValue(settings)]);
+    } else if (groupKind === "sddc") {
+      rows.push(["Back up on state change", publicValue(settings, "state_change")]);
+      rows.push(["Most recent backups retained", publicValue(settings, "sddc_most_recent")]);
+      rows.push(["Hourly backup retention (days)", publicValue(settings, "sddc_hourly_days")]);
+      rows.push(["Daily backup retention (days)", publicValue(settings, "sddc_daily_days")]);
+    } else if (groupKind === "nsx") {
+      rows.push(["Backup interval (minutes)", publicValue(settings, "interval_minutes")]);
+      rows.push(["Back up on state change", publicValue(settings, "state_change")]);
+    } else if (groupKind === "vcenter") {
+      rows.push(["Retention mode", publicValue(settings, "retention_mode", retentionMode)]);
+      rows.push(["Retention count or age", retentionValue(settings)]);
+      rows.push(["Backup parts", publicValue(settings, "parts")]);
+    }
+    return rows;
+  }
   function syncOperationView() {
     const active = operationStarted;
     node("[data-vcf-backup-review-form]")?.classList.toggle("hidden", active);
     node("[data-vcf-backup-operation]")?.classList.toggle("hidden", !active);
+    wizard?.setNavigationLocked(active);
     if (!active) return;
     node("[data-atlaso-wizard-title]").textContent = "Backup status";
     node("[data-atlaso-wizard-description]").textContent = "Follow native configuration and verify the initial backup.";
-    form.querySelectorAll("[data-atlaso-wizard-nav]").forEach((button) => { button.disabled = true; button.setAttribute("aria-disabled", "true"); });
-    ["[data-atlaso-wizard-back]", "[data-atlaso-wizard-next]", "[data-atlaso-wizard-submit]"].forEach((selector) => node(selector)?.classList.add("hidden"));
-    node("[data-atlaso-wizard-submit]").disabled = true;
   }
   function renderOperationSources() {
     const container = node("[data-vcf-backup-operation-sources]");
@@ -567,7 +611,7 @@
       }
     });
   }
-  function renderOperationGroups(groups, checkpoint) {
+  function renderOperationGroups(groups, checkpoint, reconciliation) {
     const container = node("[data-vcf-backup-operation-detail]");
     if (!container) return;
     container.replaceChildren();
@@ -579,15 +623,36 @@
       latest.textContent = `Latest checkpoint: ${checkpointLabel(checkpoint)}`;
       container.append(latest);
     }
-    if (!Array.isArray(groups) || !groups.length) return;
-    const list = document.createElement("ul");
-    groups.forEach((group, index) => {
-      const item = document.createElement("li");
-      const names = components.filter((component) => (group.component_ids || []).map(String).includes(String(component.id))).map((component) => component.name).filter(Boolean);
-      item.textContent = `${names.length ? names.join(", ") : `Native backup group ${index + 1}`}: ${checkpointLabel(group.checkpoint)}`;
-      list.append(item);
+    const reportRows = Array.isArray(reconciliation) ? reconciliation : [];
+    const reports = new Map(reportRows.map((report) => [String(report.group_id || ""), report]));
+    (Array.isArray(groups) ? groups : []).forEach((group, index) => {
+      const memberIds = new Set((group.component_ids || []).map(String));
+      const members = components.filter((component) => memberIds.has(String(component.id)));
+      const names = members.map((component) => component.name).filter(Boolean);
+      const source = inspectedSources.find((item) => members.some((component) => String(component.source_id) === String(item.request.source_id)));
+      const kind = source?.request.source_kind || "";
+      const report = reports.get(String(group.id || ""));
+      const rows = [["Latest checkpoint", checkpointLabel(report?.checkpoint || group.checkpoint)]];
+      if (report) {
+        rows.push(["Native configuration task", nativeStateLabel(report.native_configuration?.state)]);
+        rows.push(["Initial backup task", nativeStateLabel(report.native_backup?.state)]);
+        rows.push(["Atlaso backup verification", report.verified === true ? "Verified" : report.verified === false ? "Not verified" : "Not confirmed"]);
+        const current = report.current && typeof report.current === "object" ? report.current : null;
+        rows.push(["Current backup configuration", current ? groupConfigurationState({current}) : "No native settings read-back returned"]);
+        const warnings = [report.warning, report.native_configuration?.warning, report.native_backup?.warning].filter((value, offset, values) => typeof value === "string" && value && values.indexOf(value) === offset);
+        if (warnings.length) rows.push(["Native read-back warnings", warnings.join(" · ")]);
+        if (current) {
+          const settingRows = groupCurrentSettings(kind, current);
+          appendReviewSection(container, `${names.join(", ") || `Native backup group ${index + 1}`} — latest native settings`, settingRows);
+        }
+      } else if (reportRows.length) {
+        rows.push(["Native read-back", "No reconciliation report matched this group."]);
+      }
+      appendReviewSection(container, `${names.join(", ") || `Native backup group ${index + 1}`} — operation status`, rows);
     });
-    container.append(list);
+    if (reportRows.length && !groups?.length) {
+      reportRows.forEach((_report, index) => appendReviewSection(container, `Native backup group ${index + 1} — reconciliation`, [["Native read-back", "The group could not be matched to its public operation status."]]));
+    }
   }
   function renderOperation(result) {
     const box = node("[data-vcf-backup-operation]");
@@ -597,8 +662,14 @@
     node("[data-vcf-backup-operation-state]").textContent = operationStateLabel(result.state);
     node("[data-vcf-backup-operation-id]").textContent = safeText(result.operation_id || operationId, "Not loaded");
     const error = node("[data-vcf-backup-operation-error]");
-    if (error) { error.textContent = result.error || result.recovery_warning || ""; error.classList.toggle("hidden", !error.textContent); }
-    renderOperationGroups(result.groups, result.checkpoint);
+    if (error) { error.textContent = result.error || ""; error.classList.toggle("hidden", !error.textContent); }
+    const guidance = node("[data-vcf-backup-recovery-guidance]");
+    if (guidance) { guidance.textContent = result.recovery_warning || "Reconcile checks current native settings and backup status without repeating native writes."; guidance.classList.toggle("hidden", !result.recovery_warning); }
+    const runningWarning = node("[data-vcf-backup-native-running-warning]");
+    const reconciliation = Array.isArray(result.reconciliation) ? result.reconciliation : [];
+    const nativeRunning = reconciliation.some((report) => report.native_backup?.state === "running" || report.native_configuration?.state === "running");
+    if (runningWarning) { runningWarning.textContent = "A native configuration or backup task is still running. Check its status again before finishing recovery."; runningWarning.classList.toggle("hidden", !nativeRunning); }
+    renderOperationGroups(result.groups, result.checkpoint, reconciliation);
     renderOperationSources();
     if (["succeeded", "reconciled"].includes(operationState)) {
       clearManualPasswords();

@@ -439,6 +439,14 @@ class NativeBackup:
     def _safe_settings(raw: Any) -> dict[str, Any]:
         if not isinstance(raw, dict):
             return {}
+        for key, label in (
+            ("backupLocations", "destinations"),
+            ("backup_locations", "destinations"),
+            ("backupSchedules", "schedules"),
+            ("backup_schedules", "schedules"),
+        ):
+            if key in raw and not isinstance(raw[key], list):
+                raise RemoteError(f"Native backup configuration has invalid {label}")
         locations = raw.get("backupLocations", raw.get("backup_locations"))
         if isinstance(locations, list) and (
             len(locations) > 1 or any(not isinstance(item, dict) for item in locations)

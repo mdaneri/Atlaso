@@ -9,7 +9,7 @@ import pytest
 from itsdangerous import SignatureExpired
 
 from atlaso.app.database import SessionLocal
-from atlaso.app.models import Job, Setting, User
+from atlaso.app.models import Job, JobStep, Setting, User
 from atlaso.app.services import vcf_backup_workflow as workflow
 
 RECEIVER = {
@@ -24,7 +24,7 @@ RECEIVER = {
     "volume": "/srv/vcf-backups",
 }
 SFTP_SECRET = "sftp-secret-never-persist"
-PASSPHRASE = "SecureBackupPassAB12!"
+PASSPHRASE = "SecureBackupAB12!"
 API_PASSWORD = "api-password-never-persist"
 
 
@@ -485,6 +485,40 @@ def test_native_validation_failure_blocks_every_write(harness):
         assert harness["backend"].backup_starts == []
 
 
+@pytest.mark.parametrize("invalid_passphrase", [
+    "ShortAB12!",                 # fewer than 12 characters
+    "SecureBackupABCD1234!",       # more than 20 characters
+    "SECUREBACKUPAB12!",           # no lowercase letter
+    "securebackupab12!",           # no uppercase letter
+    "SecureBackupAB1!",            # fewer than two digits
+    "SecureBackupAB12",            # no symbol
+    "SecureBackupAB12É!",          # non-ASCII character
+    "SecureBackupAB12 !",          # non-visible ASCII space
+])
+def test_invalid_shared_passphrase_blocks_native_calls_and_is_not_persisted(harness, invalid_passphrase):
+    harness["monkeypatch"].setattr(
+        workflow, "_secret",
+        lambda _db, reference: SFTP_SECRET if reference["entry_id"] == 1 else invalid_passphrase,
+    )
+    with SessionLocal() as db:
+        inspected, source = inspect_operation(db)
+        reviewed = review_operation(db, inspected, source)
+        queued, dispatcher = execute_operation(db, inspected, source, reviewed)
+        dispatcher.run()
+
+        state = read_operation(db, inspected["operation_id"])
+        job = db.get(Job, queued["job_id"])
+        assert state["state"] == "needs_recovery"
+        assert "passphrase" in state["error"]
+        assert invalid_passphrase not in json.dumps(state)
+        assert job is not None and invalid_passphrase not in (job.error or "")
+        assert harness["backend"].validations == []
+        assert harness["backend"].config_writes == []
+        assert harness["backend"].backup_starts == []
+        assert job.steps
+        assert all(step.status == "failed" and step.finished_at is not None for step in job.steps)
+
+
 def test_successful_initial_backup_records_verified_fresh_receiver_artifacts(harness):
     with SessionLocal() as db:
         inspected, source = inspect_operation(db)
@@ -527,13 +561,32 @@ def test_interrupted_job_recovery_keeps_scheduler_reservation(harness):
         state = read_operation(db, inspected["operation_id"])
         locks = list(state["reservation_keys"])
         assert locks
+        job = db.get(Job, queued["job_id"])
+        assert job is not None
+        completed = job.steps[0]
+        completed.status = "succeeded"
+        completed.result = json.dumps({"proof": "preserved"})
+        pending = JobStep(
+            id=f"{job.id}:pending-recovery-regression",
+            job_id=job.id,
+            component_key="pending-recovery-regression",
+            label="Pending recovery regression",
+            position=len(job.steps),
+            status="pending",
+        )
+        job.steps.append(pending)
+        db.commit()
         assert workflow.recover_interrupted_jobs(db) == 1
+        db.refresh(job)
         recovered = read_operation(db, inspected["operation_id"])
         assert recovered["state"] == "needs_recovery"
         for key in locks:
             assert db.scalar(__import__("sqlalchemy").select(Setting).where(Setting.key == key)) is not None
-        job = db.get(Job, queued["job_id"])
-        assert job is not None and job.status == "failed"
+        assert job.status == "failed"
+        assert completed.status == "succeeded"
+        assert completed.result == json.dumps({"proof": "preserved"})
+        pending = next(step for step in job.steps if step.component_key == "pending-recovery-regression")
+        assert pending.status == "failed" and pending.finished_at is not None
 
 
 def test_active_scheduler_reservation_blocks_a_second_reviewed_operation(harness):

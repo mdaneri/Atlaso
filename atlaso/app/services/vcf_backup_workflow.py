@@ -764,6 +764,31 @@ def _verified_artifacts(group: dict[str, Any], native_state: dict[str, Any],
     return verified
 
 
+def _validate_shared_encryption_passphrase(value: str) -> None:
+    """Enforce the stricter passphrase policy shared by every native product."""
+    if (
+        not isinstance(value, str)
+        or not 12 <= len(value) <= 20
+        or any(not 33 <= ord(char) <= 126 for char in value)
+        or not any(char.isupper() for char in value)
+        or not any(char.islower() for char in value)
+        or sum(char.isdigit() for char in value) < 2
+        or not any(not char.isalnum() for char in value)
+    ):
+        raise BackupOperationError(
+            "The backup passphrase must have 12–20 visible ASCII characters, uppercase and lowercase letters, at least two digits, and a symbol."
+        )
+
+
+def _fail_unfinished_steps(job: Job, message: str) -> None:
+    """Finish pending work after a job fails without overwriting completed steps."""
+    for step in job.steps:
+        if step.status in {"pending", "running"}:
+            step.status = "failed"
+            step.error = message
+            step.finished_at = utcnow()
+
+
 def run_job(job_id: str, manual: dict[str, Any] | None = None) -> None:
     """Configure reviewed native schedulers and verify initial backup artifacts once.
 
@@ -789,10 +814,7 @@ def run_job(job_id: str, manual: dict[str, Any] | None = None) -> None:
                 raise BackupOperationError("The receiver changed after review.")
             credentials = _worker_inputs(db, state, manual or {})
             sftp_password, passphrase = _secret(db, state["sftp_secret"]), _secret(db, state["encryption_secret"])
-            if (not 12 <= len(passphrase) <= 128 or not any(char.isupper() for char in passphrase)
-                or sum(char.isdigit() for char in passphrase) < 2 or not any(not char.isalnum() and not char.isspace() for char in passphrase)
-                or any(ord(char) < 32 for char in passphrase)):
-                raise BackupOperationError("The backup passphrase must have 12–128 characters, an uppercase letter, two digits, and a symbol.")
+            _validate_shared_encryption_passphrase(passphrase)
             # Recheck the entire plan before the first native write.
             for source in state["sources"]:
                 with NativeBackup(source, credentials[source["source_id"]]) as native:
@@ -883,9 +905,7 @@ def run_job(job_id: str, manual: dict[str, Any] | None = None) -> None:
             job = db.get(Job, job_id)
             if job is not None:
                 job.status, job.error = "failed", message
-                for step in job.steps:
-                    if step.status == "running":
-                        step.status, step.error, step.finished_at = "failed", message, utcnow()
+                _fail_unfinished_steps(job, message)
         finally:
             if job is not None:
                 job.finished_at = utcnow()
@@ -992,6 +1012,7 @@ def recover_interrupted_jobs(db: Session) -> int:
         state.update(state="needs_recovery", error="Atlaso restarted. Reconcile recorded native work before retrying.")
         row.value = _json(state)
         job.status, job.error, job.finished_at = "failed", state["error"], utcnow()
+        _fail_unfinished_steps(job, state["error"])
         count += 1
     db.commit()
     return count

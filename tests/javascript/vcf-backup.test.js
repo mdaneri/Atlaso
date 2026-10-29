@@ -31,7 +31,7 @@ test('Recovery lookup stays in Credential and ongoing status replaces Review wit
   assert.match(modal, /data-vcf-backup-review-form/);
   assert.match(modal, /data-vcf-backup-operation-id/);
   assert.doesNotMatch(modal, /detail-panel/);
-  assert.match(js, /function syncOperationView\(\)[\s\S]*?data-vcf-backup-review-form[\s\S]*?data-vcf-backup-operation[\s\S]*?data-atlaso-wizard-nav[\s\S]*?data-atlaso-wizard-back[\s\S]*?data-atlaso-wizard-next/);
+  assert.match(js, /function syncOperationView\(\)[\s\S]*?data-vcf-backup-review-form[\s\S]*?data-vcf-backup-operation[\s\S]*?setNavigationLocked/);
 });
 
 test('Wizard follows the required credential, server, explicit fingerprint, login, discovery, settings, review order', () => {
@@ -87,7 +87,7 @@ test('Discovered Fleet service base path is separated from its host and port', (
 test('The shared discovery grid is created only after its wizard step is visible and starts with discovered rows', async () => {
   const declarations = [
     'selectedComponentIds', 'isSupportedBackupRow', 'lockUnsupportedRowSelection', 'syncSupportedSelectionHeader',
-    'supportedSelectionHeaderFormatter', 'restoreSupportedSelection', 'isDiscoveryStepActive', 'renderComponents',
+    'supportedSelectionHeaderFormatter', 'restoreSupportedSelection', 'isDiscoveryStepActive', 'groupConfigurationState', 'renderComponents',
   ]
     .map(functionDeclaration).join('\n');
   assert.ok(declarations.includes('function renderComponents()'));
@@ -136,6 +136,9 @@ test('The shared discovery grid is created only after its wizard step is visible
   context.renderComponents();
   assert.equal(gridCreates, 1);
   assert.equal(config.options.data.length, 10, 'provide discovered data in the initial Tabulator config');
+  const stateFormatter = config.options.columns.find((column) => column.field === 'current').formatter;
+  assert.equal(stateFormatter({getValue: () => ({configured: false, port: 22, days: []})}).textContent, 'Not configured');
+  assert.equal(stateFormatter({getValue: () => ({host: 'backup.example', directory: '/backups'})}).textContent, 'Configured');
   assert.equal(config.options.data.filter((item) => config.options.selectableRowsCheck({getData: () => item})).length, 8);
   config.onReady(table);
   assert.deepEqual(redraws, [true], 'redraw after the shared grid reveals the element on tableBuilt');
@@ -180,14 +183,64 @@ test('Review presents exact current and proposed native settings with operator l
 });
 
 test('Current review matrix uses compact configured labels and operation state/checkpoints are operator friendly', () => {
-  const declarations = ['groupConfigurationState', 'operationStateLabel', 'checkpointLabel'].map(functionDeclaration).join('\n');
+  const declarations = ['groupConfigurationState', 'operationStateLabel', 'checkpointLabel', 'nativeStateLabel'].map(functionDeclaration).join('\n');
   const context = vm.createContext({});
   vm.runInContext(declarations, context);
   assert.equal(context.groupConfigurationState({current: {}}), 'Not configured');
   assert.equal(context.groupConfigurationState({current: {host: 'sftp.example'}}), 'Configured');
+  assert.equal(context.groupConfigurationState({current: {configured: true}}), 'Configured');
+  assert.equal(context.groupConfigurationState({current: {configured: false, host: null, port: null, user: null, directory: null, days: [], parts: [], schedule_enabled: null, state_change: false, secret_configured: false, sftp_secret_configured: false}}), 'Not configured');
+  assert.equal(context.groupConfigurationState({current: {host: null, port: 22, user: null, directory: null, days: [], parts: [], schedule_enabled: null, state_change: false, secret_configured: false, sftp_secret_configured: false}}), 'Not configured', 'vCenter default port and empty allowlisted fields do not imply a configured schedule');
   assert.equal(context.operationStateLabel('needs_recovery'), 'Needs attention');
   assert.equal(context.checkpointLabel('backup_submitted'), 'Initial backup submitted to the native appliance');
   assert.equal(context.checkpointLabel('backup_dispatch_pending'), 'Initial backup may have been started; reconcile before taking further action');
+  assert.equal(context.nativeStateLabel('running'), 'Running');
+  assert.equal(context.nativeStateLabel(undefined), 'No native task status returned');
+});
+
+test('Operation status renders reconciliation settings, native progress, verification, and all warnings safely', () => {
+  const declarations = [
+    'groupConfigurationState', 'formatReviewValue', 'publicValue', 'retentionMode', 'retentionValue',
+    'appendReviewSection', 'sourceKindLabel', 'checkpointLabel', 'nativeStateLabel', 'groupCurrentSettings', 'renderOperationGroups',
+  ].map(functionDeclaration).join('\n');
+  const makeElement = (tagName) => ({tagName, children: [], textContent: '', className: '',
+    append(...children) { this.children.push(...children); },
+    replaceChildren(...children) { this.children = [...children]; },
+  });
+  const container = makeElement('div');
+  const context = vm.createContext({
+    document: {createElement: makeElement},
+    node: (selector) => selector === '[data-vcf-backup-operation-detail]' ? container : null,
+    safeText: (value, fallback = 'Not recorded') => value === undefined || value === null || value === '' ? fallback : String(value),
+    components: [{id: 'component-1', source_id: 'source-1', name: 'SDDC Manager'}],
+    inspectedSources: [{request: {source_id: 'source-1', source_kind: 'sddc'}}],
+  });
+  vm.runInContext(declarations, context);
+  const nativeReadback = {
+    group_id: 'opaque-group-hash', checkpoint: 'backup_submitted',
+    current: {configured: true, host: 'backup.example', port: 22, user: 'atlaso', directory: '/backups/vcf', schedule_enabled: true, full_time: '02:00', days: ['MONDAY'], state_change: true, sddc_most_recent: 10, sddc_hourly_days: 2, sddc_daily_days: 15, secret_configured: true, sftp_secret_configured: true},
+    native_configuration: {state: 'running', warning: 'Native configuration poll returned HTTP 503.'},
+    native_backup: {state: 'running', warning: 'Native backup history poll returned HTTP 503.', artifacts: [{path: '/private/artifact.zip'}]},
+    verified: false,
+    warning: 'Initial artifacts exist, but the native policy no longer matches the reviewed configuration.',
+  };
+  context.renderOperationGroups(
+    [{id: 'opaque-group-hash', component_ids: ['component-1'], checkpoint: 'backup_submitted'}],
+    'backup_submitted', [nativeReadback],
+  );
+  const visible = (node) => [node.textContent || '', ...(node.children || []).map(visible)].join(' ');
+  const text = visible(container);
+  assert.match(text, /SDDC Manager — operation status/);
+  assert.match(text, /Latest checkpoint: Initial backup submitted to the native appliance/);
+  assert.match(text, /Native configuration task Running/);
+  assert.match(text, /Initial backup task Running/);
+  assert.match(text, /Atlaso backup verification Not verified/);
+  assert.match(text, /Current backup configuration Configured/);
+  assert.match(text, /Destination host backup\.example/);
+  assert.match(text, /Native configuration poll returned HTTP 503/);
+  assert.match(text, /Native backup history poll returned HTTP 503/);
+  assert.match(text, /native policy no longer matches/);
+  assert.doesNotMatch(text, /opaque-group-hash|secret_configured|private\/artifact\.zip/);
 });
 
 test('An active operation hides plan acknowledgements and locks every prior wizard step', () => {
@@ -207,7 +260,7 @@ test('An active operation hides plan acknowledgements and locks every prior wiza
     ['[data-atlaso-wizard-back]', back], ['[data-atlaso-wizard-next]', next], ['[data-atlaso-wizard-submit]', submit],
     ['[data-atlaso-wizard-title]', title], ['[data-atlaso-wizard-description]', description],
   ]);
-  const context = vm.createContext({operationStarted: true, node: (selector) => elements.get(selector), form: {querySelectorAll: () => [nav]}});
+  const context = vm.createContext({operationStarted: true, node: (selector) => elements.get(selector), wizard: {setNavigationLocked(value) { nav.disabled = value; }}});
   vm.runInContext(declarations, context);
   context.syncOperationView();
   assert.equal(reviewForm.classList.hidden, true);
@@ -215,11 +268,7 @@ test('An active operation hides plan acknowledgements and locks every prior wiza
   assert.equal(title.textContent, 'Backup status');
   assert.match(description.textContent, /verify the initial backup/);
   assert.equal(nav.disabled, true);
-  assert.equal(nav.attributes['aria-disabled'], 'true');
-  assert.equal(back.classList.hidden, true);
-  assert.equal(next.classList.hidden, true);
-  assert.equal(submit.classList.hidden, true);
-  assert.equal(submit.disabled, true);
+
 });
 
 test('Discovery refresh restores only matching eligible IDs and drops unsupported or stale choices', () => {
@@ -309,9 +358,9 @@ test('Schedule controls appear only for selected native products that use them',
 
 test('The updated backup script URL and service worker cache version stay aligned', () => {
   const worker = fs.readFileSync(path.join(__dirname, '../../atlaso/app/static/service-worker.js'), 'utf8');
-  assert.match(helper, /vcf-backup\.js\?v=issue-1066-6/);
-  assert.match(worker, /ATLASO_CACHE_PREFIX\}397/);
-  assert.match(worker, /vcf-backup\.js\?v=issue-1066-6/);
+  assert.match(helper, /vcf-backup\.js\?v=issue-1066-7/);
+  assert.match(worker, /ATLASO_CACHE_PREFIX\}398/);
+  assert.match(worker, /vcf-backup\.js\?v=issue-1066-7/);
 });
 
 test('Review binds the selected component IDs, source credentials, policy, and saved secret references', () => {
@@ -344,7 +393,7 @@ test('Configuration executes only with a fresh review and explicit recovery, rep
   assert.match(modal, /name="acknowledged" required/);
   assert.match(js, /function lockSubmitAfterOperation\(\)[\s\S]*?window\.setTimeout\(\(\) => \{\s+if \(operationStarted\) node\("\[data-atlaso-wizard-submit\]"\)\.disabled = true;/);
   assert.match(js, /onStepChange: \(\{step\}\) => \{\s+const body = node\("\.vcf-sddc-wizard-body"\);[\s\S]*?if \(step\.id === "discovery"\) renderComponents\(\);\s+syncOperationView\(\);/);
-  assert.match(js, /function syncOperationView\(\)[\s\S]*?button\.disabled = true[\s\S]*?data-atlaso-wizard-submit[\s\S]*?\.disabled = true/);
+  assert.match(js, /function syncOperationView\(\)[\s\S]*?wizard\?\.setNavigationLocked\(active\)/);
 });
 
 test('Task polling reads operation state while reconcile remains a separate read-only action', () => {
@@ -353,7 +402,12 @@ test('Task polling reads operation state while reconcile remains a separate read
   assert.match(js, /schedulePoll\(1800\)/);
   assert.match(modal, /data-vcf-backup-reconcile/);
   assert.match(modal, /data-vcf-backup-task-link/);
-  assert.match(modal, /Reconciliation rechecks current native settings and backup status\. It does not configure native settings or start another backup\./);
+  assert.match(modal, /data-vcf-backup-recovery-guidance/);
+  assert.match(modal, /data-vcf-backup-native-running-warning/);
+  assert.match(modal, /After checking native status, finish recovery so I can review a new plan\./);
+  assert.match(js, /error\.textContent = result\.error \|\| ""/);
+  assert.match(js, /guidance\.textContent = result\.recovery_warning \|\|/);
+  assert.match(js, /renderOperationGroups\(result\.groups, result\.checkpoint, reconciliation\)/);
 });
 
 test('Closing the dialog clears every request-local manual password', () => {
@@ -380,7 +434,8 @@ test('Review highlights native side effects and operation results prioritize err
   assert.match(js, /Important native side effects/);
   assert.match(js, /group\.side_effects/);
   assert.match(js, /item\.coverage_gap/);
-  assert.match(js, /error\.textContent = result\.error \|\| result\.recovery_warning/);
+  assert.match(js, /error\.textContent = result\.error \|\| ""/);
+  assert.match(js, /guidance\.textContent = result\.recovery_warning \|\|/);
 });
 
 test('Terminal operations can be explicitly cleared before a fresh plan', () => {

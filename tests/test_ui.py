@@ -1039,7 +1039,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}391`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}398`;' in service_worker.text
     assert "/static/vcf-certificate-renewal.js?v=issue-1052-4" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
@@ -1057,7 +1057,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert '!hasDownloadLikePath(url)' in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
     assert "/static/app.css?v=ca-csr-intake-1028-1" in service_worker.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11" in service_worker.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-12" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
     assert "/static/app.js?v=same-interface-gateway-1045-2" in service_worker.text
@@ -1119,10 +1119,10 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-12"
         )
         assert shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-12"
         ) < shell.index(app_asset)
     assert "/static/app.css?v=ca-csr-intake-1028-1" in public_base
 
@@ -1789,7 +1789,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vcf-helper-tabs-1027-2" in page.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11" in page.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-12" in page.text
     assert "/static/app.js?v=same-interface-gateway-1045-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200

@@ -95,12 +95,13 @@
             <p class="status-badge" data-vcf-backup-operation-state>Task status</p>
             <p data-vcf-backup-operation-detail></p>
             <p class="alert error hidden" data-vcf-backup-operation-error role="alert"></p>
+            <p class="alert warning hidden" data-vcf-backup-native-running-warning role="status"></p>
             <progress max="100" value="0" aria-label="Backup verification progress" data-vcf-backup-progress></progress>
             <div class="settings-list compact-settings-list" data-vcf-backup-operation-sources></div>
             <div class="form-stack" data-vcf-backup-recovery-credentials></div>
             <p><a class="button ghost hidden" data-vcf-backup-task-link href="{{ management_ui_root }}/tasks">Open task</a></p>
-            <p class="muted">Reconciliation rechecks current native settings and backup status. It does not configure native settings or start another backup.</p>
-            <label class="switch-field" data-vcf-backup-close-control><span>After reconciliation, close this recovery record and release its scheduler reservations.</span><input type="checkbox" name="close_recovery"></label>
+            <p class="muted" data-vcf-backup-recovery-guidance>Reconcile checks current native settings and backup status without repeating native writes.</p>
+            <label class="switch-field" data-vcf-backup-close-control><span>After checking native status, finish recovery so I can review a new plan.</span><input type="checkbox" name="close_recovery"></label>
             <button class="button secondary" type="button" data-vcf-backup-reconcile>Reconcile (read-only)</button>
             <button class="button ghost hidden" type="button" data-vcf-backup-new-plan>Start a new plan</button>
           </section>
