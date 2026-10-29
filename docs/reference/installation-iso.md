@@ -207,6 +207,8 @@ Escape cancels before credentials or disk writes.
 It obtains no credentials and compares both stopped disks. `CustomAliasProbe` submits `/srv` in the native **Create New**
 form and requires the complete `Use /var/srv; /srv is a symlink.` refusal, including its native wrapped display and
 the form controls. It then stops the VM and compares both disks; it sends no credentials or erasure consent.
+The public observer requires the whole message across adjacent display rows within that form. Its numeric cursor
+parser remains unchanged and does not assign widths to unknown characters.
 `CustomReboot` creates one remaining-size `ext4` root
 partition on the fixture's selected 64-GiB disk through the native **Create New** form. Before consent it requires
 the complete review: that exact disk, only the native 10-MiB EFI partition and remaining-size root, the full erasure

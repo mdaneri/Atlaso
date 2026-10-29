@@ -648,9 +648,10 @@ function Test-InstallationCustomPublicState {
         return $candidates -eq 1
     }
     if ($Kind -eq 'Alias') {
-        # Native ReadMulText has a 47-column window in this 80-column viewport.
-        # Its validation error starts at the first label's length and wraps to
-        # the window's left edge. Locate that geometry from the retained Form.
+        # Bind the complete refusal to the native Form and its error origin.
+        # A retained decoded continuation can start left of the label-derived
+        # edge. Compare the exact adjacent fragments without assigning widths
+        # to unknown characters or assuming a decoded wrap column.
         $expected = 'Use /var/srv; /srv is a symlink.'
         $typeLabel = 'Type: (ext3, ext4, xfs, btrfs, swap)'
         $candidates = 0
@@ -663,10 +664,19 @@ function Test-InstallationCustomPublicState {
                 -not $rows[$row + 7].Substring($left, 47).Contains('<OK>', [StringComparison]::Ordinal) -or
                 -not $rows[$row + 7].Substring($left, 47).Contains('<Cancel>', [StringComparison]::Ordinal)) { continue }
             $column = $left + 'Size in MB: 65536 available'.Length
-            $firstLength = $left + 47 - $column
-            if (($rows[$row - 4].Substring($column, $firstLength) +
-                    $rows[$row - 3].Substring($left, $expected.Length - $firstLength)) -ceq $expected) {
-                $candidates++
+            for ($split = 'Use /var/srv;'.Length; $split -lt $expected.Length; $split++) {
+                if ($column + $split -gt 80 -or
+                    $rows[$row - 4].Substring($column, $split) -cne $expected.Substring(0, $split)) { continue }
+                $tail = $expected.Substring($split)
+                $continuation = $rows[$row - 3].IndexOf($tail, [StringComparison]::Ordinal)
+                $textColumn = $continuation + $tail.Length - $tail.TrimStart(' ').Length
+                if ($continuation -ge 0 -and $textColumn -lt $labelColumn -and
+                    $continuation + $tail.Length -le $column) {
+                    # A boundary space can yield two equivalent splits of the
+                    # same message. Count its origin once, never as two dialogs.
+                    $candidates++
+                    break
+                }
             }
         }
         return $candidates -eq 1

@@ -1001,6 +1001,18 @@ $aliasMessage = 'Use /var/srv; /srv is a symlink.'
 $aliasRefusal = $customForm + "`e[5;36H" + $aliasMessage.Substring(0, 20) + "`e[6;9H" + $aliasMessage.Substring(20)
 Assert-InstallationVmCondition (Test-InstallationCustomPublicState -Text $aliasRefusal -Kind Alias) `
     'The complete alias refusal must span the native window and retain all public form controls.'
+$observedAliasForm = "`e[2J`e[34h`e[7;20HSize in MB: 65536 available`e[11;20HType: (ext3, ext4, xfs, btrfs, swap)`e[15;20HMountpoint:`e[18;24H<Cancel>`e[18;55H<OK>"
+$observedAliasRefusal = $observedAliasForm + "`e[7;46H" + $aliasMessage.Substring(0, 19) + "`e[8;18H" + $aliasMessage.Substring(19)
+Assert-InstallationVmCondition (Test-InstallationCustomPublicState -Text $observedAliasRefusal -Kind Alias) `
+    'The measured native continuation left of the label must admit the complete message once despite equivalent boundary-space splits.'
+foreach ($invalidObservedAlias in @($observedAliasRefusal.Replace('symlink.', 'symlinx.'),
+        $observedAliasRefusal.Replace("`e[8;18H" + $aliasMessage.Substring(19), ''),
+        $observedAliasRefusal.Replace("`e[8;18H", "`e[8;20H"),
+        $observedAliasRefusal.Replace("`e[7;46H", "`e[7;45H"),
+        $observedAliasRefusal.Replace('<OK>', ''), $observedAliasRefusal.Replace('Mountpoint:', ''))) {
+    Assert-InstallationVmCondition (-not (Test-InstallationCustomPublicState -Text $invalidObservedAlias -Kind Alias)) `
+        'Changed tails, truncation, wrong origins, continuations outside the field edge and missing form context must refuse.'
+}
 foreach ($invalidAlias in @($aliasRefusal.Replace('symlink.', 'symlinx.'),
         $aliasRefusal.Replace("`e[6;9H" + $aliasMessage.Substring(20), ''),
         $aliasRefusal.Replace('Mountpoint:', ''), $aliasRefusal.Replace('<Cancel>', ''),
