@@ -24,7 +24,7 @@ Probe the native UI, cancel at disk/layout review, reject insufficient capacity,
 CustomCancel verifies empty-layout refusal and cancels without credentials or consent.
 CustomReboot installs one native Custom remaining-size ext4 root and boots without media.
 MultiProbe admits the fixed three-disk menu without writes or credentials.
-CustomMultiReboot installs a root and separate 8 GiB /srv filesystem while preserving the third, unselected disk.
+CustomMultiReboot installs a root and separate 8 GiB /var/srv filesystem while preserving the third, unselected disk.
 LoginInstalled resumes an already installed, receipt-bound VM without repeating installation.
 BootInstalled completes a VNC-driven installation by disconnecting media and checking ordinary serial login.
 VncCredential submits one SDK account value at an operator-observed concealed installer field.
@@ -685,7 +685,7 @@ function Test-InstallationCustomPublicState {
         if ($path -ceq $ExpectedDisk) {
             if ($body[$index++] -cne '  /boot/efi vfat 10 MiB (Photon UEFI default)' -or
                 $body[$index++] -cne '  / ext4 remaining MiB') { return $false }
-        } elseif ($body[$index++] -cne '  /srv ext4 remaining MiB') { return $false }
+        } elseif ($body[$index++] -cne '  /var/srv ext4 remaining MiB') { return $false }
     }
     return ($body[$index++] -ceq 'ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.' -and
         $body[$index] -ceq 'Select Yes to continue or No to cancel.' -and
@@ -769,7 +769,7 @@ Numeric state shared with all waits on this private pipe.
 .PARAMETER Cancel
 Verify empty-layout refusal and cancel instead of preparing a single-root install.
 .PARAMETER MultiDisk
-Select the fixed 64/8/4 GiB fixture and add /srv on the separate selected data disk.
+Select the fixed 64/8/4 GiB fixture and add /var/srv on the separate selected data disk.
 #>
 function Invoke-InstallationCustomLayout {
     param([IO.Pipes.NamedPipeServerStream]$Pipe, [DateTimeOffset]$Deadline, [hashtable]$CursorState, [switch]$Cancel, [switch]$MultiDisk)
@@ -794,7 +794,7 @@ function Invoke-InstallationCustomLayout {
         $dataDisk = ''
         if ($MultiDisk) {
             $dataDisk = @($options | Where-Object SizeGiB -EQ 8)[0].DiskPath
-            $partitions += [pscustomobject]@{ SizeGiB = 8; Path = $dataDisk; Mount = '/srv' }
+            $partitions += [pscustomobject]@{ SizeGiB = 8; Path = $dataDisk; Mount = '/var/srv' }
         }
         Send-InstallationConsoleText -Pipe $Pipe -Text "`n"
         for ($index = 0; $index -lt $partitions.Count; $index++) {

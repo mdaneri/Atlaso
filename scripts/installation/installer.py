@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import curses
 import os
+import posixpath
 import re
 import secrets
 import shutil
@@ -14,7 +15,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 SOURCE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SOURCE))
@@ -45,6 +46,77 @@ NATIVE_PATH = Path("/usr/lib/python3.11/site-packages/photon_installer")
 TRUST_KEY = Path("/etc/atlaso-installer/trust.pem")
 MINIMUM_DISK_BYTES = 64 * 1024**3
 MAX_INSPECTION_SOFTWARE_BYTES = 2 * 1024**3
+
+
+def filesystem_mount_aliases(media: Path, identity: dict) -> dict[str, str]:
+    """Read symlink mount aliases from the authenticated native filesystem RPM.
+
+    Args:
+        media: Read-only payload already admitted by ``verify_media``.
+        identity: Signature-verified manifest with the complete RPM inventory.
+    """
+    records = [item for item in identity["rpm_inventory"] if item["name"] == "filesystem"]
+    if len(records) != 1:
+        raise ValueError("installation requires exactly one authenticated filesystem RPM")
+    record = records[0]
+    name = record["file"]
+    if not re.fullmatch(r"[A-Za-z0-9+._-]+\.rpm", name):
+        raise ValueError("filesystem RPM filename is invalid")
+    package = media / "rpms" / name
+    if package.is_symlink() or not package.is_file() or digest(package) != record["sha256"]:
+        raise ValueError("authenticated filesystem RPM changed before mount admission")
+    result = subprocess.run(
+        ["rpm", "-qp", "--qf", "[%{FILENAMES}\t%{FILELINKTOS}\n]", str(package)],
+        check=True, capture_output=True, text=True, timeout=15,
+    )
+    if not result.stdout or len(result.stdout) > 65536:
+        raise ValueError("filesystem RPM path inventory is missing or exceeds its bound")
+    aliases = {}
+    seen = set()
+    for line in result.stdout.splitlines():
+        fields = line.split("\t")
+        if len(fields) != 2:
+            raise ValueError("filesystem RPM path inventory is malformed")
+        path, link = fields
+        if (not path.startswith("/") or path.startswith("//") or str(PurePosixPath(path)) != path or ".." in PurePosixPath(path).parts
+                or path in seen or any(ord(char) < 32 or ord(char) > 126 for char in path + link)):
+            raise ValueError("filesystem RPM path inventory is invalid or duplicated")
+        seen.add(path)
+        if link:
+            aliases[path] = posixpath.normpath(posixpath.join(posixpath.dirname(path), link))
+    if not aliases:
+        raise ValueError("filesystem RPM has no native mount alias inventory")
+    return aliases
+
+
+def validate_custom_mountpoint(mountpoint: str, aliases: dict[str, str]) -> None:
+    """Reject noncanonical and package-owned symlink mounts before disk consent.
+
+    Args:
+        mountpoint: Native Custom mount field supplied by the operator.
+        aliases: Filesystem aliases derived from the authenticated Photon RPM.
+    """
+    path = PurePosixPath(mountpoint)
+    if (not path.is_absolute() or mountpoint.startswith("//") or str(path) != mountpoint or ".." in path.parts
+            or any(ord(char) < 32 or ord(char) == 127 for char in mountpoint)):
+        raise ValueError("Use an absolute canonical mount point.")
+    canonical = mountpoint
+    visited = set()
+    for _ in range(len(aliases) + 1):
+        if canonical in visited:
+            raise ValueError("Photon filesystem aliases contain a cycle.")
+        visited.add(canonical)
+        prefix = next((alias for alias in sorted(aliases, key=len, reverse=True)
+                       if canonical == alias or canonical.startswith(alias + "/")), None)
+        if prefix is None:
+            break
+        canonical = posixpath.normpath(aliases[prefix] + canonical[len(prefix):])
+    else:
+        raise ValueError("Photon filesystem aliases exceed their bound.")
+    if canonical != mountpoint:
+        raise ValueError(f"Use {canonical}; {mountpoint} is a symlink.")
+    if any(mountpoint == root or mountpoint.startswith(root + "/") for root in ("/proc", "/sys", "/dev", "/run", "/tmp")):
+        raise ValueError("Mount point is reserved by Photon.")
 
 
 class Cancelled(Exception):
@@ -137,12 +209,13 @@ def show_layout_review_pages(maxy: int, maxx: int, lines: list[str], *, heading:
             raise Cancelled()
 
 
-def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tuple[str, str]]:
+def configure_console(screen, initial: dict[str, dict], mount_aliases: dict[str, str]) -> tuple[dict, dict, tuple[str, str]]:
     """Collect the native layout, destructive consent, and concealed credentials.
 
     Args:
         screen: Active curses screen used by the installer.
-        initial: Read-only disk identities captured before operator selection."""
+        initial: Read-only disk identities captured before operator selection.
+        mount_aliases: Native symlinks from the authenticated filesystem RPM."""
     from custompartition import CustomPartition
     from device import Device
     from partitionpane import PartitionPane
@@ -222,6 +295,11 @@ def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tup
                 return False, "The root filesystem must be ext4, xfs, or btrfs."
             if values and values[1] not in {"ext4", "xfs", "btrfs", "swap"}:
                 return False, "Use ext4, xfs, btrfs, or swap."
+            if values and values[2]:
+                try:
+                    validate_custom_mountpoint(values[2], mount_aliases)
+                except ValueError as error:
+                    return False, str(error)
             selected = self.devices[self.device_index].path
             self.has_empty = any(
                 path == selected and self.cp_config.get(f"{index}partition_info0") == ""
@@ -256,6 +334,9 @@ def configure_console(screen, initial: dict[str, dict]) -> tuple[dict, dict, tup
                 raise Cancelled()
         else:
             config["partitions"] = [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]
+        for partition in config["partitions"]:
+            if partition.get("mountpoint"):
+                validate_custom_mountpoint(partition["mountpoint"], mount_aliases)
         paths = selected_disks(config)
         consent = {path: initial[path] for path in paths}
         revalidate_disks(config, consent, disk_inventory())
@@ -641,7 +722,8 @@ def main() -> int:
     sys.path.insert(0, str(NATIVE_PATH))
     with tempfile.TemporaryDirectory(prefix="atlaso-installer-", dir="/run") as temporary:
         identity = verify_media(args.media, TRUST_KEY, scratch=Path(temporary), expected_key_id=installer_key_id(), boot_crypto=True)
-    config, consent, credentials = curses.wrapper(configure_console, disk_inventory())
+    mount_aliases = filesystem_mount_aliases(args.media, identity)
+    config, consent, credentials = curses.wrapper(configure_console, disk_inventory(), mount_aliases)
     try:
         install(args.media, identity, config, consent, credentials)
     finally:

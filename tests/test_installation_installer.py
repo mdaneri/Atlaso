@@ -1,5 +1,6 @@
 """Exercise installer consent and failure paths without touching a block device."""
 
+import hashlib
 import importlib.util
 import shutil
 import subprocess
@@ -21,6 +22,100 @@ Args:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.mark.parametrize("mountpoint,expected", [
+    ("/", None), ("/var/srv", None), ("/var/srv/app", None),
+    ("/srv", "Use /var/srv"), ("/srv/app", "Use /var/srv/app"),
+    ("/bin/app", "Use /usr/bin/app"), ("/var/run/app", "Use /run/app"),
+    ("//srv", "canonical"), ("/srv/../var/srv", "canonical"), ("/var/srv\n", "canonical"),
+    ("/var//srv", "canonical"), ("/var/srv/", "canonical"), ("relative", "canonical"),
+    ("/proc", "reserved"), ("/proc/app", "reserved"), ("/sys", "reserved"),
+    ("/dev/app", "reserved"), ("/run", "reserved"), ("/tmp/app", "reserved"),
+])
+def test_custom_mountpoint_rejects_native_aliases_before_consent(monkeypatch, mountpoint, expected):
+    """Keep operator mount points canonical without rewriting a reviewed plan.
+
+    Args:
+        monkeypatch: Controlled native module loader.
+        mountpoint: Proposed public Custom field.
+        expected: Expected refusal substring, or acceptance for canonical paths.
+    """
+    module = load_installer(monkeypatch)
+    aliases = {"/srv": "/var/srv", "/bin": "/usr/bin", "/var/run": "/run"}
+    if expected:
+        with pytest.raises(ValueError, match=expected):
+            module.validate_custom_mountpoint(mountpoint, aliases)
+    else:
+        module.validate_custom_mountpoint(mountpoint, aliases)
+
+
+def test_custom_mountpoint_refuses_native_alias_cycles(monkeypatch):
+    """Fail before consent on a malformed native alias chain.
+
+    Args:
+        monkeypatch: Controlled native module loader.
+    """
+    module = load_installer(monkeypatch)
+    with pytest.raises(ValueError, match="cycle"):
+        module.validate_custom_mountpoint("/a", {"/a": "/b", "/b": "/a"})
+
+
+@pytest.mark.parametrize("failure", ["", "changed", "missing", "duplicate", "malformed", "duplicate-path", "oversized", "timeout"])
+def test_mount_alias_inventory_is_authenticated_and_bounded(monkeypatch, tmp_path, failure):
+    """Query package headers only and reject missing, changed or malformed inputs.
+
+    Args:
+        monkeypatch: Native query replacement; no package scripts run.
+        tmp_path: Synthetic authenticated media directory.
+        failure: Guard whose refusal must precede native layout use.
+    """
+    module = load_installer(monkeypatch)
+    directory = tmp_path / "rpms"
+    directory.mkdir()
+    package = directory / "filesystem-test.rpm"
+    package.write_bytes(b"synthetic authenticated package")
+    record = {"name": "filesystem", "file": package.name, "sha256": hashlib.sha256(package.read_bytes()).hexdigest()}
+    identity = {"rpm_inventory": [record]}
+    calls = []
+    if failure == "changed":
+        package.write_bytes(b"changed")
+    elif failure == "missing":
+        identity["rpm_inventory"] = []
+    elif failure == "duplicate":
+        identity["rpm_inventory"].append(record.copy())
+
+    def query(command, **kwargs):
+        """Return public RPM header rows without reading or executing an RPM.
+
+        Args:
+            command: Exact read-only query argument vector.
+            **kwargs: Required subprocess deadline and output settings.
+        """
+        calls.append(command)
+        assert command == ["rpm", "-qp", "--qf", "[%{FILENAMES}\t%{FILELINKTOS}\n]", str(package)]
+        assert kwargs == {"check": True, "capture_output": True, "text": True, "timeout": 15}
+        if failure == "timeout":
+            raise subprocess.TimeoutExpired(command, 15)
+        output = "/srv\tvar/srv\n/var/run\t../run\n/var\t\n"
+        if failure == "malformed":
+            output = "/srv missing-tab\n"
+        elif failure == "duplicate-path":
+            output += "/srv\tvar/srv\n"
+        elif failure == "oversized":
+            output = "x" * 65537
+        return SimpleNamespace(stdout=output)
+
+    monkeypatch.setattr(module.subprocess, "run", query)
+    if failure:
+        expected = subprocess.TimeoutExpired if failure == "timeout" else ValueError
+        with pytest.raises(expected):
+            module.filesystem_mount_aliases(tmp_path, identity)
+        if failure in {"changed", "missing", "duplicate"}:
+            assert calls == []
+    else:
+        assert module.filesystem_mount_aliases(tmp_path, identity) == {"/srv": "/var/srv", "/var/run": "/run"}
+        assert len(calls) == 1
 
 
 def assert_native_confirmation_geometry(height, width, maxy, maxx, starty, message):
@@ -593,7 +688,7 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
 
     if size_gib < 64:
         with pytest.raises(module.Cancelled):
-            module.configure_console(Screen(), initial)
+            module.configure_console(Screen(), initial, {"/srv": "/var/srv"})
         assert calls == ["revalidate"]
         assert confirmation["info"] is True
         assert "default installation requires a disk of at least 64 GiB" in confirmation["message"]
@@ -601,7 +696,7 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
         assert "Press Enter to choose another disk, or Esc to cancel." in confirmation["message"]
     else:
         with pytest.raises(module.Cancelled):
-            module.configure_console(Screen(), initial)
+            module.configure_console(Screen(), initial, {"/srv": "/var/srv"})
         assert calls == ["revalidate"]
         assert confirmation["default"] == 1
         assert "Erase selected disks?" in confirmation["message"]
@@ -707,7 +802,7 @@ def test_small_default_disk_refusal_returns_to_native_disk_selection(monkeypatch
     monkeypatch.setattr(module, "prompt", lambda *_args, **_kwargs: pytest.fail("credentials must follow capacity admission"))
 
     with pytest.raises(module.Cancelled):
-        module.configure_console(Screen(), initial)
+        module.configure_console(Screen(), initial, {"/srv": "/var/srv"})
 
     assert selected == ["/dev/sdb", "/dev/nvme0n1"]
     assert len(revalidated) == 2
@@ -826,6 +921,11 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
             assert self.validate_partition(("", "vfat", "/", "0")) == (
                 False, "The root filesystem must be ext4, xfs, or btrfs.",
             )
+            assert self.validate_partition(("", "ext4", "/srv", "0")) == (
+                False, "Use /var/srv; /srv is a symlink.",
+            )
+            assert self.cp_config["partitionsnumber"] == 0
+            assert self.partition_disks == {}
             self.create_function()
             self.cp_config.update({"partitionsnumber": 0, "0partition_info0": "existing"})
             self.validate_partition(("", "ext4", "/", "0"))
@@ -916,7 +1016,7 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
     monkeypatch.setattr(module.curses, "curs_set", lambda *_args: None, raising=False)
     monkeypatch.setattr(module.curses, "color_pair", lambda *_args: 0, raising=False)
 
-    config, consent, _credentials = module.configure_console(Screen(), initial)
+    config, consent, _credentials = module.configure_console(Screen(), initial, {"/srv": "/var/srv"})
 
     assert interactions == [[
         {"mountpoint": "/", "filesystem": "ext4", "size": 0, "disk": "/dev/nvme0n1"},
@@ -1056,7 +1156,7 @@ def test_large_custom_disk_review_pages_identities_and_layout_before_cancellable
     monkeypatch.setattr(module.curses, "color_pair", lambda *_args: 0, raising=False)
 
     with pytest.raises(module.Cancelled):
-        module.configure_console(Screen(), initial)
+        module.configure_console(Screen(), initial, {"/srv": "/var/srv"})
 
     information = [dialog["message"] for dialog in dialogs if dialog["info"]]
     assert len(information) >= 4

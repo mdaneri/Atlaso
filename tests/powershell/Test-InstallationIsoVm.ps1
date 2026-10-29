@@ -948,7 +948,7 @@ function New-InstallationTestMultiReview {
     foreach ($path in $paths) {
         $body += ($path + ' planned layout:')
         if ($path -ceq $RootDisk) { $body += @('  /boot/efi vfat 10 MiB (Photon UEFI default)', '  / ext4 remaining MiB') }
-        else { $body += '  /srv ext4 remaining MiB' }
+        else { $body += '  /var/srv ext4 remaining MiB' }
     }
     $body += @('', 'ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.', 'Select Yes to continue or No to cancel.', '', 'Yes        No')
     return "`e[2J`e[34h`e[3;6H" + ($body -join "`r`n     ")
@@ -958,10 +958,10 @@ foreach ($diskPair in @(@('/dev/sda', '/dev/sdc'), @('/dev/sdc', '/dev/sda'))) {
     Assert-InstallationVmCondition (Test-InstallationCustomPublicState -Text $multiReview -Kind MultiReview -ExpectedDisk $diskPair[0] -ExpectedDataDisk $diskPair[1]) `
         'The exact multi-disk review must admit either native path ordering while binding root64/data8 and only their three partitions.'
     foreach ($bad in @(
-            $multiReview.Replace('  /srv ext4 remaining MiB', '  /srv xfs remaining MiB'),
-            $multiReview.Replace('  /srv ext4 remaining MiB', '  /data ext4 remaining MiB'),
-            $multiReview.Replace('  /srv ext4 remaining MiB', ''),
-            $multiReview.Replace('  /srv ext4 remaining MiB', "  /srv ext4 remaining MiB`r`n       swap swap 1 MiB"),
+            $multiReview.Replace('  /var/srv ext4 remaining MiB', '  /var/srv xfs remaining MiB'),
+            $multiReview.Replace('  /var/srv ext4 remaining MiB', '  /data ext4 remaining MiB'),
+            $multiReview.Replace('  /var/srv ext4 remaining MiB', ''),
+            $multiReview.Replace('  /var/srv ext4 remaining MiB', "  /var/srv ext4 remaining MiB`r`n       swap swap 1 MiB"),
             $multiReview.Replace('8 GiB', '4 GiB'),
             $multiReview.Replace('Planned layout:', "Planned layout:`r`n     /dev/sdb planned layout:"),
             $multiReview.Replace('vfat 10 MiB', 'vfat 100 MiB'),

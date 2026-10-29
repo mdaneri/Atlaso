@@ -223,10 +223,13 @@ the original two-disk gate remains **74 GiB**. The fixed profile is recorded in 
 receipts before use. Existing operations derive it from those sealed receipts; missing legacy profile fields admit
 only the original two-disk recipe. Profiles are never inferred from a current VMX or transferred between VMs.
 `MultiProbe` obtains no credentials and verifies all three stopped disks against their original baselines.
-`CustomMultiReboot` creates a remaining-size `ext4` root on the 64-GiB disk and a remaining-size `ext4` `/srv` on the
+`CustomMultiReboot` creates a remaining-size `ext4` root on the 64-GiB disk and a remaining-size `ext4` `/var/srv` on the
 8-GiB disk. Its complete review must identify exactly those two disks and the native EFI/root/data partitions before
 Yes. The 4-GiB disk remains independently unselected and is compared after installation and media-free reboot.
 Use a fresh receipt-bound directory and `-Scenario CustomMultiReboot` with the same inspection options as above.
+The Custom editor rejects symlink mount targets from the authenticated Photon `filesystem` RPM before consent.
+For example, `/srv` is a native alias for `/var/srv`; enter `/var/srv` explicitly so the reviewed path matches the
+installed filesystem. Reserved live-system paths and noncanonical paths are also refused.
 Cancellation checks include every selected disk as well as the unselected disk. A mismatched profile, missing disk,
 extra disk or partition, changed path or size, truncated review, or additional device fails admission.
 Creation records a separate disk-baseline receipt before first boot. Retain both original receipt paths and their
@@ -672,6 +675,11 @@ the same immutable `7df968dc3` media passed its complete native review, media-fr
 and account challenges, all five content checks, and stopped unselected-disk comparison. Its content measurements
 equalled both earlier Auto installations, while machine and SSH identities differed. This is single-root Custom
 evidence; it does not establish multi-disk Custom or physical acceptance.
+
+A fresh host `4c9638772` multi-disk run admitted its complete two-disk plan, then failed during the native filesystem
+RPM transaction with error 1525. Its `/srv` mount conflicts with the authenticated RPM's `/srv -> var/srv` alias;
+the original failed VM, receipts and stopped unselected-disk comparison are retained. This is a failed installation,
+not multi-disk acceptance. The updated alias check and canonical `/var/srv` fixture require new development media.
 
 Disconnected update/rollback, multi-disk Custom and fault scenarios, certificate address-control acceptance,
 and preservation of disks carrying old Atlaso labels remain outstanding. Do not describe the installer as validated
