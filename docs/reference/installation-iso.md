@@ -11,11 +11,12 @@ status: roadmap
 
 This reference records the build and release path for
 [issue #542](https://github.com/mdaneri/Atlaso/issues/542). The development ISO from source commit
-`353be9d4cb12d8116530e89b2147ca19154b0a7a` completed two independent disconnected Auto installations in VMware.
-Both booted without media, passed root/admin authentication and account challenges, matched the application wheel,
-and preserved their unselected disks. Public machine and SSH identities differed between installations and stayed
-stable across two resumes of the first VM. These VNC installations used a one-time `console=tty0` boot override;
-the default serial installer path and broader installed-system acceptance remain in progress. Physical
+`7df968dc3079f3e7cf09655e248d961b8bc05c9d` completed two independent disconnected Auto installations through the default
+serial path in VMware, inspected with host source `9337eb391f4500ae3ae557b672074bba4abc79a8`.
+Both booted without media, passed root/admin authentication and account challenges, matched all five installed-content
+measurements, and preserved their unselected disks. Public machine and SSH identities differed between installations;
+the first VM retained its identity across a later network boot. Three later certificate-pinned host OpenAPI samples
+passed, while an initial failed API probe and broader installer acceptance remain under investigation. Physical
 SATA/NVMe and wired-Ethernet acceptance remains outstanding. This VM result does not establish physical-platform
 support or complete issue acceptance.
 
@@ -198,7 +199,9 @@ The same confirmation displays the selected disks and proposed layout; no typed 
 Large disk-identity summaries and custom layouts use native review pages before that final confirmation. `Insufficient`
 selects the fixture's four-GiB disk and requires the exact capacity refusal for that disk before consent. Both
 scenarios use no credentials and compare both disks with their pre-boot baselines after stopping the VM.
-The native capacity dialog identifies the selected disk and its size. Enter returns to explicit disk selection;
+The native capacity dialog identifies the selected disk and its size. The console test reads all four complete message
+rows inside the native panel border and still requires the exact selected disk and byte count. Enter returns to explicit
+disk selection;
 Escape cancels before credentials or disk writes.
 Creation records a separate disk-baseline receipt before first boot. Retain both original receipt paths and their
 creation-time hashes from the console driver's ownership output. The console runner automatically verifies disks
@@ -511,8 +514,9 @@ The development `Probe` and `Cancel` scenarios passed earlier. A disconnected `A
 the receipt-bound VM for source commit `960621fdd0e6c1babcc707e2ca0ca2896539876e`. After stopping the VM,
 receipt-bound verification confirmed the unselected disk's logical contents matched its pre-boot baseline. Fresh
 machine identity uniqueness and application wheel equality subsequently passed on two independent installations from
-the source commit recorded above. The host-facing `/openapi.json`, Appliance Update success
-and rollback persistence, and physical acceptance remain outstanding. A serial-enabled boot attempt exposed a missing
+the source commit recorded above. Later host-facing `/openapi.json` measurements are recorded in
+[Acceptance status](#acceptance-status); Appliance Update success and rollback persistence, and physical acceptance
+remain outstanding. A serial-enabled boot attempt exposed a missing
 initramfs package. After adding its resolved RPM
 closure, the corrected development image completed disconnected installation and booted without media through systemd
 to the root login/password prompts. After correcting shell readiness and PowerShell Enter handling, the retained
@@ -521,7 +525,7 @@ post-reboot comparison confirmed the unselected disk was unchanged. The console 
 Photon's bracketed root prompts, colon-path prompts, and Bash fallback prompts after removing terminal colors/titles.
 It refuses password-change conversations before submitting a shell command and still requires a separate
 account-identity challenge.
-The capacity-refusal and planned-layout cancellation scenarios passed with both fixture disks unchanged.
+Earlier capacity-refusal and planned-layout cancellation scenarios passed with both fixture disks unchanged.
 Do not infer reboot or persistence results from a completed installation run.
 
 Publication is a separate, explicit workflow dispatch after the exact ISO has been validated. The maintainer supplies
@@ -530,8 +534,8 @@ success and rollback persistence, and unselected-disk preservation were tested. 
 to match the signed draft index before publishing, then downloads and verifies the published assets again. The
 development ISO has completed disconnected Auto installation, boot without media, chosen-account login challenges,
 and the unselected-disk comparison. Public identity uniqueness, application wheel equality and all five bounded
-installed-content checks also passed. Host-facing API and Appliance Update checks remain
-unrecorded, so these results do not establish
+installed-content checks also passed. Later host-facing API measurements are recorded below; Appliance Update checks
+remain outstanding, so these results do not establish
 full installer acceptance or authorize publication. Do not publish or describe the installer as validated before the
 remaining acceptance evidence exists.
 
@@ -608,17 +612,26 @@ are recorded. Native VM evidence alone does not establish physical support or co
 VMware path supports receipt-bound blank-disk ISO and installer-console tests. Probe, Cancel, capacity refusal,
 and disconnected Auto installations have passed. Two independently installed VMs booted without media,
 authenticated both chosen account passwords, passed separate root/admin challenges, matched the ISO-bound application
-wheel, and preserved their unselected disks. The default native serial path also completed two independent installations
-from development media source `151b76dbe63db5c7acfb83861e5f5b4b957d30be`, inspected with host source
-`a02ccd3142aeed560a8e3b68ac676279e79f9942`. Their five bounded content measurements matched: 1,316 copied source files,
-20 deployed shared assets, 66 Python distributions, 37 PowerCLI modules, 217 installed RPMs, native runtime/file/firmware
-verification, and reproduced notices. Their signed application software was 0.9.465. Public identities were unique
-between them; the first VM's identity and application measurement stayed stable across five boot/resume observations.
-The subsequent host-only network check exposed a missing prerequisite: none of that media's 241 RPMs provides `ip` or
-`ss`. Those tools are required by Atlaso's console and diagnostics. That media remains partial evidence; the package
-selection correction requires a fresh complete capture, ISO, and independent installed-system tests. Host-facing
-OpenAPI, disconnected update/rollback, custom/fault scenarios, and preservation of disks carrying old Atlaso labels
-remain outstanding. Do not describe the installer as validated or claim physical support while these gates are
+wheel, and preserved their unselected disks. Earlier media source `151b76dbe63db5c7acfb83861e5f5b4b957d30be` lacked RPMs
+providing `ip` and `ss`; its installed-system results remain partial evidence. The corrected source
+`7df968dc3079f3e7cf09655e248d961b8bc05c9d` includes `iproute2` from a fresh complete capture of 244 RPMs. Its two fresh
+default-serial installations, inspected with host source `9337eb391f4500ae3ae557b672074bba4abc79a8`, produced identical
+five-part content measurements: 1,318 copied source files, 20 deployed shared assets, 66 Python distributions,
+37 PowerCLI modules, 220 installed RPMs, native runtime/file/firmware and module-index verification, and reproduced
+notices. Their signed application software was 0.9.465. Both account challenges passed after media-free boots;
+machine and SSH identities were unique between the installations.
+
+The first VM subsequently retained its identity and application measurement across a host-only network boot. Its
+initial native host API probe failed; a later unchanged probe succeeded, followed by three consecutive bounded,
+certificate-pinned OpenAPI responses with HTTP 200, version 0.9.465, 162 paths, and identical response digests.
+These measurements establish steady-state host API access; the initial failure remains unresolved. The adapter was
+restored to its absent state after owning stopped-disk verification. A separate capacity diagnostic found all four
+exact refusal lines inside native panel borders, which the earlier host reader incorrectly compared as full rows;
+both disks remained unchanged. Retain the failed run and require fresh native validation of the reader correction.
+
+Initial API readiness, disconnected update/rollback, custom/fault scenarios, certificate address-control acceptance,
+and preservation of disks carrying old Atlaso labels remain outstanding. Do not describe the installer as validated
+or claim physical support while these gates are
 outstanding. Secure Boot is disabled for phase one; this reference makes no Secure Boot or ARM support claim.
 
 An earlier extended content run matched all 1,299 copied source files, 20 deployed shared assets and the public

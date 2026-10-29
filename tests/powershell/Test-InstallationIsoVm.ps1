@@ -1489,6 +1489,13 @@ foreach ($fixtureIdentity in @('admin', 'root')) {
 
 foreach ($capacityFixture in @(
     @{ Disk = '/dev/sda'; Bytes = '4294967296'; Pass = $true; Fragmented = $true },
+    @{ Disk = '/dev/sda'; Bytes = '4294967296'; Pass = $true; Panel = '?' },
+    @{ Disk = '/dev/sda'; Bytes = '4294967296'; Pass = $true; Panel = 'x' },
+    @{ Disk = '/dev/sdb'; Bytes = '4294967296'; Pass = $false; Panel = '?'; ExpectedFailure = 'mismatched or malformed' },
+    @{ Disk = '/dev/sda'; Bytes = '4096'; Pass = $false; Panel = '?'; ExpectedFailure = 'mismatched or malformed' },
+    @{ Disk = '/dev/sda'; Bytes = '4294967296'; Pass = $false; Panel = '?'; OmitPrompt = $true; ExpectedFailure = 'complete native capacity refusal' },
+    @{ Disk = '/dev/sda'; Bytes = '4294967296'; Pass = $false; Panel = '?'; ExtraText = $true; ExpectedFailure = 'mismatched or malformed' },
+    @{ Disk = '/dev/sda'; Bytes = '4294967296'; Pass = $false; Panel = '?'; MissingRightPanel = $true; ExpectedFailure = 'complete native capacity refusal' },
     @{ Disk = '/dev/sdb'; Bytes = '4294967296'; Pass = $false; ExpectedFailure = 'mismatched or malformed' },
     @{ Disk = '/dev/sda'; Bytes = '4096'; Pass = $false; ExpectedFailure = 'mismatched or malformed' },
     @{ Disk = '/dev/sda'; Bytes = '4294967296'; Pass = $false; Malformed = $true; ExpectedFailure = 'complete native capacity refusal' },
@@ -1508,13 +1515,27 @@ foreach ($capacityFixture in @(
                 "Insufficient disk capacity.`r`ndefault installation requires a disk of at least 64 GiB`r`n",
                 (('Selected {0} has {1} bytes.' -f $capacityFixture.Disk, $capacityFixture.Bytes) + "`r`n"))
         } else {
-            $capacityDialog = @(
+            $capacityLines = @(
                 'Insufficient disk capacity.',
                 'default installation requires a disk of at least 64 GiB',
                 ('Selected {0} has {1} bytes.' -f $capacityFixture.Disk, $capacityFixture.Bytes),
                 'Press Enter to choose another disk, or Esc to cancel.'
-            ) -join "`r`n"
-            if ($capacityFixture.Fragmented) {
+            )
+            $capacityDialog = $capacityLines -join "`r`n"
+            if ($capacityFixture.Panel) {
+                # Match the measured native panel: four consecutive rows at column
+                # six, with four left and two right border cells after ASCII decoding.
+                $panel = "`e[2J"
+                $lineCount = if ($capacityFixture.OmitPrompt) { 3 } else { 4 }
+                for ($lineIndex = 0; $lineIndex -lt $lineCount; $lineIndex++) {
+                    $message = $capacityLines[$lineIndex]
+                    if ($capacityFixture.ExtraText -and $lineIndex -eq 2) { $message = 'unexpected ' + $message }
+                    $rightPanel = if ($capacityFixture.MissingRightPanel) { '  ' } else { $capacityFixture.Panel * 2 }
+                    $panelRow = (($capacityFixture.Panel * 4) + '  ' + $message).PadRight(78) + $rightPanel
+                    $panel += ("`e[{0};1H" -f (10 + $lineIndex)) + $panelRow
+                }
+                $capacityFragments = [string[]]@($panel)
+            } elseif ($capacityFixture.Fragmented) {
                 $capacityFragments = [string[]]@(
                     'Insufficient disk ',
                     "capacity.`r`ndefault installation requires a disk of at least 64 GiB`r`nSelected /dev/s",
@@ -1525,7 +1546,7 @@ foreach ($capacityFixture in @(
             }
         }
         $capacityWaitSeconds = 5
-        if ($capacityFixture.Malformed) {
+        if ($capacityFixture.Malformed -or $capacityFixture.OmitPrompt -or $capacityFixture.ExtraText -or $capacityFixture.MissingRightPanel) {
             $capacityReady = [Threading.ManualResetEventSlim]::new()
             $capacitySender = [AtlasoInstallationPipeTestWriter]::Start($capacityPair.Client, $capacityFragments, $capacityReady)
             Assert-InstallationVmCondition ($capacityReady.Wait(5000)) 'The incomplete capacity writer did not start.'

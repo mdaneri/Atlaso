@@ -830,7 +830,17 @@ function Wait-InstallationConsoleState {
                 }
                 if ($capacityHeaderSeen -or $capacityPromptSeen) {
                     $visibleCapacityRows = @(ConvertFrom-InstallationConsoleFrame -Text $text |
-                        ForEach-Object { $_.Trim() })
+                        ForEach-Object {
+                            $rowText = $_.Trim()
+                            # Native panel sides remain in the complete frame. The
+                            # serial ASCII bridge represents some box glyphs as '?'.
+                            # Remove only known framing on both sides; all four message
+                            # rows, the selected disk and its exact byte count stay strict.
+                            if ($rowText -cmatch '^[?x|]' -and $rowText -cmatch '[?x|]$') {
+                                $rowText = $rowText.Trim([char[]]' ?x|')
+                            }
+                            $rowText
+                        })
                     $capacityFound = $false
                     for ($row = 0; $row -le $visibleCapacityRows.Count - 4; $row++) {
                         if ($visibleCapacityRows[$row] -cne 'Insufficient disk capacity.' -or
