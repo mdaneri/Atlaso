@@ -32,7 +32,8 @@ INSTALLATION_AUDIT_PATH = Path("/var/log/audit")
 INSTALLATION_AUDIT_TMPFILES_ROW = "d /var/log/audit 0700 root root - -"
 INSTALLATION_RPCBIND_SHA256 = "2c3d001aca71e6c6c81377a7bfc7ec9c3d26ee7a9891b4a706a8205657bc31ba"
 INSTALLATION_RPCBIND_PATH = Path("/var/lib/rpcbind")
-INSTALLATION_OPENSSH_SHA256 = "cf1bace04bca67f58536b2cc241754bcdb3bb7e2b38c518bc283f3c90c16a2d8"
+# Reviewed openssh-server-10.6p1-2.ph5 retains the native root:sys 0711 directory policy.
+INSTALLATION_OPENSSH_SHA256 = "8701947e3a0ca692ad4dc19b51432e2030e04b54d1a3f124276c43ccbd016dc3"
 INSTALLATION_OPENSSH_PATH = Path("/usr/share/empty.sshd")
 INSTALLATION_OPENLDAP_SHA256 = "11b4af044b7418ba9af5cf6762e2cbe5add5b3463774d20f6be89b8ff98c47dc"
 INSTALLATION_OPENLDAP_UNIT_PATH = Path("/usr/lib/systemd/system/slapd.service")

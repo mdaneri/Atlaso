@@ -22,7 +22,8 @@ PHOTON_GRUB_EFI_SHA256 = "516e63a3c609abecf4a4bf3ef2661d4f1bed26729a612f73e0bfcb
 PHOTON_SHIM_SHA256 = "e41e6109d7be89ae83da63ef8021ef9a0e053ecd4fe1f47ae73dd79270d688c7"
 PHOTON_RPCBIND_SHA256 = "2c3d001aca71e6c6c81377a7bfc7ec9c3d26ee7a9891b4a706a8205657bc31ba"
 PHOTON_OPENLDAP_SHA256 = "11b4af044b7418ba9af5cf6762e2cbe5add5b3463774d20f6be89b8ff98c47dc"
-PHOTON_OPENSSH_SHA256 = "cf1bace04bca67f58536b2cc241754bcdb3bb7e2b38c518bc283f3c90c16a2d8"
+# Reviewed openssh-server-10.6p1-2.ph5 retains the native root:sys 0711 directory policy.
+PHOTON_OPENSSH_SHA256 = "8701947e3a0ca692ad4dc19b51432e2030e04b54d1a3f124276c43ccbd016dc3"
 PHOTON_AUDIT_SHA256 = "e55fac7b24b2f7546485f0b8b37fb7b105be764436dd4b139ccaa88e6c3e374f"
 # The original native pip RPM requires setuptools. Shared provisioning removes
 # setuptools after creating the protected application venv, so tdnf also erases

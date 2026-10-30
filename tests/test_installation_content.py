@@ -488,6 +488,7 @@ def test_module_media_pins_match_the_shared_native_verifier():
         "kmod": helper.INSTALLATION_KMOD_SHA256,
         "kmod-binary": helper.INSTALLATION_KMOD_BINARY_SHA256,
     }
+    assert content_inspection.PHOTON_OPENSSH_SHA256 == helper.INSTALLATION_OPENSSH_SHA256
 
 
 def test_notices_refuse_missing_release_lock():
