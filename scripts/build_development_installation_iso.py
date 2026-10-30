@@ -63,6 +63,10 @@ def main() -> int:
     parser.add_argument("--commit", required=True)
     parser.add_argument("--software-version", required=True)
     parser.add_argument("--software-commit", required=True)
+    parser.add_argument(
+        "--serial-console", action="store_true",
+        help="Use ttyS0 for automated serial-console tests; the default uses the VMware window.",
+    )
     for name in ("software", "rpms", "powercli", "payload", "scratch", "source-iso", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
     args = parser.parse_args()
@@ -73,8 +77,8 @@ def main() -> int:
     with trust.open("xb") as handle:
         handle.write(sign_test_manifest(args.payload))
     verify_media(args.payload, trust, scratch=args.scratch, expected_key_id=DEVELOPMENT_KEY_ID)
-    build_iso(args.source_iso, args.payload, args.output, trust_key=trust, development=True)
-    print(json.dumps({"kind": "atlaso-installation-development", "source_commit": args.commit, "software_source_commit": args.software_commit, "iso_sha256": digest(args.output), "production_release": False}))
+    build_iso(args.source_iso, args.payload, args.output, trust_key=trust, development=True, serial_console=args.serial_console)
+    print(json.dumps({"kind": "atlaso-installation-development", "source_commit": args.commit, "software_source_commit": args.software_commit, "iso_sha256": digest(args.output), "console": "serial" if args.serial_console else "graphical", "production_release": False}))
     return 0
 
 

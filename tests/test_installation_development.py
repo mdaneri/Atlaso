@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
+from scripts import build_development_installation_iso
 from scripts.installation import build, development
 from scripts.installation.manifest import DEVELOPMENT_KEY_ID, MANIFEST
 
@@ -340,3 +343,50 @@ def test_prepare_payload_rejects_existing_output_without_mutating_it(
         )
 
     assert sentinel.read_text(encoding="utf-8") == "keep"
+
+
+@pytest.mark.parametrize("serial_console", [False, True])
+def test_development_cli_forwards_and_reports_console_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    serial_console: bool,
+) -> None:
+    """The operator CLI preserves explicit mode selection and reports provenance.
+
+    Args:
+        tmp_path: Temporary directory for the caller-owned scratch fixture.
+        monkeypatch: Fixture replacing unrelated expensive preparation stages.
+        capsys: Fixture collecting the CLI's public result record.
+        serial_console: Whether the explicit serial flag is present.
+    """
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    paths = {name: tmp_path / name for name in (
+        "software", "rpms", "powercli", "payload", "source-iso", "output",
+    )}
+    paths["scratch"] = scratch
+    argv = ["build_development_installation_iso.py", "--commit", "a" * 40,
+            "--software-version", "0.9.465", "--software-commit", "b" * 40]
+    for name, path in paths.items():
+        argv += ["--" + name, str(path)]
+    if serial_console:
+        argv.append("--serial-console")
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(build_development_installation_iso, "prepare_payload", Mock())
+    monkeypatch.setattr(build_development_installation_iso, "sign_test_manifest", Mock(return_value=b"public fixture"))
+    monkeypatch.setattr(build_development_installation_iso, "verify_media", Mock())
+    remaster = Mock()
+    monkeypatch.setattr(build_development_installation_iso, "build_iso", remaster)
+    monkeypatch.setattr(build_development_installation_iso, "digest", Mock(return_value="c" * 64))
+
+    assert build_development_installation_iso.main() == 0
+
+    remaster.assert_called_once_with(
+        paths["source-iso"], paths["payload"], paths["output"],
+        trust_key=scratch / "development-public-test.pem", development=True,
+        serial_console=serial_console,
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["console"] == ("serial" if serial_console else "graphical")
+    assert result["production_release"] is False
+    assert result["source_commit"] == "a" * 40
+    assert result["software_source_commit"] == "b" * 40

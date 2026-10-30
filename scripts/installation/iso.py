@@ -691,7 +691,10 @@ def _remove_owned_output(path: Path, identity: tuple[int, int]) -> None:
         pass
 
 
-def build_iso(source_iso: Path, payload_root: Path, output: Path, *, trust_key: Path, development: bool = False) -> None:
+def build_iso(
+    source_iso: Path, payload_root: Path, output: Path, *, trust_key: Path,
+    development: bool = False, serial_console: bool = False,
+) -> None:
     """Create a new Atlaso offline installer ISO from the pinned Photon source.
 
     Args:
@@ -699,7 +702,11 @@ def build_iso(source_iso: Path, payload_root: Path, output: Path, *, trust_key: 
         payload_root: Prepared signed Atlaso payload directory to embed.
         output: Destination path for the generated output.
         trust_key: Trusted public key used to verify signed metadata.
-        development: Build an explicitly marked VMware-only serial-console test ISO."""
+        development: Build an explicitly marked VMware-only test ISO.
+        serial_console: Opt a development ISO into the automated serial console.
+    """
+    if serial_console and not development:
+        raise ValueError("serial console selection is restricted to development images")
     try:
         import pycdlib
     except ImportError as exc:
@@ -776,7 +783,8 @@ def build_iso(source_iso: Path, payload_root: Path, output: Path, *, trust_key: 
         for iso_path, rr_name in grub_paths:
             grub = _GRUB_CONFIG
             if development:
-                grub = grub.replace("set timeout=-1", "set timeout=1").replace("Install Atlaso offline", "DEVELOPMENT ONLY - Install Atlaso offline").replace("photon.media=cdrom", "photon.media=cdrom console=ttyS0,115200n8")
+                console = "ttyS0,115200n8" if serial_console else "tty0"
+                grub = grub.replace("set timeout=-1", "set timeout=5").replace("Install Atlaso offline", "DEVELOPMENT ONLY - Install Atlaso offline").replace("photon.media=cdrom", f"photon.media=cdrom console={console}")
             replace_text_file(iso, iso_path=iso_path, rr_name=rr_name, text=grub)
 
         iso.pvd.volume_identifier = VOLUME_IDENTIFIER

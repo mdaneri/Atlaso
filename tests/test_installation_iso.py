@@ -239,6 +239,59 @@ def test_rejects_unpinned_source_before_creating_output(tmp_path: Path, monkeypa
     assert not output.exists()
 
 
+@pytest.mark.parametrize("serial_console", [False, True])
+def test_development_image_records_the_requested_console_in_both_boot_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, serial_console: bool,
+) -> None:
+    """Manual images boot locally; serial testing is an explicit separate mode.
+
+    Args:
+        tmp_path: Temporary directory for isolated remaster inputs.
+        monkeypatch: Fixture replacing only synthetic input admission.
+        serial_console: Whether the automated serial mode is selected.
+    """
+    source, payload, trust = _prepared_inputs(tmp_path, monkeypatch)
+    output = tmp_path / "development.iso"
+    installation_iso.build_iso(
+        source, payload, output, trust_key=trust, development=True,
+        **({"serial_console": True} if serial_console else {}),
+    )
+    image = pycdlib.PyCdlib()
+    image.open(str(output))
+    try:
+        expected_console = b"console=ttyS0,115200n8" if serial_console else b"console=tty0"
+        for path in ("/boot/grub2/grub.cfg", "/efi/boot/grub.cfg"):
+            grub = _extract(image, rr_path=path)
+            assert grub.count(b"console=") == 1
+            assert expected_console in grub
+            assert b"set timeout=5" in grub
+            assert b"DEVELOPMENT ONLY - Install Atlaso offline" in grub
+            assert b"ks=" not in grub
+        initrd = gzip.decompress(_extract(image, rr_path="/isolinux/initrd.img"))
+        entries, magic, _padding = installation_iso._parse_newc(initrd)
+        by_name = {entry.name: entry for entry in entries}
+        assert installation_iso._cpio_data(by_name[installation_iso.BOOT_LAUNCHER_PATH].raw, magic) == installation_iso._LAUNCHER
+        assert "etc/atlaso-installer/development" in by_name
+    finally:
+        image.close()
+
+
+def test_production_image_rejects_development_serial_selection_before_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The development console option cannot change production boot behavior.
+
+    Args:
+        tmp_path: Temporary directory for isolated inputs and absent output.
+        monkeypatch: Fixture replacing synthetic input admission.
+    """
+    source, payload, trust = _prepared_inputs(tmp_path, monkeypatch)
+    output = tmp_path / "production.iso"
+    with pytest.raises(ValueError, match="restricted to development"):
+        installation_iso.build_iso(source, payload, output, trust_key=trust, serial_console=True)
+    assert not output.exists()
+
+
 def test_rejects_photon_installer_version_mismatch_before_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Args:

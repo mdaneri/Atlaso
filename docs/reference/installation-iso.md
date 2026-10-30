@@ -132,8 +132,12 @@ authority and is never stored as a secret. The production signer and default pro
 the production key identity. Production finalization runs only from `main`, uses its checked-out workflow tools, and
 retains the protected signing environment and main-release admission checks. The development initrd accepts the test
 identity only when its explicit development
-marker is present. The resulting image is for VMware testing only: it uses the serial installer console on `ttyS0`,
-is not publishable as an Atlaso release, and does not establish production or physical-hardware acceptance.
+marker is present. The resulting image is for VMware testing only and starts the installer in the VMware window
+by default (`console=tty0`). Open the fresh VM with its ISO attached and power on; no GRUB edit is needed.
+For the automated serial-console harness, add `--serial-console` to the development build command to select
+`ttyS0,115200n8` instead. The build result records `console` as `graphical` or `serial`; retain it with the exact ISO
+digest so validation for one console mode is not reported as validation of the other. Neither image is publishable
+as an Atlaso release or establishes production or physical-hardware acceptance.
 
 Boot-time signature verification reuses the `cryptography` package already included in the pinned Photon initrd;
 that initrd removes the OpenSSL command-line executable. The downloadable verifier retains its existing OpenSSL path.
@@ -253,8 +257,9 @@ within its process deadline. To repeat verification afterward:
 The built-in Workstation VNC server can be controlled with a command-line client without using the host keyboard or
 mouse. Keep the original VM and disk-baseline receipts. Configure only that stopped VM, use an unused port bound
 exclusively to `127.0.0.1`, and verify the live listener belongs to its exact VMX. Keep the VM's network adapters absent.
-The development ISO selects `ttyS0`; for a graphical-console test, edit only that boot's GRUB kernel arguments to use
-`console=tty0`. Record this override with the result; it does not validate the default serial startup path.
+Use the default graphical development ISO for this path; it selects `console=tty0` without an override. Images
+built with `--serial-console` are a separate serial-test mode. Historical serial images require a one-boot GRUB edit
+to use `console=tty0` for a graphical test; record that override rather than claiming default graphical startup.
 
 For an initial installer password field, `VncCredential` reuses the bounded SDK bridge, source/runtime pins, native
 provider verifier and concealed-field byte encoder. Its optional client is VNCDoTool **1.4.2**, installed with its
