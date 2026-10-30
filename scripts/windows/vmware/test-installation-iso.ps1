@@ -915,10 +915,16 @@ function ConvertTo-InstallationRecoveryBootConfiguration {
     param([string]$Text)
     $null = ConvertTo-InstallationDiskBootConfiguration -Text $Text -FixtureProfile OldSystemLabel
     $orders = @([regex]::Matches($Text, '(?im)^\s*efi\.bootOrder\s*=.*$'))
-    if ($orders.Count -ne 0) { throw 'Recovery requires an original fixture without a boot-order override.' }
+    if ($orders.Count -gt 1 -or ($orders.Count -eq 1 -and $orders[0].Value.TrimEnd("`r") -cne 'efi.bootOrder = "cdrom,hdd"') -or
+        [regex]::IsMatch($Text, '(?im)^\s*bios\.(?:bootOrder|hddOrder)\s*=')) {
+        throw 'Recovery refuses unknown or duplicate boot-order overrides.'
+    }
+    # Workstation rejects generic device classes in efi.bootOrder. Retain the
+    # failed transition receipt; replace only that exact known failed value.
+    $Text = [regex]::Replace($Text, '(?m)^efi\.bootOrder = "cdrom,hdd"(?:\r?\n|$)', '')
     $newline = if ($Text.Contains("`r`n")) { "`r`n" } else { "`n" }
     $separator = if ($Text.EndsWith("`n")) { '' } else { $newline }
-    return $Text + $separator + 'efi.bootOrder = "cdrom,hdd"' + $newline
+    return $Text + $separator + 'bios.bootOrder = "cdrom,hdd"' + $newline + 'bios.hddOrder = "scsi0:0"' + $newline
 }
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {

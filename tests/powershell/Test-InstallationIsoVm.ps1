@@ -1437,7 +1437,9 @@ finally { if ($stagePair) { Close-InstallationTestPipePair -Pair $stagePair } }
 
 $bootSource = ($lines -join "`n") + "`n"
 $recoveryText = ConvertTo-InstallationRecoveryBootConfiguration -Text $bootSource
-Assert-InstallationVmCondition ($recoveryText -ceq ($bootSource + 'efi.bootOrder = "cdrom,hdd"' + "`n")) 'Recovery must explicitly prefer the connected original optical media and preserve unrelated VMX bytes.'
+Assert-InstallationVmCondition ($recoveryText -ceq ($bootSource + 'bios.bootOrder = "cdrom,hdd"' + "`n" + 'bios.hddOrder = "scsi0:0"' + "`n")) 'Recovery must explicitly prefer the connected optical media and bind the selected fallback disk.'
+$correctedRecovery = ConvertTo-InstallationRecoveryBootConfiguration -Text ($bootSource + 'efi.bootOrder = "cdrom,hdd"' + "`n")
+Assert-InstallationVmCondition ($correctedRecovery -ceq $recoveryText) 'Recovery may replace only the exact previously recorded unsupported EFI device-class override.'
 foreach ($bad in @($recoveryText, ($bootSource + 'EFI.bootOrder = "hdd"'), $bootSource.Replace('sata0:0.present = "TRUE"', 'sata0:0.present = "FALSE"'))) {
     $refused = $false
     try { $null = ConvertTo-InstallationRecoveryBootConfiguration -Text $bad } catch { $refused = $true }
