@@ -164,7 +164,7 @@ class NativeTree:
         self.stage = "/run/.atlaso-depmod-" + str(os.getpid())
         self.deleted = []
         self.real = {name: getattr(os, name) for name in ("open", "close", "fstat", "stat", "scandir", "mkdir", "readlink", "unlink", "rmdir")}
-        for name in ("/usr", "/usr/bin", "/usr/lib", "/usr/lib/modules", "/usr/lib/modules/6.12.113-6.ph5",
+        for name in ("/usr", "/usr/bin", "/usr/lib", "/usr/lib/modules", "/usr/lib/modules/6.12.114-1.ph5",
                      "/etc", "/usr/local", "/usr/local/lib"):
             self.add(name, "d", 0o755)
         self.add("/run", "d", 0o755, device=9)
@@ -410,7 +410,7 @@ def test_native_module_derivation_requires_exact_inputs_and_owned_output(change,
     spec.loader.exec_module(verifier)
     tree = NativeTree()
     tree.change = change
-    module = "/usr/lib/modules/6.12.113-6.ph5"
+    module = "/usr/lib/modules/6.12.114-1.ph5"
     indexes = {name: b"public native index" for name in verifier.INSTALLATION_MODULE_GENERATED}
     if change == "empty-native-index":
         indexes["modules.devname"] = b""
@@ -460,9 +460,9 @@ def test_native_module_derivation_requires_exact_inputs_and_owned_output(change,
         if tree.snapshots > 1 and change == "index-after":
             actual[sorted(actual)[0]] = b"private changed index"
         if tree.snapshots > 1 and change == "cleanup-file-race":
-            tree.lookup(tree.stage + "/usr/lib/modules/6.12.113-6.ph5/" + sorted(indexes)[0]).stamp += 1
+            tree.lookup(tree.stage + "/usr/lib/modules/6.12.114-1.ph5/" + sorted(indexes)[0]).stamp += 1
         elif tree.snapshots > 1 and change == "cleanup-obstruction":
-            tree.add(tree.stage + "/usr/lib/modules/6.12.113-6.ph5/private-retained", "f", 0o600)
+            tree.add(tree.stage + "/usr/lib/modules/6.12.114-1.ph5/private-retained", "f", 0o600)
         return {"input": (tree.input_state,)}, actual
 
     def read(path, mode, maximum_bytes, policy_name, *, directory_fd=None, allow_empty=False):
@@ -496,13 +496,13 @@ def test_native_module_derivation_requires_exact_inputs_and_owned_output(change,
         tree.runs += 1
         assert arguments[:7] == ["depmod", "-a", "-b", "/", "-m", "/usr/lib/modules", "-o"]
         assert tree.lookup(arguments[7]) is tree.lookup(tree.stage)
-        assert arguments[8:] == ["-C", "/dev/null", "6.12.113-6.ph5"]
+        assert arguments[8:] == ["-C", "/dev/null", "6.12.114-1.ph5"]
         assert kwargs == dict(executable="/usr/bin/kmod", cwd="/", env={"PATH": "/usr/sbin:/usr/bin", "LANG": "C", "LC_ALL": "C"},
                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               timeout=60, check=False, umask=0o022)
         if change == "native-timeout":
             raise subprocess.TimeoutExpired("private fixture command", 60)
-        generated = tree.stage + "/usr/lib/modules/6.12.113-6.ph5"
+        generated = tree.stage + "/usr/lib/modules/6.12.114-1.ph5"
         for name, data in indexes.items():
             tree.add(generated + "/" + name, "f", 0o644, data=data)
         selected = tree.lookup(generated + "/" + sorted(indexes)[0])
@@ -589,7 +589,7 @@ def test_native_module_derivation_requires_exact_inputs_and_owned_output(change,
         assert "private" not in str(error.value)
         assert tree.deleted == []
         if change in {"scratch-collision", "cleanup-obstruction"}:
-            retained = tree.stage + ("/private-retained" if change == "scratch-collision" else "/usr/lib/modules/6.12.113-6.ph5/private-retained")
+            retained = tree.stage + ("/private-retained" if change == "scratch-collision" else "/usr/lib/modules/6.12.114-1.ph5/private-retained")
             assert tree.lookup(retained).kind == "f"
     assert tree.fds == {}
     if change in {"capability", "unrecorded-mount", "nested-mount", "runtime-mount", "ancestor-mode",
