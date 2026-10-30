@@ -266,6 +266,19 @@ def _policy(values: Any) -> dict[str, Any]:
               "fleet_schedule_mode": values.get("fleet_schedule_mode", "preserve")}
     if not isinstance(result["fleet_schedule_mode"], str) or result["fleet_schedule_mode"] not in {"preserve", "daily", "disabled"}:
         raise BackupOperationError("Choose whether to preserve, enable, or disable Operations recurring backups.")
+    incremental_mode = values.get("fleet_incremental_mode", "preserve")
+    if not isinstance(incremental_mode, str) or incremental_mode not in {"preserve", "enabled", "disabled"}:
+        raise BackupOperationError("Choose whether to preserve, enable, or disable Operations incremental backups.")
+    if result["fleet_schedule_mode"] != "daily" and incremental_mode != "preserve":
+        raise BackupOperationError("Choose daily full backups before changing the Operations incremental schedule.")
+    interval = values.get("fleet_incremental_interval_minutes", 240)
+    fallback = values.get("fleet_incremental_fallback_to_full", True)
+    if type(interval) is not int or not 240 <= interval <= 2147483647:
+        raise BackupOperationError("Enter a whole Operations incremental interval of at least 240 minutes.")
+    if not isinstance(fallback, bool):
+        raise BackupOperationError("Choose whether incremental backups may fall back to a full backup.")
+    result.update(fleet_incremental_mode=incremental_mode, fleet_incremental_interval_minutes=interval,
+                  fleet_incremental_fallback_to_full=fallback)
     if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", result["full_time"]):
         raise BackupOperationError("Enter a daily full-backup time as HH:MM.")
     if result["retention_mode"] not in {"count", "days"} or not isinstance(result["state_change"], bool):

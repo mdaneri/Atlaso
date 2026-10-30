@@ -40,13 +40,123 @@ test('Resume opens a standalone status popup instead of the configuration wizard
   assert.match(js, /document\.querySelector\("\[data-vcf-backup-open\]"\)[\s\S]*?openBackupConfiguration\(event.currentTarget\)/);
 });
 
-test('Wizard follows the required credential, server, explicit fingerprint, login, discovery, settings, review order', () => {
-  assert.match(modal, /\[\('credential','Credential','Vault or manual'\),\('server','Server','Product and endpoint'\),\('fingerprint','TLS fingerprint','Confirm each server'\),\('login','Login','Manual credentials only'\),\('discovery','Discovery','Select components'\),\('settings','Destination and schedule','Review policy'\),\('review','Review and configure','Start initial backup'\)\]/);
-  assert.match(js, /const stepIds = \["credential", "server", "fingerprint", "login", "discovery", "settings", "review"\]/);
+test('Wizard selects products first, then follows credentials, TLS, discovery, settings, and review', () => {
+  assert.match(modal, /\[\('components','Components','Choose one or more'\),\('credential','Credential','Vault or manual'\),\('server','Server','Product and endpoint'\),\('fingerprint','TLS fingerprint','Confirm each server'\),\('login','Login','Manual credentials only'\),\('discovery','Discovery','Select components'\),\('settings','Destination and schedule','Review policy'\),\('review','Review and configure','Start initial backup'\)\]/);
+  assert.match(js, /const stepIds = \["components", "credential", "server", "fingerprint", "login", "discovery", "settings", "review"\]/);
+  assert.match(modal, /data-atlaso-wizard-step="components"[\s\S]*?data-vcf-backup-plan-kind/);
+  assert.match(modal, /name="source_kind" data-vcf-backup-source-kind disabled/);
   assert.match(modal, /data-atlaso-wizard/);
   assert.match(js, /AtlasoUiPatterns\.createWizard/);
   assert.match(js, /AtlasoUiPatterns\.createGrid/);
   assert.doesNotMatch(js, /new Tabulator\s*\(/);
+});
+
+test('Plan selection waits for an eligible selected target from every chosen product', () => {
+  let chosenKinds = ['fleet', 'nsx', 'vcenter'];
+  let selectedIds = ['fleet-target'];
+  const context = vm.createContext({
+    form: {querySelectorAll: () => chosenKinds.map((value) => ({value}))},
+    planKinds: ['fleet', 'nsx', 'vcenter'], selectedComponentIds: () => selectedIds,
+    inspectedSources: [{request: {source_kind: 'fleet', source_id: 'fleet-source'}}],
+    components: [
+      {id: 'fleet-target', source_id: 'fleet-source', supported: true},
+      {id: 'nsx-target', source_id: 'nsx-source', supported: true},
+      {id: 'vcenter-target', source_id: 'vcenter-source', supported: true},
+      {id: 'unsupported-target', source_id: 'vcenter-source', supported: false},
+    ],
+  });
+  vm.runInContext(['selectedPlanKinds', 'pendingPlanKinds', 'planSelectionComplete'].map(functionDeclaration).join('\n'), context);
+  assert.deepEqual(Array.from(context.selectedPlanKinds()), ['fleet', 'nsx', 'vcenter']);
+  assert.deepEqual(Array.from(context.pendingPlanKinds()), ['nsx', 'vcenter']);
+  assert.equal(context.planSelectionComplete(), false, 'connected Fleet alone cannot complete a three-product plan');
+
+  context.inspectedSources.push({request: {source_kind: 'nsx', source_id: 'nsx-source'}});
+  selectedIds = ['fleet-target', 'nsx-target'];
+  assert.deepEqual(Array.from(context.pendingPlanKinds()), ['vcenter']);
+  assert.equal(context.planSelectionComplete(), false, 'every chosen product still needs an eligible selected target');
+  context.inspectedSources.push({request: {source_kind: 'vcenter', source_id: 'vcenter-source'}});
+  selectedIds = ['fleet-target', 'nsx-target', 'vcenter-target'];
+  assert.equal(context.planSelectionComplete(), true);
+
+  chosenKinds = ['fleet', 'nsx'];
+  assert.equal(context.planSelectionComplete(), false, 'changing the checked product set invalidates the collected plan');
+  chosenKinds = ['fleet', 'nsx', 'vcenter'];
+  selectedIds = ['fleet-target', 'nsx-target', 'unsupported-target'];
+  assert.equal(context.planSelectionComplete(), false, 'unsupported discovered rows cannot complete the plan');
+});
+
+test('beginPlanSource resets prior connection state and binds the next selected product', () => {
+  const sourceKind = {value: 'fleet', disabled: false};
+  const events = [];
+  const context = vm.createContext({
+    sourceKind,
+    resetCurrentSource() { events.push('reset'); sourceKind.value = 'fleet'; sourceKind.disabled = false; },
+    updateSourceFields() { events.push('update'); },
+    sourceKindLabel: (kind) => ({fleet: 'VCF Operations', nsx: 'NSX', vcenter: 'vCenter'}[kind]),
+    setStatus: (value) => events.push(value),
+  });
+  vm.runInContext(functionDeclaration('beginPlanSource'), context);
+  context.beginPlanSource('nsx');
+  assert.deepEqual(events.slice(0, 2), ['reset', 'update']);
+  assert.equal(sourceKind.value, 'nsx');
+  assert.equal(sourceKind.disabled, true);
+  assert.match(events[2], /Connect to NSX/);
+  assert.match(events[2], /own credentials and TLS confirmation/);
+});
+
+test('Captured createWizard callbacks queue every selected connection before settings without executing', async () => {
+  const match = js.match(/wizard = window\.AtlasoUiPatterns\.createWizard\(\{([\s\S]*?)\n  \}\);/);
+  assert.ok(match, 'capture the actual shared createWizard callback object');
+  const selectedKinds = ['fleet', 'nsx', 'vcenter'];
+  const selectedIds = [];
+  const sourceKind = {value: 'fleet', disabled: true};
+  const requested = [];
+  const context = vm.createContext({
+    form: {}, dialog: {}, stepIds: ['components', 'credential', 'server', 'fingerprint', 'login', 'discovery', 'settings', 'review'],
+    stepCopy: Object.fromEntries(['components', 'credential', 'server', 'fingerprint', 'login', 'discovery', 'settings', 'review'].map((id) => [id, [id, id]])),
+    selectedPlanKinds: () => selectedKinds,
+    pendingPlanKinds: null,
+    planSelectionComplete: null,
+    beginPlanSource(kind) { sourceKind.value = kind; sourceKind.disabled = true; requested.push(kind); },
+    sourceKind, operationId: '', inspectionRevision: '', inspectedSources: [], components: [], receiver: null,
+    planKinds: [], grid: null, reviewToken: '', mode: {value: 'manual'}, setError() {}, setStatus() {},
+    invalidateReview() { this.reviewToken = ''; }, clearManualPasswords() {}, updateCredentialMode() {}, updateSourceFields() {}, syncOperationView() {},
+    node() { return null; }, renderComponents() {}, call: async (path) => { requested.push(path); return {}; },
+    field: () => ({value: '', checked: true}), selectedComponentIds: () => selectedIds,
+    validProbes: () => true, selectedVaultEntry: () => null,
+  });
+  context.pendingPlanKinds = () => {
+    const connected = new Set(context.inspectedSources.map((item) => item.request.source_kind));
+    return context.planKinds.filter((kind) => !connected.has(kind));
+  };
+  context.planSelectionComplete = () => {
+    const selected = new Set(selectedIds);
+    return context.planKinds.length > 0 && JSON.stringify(context.planKinds) === JSON.stringify(selectedKinds)
+      && context.planKinds.every((kind) => context.inspectedSources.some(({request}) => request.source_kind === kind
+        && context.components.some((component) => String(component.source_id) === String(request.source_id)
+            && component.supported === true && selected.has(String(component.id)))));
+  };
+  const config = vm.runInContext(`({${match[1]}})`, context);
+  assert.deepEqual(config.steps.map((step) => step.id), ['components', 'credential', 'server', 'fingerprint', 'login', 'discovery', 'settings', 'review']);
+  assert.equal(config.validateStep({step: {id: 'components'}}), true);
+
+  assert.equal(await config.onNext({step: {id: 'components'}}), 'credential');
+  assert.deepEqual(requested, ['fleet']);
+  for (const [index, kind] of ['fleet', 'nsx', 'vcenter'].entries()) {
+    const sourceId = `${kind}-source`;
+    const componentId = `${kind}-target`;
+    context.inspectedSources.push({request: {source_kind: kind, source_id: sourceId}});
+    context.components.push({id: componentId, source_id: sourceId, supported: true});
+    selectedIds.push(componentId);
+    const next = await config.onNext({step: {id: 'discovery'}});
+    if (index < 2) {
+      assert.equal(next, 'credential', `connect ${['nsx', 'vcenter'][index]} before entering settings`);
+      assert.equal(sourceKind.value, ['nsx', 'vcenter'][index]);
+    } else assert.equal(next, 'settings');
+  }
+  assert.deepEqual(requested, ['fleet', 'nsx', 'vcenter']);
+  assert.equal(config.validateStep({step: {id: 'review'}}), false, 'review remains locked without a review token and approvals');
+  assert.equal(requested.includes('/execute'), false, 'source selection and discovery never dispatch execution');
 });
 
 test('Saved Vault credentials skip Login; manual passwords are sent only after the fingerprint gate', () => {
@@ -59,7 +169,7 @@ test('Saved Vault credentials skip Login; manual passwords are sent only after t
   assert.doesNotMatch(js, /localStorage|sessionStorage|console\.(log|warn|error)/);
 });
 
-test('VCF Operations is the recommended source; one confirmed Operations fingerprint gates Fleet discovery', () => {
+test('Selected source kinds use product labels and Operations keeps its single confirmed TLS pin', () => {
   assert.match(modal, /<option value="fleet" selected>VCF Operations<\/option>/);
   assert.match(modal, /discovers its Fleet LCM service automatically/);
   assert.match(modal, /data-vcf-backup-confirm="server"/);
@@ -77,7 +187,7 @@ test('Discovered Fleet service metadata is shown read-only in discovery and exac
   for (const field of ['address', 'port', 'base_path', 'key', 'fingerprint', 'version']) {
     assert.match(js, new RegExp(`service\\.${field}`));
   }
-  assert.match(js, /const sourceKindLabel = \(kind\) => kind === "fleet" \? "VCF Operations"/);
+  assert.match(js, /const sourceKindLabel = \(kind\) => \(\{fleet: "VCF Operations", nsx: "NSX", vcenter: "vCenter", sddc: "SDDC Manager"\}/);
 });
 
 test('Discovered Fleet service base path is separated from its host and port', () => {
@@ -479,6 +589,8 @@ test('Operations recurrence controls follow selected components and preserve per
   ];
   const fields = new Map([
     ['fleet_schedule_mode', {value: 'preserve'}], ['full_time', {value: ''}],
+    ['fleet_incremental_mode', {value: 'preserve', disabled: false}], ['fleet_incremental_interval_minutes', {value: '240', disabled: false}],
+    ['fleet_incremental_fallback_to_full', {checked: true, disabled: false}],
     ['nsx_interval_minutes', {value: '60'}], ['state_change', {checked: false}],
     ['retention_value', {value: '14'}], ['sddc_most_recent', {value: '10'}],
     ['sddc_hourly_days', {value: '2'}], ['sddc_daily_days', {value: '15'}],
@@ -499,19 +611,33 @@ test('Operations recurrence controls follow selected components and preserve per
   context.updateSourceFields();
   assert.equal(node('[data-vcf-backup-fleet-schedule-mode]').classList.hidden, false);
   assert.equal(node('[data-vcf-backup-daily-time]').classList.hidden, true);
+  assert.equal(node('[data-vcf-backup-fleet-incremental]').classList.hidden, true);
+  assert.equal(fields.get('fleet_incremental_mode').disabled, true, 'incremental mode is disabled outside daily Operations mode');
   assert.equal(context.settingsAreValid(), true, 'preserving an unconfigured Operations schedule permits destination and initial backup only');
 
   fields.get('fleet_schedule_mode').value = 'daily';
   context.updateSourceFields();
   assert.equal(node('[data-vcf-backup-daily-time]').classList.hidden, false);
+  assert.equal(node('[data-vcf-backup-fleet-incremental]').classList.hidden, false);
+  assert.equal(fields.get('fleet_incremental_mode').disabled, false);
+  assert.equal(node('[data-vcf-backup-fleet-incremental-options]').classList.hidden, true);
   assert.equal(context.settingsAreValid(), false, 'Daily mode requires a recurring backup time');
   fields.get('full_time').value = '02:00';
+  assert.equal(context.settingsAreValid(), true);
+  fields.get('fleet_incremental_mode').value = 'enabled';
+  context.updateSourceFields();
+  assert.equal(node('[data-vcf-backup-fleet-incremental-options]').classList.hidden, false);
+  fields.get('fleet_incremental_interval_minutes').value = '239';
+  assert.equal(context.settingsAreValid(), false, 'Enabled incremental backups require the native 240-minute minimum');
+  fields.get('fleet_incremental_interval_minutes').value = '240';
   assert.equal(context.settingsAreValid(), true);
 
   selectedIds = ['sddc-1'];
   fields.get('full_time').value = '';
   context.updateSourceFields();
   assert.equal(node('[data-vcf-backup-fleet-schedule-mode]').classList.hidden, true);
+  assert.equal(node('[data-vcf-backup-fleet-incremental]').classList.hidden, true);
+  assert.equal(fields.get('fleet_incremental_mode').disabled, true, 'incremental controls are disabled when Operations is not selected');
   assert.equal(node('[data-vcf-backup-daily-time]').classList.hidden, false, 'selected direct products continue to show their native schedule controls');
   assert.equal(node('[data-vcf-backup-daily-time] span').textContent, 'Daily full backup time (UTC for SDDC Manager)');
   assert.equal(context.settingsAreValid(), false);
@@ -533,11 +659,55 @@ test('Operations recurrence controls follow selected components and preserve per
   assert.equal(node('[data-vcf-backup-daily-time]').classList.hidden, true);
 });
 
+test('Incremental policy serialization sends preserve defaults for irrelevant or invalid hidden values', () => {
+  const fields = new Map([
+    ['fleet_schedule_mode', {value: 'preserve'}], ['fleet_incremental_mode', {value: 'enabled'}],
+    ['fleet_incremental_interval_minutes', {value: '239'}], ['fleet_incremental_fallback_to_full', {checked: false}],
+    ['full_time', {value: '02:00'}], ['nsx_interval_minutes', {value: '60'}], ['state_change', {checked: true}],
+    ['retention_mode', {value: 'count'}], ['retention_value', {value: '14'}], ['sddc_most_recent', {value: '10'}],
+    ['sddc_hourly_days', {value: '2'}], ['sddc_daily_days', {value: '15'}],
+  ]);
+  const context = vm.createContext({
+    field: (name) => fields.get(name),
+    fleetScheduleMode: () => fields.get('fleet_schedule_mode').value,
+    selectedSourceKinds: () => new Set(['fleet']),
+  });
+  vm.runInContext(`${functionDeclaration('policyPayload')}`, context);
+  const preserve = context.policyPayload();
+  assert.equal(preserve.fleet_incremental_mode, 'preserve');
+  assert.equal(preserve.fleet_incremental_interval_minutes, 240);
+  assert.equal(preserve.fleet_incremental_fallback_to_full, false);
+
+  fields.get('fleet_schedule_mode').value = 'daily';
+  fields.get('fleet_incremental_mode').value = 'enabled';
+  fields.get('fleet_incremental_interval_minutes').value = '360';
+  const enabled = context.policyPayload();
+  assert.equal(enabled.fleet_incremental_mode, 'enabled');
+  assert.equal(enabled.fleet_incremental_interval_minutes, 360);
+  assert.equal(enabled.fleet_incremental_fallback_to_full, false);
+});
+
+test('Coverage gaps are labeled as outside the plan and explain Fleet ineligibility', () => {
+  const coverage = {textContent: '', classList: {hidden: true, toggle(_name, value) { this.hidden = value; }}};
+  const context = vm.createContext({
+    review: {components: [], coverage_gaps: [{product: 'fleet', component: 'Telemetry', reason: 'Fleet reports backupAllowed=false for this component.'}]},
+    inspectedSources: [], fleetScheduleMode: () => 'preserve', field: () => ({value: 'preserve'}),
+    node: (selector) => selector === '[data-vcf-backup-coverage]' ? coverage : {replaceChildren() {}},
+    appendReviewSection() {}, groupConfigurationState: () => '', sourceKindLabel: (kind) => kind,
+    coverageText: (item) => `${item.component}: ${item.reason}`, sideEffectText: () => '',
+  });
+  vm.runInContext(`${functionDeclaration('renderReview')}`, context);
+  context.renderReview();
+  assert.match(coverage.textContent, /^Not covered by this plan: Telemetry: Fleet reports backupAllowed=false/);
+  assert.match(coverage.textContent, /selected eligible components can still be configured and backed up/);
+  assert.equal(coverage.classList.hidden, false);
+});
+
 test('The updated backup script URL and service worker cache version stay aligned', () => {
   const worker = fs.readFileSync(path.join(__dirname, '../../atlaso/app/static/service-worker.js'), 'utf8');
-  assert.match(helper, /vcf-backup\.js\?v=issue-1066-16/);
-  assert.match(worker, /ATLASO_CACHE_PREFIX\}407/);
-  assert.match(worker, /vcf-backup\.js\?v=issue-1066-16/);
+  assert.match(helper, /vcf-backup\.js\?v=issue-1066-17/);
+  assert.match(worker, /ATLASO_CACHE_PREFIX\}408/);
+  assert.match(worker, /vcf-backup\.js\?v=issue-1066-17/);
 });
 
 test('Review binds the selected component IDs, source credentials, policy, and saved secret references', () => {
@@ -558,18 +728,20 @@ test('Changing a target, credential, selection, or policy invalidates the exact 
   assert.match(js, /entrySelect\?\.addEventListener\("change", \(\) => \{\s+updateSourceFields\(\); invalidateReview\(\);/);
   assert.match(js, /event\.target\.closest\("\[data-atlaso-wizard-step='settings'\]"\)\) invalidateReview\(\)/);
   assert.match(js, /grid\?\.table\?\.on\?\.\("rowSelectionChanged", \(\) => \{\s+invalidateReview\(\);\s+if \(grid\?\.table\) syncSupportedSelectionHeader\(grid\.table\);/);
+  assert.match(js, /if \(event\.target\.matches\("\[data-vcf-backup-plan-kind\]"\)\) invalidateReview\(\)/);
+  assert.match(js, /if \(JSON\.stringify\(chosen\) !== JSON\.stringify\(planKinds\)\)[\s\S]*?planKinds = chosen/);
   assert.match(js, /function sourceSignature\(source\)/);
 });
 
 test('Configuration executes only with a fresh review and explicit recovery, replacement, and initial-run approval', () => {
-  assert.match(js, /if \(!reviewToken\) return \{ok: false, message: "Build a fresh exact review/);
+  assert.match(js, /if \(!reviewToken \|\| !planSelectionComplete\(\)\) return \{ok: false, message: "Build a fresh exact review/);
   assert.match(js, /wizard\.markClean\(\)/);
   assert.match(js, /call\("\/execute", \{\.\.\.reviewPayload\(\), review_token: submittedReviewToken/);
   assert.match(modal, /name="recovery_ready" required/);
   assert.match(modal, /name="replacements_confirmed" required/);
   assert.match(modal, /name="acknowledged" required/);
   assert.match(js, /function lockSubmitAfterOperation\(\)[\s\S]*?window\.setTimeout\(\(\) => \{\s+if \(operationStarted\) node\("\[data-atlaso-wizard-submit\]"\)\.disabled = true;/);
-  assert.match(js, /onStepChange: \(\{step\}\) => \{\s+const body = node\("\.vcf-sddc-wizard-body"\);[\s\S]*?if \(step\.id === "discovery"\) renderComponents\(\);\s+syncOperationView\(\);/);
+  assert.match(js, /onStepChange: \(\{step\}\) => \{\s+const body = node\("\.vcf-sddc-wizard-body"\);[\s\S]*?if \(step\.id === "discovery"\) renderComponents\(\);[\s\S]*?pendingPlanKinds\(\)[\s\S]*?syncOperationView\(\);/);
   assert.match(js, /function syncOperationView\(\)[\s\S]*?wizard\?\.setNavigationLocked\(operationStarted\)/);
 });
 
@@ -856,7 +1028,7 @@ test('Configure always opens a fresh wizard without reopening or cancelling an e
     const launcher = {};
     const context = vm.createContext({
       receiverReady: true, operationState: state, operationId: 'previous', operationStarted: true, form: {reset() { reset = true; }},
-      inspectedSources: [{request: {password: 'ephemeral'}}], components: ['old'], receiver: {},
+      inspectedSources: [{request: {password: 'ephemeral'}}], planKinds: ['nsx'], components: ['old'], receiver: {},
       inspectionRevision: 'old', canCloseWithoutCredentials: true, pollTimer: 1,
       invalidateStatusView() {}, window: {clearTimeout() {}},
       clearManualPasswords() { cleared = true; }, grid: null,
@@ -867,14 +1039,15 @@ test('Configure always opens a fresh wizard without reopening or cancelling an e
       call() { assert.fail('Opening a new wizard must not dispatch native work'); },
     });
     vm.runInContext(`(${declaration})(launcher)`, context);
-    assert.equal(opened.step, 'credential');
-    assert.equal(opened.highestStep, 'credential');
+    assert.equal(opened.step, 'components');
+    assert.equal(opened.highestStep, 'components');
     assert.equal(opened.launcher, launcher);
     assert.equal(cleared, true);
     assert.equal(reset, true);
     assert.equal(context.operationId, '');
     assert.equal(context.operationStarted, false);
     assert.equal(context.inspectedSources.length, 0);
+    assert.equal(context.planKinds.length, 0);
   }
   assert.match(js, /if \(!event.currentTarget.disabled\) openBackupConfiguration\(event.currentTarget\)/);
 });

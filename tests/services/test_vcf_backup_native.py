@@ -856,6 +856,7 @@ def test_fleet_schedule_modes_preserve_disable_or_replace_only_full_schedule() -
 
 
 @pytest.mark.parametrize("mode", ["preserve", "daily", "disabled"])
+@pytest.mark.parametrize("incremental_mode", ["preserve", "enabled", "disabled"])
 @pytest.mark.parametrize(
     "schedule",
     [
@@ -876,11 +877,12 @@ def test_fleet_schedule_modes_preserve_disable_or_replace_only_full_schedule() -
         {},
     ],
 )
-def test_fleet_proposal_roundtrips_actual_schedule_state(mode: str, schedule: dict[str, Any]) -> None:
+def test_fleet_proposal_roundtrips_actual_schedule_state(mode: str, incremental_mode: str, schedule: dict[str, Any]) -> None:
     """Verify that Fleet proposal roundtrips actual schedule state.
 
         Args:
             mode: Fleet recurrence intent exercised by the round-trip.
+            incremental_mode: Incremental intent applied only with daily full recurrence.
             schedule: Existing schedule snapshot, or an empty new configuration.
     """
     receiver_key = ssh_public_key("ecdsa-sha2-nistp256", b"fleet-roundtrip-key")
@@ -901,12 +903,23 @@ def test_fleet_proposal_roundtrips_actual_schedule_state(mode: str, schedule: di
     current_before = adapter.current("lcm-1")
     adapter._inventory["groups"][0]["current"] = current_before
 
-    proposed = adapter.proposed("lcm-1", {"fleet_schedule_mode": mode, "full_time": "02:30"}, {
+    policy = {
+        "fleet_schedule_mode": mode, "full_time": "02:30",
+        "fleet_incremental_mode": incremental_mode if mode == "daily" else "preserve",
+        "fleet_incremental_interval_minutes": 480, "fleet_incremental_fallback_to_full": False,
+    }
+    proposed = adapter.proposed("lcm-1", policy, {
         "host": "backup.example.test", "port": 22, "username": "backup-user",
         "directory": "/backups/vcf", "host_key": receiver_key,
         "ecdsa_fingerprint": receiver_pin,
     })
     body = NativeBackup._fleet_config_body(proposed, "sftp-secret", "SecureAB12!")
+    if mode == "daily" and incremental_mode == "enabled":
+        assert body["incrementalSchedule"] == {"enabled": True, "interval": 480, "fallbackToFull": False}
+    elif mode == "daily" and incremental_mode == "disabled":
+        assert body["incrementalSchedule"] == {**schedule.get("incrementalSchedule", {}), "enabled": False}
+    elif mode == "daily":
+        assert body.get("incrementalSchedule") == schedule.get("incrementalSchedule")
     fleet_transport.responses.append((200, {"id": "lcm-1", "backupConfig": body}))
     current_after = adapter.current("lcm-1")
 
@@ -916,6 +929,36 @@ def test_fleet_proposal_roundtrips_actual_schedule_state(mode: str, schedule: di
         if key not in {"fleet_schedule_mode", "host_key"} and current_after.get(key) != value
     }
     assert mismatches == {}
+
+
+@pytest.mark.parametrize("interval", [239, 0, -1, True, 240.5, "240", None, 2147483648])
+def test_fleet_incremental_request_rejects_unsupported_interval(interval: Any) -> None:
+    """Reject unsupported new incremental cadence before native dispatch.
+
+    Args:
+        interval: Invalid interval supplied to the native schedule builder.
+    """
+    with pytest.raises(ValueError, match="incremental interval"):
+        NativeBackup._fleet_schedule_spec({
+            "fleet_schedule_mode": "daily", "full_time": "02:30", "schedule_timezone": "UTC",
+            "fleet_incremental_mode": "enabled", "fleet_incremental_interval_minutes": interval,
+        })
+
+
+@pytest.mark.parametrize("fallback", [True, False])
+def test_fleet_incremental_minimum_and_fallback_are_exact(fallback: bool) -> None:
+    """Keep the minimum cadence and explicit fallback choice in the write body.
+
+    Args:
+        fallback: Operator's explicit full-backup fallback decision.
+    """
+    schedule = NativeBackup._fleet_schedule_spec({
+        "fleet_schedule_mode": "daily", "full_time": "02:30", "schedule_timezone": "UTC",
+        "fleet_incremental_mode": "enabled", "fleet_incremental_interval_minutes": 240,
+        "fleet_incremental_fallback_to_full": fallback,
+    })
+    assert schedule["fullSchedule"]["enabled"] is True
+    assert schedule["incrementalSchedule"] == {"enabled": True, "interval": 240, "fallbackToFull": fallback}
 
 
 def test_fleet_preserve_without_current_schedule_disables_both_recurrences() -> None:

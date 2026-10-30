@@ -46,9 +46,11 @@ RSA or ECDSA public key before reviewing or submitting it; it does not trust the
 
 ## Inspect and review VCF sources
 
-1. Open **VCF Helper → Backup → Configure VCF Backup**. This is an administrator-only workflow. For Fleet LCM,
-   provide the VCF Operations endpoint and choose an existing **Vault** credential or enter Operations credentials for
-   this request.
+1. Open **VCF Helper → Backup → Configure VCF Backup**. This is an administrator-only workflow. In **Choose
+   components**, select **VCF Operations**, **NSX**, **vCenter**, or a direct **SDDC Manager** connection. Select any
+   combination. The wizard guides you through credentials, server, TLS confirmation and discovery for each chosen
+   product. For Fleet LCM, provide the VCF Operations endpoint and choose an existing **Vault** credential or enter
+   Operations credentials for this request.
 2. Use **Read TLS fingerprint** for VCF Operations. Compare the SHA-256 certificate fingerprint with a trusted
    out-of-band source and confirm that exact Operations server before submitting credentials. After login, Atlaso reads
    `GET /suite-api/api/integrations/services` and requires exactly one `VCF_FLEET_LCM` descriptor. Review its advertised
@@ -56,8 +58,9 @@ RSA or ECDSA public key before reviewing or submitting it; it does not trust the
    Fleet service through Operations with a service JWT and the pinned certificate. The descriptor is bound to the
    operation; identity or certificate drift requires a fresh inspection. You do not enter a separate Fleet LCM endpoint
    or confirm a second Fleet certificate. The SSH host key shown later belongs to the Atlaso SFTP receiver.
-3. In **Discovery**, select **Add another source** to add optional direct SDDC Manager, vCenter, or NSX connections.
-   Confirm each direct server's TLS fingerprint before submitting credentials. Select supported components and inspect
+3. In **Discovery**, select supported targets for the connected product, then select **Next** to connect the next
+   chosen product. Confirm each direct server's TLS fingerprint before submitting credentials. **Change components**
+   returns to the initial choices; changing those choices starts discovery again. Select supported targets and inspect
    displayed **Coverage** and warning details. The workflow accepts native API versions in the VCF 9.1.x range; it
    refuses unsupported or ambiguous source versions or identities before native writes.
 4. Set the destination password and backup-encryption passphrase using the offered saved **Vault** secret references.
@@ -72,7 +75,12 @@ RSA or ECDSA public key before reviewing or submitting it; it does not trust the
    its exact time and timezone. When no schedule exists, this choice leaves recurrence disabled. Choose **Daily
    recurring backups** to create a daily full-backup schedule at the selected UTC time, or **Disable recurring backups**
    to explicitly disable both full and incremental recurrence. Every choice still starts one initial backup after
-   configuration. These recurrence choices currently apply to VCF Operations; direct appliance schedules retain their
+   configuration. With **Daily recurring backups** selected for VCF Operations, choose whether to preserve its existing
+   incremental schedule, enable incremental backups, or disable incremental backups. Enabling them defaults to a
+   240-minute interval and allows fallback to a full backup; VCF Operations requires at least 240 minutes and an
+   enabled full schedule. See Broadcom's
+   [IncrementalBackupConfigSpec](https://developer.broadcom.com/xapis/vcf-fleet-lcm-service-apis/latest/data-structures/IncrementalBackupConfigSpec/).
+   These recurrence choices currently apply to VCF Operations; direct appliance schedules retain their
    existing daily/interval controls. SDDC Manager uses UTC; vCenter uses its configured appliance timezone. The
    state-change control applies only where that native API supports it. Retention settings are product-specific: NSX
    has no native retention policy, and SDDC Manager exposes separate most-recent, hourly-day, and daily-day values.
@@ -81,7 +89,9 @@ RSA or ECDSA public key before reviewing or submitting it; it does not trust the
    combined execution. Fleet LCM stores a shared schedule for the entire SDDC-LCM group, so the wizard requires every
    eligible component in a selected group together.
 6. Select **Next** to open **Review and configure**, then inspect the exact current and proposed native settings,
-   selected components, destination, coverage gaps, and side effects. Review existing schedules before approving
+   selected components, destination, coverage gaps, and side effects. Coverage gaps are labeled **Not covered by this
+   plan** with the native reason; Fleet components reported with `backupAllowed=false` are ineligible, while selected
+   eligible components may still be configured and backed up. Review existing schedules before approving
    replacement. The signed review is bound to the inspected source revisions, TLS fingerprints, current receiver,
    component selection, policy, and Vault references. It expires after ten minutes and can be used once; changing an
    input requires a fresh inspect or review.

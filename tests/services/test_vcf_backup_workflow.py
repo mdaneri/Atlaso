@@ -30,6 +30,40 @@ PASSPHRASE = "SecureBackupAB12!"
 API_PASSWORD = "api-password-never-persist"
 
 
+@pytest.mark.parametrize("changes", [
+    {"fleet_incremental_mode": "unsupported"},
+    {"fleet_incremental_mode": []},
+    {"fleet_incremental_mode": "enabled"},
+    {"fleet_schedule_mode": "disabled", "fleet_incremental_mode": "enabled"},
+    {"fleet_incremental_interval_minutes": 239},
+    {"fleet_incremental_interval_minutes": True},
+    {"fleet_incremental_interval_minutes": 240.5},
+    {"fleet_incremental_interval_minutes": "240"},
+    {"fleet_incremental_interval_minutes": 2147483648},
+    {"fleet_incremental_fallback_to_full": "false"},
+])
+def test_policy_rejects_invalid_operations_incremental_settings(changes):
+    """Reject invalid incremental intent before reviewing a configuration.
+
+    Args:
+        changes: Unsupported policy values submitted by the browser.
+    """
+    with pytest.raises(workflow.BackupOperationError):
+        workflow._policy(changes)
+
+
+def test_policy_keeps_explicit_incremental_choices_and_safe_defaults():
+    """Retain editable incremental intent while preserving schedules by default."""
+    defaults = workflow._policy({})
+    assert defaults["fleet_incremental_mode"] == "preserve"
+    enabled = workflow._policy({
+        "fleet_schedule_mode": "daily", "fleet_incremental_mode": "enabled",
+        "fleet_incremental_interval_minutes": 240, "fleet_incremental_fallback_to_full": False,
+    })
+    assert enabled["fleet_incremental_interval_minutes"] == 240
+    assert enabled["fleet_incremental_fallback_to_full"] is False
+
+
 class FakeBackend:
     def __init__(self, *, kind: str = "sddc", fleet_size: int = 0) -> None:
         """Support init.

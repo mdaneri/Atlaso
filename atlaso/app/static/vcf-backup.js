@@ -31,6 +31,7 @@
   let operationId = "";
   let inspectionRevision = "";
   let inspectedSources = [];
+  let planKinds = [];
   let components = [];
   let receiver = null;
   let reviewToken = "";
@@ -64,7 +65,27 @@
     }
   };
   const safeText = (value, fallback = "Not recorded") => value === undefined || value === null || value === "" ? fallback : String(value);
-  const sourceKindLabel = (kind) => kind === "fleet" ? "VCF Operations" : safeText(kind, "Source");
+  const sourceKindLabel = (kind) => ({fleet: "VCF Operations", nsx: "NSX", vcenter: "vCenter", sddc: "SDDC Manager"}[kind] || safeText(kind, "Source"));
+  function selectedPlanKinds() {
+    return [...form.querySelectorAll("[data-vcf-backup-plan-kind]:checked")].map((input) => input.value);
+  }
+  function pendingPlanKinds() {
+    const connected = new Set(inspectedSources.map((item) => item.request.source_kind));
+    return planKinds.filter((kind) => !connected.has(kind));
+  }
+  function planSelectionComplete() {
+    const selected = new Set(selectedComponentIds());
+    return planKinds.length > 0 && JSON.stringify(planKinds) === JSON.stringify(selectedPlanKinds()) && planKinds.every((kind) => inspectedSources.some(({request}) =>
+      request.source_kind === kind && components.some((component) =>
+        String(component.source_id) === String(request.source_id) && component.supported === true && selected.has(String(component.id)))));
+  }
+  function beginPlanSource(kind) {
+    resetCurrentSource();
+    sourceKind.value = kind;
+    sourceKind.disabled = true;
+    updateSourceFields();
+    setStatus(`Connect to ${sourceKindLabel(kind)}. Each selected product has its own credentials and TLS confirmation.`);
+  }
   function serviceBasePath(value) {
     const path = typeof value === "string" ? value.replace(/^\/+|\/+$/g, "") : "";
     return path ? `/${path}` : "";
@@ -137,12 +158,19 @@
     const operationsSelected = selectedKinds.has("fleet");
     const directDailySelected = ["sddc", "vcenter"].some((kind) => selectedKinds.has(kind));
     const operationsDaily = operationsSelected && fleetScheduleMode() === "daily";
+    const incrementalMode = operationsDaily ? field("fleet_incremental_mode")?.value || "preserve" : "preserve";
+    const incrementalEnabled = operationsDaily && incrementalMode === "enabled";
     const daily = directDailySelected || operationsDaily;
     const nsx = kinds.has("nsx");
     const stateChange = nsx || kinds.has("sddc");
     const generalRetention = kinds.has("fleet") || kinds.has("vcenter");
     node("[data-vcf-backup-fleet-schedule-mode]")?.classList.toggle("hidden", !operationsSelected);
     node("[data-vcf-backup-fleet-schedule-help]")?.classList.toggle("hidden", !operationsSelected);
+    node("[data-vcf-backup-fleet-incremental]")?.classList.toggle("hidden", !operationsDaily);
+    node("[data-vcf-backup-fleet-incremental-options]")?.classList.toggle("hidden", !incrementalEnabled);
+    field("fleet_incremental_mode").disabled = !operationsDaily;
+    field("fleet_incremental_interval_minutes").disabled = !incrementalEnabled;
+    field("fleet_incremental_fallback_to_full").disabled = !incrementalEnabled;
     node("[data-vcf-backup-daily-time]")?.classList.toggle("hidden", !daily);
     const dailyLabel = node("[data-vcf-backup-daily-time] span");
     const utcProducts = [operationsDaily ? "Operations" : "", selectedKinds.has("sddc") ? "SDDC Manager" : ""].filter(Boolean);
@@ -252,8 +280,15 @@
     return {vault_id: vault_id || "", entry_id: entry_id || ""};
   }
   function policyPayload() {
+    const operationsDaily = selectedSourceKinds().has("fleet") && fleetScheduleMode() === "daily";
+    const enteredInterval = Number(field("fleet_incremental_interval_minutes").value);
+    const incrementalEnabled = operationsDaily && field("fleet_incremental_mode").value === "enabled";
+    const interval = incrementalEnabled ? enteredInterval : 240;
     return {
       fleet_schedule_mode: fleetScheduleMode(),
+      fleet_incremental_mode: operationsDaily ? field("fleet_incremental_mode").value || "preserve" : "preserve",
+      fleet_incremental_interval_minutes: interval,
+      fleet_incremental_fallback_to_full: Boolean(field("fleet_incremental_fallback_to_full").checked),
       full_time: field("full_time").value,
       nsx_interval_minutes: Number(field("nsx_interval_minutes").value),
       state_change: field("state_change").checked,
@@ -280,8 +315,11 @@
     const requiresRetention = kinds.has("fleet") || kinds.has("vcenter");
     const hasNSX = kinds.has("nsx");
     const hasSDDC = kinds.has("sddc");
+    const validatesIncremental = kinds.has("fleet") && fleetScheduleMode() === "daily" && field("fleet_incremental_mode").value === "enabled";
     return secrets.length > 0 && Boolean(field("sftp_secret_ref").value && field("encryption_secret_ref").value)
       && (!requiresDaily || Boolean(field("full_time").value))
+      && (!validatesIncremental || Number.isInteger(Number(field("fleet_incremental_interval_minutes").value))
+        && Number(field("fleet_incremental_interval_minutes").value) >= 240 && Number(field("fleet_incremental_interval_minutes").value) <= 2147483647)
       && (!hasNSX || Number(field("nsx_interval_minutes").value) >= 5 && Number(field("nsx_interval_minutes").value) <= 1440)
       && (!requiresRetention || Number(field("retention_value").value) >= 1 && Number(field("retention_value").value) <= 365)
       && (!hasSDDC || Number(field("sddc_most_recent").value) >= 1 && Number(field("sddc_most_recent").value) <= 600
@@ -439,6 +477,11 @@
       const intent = {preserve: "Preserve existing schedule", daily: "Daily recurring backups", disabled: "Disable recurring backups"}[fleetScheduleMode()];
       appendReviewSection(container, "VCF Operations recurring backups", [
         ["Scheduling intent", intent || "Preserve existing schedule"],
+        ["Incremental backup intent", fleetScheduleMode() === "disabled" ? "Disable with full recurring backups" : {preserve: "Preserve existing incremental schedule", enabled: "Enable incremental backups", disabled: "Disable incremental backups"}[fleetScheduleMode() === "daily" ? field("fleet_incremental_mode")?.value : "preserve"] || "Preserve existing incremental schedule"],
+        ...(fleetScheduleMode() === "daily" && field("fleet_incremental_mode")?.value === "enabled" ? [
+          ["Incremental interval (minutes)", String(Number(field("fleet_incremental_interval_minutes").value) || 240)],
+          ["Fallback to full backup", field("fleet_incremental_fallback_to_full").checked ? "Enabled" : "Disabled"],
+        ] : []),
         ["Initial backup", "Runs once in every mode"],
         ["Unconfigured schedule", "Preserve leaves recurring backups disabled when no schedule exists."],
       ]);
@@ -478,7 +521,15 @@
     ]);
     appendReviewSection(container, "Warnings", [["Review warnings", (review.warnings || []).join("; ") || "None"]]);
     const gaps = review.coverage_gaps || [];
-    if (coverage) { coverage.textContent = gaps.length ? `Coverage gaps: ${gaps.map(coverageText).join("; ")}` : "No coverage gaps were reported."; coverage.classList.toggle("hidden", !gaps.length); }
+    if (coverage) {
+      const fleetIneligible = gaps.some((gap) => gap && typeof gap === "object"
+        && (String(gap.reason || gap.coverage_gap || "").includes("backupAllowed=false") || String(gap.product || "").toLowerCase() === "fleet"));
+      const detail = gaps.map(coverageText).join("; ");
+      coverage.textContent = gaps.length
+        ? `Not covered by this plan: ${detail}.${fleetIneligible ? " Fleet reports these components as ineligible for backup; selected eligible components can still be configured and backed up." : " These items are not protected by this plan; the selected eligible components can still be configured and backed up."}`
+        : "No coverage gaps were reported.";
+      coverage.classList.toggle("hidden", !gaps.length);
+    }
   }
   function groupConfigurationState(group) {
     const current = group.current;
@@ -1004,6 +1055,7 @@
     operationId = "";
     inspectionRevision = "";
     inspectedSources = [];
+    planKinds = [];
     components = [];
     receiver = null;
     operationStarted = false;
@@ -1017,8 +1069,8 @@
     node("[data-vcf-backup-recovery-credentials]").replaceChildren();
     node("[data-atlaso-wizard-submit]").disabled = false;
     node("[data-vcf-backup-task-link]").classList.add("hidden");
-    wizard.open({launcher, step: "credential", highestStep: "credential"});
-    setStatus("Choose credentials for a new backup configuration.");
+    wizard.open({launcher, step: "components", highestStep: "components"});
+    setStatus("Choose the components for a new backup configuration.");
   }
   function schedulePoll(delay) {
     window.clearTimeout(pollTimer);
@@ -1117,10 +1169,11 @@
       encryption_secret: secret("encryption_secret_ref"),
     };
   }
-  const stepIds = ["credential", "server", "fingerprint", "login", "discovery", "settings", "review"];
+  const stepIds = ["components", "credential", "server", "fingerprint", "login", "discovery", "settings", "review"];
   const stepCopy = {
+    components: ["Choose components", "Select VCF Operations, NSX, vCenter, or a direct SDDC Manager connection. You can choose several."],
     credential: ["Choose credentials", "Select a saved Vault key or use a one-time manual login."],
-      server: ["Select the VCF component", "Choose a component type and enter its server endpoint. VCF Operations discovers Fleet LCM automatically."],
+      server: ["Enter the server", "Enter the endpoint for this selected component. VCF Operations discovers Fleet LCM automatically."],
       fingerprint: ["Confirm TLS identity", "Probe the server and compare its fingerprint with a trusted source."],
     login: ["Sign in to the appliance", "Manual credentials are submitted only after TLS confirmation."],
     discovery: ["Discover backup components", "Inspect supported components and select the exact targets."],
@@ -1131,13 +1184,15 @@
   wizard = window.AtlasoUiPatterns.createWizard({
     form, dialog, steps: stepIds.map((id) => ({id, title: stepCopy[id][0], description: stepCopy[id][1]})),
     validateStep: ({step}) => {
+      if (step.id === "components") return selectedPlanKinds().length > 0;
       if (step.id === "credential") return mode.value === "vault" ? Boolean(selectedVaultEntry()) : true;
       if (step.id === "server") return Boolean(field("address").value.trim() && Number(field("port").value) > 0);
       if (step.id === "fingerprint") return validProbes();
       if (step.id === "login") return Boolean(field("username").value.trim() && field("password").value);
-      if (step.id === "discovery") return Boolean(inspectedSources.length && selectedComponentIds().length);
+      if (step.id === "discovery") return Boolean(inspectedSources.length && selectedComponentIds().some((id) => components.some((component) =>
+        String(component.id) === id && inspectedSources.some(({request}) => request.source_kind === sourceKind.value && String(request.source_id) === String(component.source_id)))));
       if (step.id === "settings") return settingsAreValid();
-      if (step.id === "review") return Boolean(reviewToken && field("recovery_ready").checked && field("replacements_confirmed").checked && field("acknowledged").checked);
+      if (step.id === "review") return Boolean(planSelectionComplete() && reviewToken && field("recovery_ready").checked && field("replacements_confirmed").checked && field("acknowledged").checked);
       return true;
     },
     onOpen: async () => {
@@ -1150,10 +1205,32 @@
       if (body?.scrollTo) body.scrollTo({top: 0});
       else if (body) body.scrollTop = 0;
       if (step.id === "discovery") renderComponents();
+      if (["credential", "server", "fingerprint", "login"].includes(step.id)) {
+        node("[data-atlaso-wizard-title]").textContent = `${stepCopy[step.id][0]} — ${sourceKindLabel(sourceKind.value)}`;
+      }
+      const progress = node("[data-vcf-backup-plan-progress]");
+      const pending = pendingPlanKinds().filter((kind) => kind !== sourceKind.value);
+      if (progress) progress.textContent = pending.length
+        ? `Select eligible targets for ${sourceKindLabel(sourceKind.value)}. Next: connect ${pending.map(sourceKindLabel).join(", ")}.`
+        : "All selected products are connected. Select the eligible targets for the combined backup plan.";
       syncOperationView();
       if (!operationStarted) setStatus("");
     },
     onNext: async ({step}) => {
+      if (step.id === "components") {
+        const chosen = selectedPlanKinds();
+        if (JSON.stringify(chosen) !== JSON.stringify(planKinds)) {
+          clearManualPasswords();
+          operationId = ""; inspectionRevision = ""; inspectedSources = []; components = []; receiver = null;
+          grid?.table?.deselectRow?.();
+          invalidateReview();
+          planKinds = chosen;
+        }
+        const pending = pendingPlanKinds();
+        if (!pending.length) return "discovery";
+        beginPlanSource(pending[0]);
+        return "credential";
+      }
       if (step.id === "server") {
         tlsFingerprints.server = "";
         const checkbox = node('[data-vcf-backup-confirm="server"]'); if (checkbox) { checkbox.checked = false; checkbox.disabled = true; }
@@ -1165,9 +1242,14 @@
       if (step.id === "fingerprint" && mode.value === "vault") {
         try { await inspectCurrentSource(); return "discovery"; } catch (error) { setError(error.message); return false; }
       }
-      if (step.id === "discovery" && inspectedSources.length) return "settings";
+      if (step.id === "discovery" && inspectedSources.length) {
+        const pending = pendingPlanKinds();
+        if (pending.length) { beginPlanSource(pending[0]); return "credential"; }
+        if (!planSelectionComplete()) { setError("Select at least one eligible target for every chosen product."); return false; }
+        return "settings";
+      }
       if (step.id === "settings") {
-        if (!selectedComponentIds().length) { setError("Select at least one discovered component."); return false; }
+        if (!planSelectionComplete()) { setError("Connect and select eligible targets for every chosen product before review."); return false; }
         try {
           invalidateReview();
           const result = await call("/review", reviewPayload());
@@ -1181,7 +1263,7 @@
       return true;
     },
     onSubmit: async () => {
-      if (!reviewToken) return {ok: false, message: "Build a fresh exact review before configuring backups."};
+      if (!reviewToken || !planSelectionComplete()) return {ok: false, message: "Build a fresh exact review before configuring backups."};
       setError("");
       const submittedReviewToken = reviewToken;
       reviewToken = "";
@@ -1223,6 +1305,7 @@
   });
   sourceKind?.addEventListener("change", () => { updateSourceFields(); invalidateReview(); });
   form.addEventListener("input", (event) => {
+    if (event.target.matches("[data-vcf-backup-plan-kind]")) invalidateReview();
     if (event.target.matches("[name='address'],[name='port']")) {
       invalidateReview(); tlsFingerprints.server = "";
       const checkbox = node('[data-vcf-backup-confirm="server"]'); if (checkbox) { checkbox.checked = false; checkbox.disabled = true; }
@@ -1254,11 +1337,8 @@
     }
     if (event.target.closest("[data-vcf-backup-add-source]")) {
       event.preventDefault();
-      resetCurrentSource();
-      updateCredentialMode();
-      wizard.setHighestStep("fingerprint");
-      wizard.showStep("credential", {unlock: true});
-      setStatus("Add another source. Previously inspected source inputs remain only in this open wizard.");
+      wizard.showStep("components", {unlock: true});
+      setStatus("Choose the products to include. Changing the selection starts discovery again.");
       return;
     }
   });

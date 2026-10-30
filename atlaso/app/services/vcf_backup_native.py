@@ -1256,6 +1256,9 @@ class NativeBackup:
             schedule_proposal = {
                 **value,
                 "fleet_schedule": current_schedule,
+                "fleet_incremental_mode": policy.get("fleet_incremental_mode", "preserve"),
+                "fleet_incremental_interval_minutes": policy.get("fleet_incremental_interval_minutes", 240),
+                "fleet_incremental_fallback_to_full": policy.get("fleet_incremental_fallback_to_full", True),
             }
             value["fleet_schedule"] = self._fleet_schedule_spec(schedule_proposal)
             full = value["fleet_schedule"].get("fullSchedule", {})
@@ -1494,6 +1497,11 @@ class NativeBackup:
         else:
             if not isinstance(schedule_mode, str) or schedule_mode not in {"preserve", "daily", "disabled"}:
                 raise ValueError("Fleet schedule mode must be preserve, daily, or disabled")
+            incremental_mode = proposed.get("fleet_incremental_mode", "preserve")
+            if not isinstance(incremental_mode, str) or incremental_mode not in {"preserve", "enabled", "disabled"}:
+                raise ValueError("Fleet incremental mode must be preserve, enabled, or disabled")
+            if schedule_mode != "daily" and incremental_mode != "preserve":
+                raise ValueError("Changing Fleet incremental backups requires daily full backups")
             current = NativeBackup._safe_fleet_schedule(proposed.get("fleet_schedule", {}))
             if schedule_mode == "preserve":
                 schedule_spec = dict(current)
@@ -1516,6 +1524,20 @@ class NativeBackup:
                 }
                 if "incrementalSchedule" in current:
                     schedule_spec["incrementalSchedule"] = current["incrementalSchedule"]
+                if incremental_mode == "enabled":
+                    interval = proposed.get("fleet_incremental_interval_minutes", 240)
+                    fallback = proposed.get("fleet_incremental_fallback_to_full", True)
+                    if type(interval) is not int or not 240 <= interval <= 2147483647:
+                        raise ValueError("Fleet incremental interval must be a whole number of at least 240 minutes")
+                    if not isinstance(fallback, bool):
+                        raise ValueError("Fleet incremental fallback must be a boolean")
+                    schedule_spec["incrementalSchedule"] = {
+                        "enabled": True, "interval": interval, "fallbackToFull": fallback,
+                    }
+                elif incremental_mode == "disabled":
+                    schedule_spec["incrementalSchedule"] = {
+                        **current.get("incrementalSchedule", {}), "enabled": False,
+                    }
             else:
                 full = dict(current.get("fullSchedule", {}))
                 full["enabled"] = False
