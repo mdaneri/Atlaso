@@ -25,7 +25,7 @@ test('Backup is a separate VCF Helper tab and readiness gates the launcher with 
   assert.doesNotMatch(helper.match(/data-vcf-backup-resume[\s\S]*?aria-controls="vcf-backup-status-modal"/)?.[0] || '', /disabled/);
   assert.match(modal, /data-vcf-backup-form[^>]*data-setup-ready="\{% if vcf_backup_wizard is defined and vcf_backup_wizard\.ready %\}true\{% else %\}false\{% endif %\}"/);
   assert.match(js, /const receiverReady = form\.dataset\.setupReady === "true"/);
-  assert.match(js, /!receiverReady \|\| !\["succeeded", "reconciled"\]\.includes\(operationState\)/);
+  assert.match(js, /function openBackupConfiguration\(launcher\) \{\s+if \(!receiverReady\) return;/);
 });
 
 test('Resume opens a standalone status popup instead of the configuration wizard', () => {
@@ -37,7 +37,7 @@ test('Resume opens a standalone status popup instead of the configuration wizard
   assert.doesNotMatch(modal, /data-vcf-backup-recovery-id|data-vcf-backup-operation/);
   assert.doesNotMatch(statusModal, /data-atlaso-wizard-step|data-atlaso-wizard/);
   assert.match(js, /document\.querySelector\("\[data-vcf-backup-resume\]"\)[\s\S]*?openOperationStatus\(operationStarted && operationId \? operationId : ""\)/);
-  assert.match(js, /document\.querySelector\("\[data-vcf-backup-open\]"\)[\s\S]*?if \(operationStarted && operationId\) \{\s+openOperationStatus\(operationId\)/);
+  assert.match(js, /document\.querySelector\("\[data-vcf-backup-open\]"\)[\s\S]*?openBackupConfiguration\(event.currentTarget\)/);
 });
 
 test('Wizard follows the required credential, server, explicit fingerprint, login, discovery, settings, review order', () => {
@@ -535,9 +535,9 @@ test('Operations recurrence controls follow selected components and preserve per
 
 test('The updated backup script URL and service worker cache version stay aligned', () => {
   const worker = fs.readFileSync(path.join(__dirname, '../../atlaso/app/static/service-worker.js'), 'utf8');
-  assert.match(helper, /vcf-backup\.js\?v=issue-1066-15/);
-  assert.match(worker, /ATLASO_CACHE_PREFIX\}406/);
-  assert.match(worker, /vcf-backup\.js\?v=issue-1066-15/);
+  assert.match(helper, /vcf-backup\.js\?v=issue-1066-16/);
+  assert.match(worker, /ATLASO_CACHE_PREFIX\}407/);
+  assert.match(worker, /vcf-backup\.js\?v=issue-1066-16/);
 });
 
 test('Review binds the selected component IDs, source credentials, policy, and saved secret references', () => {
@@ -773,8 +773,8 @@ test('Backup Operations list uses the shared read-only grid and opens selected o
   const gridElement = {};
   const context = vm.createContext({
     document: {querySelector: (selector) => selector === '[data-vcf-backup-operations-grid]' ? gridElement : {}},
-    window: {AtlasoUiPatterns: {createGrid(config) { gridConfig = config; return {table, setError() {}}; }}},
-    operationsInitialized: false, operationsGrid: null,
+    window: {addEventListener() {}, AtlasoUiPatterns: {createGrid(config) { gridConfig = config; return {table, setError() {}}; }}},
+    operationsInitialized: false, operationsGrid: null, scheduleOperationsResize() {},
     openOperationStatus(id) { openedOperation = id; },
     sourceKindLabel: (kind) => kind,
     safeText: (value, fallback = 'Not recorded') => value === undefined || value === null || value === '' ? fallback : String(value),
@@ -788,6 +788,19 @@ test('Backup Operations list uses the shared read-only grid and opens selected o
   assert.deepEqual(Array.from(gridConfig.options.columns, (column) => column.field), ['created_at', 'operation_id', 'state', 'component_count', 'sources']);
   gridConfig.onOpenRow({operation_id: 'operation-123'});
   assert.equal(openedOperation, 'operation-123');
+  const columns = Object.fromEntries(gridConfig.options.columns.map((column) => [column.field, column]));
+  assert.equal(columns.operation_id.headerFilter, 'input');
+  assert.equal(columns.created_at.headerFilter, 'input');
+  assert.equal(columns.state.headerFilter, 'list');
+  assert.equal(columns.state.headerFilterFunc, '=');
+  assert.equal(columns.state.headerFilterParams.values.needs_recovery, 'Needs attention');
+  assert.equal(columns.component_count.headerFilter, 'number');
+  assert.equal(columns.component_count.headerFilterFunc, '=');
+  const sources = [{kind: 'fleet', address: '192.0.2.35', port: 443}, {kind: 'sddc', address: 'sddc.example.test', port: 443}];
+  assert.equal(columns.sources.headerFilterFunc('FLEET', sources), true);
+  assert.equal(columns.sources.headerFilterFunc('192.0.2.35', sources), true);
+  assert.equal(columns.sources.headerFilterFunc('sddc.example.test', sources), true);
+  assert.equal(columns.sources.headerFilterFunc('unrelated', sources), false);
   assert.match(js, /call\(`\/operations\/\$\{encodeURIComponent\(requestedId\)\}`\)/);
   assert.match(js, /call\(`\/operations\?\$\{query\.toString\(\)\}`\)/);
 });
@@ -810,7 +823,7 @@ test('Backup Operations list loads the bounded first page and follows its cursor
     getData: () => data,
   };
   const context = vm.createContext({
-    operationsGrid: {table, setError() {}}, operationsLoading: false, operationsCursor: '',
+    operationsGrid: {table, setError() {}}, operationsLoading: false, operationsCursor: '', scheduleOperationsResize() {},
     URLSearchParams,
     document: {querySelector: (selector) => ({
       '[data-vcf-backup-operations-status]': status,
@@ -833,19 +846,66 @@ test('Backup Operations list loads the bounded first page and follows its cursor
   assert.equal(more.hidden, true);
 });
 
-test('Start New Plan requires ready receiver and a terminal operation', () => {
-  const newPlan = functionDeclaration('startNewPlan');
-  for (const state of [{receiverReady: false, operationState: 'succeeded'}, {receiverReady: true, operationState: 'running'}]) {
+test('Configure always opens a fresh wizard without reopening or cancelling an existing operation', () => {
+  const declaration = functionDeclaration('openBackupConfiguration');
+  for (const state of ['succeeded', 'reconciled', 'running', 'needs_recovery']) {
+    let opened;
+    let cleared = false;
     let reset = false;
-    const isolated = vm.createContext({
-      receiverReady: state.receiverReady, operationState: state.operationState,
-      window: {clearTimeout() {}}, pollTimer: 0,
-      clearManualPasswords() { reset = true; },
+    const element = {value: 'old', disabled: true, replaceChildren() {}, classList: {add() {}}};
+    const launcher = {};
+    const context = vm.createContext({
+      receiverReady: true, operationState: state, operationId: 'previous', operationStarted: true, form: {reset() { reset = true; }},
+      inspectedSources: [{request: {password: 'ephemeral'}}], components: ['old'], receiver: {},
+      inspectionRevision: 'old', canCloseWithoutCredentials: true, pollTimer: 1,
+      invalidateStatusView() {}, window: {clearTimeout() {}},
+      clearManualPasswords() { cleared = true; }, grid: null,
+      invalidateReview() {}, resetCurrentSource() {}, renderComponents() {}, renderSourceSummaries() {},
+      node() { return element; }, setStatus() {},
+      wizard: {open(options) { opened = options; }}, launcher,
+      openOperationStatus() { assert.fail('Configure must not open status'); },
+      call() { assert.fail('Opening a new wizard must not dispatch native work'); },
     });
-    vm.runInContext(`(${newPlan})()`, isolated);
-    assert.equal(reset, false);
+    vm.runInContext(`(${declaration})(launcher)`, context);
+    assert.equal(opened.step, 'credential');
+    assert.equal(opened.highestStep, 'credential');
+    assert.equal(opened.launcher, launcher);
+    assert.equal(cleared, true);
+    assert.equal(reset, true);
+    assert.equal(context.operationId, '');
+    assert.equal(context.operationStarted, false);
+    assert.equal(context.inspectedSources.length, 0);
   }
-  assert.match(js, /if \(!receiverReady \|\| !\["succeeded", "reconciled"\]\.includes\(operationState\)\) return;/);
+  assert.match(js, /if \(!event.currentTarget.disabled\) openBackupConfiguration\(event.currentTarget\)/);
+});
+
+test('Operations grid fills desktop space and clears fixed height for narrow or hidden layouts', () => {
+  const declaration = functionDeclaration('resizeOperationsGrid');
+  const element = {style: {height: ''}, isConnected: true, closest() { return null; }, getBoundingClientRect() { return {top: 400, width: 1000}; }};
+  const heights = [];
+  const context = vm.createContext({
+    operationsGridReady: true, operationsGridNeedsResize: true, operationsGrid: {table: {setHeight(height) { heights.push(height); }, redraw() {}}},
+    window: {innerWidth: 1704, innerHeight: 1244},
+    document: {querySelector(selector) { return selector.includes('operations-grid') ? element : null; }},
+  });
+  vm.runInContext(declaration, context);
+  context.resizeOperationsGrid();
+  assert.equal(element.style.height, '800px');
+  context.resizeOperationsGrid();
+  assert.equal(heights.length, 1);
+  context.window.innerWidth = 900;
+  context.resizeOperationsGrid();
+  assert.equal(element.style.height, '');
+  context.window.innerWidth = 1704;
+  element.closest = () => ({});
+  context.resizeOperationsGrid();
+  assert.equal(element.style.height, '');
+  element.closest = () => null;
+  context.window.innerHeight = 600;
+  context.resizeOperationsGrid();
+  assert.equal(element.style.height, '300px');
+  assert.match(js, /new ResizeObserver\(scheduleOperationsResize\)/);
+  assert.match(js, /window.addEventListener\("resize", scheduleOperationsResize\)/);
 });
 
 test('Successful reconciliation clears stale status but leaves native errors visible', async () => {
@@ -901,8 +961,7 @@ test('Review highlights native side effects and operation results prioritize err
   assert.match(js, /guidance\.textContent = result\.recovery_warning \|\|/);
 });
 
-test('Terminal operations can be explicitly cleared before a fresh plan', () => {
-  assert.match(statusModal, /data-vcf-backup-new-plan/);
-  assert.match(js, /function startNewPlan\(\) \{\s+if \(!receiverReady \|\| !\["succeeded", "reconciled"\]\.includes\(operationState\)\) return;[\s\S]*?operationId = "";[\s\S]*?operationStarted = false;/);
-  assert.match(js, /statusDialog\.close\(\);[\s\S]*?wizard\.open\(\{launcher: document\.querySelector\("\[data-vcf-backup-open\]"\), step: "credential", highestStep: "credential"\}\)/);
+test('Status popup contains no configuration launcher', () => {
+  assert.doesNotMatch(statusModal, /data-vcf-backup-new-plan|Start a new plan/);
+  assert.doesNotMatch(js, /data-vcf-backup-new-plan|function startNewPlan/);
 });

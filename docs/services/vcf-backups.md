@@ -121,7 +121,11 @@ Fleet polling can refresh an expired API token once through Operations after HTT
 must still match the reviewed service before the same read is retried.
 
 If a task fails, the process restarts, or the native write outcome is uncertain, use **Reconcile (read-only)** on that
-operation. The **Backup Operations** list shows your admitted runs; double-click a row to open its status. Alternatively,
+operation. The **Backup Operations** list shows your admitted runs and fills the available desktop height. Use its
+column filters to narrow loaded operations by creation date, operation ID, status, component count, or source product
+and server. Select **Load more operations** to include earlier history; filters remain applied when refreshing or
+loading more rows. Open a row to view its status. **Configure VCF Backup** always starts a fresh configuration wizard;
+opening it does not cancel an existing operation. Alternatively,
 select **Resume Existing Backup Operation**, enter the operation ID, and select **Load status**. This opens a standalone
 status popup, without configuration steps. Closing it or the browser does not stop an admitted backup or reconciliation.
 Read-only reconciliation is admitted promptly and continues in the background; the popup shows queued, running,

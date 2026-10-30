@@ -160,7 +160,7 @@
         {% if identity.has_role('admin') %}
           <section class="panel" data-vcf-backup-operations-section aria-labelledby="vcf-backup-operations-title">
             <div class="panel-head compact">
-              <div><h3 id="vcf-backup-operations-title">Backup Operations</h3><p class="muted">Review and reconcile previous backup operations. Opening an operation does not repeat native writes.</p></div>
+              <div><h3 id="vcf-backup-operations-title">Backup Operations</h3><p class="muted">Review and reconcile previous backup operations. Opening an operation does not repeat native writes. Column filters apply to loaded operations; use Load more operations to search earlier history.</p></div>
               <button class="button secondary" type="button" data-vcf-backup-operations-refresh>Refresh</button>
             </div>
             <p class="muted" data-vcf-backup-operations-status role="status" aria-live="polite">Open Backup to load recent operations.</p>
@@ -196,7 +196,7 @@
 <script id="vcf-backup-secret-options" type="application/json">{{ vcf_backup_secret_options | default([], true) | tojson }}</script>
 {% include "partials/vcf_backup_modal.html" %}
 {% include "partials/vcf_backup_status_modal.html" %}
-<script src="/static/vcf-backup.js?v=issue-1066-15" defer></script>
+<script src="/static/vcf-backup.js?v=issue-1066-16" defer></script>
 <noscript><style>#vcf-fqdn-modal:not([open]) { display: block; position: static; width: min(100%, 70rem); margin: 1rem auto; }</style></noscript>
 <noscript><style>.vcf-helper-subjects > .tab-panel[hidden] { display: grid; } .vcf-helper-tabs { display: none; }</style></noscript>
 

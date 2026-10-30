@@ -43,6 +43,8 @@
   let operationsCursor = "";
   let operationsLoading = false;
   let operationsInitialized = false;
+  let operationsGridReady = false;
+  let operationsGridNeedsResize = true;
   let selectAllSupportedCheckbox = null;
   let busy = false;
   let pollTimer = null;
@@ -772,7 +774,6 @@
     const link = node("[data-vcf-backup-task-link]");
     if (link && result.job_id) { link.href = `${form.dataset.tasksRoot}?job_id=${encodeURIComponent(result.job_id)}`; link.classList.remove("hidden"); }
     else link?.classList.add("hidden");
-    node("[data-vcf-backup-new-plan]")?.classList.toggle("hidden", !receiverReady || !["succeeded", "reconciled"].includes(operationState));
     node("[data-vcf-backup-close-control]")?.classList.toggle("hidden", operationState !== "needs_recovery");
     const reconcileButton = node("[data-vcf-backup-reconcile]");
     reconcileButton?.classList.toggle("hidden", ["succeeded", "reconciled"].includes(operationState));
@@ -845,7 +846,6 @@
       node("[data-vcf-backup-operation-error]").classList.add("hidden");
       node("[data-vcf-backup-native-running-warning]").classList.add("hidden");
       node("[data-vcf-backup-task-link]").classList.add("hidden");
-      node("[data-vcf-backup-new-plan]").classList.add("hidden");
       field("close_recovery").checked = false;
     }
     operationId = requestedId;
@@ -898,7 +898,8 @@
       else await operationsGrid.table.setData(items);
       operationsCursor = result.next_cursor || "";
       if (more) more.classList.toggle("hidden", !operationsCursor);
-      if (status) status.textContent = `Loaded ${operationsGrid.table.getDataCount?.("active") ?? operationsGrid.table.getData?.().length ?? items.length} backup operation(s).`;
+      scheduleOperationsResize();
+      if (status) status.textContent = `Loaded ${operationsGrid.table.getDataCount?.() ?? operationsGrid.table.getData?.().length ?? items.length} backup operation(s).`;
     } catch (error) {
       const message = error?.message || "Backup operations could not be loaded.";
       operationsGrid.setError(message);
@@ -908,6 +909,32 @@
       if (refresh) refresh.disabled = false;
       if (more) more.disabled = false;
     }
+  }
+  function resizeOperationsGrid() {
+    const element = document.querySelector("[data-vcf-backup-operations-grid]");
+    const table = operationsGrid?.table;
+    if (!operationsGridReady || !element || !table) return;
+    const rect = element.getBoundingClientRect();
+    if (!element.isConnected || element.closest("[hidden], .hidden") || rect.width <= 0) {
+      element.style.height = "";
+      operationsGridNeedsResize = true;
+      return;
+    }
+    const compact = window.innerWidth <= 1100;
+    const footer = document.querySelector(".management-info-footnote")?.getBoundingClientRect().height || 0;
+    const more = document.querySelector("[data-vcf-backup-operations-more]");
+    const moreHeight = more && !more.classList.contains("hidden") ? more.getBoundingClientRect().height + 12 : 0;
+    const nextHeight = compact ? "" : `${Math.max(300, Math.floor(window.innerHeight - Math.max(0, rect.top) - footer - moreHeight - 44))}px`;
+    if (element.style.height === nextHeight && !operationsGridNeedsResize) return;
+    element.style.height = nextHeight;
+    table.setHeight(nextHeight);
+    table.redraw(true);
+    operationsGridNeedsResize = false;
+  }
+  let operationsResizeFrame = null;
+  function scheduleOperationsResize() {
+    window.cancelAnimationFrame(operationsResizeFrame);
+    operationsResizeFrame = window.requestAnimationFrame(resizeOperationsGrid);
   }
   function initializeOperationsGrid() {
     const element = document.querySelector("[data-vcf-backup-operations-grid]");
@@ -922,29 +949,36 @@
       loadingMessage: "Loading recent VCF backup operations…",
       emptyMessage: "No backup operations have been recorded.",
       errorMessage: "The backup operation list could not be displayed. Refresh to retry.",
-      onReady: () => window.requestAnimationFrame(() => loadOperations(false)),
+      onReady: () => { operationsGridReady = true; window.requestAnimationFrame(() => { resizeOperationsGrid(); loadOperations(false); }); },
       onOpenRow: (item) => rowAction(item),
       rowActions: [{label: "View status", action: (_event, row) => rowAction(row.getData())}],
       options: {
         data: [], index: "operation_id", layout: "fitColumns", responsiveLayout: "collapse",
         pagination: true, paginationSize: 25, selectableRows: 1,
         columns: [
-          {title: "Created", field: "created_at", minWidth: 170, formatter: (cell) => operationCell(cell.getValue())},
-          {title: "Operation", field: "operation_id", minWidth: 220, formatter: (cell) => operationCell(cell.getValue())},
-          {title: "Status", field: "state", minWidth: 140, formatter: (cell) => operationCell(operationStateLabel(cell.getValue()))},
-          {title: "Components", field: "component_count", width: 120, formatter: (cell) => operationCell(cell.getValue(), "0")},
-          {title: "Sources", field: "sources", minWidth: 240, formatter: (cell) => operationCell(operationSourceSummary(cell.getValue()))},
+          {title: "Created", field: "created_at", minWidth: 170, formatter: (cell) => operationCell(cell.getValue()), headerFilter: "input", headerFilterPlaceholder: "Filter date"},
+          {title: "Operation", field: "operation_id", minWidth: 220, formatter: (cell) => operationCell(cell.getValue()), headerFilter: "input", headerFilterPlaceholder: "Filter operation"},
+          {title: "Status", field: "state", minWidth: 150, formatter: (cell) => operationCell(operationStateLabel(cell.getValue())), headerFilter: "list", headerFilterParams: {values: {"": "All", queued: "Queued", running: "Running", needs_recovery: "Needs attention", succeeded: "Succeeded", reconciled: "Reconciled"}}, headerFilterFunc: "="},
+          {title: "Components", field: "component_count", width: 125, formatter: (cell) => operationCell(cell.getValue(), "0"), headerFilter: "number", headerFilterPlaceholder: "Count", headerFilterParams: {min: 0, step: 1}, headerFilterFunc: "="},
+          {title: "Sources", field: "sources", minWidth: 240, formatter: (cell) => operationCell(operationSourceSummary(cell.getValue())), headerFilter: "input", headerFilterPlaceholder: "Filter product or server", headerFilterFunc: (value, sources) => operationSourceSummary(sources).toLowerCase().includes(String(value).toLowerCase())},
         ],
       },
       permission: {allowed: true},
     });
     operationsGrid?.table?.on?.("rowClick", (_event, row) => rowAction(row.getData()));
     if (!operationsGrid?.table) operationsGrid?.setError?.("The backup operation list could not be initialized. Refresh to retry.");
+    else {
+      window.addEventListener("resize", scheduleOperationsResize);
+      if (typeof ResizeObserver !== "undefined") {
+        const observer = new ResizeObserver(scheduleOperationsResize);
+        observer.observe(element.closest("[data-vcf-backup-operations-section]") || element);
+      }
+    }
   }
   const backupTab = document.getElementById("vcf-helper-backup");
   const backupTabButton = document.querySelector('[data-tab-target="vcf-helper-backup"]');
   const initializeVisibleOperationsGrid = () => {
-    if (backupTab && !backupTab.hidden) initializeOperationsGrid();
+    if (backupTab && !backupTab.hidden) { initializeOperationsGrid(); scheduleOperationsResize(); }
   };
   backupTabButton?.addEventListener("click", () => window.requestAnimationFrame(initializeVisibleOperationsGrid));
   if (backupTab && !backupTab.hidden) initializeOperationsGrid();
@@ -960,11 +994,12 @@
     node("[data-vcf-backup-recovery-credentials]")?.querySelectorAll("input[type='password']").forEach((input) => { input.value = ""; });
     field("password").value = "";
   }
-  function startNewPlan() {
-    if (!receiverReady || !["succeeded", "reconciled"].includes(operationState)) return;
+  function openBackupConfiguration(launcher) {
+    if (!receiverReady) return;
     invalidateStatusView();
     window.clearTimeout(pollTimer);
     clearManualPasswords();
+    form.reset();
     grid?.table?.deselectRow?.();
     operationId = "";
     inspectionRevision = "";
@@ -978,14 +1013,12 @@
     resetCurrentSource();
     renderComponents();
     renderSourceSummaries();
-    node("[data-vcf-backup-new-plan]")?.classList.add("hidden");
     node("[data-vcf-backup-recovery-id]").value = "";
     node("[data-vcf-backup-recovery-credentials]").replaceChildren();
     node("[data-atlaso-wizard-submit]").disabled = false;
     node("[data-vcf-backup-task-link]").classList.add("hidden");
-    setStatus("Start a fresh inspection and review for the new plan.");
-    statusDialog.close();
-    wizard.open({launcher: document.querySelector("[data-vcf-backup-open]"), step: "credential", highestStep: "credential"});
+    wizard.open({launcher, step: "credential", highestStep: "credential"});
+    setStatus("Choose credentials for a new backup configuration.");
   }
   function schedulePoll(delay) {
     window.clearTimeout(pollTimer);
@@ -1244,23 +1277,13 @@
     if (event.target.closest("[data-vcf-backup-load-operation]")) {
       event.preventDefault(); loadOperation().catch((error) => setStatus(error.message, true));
     }
-    if (event.target.closest("[data-vcf-backup-new-plan]")) {
-      event.preventDefault(); startNewPlan();
-    }
     if (event.target.closest("[data-vcf-backup-status-close]")) {
       event.preventDefault(); statusDialog.close();
     }
   });
   node('[data-vcf-backup-confirm="server"]')?.addEventListener("change", invalidateReview);
   document.querySelector("[data-vcf-backup-open]")?.addEventListener("click", (event) => {
-    if (!event.currentTarget.disabled) {
-      if (operationStarted && operationId) {
-        openOperationStatus(operationId);
-        return;
-      }
-      const resume = operationId && inspectedSources.length ? "discovery" : "credential";
-      wizard.open({launcher: event.currentTarget, step: resume, highestStep: resume});
-    }
+    if (!event.currentTarget.disabled) openBackupConfiguration(event.currentTarget);
   });
   document.querySelector("[data-vcf-backup-resume]")?.addEventListener("click", (event) => {
     openOperationStatus(operationStarted && operationId ? operationId : "");

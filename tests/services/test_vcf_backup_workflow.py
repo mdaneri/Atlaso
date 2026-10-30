@@ -874,7 +874,7 @@ def test_native_identity_change_after_preflight_blocks_configuration(harness):
         dispatcher.run()
         state = read_operation(db, inspected["operation_id"])
         assert state["state"] == "needs_recovery"
-        assert "inventory or backup settings changed" in state["error"]
+        assert "identity changed after review" in state["error"]
         assert backend.validations
         assert backend.config_writes == []
         assert backend.backup_starts == []
@@ -1268,6 +1268,113 @@ def test_native_backup_failure_is_not_recorded_as_verified_success(harness):
         assert state["plan"][0]["checkpoint"] == "backup_submitted"
         assert state["plan"][0].get("verified_components") is None
         assert "native initial backup failed" in state["error"]
+
+
+def _install_two_group_inventory(harness):
+    """Expose two independently configured Fleet LCM groups on one Operations source.
+
+    Args:
+        harness: Workflow fixtures whose native backend will provide the inventory.
+    """
+    backend = harness["backend"]
+    backend.kind = "fleet"
+    backend.group_id = "group-a"
+    backend.component_ids = ["component-a", "component-b"]
+    backend.current_by_group = {"group-a": dict(backend.initial), "group-b": dict(backend.initial)}
+
+    def inventory(address=""):
+        """Return two scheduler groups with their independently current settings.
+
+        Args:
+            address: Native endpoint accepted for parity with the fake inventory adapter.
+        """
+        current_a = dict(backend.current_by_group["group-a"])
+        current_b = dict(backend.current_by_group["group-b"])
+        service = {
+            "address": "fleet.example.test", "port": 443, "base_path": "suite-api",
+            "key": "fleet-lcm", "version": "9.1.1.0",
+        }
+        return {
+            "identity": "fleet:fleet.example.test:pin:stable-groups-a-b",
+            "version": "9.1.1.0",
+            "components": [
+                {"id": "component-a", "group_id": "group-a", "name": "Component A", "product": "SDDC_MANAGER",
+                 "version": "9.1.1.0", "supported": True, "current": current_a, "warnings": []},
+                {"id": "component-b", "group_id": "group-b", "name": "Component B", "product": "SDDC_MANAGER",
+                 "version": "9.1.1.0", "supported": True, "current": current_b, "warnings": []},
+            ],
+            "groups": [
+                {"id": "group-a", "product": "fleet", "component_ids": ["component-a"], "current": current_a,
+                 "native_identity": {"sddc_lcm_id": "group-a", "sddc_manager_fqdns": ["manager-a.example.test"]},
+                 "reservation_keys": ["sddc-manager-fqdn:manager-a.example.test"],
+                 "side_effects": []},
+                {"id": "group-b", "product": "fleet", "component_ids": ["component-b"], "current": current_b,
+                 "native_identity": {"sddc_lcm_id": "group-b", "sddc_manager_fqdns": ["manager-b.example.test"]},
+                 "reservation_keys": ["sddc-manager-fqdn:manager-b.example.test"],
+                 "side_effects": []},
+            ],
+            "coverage_gaps": [],
+            "service": service,
+        }
+
+    harness["monkeypatch"].setattr(FakeBackend, "inventory", lambda _self, address="": inventory(address))
+    return backend
+
+
+def test_multiple_native_groups_configure_and_backup_after_each_readback(harness):
+    """Verify one group's config change does not look like drift in another group.
+
+    Args:
+        harness: Fake native, receiver, clock, and administrator fixtures for workflow execution.
+    """
+    backend = _install_two_group_inventory(harness)
+    with SessionLocal() as db:
+        inspected, source = inspect_operation(db, kind="fleet")
+        reviewed = review_operation(db, inspected, source)
+        _, dispatcher = execute_operation(db, inspected, source, reviewed)
+        dispatcher.run()
+        state = read_operation(db, inspected["operation_id"])
+
+    assert state["state"] == "succeeded"
+    assert [group for group, _ in backend.config_writes] == ["group-a", "group-b"]
+    assert [group for group, _ in backend.backup_starts] == ["group-a", "group-b"]
+    assert all(backend.current_by_group[group] == proposed for group, proposed in backend.config_writes)
+
+
+def test_pending_group_external_drift_stops_before_its_configuration_write(harness):
+    """Verify mutable drift in the next group is caught after the prior group completes.
+
+    Args:
+        harness: Fake native, receiver, clock, and administrator fixtures for workflow execution.
+    """
+    backend = _install_two_group_inventory(harness)
+    original_status = FakeNative.backup_status
+
+    def drift_pending_group(native, group, reference):
+        """Change the second group's reviewed settings after the first backup.
+
+        Args:
+            native: Fake adapter used by the running workflow.
+            group: Group whose backup status is being checked.
+            reference: Native task reference for that backup.
+        """
+        status = original_status(native, group, reference)
+        if group == "group-a":
+            backend.current_by_group["group-b"]["full_time"] = "03:45"
+        return status
+
+    harness["monkeypatch"].setattr(FakeNative, "backup_status", drift_pending_group)
+    with SessionLocal() as db:
+        inspected, source = inspect_operation(db, kind="fleet")
+        reviewed = review_operation(db, inspected, source)
+        _, dispatcher = execute_operation(db, inspected, source, reviewed)
+        dispatcher.run()
+        state = read_operation(db, inspected["operation_id"])
+
+    assert state["state"] == "needs_recovery"
+    assert [group for group, _ in backend.config_writes] == ["group-a"]
+    assert [group for group, _ in backend.backup_starts] == ["group-a"]
+    assert "settings changed after preflight" in state["error"]
 
 
 def test_fleet_review_rejects_partial_native_backup_group(harness):

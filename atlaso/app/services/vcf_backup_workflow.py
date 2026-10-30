@@ -1139,7 +1139,10 @@ def run_job(job_id: str, manual: dict[str, Any] | None = None) -> None:
                         step.status, step.started_at = "running", utcnow()
                     with NativeBackup(source, credentials[source["source_id"]]) as native:
                         native.login()
-                        _current_inventory(native, source)
+                        # A completed group legitimately changes the mutable
+                        # inventory snapshot. Recheck immutable identities here,
+                        # then compare this pending group's original settings.
+                        _current_native_identity(native, source)
                         if native.current(group["native_group_id"]) != group["current"]:
                             raise BackupOperationError("Native backup settings changed after preflight. Reconcile before a new review.")
                         _checkpoint(db, row, state, group, "configuration_dispatch_pending")
