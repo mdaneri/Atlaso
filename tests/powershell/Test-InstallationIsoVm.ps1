@@ -184,6 +184,7 @@ function Get-InstallationVmFunctionText {
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Get-InstallationVmxEncoding')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Read-InstallationVmxText')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'ConvertTo-InstallationDiskBootConfiguration')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'ConvertTo-InstallationRecoveryBootConfiguration')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Get-InstallationVmxPathAssignment')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmDiskBindings')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Read-InstallationRunningVmxText')))
@@ -254,6 +255,10 @@ foreach ($mutation in @('missing', 'duplicate', 'outside', 'size', 'unknown')) {
     Assert-InstallationVmCondition $refused 'Missing, duplicate, outside, wrong-size or unknown baseline roles must fail without filesystem activity.'
 }
 Import-Module (Join-Path $repositoryRoot 'scripts/windows/vmware/Atlaso.InstallationOldLabel.psm1') -Force
+$moduleProcess = & (Get-Module Atlaso.InstallationOldLabel) {
+    Invoke-AtlasoBoundedProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile', '-Command', "Write-Output 'old-label-module-scope'") -TimeoutSeconds 15 -Action 'Verify module-local bounded helper'
+}
+Assert-InstallationVmCondition ($moduleProcess.Trim() -ceq 'old-label-module-scope') 'The old-label module must resolve its own bounded helper in a fresh child.'
 $oldFixture = Get-AtlasoInstallationFixture -FixtureProfile OldSystemLabel
 Assert-InstallationVmCondition ($oldFixture.Disks.Count -eq 2 -and $oldFixture.Disks[0].SizeGiB -eq 64 -and $oldFixture.Disks[1].SizeGiB -eq 4 -and -not $oldFixture.Disks[1].Selected) 'Old-label coverage must preserve the original64/4GiB roles.'
 $oldSpec = Get-AtlasoInstallationOldLabelSpec
@@ -664,7 +669,7 @@ Assert-InstallationVmCondition ($startHelper.Contains('[Environment]::CurrentDir
 Assert-InstallationVmCondition ($source.Contains("'compare', '-f', 'vmdk', '-F', 'vmdk'")) 'Disk comparison must use qemu-img logical VMDK comparison.'
 Assert-InstallationVmCondition (-not $source.Contains("'compare', '-s'")) 'Logical comparison must not require sparse allocation layout to match.'
 Assert-InstallationVmCondition ($source.Contains('-Kind installation-baseline')) 'The baseline record must use its dedicated ownership-receipt kind.'
-Assert-InstallationVmCondition ($ownershipSource.Contains("'installation-baseline', 'installation-boot', 'installation-resume', 'installation-interruption')")) 'The immutable ownership publisher must admit the baseline record kind.'
+Assert-InstallationVmCondition ($ownershipSource.Contains("'installation-baseline', 'installation-boot', 'installation-resume', 'installation-interruption', 'installation-recovery-boot')")) 'The immutable ownership publisher must admit the baseline and recovery record kinds.'
 Assert-InstallationVmCondition ($cleanupSource.Contains("'Confirm-AtlasoWorkstationVmInactive'")) 'The guarded VM stop helper must be available to the verification mode.'
 $verifyMode = $source.IndexOf('if ($Mode -in @(''AdmitConsole'', ''AdmitNetwork'', ''Verify'', ''BootInstalled'', ''ResumeInstalled'', ''ResumeInstaller''))', [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($verifyMode -ge 0) 'The harness must expose receipt-bound disk verification.'
@@ -1431,6 +1436,16 @@ try {
 finally { if ($stagePair) { Close-InstallationTestPipePair -Pair $stagePair } }
 
 $bootSource = ($lines -join "`n") + "`n"
+$recoveryText = ConvertTo-InstallationRecoveryBootConfiguration -Text $bootSource
+Assert-InstallationVmCondition ($recoveryText -ceq ($bootSource + 'efi.bootOrder = "cdrom,hdd"' + "`n")) 'Recovery must explicitly prefer the connected original optical media and preserve unrelated VMX bytes.'
+foreach ($bad in @($recoveryText, ($bootSource + 'EFI.bootOrder = "hdd"'), $bootSource.Replace('sata0:0.present = "TRUE"', 'sata0:0.present = "FALSE"'))) {
+    $refused = $false
+    try { $null = ConvertTo-InstallationRecoveryBootConfiguration -Text $bad } catch { $refused = $true }
+    Assert-InstallationVmCondition $refused 'Recovery must refuse duplicate/preexisting boot overrides and disconnected optical media.'
+}
+$recoveryPublish = $source.IndexOf('-Record $transition -Kind installation-recovery-boot', [StringComparison]::Ordinal)
+$recoveryWrite = $source.IndexOf('$writer.Write($after', $recoveryPublish, [StringComparison]::Ordinal)
+Assert-InstallationVmCondition ($recoveryPublish -gt $verifyCompare -and $recoveryWrite -gt $recoveryPublish) 'Recovery must verify original disks and publish the immutable transition before VMX mutation.'
 $bootText = ConvertTo-InstallationDiskBootConfiguration -Text $bootSource
 Assert-InstallationVmCondition ($bootText.Contains('sata0:0.present = "FALSE"') -and $bootText.Contains('sata0:0.startConnected = "FALSE"')) 'Installed boot must disconnect the CD drive.'
 Assert-InstallationVmCondition ($bootText.Replace('sata0:0.present = "FALSE"', 'sata0:0.present = "TRUE"').Replace('sata0:0.startConnected = "FALSE"', 'sata0:0.startConnected = "TRUE"') -ceq $bootSource) 'Installed boot must preserve all other VMX bytes.'

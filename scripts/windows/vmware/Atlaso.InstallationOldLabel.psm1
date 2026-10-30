@@ -3,6 +3,7 @@
 Prepare a genuine old system-content filesystem only in a newly owned regular image before its baseline.
 #>
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 
 <#
 .SYNOPSIS
@@ -66,7 +67,10 @@ run('e2fsck',['-f','-n',str(raw)])
 identity=dict(line.split('=',1) for line in run('blkid',['-p','-o','export',str(raw)]).decode().splitlines() if '=' in line)
 actual=run('debugfs',['-R','cat /sentinel.txt',str(raw)])
 if identity.get('LABEL')!=label or identity.get('UUID')!=uuid or identity.get('TYPE')!='ext4' or actual!=(seed/'sentinel.txt').read_bytes(): raise ValueError('Old-label filesystem verification failed')
-with raw.open('rb') as f: digest=hashlib.file_digest(f,'sha256').hexdigest()
+digest_state=hashlib.sha256()
+with raw.open('rb') as f:
+ for block in iter(lambda:f.read(1024*1024),b''): digest_state.update(block)
+digest=digest_state.hexdigest()
 print(json.dumps({'schema':1,'label':label,'uuid':uuid,'filesystem':'ext4','virtual_size_bytes':info.st_size,'raw_sha256':digest,'sentinel_sha256':hashlib.sha256(actual).hexdigest(),'tools':tools,'wsl_distribution':os.environ.get('WSL_DISTRO_NAME')}))
 '@
     $json = Invoke-AtlasoBoundedProcess -FilePath 'wsl.exe' -ArgumentList @('--exec', '/usr/bin/python3', '-c', $program, $raw, $seed, $spec.Label, $spec.Uuid) `

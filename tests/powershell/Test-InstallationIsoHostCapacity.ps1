@@ -10,6 +10,7 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+Import-Module (Join-Path $repositoryRoot 'scripts/windows/vmware/Atlaso.InstallationFixture.psm1') -Force
 $harnessPath = Join-Path $repositoryRoot 'scripts\windows\vmware\test-installation-iso.ps1'
 $tokens = $null
 $parseErrors = $null
@@ -45,6 +46,13 @@ Assert-InstallationHostCapacity -OutputDirectory 'E:\owned\fresh-vm'
 if ($script:capacityQueries -ne 1 -or $script:queriedOutputDirectories[0] -cne 'E:\owned\fresh-vm') {
     throw 'The guard must query the containing volume for the exact task-owned path before accepting capacity.'
 }
+$oldLabelRejected = $false
+$script:capacityFixture = [pscustomobject]@{ IsReady = $true; AvailableFreeSpace = [long]77GB }
+try { Assert-InstallationHostCapacity -OutputDirectory 'E:\owned\old-label-vm' -FixtureProfile OldSystemLabel }
+catch { $oldLabelRejected = $true }
+if (-not $oldLabelRejected) { throw 'Old-label creation must reserve its additional raw image capacity.' }
+$script:capacityFixture = [pscustomobject]@{ IsReady = $true; AvailableFreeSpace = [long]78GB }
+Assert-InstallationHostCapacity -OutputDirectory 'E:\owned\old-label-vm' -FixtureProfile OldSystemLabel
 
 $belowFreshMinimumRejected = $false
 $script:capacityFixture = [pscustomobject]@{ IsReady = $true; AvailableFreeSpace = [long]73GB }

@@ -905,6 +905,22 @@ function ConvertTo-InstallationDiskBootConfiguration {
     return [regex]::Replace($result, '(?m)^sata0:0\.startConnected = "TRUE"(?=\r?$)', 'sata0:0.startConnected = "FALSE"')
 }
 
+<#
+.SYNOPSIS
+Prefer the original connected optical media for an explicitly admitted interrupted reinstall.
+.PARAMETER Text
+Stopped original EFI fixture VMX text, preserving every unrelated assignment.
+#>
+function ConvertTo-InstallationRecoveryBootConfiguration {
+    param([string]$Text)
+    $null = ConvertTo-InstallationDiskBootConfiguration -Text $Text -FixtureProfile OldSystemLabel
+    $orders = @([regex]::Matches($Text, '(?im)^\s*efi\.bootOrder\s*=.*$'))
+    if ($orders.Count -ne 0) { throw 'Recovery requires an original fixture without a boot-order override.' }
+    $newline = if ($Text.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $separator = if ($Text.EndsWith("`n")) { '' } else { $newline }
+    return $Text + $separator + 'efi.bootOrder = "cdrom,hdd"' + $newline
+}
+
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     throw 'Pass a canonical -OutputDirectory beneath the source checkout or an approved, receipted validation root.'
 }
@@ -1153,15 +1169,7 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
             $interruptedReceipt = Publish-AtlasoTestVmOwnershipRecord -Context $context -Record $interrupted -Kind installation-interruption
             Write-Host ('Installer interruption receipt: ' + ($interruptedReceipt | ConvertTo-Json -Compress))
         }
-        if ($Mode -eq 'ResumeInstaller') {
-            Assert-InstallationHostCapacity -OutputDirectory $context.OutputDirectory -ExistingVm
-            Assert-AtlasoTestVmCheckoutSource -Context $context
-            if (@($vmxLines | Where-Object { $_ -ceq 'sata0:0.present = "TRUE"' }).Count -ne 1 -or
-                @($vmxLines | Where-Object { $_ -ceq 'sata0:0.startConnected = "TRUE"' }).Count -ne 1) { throw 'Installer recovery requires the original connected ISO.' }
-            $vmxPin.Dispose(); $vmxPin = $null
-            Start-InstallationIsoVm -VmrunPath $vmrun -VmxPath $context.VmxPath -OutputDirectory $context.OutputDirectory
-        }
-        if ($Mode -eq 'BootInstalled') {
+        if ($Mode -in @('BootInstalled', 'ResumeInstaller')) {
             Assert-InstallationHostCapacity -OutputDirectory $context.OutputDirectory -ExistingVm
             $vmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($context.VmxPath)
             $vmxPin.Dispose()
@@ -1176,10 +1184,13 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
                 $encoding = Get-InstallationVmxEncoding -Bytes $before
                 $text = $encoding.GetString($before)
                 Assert-InstallationVmDiskBindings -VmxLines ($text -split "`r?`n") -Context $context -IsoPath ([string]$original.installation_iso.path)
-                $after = $encoding.GetBytes((ConvertTo-InstallationDiskBootConfiguration -Text $text -FixtureProfile $fixture.Profile))
+                $afterText = if ($Mode -eq 'ResumeInstaller') {
+                    ConvertTo-InstallationRecoveryBootConfiguration -Text $text
+                } else { ConvertTo-InstallationDiskBootConfiguration -Text $text -FixtureProfile $fixture.Profile }
+                $after = $encoding.GetBytes($afterText)
                 Assert-AtlasoTestVmCheckoutSource -Context $context
                 $transition = [ordered]@{
-                    schema = 1; phase = 'installation-boot-without-media'; task_id = $context.TaskId
+                    schema = 1; phase = $(if ($Mode -eq 'ResumeInstaller') { 'installation-recovery-boot' } else { 'installation-boot-without-media' }); task_id = $context.TaskId
                     repository = $context.Repository; source_branch = $context.Branch; source_commit = $context.SourceCommit
                     worktree = $context.Worktree; pull_request_number = $context.PullRequestNumber; local_builder = $context.LocalBuilder
                     canonical_name = $context.Name; output_directory = $context.OutputDirectory; vmx_path = $context.VmxPath
@@ -1191,8 +1202,15 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
                     after_sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($after)).ToLowerInvariant()
                     created_utc = [DateTimeOffset]::UtcNow.ToString('o')
                 }
-                $published = Publish-AtlasoTestVmOwnershipRecord -Context $context -Record $transition -Kind installation-boot
-                Write-Host ('Installed boot transition receipt: ' + ($published | ConvertTo-Json -Compress))
+                if ($Mode -eq 'ResumeInstaller') {
+                    $transition.interruption_receipt_path = $InterruptionReceiptPath
+                    $transition.interruption_receipt_sha256 = $InterruptionReceiptSha256
+                    $published = Publish-AtlasoTestVmOwnershipRecord -Context $context -Record $transition -Kind installation-recovery-boot
+                    Write-Host ('Recovery boot transition receipt: ' + ($published | ConvertTo-Json -Compress))
+                } else {
+                    $published = Publish-AtlasoTestVmOwnershipRecord -Context $context -Record $transition -Kind installation-boot
+                    Write-Host ('Installed boot transition receipt: ' + ($published | ConvertTo-Json -Compress))
+                }
                 $writer.Position = 0
                 $writer.Write($after, 0, $after.Length)
                 $writer.SetLength($after.Length)

@@ -1779,7 +1779,11 @@ try {
             $readyForInstallation = $Scenario -in @('CustomReboot', 'CustomMultiReboot')
         } else {
             Write-Host 'Public installer phase: awaiting-disk-selection'
-            $diskOptions = @(Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline -ReadBootProgress -CursorState $cursorState -FixtureProfile $creationFixture.Profile -ReadDiskSelection:($Scenario -in @('Probe', 'MultiProbe', 'Auto', 'AutoReboot', 'OldLabelInterrupted', 'OldLabelReboot', 'RecoverOldLabelReboot', 'CancelReview', 'Insufficient')))
+            $diskSelectionDeadline = $deadline
+            if ($Scenario -eq 'RecoverOldLabelReboot' -and [DateTimeOffset]::UtcNow.AddSeconds(120) -lt $deadline) {
+                $diskSelectionDeadline = [DateTimeOffset]::UtcNow.AddSeconds(120)
+            }
+            $diskOptions = @(Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $diskSelectionDeadline -ReadBootProgress -CursorState $cursorState -FixtureProfile $creationFixture.Profile -ReadDiskSelection:($Scenario -in @('Probe', 'MultiProbe', 'Auto', 'AutoReboot', 'OldLabelInterrupted', 'OldLabelReboot', 'RecoverOldLabelReboot', 'CancelReview', 'Insufficient')))
             Write-Host 'Public installer phase: disk-selection-ready'
             Write-Host 'Installer reached the native Photon disk selection screen.'
             if ($Scenario -eq 'Cancel') {
