@@ -238,6 +238,7 @@
     let launcher = null;
     let closing = false;
     let submitting = false;
+    let navigationLocked = false;
     let invalidControl = null;
 
     form.setAttribute("data-atlaso-wizard", "");
@@ -289,7 +290,20 @@
     };
     const clearError = () => setError();
 
+    const syncNavigation = () => {
+      navButtons.forEach((button, buttonIndex) => {
+        const index = navIndex(button, buttonIndex);
+        button.disabled = navigationLocked || skippedStepIds.has(steps[index]?.id) || index > highestIndex;
+        button.setAttribute?.("aria-disabled", button.disabled ? "true" : "false");
+      });
+      backButton?.classList?.toggle?.("hidden", navigationLocked || currentIndex === 0);
+      nextButton?.classList?.toggle?.("hidden", navigationLocked || currentIndex === visibleStepIndices().at(-1));
+      submitButton?.classList?.toggle?.("hidden", navigationLocked || currentIndex !== visibleStepIndices().at(-1));
+      if (submitButton) submitButton.disabled = navigationLocked || currentIndex !== visibleStepIndices().at(-1) || submitting;
+    };
+
     const showStep = (target, options = {}) => {
+      if (navigationLocked && !options.force) return false;
       const nextIndex = indexFor(target);
       if (options.unlock) highestIndex = Math.max(highestIndex, nextIndex);
       if (!options.force && nextIndex > highestIndex) return false;
@@ -322,14 +336,10 @@
         button.setAttribute?.("aria-disabled", button.disabled ? "true" : "false");
       });
       const visiblePosition = visible.indexOf(currentIndex);
-      const lastVisibleIndex = visible[visible.length - 1];
       if (kicker) kicker.textContent = `Step ${visiblePosition + 1} of ${visible.length}`;
       if (title) title.textContent = step.title;
       if (description) description.textContent = step.description;
-      backButton?.classList?.toggle?.("hidden", currentIndex === 0);
-      nextButton?.classList?.toggle?.("hidden", currentIndex === lastVisibleIndex);
-      submitButton?.classList?.toggle?.("hidden", currentIndex !== lastVisibleIndex);
-      if (submitButton) submitButton.disabled = currentIndex !== lastVisibleIndex || submitting;
+      syncNavigation();
       clearError();
       config.onStepChange?.({
         controller,
@@ -397,6 +407,7 @@
     };
 
     const next = async () => {
+      if (navigationLocked) return false;
       if (!(await validate(currentIndex))) return false;
       let target = adjacentVisibleIndex(currentIndex, 1);
       if (typeof config.onNext === "function") {
@@ -418,6 +429,7 @@
     };
 
     const back = async () => {
+      if (navigationLocked) return false;
       let target = adjacentVisibleIndex(currentIndex, -1);
       if (typeof config.onBack === "function") {
         const result = await config.onBack({
@@ -468,6 +480,7 @@
     const reset = () => {
       form.reset?.();
       skippedStepIds = new Set();
+      navigationLocked = false;
       dirty = false;
       highestIndex = 0;
       currentIndex = 0;
@@ -519,6 +532,10 @@
       requestClose,
       reset,
       markClean,
+      setNavigationLocked(locked) {
+        navigationLocked = Boolean(locked);
+        syncNavigation();
+      },
       setHighestStep(target) {
         highestIndex = Math.max(highestIndex, indexFor(target));
       },
@@ -542,6 +559,7 @@
     });
     navButtons.forEach((button, buttonIndex) => {
       button.addEventListener?.("click", async () => {
+        if (navigationLocked) return;
         const target = navIndex(button, buttonIndex);
         if (target > highestIndex) return;
         if (target > currentIndex && !(await validate(currentIndex))) return;
@@ -579,6 +597,7 @@
     });
     form.addEventListener?.("submit", async (event) => {
       event.preventDefault?.();
+      if (navigationLocked) return;
       if (currentIndex !== steps.length - 1) {
         await next();
         return;
@@ -610,7 +629,7 @@
         setError(error?.message || "The request could not be completed. Check the connection and try again.");
       } finally {
         submitting = false;
-        if (submitButton && currentIndex === steps.length - 1) submitButton.disabled = false;
+        syncNavigation();
       }
     });
 

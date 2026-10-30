@@ -67,6 +67,8 @@ versioned asset.
 - `AtlasoUiPatterns.createWizard(...)` is the only approved step-controller entry point. It owns step locking,
   synchronous and asynchronous validation, review entry, navigation, discard confirmation through the shared
   confirmation modal, recoverable errors, focus containment, first-control focus, and launcher-focus restoration.
+  Use its `setNavigationLocked(true)` after accepted asynchronous work replaces setup with status; it prevents step
+  navigation and repeat submission while keeping Close available. Resetting the wizard restores normal navigation.
 - Wizard templates use `data-atlaso-wizard` on the form and the generic `data-atlaso-wizard-*` attributes for steps,
   navigation, status, and actions. Page adapters keep only business-specific discovery, validation, conditional-field,
   review-population, and submission callbacks.

@@ -1,0 +1,26 @@
+<dialog id="vcf-backup-status-modal" class="confirm-modal wide-modal task-modal" aria-labelledby="vcf-backup-status-title" aria-describedby="vcf-backup-status-description" data-endpoint="{{ management_ui_root }}/vcf-helper/backups" data-tasks-root="{{ management_ui_root }}/tasks" data-csrf="{{ csrf_token }}">
+  <div class="confirm-modal-panel form-stack">
+    <div class="confirm-modal-body">
+      <p class="kicker">VCF Backup</p>
+      <div class="task-modal-title-row">
+        <h2 id="vcf-backup-status-title" tabindex="-1">Backup operation status</h2>
+        <span class="status-pill muted" data-vcf-backup-operation-state>Status not loaded</span>
+      </div>
+      <p id="vcf-backup-status-description" class="muted">Check or reconcile an existing backup operation. Reconciliation does not repeat native writes.</p>
+      <p class="muted" data-vcf-backup-status role="status" aria-live="polite"></p>
+      <div class="settings-list compact-settings-list validation-settings-list"><div><span>Operation ID</span><strong class="mono-text" data-vcf-backup-operation-id>Not loaded</strong></div></div>
+      <p class="alert error hidden" data-vcf-backup-operation-error role="alert"></p>
+      <p class="alert warning hidden" data-vcf-backup-native-running-warning role="status"></p>
+      <div data-vcf-backup-operation-detail></div>
+      <progress max="100" value="0" aria-label="Backup verification progress" data-vcf-backup-progress></progress>
+      <div class="settings-list compact-settings-list validation-settings-list" data-vcf-backup-operation-sources></div>
+      <div class="form-stack" data-vcf-backup-recovery-credentials></div>
+      <p><a class="button ghost hidden" data-vcf-backup-task-link href="{{ management_ui_root }}/tasks">Open task</a></p>
+      <p class="muted" data-vcf-backup-recovery-guidance>Reconcile checks current native settings and backup status without repeating native writes.</p>
+      <p class="muted" data-vcf-backup-reconciliation-status role="status" aria-live="polite" hidden></p>
+      <label class="switch-field" data-vcf-backup-close-control><span>After checking native status, finish recovery so I can review a new plan.</span><input type="checkbox" name="close_recovery"></label>
+      <button class="button secondary" type="button" data-vcf-backup-reconcile>Reconcile (read-only)</button>
+    </div>
+    <div class="confirm-modal-actions"><button class="button ghost" type="button" data-vcf-backup-status-close>Close</button></div>
+  </div>
+</dialog>

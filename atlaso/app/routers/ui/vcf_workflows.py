@@ -50,6 +50,9 @@ from atlaso.app.models import (
 )
 from atlaso.app.operational_logging import log_audit_event
 from atlaso.app.routers.chunk_uploads import ChunkedUploadRoute
+from atlaso.app.routers.ui.vcf_backup_workflows import (
+    register_routes as register_backup_routes,
+)
 from atlaso.app.routers.ui.vcf_certificates import (
     register_routes as register_certificate_routes,
 )
@@ -62,6 +65,8 @@ from atlaso.app.routers.ui.vcf_renewals import (
 from atlaso.app.secrets import decrypt_secret
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services import log_viewer
+from atlaso.app.services import vcf_backup_receiver as vcf_backup_receiver_service
+from atlaso.app.services import vcf_backup_workflow as vcf_backup_workflow_service
 from atlaso.app.services.dnsmasq import split_addresses, split_interfaces
 from atlaso.app.services.local_users import has_pending_os_password
 from atlaso.app.services.vaults import (
@@ -469,6 +474,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
     verify_csrf = dependencies.verify_csrf
     register_lab_routes(router, verify_csrf)
     register_certificate_routes(router, verify_csrf)
+    register_backup_routes(router, verify_csrf)
     register_renewal_routes(router, verify_csrf)
 
     @router.get("/https-repository", response_model=None)
@@ -575,6 +581,16 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             }
         return {
             "identity": identity,
+            "vcf_backup_wizard": (
+                vcf_backup_receiver_service.receiver_state(db)
+                if identity.has_role("admin")
+                else {"ready": False, "reason": "Administrator access is required."}
+            ),
+            "vcf_backup_secret_options": (
+                vcf_backup_workflow_service.secret_options(db)
+                if identity.has_role("admin")
+                else []
+            ),
             **vcf_helper_context(db),
             **vcf_trust_context(db),
             **ldap_context_data,

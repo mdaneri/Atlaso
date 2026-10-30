@@ -32,11 +32,20 @@ Use the tabs inside **VCF Helper** to choose a workflow:
 | Credentials | Import passwords into a vault |
 | Certificates | VCF Certificate Trust, Appliance Certificate Replacement, Certificate Renewal |
 | LDAP | Managed LDAP for VCF, Generate LDAP Test Directory |
+| Backup | Configure VCF Backup ([operator guide](vcf-backups.md)) |
 | Lab | Lab / Non-production Overrides |
 
 The page opens Deployment on the first visit and remembers your selected tab. Workflow links and returned results
 open the relevant category. Closing a dialog returns focus to its launch action. Use Left/Right Arrow, Home, and End
 on the tabs to navigate with the keyboard. Without JavaScript, the page displays all helper groups.
+
+The **Backup** tab opens the native VCF 9.1.x backup wizard. VCF Operations is the primary connection for Fleet LCM
+discovery: after the operator confirms the VCF Operations TLS certificate, Atlaso reads its integrations catalog and
+requires one unambiguous `VCF_FLEET_LCM` service descriptor. The discovered Fleet service identity is shown for review
+and bound to the operation; a changed descriptor or certificate stops the workflow. Atlaso uses the advertised Fleet
+service through VCF Operations with a service JWT and the pinned certificate. Operators enter only the VCF Operations
+endpoint. SDDC Manager, vCenter, and NSX can also be added as optional direct connections when their native APIs are
+needed. See the [VCF Backups operator guide](vcf-backups.md) for prerequisites, coverage limits, and recovery.
 
 ### Appliance Certificate Replacement
 

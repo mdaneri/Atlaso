@@ -1039,7 +1039,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}391`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}411`;' in service_worker.text
     assert "/static/vcf-certificate-renewal.js?v=issue-1052-4" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
@@ -1057,7 +1057,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert '!hasDownloadLikePath(url)' in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
     assert "/static/app.css?v=ca-csr-intake-1028-1" in service_worker.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11" in service_worker.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-12" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
     assert "/static/app.js?v=same-interface-gateway-1045-2" in service_worker.text
@@ -1119,10 +1119,10 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-12"
         )
         assert shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-12"
         ) < shell.index(app_asset)
     assert "/static/app.css?v=ca-csr-intake-1028-1" in public_base
 
@@ -1789,7 +1789,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vcf-helper-tabs-1027-2" in page.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11" in page.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-12" in page.text
     assert "/static/app.js?v=same-interface-gateway-1045-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
@@ -11370,6 +11370,17 @@ def test_vcf_backups_page_uses_local_user_for_sftp(client):
     assert "/mnt/atlaso-vcf-backups" in page.text
     assert "/backups" in page.text
     assert 'action="/ui/management/vcf-backups/settings"' in page.text
+    assert 'data-vcf-backup-operations-grid' in page.text
+    assert 'id="vcf-backup-status-modal"' in page.text
+    assert 'data-endpoint="/ui/management/vcf-helper/backups"' in page.text
+    assert 'data-vcf-backup-form' not in page.text
+    assert '/static/vcf-backup.js?v=issue-1066-20' in page.text
+    assert 'data-vcf-backup-load-operation' not in page.text
+    assert 'name="recovery_operation_id"' not in page.text
+    helper = client.get("/vcf-helper")
+    assert helper.status_code == 200
+    assert 'data-vcf-backup-operations-grid' not in helper.text
+    assert 'href="/ui/management/vcf-backups#vcf-backup-operations-title"' in helper.text
     assert 'data-autosave-status-id="vcf-backup-settings-status"' in page.text
     assert 'href="/ui/management/dashboard#appliance-apply-review"' in page.text
     assert "Review appliance changes" in page.text
@@ -18436,9 +18447,11 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert "Lab / Non-production Overrides requires JavaScript." in fallback
     assert "No changes are made by opening this page." in fallback
     assert "Review DNS" not in visible_workspace
-    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 10
+    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 12
+    assert "Configure VCF Backup" in visible_workspace
+    assert "Resume Existing Backup Operation" in visible_workspace
     assert "Import passwords into a vault" in visible_workspace
-    assert visible_workspace.count('class="vcf-helper-action-bands"') == 5
+    assert visible_workspace.count('class="vcf-helper-action-bands"') == 6
     groups = {key: visible_workspace.split(f'id="vcf-helper-{key}" role="tabpanel"', 1)[1].split('class="tab-panel', 1)[0] for key in ("deployment", "credentials", "certificates", "ldap", "lab")}
     assert "Import passwords into a vault" in groups["credentials"]
     assert "VCF Certificate Trust" in groups["certificates"]
