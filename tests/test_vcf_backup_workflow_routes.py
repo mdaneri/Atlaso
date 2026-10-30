@@ -43,6 +43,10 @@ def test_backup_operation_requires_administrator(client):
         user.role = "viewer"
         user.roles_json = '["viewer"]'
         db.commit()
+    page = client.get("/ui/management/vcf-backups")
+    assert page.status_code == 200
+    assert 'data-vcf-backup-operations-grid' not in page.text
+    assert 'id="vcf-backup-status-modal"' not in page.text
     response = client.post(
         f"{PREFIX}/probe", json={}, headers={"X-CSRF-Token": csrf_token(client)}
     )

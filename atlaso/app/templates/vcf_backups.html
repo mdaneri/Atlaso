@@ -46,6 +46,9 @@
         <div><span>Remote directory</span><strong data-vcf-remote-directory>{{ vcf_backup_remote_directory }}</strong></div>
       </div>
     </section>
+    {% if identity.has_role('admin') %}
+      {% include "partials/vcf_backup_operations.html" %}
+    {% endif %}
   </div>
 
   <aside class="side-stack">
@@ -154,4 +157,8 @@
     </div>
   </aside>
 </section>
+{% if identity.has_role('admin') %}
+  {% include "partials/vcf_backup_status_modal.html" %}
+  <script src="/static/vcf-backup.js?v=issue-1066-20" defer></script>
+{% endif %}
 {% endblock %}

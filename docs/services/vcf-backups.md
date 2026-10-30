@@ -131,13 +131,18 @@ Fleet polling can refresh an expired API token once through Operations after HTT
 must still match the reviewed service before the same read is retried.
 
 If a task fails, the process restarts, or the native write outcome is uncertain, use **Reconcile (read-only)** on that
-operation. The **Backup Operations** list shows your admitted runs and fills the available desktop height. Use its
-column filters to narrow loaded operations by creation date, operation ID, status, component count, or source product
+operation. Open **VCF Backups → Backup Operations** for your admitted runs. The list fills the available desktop
+height below the SFTP target summary. **VCF Helper → Backup** links to this list and keeps the configuration wizard.
+Creation date and time are separate columns in your browser time zone, without fractional seconds. **Elapsed** uses
+the recorded Atlaso task start and finish times, including verification and recovery; it is not the native transfer
+duration. Running values are calculated at the last refresh. A later status check preserves an already successful
+task's recorded finish time. Use the column filters to narrow loaded operations by creation date or time, operation ID,
+status, component count, or source product
 and server. Select **Load more operations** to include earlier history; filters remain applied when refreshing or
-loading more rows. Open a row to view its status. **Configure VCF Backup** always starts a fresh configuration wizard;
-opening it does not cancel an existing operation. Alternatively,
-select **Resume Existing Backup Operation**, enter the operation ID, and select **Load status**. This opens a standalone
-status popup, without configuration steps. Closing it or the browser does not stop an admitted backup or reconciliation.
+loading more rows. Open a row to load that operation directly in its standalone status popup. Its operation ID is
+displayed read-only; no separate ID entry or load action is needed. **Configure VCF Backup** always starts a fresh
+configuration wizard; opening it does not cancel an existing operation. Closing the status popup or browser does not
+stop an admitted backup or reconciliation.
 Read-only reconciliation is admitted promptly and continues in the background; the popup shows queued, running,
 completed, or failed status independently of the original backup outcome. Reopening the operation loads that durable
 status. Repeated clicks while reconciliation is active reuse the same run. If Atlaso restarts during reconciliation,

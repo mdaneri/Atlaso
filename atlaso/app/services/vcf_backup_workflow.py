@@ -1429,13 +1429,17 @@ def _reconcile(db: Session, actor: str, row: Setting, state: dict[str, Any], val
     if reports and all(report.get("verified") for report in reports):
         state.update(state="succeeded", checkpoint="verified", progress_percent=100, error="")
         if job is not None:
-            job.status, job.progress_percent, job.finished_at, job.error = "succeeded", 100, utcnow(), ""
+            if job.status != "succeeded" or job.finished_at is None:
+                job.finished_at = utcnow()
+            job.status, job.progress_percent, job.error = "succeeded", 100, ""
             job.result = _json({"operation_id": state["operation_id"], "state": "succeeded", "checkpoint": "verified",
                                 "coverage_gaps": state["coverage_gaps"]})
             for step in job.steps:
                 group = next(item for item in state["plan"] if step.component_key in item["component_ids"])
                 native_id = group["native_component_ids"][group["component_ids"].index(step.component_key)]
-                step.status, step.finished_at, step.progress_percent, step.error = "succeeded", utcnow(), 100, ""
+                if step.status != "succeeded" or step.finished_at is None:
+                    step.finished_at = utcnow()
+                step.status, step.progress_percent, step.error = "succeeded", 100, ""
                 step.result = _json({"artifacts": group["verified_components"][native_id], "verified": True})
         _release(db, state)
     # Explicit closure releases reservations but never calls a native write or

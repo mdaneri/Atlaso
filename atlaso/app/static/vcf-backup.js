@@ -2,17 +2,19 @@
 (() => {
   "use strict";
 
-  const form = document.querySelector("[data-vcf-backup-form]");
-  const dialog = document.getElementById("vcf-backup-modal");
+  const configurationForm = document.querySelector("[data-vcf-backup-form]");
   const statusDialog = document.getElementById("vcf-backup-status-modal");
-  if (!form || !dialog || !statusDialog || !window.AtlasoUiPatterns) return;
+  const form = configurationForm || statusDialog;
+  const dialog = configurationForm ? document.getElementById("vcf-backup-modal") : null;
+  if (!form || !statusDialog || !window.AtlasoUiPatterns) return;
 
-  const field = (name) => form.elements.namedItem(name) || statusDialog.querySelector(`[name="${name}"]`);
+  const field = (name) => form.elements?.namedItem?.(name) || statusDialog.querySelector(`[name="${name}"]`);
   const node = (selector) => form.querySelector(selector) || statusDialog.querySelector(selector) || document.querySelector(selector);
-  const endpoint = form.dataset.endpoint || "";
-  const receiverReady = form.dataset.setupReady === "true";
-  const setupStatus = form.querySelector("[data-vcf-backup-status]");
+  const endpoint = configurationForm?.dataset.endpoint || statusDialog.dataset.endpoint || "";
+  const receiverReady = configurationForm?.dataset.setupReady === "true";
+  const setupStatus = configurationForm?.querySelector("[data-vcf-backup-status]") || statusDialog.querySelector("[data-vcf-backup-status]");
   const operationStatus = statusDialog.querySelector("[data-vcf-backup-status]");
+  let wizard;
   const mode = node("[data-vcf-backup-credential-mode]");
   const vaultSelect = node("[data-vcf-backup-vault]");
   const entrySelect = node("[data-vcf-backup-entry]");
@@ -96,7 +98,7 @@
       credentials: "same-origin",
       cache: "no-store",
       headers: payload === undefined ? {Accept: "application/json"} : {
-        "Content-Type": "application/json", Accept: "application/json", "X-CSRF-Token": form.dataset.csrf || "",
+        "Content-Type": "application/json", Accept: "application/json", "X-CSRF-Token": configurationForm?.dataset.csrf || statusDialog.dataset.csrf || "",
       },
       body: payload === undefined ? undefined : JSON.stringify(payload),
     });
@@ -823,7 +825,7 @@
       progress.classList.toggle("hidden", ["needs_recovery", "reconciled"].includes(operationState));
     }
     const link = node("[data-vcf-backup-task-link]");
-    if (link && result.job_id) { link.href = `${form.dataset.tasksRoot}?job_id=${encodeURIComponent(result.job_id)}`; link.classList.remove("hidden"); }
+    if (link && result.job_id) { link.href = `${configurationForm?.dataset.tasksRoot || statusDialog.dataset.tasksRoot || ""}?job_id=${encodeURIComponent(result.job_id)}`; link.classList.remove("hidden"); }
     else link?.classList.add("hidden");
     node("[data-vcf-backup-close-control]")?.classList.toggle("hidden", operationState !== "needs_recovery");
     const reconcileButton = node("[data-vcf-backup-reconcile]");
@@ -870,19 +872,14 @@
     components = result.components || [];
     receiver = result.receiver || receiver;
     renderOperation(result);
-    node("[data-vcf-backup-recovery-id]").value = operationId;
     setStatus("Status loaded. Recovery can inspect or reconcile this operation; it cannot repeat native writes.");
   }
   async function openOperationStatus(requestedId) {
+    if (!requestedId) return;
     const viewEpoch = invalidateStatusView();
     window.clearTimeout(pollTimer);
     pollTimer = null;
-    if (requestedId) node("[data-vcf-backup-recovery-id]").value = requestedId;
     showStatusDialog();
-    if (!requestedId) {
-      setStatus("Enter an operation ID or choose an operation from the list.");
-      return;
-    }
     if (requestedId !== operationId) {
       clearManualPasswords();
       inspectedSources = [];
@@ -914,14 +911,9 @@
       if (panelError) { panelError.textContent = message; panelError.classList.remove("hidden"); }
     }
   }
-  async function loadOperation() {
-    const requestedId = node("[data-vcf-backup-recovery-id]").value.trim();
-    if (!requestedId) throw new Error("Enter an operation ID first.");
-    return openOperationStatus(requestedId);
-  }
   function showStatusDialog() {
     if (!statusDialog.open) statusDialog.showModal();
-    window.requestAnimationFrame(() => node("[data-vcf-backup-recovery-id]")?.focus({preventScroll: true}));
+    window.requestAnimationFrame(() => node("#vcf-backup-status-title")?.focus({preventScroll: true}));
   }
   function operationSourceSummary(sources) {
     return (Array.isArray(sources) ? sources : []).map((source) => `${sourceKindLabel(source.kind)} · ${safeText(source.address)}:${safeText(source.port)}`).join("; ") || "Not recorded";
@@ -930,6 +922,62 @@
     const span = document.createElement("span");
     span.textContent = safeText(value, fallback);
     return span;
+  }
+  function operationCreatedTimestamp(value) {
+    if ((typeof value !== "string" && typeof value !== "number") || value === "") return null;
+    const timestamp = new Date(value).getTime();
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+  function formatOperationElapsedDuration(seconds) {
+    const wholeSeconds = Math.floor(seconds);
+    const days = Math.floor(wholeSeconds / 86400);
+    const remainder = wholeSeconds % 86400;
+    const pad = (value) => String(value).padStart(2, "0");
+    const clock = `${pad(Math.floor(remainder / 3600))}:${pad(Math.floor((remainder % 3600) / 60))}:${pad(remainder % 60)}`;
+    return days ? `${days}d ${clock}` : clock;
+  }
+  function operationElapsed(item, now = Date.now()) {
+    const started = operationCreatedTimestamp(item?.started_at);
+    if (started === null) return {display: "Not started", seconds: null};
+    const state = String(item?.state || "").toLowerCase();
+    const end = ["queued", "running"].includes(state) ? now : operationCreatedTimestamp(item?.finished_at);
+    if (end === null || !Number.isFinite(end) || end < started) return {display: "Not recorded", seconds: null};
+    const seconds = Math.floor((end - started) / 1000);
+    return {display: formatOperationElapsedDuration(seconds), seconds};
+  }
+  function operationElapsedSort(_leftValue, _rightValue, leftRow, rightRow) {
+    const seconds = (row, value) => {
+      const raw = row?.getData?.()?.elapsed_duration_seconds;
+      return Number.isFinite(raw) ? raw : typeof value === "number" && Number.isFinite(value) ? value : null;
+    };
+    const left = seconds(leftRow, _leftValue);
+    const right = seconds(rightRow, _rightValue);
+    if (left === null) return right === null ? 0 : 1;
+    if (right === null) return -1;
+    return left - right;
+  }
+  function projectOperationRow(item, now = Date.now()) {
+    const row = item && typeof item === "object" ? item : {};
+    const timestamp = operationCreatedTimestamp(row.created_at);
+    const elapsed = operationElapsed(row, now);
+    if (timestamp === null) return {...row, created_date: "Not recorded", created_time: "Not recorded", elapsed_duration: elapsed.display, elapsed_duration_seconds: elapsed.seconds};
+    const local = new Date(timestamp);
+    const pad = (value) => String(value).padStart(2, "0");
+    return {
+      ...row,
+      created_date: `${String(local.getFullYear()).padStart(4, "0")}-${pad(local.getMonth() + 1)}-${pad(local.getDate())}`,
+      created_time: `${pad(local.getHours())}:${pad(local.getMinutes())}:${pad(local.getSeconds())}`,
+      elapsed_duration: elapsed.display,
+      elapsed_duration_seconds: elapsed.seconds,
+    };
+  }
+  function operationCreatedAtSort(_leftValue, _rightValue, leftRow, rightRow) {
+    const createdAt = (row, value) => operationCreatedTimestamp(row?.getData?.()?.created_at ?? value);
+    const left = createdAt(leftRow, _leftValue);
+    const right = createdAt(rightRow, _rightValue);
+    if (left === null) return right === null ? 0 : 1;
+    if (right === null) return -1;
+    return left - right;
   }
   async function loadOperations(append = false) {
     if (!operationsGrid?.table || operationsLoading) return;
@@ -944,7 +992,8 @@
     if (append && operationsCursor) query.set("cursor", operationsCursor);
     try {
       const result = await call(`/operations?${query.toString()}`);
-      const items = Array.isArray(result.items) ? result.items : [];
+      const refreshedAt = Date.now();
+      const items = Array.isArray(result.items) ? result.items.map((item) => projectOperationRow(item, refreshedAt)) : [];
       if (append) await operationsGrid.table.addData(items);
       else await operationsGrid.table.setData(items);
       operationsCursor = result.next_cursor || "";
@@ -1007,7 +1056,9 @@
         data: [], index: "operation_id", layout: "fitColumns", responsiveLayout: "collapse",
         pagination: true, paginationSize: 25, selectableRows: 1,
         columns: [
-          {title: "Created", field: "created_at", minWidth: 170, formatter: (cell) => operationCell(cell.getValue()), headerFilter: "input", headerFilterPlaceholder: "Filter date"},
+          {title: "Date", field: "created_date", minWidth: 120, sorter: operationCreatedAtSort, headerTooltip: "Date and time use your browser time zone.", headerFilter: "input", headerFilterPlaceholder: "Filter date"},
+          {title: "Time (local)", field: "created_time", minWidth: 105, headerTooltip: "Date and time use your browser time zone.", headerFilter: "input", headerFilterPlaceholder: "Filter time"},
+          {title: "Elapsed", field: "elapsed_duration", minWidth: 125, sorter: operationElapsedSort, headerTooltip: "Recorded Atlaso task runtime, including verification and recovery. Running values update on Refresh.", headerFilter: "input", headerFilterPlaceholder: "Filter elapsed time"},
           {title: "Operation", field: "operation_id", minWidth: 220, formatter: (cell) => operationCell(cell.getValue()), headerFilter: "input", headerFilterPlaceholder: "Filter operation"},
           {title: "Status", field: "state", minWidth: 150, formatter: (cell) => operationCell(operationStateLabel(cell.getValue())), headerFilter: "list", headerFilterParams: {values: {"": "All", queued: "Queued", running: "Running", needs_recovery: "Needs attention", succeeded: "Succeeded", reconciled: "Reconciled"}}, headerFilterFunc: "="},
           {title: "Components", field: "component_count", width: 125, formatter: (cell) => operationCell(cell.getValue(), "0"), headerFilter: "number", headerFilterPlaceholder: "Count", headerFilterParams: {min: 0, step: 1}, headerFilterFunc: "="},
@@ -1026,13 +1077,7 @@
       }
     }
   }
-  const backupTab = document.getElementById("vcf-helper-backup");
-  const backupTabButton = document.querySelector('[data-tab-target="vcf-helper-backup"]');
-  const initializeVisibleOperationsGrid = () => {
-    if (backupTab && !backupTab.hidden) { initializeOperationsGrid(); scheduleOperationsResize(); }
-  };
-  backupTabButton?.addEventListener("click", () => window.requestAnimationFrame(initializeVisibleOperationsGrid));
-  if (backupTab && !backupTab.hidden) initializeOperationsGrid();
+  initializeOperationsGrid();
   document.querySelector("[data-vcf-backup-operations-refresh]")?.addEventListener("click", () => {
     operationsCursor = "";
     loadOperations(false);
@@ -1043,7 +1088,8 @@
       if (credentialMode === "manual") request.password = "";
     });
     node("[data-vcf-backup-recovery-credentials]")?.querySelectorAll("input[type='password']").forEach((input) => { input.value = ""; });
-    field("password").value = "";
+    const currentPassword = field("password");
+    if (currentPassword) currentPassword.value = "";
   }
   function openBackupConfiguration(launcher) {
     if (!receiverReady) return;
@@ -1065,7 +1111,6 @@
     resetCurrentSource();
     renderComponents();
     renderSourceSummaries();
-    node("[data-vcf-backup-recovery-id]").value = "";
     node("[data-vcf-backup-recovery-credentials]").replaceChildren();
     node("[data-atlaso-wizard-submit]").disabled = false;
     node("[data-vcf-backup-task-link]").classList.add("hidden");
@@ -1180,7 +1225,33 @@
     settings: ["Set destination and schedule", "Choose stored secret references and review backup policy settings."],
     review: ["Review and configure", "Review exact current and proposed settings before starting the initial backup task."],
   };
-  let wizard;
+  function bindStatusEvents() {
+    statusDialog.addEventListener("click", (event) => {
+      if (event.target.closest("[data-vcf-backup-reconcile]")) {
+        event.preventDefault();
+        const requestedId = operationId;
+        const viewEpoch = statusViewEpoch;
+        reconcile().catch((error) => {
+          if (!isCurrentStatusView(viewEpoch, requestedId)) return;
+          setStatus(error.message, true);
+          const panelError = node("[data-vcf-backup-operation-error]");
+          if (panelError) { panelError.textContent = error.message; panelError.classList.remove("hidden"); }
+        });
+      }
+      if (event.target.closest("[data-vcf-backup-status-close]")) {
+        event.preventDefault(); statusDialog.close();
+      }
+    });
+    statusDialog.addEventListener("close", () => {
+      if (!statusDialog.open) invalidateStatusView();
+      window.clearTimeout(pollTimer); pollTimer = null;
+      clearManualPasswords();
+    });
+  }
+  if (!configurationForm) {
+    bindStatusEvents();
+    return;
+  }
   wizard = window.AtlasoUiPatterns.createWizard({
     form, dialog, steps: stepIds.map((id) => ({id, title: stepCopy[id][0], description: stepCopy[id][1]})),
     validateStep: ({step}) => {
@@ -1342,38 +1413,12 @@
       return;
     }
   });
-  statusDialog.addEventListener("click", (event) => {
-    if (event.target.closest("[data-vcf-backup-reconcile]")) {
-      event.preventDefault();
-      const requestedId = operationId;
-      const viewEpoch = statusViewEpoch;
-      reconcile().catch((error) => {
-        if (!isCurrentStatusView(viewEpoch, requestedId)) return;
-        setStatus(error.message, true);
-        const panelError = node("[data-vcf-backup-operation-error]");
-        if (panelError) { panelError.textContent = error.message; panelError.classList.remove("hidden"); }
-      });
-    }
-    if (event.target.closest("[data-vcf-backup-load-operation]")) {
-      event.preventDefault(); loadOperation().catch((error) => setStatus(error.message, true));
-    }
-    if (event.target.closest("[data-vcf-backup-status-close]")) {
-      event.preventDefault(); statusDialog.close();
-    }
-  });
+  bindStatusEvents();
   node('[data-vcf-backup-confirm="server"]')?.addEventListener("change", invalidateReview);
   document.querySelector("[data-vcf-backup-open]")?.addEventListener("click", (event) => {
     if (!event.currentTarget.disabled) openBackupConfiguration(event.currentTarget);
   });
-  document.querySelector("[data-vcf-backup-resume]")?.addEventListener("click", (event) => {
-    openOperationStatus(operationStarted && operationId ? operationId : "");
-  });
-  statusDialog.addEventListener("close", () => {
-    if (!statusDialog.open) invalidateStatusView();
-    window.clearTimeout(pollTimer); pollTimer = null;
-    clearManualPasswords();
-  });
-  dialog.addEventListener("close", () => {
+  dialog?.addEventListener("close", () => {
     window.clearTimeout(pollTimer); pollTimer = null;
     clearManualPasswords();
     invalidateReview();

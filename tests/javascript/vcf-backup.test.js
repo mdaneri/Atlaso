@@ -6,37 +6,47 @@ const vm = require('node:vm');
 
 const js = fs.readFileSync(path.join(__dirname, '../../atlaso/app/static/vcf-backup.js'), 'utf8');
 const helper = fs.readFileSync(path.join(__dirname, '../../atlaso/app/templates/vcf_helper.html'), 'utf8');
+const backupsPage = fs.readFileSync(path.join(__dirname, '../../atlaso/app/templates/vcf_backups.html'), 'utf8');
 const modal = fs.readFileSync(path.join(__dirname, '../../atlaso/app/templates/partials/vcf_backup_modal.html'), 'utf8');
+const operationsPartial = fs.readFileSync(path.join(__dirname, '../../atlaso/app/templates/partials/vcf_backup_operations.html'), 'utf8');
 const statusModal = fs.readFileSync(path.join(__dirname, '../../atlaso/app/templates/partials/vcf_backup_status_modal.html'), 'utf8');
 
 function functionDeclaration(name) {
   return js.match(new RegExp(`function ${name}\\([^]*?\\n  \\}`))?.[0] || '';
 }
 
-test('Backup is a separate VCF Helper tab and readiness gates the launcher with a settings recovery link', () => {
+test('Backup configuration stays in VCF Helper while operations link to the VCF Backups service page', () => {
   assert.match(helper, /data-tab-target="vcf-helper-backup"[^>]*>Backup<\/button>/);
   assert.match(helper, /data-vcf-backup-open[^>]*disabled/);
   assert.match(helper, /vcf_backup_wizard\.ready/);
   assert.match(helper, /vcf_backup_wizard\.reason/);
   assert.match(helper, /href="\{\{ management_ui_root \}\}\/vcf-backups"/);
   assert.match(helper, /partials\/vcf_backup_modal\.html/);
-  assert.match(helper, /partials\/vcf_backup_status_modal\.html/);
-  assert.match(helper, /\{% if identity\.has_role\('admin'\) %\}[\s\S]*?data-vcf-backup-resume[\s\S]*?Resume Existing Backup Operation[\s\S]*?\{% endif %\}/);
-  assert.doesNotMatch(helper.match(/data-vcf-backup-resume[\s\S]*?aria-controls="vcf-backup-status-modal"/)?.[0] || '', /disabled/);
+  assert.match(helper, /href="\{\{ management_ui_root \}\}\/vcf-backups#vcf-backup-operations-title"/);
+  assert.doesNotMatch(helper, /data-vcf-backup-operations-section|data-vcf-backup-operations-grid/);
   assert.match(modal, /data-vcf-backup-form[^>]*data-setup-ready="\{% if vcf_backup_wizard is defined and vcf_backup_wizard\.ready %\}true\{% else %\}false\{% endif %\}"/);
-  assert.match(js, /const receiverReady = form\.dataset\.setupReady === "true"/);
+  assert.match(js, /const receiverReady = configurationForm\?\.dataset\.setupReady === "true"/);
   assert.match(js, /function openBackupConfiguration\(launcher\) \{\s+if \(!receiverReady\) return;/);
+  assert.match(backupsPage, /\{% if identity\.has_role\('admin'\) %\}[\s\S]*?partials\/vcf_backup_operations\.html[\s\S]*?\{% endif %\}/);
+  assert.match(backupsPage, /\{% if identity\.has_role\('admin'\) %\}[\s\S]*?partials\/vcf_backup_status_modal\.html[\s\S]*?vcf-backup\.js\?v=issue-1066-20[\s\S]*?\{% endif %\}/);
+  assert.match(operationsPartial, /data-vcf-backup-operations-section/);
+  assert.match(operationsPartial, /data-vcf-backup-operations-grid/);
+  assert.match(operationsPartial, /data-vcf-backup-operations-refresh/);
+  assert.doesNotMatch(operationsPartial, /data-vcf-backup-resume|Find operation by ID/);
 });
 
-test('Resume opens a standalone status popup instead of the configuration wizard', () => {
-  assert.match(helper, /data-vcf-backup-resume[^>]*aria-controls="vcf-backup-status-modal"/);
+test('A selected operation opens the standalone status popup without an ID lookup form', () => {
   assert.match(statusModal, /<dialog id="vcf-backup-status-modal"[^>]*task-modal/);
-  assert.match(statusModal, /data-vcf-backup-recovery-id/);
-  assert.match(statusModal, /data-vcf-backup-load-operation/);
+  assert.match(statusModal, /data-endpoint="\{\{ management_ui_root \}\}\/vcf-helper\/backups"[^>]*data-tasks-root[^>]*data-csrf/);
+  assert.match(statusModal, /<h2 id="vcf-backup-status-title"[^>]*tabindex="-1"/);
+  assert.doesNotMatch(statusModal, /recovery_operation_id|data-vcf-backup-recovery-id|data-vcf-backup-load-operation/);
   assert.match(statusModal, /data-vcf-backup-operation/);
-  assert.doesNotMatch(modal, /data-vcf-backup-recovery-id|data-vcf-backup-operation/);
+  assert.doesNotMatch(modal, /data-vcf-backup-operation/);
   assert.doesNotMatch(statusModal, /data-atlaso-wizard-step|data-atlaso-wizard/);
-  assert.match(js, /document\.querySelector\("\[data-vcf-backup-resume\]"\)[\s\S]*?openOperationStatus\(operationStarted && operationId \? operationId : ""\)/);
+  assert.match(js, /const rowAction = \(item\) => openOperationStatus\(item\.operation_id\)/);
+  assert.match(js, /function openOperationStatus\(requestedId\) \{\s+if \(!requestedId\) return;/);
+  assert.match(js, /function showStatusDialog\(\)[\s\S]*?statusDialog\.showModal\(\)[\s\S]*?node\("#vcf-backup-status-title"\)\?\.focus/);
+  assert.doesNotMatch(js, /function loadOperation\(|data-vcf-backup-load-operation|data-vcf-backup-resume/);
   assert.match(js, /document\.querySelector\("\[data-vcf-backup-open\]"\)[\s\S]*?openBackupConfiguration\(event.currentTarget\)/);
 });
 
@@ -705,9 +715,9 @@ test('Coverage gaps are labeled as outside the plan and explain Fleet ineligibil
 
 test('The updated backup script URL and service worker cache version stay aligned', () => {
   const worker = fs.readFileSync(path.join(__dirname, '../../atlaso/app/static/service-worker.js'), 'utf8');
-  assert.match(helper, /vcf-backup\.js\?v=issue-1066-17/);
-  assert.match(worker, /ATLASO_CACHE_PREFIX\}408/);
-  assert.match(worker, /vcf-backup\.js\?v=issue-1066-17/);
+  assert.match(helper, /vcf-backup\.js\?v=issue-1066-20/);
+  assert.match(worker, /ATLASO_CACHE_PREFIX\}411/);
+  assert.match(worker, /vcf-backup\.js\?v=issue-1066-20/);
 });
 
 test('Review binds the selected component IDs, source credentials, policy, and saved secret references', () => {
@@ -867,6 +877,19 @@ test('Late operation lookups cannot replace the operation selected afterward', a
   assert.equal(context.operationId, 'current-operation');
 });
 
+test('Opening operation status requires a selected operation ID', async () => {
+  const context = vm.createContext({
+    invalidateStatusView() { assert.fail('An empty operation ID must return before opening or requesting status'); },
+    window: {clearTimeout() { assert.fail('An empty operation ID must be ignored'); }},
+    statusDialog: {open: false},
+    showStatusDialog() { assert.fail('An empty operation ID must not open the popup'); },
+    call() { assert.fail('An empty operation ID must not dispatch a status request'); },
+  });
+  const open = vm.runInContext(`(async ${functionDeclaration('openOperationStatus')})`, context);
+  await open('');
+  assert.equal(context.statusDialog.open, false);
+});
+
 test('Late poll and reconciliation results are ignored after selection or popup close', async () => {
   const pollDeclaration = functionDeclaration('pollOperation');
   const reconcileDeclaration = functionDeclaration('reconcile');
@@ -922,23 +945,21 @@ test('Late poll and reconciliation results are ignored after selection or popup 
 });
 
 test('Hydrating an operation feeds the standalone status view without wizard navigation', () => {
-  const lookup = {value: ''};
   let rendered = null;
   const context = vm.createContext({
     operationId: '', operationStarted: false, inspectionRevision: '', inspectedSources: [], components: [], receiver: null,
     invalidateReview: () => {}, buildRecoverySource: (source) => source,
-    renderOperation: (result) => { rendered = result; }, node: () => lookup, setStatus: () => {},
+    renderOperation: (result) => { rendered = result; }, setStatus: () => {},
   });
   vm.runInContext(functionDeclaration('hydrateOperation'), context);
   const result = {operation_id: 'saved-operation', revision: 'revision', state: 'running', sources: [], components: []};
   context.hydrateOperation(result);
   assert.equal(rendered, result);
-  assert.equal(lookup.value, 'saved-operation');
   assert.equal(context.operationStarted, true);
 });
 
 test('Backup Operations list uses the shared read-only grid and opens selected operation status', () => {
-  const declarations = ['operationStateLabel', 'operationSourceSummary', 'operationCell', 'initializeOperationsGrid'].map(functionDeclaration).join('\n');
+  const declarations = ['operationCreatedTimestamp', 'operationCreatedAtSort', 'operationElapsedSort', 'operationStateLabel', 'operationSourceSummary', 'operationCell', 'initializeOperationsGrid'].map(functionDeclaration).join('\n');
   let gridConfig;
   let openedOperation = '';
   const table = {on() {}};
@@ -957,12 +978,25 @@ test('Backup Operations list uses the shared read-only grid and opens selected o
   vm.runInContext(declarations, context);
   context.initializeOperationsGrid();
   assert.equal(gridConfig.pattern, 'read-only');
-  assert.deepEqual(Array.from(gridConfig.options.columns, (column) => column.field), ['created_at', 'operation_id', 'state', 'component_count', 'sources']);
+  assert.deepEqual(Array.from(gridConfig.options.columns, (column) => column.field), ['created_date', 'created_time', 'elapsed_duration', 'operation_id', 'state', 'component_count', 'sources']);
   gridConfig.onOpenRow({operation_id: 'operation-123'});
   assert.equal(openedOperation, 'operation-123');
   const columns = Object.fromEntries(gridConfig.options.columns.map((column) => [column.field, column]));
   assert.equal(columns.operation_id.headerFilter, 'input');
-  assert.equal(columns.created_at.headerFilter, 'input');
+  assert.equal(columns.created_date.title, 'Date');
+  assert.equal(columns.created_date.headerFilter, 'input');
+  assert.equal(columns.created_date.headerFilterPlaceholder, 'Filter date');
+  assert.equal(typeof columns.created_date.sorter, 'function');
+  assert.equal(columns.created_date.headerTooltip, 'Date and time use your browser time zone.');
+  assert.equal(columns.created_time.title, 'Time (local)');
+  assert.equal(columns.created_time.headerFilter, 'input');
+  assert.equal(columns.created_time.headerFilterPlaceholder, 'Filter time');
+  assert.equal(columns.created_time.headerTooltip, 'Date and time use your browser time zone.');
+  assert.equal(columns.elapsed_duration.title, 'Elapsed');
+  assert.equal(columns.elapsed_duration.headerFilter, 'input');
+  assert.equal(columns.elapsed_duration.headerFilterPlaceholder, 'Filter elapsed time');
+  assert.equal(columns.elapsed_duration.headerTooltip, 'Recorded Atlaso task runtime, including verification and recovery. Running values update on Refresh.');
+  assert.equal(typeof columns.elapsed_duration.sorter, 'function');
   assert.equal(columns.state.headerFilter, 'list');
   assert.equal(columns.state.headerFilterFunc, '=');
   assert.equal(columns.state.headerFilterParams.values.needs_recovery, 'Needs attention');
@@ -977,12 +1011,76 @@ test('Backup Operations list uses the shared read-only grid and opens selected o
   assert.match(js, /call\(`\/operations\?\$\{query\.toString\(\)\}`\)/);
 });
 
+test('Operation timestamps project to local date, time, and elapsed while preserving source fields', () => {
+  const context = vm.createContext({});
+  vm.runInContext(['operationCreatedTimestamp', 'formatOperationElapsedDuration', 'operationElapsed', 'projectOperationRow'].map(functionDeclaration).join('\n'), context);
+  const source = {
+    operation_id: 'offset-operation', created_at: '2024-01-01T00:30:45.987Z',
+    started_at: '2024-01-01T00:31:00Z', finished_at: '2024-01-01T00:41:30Z', state: 'succeeded', sources: [{kind: 'nsx'}],
+  };
+  const projected = context.projectOperationRow(source, Date.parse('2024-01-01T00:50:00Z'));
+  const local = new Date(source.created_at);
+  const pad = (value) => String(value).padStart(2, '0');
+  assert.equal(projected.created_date, `${String(local.getFullYear()).padStart(4, '0')}-${pad(local.getMonth() + 1)}-${pad(local.getDate())}`);
+  assert.equal(projected.created_time, `${pad(local.getHours())}:${pad(local.getMinutes())}:${pad(local.getSeconds())}`);
+  assert.match(projected.created_date, /^\d{4}-\d{2}-\d{2}$/);
+  assert.match(projected.created_time, /^\d{2}:\d{2}:\d{2}$/);
+  assert.equal(projected.elapsed_duration, '00:10:30');
+  assert.equal(projected.elapsed_duration_seconds, 630);
+  assert.equal(projected.created_at, source.created_at, 'the original instant remains available for sorting and status');
+  assert.equal(projected.started_at, source.started_at);
+  assert.equal(projected.finished_at, source.finished_at);
+  assert.equal(projected.state, source.state);
+  assert.deepEqual(projected.sources, source.sources);
+  assert.notEqual(projected, source, 'projection does not mutate the server row');
+});
+
+test('Operation timestamp projection and date sorting handle offsets, missing values, and malformed dates', () => {
+  const context = vm.createContext({});
+  vm.runInContext(['operationCreatedTimestamp', 'formatOperationElapsedDuration', 'operationElapsed', 'projectOperationRow', 'operationCreatedAtSort'].map(functionDeclaration).join('\n'), context);
+  const early = context.projectOperationRow({operation_id: 'early', created_at: '2024-03-10T09:59:59.500-07:00'});
+  const late = context.projectOperationRow({operation_id: 'late', created_at: '2024-03-10T17:00:00.250Z'});
+  const invalid = context.projectOperationRow({operation_id: 'invalid', created_at: 'not-a-timestamp'});
+  const missing = context.projectOperationRow({operation_id: 'missing'});
+  const row = (data) => ({getData: () => data});
+  assert.ok(context.operationCreatedAtSort(early.created_date, late.created_date, row(early), row(late)) < 0, 'sorting uses the original instants and ignores display-date collisions');
+  assert.ok(context.operationCreatedAtSort(late.created_date, early.created_date, row(late), row(early)) > 0);
+  assert.ok(context.operationCreatedAtSort(early.created_date, invalid.created_date, row(early), row(invalid)) < 0, 'invalid timestamps sort after valid instants');
+  assert.equal(invalid.created_date, 'Not recorded');
+  assert.equal(invalid.created_time, 'Not recorded');
+  assert.equal(invalid.elapsed_duration, 'Not started');
+  assert.equal(missing.created_date, 'Not recorded');
+  assert.equal(missing.created_time, 'Not recorded');
+  assert.equal(invalid.created_at, 'not-a-timestamp');
+  assert.equal(missing.created_at, undefined);
+  assert.equal(context.operationCreatedAtSort('Not recorded', 'Not recorded', row(invalid), row(missing)), 0);
+});
+
+test('Elapsed formatting covers long runs, active refresh time, missing times, offsets, and negative intervals', () => {
+  const context = vm.createContext({});
+  vm.runInContext(['operationCreatedTimestamp', 'formatOperationElapsedDuration', 'operationElapsed', 'projectOperationRow', 'operationElapsedSort'].map(functionDeclaration).join('\n'), context);
+  const project = (item) => context.projectOperationRow(item, Date.parse('2024-03-10T11:00:00Z'));
+  assert.equal(project({state: 'queued', started_at: '2024-03-10T10:00:00Z'}).elapsed_duration, '01:00:00', 'started queued work uses the current refresh snapshot');
+  assert.equal(project({state: 'running', started_at: '2024-03-10T09:00:00Z'}).elapsed_duration, '02:00:00');
+  assert.equal(project({state: 'running'}).elapsed_duration, 'Not started');
+  assert.equal(project({state: 'succeeded', started_at: '2024-03-10T10:00:00Z'}).elapsed_duration, 'Not recorded', 'terminal work without a finish time does not guess');
+  assert.equal(project({state: 'succeeded', started_at: '2024-03-10T10:10:00Z', finished_at: '2024-03-10T10:00:00Z'}).elapsed_duration, 'Not recorded', 'negative intervals are rejected');
+  assert.equal(project({state: 'succeeded', started_at: '2024-03-10T01:55:00-08:00', finished_at: '2024-03-10T03:05:30-07:00'}).elapsed_duration, '00:10:30', 'offset timestamps are compared as instants');
+  assert.equal(project({state: 'succeeded', started_at: '2024-03-08T10:00:00Z', finished_at: '2024-03-09T11:02:03Z'}).elapsed_duration, '1d 01:02:03');
+  const short = project({state: 'succeeded', started_at: '2024-03-10T10:00:00Z', finished_at: '2024-03-10T10:05:00Z'});
+  const long = project({state: 'succeeded', started_at: '2024-03-10T09:00:00Z', finished_at: '2024-03-10T10:00:00Z'});
+  const row = (data) => ({getData: () => data});
+  assert.ok(context.operationElapsedSort(short.elapsed_duration, long.elapsed_duration, row(short), row(long)) < 0, 'elapsed sorts by numeric duration, not formatted text');
+  const unavailable = project({state: 'succeeded'});
+  assert.ok(context.operationElapsedSort(unavailable.elapsed_duration, short.elapsed_duration, row(unavailable), row(short)) > 0);
+});
+
 test('Backup Operations list loads the bounded first page and follows its cursor', async () => {
-  const declarations = ['operationCell', 'operationSourceSummary', 'loadOperations'].map(functionDeclaration).join('\n');
+  const declarations = ['operationCreatedTimestamp', 'formatOperationElapsedDuration', 'operationElapsed', 'projectOperationRow', 'operationCell', 'operationSourceSummary', 'loadOperations'].map(functionDeclaration).join('\n');
   const requests = [];
   const pages = [
-    {items: [{operation_id: 'first'}], next_cursor: 'opaque-cursor'},
-    {items: [{operation_id: 'second'}], next_cursor: null},
+    {items: [{operation_id: 'first', created_at: '2024-03-10T09:59:59.500-07:00', started_at: '2024-03-10T10:00:00-07:00', finished_at: '2024-03-10T10:10:30-07:00', state: 'succeeded'}], next_cursor: 'opaque-cursor'},
+    {items: [{operation_id: 'second', created_at: '2024-03-10T17:00:00.250Z', started_at: '2024-03-10T17:01:00Z', state: 'running'}], next_cursor: null},
   ];
   const data = [];
   const status = {textContent: ''};
@@ -1011,10 +1109,20 @@ test('Backup Operations list loads the bounded first page and follows its cursor
   await context.loadOperations(false);
   assert.equal(requests[0], '/operations?limit=25');
   assert.equal(data.length, 1);
+  assert.equal(data[0].created_at, '2024-03-10T09:59:59.500-07:00');
+  assert.match(data[0].created_date, /^\d{4}-\d{2}-\d{2}$/);
+  assert.match(data[0].created_time, /^\d{2}:\d{2}:\d{2}$/);
+  assert.equal(data[0].elapsed_duration, '00:10:30');
+  assert.equal(data[0].elapsed_duration_seconds, 630);
+  assert.equal(data[0].state, 'succeeded');
   assert.equal(more.hidden, false);
   await context.loadOperations(true);
   assert.equal(requests[1], '/operations?limit=25&cursor=opaque-cursor');
   assert.equal(data.length, 2);
+  assert.equal(data[1].created_at, '2024-03-10T17:00:00.250Z');
+  assert.match(data[1].created_date, /^\d{4}-\d{2}-\d{2}$/);
+  assert.match(data[1].elapsed_duration, /^\d+d? ?\d{2}:\d{2}:\d{2}$/);
+  assert.equal(data[1].state, 'running');
   assert.equal(more.hidden, true);
 });
 
@@ -1109,13 +1217,12 @@ test('Closing the dialog clears every request-local manual password', () => {
   assert.match(js, /inspectedSources\.push\(\{request: sourceRequest, credentialMode: request\.credential_vault_id \? "vault" : "manual"/);
   assert.match(js, /function clearManualPasswords\(\) \{[\s\S]*?inspectedSources\.forEach\(\(\{request, credentialMode\}\) => \{\s+if \(credentialMode === "manual"\) request\.password = "";/);
   assert.match(js, /querySelectorAll\("input\[type='password'\]"\)\.forEach\(\(input\) => \{ input\.value = ""; \}\)/);
-  assert.match(js, /dialog\.addEventListener\("close", \(\) => \{[\s\S]*?clearManualPasswords\(\);/);
+  assert.match(js, /statusDialog\.addEventListener\("close", \(\) => \{[\s\S]*?clearManualPasswords\(\);/);
 });
 
 test('An operation ID reloads safe durable sources and collects manual passwords only in memory', () => {
-  assert.match(statusModal, /name="recovery_operation_id" data-vcf-backup-recovery-id/);
-  assert.match(statusModal, /data-vcf-backup-load-operation/);
-  assert.match(js, /async function loadOperation\(\)[\s\S]*?openOperationStatus\(requestedId\)/);
+  assert.doesNotMatch(statusModal, /name="recovery_operation_id"|data-vcf-backup-load-operation/);
+  assert.doesNotMatch(js, /function loadOperation\(|data-vcf-backup-recovery-id|data-vcf-backup-load-operation/);
   assert.match(js, /function hydrateOperation\(result\)[\s\S]*?inspectedSources = \(result\.sources \|\| \[\]\)\.map\(buildRecoverySource\)[\s\S]*?renderOperation\(result\)/);
   assert.doesNotMatch(js, /hydrateOperation\(result\)[\s\S]*?wizard\.showStep\("review"/);
   assert.match(js, /function buildRecoverySource\(source\)[\s\S]*?credential_reference \|\| \{\}[\s\S]*?confirmed_tls_fingerprint: source\.fingerprint[\s\S]*?credential_uri: reference\.uri/);
@@ -1137,4 +1244,103 @@ test('Review highlights native side effects and operation results prioritize err
 test('Status popup contains no configuration launcher', () => {
   assert.doesNotMatch(statusModal, /data-vcf-backup-new-plan|Start a new plan/);
   assert.doesNotMatch(js, /data-vcf-backup-new-plan|function startNewPlan/);
+});
+
+test('Status-only VCF Backups page loads its grid and reconciles recorded manual and Vault sources', async () => {
+  const nodes = new Map(); const listeners = new Map(); const created = []; const frames = []; const requests = [];
+  let gridOptions; let gridData = []; let focusedNode = '';
+  const getNode = (selector) => {
+    if (nodes.has(selector)) return nodes.get(selector);
+    const classes = new Set(selector.includes('operations-grid') ? ['hidden'] : []);
+    const element = {
+      selector, value: '', checked: false, textContent: '', href: '', disabled: false, hidden: false, type: '', autocomplete: '',
+      dataset: {}, style: {height: ''}, children: [], isConnected: true,
+      classList: {
+        add(name) { classes.add(name); }, remove(name) { classes.delete(name); },
+        toggle(name, force) { if (force === undefined ? !classes.has(name) : force) classes.add(name); else classes.delete(name); },
+        contains(name) { return classes.has(name); },
+      },
+      append(...items) { this.children.push(...items); }, replaceChildren(...items) { this.children = [...items]; },
+      addEventListener(type, callback) { listeners.set(`${selector}:${type}`, callback); },
+      querySelector: (child) => getNode(`${selector} ${child}`), querySelectorAll: () => [], closest: () => null,
+      getBoundingClientRect: () => ({top: 100, width: 1200, height: 20}), setAttribute() {}, removeAttribute() {}, focus() { focusedNode = selector; },
+      showModal() { this.open = true; }, close() { this.open = false; },
+    };
+    Object.defineProperty(element, 'childElementCount', {get() { return this.children.length; }});
+    nodes.set(selector, element); return element;
+  };
+  const statusDialog = getNode('status-dialog');
+  statusDialog.dataset = {endpoint: '/ui/management/vcf-helper/backups', tasksRoot: '/ui/management/tasks', csrf: 'csrf-token'};
+  statusDialog.querySelector = getNode;
+  const operationGridElement = getNode('[data-vcf-backup-operations-grid]');
+  const globalNodes = new Map([
+    ['[data-vcf-backup-operations-grid]', operationGridElement],
+    ...['[data-vcf-backup-operations-status]', '[data-vcf-backup-operations-refresh]', '[data-vcf-backup-operations-more]'].map((selector) => [selector, getNode(selector)]),
+  ]);
+  const operation = {
+    operation_id: 'operation-1', state: 'needs_recovery', groups: [], reconciliation: [],
+    sources: [
+      {kind: 'nsx', source_id: 'nsx-source', address: 'nsx.example', port: 443, fingerprint: 'sha256-nsx', credential_reference: {mode: 'manual', username: 'backup-user'}},
+      {kind: 'vcenter', source_id: 'vcenter-source', address: 'vc.example', port: 443, fingerprint: 'sha256-vc', credential_reference: {mode: 'vault', username: 'vault-user', vault_id: 'vault-1', entry_id: 'entry-1', uri: 'https://vc.example'}},
+    ],
+  };
+  const document = {
+    querySelector: (selector) => selector === '[data-vcf-backup-form]' ? null : globalNodes.get(selector) || null,
+    querySelectorAll: () => [], getElementById: (id) => id === 'vcf-backup-status-modal' ? statusDialog : null,
+    createElement(tag) { const element = getNode(`created-${tag}-${created.length}`); element.tagName = tag.toUpperCase(); created.push(element); return element; },
+  };
+  const table = {
+    on() {}, async setData(rows) { gridData = [...rows]; }, async addData(rows) { gridData.push(...rows); },
+    getDataCount: () => gridData.length, getData: () => gridData, setHeight() {}, redraw() {},
+  };
+  const createdWizard = [];
+  const context = vm.createContext({
+    document, URLSearchParams,
+    window: {
+      innerWidth: 1400, innerHeight: 1000, addEventListener() {}, cancelAnimationFrame() {}, clearTimeout() {}, setTimeout() { return 1; },
+      requestAnimationFrame(callback) { frames.push(callback); return frames.length; },
+      AtlasoUiPatterns: {
+        createGrid(options) { gridOptions = options; return {table, setError(message) { this.error = message; }}; },
+        createWizard(options) { createdWizard.push(options); return {}; },
+      },
+    },
+    fetch: async (url, options = {}) => {
+      requests.push({url, options});
+      if (url.endsWith('/operations?limit=25')) return {ok: true, async json() { return {items: [{operation_id: 'operation-1'}], next_cursor: null}; }};
+      if (url.endsWith('/operations/operation-1')) return {ok: true, async json() { return operation; }};
+      if (url.endsWith('/reconcile')) return {ok: true, async json() { return {...operation, reconciliation_state: 'queued'}; }};
+      throw new Error(`Unexpected status-only request ${url}`);
+    },
+  });
+  vm.runInContext(js, context);
+  assert.equal(createdWizard.length, 0, 'no configuration wizard is instantiated without its form');
+  assert.ok(gridOptions, 'the operations grid initializes without a configuration form');
+  gridOptions.onReady();
+  while (frames.length) frames.shift()();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests[0].url, '/ui/management/vcf-helper/backups/operations?limit=25');
+  assert.equal(requests[0].options.headers.Accept, 'application/json');
+  assert.equal(gridData.length, 1);
+
+  await gridOptions.onOpenRow({operation_id: 'operation-1'});
+  assert.equal(statusDialog.open, true);
+  assert.equal(nodes.get('[data-vcf-backup-operation-id]').textContent, 'operation-1');
+  while (frames.length) frames.shift()();
+  assert.equal(focusedNode, '#vcf-backup-status-title', 'status popup puts keyboard focus on its heading');
+  assert.match(created.map((element) => element.textContent).join(' '), /Credential uses the recorded Vault reference/);
+  const manual = created.find((element) => element.dataset.vcfBackupRecoveryPassword === 'nsx-source');
+  assert.ok(manual, 'manual source gets a request-local recovery password input');
+  manual.value = 'reentered-manual-password';
+  listeners.get(`${manual.selector}:input`)();
+  const click = listeners.get('status-dialog:click');
+  await click({target: {closest: (selector) => selector === '[data-vcf-backup-reconcile]' ? {} : null}, preventDefault() {}});
+  await new Promise((resolve) => setImmediate(resolve));
+  const reconcile = requests.find(({url}) => url.endsWith('/reconcile'));
+  assert.ok(reconcile);
+  const payload = JSON.parse(reconcile.options.body);
+  assert.equal(payload.sources.find((source) => source.source_id === 'nsx-source').password, 'reentered-manual-password');
+  assert.equal(payload.sources.find((source) => source.source_id === 'vcenter-source').credential_vault_id, 'vault-1');
+  assert.equal(payload.sources.find((source) => source.source_id === 'vcenter-source').credential_entry_id, 'entry-1');
+  assert.equal(reconcile.options.headers['X-CSRF-Token'], 'csrf-token');
+  assert.equal(requests.some(({url}) => url.endsWith('/execute')), false);
 });

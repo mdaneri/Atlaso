@@ -1811,6 +1811,36 @@ def test_reconcile_adopts_exact_backup_reference_and_fresh_files_without_replayi
     assert len(backend.backup_starts) == backup_count
 
 
+def test_successful_reconciliation_preserves_recorded_completion_times(harness):
+    """Keep elapsed task time stable when a successful backup is checked later.
+
+    Args:
+        harness: Fake native, receiver, clock, and administrator fixtures for workflow execution.
+    """
+    with SessionLocal() as db:
+        inspected, source = inspect_operation(db)
+        reviewed = review_operation(db, inspected, source)
+        _, dispatcher = execute_operation(db, inspected, source, reviewed)
+        dispatcher.run()
+        state = read_operation(db, inspected["operation_id"])
+        assert state["state"] == "succeeded"
+        job = db.get(Job, state["job_id"])
+        finished = workflow._utc_iso(job.finished_at)
+        step_finished = {step.id: workflow._utc_iso(step.finished_at) for step in job.steps}
+        harness["monkeypatch"].setattr(FakeReceiverSession, "__enter__", lambda self: self)
+        future = datetime.now(timezone.utc) + timedelta(days=2)
+        harness["monkeypatch"].setattr(workflow, "utcnow", lambda: future)
+        for _ in range(2):
+            result = settled_reconcile(db, "admin", "reconcile", {
+                "operation_id": inspected["operation_id"], "sources": [source],
+            }, CapturedDispatcher())
+            assert result["state"] == "succeeded"
+            assert workflow._utc_iso(job.finished_at) == finished
+            assert {step.id: workflow._utc_iso(step.finished_at) for step in job.steps} == step_finished
+            item = workflow.list_operations(db, "admin")["items"][0]
+            assert item["finished_at"] == finished
+
+
 def test_reconcile_accepts_rotated_api_secret_at_same_vault_identity(harness):
     """Verify reconcile accepts rotated api secret at same vault identity.
 

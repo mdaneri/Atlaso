@@ -1,17 +1,13 @@
-<dialog id="vcf-backup-status-modal" class="confirm-modal wide-modal task-modal" aria-labelledby="vcf-backup-status-title" aria-describedby="vcf-backup-status-description">
+<dialog id="vcf-backup-status-modal" class="confirm-modal wide-modal task-modal" aria-labelledby="vcf-backup-status-title" aria-describedby="vcf-backup-status-description" data-endpoint="{{ management_ui_root }}/vcf-helper/backups" data-tasks-root="{{ management_ui_root }}/tasks" data-csrf="{{ csrf_token }}">
   <div class="confirm-modal-panel form-stack">
     <div class="confirm-modal-body">
       <p class="kicker">VCF Backup</p>
       <div class="task-modal-title-row">
-        <h2 id="vcf-backup-status-title">Backup operation status</h2>
+        <h2 id="vcf-backup-status-title" tabindex="-1">Backup operation status</h2>
         <span class="status-pill muted" data-vcf-backup-operation-state>Status not loaded</span>
       </div>
       <p id="vcf-backup-status-description" class="muted">Check or reconcile an existing backup operation. Reconciliation does not repeat native writes.</p>
       <p class="muted" data-vcf-backup-status role="status" aria-live="polite"></p>
-      <div class="form-grid ntp-port-grid" data-vcf-backup-status-lookup>
-        <label><span>Operation ID</span><input name="recovery_operation_id" data-vcf-backup-recovery-id autocomplete="off"></label>
-        <button class="button secondary" type="button" data-vcf-backup-load-operation>Load status</button>
-      </div>
       <div class="settings-list compact-settings-list validation-settings-list"><div><span>Operation ID</span><strong class="mono-text" data-vcf-backup-operation-id>Not loaded</strong></div></div>
       <p class="alert error hidden" data-vcf-backup-operation-error role="alert"></p>
       <p class="alert warning hidden" data-vcf-backup-native-running-warning role="status"></p>
