@@ -8,11 +8,11 @@ Set-StrictMode -Version Latest
 .SYNOPSIS
 Return a fresh fixed disk recipe for an explicitly selected installation fixture.
 .PARAMETER FixtureProfile
-SingleDisk preserves the original 64/4 GiB layout; MultiDisk adds an 8 GiB selected data disk.
+SingleDisk preserves 64/4 GiB; MultiDisk adds selected data; OldSystemLabel seeds only the unselected disk.
 #>
 function Get-AtlasoInstallationFixture {
-    param([ValidateSet('SingleDisk', 'MultiDisk')][string]$FixtureProfile = 'SingleDisk')
-    $fixtureName = if ($FixtureProfile -ieq 'MultiDisk') { 'MultiDisk' } else { 'SingleDisk' }
+    param([ValidateSet('SingleDisk', 'MultiDisk', 'OldSystemLabel')][string]$FixtureProfile = 'SingleDisk')
+    $fixtureName = @('SingleDisk', 'MultiDisk', 'OldSystemLabel') | Where-Object { $_ -ieq $FixtureProfile }
     $disks = @(
         [pscustomobject]@{ Role = 'target'; Name = 'target-64g.vmdk'; SizeGiB = 64; Device = 'scsi0:0'; Selected = $true },
         [pscustomobject]@{ Role = 'unselected'; Name = 'unselected-4g.vmdk'; SizeGiB = 4; Device = 'scsi0:1'; Selected = $false }
@@ -33,7 +33,7 @@ function Get-AtlasoInstallationContextFixture {
     param([psobject]$Context)
     $fixtureName = 'SingleDisk'
     if ($Context.PSObject.Properties['FixtureProfile']) {
-        if ($Context.FixtureProfile -isnot [string] -or $Context.FixtureProfile -cnotin @('SingleDisk', 'MultiDisk')) {
+        if ($Context.FixtureProfile -isnot [string] -or $Context.FixtureProfile -cnotin @('SingleDisk', 'MultiDisk', 'OldSystemLabel')) {
             throw 'Installation fixture context profile is malformed.'
         }
         $fixtureName = $Context.FixtureProfile
@@ -57,7 +57,7 @@ function Resolve-AtlasoInstallationReceiptFixture {
         return Get-AtlasoInstallationFixture -FixtureProfile SingleDisk
     }
     if (-not $originalField -or -not $baselineField -or $originalField.Value -isnot [string] -or
-        $originalField.Value -cnotin @('SingleDisk', 'MultiDisk') -or
+        $originalField.Value -cnotin @('SingleDisk', 'MultiDisk', 'OldSystemLabel') -or
         $baselineField.Value -cne $originalField.Value) {
         throw 'Original and baseline installation fixture profiles do not match.'
     }
@@ -103,7 +103,7 @@ Original sealed fixed recipe.
 Compare all selected disks as well as the unselected disk before admitting a no-write result.
 #>
 function Get-AtlasoInstallationVerificationRoles {
-    param([ValidateSet('SingleDisk', 'MultiDisk')][string]$FixtureProfile = 'SingleDisk', [switch]$IncludeSelected)
+    param([ValidateSet('SingleDisk', 'MultiDisk', 'OldSystemLabel')][string]$FixtureProfile = 'SingleDisk', [switch]$IncludeSelected)
     $roles = @('unselected')
     if ($IncludeSelected) {
         $roles += @((Get-AtlasoInstallationFixture -FixtureProfile $FixtureProfile).Disks | Where-Object Selected | ForEach-Object Role)

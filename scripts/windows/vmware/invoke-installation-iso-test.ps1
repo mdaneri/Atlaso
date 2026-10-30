@@ -26,6 +26,8 @@ CustomAliasProbe requires the native /srv alias refusal without credentials or c
 CustomReboot installs one native Custom remaining-size ext4 root and boots without media.
 MultiProbe admits the fixed three-disk menu without writes or credentials.
 CustomMultiReboot installs a root and separate 8 GiB /var/srv filesystem while preserving the third, unselected disk.
+OldLabelReboot installs while preserving an original ext4 ATLASO_SYSTEM unselected disk.
+OldLabelInterrupted stops after native partitioning; RecoverOldLabelReboot requires its original interruption receipt and fresh consent.
 LoginInstalled resumes an already installed, receipt-bound VM without repeating installation.
 BootInstalled completes a VNC-driven installation by disconnecting media and checking ordinary serial login.
 VncCredential submits one SDK account value at an operator-observed concealed installer field.
@@ -41,6 +43,10 @@ Independently preserved baseline receipt digest.
 Original installed-boot transition receipt for LoginInstalled.
 .PARAMETER BootReceiptSha256
 Independently preserved installed-boot receipt digest.
+.PARAMETER InterruptionReceiptPath
+Original controlled-interruption receipt required for RecoverOldLabelReboot.
+.PARAMETER InterruptionReceiptSha256
+Independently retained original interruption digest.
 .PARAMETER TimeoutSeconds
 Whole test and console deadline.
 .PARAMETER InspectInstalled
@@ -81,13 +87,15 @@ param(
     [string]$ValidationRootReceiptSha256 = '',
     [Parameter(Mandatory = $true)][ValidateRange(1, 2147483647)][int]$PullRequestNumber,
     [string]$CollisionSuffix = '',
-    [ValidateSet('Probe', 'MultiProbe', 'Cancel', 'CancelReview', 'Insufficient', 'Auto', 'AutoReboot', 'CustomCancel', 'CustomAliasProbe', 'CustomReboot', 'CustomMultiReboot', 'BootInstalled', 'LoginInstalled', 'VncCredential')][string]$Scenario = 'Probe',
+    [ValidateSet('Probe', 'RecoverOldLabelReboot', 'OldLabelReboot', 'MultiProbe', 'Cancel', 'CancelReview', 'Insufficient', 'Auto', 'AutoReboot', 'OldLabelInterrupted', 'CustomCancel', 'CustomAliasProbe', 'CustomReboot', 'CustomMultiReboot', 'BootInstalled', 'LoginInstalled', 'VncCredential')][string]$Scenario = 'Probe',
     [string]$OriginalReceiptPath = '',
     [string]$OriginalReceiptSha256 = '',
     [string]$BaselineReceiptPath = '',
     [string]$BaselineReceiptSha256 = '',
     [string]$BootReceiptPath = '',
     [string]$BootReceiptSha256 = '',
+    [string]$InterruptionReceiptPath = '',
+    [string]$InterruptionReceiptSha256 = '',
     [ValidateRange(60, 14400)][int]$TimeoutSeconds = 3600,
     [switch]$InspectInstalled,
     [switch]$InspectContent,
@@ -118,6 +126,7 @@ if (-not $Child) {
         '-OriginalReceiptPath', $OriginalReceiptPath, '-OriginalReceiptSha256', $OriginalReceiptSha256,
         '-BaselineReceiptPath', $BaselineReceiptPath, '-BaselineReceiptSha256', $BaselineReceiptSha256,
         '-BootReceiptPath', $BootReceiptPath, '-BootReceiptSha256', $BootReceiptSha256,
+        '-InterruptionReceiptPath', $InterruptionReceiptPath, '-InterruptionReceiptSha256', $InterruptionReceiptSha256,
         '-InspectionPythonPath', $InspectionPythonPath, '-InspectionVmnet', $InspectionVmnet
     )
     if ($InspectInstalled) { $childArguments += '-InspectInstalled' }
@@ -585,7 +594,7 @@ Creation-time fixed SingleDisk or MultiDisk profile.
 #>
 function Test-InstallationConsoleFixtureOptions {
     [OutputType([bool])]
-    param([object[]]$Options, [ValidateSet('SingleDisk', 'MultiDisk')][string]$FixtureProfile = 'SingleDisk')
+    param([object[]]$Options, [ValidateSet('SingleDisk', 'MultiDisk', 'OldSystemLabel')][string]$FixtureProfile = 'SingleDisk')
     $fixture = Get-AtlasoInstallationFixture -FixtureProfile $FixtureProfile
     if ($Options.Count -ne $fixture.Disks.Count -or @($Options | Where-Object DiskPath -CNotMatch '^/dev/sd[a-z]+$').Count -or
         @($Options.DiskPath | Sort-Object -Unique).Count -ne $fixture.Disks.Count) { return $false }
@@ -751,7 +760,7 @@ function Wait-InstallationCustomPublicState {
     param([IO.Pipes.NamedPipeServerStream]$Pipe, [hashtable]$State, [hashtable]$CursorState,
         [DateTimeOffset]$Deadline, [ValidateSet('Disk', 'Editor', 'Form', 'Empty', 'Alias', 'Review', 'MultiReview')][string]$Kind,
         [string]$ExpectedDisk = '', [string]$ExpectedDataDisk = '',
-        [ValidateSet('SingleDisk', 'MultiDisk')][string]$FixtureProfile = 'SingleDisk')
+        [ValidateSet('SingleDisk', 'MultiDisk', 'OldSystemLabel')][string]$FixtureProfile = 'SingleDisk')
     $buffer = [byte[]]::new(4096)
     $phaseStart = $State.Text.Length
     $phaseDeadline = [DateTimeOffset]::UtcNow.AddSeconds(90)
@@ -924,7 +933,7 @@ Public package names derived from the original ISO, admitted before reporting ca
 Fixed disk recipe used only when admitting native disk-selection rows.
 #>
 function Wait-InstallationConsoleState {
-    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [switch]$ReadLoginProgress, [ValidateSet('', 'root', 'admin')][string]$ShellAccount = '', [string]$ExpectedCapacityDisk = '', [hashtable]$CursorState, [switch]$ReadInspectionReport, [string[]]$AllowedRpmPackages = @(), [ValidateSet('SingleDisk', 'MultiDisk')][string]$FixtureProfile = 'SingleDisk')
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [string]$Pattern, [DateTimeOffset]$Deadline, [switch]$ReadDiskSelection, [string[]]$KnownProvisioningStages = @(), [switch]$ReadBootProgress, [switch]$ReadLoginProgress, [ValidateSet('', 'root', 'admin')][string]$ShellAccount = '', [string]$ExpectedCapacityDisk = '', [hashtable]$CursorState, [switch]$ReadInspectionReport, [string[]]$AllowedRpmPackages = @(), [ValidateSet('SingleDisk', 'MultiDisk', 'OldSystemLabel')][string]$FixtureProfile = 'SingleDisk')
     if ($AllowedRpmPackages.Count -gt 1024) { throw 'Diagnostic package set exceeds its bound.' }
     $allowedPackageHashes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($name in $AllowedRpmPackages) {
@@ -1573,15 +1582,16 @@ if ($VncAccount -or $VncPort -or $VncScreenPath -or $VncScreenSha256 -or $VncFie
 $knownProvisioningStages = @(Get-InstallationProvisioningStages -Text (Get-Content -LiteralPath `
     (Join-Path $worktree 'image/common/scripts/provision-atlaso.sh') -Raw -Encoding utf8))
 $credentials = $null
-$creationFixture = Get-AtlasoInstallationFixture -FixtureProfile $(if ($Scenario -in @('MultiProbe', 'CustomMultiReboot')) { 'MultiDisk' } else { 'SingleDisk' })
+$creationFixture = Get-AtlasoInstallationFixture -FixtureProfile $(if ($Scenario -in @('MultiProbe', 'CustomMultiReboot')) { 'MultiDisk' } elseif ($Scenario -in @('OldLabelReboot', 'OldLabelInterrupted', 'RecoverOldLabelReboot')) { 'OldSystemLabel' } else { 'SingleDisk' })
 $resumeSelectors = @{}
-if ($Scenario -in @('LoginInstalled', 'BootInstalled')) {
+if ($Scenario -in @('LoginInstalled', 'BootInstalled', 'RecoverOldLabelReboot')) {
     $requiredReceiptPairs = @(
         @($OriginalReceiptPath, $OriginalReceiptSha256),
         @($BaselineReceiptPath, $BaselineReceiptSha256)
     )
     if ($Scenario -eq 'LoginInstalled') { $requiredReceiptPairs += ,@($BootReceiptPath, $BootReceiptSha256) }
     elseif ($BootReceiptPath -or $BootReceiptSha256) { throw 'BootInstalled creates a new media-disconnection receipt; use LoginInstalled to resume it.' }
+    if ($Scenario -eq 'RecoverOldLabelReboot') { $requiredReceiptPairs += ,@($InterruptionReceiptPath, $InterruptionReceiptSha256) }
     foreach ($pair in $requiredReceiptPairs) {
         if (-not [IO.Path]::IsPathFullyQualified($pair[0]) -or $pair[1] -cnotmatch '^[0-9a-f]{64}$') {
             throw 'Installed checks require the original VM, baseline, and applicable boot receipt selectors.'
@@ -1607,7 +1617,7 @@ if ($InspectNetwork -and (-not $InspectInstalled -or $Scenario -ne 'LoginInstall
 }
 if ($InspectionVmnet -and -not $InspectNetwork) { throw 'InspectionVmnet requires InspectNetwork.' }
 if ($InspectInstalled) {
-    if ($Scenario -notin @('AutoReboot', 'CustomReboot', 'CustomMultiReboot', 'BootInstalled', 'LoginInstalled')) {
+    if ($Scenario -notin @('AutoReboot', 'OldLabelReboot', 'RecoverOldLabelReboot', 'CustomReboot', 'CustomMultiReboot', 'BootInstalled', 'LoginInstalled')) {
         throw 'Installed inspection requires an installed-boot scenario.'
     }
     if (-not [IO.Path]::IsPathFullyQualified($InspectionPythonPath) -or
@@ -1656,7 +1666,19 @@ if ($InspectInstalled) {
 } elseif ($InspectionPythonPath) {
     throw 'InspectionPythonPath requires InspectInstalled.'
 }
-if ($Scenario -in @('Auto', 'AutoReboot', 'CustomReboot', 'CustomMultiReboot', 'BootInstalled', 'LoginInstalled')) {
+if ($Scenario -ne 'RecoverOldLabelReboot' -and ($InterruptionReceiptPath -or $InterruptionReceiptSha256)) { throw 'Interruption selectors require RecoverOldLabelReboot.' }
+$recoveryAdmission = $null
+if ($Scenario -eq 'RecoverOldLabelReboot') {
+    # Validate the interruption and original filesystem provenance before obtaining any credential.
+    $recoveryAdmission = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+        -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
+        -Mode Verify -Worktree $worktree -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber `
+        -CollisionSuffix $CollisionSuffix @resumeSelectors -InterruptionReceiptPath $InterruptionReceiptPath `
+        -InterruptionReceiptSha256 $InterruptionReceiptSha256 -Confirm:$false
+    if (-not [IO.Path]::GetFullPath($IsoPath).Equals([string]$recoveryAdmission.IsoPath, [StringComparison]::OrdinalIgnoreCase) -or
+        $IsoSha256 -cne [string]$recoveryAdmission.IsoSha256) { throw 'Recovery ISO differs from its original interrupted installation.' }
+}
+if ($Scenario -in @('Auto', 'AutoReboot', 'OldLabelInterrupted', 'OldLabelReboot', 'RecoverOldLabelReboot', 'CustomReboot', 'CustomMultiReboot', 'BootInstalled', 'LoginInstalled')) {
     Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
     $selector = Resolve-AtlasoOnePasswordEnvironmentId -RepositoryRoot $worktree
     $token = Resolve-AtlasoOnePasswordServiceAccountTokenFile -RepositoryRoot $worktree `
@@ -1665,12 +1687,15 @@ if ($Scenario -in @('Auto', 'AutoReboot', 'CustomReboot', 'CustomMultiReboot', '
         -OnePasswordServiceAccountTokenFile $token -TimeoutSeconds 300 -ConsumerDescription 'development installer console'
 }
 
+
 $pipeName = 'Atlaso-Installation-' + [guid]::NewGuid().ToString('N')
-if ($Scenario -in @('LoginInstalled', 'BootInstalled')) {
+if ($Scenario -in @('LoginInstalled', 'BootInstalled', 'RecoverOldLabelReboot')) {
+    if ($recoveryAdmission) { $vm = $recoveryAdmission } else {
     $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
             -Mode Verify -Worktree $worktree `
         -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix @resumeSelectors -Confirm:$false
+    }
     if (-not [IO.Path]::GetFullPath($IsoPath).Equals([string]$vm.IsoPath, [StringComparison]::OrdinalIgnoreCase) -or
         $IsoSha256 -cne [string]$vm.IsoSha256) {
         throw 'LoginInstalled ISO identity differs from the original VM creation receipt.'
@@ -1699,6 +1724,13 @@ try {
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
             -Mode ResumeInstalled -Worktree $worktree `
             -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix @resumeSelectors -Confirm:$false
+    } elseif ($Scenario -eq 'RecoverOldLabelReboot') {
+        $resumedInstaller = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
+            -Mode ResumeInstaller -Worktree $worktree -OutputDirectory $OutputDirectory `
+            -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix @resumeSelectors `
+            -InterruptionReceiptPath $InterruptionReceiptPath -InterruptionReceiptSha256 $InterruptionReceiptSha256 -Confirm:$false
+        Write-Host ('Installer recovery original selectors: ' + ($resumedInstaller | ConvertTo-Json -Depth 4 -Compress))
     } elseif ($Scenario -eq 'BootInstalled') {
         $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
@@ -1747,7 +1779,7 @@ try {
             $readyForInstallation = $Scenario -in @('CustomReboot', 'CustomMultiReboot')
         } else {
             Write-Host 'Public installer phase: awaiting-disk-selection'
-            $diskOptions = @(Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline -ReadBootProgress -CursorState $cursorState -FixtureProfile $creationFixture.Profile -ReadDiskSelection:($Scenario -in @('Probe', 'MultiProbe', 'Auto', 'AutoReboot', 'CancelReview', 'Insufficient')))
+            $diskOptions = @(Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Select a disk' -Deadline $deadline -ReadBootProgress -CursorState $cursorState -FixtureProfile $creationFixture.Profile -ReadDiskSelection:($Scenario -in @('Probe', 'MultiProbe', 'Auto', 'AutoReboot', 'OldLabelInterrupted', 'OldLabelReboot', 'RecoverOldLabelReboot', 'CancelReview', 'Insufficient')))
             Write-Host 'Public installer phase: disk-selection-ready'
             Write-Host 'Installer reached the native Photon disk selection screen.'
             if ($Scenario -eq 'Cancel') {
@@ -1756,7 +1788,7 @@ try {
                 Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Installation cancelled' -Deadline $deadline
                 Write-Host 'Installer cancellation returned without admitting disk writes.'
             }
-            elseif ($Scenario -in @('Auto', 'AutoReboot', 'CancelReview', 'Insufficient')) {
+            elseif ($Scenario -in @('Auto', 'AutoReboot', 'OldLabelInterrupted', 'OldLabelReboot', 'RecoverOldLabelReboot', 'CancelReview', 'Insufficient')) {
                 # Native visual row order can differ from VMX SCSI order.
                 $selectedGiB = if ($Scenario -eq 'Insufficient') { 4 } else { 64 }
                 $target = @($diskOptions | Where-Object SizeGiB -EQ $selectedGiB)[0]
@@ -1789,10 +1821,18 @@ try {
                     Send-InstallationConsoleSecret -Pipe $pipe -Value $value
                 }
             }
-            Write-Host 'Public installer phase: awaiting-installation-completion'
-            Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Atlaso installation completed.' -Deadline $deadline `
-                -KnownProvisioningStages $knownProvisioningStages
-            Write-Host 'Disconnected installation completed; reboot and persistence acceptance remain separate.'
+            if ($Scenario -eq 'OldLabelInterrupted') {
+                # This exact public source-defined stage follows native partitioning and base installation.
+                # Stop only this original VM; recovery will require another explicit erasure confirmation.
+                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'installing Photon appliance packages' -Deadline $deadline `
+                    -KnownProvisioningStages $knownProvisioningStages
+                Write-Host 'Controlled installation interruption at installing Photon appliance packages.'
+            } else {
+                Write-Host 'Public installer phase: awaiting-installation-completion'
+                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Atlaso installation completed.' -Deadline $deadline `
+                    -KnownProvisioningStages $knownProvisioningStages
+                Write-Host 'Disconnected installation completed; reboot and persistence acceptance remain separate.'
+            }
         }
         # Keep checked provider stop and disk comparison inside this runner's existing
         # whole-process-tree deadline, including the shared vmrun inactivity checks.
@@ -1802,10 +1842,10 @@ try {
             -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix `
             -OriginalReceiptPath $vm.ReceiptPath -OriginalReceiptSha256 $vm.ReceiptSha256 `
             -BaselineReceiptPath $vm.BaselineReceiptPath -BaselineReceiptSha256 $vm.BaselineReceiptSha256 `
-            -VerifyTarget:($Scenario -notin @('Auto', 'AutoReboot', 'CustomReboot', 'CustomMultiReboot')) -Confirm:$false
+            -VerifyTarget:($Scenario -notin @('Auto', 'AutoReboot', 'OldLabelInterrupted', 'OldLabelReboot', 'RecoverOldLabelReboot', 'CustomReboot', 'CustomMultiReboot')) -MarkInterrupted:($Scenario -eq 'OldLabelInterrupted') -Confirm:$false
         Write-Host ('Installation disk verification: ' + ($verification | ConvertTo-Json -Depth 4 -Compress))
     }
-    if ($Scenario -in @('AutoReboot', 'CustomReboot', 'CustomMultiReboot')) {
+    if ($Scenario -in @('AutoReboot', 'OldLabelReboot', 'RecoverOldLabelReboot', 'CustomReboot', 'CustomMultiReboot')) {
         $pipe.Disconnect()
         $connection = $pipe.WaitForConnectionAsync()
         $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
@@ -1822,7 +1862,7 @@ try {
         }
         $cursorState = @{}
     }
-    if ($Scenario -in @('AutoReboot', 'CustomReboot', 'CustomMultiReboot', 'BootInstalled', 'LoginInstalled')) {
+    if ($Scenario -in @('AutoReboot', 'OldLabelReboot', 'RecoverOldLabelReboot', 'CustomReboot', 'CustomMultiReboot', 'BootInstalled', 'LoginInstalled')) {
         foreach ($account in @('root', 'admin')) {
             $accountProbe = Get-InstallationAccountProbe -Account $account
             $loginDeadline = [DateTimeOffset]::UtcNow.AddSeconds(180)

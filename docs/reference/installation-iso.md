@@ -578,6 +578,52 @@ remain outstanding, so these results do not establish
 full installer acceptance or authorize publication. Do not publish or describe the installer as validated before the
 remaining acceptance evidence exists.
 
+### Preserve an old system-content label and recover an interrupted installation
+
+`OldLabelReboot` uses a fixed 64-GiB target and a genuinely unselected 4-GiB disk. Before the first baseline or boot,
+the owning creator builds a real `ext4` filesystem labelled `ATLASO_SYSTEM`, with a fixed public test UUID and benign
+sentinel. Its original VM receipt seals the seed plan; the baseline records the verified filesystem identity, sentinel
+and raw-image digests. Cancellation and installation retain their original comparison rules. A stopped logical
+comparison against that baseline also proves that the old filesystem, UUID and sentinel survived unchanged.
+
+This optional Windows fixture requires an existing WSL distribution with Python 3, `mke2fs`, `debugfs`, `e2fsck`, and
+`blkid`, plus the existing native `qemu-img` dependency. It records the actual filesystem-tool paths and binary hashes.
+It formats only a newly created regular image inside the original owned VM directory; it uses no host block devices,
+loop mounts or host-network changes. The raw seed and sentinel are retained there for the normal receipt-bound owning
+cleanup. Creation reserves **78 GiB**, including the additional 4-GiB raw image; ordinary two-disk and MultiDisk gates
+remain 74 and 82 GiB. Existing-VM recovery retains its separate 6-GiB allowance.
+
+Use the ordinary ISO/root inputs shown above with one absent VM directory and:
+
+```powershell
+  -Scenario OldLabelReboot -TimeoutSeconds 3600 `
+  -InspectInstalled -InspectContent -InspectionPythonPath <ABSOLUTE-PREPARED-PYTHON-EXECUTABLE>
+```
+
+For a controlled recovery test, create a separate fresh fixture with `-Scenario OldLabelInterrupted`. The canonical
+console driver selects the target, confirms replacement and supplies the ordinary concealed account fields. It stops
+the owned VM only after observing the source-defined `installing Photon appliance packages` stage, which follows
+native partitioning and base installation. It compares the unselected disk and emits an immutable **Installer
+interruption receipt**. The target may have been written; this is an interruption result, never installation success.
+
+Retain the original VM, baseline and interruption receipt paths and their emitted digests outside the VM root. Use the
+same output directory and collision suffix for a distinct recovery invocation:
+
+```powershell
+  -Scenario RecoverOldLabelReboot -TimeoutSeconds 3600 `
+  -OriginalReceiptPath <ORIGINAL-VM-RECEIPT> -OriginalReceiptSha256 <ORIGINAL-DIGEST> `
+  -BaselineReceiptPath <ORIGINAL-BASELINE> -BaselineReceiptSha256 <ORIGINAL-BASELINE-DIGEST> `
+  -InterruptionReceiptPath <ORIGINAL-INTERRUPTION-RECEIPT> -InterruptionReceiptSha256 <EMITTED-DIGEST> `
+  -InspectInstalled -InspectContent -InspectionPythonPath <ABSOLUTE-PREPARED-PYTHON-EXECUTABLE>
+```
+
+Recovery admits the original interruption, filesystem seed and stopped unselected comparison before obtaining
+credentials. It starts the original connected ISO and requires a fresh target selection and erase confirmation before
+reinstalling. It then uses the existing media-free boot, both account challenges, all five strict content checks and
+stopped unselected comparison. Preserve both original invocations and their original deadlines; never restart an
+expired consumer or recreate a baseline from a partially installed disk. These finite scenarios do not imply recovery
+from arbitrary hardware faults, successful Appliance Update rollback, certificate address control, or physical support.
+
 ### Inspect a separately admitted host-only connection
 
 Finish disconnected installation, media removal, account and content checks before this separate network phase.
@@ -688,8 +734,9 @@ RPM transaction with error 1525. Its `/srv` mount conflicts with the authenticat
 the original failed VM, receipts and stopped unselected-disk comparison are retained. This is a failed installation,
 not multi-disk acceptance. The updated alias check and canonical `/var/srv` fixture require new development media.
 
-Disconnected update/rollback, multi-disk Custom and fault scenarios, certificate address-control acceptance,
-and preservation of disks carrying old Atlaso labels remain outstanding. Do not describe the installer as validated
+Final acceptance requires source-bound multi-disk Custom, controlled-fault and old-label preservation evidence,
+plus Appliance Update/rollback, certificate address-control and representative physical results.
+Do not describe the installer as validated
 or claim physical support while these gates are
 outstanding. Secure Boot is disabled for phase one; this reference makes no Secure Boot or ARM support claim.
 

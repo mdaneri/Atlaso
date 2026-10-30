@@ -253,6 +253,42 @@ foreach ($mutation in @('missing', 'duplicate', 'outside', 'size', 'unknown')) {
     try { Assert-AtlasoInstallationBaselineDisks -Fixture $resolved -Baseline $bad -OutputDirectory 'C:\vm' } catch { $refused = $true }
     Assert-InstallationVmCondition $refused 'Missing, duplicate, outside, wrong-size or unknown baseline roles must fail without filesystem activity.'
 }
+Import-Module (Join-Path $repositoryRoot 'scripts/windows/vmware/Atlaso.InstallationOldLabel.psm1') -Force
+$oldFixture = Get-AtlasoInstallationFixture -FixtureProfile OldSystemLabel
+Assert-InstallationVmCondition ($oldFixture.Disks.Count -eq 2 -and $oldFixture.Disks[0].SizeGiB -eq 64 -and $oldFixture.Disks[1].SizeGiB -eq 4 -and -not $oldFixture.Disks[1].Selected) 'Old-label coverage must preserve the original64/4GiB roles.'
+$oldSpec = Get-AtlasoInstallationOldLabelSpec
+$sentinelSha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($oldSpec.Sentinel))).ToLowerInvariant()
+$oldOriginal = [pscustomobject]@{ old_label_seed_plan = $oldSpec }
+$oldBaseline = [pscustomobject]@{ old_label_seed = [pscustomobject]@{ schema = 1; label = $oldSpec.Label; uuid = $oldSpec.Uuid; filesystem = 'ext4'; virtual_size_bytes = [long]4GB; raw_sha256 = ('a' * 64); sentinel_sha256 = $sentinelSha } }
+Assert-AtlasoInstallationOldLabelRecords -Original $oldOriginal -Baseline $oldBaseline
+foreach ($mutation in @('missing-plan', 'missing-seed', 'label', 'uuid', 'filesystem', 'size', 'sentinel', 'raw-digest')) {
+    $o = $oldOriginal | ConvertTo-Json -Depth 5 | ConvertFrom-Json
+    $b = $oldBaseline | ConvertTo-Json -Depth 5 | ConvertFrom-Json
+    switch ($mutation) {
+        'missing-plan' { $o = [pscustomobject]@{} }
+        'missing-seed' { $b = [pscustomobject]@{} }
+        'label' { $b.old_label_seed.label = 'OTHER' }
+        'uuid' { $b.old_label_seed.uuid = '00000000-0000-4000-8000-000000000000' }
+        'filesystem' { $b.old_label_seed.filesystem = 'xfs' }
+        'size' { $b.old_label_seed.virtual_size_bytes = [long]8GB }
+        'sentinel' { $b.old_label_seed.sentinel_sha256 = ('b' * 64) }
+        'raw-digest' { $b.old_label_seed.raw_sha256 = 'invalid' }
+    }
+    $refused = $false
+    try { Assert-AtlasoInstallationOldLabelRecords -Original $o -Baseline $b } catch { $refused = $true }
+    Assert-InstallationVmCondition $refused 'Missing or changed original seed identity must refuse without provider activity.'
+}
+$interruptionOriginal = [pscustomobject]@{ original_identities = @{ directory = 'ABCD1234:0000000000000001' }; persistent_vm_identity_sha256 = ('a' * 64) }
+$interruptionSelectors = @{ OriginalReceiptPath = 'original'; OriginalReceiptSha256 = ('b' * 64); BaselineReceiptPath = 'baseline'; BaselineReceiptSha256 = ('c' * 64) }
+$interruption = [pscustomobject]@{ phase = 'installation-controlled-interruption'; original_receipt_path = 'original'; original_receipt_sha256 = ('b' * 64); baseline_receipt_path = 'baseline'; baseline_receipt_sha256 = ('c' * 64); original_directory_identity = 'ABCD1234:0000000000000001'; persistent_vm_identity_sha256 = ('a' * 64); stage = 'installing Photon appliance packages'; unselected_logical_contents_unchanged = $true; selected_disks_may_have_been_written = $true }
+Assert-AtlasoInstallationInterruptionRecord -Original $interruptionOriginal -Interruption $interruption -Selectors $interruptionSelectors
+foreach ($field in @('phase','original_receipt_path','original_receipt_sha256','baseline_receipt_path','baseline_receipt_sha256','original_directory_identity','persistent_vm_identity_sha256','stage','unselected_logical_contents_unchanged','selected_disks_may_have_been_written')) {
+    $badInterruption = $interruption | ConvertTo-Json | ConvertFrom-Json
+    $badInterruption.$field = 'other'
+    $refused = $false
+    try { Assert-AtlasoInstallationInterruptionRecord -Original $interruptionOriginal -Interruption $badInterruption -Selectors $interruptionSelectors } catch { $refused = $true }
+    Assert-InstallationVmCondition $refused 'Wrong VM, baseline, stopped preservation or observed interruption stage must refuse recovery before provider activity.'
+}
 $legacy = Resolve-AtlasoInstallationReceiptFixture -Original ([pscustomobject]@{}) -Baseline ([pscustomobject]@{})
 Assert-InstallationVmCondition ($legacy.Profile -ceq 'SingleDisk' -and $legacy.Disks.Count -eq 2) 'Only the original two-disk recipe may be inferred for legacy receipts.'
 foreach ($pair in @(
@@ -277,6 +313,7 @@ foreach ($pair in @(
     function Get-InstallationHostVolumeInfo { param([string]$OutputDirectory) return [pscustomobject]@{ IsReady = $true; AvailableFreeSpace = [long]$available } }
     foreach ($case in @(
             @{ Profile = 'SingleDisk'; Free = [long](74GB - 1); Pass = $false }, @{ Profile = 'SingleDisk'; Free = [long]74GB; Pass = $true },
+            @{ Profile = 'OldSystemLabel'; Free = [long](78GB - 1); Pass = $false }, @{ Profile = 'OldSystemLabel'; Free = [long]78GB; Pass = $true },
             @{ Profile = 'MultiDisk'; Free = [long](82GB - 1); Pass = $false }, @{ Profile = 'MultiDisk'; Free = [long]82GB; Pass = $true }
         )) {
         $available = $case.Free; $passed = $true
@@ -627,9 +664,9 @@ Assert-InstallationVmCondition ($startHelper.Contains('[Environment]::CurrentDir
 Assert-InstallationVmCondition ($source.Contains("'compare', '-f', 'vmdk', '-F', 'vmdk'")) 'Disk comparison must use qemu-img logical VMDK comparison.'
 Assert-InstallationVmCondition (-not $source.Contains("'compare', '-s'")) 'Logical comparison must not require sparse allocation layout to match.'
 Assert-InstallationVmCondition ($source.Contains('-Kind installation-baseline')) 'The baseline record must use its dedicated ownership-receipt kind.'
-Assert-InstallationVmCondition ($ownershipSource.Contains("'installation-baseline', 'installation-boot', 'installation-resume')")) 'The immutable ownership publisher must admit the baseline record kind.'
+Assert-InstallationVmCondition ($ownershipSource.Contains("'installation-baseline', 'installation-boot', 'installation-resume', 'installation-interruption')")) 'The immutable ownership publisher must admit the baseline record kind.'
 Assert-InstallationVmCondition ($cleanupSource.Contains("'Confirm-AtlasoWorkstationVmInactive'")) 'The guarded VM stop helper must be available to the verification mode.'
-$verifyMode = $source.IndexOf('if ($Mode -in @(''AdmitConsole'', ''AdmitNetwork'', ''Verify'', ''BootInstalled'', ''ResumeInstalled''))', [StringComparison]::Ordinal)
+$verifyMode = $source.IndexOf('if ($Mode -in @(''AdmitConsole'', ''AdmitNetwork'', ''Verify'', ''BootInstalled'', ''ResumeInstalled'', ''ResumeInstaller''))', [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($verifyMode -ge 0) 'The harness must expose receipt-bound disk verification.'
 $verifyOriginalRead = $source.IndexOf('Read-AtlasoTestVmSealedRecord -Context $context -Path $OriginalReceiptPath', $verifyMode, [StringComparison]::Ordinal)
 $verifyBaselineRead = $source.IndexOf('Read-AtlasoTestVmSealedRecord -Context $context -Path $BaselineReceiptPath', $verifyMode, [StringComparison]::Ordinal)
@@ -638,16 +675,16 @@ $verifyCompare = $source.IndexOf('Assert-InstallationDiskUnchanged -Disk', $veri
 Assert-InstallationVmCondition ($verifyOriginalRead -gt $verifyMode -and $verifyBaselineRead -gt $verifyOriginalRead -and $verifyStop -gt $verifyBaselineRead -and $verifyCompare -gt $verifyStop) 'Verification must validate both bound receipts before stopping the VM and compare only after stop.'
 Assert-InstallationVmCondition ($source.Contains('Get-AtlasoInstallationVerificationRoles -FixtureProfile $fixture.Profile -IncludeSelected:$VerifyTarget')) `
     'Verification must use the original profile and explicit cancellation selector for its comparison roles.'
-foreach ($fixtureName in @('SingleDisk', 'MultiDisk')) {
+foreach ($fixtureName in @('SingleDisk', 'MultiDisk', 'OldSystemLabel')) {
     $ordinaryRoles = @(Get-AtlasoInstallationVerificationRoles -FixtureProfile $fixtureName)
     $cancelRoles = @(Get-AtlasoInstallationVerificationRoles -FixtureProfile $fixtureName -IncludeSelected)
-    $expectedCancel = if ($fixtureName -ceq 'SingleDisk') { 'target,unselected' } else { 'data,target,unselected' }
+    $expectedCancel = if ($fixtureName -cne 'MultiDisk') { 'target,unselected' } else { 'data,target,unselected' }
     Assert-InstallationVmCondition (($ordinaryRoles -join ',') -ceq 'unselected' -and
         (($cancelRoles | Sort-Object) -join ',') -ceq $expectedCancel) `
         'Both profiles must always compare the unselected disk; cancellation must also compare every selected disk.'
 }
 Assert-InstallationVmCondition ($source.Contains("Invoke-AtlasoBoundedProcess -FilePath `$QemuImg -ArgumentList @('info', '--output=json', `$Path)")) 'qemu-img metadata inspection must use the existing bounded process helper.'
-Assert-InstallationVmCondition ($source.Contains("[ValidateSet('Create', 'AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'ResumeInstalled', 'Cleanup')]") -and
+Assert-InstallationVmCondition ($source.Contains("[ValidateSet('Create', 'AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'ResumeInstalled', 'ResumeInstaller', 'Cleanup')]") -and
     $source.Contains('Console admission requires an enabled task-owned VM receipt context.')) `
     'AdmitConsole must be an explicit task-owned mode.'
 $admitConsoleBranches = @($ast.FindAll({
@@ -1413,12 +1450,33 @@ $bootPublish = $source.IndexOf('-Record $transition -Kind installation-boot', [S
 $bootWrite = $source.IndexOf('$writer.Write($after', $bootPublish, [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($bootPublish -gt $verifyCompare -and $bootWrite -gt $bootPublish) 'Original/baseline verification and transition publication must precede VMX mutation.'
 Write-Host 'Installation disk-boot transition regression tests passed.'
+$childArgumentAssignments = @($driverAst.FindAll({ param($node)
+    $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq '$childArguments' -and
+    $node.Extent.Text.Contains("'-OriginalReceiptPath'")
+}, $true))
+Assert-InstallationVmCondition ($childArgumentAssignments.Count -eq 1) 'The bounded child must have one canonical receipt argument assignment.'
+& {
+    param([string]$Assignment)
+    foreach ($parameter in $driverAst.ParamBlock.Parameters) { Set-Variable -Name $parameter.Name.VariablePath.UserPath -Value '' }
+    $InterruptionReceiptPath = 'C:\owned evidence\original interruption.json'
+    $InterruptionReceiptSha256 = 'd' * 64
+    . ([scriptblock]::Create($Assignment))
+    $receiptIndex = [array]::IndexOf($childArguments, '-InterruptionReceiptPath')
+    $digestIndex = [array]::IndexOf($childArguments, '-InterruptionReceiptSha256')
+    Assert-InstallationVmCondition ($receiptIndex -ge 0 -and $digestIndex -ge 0 -and
+        $childArguments[$receiptIndex + 1] -ceq $InterruptionReceiptPath -and
+        $childArguments[$digestIndex + 1] -ceq $InterruptionReceiptSha256) 'The bounded child must retain the exact original interruption path and digest, including spaces.'
+} $childArgumentAssignments[0].Extent.Text
+$recoveryAdmissionIndex = $driverAst.Extent.Text.IndexOf('$recoveryAdmission = &', [StringComparison]::Ordinal)
+$credentialIndex = $driverAst.Extent.Text.IndexOf('$credentials = Get-AtlasoOnePasswordCredentialPair', [StringComparison]::Ordinal)
+Assert-InstallationVmCondition ($recoveryAdmissionIndex -gt 0 -and $credentialIndex -gt $recoveryAdmissionIndex) 'Recovery receipt and stopped-disk admission must precede credential retrieval.'
+
 $resumePublish = $source.IndexOf('-Record $resume -Kind installation-resume', [StringComparison]::Ordinal)
 $resumeStart = $source.IndexOf('Start-InstallationIsoVm -VmrunPath', $resumePublish, [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($resumePublish -gt $verifyCompare -and $resumeStart -gt $resumePublish) 'Installed resume must compare disks and publish its immutable operation receipt before starting the VM.'
 $resumeBranches = @($ast.FindAll({
     param($node)
-    $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith("if (`$Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'ResumeInstalled'))", [StringComparison]::Ordinal)
+    $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith("if (`$Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'ResumeInstalled', 'ResumeInstaller'))", [StringComparison]::Ordinal)
 }, $true))
 Assert-InstallationVmCondition ($resumeBranches.Count -eq 1) 'Expected exactly one shared installed-VM admission branch.'
 $missingResumeReceiptRefused = $false
