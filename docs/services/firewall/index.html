@@ -220,6 +220,8 @@
           
         
       
+        
+      
     
     
     
@@ -386,6 +388,8 @@
       
         
           
+        
+      
         
       
         
@@ -630,6 +634,8 @@
           
         
       
+        
+      
     
     
     
@@ -670,8 +676,62 @@
 
             </a>
             
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
           </div>
         
+        
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+            <label class="md-nav__title" for="__nav_2">
+              <span class="md-nav__icon md-icon"></span>
+              
+  
+  Getting started
+
+            </label>
+            <ul class="md-nav__list" data-md-scrollfix>
+              
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/physical-installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Physical installation
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+            </ul>
+          </nav>
         
       
     </li>
@@ -2482,6 +2542,8 @@
       
         
       
+        
+      
     
     
     
@@ -2540,6 +2602,40 @@
             </label>
             <ul class="md-nav__list" data-md-scrollfix>
               
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/installation-iso/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation ISO
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
                 
               
                 
@@ -4322,6 +4418,10 @@ The OpenAPI description field publishes <code>x-maxLengthUtf16CodeUnits: 1000</c
 UTF-16 length (for example, JavaScript string <code>length</code>). Standard JSON Schema <code>maxLength</code> counts code points, so it is
 intentionally omitted for this field.</p>
 <h2 id="verify-and-recover">Verify and recover<a class="headerlink" href="#verify-and-recover" title="Permanent link">&para;</a></h2>
+<p>Generated IPv6 ICMP diagnostic rules use protocol number <code>58</code>, so loading them does not require an <code>/etc/protocols</code>
+database. A <code>Could not resolve protocol name</code> error from an older ruleset is a ruleset validation failure, independent
+of whether DHCP assigned an address. Check the failing rule with <code>nft -c -f /etc/atlaso/nftables.d/atlaso.nft</code> before
+recovery; submit corrected desired state through the global Firewall Apply workflow.</p>
 <p>Port-forward admissions appear as read-only generated rows attributed to their Traffic Publishing resource. They
 match the original listener, protocol, external ports, source boundary, and ingress of the translated connection.
 Edit the owning <a href="../../operate/traffic-publishing/#configure-port-forwarding">port forward</a> to change that boundary.

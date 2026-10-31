@@ -91,6 +91,9 @@
         <loc>https://mdaneri.github.io/Atlaso/docs/getting-started/</loc>
       </url>
       <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/getting-started/physical-installation/</loc>
+      </url>
+      <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/ipxe/</loc>
       </url>
       <url>
@@ -209,6 +212,9 @@
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/reference/full-technical-reference/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/reference/installation-iso/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/reference/interface-gallery/</loc>
