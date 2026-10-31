@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from scripts.installation import disks
+from scripts.installation.layout import validate_layout
 
 
 def _device(
@@ -129,6 +130,42 @@ def test_revalidate_accepts_unchanged_consent_for_root_efi_and_custom_mounts() -
     consent = {path: _identity(path) for path in disks.selected_disks(config)}
 
     assert disks.revalidate_disks(config, consent, dict(consent)) is None
+
+
+@pytest.mark.parametrize("mounted,efi_present,swap,accepted", [
+    (31, False, False, True), (31, False, True, True), (32, False, False, False),
+    (32, False, True, False), (32, True, False, True), (32, True, True, True), (33, True, True, False),
+])
+def test_mount_capacity_matches_persisted_layout_before_native_work(monkeypatch, mounted, efi_present, swap, accepted):
+    """Reserve native EFI once and never consume a mount slot for swap.
+
+    Args:
+        monkeypatch: Detect accidental native commands during admission.
+        mounted: Number of already planned mounted filesystems.
+        efi_present: Whether native EFI has already expanded the plan.
+        swap: Whether a non-mounted swap partition is also present.
+        accepted: Whether the complete persisted layout should fit.
+    """
+    targets = ["/", *(["/boot/efi"] if efi_present else [])]
+    targets += [f"/mnt/data-{index}" for index in range(mounted - len(targets))]
+    partitions = [{"mountpoint": target, "filesystem": "vfat" if target == "/boot/efi" else "ext4"}
+                  for target in targets]
+    if swap:
+        partitions.append({"mountpoint": None, "filesystem": "swap"})
+    config = {"arch": "x86_64", "bootmode": "efi", "disk": "/dev/sda", "partitions": partitions}
+    consent = {"/dev/sda": _identity("/dev/sda")}
+    monkeypatch.setattr(disks.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("admission must precede native work"))
+    monkeypatch.setattr(disks.subprocess, "check_output", lambda *_args, **_kwargs: pytest.fail("admission must precede native work"))
+    if not accepted:
+        with pytest.raises(ValueError, match="31 mounts"):
+            disks.revalidate_disks(config, consent, dict(consent))
+        return
+    disks.revalidate_disks(config, consent, dict(consent))
+    if not efi_present:
+        partitions.append({"mountpoint": "/boot/efi", "filesystem": "vfat"})
+    recorded = [{"target": p["mountpoint"], "uuid": f"filesystem-{index}", "filesystem": p["filesystem"]}
+                for index, p in enumerate(partitions) if p["filesystem"] != "swap"]
+    assert len(validate_layout({"schema": 1, "architecture": "x86_64", "mounts": recorded})["mounts"]) == 32
 
 
 @pytest.mark.parametrize("target", ["/boot/grub2", "/boot/grub2/themes", "/boot/efi/EFI", "/boot/kernel"])

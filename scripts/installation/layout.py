@@ -16,6 +16,7 @@ from pathlib import Path, PurePosixPath
 LAYOUT_PATH = Path("/etc/atlaso/installation-layout.json")
 PROFILE_PATH = Path("/etc/atlaso/installation-profile")
 PROFILE = "atlaso-installation-v1\n"
+MAX_MOUNTS = 32
 DATA_PATHS = ("/mnt/atlaso-vcf-offline-depot", "/mnt/atlaso-vcf-backups")
 UUID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{3,127}\Z")
 
@@ -67,7 +68,7 @@ def validate_layout(value: object) -> dict:
     if type(value["schema"]) is not int or value["schema"] != 1 or value["architecture"] != "x86_64":
         raise ValueError("installation layout version or architecture is unsupported")
     mounts = value["mounts"]
-    if not isinstance(mounts, list) or not 1 <= len(mounts) <= 32:
+    if not isinstance(mounts, list) or not 1 <= len(mounts) <= MAX_MOUNTS:
         raise ValueError("installation layout mount inventory is invalid")
     seen = set()
     uuids = set()

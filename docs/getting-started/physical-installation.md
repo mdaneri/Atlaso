@@ -44,6 +44,8 @@ identity and proposed layout for every selected disk before confirming.
   Photon creates its own `/boot/efi` partition; do not create that mount or any of its descendants in Custom.
   You can mount `/opt/atlaso` on a system-content partition. Atlaso-owned symlinks, including `/opt/atlaso/current`
   and `/opt/atlaso/.venv`, and paths beneath them cannot be partition mount points; the editor reports **Atlaso symlink**.
+  The installed layout supports 32 mounted filesystems, including Photon’s generated EFI partition. Custom therefore
+  permits at most 31 operator-selected mounts and reports **31 mounts + EFI** at the limit. Swap does not consume a mount.
 
 Both flows finish with **SFTP backup storage** and **VCFDT depot storage** choices. The default preserves an existing
 service partition or keeps shared storage. You can assign a compatible Custom partition currently mounted under

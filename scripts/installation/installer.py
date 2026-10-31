@@ -32,10 +32,12 @@ from scripts.installation.disks import (  # noqa: E402 - boot media is added bef
     require_atlaso_mountpoint,
     require_bootloader_mountpoint,
     require_fstab_safe_mountpoint,
+    require_mount_capacity,
     revalidate_disks,
     selected_disks,
 )
 from scripts.installation.layout import (  # noqa: E402 - boot media path bootstrap.
+    MAX_MOUNTS,
     PROFILE,
     record_layout,
 )
@@ -123,7 +125,7 @@ def service_storage_choices(config: dict, mountpoint: str, eligible: dict) -> li
     mounted = sum(bool(p.get("mountpoint")) and p.get("filesystem") not in {"swap", "bios"}
                   for p in config["partitions"])
     for disk, identity in eligible.items():
-        if disk not in used and (existing is not None or mounted < 31):
+        if disk not in used and (existing is not None or mounted < MAX_MOUNTS - 1):
             choices.append((f"Erase whole disk {disk} ({identity['size'] // 1024**3} GiB)", "disk", disk))
     return choices
 
@@ -691,6 +693,14 @@ def configure_console(screen, initial: dict[str, dict], mount_aliases: dict[str,
                 return False, "The root filesystem must be ext4, xfs, or btrfs."
             if values and values[1] not in {"ext4", "xfs", "btrfs", "swap"}:
                 return False, "Use ext4, xfs, btrfs, or swap."
+            if values:
+                planned = [{"filesystem": self.cp_config.get(f"{index}partition_info1"),
+                            "mountpoint": self.cp_config.get(f"{index}partition_info2")}
+                           for index in range(self.cp_config["partitionsnumber"])]
+                try:
+                    require_mount_capacity([*planned, {"filesystem": values[1], "mountpoint": values[2]}])
+                except ValueError as error:
+                    return False, str(error)
             if values and values[2]:
                 try:
                     validate_custom_mountpoint(values[2], mount_aliases)

@@ -8,7 +8,21 @@ import stat
 import subprocess
 from pathlib import Path, PurePosixPath
 
+from scripts.installation.layout import MAX_MOUNTS
+
 IDENTITY_FIELDS = ("path", "size", "serial", "wwn", "maj:min")
+
+
+def require_mount_capacity(partitions: list[dict]) -> None:
+    """Bound the persisted layout before mutation, reserving native EFI once.
+
+    Args:
+        partitions: Planned or native-expanded partition records.
+    """
+    targets = [p["mountpoint"] for p in partitions
+               if p.get("mountpoint") and p.get("filesystem") not in {"swap", "bios"}]
+    if len(targets) + ("/boot/efi" not in targets) > MAX_MOUNTS:
+        raise ValueError("31 mounts + EFI")
 
 
 def require_atlaso_mountpoint(target: str) -> None:
@@ -140,6 +154,7 @@ def revalidate_disks(config: dict, consent: dict[str, dict], current: dict[str, 
             raise ValueError("an installation disk identity or availability changed; review again")
     if config.get("bootmode") != "efi" or config.get("arch") != "x86_64":
         raise ValueError("only x86-64 UEFI installation is supported")
+    require_mount_capacity(config.get("partitions", []))
     mountpoints = []
     for partition in config.get("partitions", []):
         target = partition.get("mountpoint")

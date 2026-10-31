@@ -1697,6 +1697,20 @@ def test_custom_multi_disk_adapter_displays_selected_disk_and_maps_each_partitio
             )
             assert self.cp_config["partitionsnumber"] == 0
             assert self.partition_disks == {}
+            # The native editor stores type/mount in partition_info1/2. Reject
+            # the next mounted row before its validator consumes disk capacity.
+            self.cp_config.update({"partitionsnumber": 31})
+            for index in range(31):
+                self.cp_config[f"{index}partition_info1"] = "ext4"
+                self.cp_config[f"{index}partition_info2"] = "/" if index == 0 else f"/mnt/data-{index}"
+            assert self.validate_partition(("512", "ext4", "/mnt/overflow", "0")) == (False, "31 mounts + EFI")
+            assert self.partition_disks == {}
+            assert self.validate_partition(("512", "swap", "", "0"))[0]
+            self.cp_config["30partition_info1"] = "swap"
+            self.cp_config["30partition_info2"] = ""
+            assert self.validate_partition(("512", "ext4", "/mnt/last", "0"))[0]
+            self.cp_config = {"partitionsnumber": 0}
+            self.partition_disks.clear()
             self.create_function()
             self.cp_config.update({"partitionsnumber": 0, "0partition_info0": "existing"})
             self.validate_partition(("", "ext4", "/", "0"))
