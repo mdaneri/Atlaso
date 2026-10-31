@@ -1,0 +1,110 @@
+<dialog id="vcf-backup-modal" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="vcf-backup-title" aria-describedby="vcf-backup-description">
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" data-atlaso-wizard data-vcf-backup-form data-setup-ready="{% if vcf_backup_wizard is defined and vcf_backup_wizard.ready %}true{% else %}false{% endif %}" data-endpoint="{{ management_ui_root }}/vcf-helper/backups" data-tasks-root="{{ management_ui_root }}/tasks" data-csrf="{{ csrf_token }}" novalidate>
+    <aside class="vcf-sddc-wizard-rail" aria-label="VCF Backup configuration steps">
+      <p class="kicker">VCF Helper</p>
+      <h2 id="vcf-backup-title">Configure VCF Backup</h2>
+      <ol class="vcf-sddc-step-list">
+        {% for id, title, summary in [('components','Components','Choose one or more'),('credential','Credential','Vault or manual'),('server','Server','Product and endpoint'),('fingerprint','TLS fingerprint','Confirm each server'),('login','Login','Manual credentials only'),('discovery','Discovery','Select components'),('settings','Destination and schedule','Review policy'),('review','Review and configure','Start initial backup')] %}
+          <li><button class="vcf-sddc-step-button{% if loop.first %} active{% endif %}" type="button" data-atlaso-wizard-nav="{{ id }}"{% if not loop.first %} disabled{% endif %}><span>{{ loop.index }}</span><strong>{{ title }}</strong><small>{{ summary }}</small></button></li>
+        {% endfor %}
+      </ol>
+    </aside>
+    <div class="vcf-sddc-wizard-main">
+      <div class="confirm-modal-body vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 8</p><h3 data-atlaso-wizard-title>Choose components</h3><p id="vcf-backup-description" class="muted" data-atlaso-wizard-description>Choose one or more products to configure together.</p></div>
+        <div class="alert error hidden" data-atlaso-wizard-error></div>
+        <p class="muted" data-vcf-backup-status role="status" aria-live="polite">Credentials and TLS confirmations stay in this open wizard only.</p>
+        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="components">
+          <fieldset class="scope-choice-fieldset"><legend>Which components do you want to back up?</legend>
+            <div class="scope-choice-grid">
+              {% for kind, label, description in [('fleet','VCF Operations','Discover eligible management services through Operations.'),('nsx','NSX','Configure the NSX Manager cluster backup.'),('vcenter','vCenter','Configure a vCenter appliance backup.'),('sddc','SDDC Manager','Configure a direct SDDC Manager backup when needed.')] %}
+                <label class="scope-choice"><input type="checkbox" name="plan_{{ kind }}" value="{{ kind }}" data-vcf-backup-plan-kind><span class="scope-choice-copy"><strong>{{ label }}</strong><small>{{ description }}</small></span></label>
+              {% endfor %}
+            </div>
+          </fieldset>
+          <p class="muted">Select any combination. Next, connect to each selected product and choose its eligible backup targets. Changing this selection starts discovery again.</p>
+        </section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="credential">
+          <div class="form-grid">
+            <label><span>Credential source</span><select name="credential_mode" data-vcf-backup-credential-mode><option value="manual">Manual credentials</option><option value="vault">Saved Vault credential</option></select></label>
+            <label><span>Vault</span><select name="credential_vault_id" data-vcf-backup-vault><option value="">Choose a Vault</option></select></label>
+            <label><span>Vault key</span><select name="credential_entry_id" data-vcf-backup-entry disabled><option value="">Choose a Vault first</option></select></label>
+          </div>
+          <p class="muted" data-vcf-backup-credential-status>Saved credentials are resolved by Atlaso only after explicit TLS confirmation. Vault values are never sent to the browser.</p>
+        </section>
+
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="server">
+          <div class="form-grid">
+            <label><span>Selected component</span><select name="source_kind" data-vcf-backup-source-kind disabled><option value="fleet" selected>VCF Operations</option><option value="sddc">SDDC Manager</option><option value="vcenter">vCenter</option><option value="nsx">NSX</option></select></label>
+            <label><span>Server address</span><input name="address" autocomplete="off" required></label>
+            <label><span>Port</span><input name="port" type="number" value="443" min="1" max="65535" required></label>
+          </div>
+          <p class="muted">VCF Operations authenticates the control-plane session and discovers its Fleet LCM service automatically. Confirm the Operations server fingerprint before login.</p>
+        </section>
+
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="fingerprint">
+          <div class="panel" data-vcf-backup-fingerprint-server>
+            <h4>VCF Operations / component server</h4><button class="button secondary" type="button" data-vcf-backup-probe="server">Read TLS fingerprint</button>
+            <p class="mono-text" data-vcf-backup-fingerprint-value="server">Not checked</p>
+            <label class="vcf-sddc-tls-check"><input type="checkbox" data-vcf-backup-confirm="server" disabled><span>Confirm this exact server fingerprint after checking it out of band.</span></label>
+          </div>
+        </section>
+
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="login">
+          <div class="form-grid"><label><span>Username</span><input name="username" autocomplete="username"></label><label><span>Password</span><input name="password" type="password" autocomplete="current-password"></label></div>
+          <p class="muted">Manual credentials are sent only after all required TLS fingerprints are explicitly confirmed. The password is not saved.</p>
+        </section>
+
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="discovery">
+          <div class="toolbar"><button class="button ghost" type="button" data-vcf-backup-add-source>Change components</button></div>
+          <p class="muted" data-vcf-backup-plan-progress></p>
+          <p class="muted" data-vcf-backup-grid-status role="status" aria-live="polite">Inspect a source to discover supported backup components.</p>
+          <div class="hidden" data-vcf-backup-grid aria-label="Discovered VCF backup components"></div>
+          <div data-vcf-backup-grid-fallback><p class="muted">Discovered components will appear here after inspection.</p><div class="table-scroll"><table class="data-table fallback-table"><thead><tr><th>Select</th><th>Component</th><th>Product / version</th><th>Current state</th><th>Coverage</th></tr></thead><tbody data-vcf-backup-grid-fallback-rows><tr><td colspan="5">No components discovered.</td></tr></tbody></table></div></div>
+          <div class="settings-list compact-settings-list validation-settings-list" data-vcf-backup-source-summaries></div>
+          <div class="alert error hidden" data-vcf-backup-discovery-blockers role="alert"></div>
+        </section>
+
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="settings">
+          <div class="settings-list compact-settings-list validation-settings-list"><div><span>Backup receiver</span><strong data-vcf-backup-receiver>Not loaded</strong></div><div><span>SSH host key</span><strong class="mono-text" data-vcf-backup-host-key>Not loaded</strong></div></div>
+          <div class="form-grid">
+            <label><span>Destination password reference</span><select name="sftp_secret_ref" data-vcf-backup-secret-select required><option value="">Choose saved Vault secret</option>{% for option in vcf_backup_secret_options | default([], true) %}<option value="{{ option.vault_id }}:{{ option.entry_id }}">{{ option.label }}</option>{% endfor %}</select></label>
+            <label><span>Backup-encryption passphrase reference</span><select name="encryption_secret_ref" data-vcf-backup-secret-select required><option value="">Choose saved Vault secret</option>{% for option in vcf_backup_secret_options | default([], true) %}<option value="{{ option.vault_id }}:{{ option.entry_id }}">{{ option.label }}</option>{% endfor %}</select></label>
+          </div>
+          <p class="muted">Select stored secret references only. Secret values never enter this page. Choose a passphrase escrowed in your approved recovery process. For compatibility with vCenter, use 12–20 visible ASCII characters with uppercase, lowercase, two digits, and a symbol.</p>
+          <fieldset class="form-stack"><legend>Backup schedule</legend>
+            <label class="hidden" data-vcf-backup-fleet-schedule-mode><span>VCF Operations recurring backups</span><select name="fleet_schedule_mode" data-vcf-backup-fleet-schedule-mode-select><option value="preserve" selected>Preserve existing schedule</option><option value="daily">Daily recurring backups</option><option value="disabled">Disable recurring backups</option></select></label>
+            <p class="muted hidden" data-vcf-backup-fleet-schedule-help>Initial backup runs once in every mode. Preserving an unconfigured schedule leaves recurring backups disabled.</p>
+            <div class="form-stack hidden" data-vcf-backup-fleet-incremental>
+              <label for="vcf-backup-incremental-mode"><span class="field-label"><span>VCF Operations incremental backups</span><button class="help-icon" type="button" data-help="This setting applies only with daily recurring full backups. Preserve keeps the reviewed incremental schedule; enable sets its interval and fallback; disable turns incremental backups off.">i</button></span><select id="vcf-backup-incremental-mode" name="fleet_incremental_mode" data-vcf-backup-fleet-incremental-mode><option value="preserve" selected>Preserve existing incremental schedule</option><option value="enabled">Enable incremental backups</option><option value="disabled">Disable incremental backups</option></select></label>
+              <div class="form-grid hidden" data-vcf-backup-fleet-incremental-options>
+                <label for="vcf-backup-incremental-interval"><span class="field-label"><span>Incremental backup interval (minutes)</span><button class="help-icon" type="button" data-help="VCF Operations requires an interval of at least 240 minutes. This value is used when incremental backups are enabled.">i</button></span><input id="vcf-backup-incremental-interval" name="fleet_incremental_interval_minutes" type="number" min="240" max="2147483647" step="1" value="240"></label>
+                <label class="switch-field" for="vcf-backup-incremental-fallback"><span class="field-label"><span>Allow fallback to a full backup</span><button class="help-icon" type="button" data-help="Allows VCF Operations to run a full backup when an incremental backup cannot be used.">i</button></span><input id="vcf-backup-incremental-fallback" name="fleet_incremental_fallback_to_full" type="checkbox" checked></label>
+              </div>
+            </div>
+            <label data-vcf-backup-daily-time><span>Daily full backup time (appliance timezone)</span><input name="full_time" type="time" value="02:00"></label>
+            <label data-vcf-backup-nsx-interval><span>Direct NSX backup interval in minutes</span><input name="nsx_interval_minutes" type="number" min="5" max="1440" value="60"></label>
+            <label class="switch-field" data-vcf-backup-state-change><span>Back up on state change</span><input name="state_change" type="checkbox" checked></label>
+          </fieldset>
+          <fieldset class="form-stack" data-vcf-backup-general-retention><legend>Fleet and vCenter retention</legend>
+            <label><span>Retention mode</span><select name="retention_mode"><option value="count">Keep most recent backups</option><option value="days">Keep backups by age in days</option></select></label>
+            <label><span>Retention count or age in days</span><input name="retention_value" type="number" min="1" max="365" value="14"></label>
+          </fieldset>
+          <fieldset class="form-stack hidden" data-vcf-backup-sddc-retention><legend>SDDC Manager retention bands</legend><div class="form-grid"><label><span>Most recent backups</span><input name="sddc_most_recent" type="number" min="1" max="600" value="10"></label><label><span>Hourly retention in days</span><input name="sddc_hourly_days" type="number" min="0" max="14" value="2"></label><label><span>Daily retention in days</span><input name="sddc_daily_days" type="number" min="0" max="30" value="15"></label></div></fieldset>
+          <ul class="muted"><li>Operations and SDDC Manager schedules use UTC; vCenter uses its configured appliance timezone.</li><li>Direct NSX retention is not enforced by Atlaso.</li><li>Discovery warnings and image-only coverage gaps remain visible in the review.</li></ul>
+        </section>
+
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review">
+          <div data-vcf-backup-review-form>
+            <div class="settings-list compact-settings-list validation-settings-list" data-vcf-backup-review></div>
+            <div class="alert warning hidden" data-vcf-backup-coverage role="status" aria-live="polite"></div>
+            <label class="switch-field"><span>I am ready to recover the appliance and have recorded the backup-encryption passphrase in the approved escrow.</span><input type="checkbox" name="recovery_ready" required></label>
+            <label class="switch-field"><span>I approve replacing any selected existing backup policy after reviewing its current state.</span><input type="checkbox" name="replacements_confirmed" required></label>
+            <label class="switch-field"><span>I approve configuring the reviewed VCF backup settings and starting the initial backup task.</span><input type="checkbox" name="acknowledged" required></label>
+          </div>
+        </section>
+      </div>
+      <div class="confirm-modal-actions vcf-sddc-wizard-actions"><button class="button ghost" type="button" data-atlaso-wizard-cancel>Close</button><button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button><button class="button primary" type="button" data-atlaso-wizard-next>Next</button><button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Configure and start initial backup</button></div>
+    </div>
+  </form>
+</dialog>

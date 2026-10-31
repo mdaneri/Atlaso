@@ -6,7 +6,7 @@
     <div class="panel-head">
       <div>
         <h2>VCF Helper</h2>
-        <p class="muted">Choose a helper for deployment, credentials, certificates, LDAP, or lab configuration.</p>
+        <p class="muted">Choose a helper for deployment, credentials, certificates, LDAP, backups, or lab configuration.</p>
       </div>
     </div>
 
@@ -58,6 +58,7 @@
       <button class="tab-button" id="vcf-helper-credentials-tab" type="button" role="tab" data-tab-target="vcf-helper-credentials" aria-controls="vcf-helper-credentials" aria-selected="false">Credentials</button>
       <button class="tab-button" id="vcf-helper-certificates-tab" type="button" role="tab" data-tab-target="vcf-helper-certificates" aria-controls="vcf-helper-certificates" aria-selected="false">Certificates</button>
       <button class="tab-button" id="vcf-helper-ldap-tab" type="button" role="tab" data-tab-target="vcf-helper-ldap" aria-controls="vcf-helper-ldap" aria-selected="false">LDAP</button>
+      <button class="tab-button" id="vcf-helper-backup-tab" type="button" role="tab" data-tab-target="vcf-helper-backup" aria-controls="vcf-helper-backup" aria-selected="false">Backup</button>
       <button class="tab-button" id="vcf-helper-lab-tab" type="button" role="tab" data-tab-target="vcf-helper-lab" aria-controls="vcf-helper-lab" aria-selected="false">Lab</button>
     </div>
     <div class="vcf-helper-subjects" data-vcf-helper-tab-panels>
@@ -138,6 +139,25 @@
           </div>
         </div>
       </div>
+      <div class="tab-panel" id="vcf-helper-backup" role="tabpanel" aria-labelledby="vcf-helper-backup-tab" hidden>
+        <h3>Backup</h3>
+        <div class="vcf-helper-action-bands">
+          <div class="vcf-helper-action-wrap" {% if not (vcf_backup_wizard is defined and vcf_backup_wizard.ready and identity.has_role('admin')) %}data-help="{% if not (vcf_backup_wizard is defined and vcf_backup_wizard.ready) %}{{ vcf_backup_wizard.reason if vcf_backup_wizard is defined else 'VCF Backup SFTP readiness has not been provided.' }}{% else %}Administrator access is required to configure VCF Backups.{% endif %}" tabindex="0" aria-label="Configure VCF Backup unavailable. {% if not (vcf_backup_wizard is defined and vcf_backup_wizard.ready) %}{{ vcf_backup_wizard.reason if vcf_backup_wizard is defined else 'VCF Backup SFTP readiness has not been provided.' }}{% else %}Administrator access is required to configure VCF Backups.{% endif %}"{% endif %}>
+            <button class="info-band vcf-helper-action-band" type="button" data-vcf-backup-open aria-haspopup="dialog" aria-controls="vcf-backup-modal" {% if not (vcf_backup_wizard is defined and vcf_backup_wizard.ready and identity.has_role('admin')) %}disabled aria-describedby="vcf-backup-launcher-reason"{% endif %}>
+              <span class="vcf-helper-action-copy"><span class="vcf-helper-action-title">Configure VCF Backup</span><span class="muted">Discover supported VCF components, review backup schedules and retention, then configure the SFTP target and run an initial backup.</span></span>
+            </button>
+          </div>
+          {% if identity.has_role('admin') %}
+            <a class="info-band vcf-helper-action-band" href="{{ management_ui_root }}/vcf-backups#vcf-backup-operations-title">
+              <span class="vcf-helper-action-copy"><span class="vcf-helper-action-title">View Backup Operations</span><span class="muted">Open VCF Backups to review status or reconcile an existing operation.</span></span>
+            </a>
+          {% endif %}
+          {% if not (vcf_backup_wizard is defined and vcf_backup_wizard.ready and identity.has_role('admin')) %}
+            <p class="muted" id="vcf-backup-launcher-reason">{% if not (vcf_backup_wizard is defined and vcf_backup_wizard.ready) %}{{ vcf_backup_wizard.reason if vcf_backup_wizard is defined else 'VCF Backup SFTP readiness has not been provided.' }}{% else %}Administrator access is required to configure VCF Backups.{% endif %} <a href="{{ management_ui_root }}/vcf-backups">Review VCF Backup SFTP settings and Apply status.</a></p>
+          {% endif %}
+          <noscript><p class="muted">Enable JavaScript to inspect VCF backup targets and review a configuration. <a href="{{ management_ui_root }}/vcf-backups">Open VCF Backup SFTP settings.</a></p></noscript>
+        </div>
+      </div>
       <div class="tab-panel" id="vcf-helper-lab" role="tabpanel" aria-labelledby="vcf-helper-lab-tab" hidden>
         <h3>Lab</h3>
         <div class="vcf-helper-action-bands">
@@ -161,6 +181,10 @@
 {% include "partials/vcf_appliance_certificate_modal.html" %}
 {% include "partials/vcf_certificate_renewal_dialogs.html" %}
 <script id="vcf-vault-credential-options" type="application/json">{{ vcf_vault_credential_options | tojson }}</script>
+<script id="vcf-backup-secret-options" type="application/json">{{ vcf_backup_secret_options | default([], true) | tojson }}</script>
+{% include "partials/vcf_backup_modal.html" %}
+{% include "partials/vcf_backup_status_modal.html" %}
+<script src="/static/vcf-backup.js?v=issue-1066-20" defer></script>
 <noscript><style>#vcf-fqdn-modal:not([open]) { display: block; position: static; width: min(100%, 70rem); margin: 1rem auto; }</style></noscript>
 <noscript><style>.vcf-helper-subjects > .tab-panel[hidden] { display: grid; } .vcf-helper-tabs { display: none; }</style></noscript>
 
