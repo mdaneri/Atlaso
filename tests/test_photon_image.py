@@ -242,7 +242,7 @@ def test_photon_image_installs_fixed_size_atlaso_grub_branding():
     assert "theme_path='/grub2/themes/atlaso/theme.txt'" in installer
     assert "kernel_regex='/boot/\\$photon_linux'" in installer
     assert "kernel_regex='/\\$photon_linux'" in installer
-    assert 'menuentry " "' in installer
+    assert 'menuentry "Atlaso Appliance"' in installer
     assert "atlaso-backup" in installer
     assert 'gfxmode="1280x800"' in installer
     assert "gfxpayload=keep" in installer
@@ -362,6 +362,8 @@ fi
 
     assert first.returncode == 0, first.stderr
     rendered = grub_config.read_text(encoding="utf-8")
+    assert 'menuentry "Atlaso Appliance" {\n' in rendered
+    assert 'menuentry " "' not in rendered
     assert f"set theme={theme_path}\n" in rendered
     assert 'gfxmode="1280x800"\n' in rendered
     assert "gfxpayload=keep\n" in rendered

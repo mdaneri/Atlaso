@@ -31,10 +31,28 @@ The boot package selection includes Photon’s native `initramfs` package and
 its resolved dependencies. Installation requires the kernel and initrd selected by Photon’s GRUB environment to
 exist before applying chosen credentials or reporting completion.
 
+Installation requires at least one hardware-backed Ethernet adapter. The installer checks before disk selection and
+again immediately before partitioning. A disconnected cable, missing DHCP lease, or unavailable Internet does not
+block this offline installation. Add a VMware network adapter before booting a test VM; a loopback or software bridge
+alone does not satisfy the requirement.
+
+During installation the active console displays Photon's native progress bar, counting completed installation stages.
+Stages have different durations; package and Atlaso software installation can take substantially longer than other
+steps. The bar reaches completion only after the native sequence, boot checks, account configuration, and unmounts
+succeed. In the VM window, use **Alt+F2** for detailed installer/provisioner output and **Alt+F1** to return to progress.
+Serial sessions keep their selected console; the progress screen identifies a private `/run/atlaso-install-*` log
+directory when a second virtual terminal is unavailable. Logs are volatile and contain no chosen account passwords.
+
+The installed appliance enables real system adapters (`ATLASO_DRY_RUN_SYSTEM_ADAPTERS=false`), so global Appliance
+Apply executes the reviewed helper operations. Completion refuses a missing, simulated, or ambiguous persisted setting.
+This does not automatically apply pending configuration during installation. Existing appliances installed with an
+older ISO retain their original setting; producing a replacement ISO does not modify them.
+
 The shared boot-branding installer handles both native Photon kernel paths. The root-only Auto layout uses
 `/boot/$photon_linux` and points GRUB at `/boot/grub2/themes/atlaso/theme.txt`; a Custom layout with a separate `/boot`
 uses `/$photon_linux` and `/grub2/themes/atlaso/theme.txt`. Theme files remain under `/boot/grub2/themes/atlaso` in
 both layouts. Custom layouts must use ext4 for the boot filesystem; see [Choose disks and layout](../getting-started/physical-installation.md#choose-disks-and-layout).
+The installed boot entry is labeled **Atlaso Appliance**, including GRUB's text fallback; it must not be a blank entry.
 
 Use the existing VMware build and lifecycle process for admitted Photon builders and VM validation. Do not create a
 parallel Hyper-V or KVM image pipeline. Capture RPM dependencies during preparation on the authorized Photon builder;

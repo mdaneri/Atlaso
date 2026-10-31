@@ -24,6 +24,185 @@ Args:
     return module
 
 
+@pytest.mark.parametrize("hardware,kind,accepted", [
+    (False, "772", False), (False, "1", False), (True, "1", True), (True, "32", False),
+])
+def test_install_requires_hardware_ethernet_but_not_carrier(monkeypatch, tmp_path, hardware, kind, accepted):
+    """Reject absent/software interfaces while admitting a disconnected real NIC.
+
+    Args:
+        monkeypatch: Controlled native module loader.
+        tmp_path: Isolated sysfs fixture.
+        hardware: Whether the interface is device-backed.
+        kind: Kernel ARPHRD type.
+        accepted: Whether installation may proceed.
+    """
+    module = load_installer(monkeypatch)
+    interface = tmp_path / "eth0"
+    interface.mkdir()
+    (interface / "type").write_text(kind)
+    (interface / "carrier").write_text("0")
+    if hardware:
+        (interface / "device").mkdir()
+    if accepted:
+        module.require_network_adapter(tmp_path)
+    else:
+        with pytest.raises(ValueError, match="No Ethernet adapter"):
+            module.require_network_adapter(tmp_path)
+
+
+def test_install_refuses_empty_or_unreadable_network_inventory(monkeypatch, tmp_path):
+    """Never turn missing kernel evidence into permission to erase a disk.
+
+    Args:
+        monkeypatch: Controlled native module loader.
+        tmp_path: Isolated empty sysfs fixture.
+    """
+    module = load_installer(monkeypatch)
+    with pytest.raises(ValueError, match="No Ethernet adapter"):
+        module.require_network_adapter(tmp_path)
+    with pytest.raises(FileNotFoundError):
+        module.require_network_adapter(tmp_path / "missing")
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_progress_counts_completed_native_stages_only(monkeypatch, fails):
+    """Preserve native mode/results and never advance a failed stage.
+
+    Args:
+        monkeypatch: Controlled native module loader.
+        fails: Whether the package transaction fails.
+    """
+    module = load_installer(monkeypatch)
+    events = []
+    def operation(*args, **kwargs):
+        """Model a native operation without touching disks.
+
+        Args:
+            *args: Forwarded native arguments.
+            **kwargs: Forwarded native options.
+        """
+        events.append((args, kwargs))
+        if fails:
+            raise RuntimeError("native package failure")
+        return "native result"
+    engine = SimpleNamespace(**{name: operation for name, _ in module.INSTALLATION_STAGES})
+    progress = SimpleNamespace(update_message=lambda text: events.append(text), increment=lambda: events.append("increment"))
+    module.bind_installation_progress(engine, progress)
+    if fails:
+        with pytest.raises(RuntimeError, match="native package failure"):
+            engine._install_packages("offline", verify=True)
+        assert "increment" not in events
+    else:
+        assert engine._install_packages("offline", verify=True) == "native result"
+        assert events[-1] == "increment"
+    assert (("offline",), {"verify": True}) in events
+
+
+@pytest.mark.parametrize("setting", ["", "ATLASO_DRY_RUN_SYSTEM_ADAPTERS=true\n", "ATLASO_DRY_RUN_SYSTEM_ADAPTERS=false\nATLASO_DRY_RUN_SYSTEM_ADAPTERS=true\n"])
+def test_installed_dry_run_refuses_completion_before_credentials(monkeypatch, tmp_path, setting):
+    """An installed appliance must not silently retain simulated Apply behavior.
+
+    Args:
+        monkeypatch: Controlled native backend.
+        tmp_path: Isolated target fixture.
+        setting: Missing, simulated or ambiguous persisted configuration.
+    """
+    target = tmp_path / "target"
+    env = target / "etc/atlaso/atlaso.env"
+    env.parent.mkdir(parents=True)
+    original = setting + 'ATLASO_BOOTSTRAP_ADMIN_PASSWORD="placeholder"\n'
+    env.write_text(original)
+    module = _install_fake_native_backend(monkeypatch, target, [])
+    monkeypatch.setattr(module.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("credentials must remain unchanged"))
+    with pytest.raises(ValueError, match="real system adapters"):
+        module.install(tmp_path / "media", {"packages": ["linux"]}, {}, {}, ("Synthetic admin", "Synthetic root"))
+    assert env.read_text() == original
+    assert not (env.parent / "installation-profile").exists()
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_install_console_closes_output_and_withholds_completion_on_failure(monkeypatch, tmp_path, fails):
+    """Keep progress and private-output cleanup honest after a native failure.
+
+    Args:
+        monkeypatch: Isolated native control and installer doubles.
+        tmp_path: Private log directory fixture.
+        fails: Whether installation raises after a stage.
+    """
+    module = load_installer(monkeypatch)
+    events = []
+    streams = []
+    window = SimpleNamespace(addstr=lambda *_args: None, refresh=lambda: None)
+
+    class Progress:
+        """Model the native control without terminals or timers."""
+        def __init__(self, *_args):
+            """Keep an isolated drawing surface.
+
+            Args:
+                *_args: Native control geometry.
+            """
+            self.window = window
+        def update_num_items(self, count):
+            """Record the total stage count.
+
+            Args:
+                count: Native progress denominator.
+            """
+            events.append(("total", count))
+        def show(self):
+            """Record visibility without creating a terminal."""
+            events.append("show")
+        def hide(self):
+            """Record unconditional control cleanup."""
+            events.append("hide")
+        def increment(self):
+            """Record successful completion accounting."""
+            events.append("increment")
+        def update_message(self, message):
+            """Record non-secret stage text.
+
+            Args:
+                message: Displayed installation stage.
+            """
+            events.append(message)
+
+    monkeypatch.setitem(sys.modules, "progressbar", SimpleNamespace(ProgressBar=Progress))
+    monkeypatch.setitem(sys.modules, "window", SimpleNamespace(Window=lambda *_args: SimpleNamespace(show_window=lambda: None)))
+    monkeypatch.setattr(module.tempfile, "mkdtemp", lambda **_kwargs: str(tmp_path))
+    monkeypatch.setattr(module.os, "ttyname", lambda _fd: "/dev/ttyS0", raising=False)
+    for name in ("init_pair", "curs_set"):
+        setattr(module.curses, name, lambda *_args: None)
+    for name in ("COLOR_WHITE", "COLOR_BLUE", "COLOR_BLACK", "COLOR_GREEN", "COLOR_RED"):
+        setattr(module.curses, name, 0)
+    module.curses.color_pair = lambda _pair: 0
+    screen = SimpleNamespace(getmaxyx=lambda: (25, 80), bkgd=lambda *_args: None,
+                             addnstr=lambda *_args: None, refresh=lambda: None)
+    def install(*_args, **kwargs):
+        """Simulate an unequal-duration stage and optional native failure.
+
+        Args:
+            *_args: Installation inputs, never logged.
+            **kwargs: Native progress/output bindings.
+        """
+        streams.append(kwargs["output"])
+        assert kwargs["log_path"] == tmp_path
+        if fails:
+            raise RuntimeError("native failure")
+    monkeypatch.setattr(module, "install", install)
+    if fails:
+        with pytest.raises(RuntimeError, match="native failure"):
+            module.install_console(screen, None, None, None, None, None)
+        assert "increment" not in events
+        assert "Installation completed" not in events
+    else:
+        module.install_console(screen, None, None, None, None, None)
+        assert events[-3:] == ["Installation completed", "increment", "hide"]
+    assert events[-1] == "hide"
+    assert streams[0].closed
+
+
 @pytest.mark.parametrize("mountpoint,expected", [
     ("/", None), ("/var/srv", None), ("/var/srv/app", None),
     ("/srv", "Use /var/srv"), ("/srv/app", "Use /var/srv/app"),
@@ -559,7 +738,7 @@ def test_native_completion_callback_applies_chosen_credentials_only_after_boot_s
     atlaso = target / "etc/atlaso"
     atlaso.mkdir(parents=True)
     env_path = atlaso / "atlaso.env"
-    env_path.write_text('ATLASO_BOOTSTRAP_ADMIN_PASSWORD="generated-placeholder"\n', encoding="utf-8")
+    env_path.write_text('ATLASO_DRY_RUN_SYSTEM_ADAPTERS=false\nATLASO_BOOTSTRAP_ADMIN_PASSWORD="generated-placeholder"\n', encoding="utf-8")
     events = []
     module = _install_fake_native_backend(monkeypatch, target, events)
     chpasswd = []
@@ -595,7 +774,7 @@ def test_native_completion_callback_applies_chosen_credentials_only_after_boot_s
     ]
     assert "host-wide-vg-clear" not in events
     assert env_path.read_text(encoding="utf-8") == (
-        "ATLASO_BOOTSTRAP_ADMIN_PASSWORD="
+        "ATLASO_DRY_RUN_SYSTEM_ADAPTERS=false\nATLASO_BOOTSTRAP_ADMIN_PASSWORD="
         + module.environment_value("Synthetic admin $value")
         + "\n"
     )
@@ -1306,6 +1485,7 @@ def test_changed_disk_prevents_native_partition_call(monkeypatch, tmp_path):
 
     monkeypatch.setitem(sys.modules, "installer", SimpleNamespace(Installer=Backend))
     monkeypatch.setattr(module, "disk_inventory", lambda: {})
+    monkeypatch.setattr(module, "require_network_adapter", lambda: None)
     config = {"disk": "/dev/sda", "arch": "x86_64", "bootmode": "efi", "partitions": [{"mountpoint": "/", "filesystem": "ext4", "size": 0}]}
     with pytest.raises(ValueError, match="changed"):
         module.install(tmp_path, {"packages": ["linux"]}, config, {"/dev/sda": {"size": 64 * 1024**3}}, ("unused", "unused"))

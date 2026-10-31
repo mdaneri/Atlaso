@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import curses
+import logging
 import os
 import posixpath
 import re
@@ -46,6 +47,140 @@ NATIVE_PATH = Path("/usr/lib/python3.11/site-packages/photon_installer")
 TRUST_KEY = Path("/etc/atlaso-installer/trust.pem")
 MINIMUM_DISK_BYTES = 64 * 1024**3
 MAX_INSPECTION_SOFTWARE_BYTES = 2 * 1024**3
+
+
+def require_network_adapter(sysfs: Path = Path("/sys/class/net")) -> None:
+    """Require hardware-backed Ethernet without requiring carrier or Internet.
+
+    Args:
+        sysfs: Kernel interface inventory, replaced only by isolated test fixtures.
+    """
+    for interface in sysfs.iterdir():
+        if (interface / "device").exists() and (interface / "type").read_text().strip() == "1":
+            return
+    raise ValueError("No Ethernet adapter detected. Power off and add a network adapter before installing. An active link or Internet connection is not required.")
+
+
+INSTALLATION_STAGES = (
+    ("_partition_disks", "Partitioning selected disks"),
+    ("_format_partitions", "Formatting selected partitions"),
+    ("_mount_partitions", "Mounting target filesystems"),
+    ("_setup_install_repo", "Preparing authenticated offline repository"),
+    ("_initialize_system", "Initializing Photon"),
+    ("_mount_special_folders", "Preparing target system"),
+    ("_install_packages", "Installing Photon packages"),
+    ("_install_additional_rpms", "Installing additional packages"),
+    ("_setup_network", "Preparing management networking"),
+    ("_finalize_system", "Finalizing Photon"),
+    ("_cleanup_install_repo", "Finalizing offline repository"),
+    ("_setup_grub", "Installing bootloader and Atlaso software"),
+    ("_create_fstab", "Recording filesystem mounts"),
+    ("_update_abupdate", "Finalizing boot configuration"),
+    ("_execute_modules", "Running native post-install steps"),
+    ("_deactivate_network_in_chroot", "Verifying boot and configuring accounts"),
+    ("_unmount_all", "Unmounting target filesystems"),
+)
+
+
+def bind_installation_progress(engine, progress) -> None:
+    """Observe native stage boundaries without changing package execution mode.
+
+    Args:
+        engine: Pinned native installer instance.
+        progress: Native ProgressBar with one item reserved for whole-install success.
+    """
+    def observe(operation, label):
+        """Wrap one bound native operation with completed-stage accounting.
+
+        Args:
+            operation: Original bound native method.
+            label: Fixed, non-secret installation stage label.
+        """
+        def run(*args, **kwargs):
+            """Forward arguments and preserve failures without advancing progress.
+
+            Args:
+                *args: Native operation positional arguments.
+                **kwargs: Native operation keyword arguments.
+            """
+            progress.update_message(label)
+            result = operation(*args, **kwargs)
+            progress.increment()
+            return result
+        return run
+
+    for name, label in INSTALLATION_STAGES:
+        setattr(engine, name, observe(getattr(engine, name), label))
+
+
+def install_console(screen, media, identity, config, consent, credentials) -> None:
+    """Reuse Photon's progress control and guest-local detailed output terminal.
+
+    Args:
+        screen: Active installation console.
+        media: Authenticated read-only media.
+        identity: Admitted payload identity.
+        config: Confirmed native layout.
+        consent: Original selected-disk identities.
+        credentials: Concealed account inputs, never sent to the output terminal.
+    """
+    from progressbar import ProgressBar
+    from window import Window
+
+    class StageProgressBar(ProgressBar):
+        """Use the native bar without background curses timers or a time estimate."""
+
+        def initialize(self, message):
+            """Initialize completed-stage accounting on the installation thread.
+
+            Args:
+                message: Initial non-secret status text.
+            """
+            self.num_items = 0
+            self.message = message
+            self.time_elapsed = 0
+
+        def render_time(self):
+            """Explain that unequal stages do not predict the remaining duration."""
+            self.window.addstr(4, 0, "Completed stages; package and software steps take longer.")
+            self.window.refresh()
+
+    maxy, maxx = screen.getmaxyx()
+    for index, foreground, background in ((1, curses.COLOR_WHITE, curses.COLOR_BLUE), (2, curses.COLOR_BLACK, curses.COLOR_WHITE), (3, curses.COLOR_BLACK, curses.COLOR_GREEN), (4, curses.COLOR_RED, curses.COLOR_WHITE)):
+        curses.init_pair(index, foreground, background)
+    screen.bkgd(" ", curses.color_pair(1))
+    curses.curs_set(0)
+    window = Window(10, 75, maxy, maxx, "Installing Atlaso", False)
+    progress = StageProgressBar((maxy - 10) // 2 + 3, (maxx - 75) // 2 + 2, 70)
+    # Private native logs survive failure until the live system is rebooted.
+    logs = Path(tempfile.mkdtemp(prefix="atlaso-install-", dir="/run"))
+    output = (logs / "output.log").open("a", encoding="utf-8", buffering=1)
+    terminal = None
+    try:
+        if os.ttyname(sys.stdout.fileno()) == "/dev/tty1":
+            fd = os.open("/dev/tty2", os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            if not stat.S_ISCHR(os.fstat(fd).st_mode):
+                os.close(fd)
+                raise OSError("installation output terminal is not a character device")
+            terminal = os.fdopen(fd, "w", buffering=1, encoding="utf-8")
+    except OSError:
+        terminal = None
+    try:
+        window.show_window()
+        hint = "Alt+F2: detailed output; Alt+F1: progress" if terminal else f"Output: {logs}/output.log"
+        screen.addnstr(maxy - 2, 1, hint, maxx - 2)
+        screen.refresh()
+        progress.initialize("Preparing installation (progress counts completed stages)")
+        progress.update_num_items(len(INSTALLATION_STAGES) + 1)
+        progress.show()
+        install(media, identity, config, consent, credentials, progress=progress, output=terminal or output, log_path=logs)
+        progress.update_message("Installation completed")
+        progress.increment()
+    finally:
+        progress.hide()
+        if terminal:
+            terminal.close()
+        output.close()
 
 
 def filesystem_mount_aliases(media: Path, identity: dict) -> dict[str, str]:
@@ -617,7 +752,7 @@ def retain_development_inspection_inputs(media: Path, target: Path, identity: di
         raise
 
 
-def install(media: Path, identity: dict, config: dict, consent: dict, credentials: tuple[str, str]) -> None:
+def install(media: Path, identity: dict, config: dict, consent: dict, credentials: tuple[str, str], *, progress=None, output=None, log_path=None) -> None:
     """Delegate partitions, base OS, bootloader and fstab to the pinned backend.
 
     Args:
@@ -625,7 +760,10 @@ def install(media: Path, identity: dict, config: dict, consent: dict, credential
         identity: Machine identity to initialize on the installed system.
         config: Installer configuration describing the target layout.
         consent: Previously confirmed disk identities for this installation.
-        credentials: Administrator and root credentials collected by the installer."""
+        credentials: Administrator and root credentials collected by the installer.
+        progress: Optional native stage progress observer.
+        output: Optional guest-local output stream for native and provisioner logs.
+        log_path: Optional private native log directory."""
     from installer import Installer
 
     class AtlasoInstaller(Installer):
@@ -675,6 +813,7 @@ def install(media: Path, identity: dict, config: dict, consent: dict, credential
             configuration.write_text(configuration.read_text().replace("gpgcheck=0", "gpgcheck=1"))
 
         def _partition_disks(self):
+            require_network_adapter()
             revalidate_disks(self.install_config, consent, disk_inventory())
             super()._partition_disks()
 
@@ -708,11 +847,11 @@ def install(media: Path, identity: dict, config: dict, consent: dict, credential
                     "ATLASO_SOFTWARE_SOURCE_COMMIT": identity.get("development", {}).get("software_source_commit", identity["source_commit"]),
                     "ATLASO_BUILD_SOURCE_COMMIT": identity["source_commit"],
                     "ATLASO_MGMT_ADDRESS": "dhcp", "ATLASO_MGMT_IPV4_METHOD": "dhcp",
-                    "ATLASO_DRY_RUN_SYSTEM_ADAPTERS": "true",
+                    "ATLASO_DRY_RUN_SYSTEM_ADAPTERS": "false",
                 }
                 subprocess.run(
                     ["chroot", str(target), "/bin/sh", "/tmp/atlaso-src/image/common/scripts/provision-atlaso.sh"],
-                    env=environment, check=True,
+                    env=environment, check=True, stdout=output, stderr=output,
                 )
                 retain_development_inspection_inputs(media, target, identity)
                 record_layout(self.install_config["partitions"], target / "etc/atlaso/installation-layout.json")
@@ -733,6 +872,8 @@ def install(media: Path, identity: dict, config: dict, consent: dict, credential
             verify_installed_boot_artifacts(target)
             env_path = target / "etc/atlaso/atlaso.env"
             lines = env_path.read_text().splitlines()
+            if [line for line in lines if line.startswith("ATLASO_DRY_RUN_SYSTEM_ADAPTERS=")] != ["ATLASO_DRY_RUN_SYSTEM_ADAPTERS=false"]:
+                raise ValueError("installed appliance must enable real system adapters")
             admin_value = environment_value(credentials[0])
             if sum(line.startswith("ATLASO_BOOTSTRAP_ADMIN_PASSWORD=") for line in lines) != 1:
                 raise ValueError("installed bootstrap identity is ambiguous")
@@ -755,8 +896,17 @@ def install(media: Path, identity: dict, config: dict, consent: dict, credential
             os.sync()
 
     config.update({"packages": identity["packages"], "ui": False, "live": True, "hostname": "atlaso", "log_level": "info"})
-    engine = AtlasoInstaller(repo_paths=str(media / "rpms"), photon_release_version="5.0")
+    options = {"log_path": str(log_path)} if log_path else {}
+    engine = AtlasoInstaller(repo_paths=str(media / "rpms"), photon_release_version="5.0", **options)
     engine.configure(config)
+    redirected = []
+    if output is not None:
+        for handler in engine.logger.handlers:
+            if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
+                redirected.append((handler, handler.stream))
+                handler.setStream(output)
+    if progress is not None:
+        bind_installation_progress(engine, progress)
     try:
         # The native execute() catches failures and displays its success screen;
         # retain its actual install sequence while letting failures propagate.
@@ -764,6 +914,9 @@ def install(media: Path, identity: dict, config: dict, consent: dict, credential
     except BaseException:
         engine._unmount_all()
         raise
+    finally:
+        for handler, stream in redirected:
+            handler.setStream(stream)
 
 
 def main() -> int:
@@ -779,10 +932,11 @@ def main() -> int:
     sys.path.insert(0, str(NATIVE_PATH))
     with tempfile.TemporaryDirectory(prefix="atlaso-installer-", dir="/run") as temporary:
         identity = verify_media(args.media, TRUST_KEY, scratch=Path(temporary), expected_key_id=installer_key_id(), boot_crypto=True)
+    require_network_adapter()
     mount_aliases = filesystem_mount_aliases(args.media, identity)
     config, consent, credentials = curses.wrapper(configure_console, disk_inventory(), mount_aliases)
     try:
-        install(args.media, identity, config, consent, credentials)
+        curses.wrapper(install_console, args.media, identity, config, consent, credentials)
     finally:
         credentials = ("", "")
     print("Atlaso installation completed. Remove the installation media before reboot.")

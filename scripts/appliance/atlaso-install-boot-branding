@@ -46,7 +46,7 @@ if [ ! -f "$grub_config.atlaso-backup" ]; then
     install -o root -g root -m 0644 "$grub_config" "$grub_config.atlaso-backup"
 fi
 sed -i "s#^set theme=.*#set theme=$theme_path#" "$grub_config"
-sed -i '/^menuentry "\(Photon\|Atlaso Appliance\|Atlaso\)" {/s//menuentry " " {/' "$grub_config"
+sed -i '/^menuentry "\(Photon\|Atlaso Appliance\|Atlaso\| \)" {/s//menuentry "Atlaso Appliance" {/' "$grub_config"
 if grep -Eq '^(set[[:space:]]+)?gfxmode=' "$grub_config"; then
     sed -i 's/^\(set[[:space:]]\+\)\?gfxmode=.*/gfxmode="1280x800"/' "$grub_config"
 else
@@ -79,7 +79,7 @@ if [ "$serial_option" = '--development-serial-console' ]; then
 fi
 
 grep -Fqx "set theme=$theme_path" "$grub_config"
-grep -q '^menuentry " " {$' "$grub_config"
+grep -q '^menuentry "Atlaso Appliance" {$' "$grub_config"
 grep -q '^gfxmode="1280x800"$' "$grub_config"
 grep -q '^gfxpayload=keep$' "$grub_config"
 grep -Eq "${kernel_line_pattern} .* fbcon=font:VGA8x16([[:space:]]|\$)" "$grub_config"

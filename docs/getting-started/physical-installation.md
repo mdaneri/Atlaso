@@ -20,6 +20,7 @@ verifier.
 
 - An x86-64 system that boots in UEFI mode.
 - Secure Boot disabled for phase one.
+- At least one hardware-backed Ethernet adapter; an active link or Internet connection is not required to install.
 - The signed Atlaso installation ISO, written to removable media.
 - A separate backup of any data that must survive installation.
 
@@ -57,6 +58,7 @@ into ordered parts, the verifier checks each part and the reconstructed image.
 ## Install and configure
 
 1. Boot the removable media in UEFI mode with Secure Boot disabled.
+   If no Ethernet adapter is detected, power off and add one before continuing; the installer stops before disk selection.
 2. Select Auto or Custom, choose the disk or disks, and review the complete proposed layout.
 3. Check the displayed disk identities and proposed partitions, then select **Yes** at **Erase selected disks?**
    only when all data on those disks may be erased. The confirmation defaults to **No**; decline if anything is unexpected.
