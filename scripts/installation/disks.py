@@ -11,6 +11,24 @@ from pathlib import Path, PurePosixPath
 IDENTITY_FIELDS = ("path", "size", "serial", "wwn", "maj:min")
 
 
+def require_atlaso_mountpoint(target: str) -> None:
+    """Preserve the symlink destinations created by shared Atlaso provisioning.
+
+    Args:
+        target: Proposed native mount-point field.
+    """
+    # A mounted directory makes ln -sfn create a link inside it instead of
+    # creating the required compatibility link. Parent directory mounts remain
+    # supported, including /opt/atlaso on its own system-content filesystem.
+    symlinks = (
+        "/opt/atlaso/current", "/opt/atlaso/.venv",
+        "/usr/local/bin/atlaso-vault", "/usr/bin/atlaso-vault",
+        "/etc/systemd/system-generators/systemd-ssh-generator",
+    )
+    if any(target == link or target.startswith(link + "/") for link in symlinks):
+        raise ValueError("Atlaso symlink")
+
+
 def require_fstab_safe_mountpoint(target: str) -> None:
     """Refuse mount text that Photon's verbatim fstab writer cannot preserve.
 
@@ -130,6 +148,7 @@ def revalidate_disks(config: dict, consent: dict[str, dict], current: dict[str, 
         if target:
             require_fstab_safe_mountpoint(target)
             require_bootloader_mountpoint(target)
+            require_atlaso_mountpoint(target)
             mountpoints.append(target)
             candidate = PurePosixPath(target)
             if not candidate.is_absolute() or str(candidate) != target or ".." in candidate.parts:

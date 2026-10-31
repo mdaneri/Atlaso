@@ -148,6 +148,45 @@ def test_revalidate_refuses_split_bootloader_filesystems(monkeypatch, target):
         disks.revalidate_disks(config, consent, dict(consent))
 
 
+@pytest.mark.parametrize("target", [
+    "/opt/atlaso/.venv", "/opt/atlaso/.venv/bin", "/opt/atlaso/current", "/opt/atlaso/current/.venv",
+    "/usr/local/bin/atlaso-vault", "/usr/local/bin/atlaso-vault/bin",
+    "/usr/bin/atlaso-vault", "/usr/bin/atlaso-vault/bin",
+    "/etc/systemd/system-generators/systemd-ssh-generator",
+    "/etc/systemd/system-generators/systemd-ssh-generator/bin",
+])
+def test_revalidate_refuses_atlaso_symlink_mounts_before_native_work(monkeypatch, target):
+    """Reject a forged plan even when UI validation was bypassed.
+
+    Args:
+        monkeypatch: Detect accidental native commands before refusal.
+        target: Provisioning-owned link or a path beneath it.
+    """
+    config = _config()
+    config["partitions"][2]["mountpoint"] = target
+    consent = {path: _identity(path) for path in disks.selected_disks(config)}
+    monkeypatch.setattr(disks.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("refusal must precede native work"))
+    monkeypatch.setattr(disks.subprocess, "check_output", lambda *_args, **_kwargs: pytest.fail("refusal must precede native work"))
+    with pytest.raises(ValueError, match="Atlaso symlink"):
+        disks.revalidate_disks(config, consent, dict(consent))
+
+
+@pytest.mark.parametrize("target", [
+    "/opt/atlaso", "/opt/atlaso/releases", "/opt/atlaso/current-data", "/opt/atlaso/.venv-data",
+    "/usr/local/bin", "/usr/bin", "/etc/systemd/system-generators",
+])
+def test_revalidate_keeps_atlaso_symlink_parent_and_sibling_mounts(target):
+    """Keep real directory mounts compatible with the generated links.
+
+    Args:
+        target: Supported parent or distinct sibling directory.
+    """
+    config = _config()
+    config["partitions"][2]["mountpoint"] = target
+    consent = {path: _identity(path) for path in disks.selected_disks(config)}
+    disks.revalidate_disks(config, consent, dict(consent))
+
+
 @pytest.mark.parametrize("target", ["/mnt/my data", "/mnt/my\tdata", "/mnt/my\ndata", r"/mnt/my\040data",
                                    r"/mnt/my\data", "/mnt/my\u00a0data", "/mnt/my\x7fdata"])
 def test_revalidate_refuses_fstab_field_changes_before_native_work(monkeypatch, target):
