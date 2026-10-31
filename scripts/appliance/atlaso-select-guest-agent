@@ -26,6 +26,13 @@ EXPECTED_STAGING_IDENTITY="${ATLASO_GUEST_AGENT_STAGING_IDENTITY:-root:root:700}
 PACKAGE_CACHE_DIRECTORY="${ATLASO_GUEST_AGENT_PACKAGE_CACHE:-/var/cache/tdnf}"
 MACHINE_IDENTITY_INITIALIZER="${ATLASO_MACHINE_IDENTITY_INITIALIZER:-/opt/atlaso/bin/atlaso-initialize-machine-identity.py}"
 TEST_ROOT="${ATLASO_GUEST_AGENT_TEST_ROOT:-}"
+ATLASO_STORAGE_PROFILE="${ATLASO_STORAGE_PROFILE:-}"
+if [ "$ATLASO_STORAGE_PROFILE" = "installation" ] ||
+  [ -e /etc/atlaso/installation-profile ] || [ -L /etc/atlaso/installation-profile ]; then
+  python3 /opt/atlaso/scripts/installation/layout.py verify
+  ATLASO_STORAGE_PROFILE=installation
+  export ATLASO_STORAGE_PROFILE
+fi
 
 log() {
   printf 'atlaso-select-guest-agent: %s\n' "$1"
@@ -213,6 +220,12 @@ install_profile() {
 }
 
 detect_platform() {
+  # An explicitly installed host uses no guest integration, including in an
+  # isolated UEFI installer smoke VM. Hardware detection still owns VM images.
+  if [ "$ATLASO_STORAGE_PROFILE" = "installation" ]; then
+    printf 'baremetal\n'
+    return
+  fi
   detected="$(systemd-detect-virt --vm 2>/dev/null || true)"
   case "$detected" in
     vmware) systemd_platform=vmware ;;
@@ -466,7 +479,9 @@ fi
 # the persistent closure. Production fixes that identity at root:root; the
 # override exists only for the unprivileged, isolated selector test boundary.
 install -d -o "$expected_owner" -g "$expected_group" -m 0700 "$RUNTIME_DIRECTORY"
-verify_staging
+if [ "$ATLASO_STORAGE_PROFILE" != "installation" ]; then
+  verify_staging
+fi
 platform="$(detect_platform)"
 log "Detected platform: $platform"
 

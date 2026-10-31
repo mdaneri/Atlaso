@@ -21,8 +21,9 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 import zipfile
+from email.parser import Parser
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable
 
 DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 DIST_INFO_PATTERN = re.compile(r"^[A-Za-z0-9_.]+-[A-Za-z0-9_.+!]+\.dist-info$")
@@ -698,6 +699,511 @@ def _expected_environment(
                 raise SystemExit(f"signed wheel installation paths collide: {name}")
             records[name] = record
     return records, dist_infos
+
+
+def _canonical_distribution(name: str) -> str:
+    """Return the conservative PEP 503 spelling used for wheel owners.
+
+    Args:
+        name: Distribution name from signed wheel metadata.
+    """
+
+    if not name or re.fullmatch(
+        r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?", name
+    ) is None:
+        raise SystemExit("signed wheel contains an invalid distribution name")
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _wheel_metadata(
+    archive: zipfile.ZipFile, dist_info: str
+) -> tuple[str, str, list[str]]:
+    """Read bounded identity and dependency declarations from one wheel.
+
+    Args:
+        archive: Open signed wheel archive.
+        dist_info: Safe dist-info directory identified by its RECORD path.
+    """
+
+    metadata_name = f"{dist_info}/METADATA"
+    try:
+        if archive.getinfo(metadata_name).file_size > 16 * 1024 * 1024:
+            raise SystemExit("signed wheel metadata exceeds the inspection limit")
+        message = Parser().parsestr(archive.read(metadata_name).decode("utf-8"))
+    except (KeyError, UnicodeDecodeError) as exc:
+        raise SystemExit("signed wheel metadata is missing or unreadable") from exc
+    names = message.get_all("Name", [])
+    versions = message.get_all("Version", [])
+    if len(names) != 1 or len(versions) != 1:
+        raise SystemExit("signed wheel metadata has an ambiguous identity")
+    distribution = _canonical_distribution(names[0])
+    version = versions[0].strip()
+    if (
+        not version
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.!+_-]*", version) is None
+    ):
+        raise SystemExit("signed wheel metadata has an invalid version")
+    stem = PurePosixPath(dist_info).name.removesuffix(".dist-info")
+    dist_name, separator, dist_version = stem.rpartition("-")
+    if (
+        not separator
+        or _canonical_distribution(dist_name) != distribution
+        or dist_version != version
+    ):
+        raise SystemExit("signed wheel metadata disagrees with its dist-info path")
+    return distribution, version, message.get_all("Requires-Dist", [])
+
+
+def _exact_pinned_requirements(
+    declarations: list[str], actual_versions: dict[str, str]
+) -> set[str]:
+    """Select only unconditional, no-extra, exact version dependency edges.
+
+    Args:
+        declarations: Requires-Dist metadata values.
+        actual_versions: Signed distributions and their exact wheel versions.
+    """
+
+    requirements: set[str] = set()
+    patterns = (
+        re.compile(
+            r"^([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)"
+            r"==([A-Za-z0-9][A-Za-z0-9.!+_-]*)$"
+        ),
+        re.compile(
+            r"^([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)"
+            r"\s*\(\s*==\s*([A-Za-z0-9][A-Za-z0-9.!+_-]*)\s*\)$"
+        ),
+    )
+    for declaration in declarations:
+        candidate = declaration.strip()
+        match = next(
+            (
+                matched
+                for pattern in patterns
+                if (matched := pattern.fullmatch(candidate)) is not None
+            ),
+            None,
+        )
+        if match is None:
+            continue
+        dependency = _canonical_distribution(match.group(1))
+        required_version = match.group(2)
+        actual_version = actual_versions.get(dependency)
+        if actual_version is None:
+            continue
+        if required_version != actual_version:
+            raise SystemExit("signed wheel metadata conflicts with an installed dependency version")
+        requirements.add(dependency)
+    return requirements
+
+
+def _wheel_installation_records(
+    wheel: Path,
+) -> tuple[
+    str,
+    str,
+    list[str],
+    dict[str, tuple[str, int]],
+    set[str],
+    dict[str, tuple[str, int, str]],
+]:
+    """Validate one wheel's RECORD bytes and map all supported install schemes.
+
+    Args:
+        wheel: Signed wheel archive to inspect.
+    """
+
+    try:
+        with zipfile.ZipFile(wheel) as archive:
+            infos = archive.infolist()
+            names = [info.filename for info in infos]
+            if len(infos) > 100_000:
+                raise SystemExit("signed wheel archive contains too many members")
+            if len(names) != len(set(names)):
+                raise SystemExit("signed wheel archive contains duplicate members")
+            info_by_name = {info.filename: info for info in infos}
+            for info in infos:
+                file_type = stat.S_IFMT(info.external_attr >> 16)
+                if info.is_dir():
+                    if file_type not in {0, stat.S_IFDIR}:
+                        raise SystemExit(
+                            "signed wheel archive contains an unsafe directory"
+                        )
+                elif file_type not in {0, stat.S_IFREG}:
+                    raise SystemExit("signed wheel archive contains a non-regular file")
+            record_names = [
+                name for name in names if name.endswith(".dist-info/RECORD")
+                and len(PurePosixPath(name).parts) == 2
+            ]
+            if len(record_names) != 1:
+                raise SystemExit("signed wheel must contain exactly one top-level RECORD")
+            record_name = record_names[0]
+            dist_info = PurePosixPath(record_name).parent.as_posix()
+            if DIST_INFO_PATTERN.fullmatch(dist_info) is None:
+                raise SystemExit("signed wheel RECORD has an unexpected dist-info path")
+            distribution, version, dependencies = _wheel_metadata(archive, dist_info)
+            data_prefix = f"{dist_info.removesuffix('.dist-info')}.data"
+            site_records: dict[str, tuple[str, int]] = {}
+            external_records: dict[str, tuple[str, int, str]] = {}
+            destinations: set[str] = set()
+            recorded_members = {record_name}
+            record_rows: set[str] = set()
+            dist_infos = {dist_info}
+            record_count = 0
+            total_record_bytes = 0
+            if archive.getinfo(record_name).file_size > 16 * 1024 * 1024:
+                raise SystemExit("signed wheel RECORD exceeds the inspection limit")
+            rows = csv.reader(io.StringIO(archive.read(record_name).decode("utf-8")))
+            for row in rows:
+                record_count += 1
+                if record_count > 100_000:
+                    raise SystemExit("signed wheel RECORD contains too many entries")
+                if len(row) != 3:
+                    raise SystemExit("signed wheel RECORD contains an invalid row")
+                name, encoded_digest, size_text = row
+                member = PurePosixPath(name)
+                if (
+                    not name
+                    or not member.parts
+                    or "\\" in name
+                    or member.is_absolute()
+                    or ".." in member.parts
+                    or member.as_posix() != name
+                ):
+                    raise SystemExit("signed wheel RECORD contains an unsafe path")
+                if name in record_rows:
+                    raise SystemExit("signed wheel RECORD contains a duplicate row")
+                record_rows.add(name)
+                if name == record_name:
+                    if encoded_digest or size_text:
+                        raise SystemExit("signed wheel RECORD self-entry must be unhashed")
+                    continue
+                algorithm, separator, encoded = encoded_digest.partition("=")
+                if (
+                    separator != "="
+                    or algorithm != "sha256"
+                    or not size_text.isdecimal()
+                ):
+                    raise SystemExit("signed wheel RECORD contains an unsupported digest")
+                padding = "=" * (-len(encoded) % 4)
+                try:
+                    digest_bytes = base64.urlsafe_b64decode(encoded + padding)
+                except (ValueError, base64.binascii.Error) as exc:
+                    raise SystemExit("signed wheel RECORD contains an invalid digest") from exc
+                digest = digest_bytes.hex()
+                canonical_digest = base64.urlsafe_b64encode(digest_bytes).decode(
+                    "ascii"
+                ).rstrip("=")
+                if len(digest) != 64 or canonical_digest != encoded.rstrip("="):
+                    raise SystemExit("signed wheel RECORD contains a noncanonical digest")
+                size = int(size_text)
+                total_record_bytes += size
+                if size > 1_073_741_824 or total_record_bytes > 1_073_741_824:
+                    raise SystemExit("signed wheel payload exceeds the verification limit")
+                try:
+                    info = info_by_name[name]
+                except KeyError as exc:
+                    raise SystemExit("signed wheel RECORD references a missing member") from exc
+                if info.is_dir() or stat.S_IFMT(info.external_attr >> 16) not in {
+                    0,
+                    stat.S_IFREG,
+                }:
+                    raise SystemExit(
+                        "signed wheel RECORD references a non-regular member"
+                    )
+                if info.file_size != size:
+                    raise SystemExit("signed wheel member size disagrees with its RECORD")
+                if name.startswith(f"{data_prefix}/"):
+                    scheme = name.removeprefix(f"{data_prefix}/").partition("/")[0]
+                    if scheme not in {"purelib", "platlib"} and size > 16 * 1024 * 1024:
+                        raise SystemExit(
+                            "signed external wheel member exceeds the inspection limit"
+                        )
+                try:
+                    contents = archive.read(name)
+                except KeyError as exc:
+                    raise SystemExit("signed wheel RECORD references a missing member") from exc
+                recorded_members.add(name)
+                if len(contents) != size or hashlib.sha256(contents).hexdigest() != digest:
+                    raise SystemExit("signed wheel member does not match its RECORD")
+
+                relative = name
+                category = "site"
+                if name.startswith(f"{data_prefix}/"):
+                    scheme_path = name.removeprefix(f"{data_prefix}/")
+                    scheme, slash, relative = scheme_path.partition("/")
+                    if not slash or not relative:
+                        raise SystemExit("signed wheel contains a noncanonical .data path")
+                    if scheme not in {"purelib", "platlib", "headers", "scripts", "data"}:
+                        raise SystemExit("signed wheel uses an unsupported .data scheme")
+                    if scheme in {"purelib", "platlib"}:
+                        category = "site"
+                    elif scheme == "headers":
+                        category = "external"
+                        relative = f"include/site/python3.14/{distribution}/{relative}"
+                    elif scheme == "scripts":
+                        category = "external"
+                        if PurePosixPath(relative).name != relative:
+                            raise SystemExit("signed wheel script path must be flat")
+                        relative = f"bin/{relative}"
+                    else:
+                        category = "external"
+                elif name.startswith(f"{data_prefix}."):
+                    raise SystemExit("signed wheel contains a noncanonical .data directory")
+
+                target = PurePosixPath(relative)
+                if (
+                    not relative
+                    or not target.parts
+                    or "\\" in relative
+                    or target.is_absolute()
+                    or ".." in target.parts
+                    or target.as_posix() != relative
+                ):
+                    raise SystemExit("signed wheel installation path is unsafe")
+                destination = (
+                    f"lib/python3.14/site-packages/{relative}"
+                    if category == "site"
+                    else relative
+                )
+                if destination in destinations:
+                    raise SystemExit(
+                        "signed wheel contains duplicate installation destinations"
+                    )
+                destinations.add(destination)
+                if destination in {
+                    "bin/python",
+                    "bin/python3",
+                    "bin/python3.14",
+                    "pyvenv.cfg",
+                    "pip.conf",
+                }:
+                    raise SystemExit("signed wheel attempts to replace a reserved runtime file")
+                if category == "site":
+                    site_records[relative] = (digest, size)
+                else:
+                    script_line = ""
+                    if name.startswith(f"{data_prefix}/scripts/"):
+                        first_line, newline, _ = contents.partition(b"\n")
+                        if len(first_line) > 128:
+                            raise SystemExit(
+                                "signed wheel script shebang exceeds the inspection limit"
+                            )
+                        if first_line.startswith(b"#!python"):
+                            if first_line not in {b"#!python", b"#!pythonw"} or not newline:
+                                raise SystemExit(
+                                    "signed wheel script has an unsupported Python shebang"
+                                )
+                            script_line = first_line.decode("ascii") + "\n"
+                    external_records[relative] = (digest, size, script_line)
+            archive_files = {
+                info.filename for info in archive.infolist() if not info.is_dir()
+            }
+            if archive_files != recorded_members:
+                raise SystemExit("signed wheel archive contains files outside its RECORD")
+            if not site_records and not external_records:
+                raise SystemExit("signed wheel RECORD contains no immutable installed files")
+            return (
+                distribution,
+                version,
+                dependencies,
+                site_records,
+                dist_infos,
+                external_records,
+            )
+    except (OSError, UnicodeDecodeError, zipfile.BadZipFile, csv.Error) as exc:
+        raise SystemExit("signed wheel archive is invalid") from exc
+
+
+def _expected_installation(
+    wheel: Path, wheelhouse: Path, expected_digest: str
+) -> tuple[
+    dict[str, tuple[str, int]],
+    set[str],
+    dict[str, tuple[str, int, str]],
+]:
+    """Build the signed wheel installation inventory including .data schemes.
+
+    Args:
+        wheel: Signed Atlaso application wheel.
+        wheelhouse: Signed dependency-wheel directory.
+        expected_digest: Manifest-authenticated Atlaso wheel digest.
+
+    Returns:
+        Site-packages records, dist-info directories, and venv-relative payloads.
+
+    This is an opt-in inspection helper. The existing virtualization wheel
+    verifier keeps its strict site-packages-only contract.
+    """
+
+    if DIGEST_PATTERN.fullmatch(expected_digest) is None:
+        raise SystemExit("expected Atlaso wheel digest is invalid")
+    if wheel.is_symlink() or not wheel.is_file() or _sha256(wheel) != expected_digest:
+        raise SystemExit("Atlaso application wheel does not match the signed digest")
+    if wheelhouse.is_symlink() or not wheelhouse.is_dir():
+        raise SystemExit("signed CPython 3.14 wheelhouse is missing or unsafe")
+    dependency_wheels = sorted(wheelhouse.glob("*.whl"))
+    if not dependency_wheels or any(path.is_symlink() for path in dependency_wheels):
+        raise SystemExit("signed CPython 3.14 wheelhouse contains no safe wheels")
+    if len(dependency_wheels) + 1 > 512:
+        raise SystemExit("signed wheel set contains too many distributions")
+
+    candidates = [
+        _wheel_installation_records(path) for path in [*dependency_wheels, wheel]
+    ]
+    total_records = sum(len(candidate[3]) + len(candidate[5]) for candidate in candidates)
+    total_bytes = sum(
+        sum(size for _, size in candidate[3].values())
+        + sum(size for _, size, _ in candidate[5].values())
+        for candidate in candidates
+    )
+    if total_records > 100_000 or total_bytes > 1_073_741_824:
+        raise SystemExit("signed wheel set exceeds the verification limits")
+    if not any(name.startswith("atlaso/") for name in candidates[-1][3]):
+        raise SystemExit("Atlaso wheel RECORD does not cover the Atlaso package")
+    versions: dict[str, str] = {}
+    for distribution, version, *_ in candidates:
+        if distribution in versions:
+            raise SystemExit("signed wheel set contains a duplicate distribution")
+        versions[distribution] = version
+    requirements = {
+        candidate[0]: _exact_pinned_requirements(candidate[2], versions)
+        for candidate in candidates
+    }
+
+    def depends_on(owner: str, dependency: str) -> bool:
+        """Test dependency reachability for one signed distribution pair.
+
+        Args:
+            owner: Potentially later-installed dependent distribution.
+            dependency: Earlier-installed prerequisite distribution.
+        """
+
+        pending = list(requirements.get(owner, set()))
+        visited: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current == dependency:
+                return True
+            if current not in visited:
+                visited.add(current)
+                pending.extend(requirements.get(current, set()) - visited)
+        return False
+
+    records_by_destination: dict[str, list[tuple[str, str, tuple[str, int]]]] = {}
+    external_by_destination: dict[str, list[tuple[str, str, tuple[str, int, str]]]] = {}
+    site_records: dict[str, tuple[str, int]] = {}
+    external_records: dict[str, tuple[str, int, str]] = {}
+    dist_infos: set[str] = set()
+    for candidate in candidates:
+        distribution, version, _, sites, metadata_dirs, externals = candidate
+        dist_infos.update(metadata_dirs)
+        for path, record in sites.items():
+            records_by_destination.setdefault(
+                f"lib/python3.14/site-packages/{path}", []
+            ).append((distribution, version, record))
+        for path, record in externals.items():
+            external_by_destination.setdefault(path, []).append(
+                (distribution, version, record)
+            )
+
+    if set(records_by_destination) & set(external_by_destination):
+        raise SystemExit("signed wheel site and external installation paths collide")
+    for destination, owners in records_by_destination.items():
+        distinct = {record for _, _, record in owners}
+        winner = _resolve_record_collision(owners, distinct, depends_on)
+        site_records[destination.removeprefix("lib/python3.14/site-packages/")] = winner
+    for destination, owners in external_by_destination.items():
+        distinct = {(digest, size) for _, _, (digest, size, _) in owners}
+        selected = _resolve_record_collision(
+            [
+                (owner, version, (record[0], record[1]))
+                for owner, version, record in owners
+            ],
+            distinct,
+            depends_on,
+        )
+        winners = [record for _, _, record in owners if record[:2] == selected]
+        if len({record[2] for record in winners}) != 1:
+            raise SystemExit("identical wheel files have conflicting script rewrite metadata")
+        external_records[destination] = winners[0]
+    return site_records, dist_infos, external_records
+
+
+def _resolve_record_collision(
+    owners: list[tuple[str, str, tuple[str, int]]],
+    distinct: set[tuple[str, int]],
+    depends_on: Callable[[str, str], bool],
+) -> tuple[str, int]:
+    """Choose a byte owner only when pip's dependency order proves one winner.
+
+    Args:
+        owners: Colliding owners and their signed RECORD values.
+        distinct: Distinct byte records at the destination.
+        depends_on: Exact-pin dependency reachability predicate.
+    """
+
+    if len(distinct) == 1:
+        return next(iter(distinct))
+    names = [owner for owner, _, _ in owners]
+    for first in names:
+        for second in names:
+            if (
+                first != second
+                and depends_on(first, second)
+                and depends_on(second, first)
+            ):
+                raise SystemExit("signed wheel collision has cyclic ownership")
+    winners = [
+        owner
+        for owner in names
+        if all(owner == other or depends_on(owner, other) for other in names)
+    ]
+    if len(winners) != 1:
+        raise SystemExit("signed wheel collision has no unique dependency-ordered owner")
+    winning_records = {record for owner, _, record in owners if owner == winners[0]}
+    if len(winning_records) != 1:
+        raise SystemExit("signed wheel collision has conflicting owner records")
+    return next(iter(winning_records))
+
+
+def _verify_external_payload(
+    actual: bytes,
+    record: tuple[str, int, str],
+    interpreters: tuple[str, ...],
+) -> None:
+    """Verify an installed non-site wheel file, allowing only pip's shebang rewrite.
+
+    Args:
+        actual: Bytes read from the installed venv-relative destination.
+        record: Original SHA-256, size, and optional ``#!python`` first line.
+        interpreters: Exact absolute interpreter paths pip may have used.
+    """
+
+    expected_digest, expected_size, original_shebang = record
+    normalized = actual
+    if original_shebang:
+        if original_shebang not in {"#!python\n", "#!pythonw\n"}:
+            raise SystemExit("signed wheel declares an unsupported script rewrite")
+        first_line, newline, body = actual.partition(b"\n")
+        try:
+            allowed = {
+                f"#!{path}\n".encode("ascii")
+                for path in interpreters
+                if path.startswith("/") and "\n" not in path and "\r" not in path
+            }
+        except UnicodeEncodeError as exc:
+            raise SystemExit("installed interpreter path is not ASCII") from exc
+        if not newline or first_line + b"\n" not in allowed:
+            raise SystemExit("installed wheel script has an unexpected interpreter rewrite")
+        normalized = original_shebang.encode("ascii") + body
+    if (
+        len(normalized) != expected_size
+        or DIGEST_PATTERN.fullmatch(expected_digest) is None
+        or hashlib.sha256(normalized).hexdigest() != expected_digest
+    ):
+        raise SystemExit("installed external wheel member does not match signed bytes")
 
 
 def _normalized_tar_name(name: str) -> str:

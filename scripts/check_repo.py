@@ -130,6 +130,7 @@ LUNA_WORKER_REQUIRED_INSTRUCTION_MARKERS = (
 )
 
 PROTECTED_PUBLICATION_WORKFLOWS = (
+    Path(".github/workflows/installation-prerelease.yml"),
     Path(".github/workflows/inventory-linux-release.yml"),
     Path(".github/workflows/promote-release.yml"),
     Path(".github/workflows/release.yml"),

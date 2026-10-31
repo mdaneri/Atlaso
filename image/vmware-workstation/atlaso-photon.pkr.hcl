@@ -186,8 +186,21 @@ variable "dry_run_system_adapters" {
   description = "Keep Atlaso system adapters in dry-run mode. Set false only for disposable lifecycle/demo images that should mutate Photon services."
 }
 
+variable "capture_installation_rpms" {
+  type        = bool
+  default     = false
+  description = "Capture the resolved offline installation RPM closure from this authorized Photon build."
+}
+
+variable "capture_directory" {
+  type        = string
+  default     = ""
+  description = "Existing empty host directory for captured installation archives; required only when capture_installation_rpms is true."
+}
+
 locals {
   builder_static_address       = var.builder_static_ip != "" ? split("/", var.builder_static_ip)[0] : ""
+  verified_capture_directory   = var.capture_installation_rpms ? regex(".+", var.capture_directory) : ""
   builder_static_dns_text      = join(" ", var.builder_static_dns)
   bootstrap_admin_password     = var.bootstrap_admin_password
   dry_run_system_adapters_text = var.dry_run_system_adapters ? "true" : "false"
@@ -361,6 +374,43 @@ build {
   }
 
   provisioner "file" {
+    source      = "${var.source_root}/scripts/__init__.py"
+    destination = "/tmp/atlaso-src/scripts/__init__.py"
+    only        = var.capture_installation_rpms ? ["vmware-iso.photon"] : ["vmware-iso.disabled"]
+  }
+
+  provisioner "file" {
+    source      = "${var.source_root}/scripts/installation"
+    destination = "/tmp/atlaso-src/scripts/installation"
+    only        = var.capture_installation_rpms ? ["vmware-iso.photon"] : ["vmware-iso.disabled"]
+  }
+
+  provisioner "file" {
+    source      = "${var.source_root}/scripts/build_installation_iso.py"
+    destination = "/tmp/atlaso-src/scripts/build_installation_iso.py"
+    only        = var.capture_installation_rpms ? ["vmware-iso.photon"] : ["vmware-iso.disabled"]
+  }
+
+  provisioner "shell" {
+    inline = [
+      "set -eu",
+      "test ! -e /var/tmp/atlaso-installation-rpms",
+      "PYTHONPATH=/tmp/atlaso-src python3 -c 'from pathlib import Path; from scripts.installation.build import capture_packages; capture_packages(Path(\"/tmp/atlaso-src\"), Path(\"/var/tmp/atlaso-installation-rpms\"))'",
+      "tar -C /var/tmp -cf /var/tmp/atlaso-installation-rpms.tar atlaso-installation-rpms",
+      "chmod 0644 /var/tmp/atlaso-installation-rpms.tar"
+    ]
+    execute_command = "printf '%s' '${local.ssh_password_stdin_base64}' | base64 -d | sudo -S -E sh -c '{{ .Vars }} {{ .Path }}'"
+    only            = var.capture_installation_rpms ? ["vmware-iso.photon"] : ["vmware-iso.disabled"]
+  }
+
+  provisioner "file" {
+    direction   = "download"
+    source      = "/var/tmp/atlaso-installation-rpms.tar"
+    destination = "${local.verified_capture_directory}/installation-rpms.tar"
+    only        = var.capture_installation_rpms ? ["vmware-iso.photon"] : ["vmware-iso.disabled"]
+  }
+
+  provisioner "file" {
     source      = var.virtualization_source_directory != "" ? var.virtualization_source_directory : "${var.source_root}/image/common/guest-agents"
     destination = "/tmp/atlaso-software"
   }
@@ -388,5 +438,23 @@ build {
     ]
     execute_command = "printf '%s' '${local.ssh_password_stdin_base64}' | base64 -d | sudo -S -E sh -c '{{ .Vars }} {{ .Path }}'"
     script          = "${var.source_root}/image/common/scripts/provision-atlaso.sh"
+  }
+
+  provisioner "shell" {
+    inline = [
+      "set -eu",
+      "test -d /usr/local/share/powershell/Modules",
+      "tar -C /usr/local/share/powershell -cf /var/tmp/atlaso-installation-powercli.tar Modules",
+      "chmod 0644 /var/tmp/atlaso-installation-powercli.tar"
+    ]
+    execute_command = "printf '%s' '${local.ssh_password_stdin_base64}' | base64 -d | sudo -S -E sh -c '{{ .Vars }} {{ .Path }}'"
+    only            = var.capture_installation_rpms ? ["vmware-iso.photon"] : ["vmware-iso.disabled"]
+  }
+
+  provisioner "file" {
+    direction   = "download"
+    source      = "/var/tmp/atlaso-installation-powercli.tar"
+    destination = "${local.verified_capture_directory}/installation-powercli.tar"
+    only        = var.capture_installation_rpms ? ["vmware-iso.photon"] : ["vmware-iso.disabled"]
   }
 }

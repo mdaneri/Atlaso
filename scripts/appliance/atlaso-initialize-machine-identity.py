@@ -140,6 +140,15 @@ def initialize(platform: str) -> None:
         platform: Verified guest-agent platform identifier.
     """
 
+    if os.environ.get("ATLASO_STORAGE_PROFILE") == "installation" or os.path.lexists("/etc/atlaso/installation-profile"):
+        # The installer has set both local account passwords and the matching web
+        # bootstrap value. Refresh host identity without replacing that consent.
+        subprocess.run(["python3", "/opt/atlaso/scripts/installation/layout.py", "verify"], check=True)
+        _replace_environment(
+            {"ATLASO_SECRET_KEY": secrets.token_urlsafe(48), "ATLASO_SECRETS_KEY": secrets.token_urlsafe(48)}
+        )
+        _regenerate_host_identity()
+        return
     admin_password = _password()
     root_password = _password()
     username = _replace_environment(

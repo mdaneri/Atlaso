@@ -92,6 +92,12 @@ Select a deterministic local/test builder identity that requires no pull request
 Optional collision-safe suffix for concurrent pull-request or local/test builders.
 .PARAMETER ReleaseBuilder
 Select the protected version-and-commit-bound release builder identity.
+.PARAMETER CaptureInstallationRpms
+Capture the offline installation RPM closure during this canonical Photon build. This is unavailable to release builders.
+.PARAMETER InstallationCaptureDirectory
+Existing empty task-owned directory for captured installation archives. Required with CaptureInstallationRpms.
+.PARAMETER InstallationCaptureRootIdentity
+Original directory identity recorded when InstallationCaptureDirectory was created.
 .PARAMETER VirtualizationSourceDirectory
 Prepared signed software directory installed during construction; required for release builders.
 .PARAMETER ReleaseVersion
@@ -248,6 +254,9 @@ param(
     [switch]$LocalBuilder,
     [string]$CollisionSuffix = '',
     [switch]$ReleaseBuilder,
+    [switch]$CaptureInstallationRpms,
+    [string]$InstallationCaptureDirectory = '',
+    [string]$InstallationCaptureRootIdentity = '',
     [string]$VirtualizationSourceDirectory = '',
     [string]$ReleaseVersion = '',
     [string]$ReleaseSourceCommit = '',
@@ -633,6 +642,114 @@ function Assert-AtlasoPhotonSensitiveBuildPathIdentity {
             break
         }
         $candidatePath = Split-Path -Parent $candidatePath
+    }
+}
+
+<#
+.SYNOPSIS
+Admit and pin the pre-existing empty installation-capture directory.
+.PARAMETER DirectoryPath
+Existing task-owned directory receiving the captured archives.
+.PARAMETER ExpectedIdentity
+Original identity recorded when the directory was created.
+.PARAMETER ConflictPaths
+Source, output, and sensitive staging roots that must not overlap the capture directory.
+#>
+function Open-AtlasoInstallationCaptureRoot {
+    param(
+        [Parameter(Mandatory = $true)][string]$DirectoryPath,
+        [Parameter(Mandatory = $true)][string]$ExpectedIdentity,
+        [Parameter(Mandatory = $true)][string[]]$ConflictPaths
+    )
+
+    if (-not [IO.Path]::IsPathFullyQualified($DirectoryPath) -or
+        $ExpectedIdentity -notmatch '^[0-9A-F]{8}:[0-9A-F]{16}$') {
+        throw 'Installation capture requires an absolute directory and its original directory identity.'
+    }
+    $resolvedDirectory = [IO.Path]::GetFullPath($DirectoryPath)
+    if ($resolvedDirectory.Equals(
+            [IO.Path]::GetPathRoot($resolvedDirectory),
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw 'Installation capture directory cannot be a filesystem root.'
+    }
+    $resolvedDirectory = $resolvedDirectory.TrimEnd('\', '/')
+    $directoryItem = Get-Item -LiteralPath $resolvedDirectory -Force -ErrorAction SilentlyContinue
+    if ($null -eq $directoryItem -or -not $directoryItem.PSIsContainer -or
+        ($directoryItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Installation capture directory must be an existing ordinary directory.'
+    }
+    $pin = $null
+    try {
+        # Exclude root replacement while allowing Packer to create the two archive files.
+        $pin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($resolvedDirectory, $true)
+        if ((Get-AtlasoPathIdentity -Path $resolvedDirectory -Description 'Installation capture directory') -cne
+            $ExpectedIdentity) {
+            throw 'Installation capture directory identity changed; archives were not written.'
+        }
+        $directoryPrefix = $resolvedDirectory.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+        foreach ($conflictPath in $ConflictPaths) {
+            if ([string]::IsNullOrWhiteSpace($conflictPath)) { continue }
+            $resolvedConflict = [IO.Path]::GetFullPath($conflictPath).TrimEnd('\', '/')
+            $conflictPrefix = $resolvedConflict.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+            if ($resolvedDirectory.Equals($resolvedConflict, [StringComparison]::OrdinalIgnoreCase) -or
+                $resolvedDirectory.StartsWith($conflictPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+                $resolvedConflict.StartsWith($directoryPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'Installation capture directory overlaps source, output, or sensitive staging; archives were not written.'
+            }
+        }
+        if (@(Get-ChildItem -LiteralPath $resolvedDirectory -Force -ErrorAction Stop).Count -ne 0) {
+            throw 'Installation capture directory must be empty before the build.'
+        }
+        return [pscustomobject]@{
+            Path     = $resolvedDirectory
+            Identity = $ExpectedIdentity
+            Pin      = $pin
+        }
+    }
+    catch {
+        if ($null -ne $pin) { $pin.Dispose() }
+        throw
+    }
+}
+
+<#
+.SYNOPSIS
+Verify both installation archives were retained in the admitted capture directory.
+.PARAMETER CaptureRoot
+Admitted installation-capture directory and its retained pin.
+#>
+function Assert-AtlasoInstallationCaptureArchives {
+    param([Parameter(Mandatory = $true)][psobject]$CaptureRoot)
+
+    $path = [string]$CaptureRoot.Path
+    if ((Get-AtlasoPathIdentity -Path $path -Description 'Installation capture directory') -cne
+        [string]$CaptureRoot.Identity) {
+        throw 'Installation capture directory identity changed after admission; artifacts were preserved.'
+    }
+    $expectedNames = @('installation-rpms.tar', 'installation-powercli.tar')
+    $items = @(Get-ChildItem -LiteralPath $path -Force -ErrorAction Stop)
+    if ($items.Count -ne $expectedNames.Count) {
+        throw 'Packer did not retain exactly the two expected installation archives.'
+    }
+    $filePins = [Collections.Generic.List[IDisposable]]::new()
+    try {
+        foreach ($item in $items) {
+            if ($item.PSIsContainer -or
+                ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+                $item.Name -cnotin $expectedNames -or $item.Length -le 0) {
+                throw 'Installation capture contains an unexpected or invalid archive; artifacts were preserved.'
+            }
+            $filePins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($item.FullName))
+        }
+        foreach ($name in $expectedNames) {
+            if (-not (Test-Path -LiteralPath (Join-Path $path $name) -PathType Leaf)) {
+                throw "Packer did not retain required installation archive $name."
+            }
+        }
+    }
+    finally {
+        foreach ($filePin in $filePins) { $filePin.Dispose() }
     }
 }
 
@@ -1690,6 +1807,21 @@ function Assert-AtlasoPhotonCleanupRepositoryRegistration {
 }
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+if ($CaptureInstallationRpms -and $ReleaseBuilder) {
+    throw '-CaptureInstallationRpms is not allowed for a release builder.'
+}
+if ($CaptureInstallationRpms -and (
+        [string]::IsNullOrWhiteSpace($InstallationCaptureDirectory) -or
+        [string]::IsNullOrWhiteSpace($InstallationCaptureRootIdentity)
+    )) {
+    throw '-CaptureInstallationRpms requires -InstallationCaptureDirectory and its original -InstallationCaptureRootIdentity.'
+}
+if (-not $CaptureInstallationRpms -and (
+        -not [string]::IsNullOrWhiteSpace($InstallationCaptureDirectory) -or
+        -not [string]::IsNullOrWhiteSpace($InstallationCaptureRootIdentity)
+    )) {
+    throw 'Installation capture directory inputs require -CaptureInstallationRpms.'
+}
 if ($CleanupOnly) {
     # Return before lock refresh, artifact downloads, credentials, reservation
     # initialization, source protection, output claims, or any provider work.
@@ -1777,6 +1909,7 @@ $resolvedBuildStateRoot = Resolve-AtlasoPhotonBuildStateRoot `
     -RepositoryRoot $buildStateRepositoryRoot `
     -Path $BuildStateRoot
 $credentialStateRoot = Join-Path $resolvedBuildStateRoot 'credentials'
+$installationCaptureRoot = $null
 $builderReservationHandoffStateRoot = Join-Path $resolvedBuildStateRoot 'vmware-builder-addresses'
 $builderReservationPendingRoot = Join-Path $builderReservationHandoffStateRoot 'pending-releases'
 $cleanupMarkerPath = Join-Path $repoRoot (
@@ -2128,6 +2261,21 @@ if ($CredentialChild) {
         -RootIdentity $SensitiveBuildRootIdentity `
         -Path $resolvedChildPackerDirectory `
         -IdentityPins $sensitivePathIdentities
+    if ($CaptureInstallationRpms) {
+        $installationCaptureRoot = Open-AtlasoInstallationCaptureRoot `
+            -DirectoryPath $InstallationCaptureDirectory `
+            -ExpectedIdentity $InstallationCaptureRootIdentity `
+            -ConflictPaths @(
+                $repoRoot,
+                $resolvedTaskRepositoryRoot,
+                $resolvedBuildStateRoot,
+                $credentialBundleRoot,
+                $sensitiveBuildRoot,
+                $resolvedSourceSnapshotRoot,
+                $OutputDirectory,
+                $SharedSourceDirectory
+            )
+    }
     New-Item -ItemType Directory -Path $resolvedChildPackerDirectory -ErrorAction Stop | Out-Null
     Assert-AtlasoPhotonSensitiveBuildPathIdentity `
         -CredentialRoot $credentialBundleRoot `
@@ -2296,6 +2444,18 @@ else {
     Assert-AtlasoVmwareBuilderPathBudget `
         -OutputDirectory $outerCleanupOutputDirectory `
         -Identity $builderIdentity
+    if ($CaptureInstallationRpms) {
+        $installationCaptureRoot = Open-AtlasoInstallationCaptureRoot `
+            -DirectoryPath $InstallationCaptureDirectory `
+            -ExpectedIdentity $InstallationCaptureRootIdentity `
+            -ConflictPaths @(
+                $repoRoot,
+                $resolvedBuildStateRoot,
+                $credentialStateRoot,
+                $outerCleanupOutputDirectory,
+                $outerSharedSourceDirectory
+            )
+    }
     if ($needsOnePasswordDefaults) {
         $resolvedEnvironmentId = Resolve-AtlasoOnePasswordEnvironmentId `
             -EnvironmentId $OnePasswordEnvironmentId `
@@ -2581,6 +2741,12 @@ else {
             '-SourceInventorySha256', $sourceSnapshot.Sha256,
             '-SourceInventoryFileCount', $sourceSnapshot.FileCount.ToString()
         )
+        if ($CaptureInstallationRpms) {
+            $childArguments += @(
+                '-InstallationCaptureDirectory', $InstallationCaptureDirectory,
+                '-InstallationCaptureRootIdentity', $InstallationCaptureRootIdentity
+            )
+        }
         if ($null -ne $softwareSnapshot) {
             $childArguments += @('-VirtualizationSourceDirectory', $softwareSnapshot.Root)
         }
@@ -2611,6 +2777,7 @@ else {
             'BuilderHandoffStateIdentity', 'BuilderHandoffPendingIdentity',
             'PreparedIsoPath',
             'PackerDirectory', 'OutputDirectory', 'SharedSourceDirectory',
+            'InstallationCaptureDirectory', 'InstallationCaptureRootIdentity',
             'SourceSnapshotRoot', 'SourceCommit', 'SourceBranch',
             'TaskRepositoryRoot',
             'SourceInventorySha256', 'SourceInventoryFileCount',
@@ -2673,6 +2840,9 @@ else {
                 -Action 'The isolated VMware Photon image build' `
                 -ProcessJobName $processJobName `
                 -ProcessOwnershipPublisher $processOwnershipPublisher
+            if ($CaptureInstallationRpms -and -not $ValidateOnly -and -not $PrepareIsoOnly) {
+                Assert-AtlasoInstallationCaptureArchives -CaptureRoot $installationCaptureRoot
+            }
             $isolatedBuildSucceeded = $true
         }
         catch {
@@ -2762,6 +2932,10 @@ else {
         }
     }
     finally {
+        if ($null -ne $installationCaptureRoot) {
+            $installationCaptureRoot.Pin.Dispose()
+            $installationCaptureRoot = $null
+        }
         $credentialPair = $null
         $SshPassword = $null
         $BootstrapAdminPassword = $null
@@ -3436,10 +3610,14 @@ $packerVariables = @{
     vmnet_name         = $VmnetName
     service_vmnet_name = $ServiceVmnetName
     headless           = [bool]$Headless
+    capture_installation_rpms = [bool]$CaptureInstallationRpms
     virtualization_source_directory = $VirtualizationSourceDirectory
     software_manifest_sha256 = $softwareManifestSha256
     software_source_commit = $SourceCommit
     source_root        = $SourceSnapshotRoot
+}
+if ($CaptureInstallationRpms) {
+    $packerVariables['capture_directory'] = $installationCaptureRoot.Path
 }
 
 $packerBuildInvoker = $null
@@ -3630,6 +3808,10 @@ catch {
     throw
 }
 
+if ($CaptureInstallationRpms -and -not $ValidateOnly -and -not $PrepareIsoOnly) {
+    Assert-AtlasoInstallationCaptureArchives -CaptureRoot $installationCaptureRoot
+}
+
 if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     # A Packer build can outlive every pre-launch ownership proof. Refresh the
     # task, local/test, or release identity before the completed artifact gains provenance.
@@ -3676,5 +3858,9 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
 finally {
     if ($null -ne $builderOutputClaim) {
         $builderOutputClaim.Dispose()
+    }
+    if ($null -ne $installationCaptureRoot) {
+        $installationCaptureRoot.Pin.Dispose()
+        $installationCaptureRoot = $null
     }
 }
