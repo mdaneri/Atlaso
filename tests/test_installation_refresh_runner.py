@@ -15,6 +15,12 @@ pytestmark = pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None,
 
 
 def _run(script: str, directory: Path) -> str:
+    """Run a focused PowerShell snippet against the checked-in refresh functions.
+
+    Args:
+        script: PowerShell statements to evaluate after importing the helpers.
+        directory: Isolated working directory exposed to the script.
+    """
     setup = r"""
 $ErrorActionPreference='Stop'
 $repository=$env:REFRESH_TEST_REPOSITORY
@@ -36,6 +42,11 @@ foreach($function in $ast.FindAll({param($node) $node -is [Management.Automation
 
 
 def test_native_evidence_publisher_never_replaces_original_and_rejects_oversize(tmp_path):
+    """Keep original evidence immutable and reject oversized records.
+
+    Args:
+        tmp_path: Isolated directory for durable-evidence fixtures.
+    """
     output = _run(r"""
 Write-InstallationRefreshEvidence -Directory $directory -Name 'original.json' -Record @{value='original'}
 $before=(Get-FileHash -LiteralPath (Join-Path $directory 'original.json')).Hash
@@ -51,6 +62,11 @@ Write-Output 'original-preserved'
 
 
 def test_live_original_child_is_refused_and_not_stopped_by_reconciliation(tmp_path):
+    """Refuse reconciliation while an original consumer remains active.
+
+    Args:
+        tmp_path: Isolated directory for child and phase evidence.
+    """
     output = _run(r"""
 $jobName='Local\Atlaso-RefreshFixture-'+[guid]::NewGuid().ToString('N')
 $job=New-AtlasoBoundedProcessJob -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 30') -ProcessJobName $jobName -DeferResume
@@ -71,6 +87,11 @@ try{
 
 
 def test_absolute_deadline_includes_suspended_child_publication(tmp_path):
+    """Count ownership-publication time against the original process deadline.
+
+    Args:
+        tmp_path: Isolated directory for the bounded-process job fixture.
+    """
     output = _run(r"""
 $jobName='Local\Atlaso-RefreshDeadlineFixture-'+[guid]::NewGuid().ToString('N')
 $publisher={param($Job) Start-Sleep -Milliseconds 300}

@@ -15,6 +15,12 @@ from scripts.installation.manifest import digest
 
 @pytest.fixture
 def operation(tmp_path, monkeypatch):
+    """Create a synthetic originally receipted operation for admission tests.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory for isolated synthetic fixtures.
+        monkeypatch: Pytest fixture replacing dependencies without external operations.
+    """
     root, state = tmp_path / "output", tmp_path / "evidence"
     root.mkdir()
     state.mkdir()
@@ -29,6 +35,11 @@ def operation(tmp_path, monkeypatch):
 
 @pytest.mark.skipif(os.name != "nt", reason="Original output identity uses Windows handles")
 def test_phase_intent_is_original_and_cannot_be_replayed(operation):
+    """Refuse replay while preserving the original phase intent.
+
+    Args:
+        operation: Synthetic plan, original output receipt and immutable plan digest fixture.
+    """
     plan, state, checksum = operation
     intent = refresh.preflight(plan, state, checksum, "drift")
     assert intent["intent_id"]
@@ -42,6 +53,12 @@ def test_phase_intent_is_original_and_cannot_be_replayed(operation):
 
 @pytest.mark.skipif(os.name != "nt", reason="Original output identity uses Windows handles")
 def test_capacity_refusal_creates_no_original_consumer_or_resource(operation, monkeypatch):
+    """Refuse insufficient capacity before publishing a consumer intent.
+
+    Args:
+        operation: Synthetic plan, original output receipt and immutable plan digest fixture.
+        monkeypatch: Pytest fixture replacing dependencies without external operations.
+    """
     plan, state, checksum = operation
     monkeypatch.setattr(refresh, "authorize_phase", lambda *args, **kwargs: {
         "status": "authorized", "minimum_free_gib": 120, "timeout_seconds": 300})
@@ -52,6 +69,11 @@ def test_capacity_refusal_creates_no_original_consumer_or_resource(operation, mo
 
 
 def test_report_edit_invalidates_success_before_reuse(tmp_path):
+    """Refuse altered reports even when an earlier result claimed success.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory for isolated synthetic fixtures.
+    """
     report = tmp_path / "drift-report.json"
     refresh.publish(report, {"disposition": "reuse"})
     refresh.publish(tmp_path / "drift-intent.json", {"plan_sha256": "a" * 64})
@@ -63,6 +85,11 @@ def test_report_edit_invalidates_success_before_reuse(tmp_path):
 
 
 def test_protected_file_same_byte_replacement_is_not_original_identity(tmp_path):
+    """Reject same-byte protected-file replacement by filesystem identity.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory for isolated synthetic fixtures.
+    """
     protected = tmp_path / "protected.txt"
     protected.write_bytes(b"protected bytes")
     plan = {"protected_files": [{"path": str(protected), "sha256": digest(protected)}]}
@@ -76,6 +103,12 @@ def test_protected_file_same_byte_replacement_is_not_original_identity(tmp_path)
 
 
 def test_source_invalidation_refuses_capture_reuse(tmp_path, monkeypatch):
+    """Refuse captured inputs whose source compatibility digest changed.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory for isolated synthetic fixtures.
+        monkeypatch: Pytest fixture replacing dependencies without external operations.
+    """
     original = tmp_path / "original.json"
     refresh.publish(original, {"source_commit": "a" * 40, "task_id": "original-owner"})
     receipt = {"schema": 1, "kind": "installation-refresh-capture", "source_commit": "a" * 40,
@@ -91,6 +124,12 @@ def test_source_invalidation_refuses_capture_reuse(tmp_path, monkeypatch):
 
 @pytest.mark.skipif(os.name != "nt", reason="Capture root provenance uses native Windows identity")
 def test_complete_original_capture_reuse_requires_unchanged_bytes_and_creator_completion(tmp_path, monkeypatch):
+    """Admit complete original capture proof and refuse changed input bytes.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory for isolated synthetic fixtures.
+        monkeypatch: Pytest fixture replacing dependencies without external operations.
+    """
     capture = tmp_path / "retained-inputs"
     capture.mkdir()
     for name in ("rpms", "powercli"):
@@ -125,7 +164,33 @@ def test_complete_original_capture_reuse_requires_unchanged_bytes_and_creator_co
     ("Modules/file:stream", tarfile.REGTYPE), ("Modules/NUL.txt", tarfile.REGTYPE),
     ("Modules/trailing.", tarfile.REGTYPE),
 ])
+def test_capture_archive_path_admission_rejects_platform_independent_unsafe_entries(name, kind):
+    """Exercise native extraction's path/type guard without requiring Windows handles.
+
+    Args:
+        name: Traversal, link, alternate stream or reserved Windows archive path.
+        kind: Tar entry type for the unsafe candidate.
+    """
+    member = tarfile.TarInfo(name)
+    member.type = kind
+    with pytest.raises(ValueError, match="unsafe entry"):
+        refresh._capture_member_path(member, "Modules")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Archive extraction retains native Windows directory handles")
+@pytest.mark.parametrize("name,kind", [
+    ("../escape", tarfile.REGTYPE), ("Modules/link", tarfile.SYMTYPE),
+    ("Modules/file:stream", tarfile.REGTYPE), ("Modules/NUL.txt", tarfile.REGTYPE),
+    ("Modules/trailing.", tarfile.REGTYPE),
+])
 def test_complete_capture_extraction_preserves_unsafe_input_without_writing_outside(tmp_path, name, kind):
+    """Preserve unsafe capture archives and refuse writes outside the native extraction root.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory for isolated synthetic fixtures.
+        name: Unsafe archive path that must never escape or alias the extraction root.
+        kind: Tar member type used to exercise the extraction admission boundary.
+    """
     archive = tmp_path / "capture.tar"
     with tarfile.open(archive, "w:") as stream:
         member = tarfile.TarInfo(name)
@@ -139,7 +204,13 @@ def test_complete_capture_extraction_preserves_unsafe_input_without_writing_outs
     assert not (tmp_path / "escape").exists()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Archive extraction retains native Windows directory handles")
 def test_complete_capture_extraction_never_substitutes_existing_file(tmp_path):
+    """Extract a complete fixture once and refuse destination replacement.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory for isolated synthetic fixtures.
+    """
     archive = tmp_path / "capture.tar"
     with tarfile.open(archive, "w:") as stream:
         member = tarfile.TarInfo("Modules/Test/module.psm1")
@@ -153,6 +224,11 @@ def test_complete_capture_extraction_never_substitutes_existing_file(tmp_path):
 
 
 def test_direct_worker_replay_is_not_native_admission(tmp_path):
+    """Refuse direct worker calls without their original native process admission.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory for isolated synthetic fixtures.
+    """
     record = tmp_path / "install-child.json"
     refresh.publish(record, {"pid": os.getpid() + 1, "task_id": "actual", "phase": "install", "plan_sha256": "a" * 64})
     with pytest.raises(ValueError, match="original native child|native Windows job"):
@@ -160,6 +236,11 @@ def test_direct_worker_replay_is_not_native_admission(tmp_path):
 
 
 def test_immutable_publication_refuses_overwrite_and_duplicate_json_keys(tmp_path):
+    """Preserve original evidence and refuse ambiguous duplicate JSON keys.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory for isolated synthetic fixtures.
+    """
     path = tmp_path / "intent.json"
     refresh.publish(path, {"original": True})
     with pytest.raises(Exception, match="new name|publication"):

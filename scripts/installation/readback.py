@@ -41,14 +41,23 @@ TRUST_KEY = ROOT / "image/common/update-trust/atlaso-release-2026-01.pem"
 
 
 def _trusted_sources(repository: Path, commit: str) -> dict[str, bytes]:
-    """Bind installer source to the clean, pinned checkout's exact Git archive."""
+    """Bind installer source to the clean, pinned checkout's exact Git archive.
+
+    Args:
+        repository: Trusted Atlaso checkout containing the admitted source files.
+        commit: Exact full Git commit whose source bytes are required.
+    """
     from scripts.installation.development import _source_archive
 
     return _source_archive(repository, commit)
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    """Reject duplicate JSON keys before authenticating the parsed structure."""
+    """Reject duplicate JSON keys before authenticating the parsed structure.
+
+    Args:
+        pairs: Decoded JSON key/value pairs, including any duplicate keys.
+    """
     result: dict[str, Any] = {}
     for key, value in pairs:
         if key in result:
@@ -58,7 +67,12 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _parse_manifest(raw: bytes, signature_raw: bytes) -> dict[str, Any]:
-    """Verify the explicit public development trust and validate media identities."""
+    """Verify the explicit public development trust and validate media identities.
+
+    Args:
+        raw: Canonical manifest bytes to authenticate and parse.
+        signature_raw: Detached signature envelope bytes accompanying the manifest.
+    """
     try:
         value = json.loads(raw, object_pairs_hook=_unique_object)
         signature = json.loads(signature_raw, object_pairs_hook=_unique_object)
@@ -203,7 +217,13 @@ def _parse_manifest(raw: bytes, signature_raw: bytes) -> dict[str, Any]:
 
 
 def _stream_digest(iso: pycdlib.PyCdlib, rr_path: str, expected_size: int) -> tuple[int, str]:
-    """Hash one bounded ISO member through PyCdlib's streaming reader."""
+    """Hash one bounded ISO member through PyCdlib's streaming reader.
+
+    Args:
+        iso: Open read-only ISO filesystem used for payload inspection.
+        rr_path: Exact Rock Ridge path inside the ISO filesystem.
+        expected_size: Authenticated byte count required for this ISO member.
+    """
     record = iso.get_record(rr_path=rr_path)
     if record.is_dir() or record.is_symlink() or record.data_length != expected_size or expected_size > _MAX_MEMBER:
         raise ValueError("installation ISO member size differs from its signed inventory")
@@ -221,7 +241,13 @@ def _stream_digest(iso: pycdlib.PyCdlib, rr_path: str, expected_size: int) -> tu
 
 
 def _member_bytes(iso: pycdlib.PyCdlib, rr_path: str, maximum: int) -> bytes:
-    """Read one small ISO metadata member after checking the declared size."""
+    """Read one small ISO metadata member after checking the declared size.
+
+    Args:
+        iso: Open read-only ISO filesystem used for payload inspection.
+        rr_path: Exact Rock Ridge path inside the ISO filesystem.
+        maximum: Maximum admitted number of bytes for this metadata member.
+    """
     record = iso.get_record(rr_path=rr_path)
     if record.is_dir() or record.is_symlink() or record.data_length > maximum:
         raise ValueError("installation ISO metadata exceeds its bound")
@@ -234,7 +260,11 @@ def _member_bytes(iso: pycdlib.PyCdlib, rr_path: str, maximum: int) -> bytes:
 
 
 def _all_payload_paths(iso: pycdlib.PyCdlib) -> tuple[set[str], set[str]]:
-    """Enumerate every Rock Ridge payload file and directory, rejecting excess."""
+    """Enumerate every Rock Ridge payload file and directory, rejecting excess.
+
+    Args:
+        iso: Open read-only ISO filesystem used for payload inspection.
+    """
     files: list[str] = []
     directories: list[str] = [""]
     count = 0
@@ -259,6 +289,11 @@ class _IsoReadStream(io.RawIOBase):
     """Provide readinto for the canonical streaming software digest verifier."""
 
     def __init__(self, stream):
+        """Initialize the read-only ISO stream or path adapter.
+
+        Args:
+            stream: Unopened PyCdlib stream whose context initializes the file offset.
+        """
         super().__init__()
         self.stream = stream.__enter__()
 
@@ -266,6 +301,11 @@ class _IsoReadStream(io.RawIOBase):
         return True
 
     def readinto(self, buffer):
+        """Read the next initialized ISO stream chunk into a writable buffer.
+
+        Args:
+            buffer: Writable buffer receiving the next chunk of ISO file bytes.
+        """
         data = self.stream.read(len(buffer))
         buffer[:len(data)] = data
         return len(data)
@@ -279,6 +319,12 @@ class _IsoSoftwarePath:
     """Read-only Path interface for the existing exact signed-software checker."""
 
     def __init__(self, image, path="/atlaso/software"):
+        """Initialize the read-only ISO stream or path adapter.
+
+        Args:
+            image: Open read-only PyCdlib filesystem backing this path adapter.
+            path: Exact Rock Ridge software path exposed through the read-only adapter.
+        """
         self.image, self.path = image, path
 
     def is_symlink(self):
@@ -295,6 +341,11 @@ class _IsoSoftwarePath:
         return not record.is_dir() and stat.S_ISREG(record.rock_ridge.get_file_mode())
 
     def rglob(self, pattern):
+        """Enumerate the complete signed software tree without extraction.
+
+        Args:
+            pattern: Traversal pattern; only the complete wildcard is supported.
+        """
         if pattern != "*":
             raise ValueError("unsupported software readback traversal")
         for directory, directories, files in self.image.walk(rr_path=self.path):
@@ -302,15 +353,30 @@ class _IsoSoftwarePath:
                 yield _IsoSoftwarePath(self.image, directory + "/" + name)
 
     def relative_to(self, root):
+        """Express this ISO member relative to its software root.
+
+        Args:
+            root: Software root adapter against which the member path is expressed.
+        """
         return PurePosixPath(self.path).relative_to(PurePosixPath(root.path))
 
     def read_bytes(self):
         return _member_bytes(self.image, self.path, _MAX_MANIFEST)
 
     def read_text(self, encoding="utf-8"):
+        """Decode one bounded ISO metadata file.
+
+        Args:
+            encoding: Text encoding used to decode bounded metadata bytes.
+        """
         return self.read_bytes().decode(encoding)
 
     def open(self, mode):
+        """Open one ISO payload member for streaming binary verification.
+
+        Args:
+            mode: Requested file mode; only binary reading is supported.
+        """
         if mode != "rb":
             raise ValueError("software ISO readback is read-only")
         return _IsoReadStream(self.image.open_file_from_iso(rr_path=self.path))

@@ -45,7 +45,12 @@ class RefreshRefusal(ValueError):
 
 
 def captured_root(state: Path, plan: dict) -> Path:
-    """Keep reusable inputs beside, never under, their durable evidence directory."""
+    """Keep reusable inputs beside, never under, their durable evidence directory.
+
+    Args:
+        state: Durable operation evidence directory outside disposable output roots.
+        plan: Validated immutable operation plan with distinct task and input identities.
+    """
     root = state.parent / ("iso-inputs-" + plan["operation_id"])
     if root == state or state.is_relative_to(root):
         raise RefreshRefusal("capture inputs must not contain their durable creation evidence")
@@ -68,7 +73,12 @@ def supported_root() -> Path:
 
 
 def publish(path: Path, value: dict) -> None:
-    """Flush a new immutable evidence file; retain incomplete publication stages."""
+    """Flush a new immutable evidence file; retain incomplete publication stages.
+
+    Args:
+        path: Absent durable evidence filename to publish without replacement.
+        value: Bounded non-secret phase or resource evidence to publish.
+    """
     raw = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
     if len(raw) > MAX_STATE:
         raise RefreshRefusal("refresh evidence exceeds its bound")
@@ -81,8 +91,17 @@ def publish(path: Path, value: dict) -> None:
 
 
 def read(path: Path) -> dict:
-    """Read only bounded, ordinary, identity-checked JSON evidence."""
+    """Read only bounded, ordinary, identity-checked JSON evidence.
+
+    Args:
+        path: Exact ordinary single-link durable JSON evidence file.
+    """
     def unique(pairs):
+        """Reject duplicate JSON object keys before trusting durable evidence.
+
+        Args:
+            pairs: Decoded JSON key/value pairs, including any duplicate keys.
+        """
         result = {}
         for key, value in pairs:
             if key in result:
@@ -97,7 +116,12 @@ def read(path: Path) -> dict:
 
 
 def context(plan_path: Path, configured_root: Path) -> tuple[dict, Path, str]:
-    """Bind one plan to this actual task and an external durable evidence root."""
+    """Bind one plan to this actual task and an external durable evidence root.
+
+    Args:
+        plan_path: Absolute path of the original durable plan.json file.
+        configured_root: Independently resolved supported Codex worktree root.
+    """
     plan_path = plan_path.absolute()
     if plan_path.name != "plan.json":
         raise RefreshRefusal("refresh plan must use the fixed plan.json name")
@@ -115,7 +139,13 @@ def context(plan_path: Path, configured_root: Path) -> tuple[dict, Path, str]:
 
 
 def initialize(plan: dict, state: Path, plan_sha256: str) -> dict:
-    """Receipt the empty native-created output before any phase can consume it."""
+    """Receipt the empty native-created output before any phase can consume it.
+
+    Args:
+        plan: Validated immutable operation plan with distinct task and input identities.
+        state: Durable operation evidence directory outside disposable output roots.
+        plan_sha256: Digest binding evidence to the exact immutable operation plan.
+    """
     original = read(state / "output-native-original.json")
     root = Path(plan["output_root"])
     if (original.get("plan_sha256") != plan_sha256 or original.get("path") != str(root)
@@ -135,7 +165,12 @@ def initialize(plan: dict, state: Path, plan_sha256: str) -> dict:
 
 
 def history(state: Path, plan_sha256: str) -> tuple[dict, dict]:
-    """Refuse mismatched, pending or interrupted consumers before admitting another."""
+    """Refuse mismatched, pending or interrupted consumers before admitting another.
+
+    Args:
+        state: Durable operation evidence directory outside disposable output roots.
+        plan_sha256: Digest binding evidence to the exact immutable operation plan.
+    """
     results, starts = {}, {}
     for phase in PHASES:
         start, result = state / f"{phase}-intent.json", state / f"{phase}-result.json"
@@ -156,7 +191,11 @@ def history(state: Path, plan_sha256: str) -> tuple[dict, dict]:
 
 
 def source_input_sha256(repository: Path = ROOT) -> str:
-    """Fingerprint capture requirements without conflating them with installer source."""
+    """Fingerprint capture requirements without conflating them with installer source.
+
+    Args:
+        repository: Trusted Atlaso checkout containing the admitted source files.
+    """
     from scripts.installation.build import package_selection
     from scripts.installation.manifest import SOURCE_ISO_SHA512
 
@@ -171,7 +210,11 @@ def source_input_sha256(repository: Path = ROOT) -> str:
 
 
 def protected_files(plan: dict) -> list[dict]:
-    """Independently re-read the explicit protected file set without exposing contents."""
+    """Independently re-read the explicit protected file set without exposing contents.
+
+    Args:
+        plan: Validated immutable operation plan with distinct task and input identities.
+    """
     records = []
     for item in plan["protected_files"]:
         if digest(Path(item["path"])) != item["sha256"]:
@@ -182,12 +225,21 @@ def protected_files(plan: dict) -> list[dict]:
 
 
 def input_inventory(plan: dict) -> dict:
-    """Bind the complete unchanged capture, rather than a subset of packages."""
+    """Bind the complete unchanged capture, rather than a subset of packages.
+
+    Args:
+        plan: Validated immutable operation plan with distinct task and input identities.
+    """
     return {name: inventory(Path(plan[name])) for name in ("rpms", "powercli")}
 
 
 def verify_protected_files(plan: dict, state: Path) -> list[dict]:
-    """Compare content and original filesystem identity, including same-byte replacement."""
+    """Compare content and original filesystem identity, including same-byte replacement.
+
+    Args:
+        plan: Validated immutable operation plan with distinct task and input identities.
+        state: Durable operation evidence directory outside disposable output roots.
+    """
     observed = protected_files(plan)
     if observed != read(state / "output-original.json").get("protected_files"):
         raise RefreshRefusal("protected input identity changed; preserve resources")
@@ -195,7 +247,12 @@ def verify_protected_files(plan: dict, state: Path) -> list[dict]:
 
 
 def check_capture(plan: dict, state: Path) -> None:
-    """Require genuine original capture provenance and source-compatible bytes."""
+    """Require genuine original capture provenance and source-compatible bytes.
+
+    Args:
+        plan: Validated immutable operation plan with distinct task and input identities.
+        state: Durable operation evidence directory outside disposable output roots.
+    """
     selector = plan["capture_receipt"]
     path = Path(selector["path"]) if selector else state / "capture-inputs.json"
     if selector and digest(path) != selector["sha256"]:
@@ -235,7 +292,16 @@ def check_capture(plan: dict, state: Path) -> None:
 
 def preflight(plan: dict, state: Path, plan_sha256: str, phase: str,
               *, old_rpm: Path | None = None, new_rpm: Path | None = None) -> dict:
-    """Authorize one phase, reserve its original deadline and never replay it."""
+    """Authorize one phase, reserve its original deadline and never replay it.
+
+    Args:
+        plan: Validated immutable operation plan with distinct task and input identities.
+        state: Durable operation evidence directory outside disposable output roots.
+        plan_sha256: Digest binding evidence to the exact immutable operation plan.
+        phase: Fixed workflow phase whose original intent or result is being checked.
+        old_rpm: Exact existing old package selected for diagnostic comparison only.
+        new_rpm: Exact existing new package selected for diagnostic comparison only.
+    """
     results, starts = history(state, plan_sha256)
     authorization = authorize_phase(phase, results, starts, plan=plan)
     if authorization["status"] != "authorized":
@@ -274,13 +340,45 @@ def preflight(plan: dict, state: Path, plan_sha256: str, phase: str,
 
 
 def _call(script: str, arguments: list[str], *, powershell: bool = False) -> None:
-    """Call only a checked-in canonical entry point inside the outer Windows job."""
+    """Call only a checked-in canonical entry point inside the outer Windows job.
+
+    Args:
+        script: Repository-relative checked-in entry point selected by this workflow.
+        arguments: Individual fixed-tool arguments passed without shell interpolation.
+        powershell: Whether the checked-in entry point is a PowerShell script.
+    """
     command = ["pwsh", "-NoProfile", "-File"] if powershell else [sys.executable, "-I", "-B"]
     subprocess.run([*command, str(ROOT / script), *arguments], check=True, cwd=ROOT)
 
 
+def _capture_member_path(member: tarfile.TarInfo, prefix: str) -> PurePosixPath:
+    """Validate one archive path independently of native extraction handles.
+
+    Args:
+        member: Untrusted archive member whose type, name and size must be admitted.
+        prefix: Exact expected top-level directory in the captured archive.
+    """
+    name = PurePosixPath(member.name)
+    if (name.is_absolute() or ".." in name.parts or "\\" in member.name or not name.parts
+            or any(re.search(r'[<>:"|?*\x00-\x1f]', part) or part.endswith((".", " "))
+                   or part.split(".", 1)[0].upper() in {
+                       "CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
+                       *(f"LPT{i}" for i in range(1, 10)),
+                   } for part in name.parts)
+            or name.parts[0] != prefix or not (member.isfile() or member.isdir())
+            or member.size < 0 or member.size > 2 * 1024**3):
+        raise RefreshRefusal("capture archive has an unsafe entry")
+    return name
+
+
 def _unpack(archive: Path, destination: Path, prefix: str) -> None:
-    """Unpack a complete capture without links, replacement or unbounded extraction."""
+    """Unpack a complete capture without links, replacement or unbounded extraction.
+
+    Args:
+        archive: Existing complete capture tar archive pinned before extraction.
+        destination: Absent task-owned extraction directory under the original capture root.
+        prefix: Exact expected top-level directory in the capture archive.
+    """
     if destination.exists():
         raise RefreshRefusal("capture extraction destination already exists")
     from scripts.installation.iso import _checked_path, _open_pinned, _verify_pinned
@@ -296,15 +394,8 @@ def _unpack(archive: Path, destination: Path, prefix: str) -> None:
         directories = {destination}
         stream = pins.enter_context(tarfile.open(fileobj=archive_pin.stream, mode="r:"))
         for member in stream:
-            name = PurePosixPath(member.name)
-            if (name.is_absolute() or ".." in name.parts or "\\" in member.name or not name.parts
-                    or any(re.search(r'[<>:"|?*\x00-\x1f]', part) or part.endswith((".", " "))
-                           or part.split(".", 1)[0].upper() in {
-                               "CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
-                               *(f"LPT{i}" for i in range(1, 10)),
-                           } for part in name.parts)
-                    or name.parts[0] != prefix or member.name in names
-                    or not (member.isfile() or member.isdir()) or member.size > 2 * 1024**3):
+            name = _capture_member_path(member, prefix)
+            if member.name in names:
                 raise RefreshRefusal("capture archive has an unsafe entry")
             names.add(member.name)
             total += member.size
@@ -337,7 +428,12 @@ def _unpack(archive: Path, destination: Path, prefix: str) -> None:
 
 
 def vm_arguments(plan: dict, state: Path) -> list[str]:
-    """Use original emitted selectors, never discover or reconstruct ownership."""
+    """Use original emitted selectors, never discover or reconstruct ownership.
+
+    Args:
+        plan: Validated immutable operation plan with distinct task and input identities.
+        state: Durable operation evidence directory outside disposable output roots.
+    """
     documents = [read(state / "vm-selectors.json")]
     if (state / "boot-selectors.json").exists():
         documents.append(read(state / "boot-selectors.json"))
@@ -365,12 +461,22 @@ def vm_arguments(plan: dict, state: Path) -> list[str]:
 
 
 def vm_root(plan: dict) -> Path:
-    """Derive the same canonical identity as the owning installation harness."""
+    """Derive the same canonical identity as the owning installation harness.
+
+    Args:
+        plan: Validated immutable operation plan with distinct task and input identities.
+    """
     return Path(plan["output_root"]) / f"Atlaso-PR-{plan['pull_request_number']}-installation-iso-{plan['operation_id']}"
 
 
 def execute(plan: dict, state: Path, phase: str) -> dict:
-    """Run exactly one fixed phase; errors preserve its resources and original intent."""
+    """Run exactly one fixed phase; errors preserve its resources and original intent.
+
+    Args:
+        plan: Validated immutable operation plan with distinct task and input identities.
+        state: Durable operation evidence directory outside disposable output roots.
+        phase: Fixed workflow phase whose original intent or result is being checked.
+    """
     root = Path(plan["output_root"])
     iso = root / "development.iso"
     capabilities = {}
@@ -486,7 +592,15 @@ def execute(plan: dict, state: Path, phase: str) -> dict:
 
 
 def assert_native_child(path: Path, plan: dict, plan_sha256: str, phase: str, state: Path) -> None:
-    """Require the exact suspended child and named Windows job, never a raw replay."""
+    """Require the exact suspended child and named Windows job, never a raw replay.
+
+    Args:
+        path: Original native child receipt selected for this exact phase.
+        plan: Validated immutable operation plan with distinct task and input identities.
+        plan_sha256: Digest binding evidence to the exact immutable operation plan.
+        phase: Fixed workflow phase whose original intent or result is being checked.
+        state: Durable operation evidence directory outside disposable output roots.
+    """
     if os.name != "nt" or path != state / f"{phase}-child.json":
         raise RefreshRefusal("refresh consumers require the native Windows job owner")
     record = read(path)
@@ -511,7 +625,11 @@ def assert_native_child(path: Path, plan: dict, plan_sha256: str, phase: str, st
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Serve the fixed native launcher protocol; never accept caller command text."""
+    """Serve the fixed native launcher protocol; never accept caller command text.
+
+    Args:
+        argv: Optional command-line argument list; None uses the process arguments.
+    """
     for name in list(os.environ):
         if name.upper().startswith("GIT_") and name.upper() != "GIT_ASKPASS":
             os.environ.pop(name)

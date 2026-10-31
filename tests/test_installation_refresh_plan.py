@@ -26,7 +26,11 @@ WORKTREE = ROOT + r"\issue1076-iso-refresh\Atlaso"
 
 
 def plan(*, fresh_capture: bool = False) -> dict:
-    """Return one well-formed plan for the tested path profile."""
+    """Return one well-formed plan for the tested path profile.
+
+    Args:
+        fresh_capture: Select newly captured inputs under the durable evidence root.
+    """
     output_root = WORKTREE + r"\refresh-" + OPERATION_ID
     return {
         "schema": 1,
@@ -50,7 +54,13 @@ def plan(*, fresh_capture: bool = False) -> dict:
 
 
 def record(status: str, *, disposition: str | None = None, **extra: object) -> dict:
-    """Bind a recorded phase result to the example plan identities."""
+    """Bind a recorded phase result to the example plan identities.
+
+    Args:
+        status: Recorded terminal or pending phase status.
+        disposition: Optional drift outcome attached to the phase result.
+        **extra: Additional result fields for the scenario under test.
+    """
     result = {
         "status": status,
         "operation_id": OPERATION_ID,
@@ -66,7 +76,11 @@ def record(status: str, *, disposition: str | None = None, **extra: object) -> d
 
 
 def context(*, disposition: str = "reuse") -> tuple[dict[str, dict], dict[str, dict]]:
-    """Return a successful drift result and its immutable original start selector."""
+    """Return a successful drift result and its immutable original start selector.
+
+    Args:
+        disposition: Drift disposition to include in the result.
+    """
     return (
         {"drift": record("succeeded", disposition=disposition)},
         {"drift": start_intent()},
@@ -124,6 +138,12 @@ def test_fresh_capture_paths_must_be_retained_outside_worktree_and_have_no_recei
 )
 
 def test_plan_rejects_noncanonical_or_untrusted_values(field: str, bad_value: object) -> None:
+    """Reject invalid values for selected plan fields.
+
+    Args:
+        field: Plan key receiving the invalid value.
+        bad_value: Invalid path or scalar value to validate.
+    """
     value = plan()
     value[field] = bad_value
 

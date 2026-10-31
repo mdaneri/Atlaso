@@ -46,6 +46,11 @@ def capture_drift_report(
 
     This is diagnostic only. A clean report does not authenticate packages or
     replace the normal complete-transaction validation.
+
+    Args:
+        captured: Complete captured package identity records to compare.
+        current: Current official Photon package identity records.
+        package_names: Complete package selection from the admitted source contract.
     """
     if len(captured) > MAX_CAPTURE_PACKAGES or len(current) > 100_000:
         raise ValueError("package inventory exceeds its bound")
@@ -117,6 +122,11 @@ def capture_drift_report(
 
 
 def _index_records(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Index bounded package identities and reject malformed or duplicate package names.
+
+    Args:
+        records: Bounded package identity records to index without duplicates.
+    """
     indexed: dict[str, dict[str, Any]] = {}
     required = {"file", "name", "version", "architecture", "sha256"}
     for record in records:
@@ -133,11 +143,21 @@ def _index_records(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
 
 
 def _identity(record: dict[str, Any]) -> tuple[str, str, str, str]:
+    """Return the complete comparable package identity, including its digest.
+
+    Args:
+        record: One package or phase evidence record being validated.
+    """
     return (record["name"], record["version"], record["architecture"], record["sha256"])
 
 
 def compare_native_packages(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
-    """Return a bounded, review-only comparison of fixed RPM header/file/script data."""
+    """Return a bounded, review-only comparison of fixed RPM header/file/script data.
+
+    Args:
+        old: Bounded native header, file metadata and scriptlet report for the old RPM.
+        new: Bounded native header, file metadata and scriptlet report for the new RPM.
+    """
     _validate_native_record(old)
     _validate_native_record(new)
     fields = ("name", "epoch", "version", "release", "architecture", "source_rpm",
@@ -189,6 +209,11 @@ def compare_native_packages(old: dict[str, Any], new: dict[str, Any]) -> dict[st
 
 
 def _validate_native_record(record: dict[str, Any]) -> None:
+    """Validate the complete bounded native package diagnostic schema.
+
+    Args:
+        record: One package or phase evidence record being validated.
+    """
     fields = {"name", "epoch", "version", "release", "architecture", "source_rpm", "license",
               "vendor", "group", "build_time", "installed_size", "archive_size", "files",
               "scriptlets_sha256", "scriptlets_bytes", "scriptlets", "sha256"}
@@ -219,7 +244,12 @@ def _validate_native_record(record: dict[str, Any]) -> None:
 
 
 def _run_rpm(arguments: list[str], *, byte_limit: int) -> bytes:
-    """Run a fixed RPM query with a timeout and a hard combined output ceiling."""
+    """Run a fixed RPM query with a timeout and a hard combined output ceiling.
+
+    Args:
+        arguments: Individual fixed-tool arguments passed without shell interpolation.
+        byte_limit: Hard maximum combined native diagnostic output size in bytes.
+    """
     import os
     import threading
 
@@ -239,6 +269,12 @@ def _run_rpm(arguments: list[str], *, byte_limit: int) -> bytes:
     exceeded = threading.Event()
 
     def drain(pipe: Any, keep: bool) -> None:
+        """Drain one native output stream while enforcing the combined output ceiling.
+
+        Args:
+            pipe: One child output pipe drained under the shared output ceiling.
+            keep: Whether this pipe contributes retained query stdout instead of discarded stderr.
+        """
         nonlocal size
         while chunk := pipe.read(8192):
             with lock:
@@ -274,17 +310,30 @@ def _run_rpm(arguments: list[str], *, byte_limit: int) -> bytes:
 
 
 def inspect_native_package(package: Path) -> dict[str, Any]:
-    """Read only fixed public RPM header, file dump, and scriptlet data for review."""
+    """Read only fixed public RPM header, file dump, and scriptlet data for review.
+
+    Args:
+        package: Existing ordinary single-link RPM file selected for a fixed query.
+    """
     return _inspect_package(package, native=True)
 
 
 def _inspect_package_identity(package: Path) -> dict[str, Any]:
-    """Read only the bounded identity fields needed for early capture drift."""
+    """Read only the bounded identity fields needed for early capture drift.
+
+    Args:
+        package: Existing ordinary single-link RPM file selected for a fixed query.
+    """
     return _inspect_package(package, native=False)
 
 
 def _inspect_package(package: Path, *, native: bool) -> dict[str, Any]:
-    """Query a pinned RPM path and verify the same file after every read."""
+    """Query a pinned RPM path and verify the same file after every read.
+
+    Args:
+        package: Existing ordinary single-link RPM file selected for a fixed query.
+        native: Whether to include full bounded header, file metadata and scriptlets.
+    """
     pinned = _open_pinned(package)
     if pinned.stream is None:
         raise ValueError("rpm_path_invalid")
@@ -345,7 +394,11 @@ def _inspect_package(package: Path, *, native: bool) -> dict[str, Any]:
 
 
 def _ordinary_file(path: Path) -> Path:
-    """Resolve an existing regular single-link RPM under ordinary directories."""
+    """Resolve an existing regular single-link RPM under ordinary directories.
+
+    Args:
+        path: Exact ordinary local filesystem path to inspect.
+    """
     return _checked_path(path, final_kind="file")
 
 
@@ -356,6 +409,11 @@ def inspect_capture(
 
     A returned current status is informational. Call the ordinary signed RPM and
     complete transaction validator before allowing any build or installation.
+
+    Args:
+        repository: Trusted Atlaso checkout containing the admitted source files.
+        rpms: Captured RPM directory, which may be absent before fresh capture.
+        package_names: Complete package selection from the admitted source contract.
     """
     selected = package_selection(repository)
     if package_names is not None and package_names != selected:
@@ -399,13 +457,22 @@ def inspect_capture(
 
 
 def _current_record(identity: tuple[str, str, str, str, str, str]) -> dict[str, Any]:
+    """Represent one current official Photon package identity for drift comparison.
+
+    Args:
+        identity: Official package name, epoch, version, release, architecture and digest tuple.
+    """
     name, epoch, version, release, architecture, sha256 = identity
     return {"file": "", "name": name, "version": f"{epoch}:{version}-{release}",
             "architecture": architecture, "sha256": sha256}
 
 
 def _validate_repodata(path: Path) -> None:
-    """Admit a bounded, ordinary flat metadata directory inside an RPM capture."""
+    """Admit a bounded, ordinary flat metadata directory inside an RPM capture.
+
+    Args:
+        path: Exact ordinary local filesystem path to inspect.
+    """
     directory = _ordinary_directory(path)
     entries = list(directory.iterdir())
     if len(entries) > 64:
@@ -415,5 +482,9 @@ def _validate_repodata(path: Path) -> None:
 
 
 def _ordinary_directory(path: Path) -> Path:
-    """Require an existing directory and every parent component to be unlinked."""
+    """Require an existing directory and every parent component to be unlinked.
+
+    Args:
+        path: Exact ordinary local filesystem path to inspect.
+    """
     return _checked_path(path, final_kind="directory")

@@ -13,6 +13,13 @@ from scripts.installation import content_inspection, refresh_drift
 
 
 def _record(name: str, version: str, digest: str) -> dict[str, Any]:
+    """Build one RPM inventory record.
+
+    Args:
+        name: Package name recorded by the fixture.
+        version: Epoch, version, and release string for the package.
+        digest: SHA-256 digest associated with the package.
+    """
     return {
         "file": f"{name}-1.0-1.ph5.x86_64.rpm",
         "name": name,
@@ -23,6 +30,12 @@ def _record(name: str, version: str, digest: str) -> dict[str, Any]:
 
 
 def _native(scriptlets: str = "", *, file_mode: str = "0100755") -> dict[str, Any]:
+    """Build one native RPM metadata record.
+
+    Args:
+        scriptlets: RPM scriptlet text included in the record.
+        file_mode: Mode string assigned to the fixture file entry.
+    """
     raw = scriptlets.encode("utf-8")
     return {
         "name": "openssh-server", "epoch": "0", "version": "10.6p1", "release": "2.ph5",
@@ -161,6 +174,12 @@ def test_native_comparison_separates_identity_digest_from_runtime_behavior() -> 
 
 
 def test_capture_without_directory_reports_current_profile_availability(monkeypatch, tmp_path) -> None:
+    """Report official profile availability when no capture directory exists.
+
+    Args:
+        monkeypatch: Pytest patcher for package selection and repository metadata.
+        tmp_path: Isolated source and absent RPM directory paths.
+    """
     selected = ["openssh-server"]
     current = {("openssh-server", "0", "10.7p1", "1.ph5", "x86_64", "d" * 64)}
     monkeypatch.setattr(refresh_drift, "package_selection", lambda _repository: selected)
@@ -173,6 +192,12 @@ def test_capture_without_directory_reports_current_profile_availability(monkeypa
 
 
 def test_native_reader_parses_tab_delimited_metadata_with_spaces(monkeypatch, tmp_path: Path) -> None:
+    """Parse native RPM records whose file paths contain spaces.
+
+    Args:
+        monkeypatch: Pytest patcher for pinned-file access and RPM command output.
+        tmp_path: Isolated directory containing the pinned RPM fixture.
+    """
     package = tmp_path / "fixture.rpm"
     package.write_bytes(b"fixture")
     pinned = type("Pinned", (), {"path": package, "stream": io.BytesIO(b"fixture"),

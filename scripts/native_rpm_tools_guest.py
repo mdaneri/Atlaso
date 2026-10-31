@@ -24,12 +24,20 @@ MAX_OUTPUT = 4 * 1024**2
 
 
 def birth(pid: int) -> str:
-    """Read the kernel start tick of one exact Linux process."""
+    """Read the kernel start tick of one exact Linux process.
+
+    Args:
+        pid: Exact Linux process identifier whose kernel birth tick is read.
+    """
     return Path(f"/proc/{pid}/stat").read_text().rpartition(") ")[2].split()[19]
 
 
 def live_group(group: int) -> list[int]:
-    """Return every executing process in the original tool session/group."""
+    """Return every executing process in the original tool session/group.
+
+    Args:
+        group: Original Linux process group and session identifier to inspect.
+    """
     result = []
     for path in Path("/proc").iterdir():
         if not path.name.isdecimal():
@@ -44,7 +52,12 @@ def live_group(group: int) -> list[int]:
 
 
 def stop_group(group: int, expected_birth: str | None = None) -> None:
-    """Terminate only the original tool group and prove no executing members remain."""
+    """Terminate only the original tool group and prove no executing members remain.
+
+    Args:
+        group: Original Linux process group and session identifier to inspect.
+        expected_birth: Original group-leader start tick preventing unrelated PID-reuse cleanup.
+    """
     end = time.monotonic() + 5
     while live_group(group):
         try:
@@ -62,12 +75,20 @@ def stop_group(group: int, expected_birth: str | None = None) -> None:
 
 
 def emit(value: dict) -> None:
-    """Emit one protocol message, never arbitrary tool or console bytes."""
+    """Emit one protocol message, never arbitrary tool or console bytes.
+
+    Args:
+        value: Bounded protocol record, never arbitrary console or credential text.
+    """
     print(json.dumps(value, separators=(",", ":")), flush=True)
 
 
 def execute(request: dict) -> int:
-    """Execute one fixed native tool with an original, host-released child."""
+    """Execute one fixed native tool with an original, host-released child.
+
+    Args:
+        request: Bounded fixed-tool request with original task, source and deadline bindings.
+    """
     name, arguments = request["tool"], request["arguments"]
     if name not in TOOLS or not isinstance(arguments, list) or len(arguments) > 2048:
         raise ValueError("native_tool_request_invalid")

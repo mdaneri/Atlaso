@@ -18,6 +18,12 @@ from scripts import native_rpm_tools as native
 
 @pytest.fixture
 def native_context(tmp_path, monkeypatch):
+    """Create a bound native-tool protocol context for one test.
+
+    Args:
+        tmp_path: Isolated root for the context and native evidence files.
+        monkeypatch: Pytest patcher for the protocol environment variables.
+    """
     directory = tmp_path / "native"
     directory.mkdir()
     context = tmp_path / "context.json"
@@ -42,6 +48,12 @@ class GuestProtocol:
     """Model the two-sided pipe barrier without executing a native utility."""
 
     def __init__(self, directory: Path, *, pending: bool = False):
+        """Initialize a fake native guest protocol endpoint.
+
+        Args:
+            directory: Root where the parent publishes original evidence.
+            pending: Whether the guest reports unproven process-group completion.
+        """
         self.stdin = io.BytesIO()
         self.stdout = self
         self.directory = directory
@@ -49,6 +61,11 @@ class GuestProtocol:
         self.step = 0
 
     def readline(self, maximum):
+        """Return the next synthetic guest protocol message.
+
+        Args:
+            maximum: Maximum requested line length from the protocol reader.
+        """
         self.step += 1
         lines = self.stdin.getvalue().splitlines()
         request = json.loads(lines[0])
@@ -68,6 +85,11 @@ class GuestProtocol:
                            "output": base64.b64encode(b"rpm version fixture\n").decode()}).encode() + b"\n"
 
     def wait(self, timeout):
+        """Report fake process completion to the parent protocol.
+
+        Args:
+            timeout: Maximum wait requested by the protocol caller.
+        """
         return 0
 
     def close(self):
@@ -75,6 +97,12 @@ class GuestProtocol:
 
 
 def test_native_tool_cannot_execute_until_original_publication(native_context, monkeypatch):
+    """Require durable Linux identity publication before tool execution.
+
+    Args:
+        native_context: Isolated context and evidence directory fixture.
+        monkeypatch: Pytest patcher for the fake guest process.
+    """
     monkeypatch.setattr(native.subprocess, "Popen", lambda *args, **kwargs: GuestProtocol(native_context))
     assert native.run(["rpm", "--version"]) == "rpm version fixture\n"
     assert native.quiescent(native_context) is True
@@ -84,6 +112,12 @@ def test_native_tool_cannot_execute_until_original_publication(native_context, m
 
 
 def test_missing_linux_completion_is_preserved_and_never_assumed_quiescent(native_context, monkeypatch):
+    """Preserve missing guest completion evidence and refuse quiescence.
+
+    Args:
+        native_context: Isolated context and evidence directory fixture.
+        monkeypatch: Pytest patcher for the pending guest process.
+    """
     monkeypatch.setattr(native.subprocess, "Popen", lambda *args, **kwargs: GuestProtocol(native_context, pending=True))
     with pytest.raises(RuntimeError, match="quiescence_unproven"):
         native.run(["rpm", "--version"])
@@ -93,7 +127,19 @@ def test_missing_linux_completion_is_preserved_and_never_assumed_quiescent(nativ
 
 
 def test_tool_allowlist_refuses_an_arbitrary_command_before_process_creation(native_context, monkeypatch):
+    """Reject commands outside the fixed native-tool allowlist before spawning.
+
+    Args:
+        native_context: Isolated context and evidence directory fixture.
+        monkeypatch: Pytest patcher that detects attempted process creation.
+    """
     def forbidden(*args, **kwargs):
+        """Fail if the native protocol attempts to create a process.
+
+        Args:
+            *args: Positional process-creation arguments.
+            **kwargs: Keyword process-creation options.
+        """
         raise AssertionError("Process creation must not occur")
 
     monkeypatch.setattr(native.subprocess, "Popen", forbidden)
@@ -114,6 +160,12 @@ def test_guest_group_inspection_does_not_include_an_unrelated_session():
 @pytest.mark.skipif(os.name == "nt", reason="Linux fork, timeout and process-group integration")
 @pytest.mark.parametrize("release", [True, False])
 def test_real_linux_child_waits_for_original_receipt_and_is_quiescent_after_owner_exit(tmp_path, release):
+    """Verify the Linux child waits for its selector and exits its process group.
+
+    Args:
+        tmp_path: Isolated working directory for the child process fixture.
+        release: Whether to release the child after publishing its original selector.
+    """
     from scripts.native_rpm_tools_guest import live_group
 
     executable = "/usr/bin/printf" if release else "/usr/bin/touch"

@@ -79,13 +79,25 @@ _DRIFT_DISPOSITIONS = {"reuse", "requires_capture", "requires_review"}
 
 
 def _require_mapping(value: object, name: str, keys: set[str]) -> dict[str, Any]:
+    """Require the exact bounded object schema without accepting additional keys.
+
+    Args:
+        value: Untrusted decoded object that must match the exact mapping schema.
+        name: Safe schema label used in fixed validation diagnostics.
+        keys: Exact required key set for this bounded JSON object.
+    """
     if not isinstance(value, Mapping) or set(value) != keys:
         raise ValueError(f"{name} schema is invalid")
     return dict(value)
 
 
 def _path(value: object, name: str) -> PurePosixPath | PureWindowsPath:
-    """Accept only canonical absolute local paths; plans never accept URI/UNC paths."""
+    """Accept only canonical absolute local paths; plans never accept URI/UNC paths.
+
+    Args:
+        value: Untrusted path spelling requiring canonical absolute local syntax.
+        name: Safe input label used in path validation diagnostics.
+    """
     if not isinstance(value, str) or not value or "\x00" in value:
         raise ValueError(f"{name} path is invalid")
     if value.startswith(("//", "\\\\")) or "://" in value:
@@ -104,14 +116,32 @@ def _path(value: object, name: str) -> PurePosixPath | PureWindowsPath:
 
 
 def _same_path_kind(first: PurePosixPath | PureWindowsPath, second: PurePosixPath | PureWindowsPath) -> bool:
+    """Require both paths to use the same local filesystem syntax.
+
+    Args:
+        first: First canonical path to compare.
+        second: Second canonical path to compare.
+    """
     return type(first) is type(second)
 
 
 def _within(path: PurePosixPath | PureWindowsPath, root: PurePosixPath | PureWindowsPath) -> bool:
+    """Test canonical lexical containment without crossing path syntax families.
+
+    Args:
+        path: Canonical local candidate path to test for containment.
+        root: Canonical local parent path defining the containment boundary.
+    """
     return _same_path_kind(path, root) and path.is_relative_to(root)
 
 
 def _overlaps(first: PurePosixPath | PureWindowsPath, second: PurePosixPath | PureWindowsPath) -> bool:
+    """Detect either containment direction between canonical local paths.
+
+    Args:
+        first: First canonical path to compare.
+        second: Second canonical path to compare.
+    """
     return _within(first, second) or _within(second, first)
 
 
@@ -127,6 +157,11 @@ def validate_plan(
     before authorizing any phase. A null capture receipt describes a fresh RPM and
     PowerCLI capture that the driver must create in its separate retained input root
     and receipt before first use.
+
+    Args:
+        value: Untrusted decoded immutable plan to validate without filesystem access.
+        configured_root: Independently resolved supported Codex worktree root.
+        worktree: Independently resolved dedicated task checkout beneath the configured root.
     """
     plan = _require_mapping(value, "refresh plan", _PLAN_KEYS)
     if type(plan["schema"]) is not int or plan["schema"] != 1:
@@ -245,7 +280,12 @@ def validate_plan(
 
 
 def canonical_plan_sha256(value: object, **path_context: str) -> str:
-    """Hash the canonical validated plan representation."""
+    """Hash the canonical validated plan representation.
+
+    Args:
+        value: Decoded plan to validate and hash in canonical form.
+        **path_context: Independently resolved configured-root and worktree path arguments.
+    """
     plan = validate_plan(value, **path_context)
     encoded = json.dumps(plan, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -257,6 +297,13 @@ def _phase_record(
     *,
     plan: Mapping[str, Any] | None,
 ) -> tuple[str, str | None]:
+    """Validate a terminal phase status and its source and quiescence binding.
+
+    Args:
+        phase: Fixed workflow phase whose original intent or result is being checked.
+        record: One package or phase evidence record being validated.
+        plan: Validated immutable operation plan with distinct task and input identities.
+    """
     if phase not in PHASES or not isinstance(record, Mapping):
         return "refused", "phase record is malformed"
     status = record.get("status")
@@ -270,6 +317,12 @@ def _phase_record(
 
 
 def _binding_error(record: Mapping[str, Any], plan: Mapping[str, Any]) -> str | None:
+    """Explain a phase record mismatch against the immutable operation identity.
+
+    Args:
+        record: One package or phase evidence record being validated.
+        plan: Validated immutable operation plan with distinct task and input identities.
+    """
     if record.get("operation_id") != plan.get("operation_id"):
         return "phase operation identity differs"
     if record.get("task_id") != plan.get("task_id"):
@@ -286,7 +339,14 @@ def _history_error(
     plan: Mapping[str, Any] | None,
     target: str,
 ) -> tuple[str, str] | None:
-    """Require one bound, quiescent result for every prior original intent."""
+    """Require one bound, quiescent result for every prior original intent.
+
+    Args:
+        results: Terminal phase results indexed by their fixed phase names.
+        started: Original immutable phase intents indexed by their fixed phase names.
+        plan: Validated immutable operation plan with distinct task and input identities.
+        target: Requested next phase, including the retained-failure verification exception.
+    """
     if any(phase not in PHASES for phase in (*results, *started)):
         return "refused", "phase history contains an unknown phase"
     for phase, intent in started.items():
@@ -325,7 +385,14 @@ def authorize_phase(
     *,
     plan: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Return whether a phase may start, honoring dependencies and no-replay rules."""
+    """Return whether a phase may start, honoring dependencies and no-replay rules.
+
+    Args:
+        phase: Fixed workflow phase whose original intent or result is being checked.
+        results: Terminal phase results indexed by their fixed phase names.
+        started: Original immutable phase intents indexed by their fixed phase names.
+        plan: Validated immutable operation plan with distinct task and input identities.
+    """
     if phase not in PHASES:
         return {"status": "refused", "reason": "phase is unknown"}
     if phase in started or phase in results:
@@ -337,6 +404,11 @@ def authorize_phase(
         return {"status": status, "reason": reason}
 
     def result_status(name: str) -> tuple[str, str | None]:
+        """Resolve a prerequisite phase result without granting missing work admission.
+
+        Args:
+            name: Fixed prerequisite phase name whose terminal status is required.
+        """
         if name not in results:
             return "pending", f"{name} result is pending"
         status, reason = _phase_record(name, results[name], plan=plan)
@@ -397,6 +469,11 @@ def authorize_phase(
 
 
 def _authorization(phase: str) -> dict[str, Any]:
+    """Return the fixed capacity and deadline contract for one admitted phase.
+
+    Args:
+        phase: Fixed workflow phase whose original intent or result is being checked.
+    """
     return {
         "status": "authorized",
         "phase": phase,
@@ -411,7 +488,13 @@ def next_phase(
     *,
     plan: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Find the next authorized phase, stopping at pending, refused, or terminal work."""
+    """Find the next authorized phase, stopping at pending, refused, or terminal work.
+
+    Args:
+        results: Terminal phase results indexed by their fixed phase names.
+        started: Original immutable phase intents indexed by their fixed phase names.
+        plan: Validated immutable operation plan with distinct task and input identities.
+    """
     for phase in PHASES:
         if phase == "compare" and phase not in started and phase not in results:
             continue

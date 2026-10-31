@@ -30,7 +30,12 @@ _RELEASE_KEY = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
 
 @pytest.fixture(autouse=True)
 def trusted_source_fixture(monkeypatch, tmp_path):
-    """Supply independent fixture trust and source bytes, distinct from media."""
+    """Supply independent fixture trust and source bytes, distinct from media.
+
+    Args:
+        monkeypatch: Pytest patcher for the independent trusted-source lookup.
+        tmp_path: Isolated directory for the fixture trust key.
+    """
     key = _RELEASE_KEY.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
     trust = tmp_path / "trusted-release.pem"
     trust.write_bytes(key)
@@ -43,7 +48,14 @@ def trusted_source_fixture(monkeypatch, tmp_path):
 
 
 def _envelope(key: Ed25519PrivateKey, document: bytes, key_id: str, *, algorithm: bool) -> bytes:
-    """Create a deterministic detached fixture signature."""
+    """Create a deterministic detached fixture signature.
+
+    Args:
+        key: Private fixture key that signs the document.
+        document: Canonical manifest bytes to sign.
+        key_id: Identifier embedded in the detached signature.
+        algorithm: Whether to include the algorithm field in the envelope.
+    """
     value = {"schema_version": 1, "key_id": key_id, "signature": base64.b64encode(key.sign(document)).decode("ascii")}
     if algorithm:
         value["algorithm"] = "ed25519"
@@ -51,7 +63,12 @@ def _envelope(key: Ed25519PrivateKey, document: bytes, key_id: str, *, algorithm
 
 
 def _add_directory(image: pycdlib.PyCdlib, relative: str) -> None:
-    """Add a Rock Ridge path using the production hashed ISO identifiers."""
+    """Add a Rock Ridge path using the production hashed ISO identifiers.
+
+    Args:
+        image: ISO builder receiving the directory entries.
+        relative: Slash-separated path relative to the Atlaso ISO root.
+    """
     parent = PurePosixPath()
     for part in PurePosixPath(relative).parts:
         parent /= part
@@ -69,7 +86,15 @@ def _add_directory(image: pycdlib.PyCdlib, relative: str) -> None:
 
 def _build_iso(path: Path, *, tamper: bool = False, extra: bool = False,
                bad_signature: bool = False, software_tamper: bool = False) -> str:
-    """Create a tiny complete and signed development media fixture."""
+    """Create a tiny complete and signed development media fixture.
+
+    Args:
+        path: Destination for the generated ISO.
+        tamper: Whether to alter an RPM after recording its manifest digest.
+        extra: Whether to add an unlisted payload file.
+        bad_signature: Whether to sign the manifest with an untrusted key.
+        software_tamper: Whether to change a release-signed software member.
+    """
     wheel = b"public wheel bytes"
     dependency = b"public dependency wheel bytes"
     selected = {
@@ -185,7 +210,12 @@ def _build_iso(path: Path, *, tamper: bool = False, extra: bool = False,
 
 
 def _read(path: Path, checksum: str) -> dict[str, object]:
-    """Invoke full readback with the independently selected identities."""
+    """Invoke full readback with the independently selected identities.
+
+    Args:
+        path: ISO image to authenticate and inspect.
+        checksum: Independently admitted SHA-256 digest for the ISO.
+    """
     return readback.full_readback(
         path,
         checksum,
@@ -197,7 +227,11 @@ def _read(path: Path, checksum: str) -> dict[str, object]:
 
 
 def test_full_readback_authenticates_all_payload_bytes_and_separate_identities(tmp_path: Path) -> None:
-    """Return only compact provenance after every signed payload member passes."""
+    """Return only compact provenance after every signed payload member passes.
+
+    Args:
+        tmp_path: Isolated destination for the signed ISO fixture.
+    """
     image = tmp_path / "development.iso"
     checksum = _build_iso(image)
 
@@ -221,6 +255,11 @@ def test_full_readback_authenticates_all_payload_bytes_and_separate_identities(t
 
 
 def test_readback_rejects_outer_resigned_software_with_wrong_production_content(tmp_path: Path) -> None:
+    """Reject software bytes that conflict with the independently signed release.
+
+    Args:
+        tmp_path: Isolated destination for the tampered ISO fixture.
+    """
     image = tmp_path / "development.iso"
     checksum = _build_iso(image, software_tamper=True)
     with pytest.raises(ValueError, match="complete authenticated contract"):
@@ -228,6 +267,11 @@ def test_readback_rejects_outer_resigned_software_with_wrong_production_content(
 
 
 def test_readback_does_not_trust_a_media_supplied_software_key(tmp_path: Path) -> None:
+    """Require host trust instead of a key supplied inside the ISO.
+
+    Args:
+        tmp_path: Isolated destination for the ISO and substituted host key.
+    """
     image = tmp_path / "development.iso"
     checksum = _build_iso(image)
     independent_key = Ed25519PrivateKey.from_private_bytes(bytes(range(2, 34)))
@@ -238,6 +282,12 @@ def test_readback_does_not_trust_a_media_supplied_software_key(tmp_path: Path) -
 
 
 def test_readback_requires_source_bytes_to_match_the_claimed_commit(tmp_path: Path, monkeypatch) -> None:
+    """Reject source archive bytes that differ from the claimed commit.
+
+    Args:
+        tmp_path: Isolated destination for the signed ISO fixture.
+        monkeypatch: Pytest patcher for the trusted source lookup.
+    """
     image = tmp_path / "development.iso"
     checksum = _build_iso(image)
     monkeypatch.setattr(readback, "_trusted_sources", lambda repository, commit: {"different.py": b"different"})
@@ -249,7 +299,14 @@ def test_readback_requires_source_bytes_to_match_the_claimed_commit(tmp_path: Pa
 def test_full_readback_rejects_tampered_extra_or_unauthenticated_payload(
     tmp_path: Path, tamper: bool, extra: bool, bad_signature: bool
 ) -> None:
-    """A checksum over the ISO alone does not bless unsigned payload contents."""
+    """A checksum over the ISO alone does not bless unsigned payload contents.
+
+    Args:
+        tmp_path: Isolated destination for the invalid ISO fixture.
+        tamper: Whether to modify a manifest-listed RPM after signing.
+        extra: Whether to add an unlisted file to the media.
+        bad_signature: Whether the payload signature uses an untrusted key.
+    """
     image = tmp_path / "invalid.iso"
     checksum = _build_iso(image, tamper=tamper, extra=extra, bad_signature=bad_signature)
 
@@ -258,7 +315,11 @@ def test_full_readback_rejects_tampered_extra_or_unauthenticated_payload(
 
 
 def test_full_readback_rejects_wrong_media_digest_and_software_identity(tmp_path: Path) -> None:
-    """Bind readback to the independently selected media and release identities."""
+    """Bind readback to the independently selected media and release identities.
+
+    Args:
+        tmp_path: Isolated destination for the signed ISO fixture.
+    """
     image = tmp_path / "development.iso"
     checksum = _build_iso(image)
     with pytest.raises(ValueError, match="admitted digest"):

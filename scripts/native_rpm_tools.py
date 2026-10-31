@@ -19,7 +19,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def linux_path(value: str) -> str:
-    """Translate an absolute local drive path without invoking a shell or distro mutation."""
+    """Translate an absolute local drive path without invoking a shell or distro mutation.
+
+    Args:
+        value: Single native argument; absolute local drive paths are translated to /mnt.
+    """
     path = PureWindowsPath(value)
     if path.drive and path.is_absolute():
         if len(path.drive) != 2 or path.drive[1] != ":":
@@ -29,7 +33,12 @@ def linux_path(value: str) -> str:
 
 
 def publish(path: Path, value: dict) -> None:
-    """Publish native selector/result evidence through Windows write-through rename."""
+    """Publish native selector/result evidence through Windows write-through rename.
+
+    Args:
+        path: Absent durable native invocation evidence filename.
+        value: Bounded non-secret original selector or terminal result object.
+    """
     stage = path.with_name("." + path.name + ".pending")
     with stage.open("xb") as stream:
         stream.write(json.dumps(value, separators=(",", ":")).encode("utf-8"))
@@ -40,7 +49,14 @@ def publish(path: Path, value: dict) -> None:
 
 def run(arguments: list[str], *, cwd: Path | None = None, byte_limit: int = MAX_OUTPUT,
         timeout_seconds: int = 120) -> str:
-    """Execute only a fixed native utility after preserving its original Linux selectors."""
+    """Execute only a fixed native utility after preserving its original Linux selectors.
+
+    Args:
+        arguments: Individual fixed-tool arguments passed without shell interpolation.
+        cwd: Exact working directory translated for the selected existing Linux distribution.
+        byte_limit: Hard maximum combined native diagnostic output size in bytes.
+        timeout_seconds: Fixed native invocation budget clipped to the original phase deadline.
+    """
     context = json.loads(read_bounded_regular(Path(os.environ[CONTEXT]), 65536))
     if context["task_id"] != os.environ.get("CODEX_THREAD_ID") or not arguments:
         raise ValueError("native_tool_task_binding_invalid")
@@ -117,7 +133,11 @@ def run(arguments: list[str], *, cwd: Path | None = None, byte_limit: int = MAX_
 
 
 def quiescent(directory: Path) -> bool:
-    """Require an original, matching terminal Linux result for every native intent."""
+    """Require an original, matching terminal Linux result for every native intent.
+
+    Args:
+        directory: Phase-owned native protocol directory containing original selectors and results.
+    """
     for intent in directory.glob("*-intent.json"):
         name = intent.name.removesuffix("-intent.json")
         original_path, result_path = directory / (name + "-original.json"), directory / (name + "-result.json")
