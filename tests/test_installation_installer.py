@@ -552,6 +552,83 @@ def assert_native_confirmation_geometry(height, width, maxy, maxx, starty, messa
     assert maxx - 9 >= max(map(len, message.splitlines()))
 
 
+@pytest.mark.parametrize("fails", [False, True])
+def test_public_provisioning_checkpoint_precedes_child_and_preserves_failures(monkeypatch, tmp_path, fails):
+    """Observe the actual provisioning entry without exposing private log output.
+
+    Args:
+        monkeypatch: Isolated native commands and progress observer.
+        tmp_path: Task-owned target and admitted-input fixture.
+        fails: Whether the shared provisioner fails after the checkpoint.
+    """
+    module = load_installer(monkeypatch)
+    target, media = tmp_path / "target", tmp_path / "media"
+    (target / "etc/atlaso").mkdir(parents=True)
+    (media / "source").mkdir(parents=True)
+    (media / "software").mkdir()
+    (media / "software/release-manifest.json").write_text("{}")
+    events = []
+    output = io.StringIO()
+
+    class Backend:
+        """Invoke only the adapter's real shared-provisioning method."""
+        def __init__(self, **_kwargs):
+            """Bind the isolated target.
+
+            Args:
+                **_kwargs: Unused native constructor options.
+            """
+            self.photon_root = str(target)
+            self.logger = SimpleNamespace(handlers=[])
+        def configure(self, config):
+            """Retain the native layout.
+
+            Args:
+                config: Tentative test configuration.
+            """
+            self.install_config = config
+        def _unsafe_install(self):
+            """Reach the real provisioning entry without native disk work."""
+            self._provision_atlaso()
+            events.append("success")
+        def _unmount_all(self):
+            """Record failure cleanup."""
+            events.append("cleanup")
+
+    def run(command, **kwargs):
+        """Assert the public checkpoint precedes private child execution.
+
+        Args:
+            command: Public native command vector.
+            **kwargs: Child options; environment values are discarded immediately.
+        """
+        kwargs.pop("env", None)
+        if command[0] == "chroot":
+            assert events[-1] == module.PROVISIONING_CHECKPOINT
+            if kwargs.get("stdout") is not output or kwargs.get("stderr") is not output:
+                raise AssertionError("provisioner output must stay on its private output stream")
+            events.append("provisioner")
+            if fails:
+                raise RuntimeError("synthetic provisioning failure")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setitem(sys.modules, "installer", SimpleNamespace(Installer=Backend))
+    monkeypatch.setattr(module.subprocess, "run", run)
+    monkeypatch.setattr(module.Path, "symlink_to", lambda *_args: None)
+    monkeypatch.setattr(module, "bind_installation_progress", lambda *_args: None)
+    monkeypatch.setattr(module, "retain_development_inspection_inputs", lambda *_args: None)
+    monkeypatch.setattr(module, "record_layout", lambda *_args: None)
+    arguments = (media, {"packages": [], "source_commit": "a" * 40}, {"partitions": []}, {}, ("unused", "unused"))
+    options = {"progress": SimpleNamespace(update_message=events.append), "output": output}
+    if fails:
+        with pytest.raises(RuntimeError, match="synthetic provisioning failure"):
+            module.install(*arguments, **options)
+        assert events == [module.PROVISIONING_CHECKPOINT, "provisioner", "cleanup"]
+    else:
+        module.install(*arguments, **options)
+        assert events == [module.PROVISIONING_CHECKPOINT, "provisioner", "success"]
+
+
 @pytest.mark.parametrize("boot_failure", [False, True])
 def test_shared_provisioning_follows_native_grub_generation(monkeypatch, tmp_path, boot_failure):
     """Retain native finalization and generate boot files before shared provisioning.

@@ -134,7 +134,8 @@ function Assert-AtlasoInstallationInterruptionRecord {
         $Interruption.baseline_receipt_sha256 -cne $Selectors.BaselineReceiptSha256 -or
         $Interruption.original_directory_identity -cne $Original.original_identities.directory -or
         $Interruption.persistent_vm_identity_sha256 -cne $Original.persistent_vm_identity_sha256 -or
-        $Interruption.stage -cne 'installing Photon appliance packages' -or
+        $Interruption.stage -isnot [string] -or
+        $Interruption.stage -cnotin @('installing Photon appliance packages', 'Starting Atlaso provisioning') -or
         $Interruption.unselected_logical_contents_unchanged -isnot [bool] -or -not $Interruption.unselected_logical_contents_unchanged -or
         $Interruption.selected_disks_may_have_been_written -isnot [bool] -or -not $Interruption.selected_disks_may_have_been_written) {
         throw 'Installer interruption receipt differs from the original stopped fixture.'

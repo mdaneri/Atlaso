@@ -357,6 +357,21 @@ $interruptionOriginal = [pscustomobject]@{ original_identities = @{ directory = 
 $interruptionSelectors = @{ OriginalReceiptPath = 'original'; OriginalReceiptSha256 = ('b' * 64); BaselineReceiptPath = 'baseline'; BaselineReceiptSha256 = ('c' * 64) }
 $interruption = [pscustomobject]@{ phase = 'installation-controlled-interruption'; original_receipt_path = 'original'; original_receipt_sha256 = ('b' * 64); baseline_receipt_path = 'baseline'; baseline_receipt_sha256 = ('c' * 64); original_directory_identity = 'ABCD1234:0000000000000001'; persistent_vm_identity_sha256 = ('a' * 64); stage = 'installing Photon appliance packages'; unselected_logical_contents_unchanged = $true; selected_disks_may_have_been_written = $true }
 Assert-AtlasoInstallationInterruptionRecord -Original $interruptionOriginal -Interruption $interruption -Selectors $interruptionSelectors
+$publicCheckpoint = 'Starting Atlaso provisioning'
+$newInterruption = $interruption | ConvertTo-Json | ConvertFrom-Json
+$newInterruption.stage = $publicCheckpoint
+Assert-AtlasoInstallationInterruptionRecord -Original $interruptionOriginal -Interruption $newInterruption -Selectors $interruptionSelectors
+Assert-InstallationVmCondition ($interruption.stage -ceq 'installing Photon appliance packages') 'Legacy interruption metadata must not be rewritten.'
+$checkpointSource = Get-Content -LiteralPath (Join-Path $repositoryRoot 'scripts/installation/installer.py') -Raw
+Assert-InstallationVmCondition ($checkpointSource.Contains('PROVISIONING_CHECKPOINT = "' + $publicCheckpoint + '"') -and
+    (Get-Content -LiteralPath $harnessPath -Raw).Contains("stage = '$publicCheckpoint'")) 'Public progress and new receipt checkpoints must agree.'
+$checkpointWaits = @($driverAst.FindAll({ param($node)
+    $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Wait-InstallationConsoleState' -and
+    @($node.CommandElements | Where-Object { $_ -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+        $_.Value -ceq $publicCheckpoint }).Count -eq 1
+}, $true))
+Assert-InstallationVmCondition ($checkpointWaits.Count -eq 1) 'The interruption consumer must wait on the exact observable public checkpoint.'
+Assert-AtlasoInstallationInterruptionRecord -Original $interruptionOriginal -Interruption $interruption -Selectors $interruptionSelectors
 foreach ($field in @('phase','original_receipt_path','original_receipt_sha256','baseline_receipt_path','baseline_receipt_sha256','original_directory_identity','persistent_vm_identity_sha256','stage','unselected_logical_contents_unchanged','selected_disks_may_have_been_written')) {
     $badInterruption = $interruption | ConvertTo-Json | ConvertFrom-Json
     $badInterruption.$field = 'other'

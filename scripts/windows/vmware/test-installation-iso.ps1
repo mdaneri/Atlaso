@@ -1176,7 +1176,7 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
                 baseline_receipt_path = $BaselineReceiptPath; baseline_receipt_sha256 = $BaselineReceiptSha256
                 original_directory_identity = $original.original_identities.directory
                 persistent_vm_identity_sha256 = $original.persistent_vm_identity_sha256
-                stage = 'installing Photon appliance packages'; selected_disks_may_have_been_written = $true
+                stage = 'Starting Atlaso provisioning'; selected_disks_may_have_been_written = $true
                 unselected_logical_contents_unchanged = $true; created_utc = [DateTimeOffset]::UtcNow.ToString('o')
             }
             $interruptedReceipt = Publish-AtlasoTestVmOwnershipRecord -Context $context -Record $interrupted -Kind installation-interruption

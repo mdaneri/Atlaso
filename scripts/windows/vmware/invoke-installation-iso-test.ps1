@@ -1852,11 +1852,11 @@ try {
                 }
             }
             if ($Scenario -eq 'OldLabelInterrupted') {
-                # This exact public source-defined stage follows native partitioning and base installation.
+                # This fixed public checkpoint follows native base/grub setup and input staging.
                 # Stop only this original VM; recovery will require another explicit erasure confirmation.
-                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'installing Photon appliance packages' -Deadline $deadline `
+                Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Starting Atlaso provisioning' -Deadline $deadline `
                     -KnownProvisioningStages $knownProvisioningStages
-                Write-Host 'Controlled installation interruption at installing Photon appliance packages.'
+                Write-Host 'Controlled installation interruption at Starting Atlaso provisioning.'
             } else {
                 Write-Host 'Public installer phase: awaiting-installation-completion'
                 Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Atlaso installation completed.' -Deadline $deadline `

@@ -50,6 +50,7 @@ NATIVE_PATH = Path("/usr/lib/python3.11/site-packages/photon_installer")
 TRUST_KEY = Path("/etc/atlaso-installer/trust.pem")
 MINIMUM_DISK_BYTES = 64 * 1024**3
 MAX_INSPECTION_SOFTWARE_BYTES = 2 * 1024**3
+PROVISIONING_CHECKPOINT = "Starting Atlaso provisioning"
 SERVICE_STORAGE = (
     ("SFTP backup storage", "/mnt/atlaso-vcf-backups"),
     ("VCFDT depot storage", "/mnt/atlaso-vcf-offline-depot"),
@@ -1037,6 +1038,11 @@ def install(media: Path, identity: dict, config: dict, consent: dict, credential
                     "ATLASO_MGMT_ADDRESS": "dhcp", "ATLASO_MGMT_IPV4_METHOD": "dhcp",
                     "ATLASO_DRY_RUN_SYSTEM_ADAPTERS": "false",
                 }
+                # A public stage on the progress console remains observable when
+                # native/provisioner logs are isolated on tty2 or a private log.
+                # It marks entry, not execution of any package transaction.
+                if progress is not None:
+                    progress.update_message(PROVISIONING_CHECKPOINT)
                 subprocess.run(
                     ["chroot", str(target), "/bin/sh", "/tmp/atlaso-src/image/common/scripts/provision-atlaso.sh"],
                     env=environment, check=True, stdout=output, stderr=output,

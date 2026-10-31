@@ -650,9 +650,13 @@ Use the ordinary ISO/root inputs shown above with one absent VM directory and:
 
 For a controlled recovery test, create a separate fresh fixture with `-Scenario OldLabelInterrupted`. The canonical
 console driver selects the target, confirms replacement and supplies the ordinary concealed account fields. It stops
-the owned VM only after observing the source-defined `installing Photon appliance packages` stage, which follows
-native partitioning and base installation. It compares the unselected disk and emits an immutable **Installer
+the owned VM only after observing the public `Starting Atlaso provisioning` checkpoint on the progress console.
+This follows native partitioning, base OS/bootloader setup, and input staging, immediately before the shared provisioner
+starts. It does not assert that a provisioner package transaction has started. Detailed logs stay on their separate
+terminal/private log. It compares the unselected disk and emits an immutable **Installer
 interruption receipt**. The target may have been written; this is an interruption result, never installation success.
+Previously sealed receipts retain their original `installing Photon appliance packages` stage; recovery accepts either
+explicit supported checkpoint without rewriting old receipts or extending their original consumers.
 
 Retain the original VM, baseline and interruption receipt paths and their emitted digests outside the VM root. Use the
 same output directory and collision suffix for a distinct recovery invocation:
