@@ -65,7 +65,7 @@ def main() -> int:
     parser.add_argument("--software-commit", required=True)
     parser.add_argument(
         "--serial-console", action="store_true",
-        help="Use ttyS0 for automated serial-console tests; the default uses the VMware window.",
+        help="Default the GRUB console menu to ttyS0 for automated tests; both console choices remain available.",
     )
     for name in ("software", "rpms", "powercli", "payload", "scratch", "source-iso", "output"):
         parser.add_argument("--" + name, type=Path, required=True)

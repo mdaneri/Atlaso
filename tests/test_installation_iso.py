@@ -215,7 +215,8 @@ def test_remaster_preserves_efi_boot_and_embeds_interactive_offline_installer(
         launcher = installation_iso._cpio_data(by_name[installation_iso.BOOT_LAUNCHER_PATH].raw, b"070701")
         assert b"/sys/devices/virtual/tty/console/active" in launcher
         assert b"ttyS" in launcher
-        assert b"stty rows 25 cols 80" in launcher
+        assert b"ttyS*) stty rows 25 cols 80" in launcher
+        assert launcher.count(b"stty rows") == 1
         assert _extract(remastered, rr_path="/atlaso/payload-manifest.json") == b"{}\n"
         assert _extract(remastered, rr_path="/atlaso/payload-manifest.json.sig") == b"signature\n"
         assert _extract(remastered, rr_path="/atlaso/long directory name/a payload with spaces.bin") == b"offline payload"
@@ -243,7 +244,7 @@ def test_rejects_unpinned_source_before_creating_output(tmp_path: Path, monkeypa
 def test_development_image_records_the_requested_console_in_both_boot_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, serial_console: bool,
 ) -> None:
-    """Manual images boot locally; serial testing is an explicit separate mode.
+    """Both console entries survive remastering with the requested default.
 
     Args:
         tmp_path: Temporary directory for isolated remaster inputs.
@@ -259,11 +260,26 @@ def test_development_image_records_the_requested_console_in_both_boot_paths(
     image = pycdlib.PyCdlib()
     image.open(str(output))
     try:
-        expected_console = b"console=ttyS0,115200n8" if serial_console else b"console=tty0"
+        expected_default = b"atlaso-serial" if serial_console else b"atlaso-graphical"
         for path in ("/boot/grub2/grub.cfg", "/efi/boot/grub.cfg"):
             grub = _extract(image, rr_path=path)
-            assert grub.count(b"console=") == 1
-            assert expected_console in grub
+            assert b"set default=" + expected_default + b"\n" in grub
+            assert grub.count(b"menuentry ") == 2
+            entries = grub.split(b"menuentry ")[1:]
+            for entry, console, menu_id in zip(
+                entries, (b"tty0", b"ttyS0,115200n8"),
+                (b"atlaso-graphical", b"atlaso-serial"), strict=True,
+            ):
+                assert b"--id=" + menu_id + b" {" in entry
+                linux = next(line for line in entry.splitlines() if line.strip().startswith(b"linux "))
+                assert linux.split() == [
+                    b"linux", b"/isolinux/vmlinuz", b"root=/dev/ram0", b"loglevel=3",
+                    b"photon.media=cdrom", b"console=" + console,
+                ]
+                assert b"initrd /isolinux/initrd.img" in entry
+            assert b"if serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1; then" in grub
+            assert b"terminal_input console serial" in grub
+            assert b"terminal_output console serial" in grub
             assert b"set timeout=5" in grub
             assert b"DEVELOPMENT ONLY - Install Atlaso offline" in grub
             assert b"ks=" not in grub

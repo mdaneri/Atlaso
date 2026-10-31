@@ -134,8 +134,17 @@ retains the protected signing environment and main-release admission checks. The
 identity only when its explicit development
 marker is present. The resulting image is for VMware testing only and starts the installer in the VMware window
 by default (`console=tty0`). Open the fresh VM with its ISO attached and power on; no GRUB edit is needed.
-For the automated serial-console harness, add `--serial-console` to the development build command to select
-`ttyS0,115200n8` instead. The build result records `console` as `graphical` or `serial`; retain it with the exact ISO
+The five-second GRUB menu offers **VM window (tty0)** and **Serial (ttyS0, 115200)** entries. Use the arrow keys
+and Enter to choose the installer console. Each entry selects exactly one kernel console. When serial initialization
+succeeds, the boot menu accepts input and displays output on both the VM window and COM1 at 115200 baud, 8N1;
+otherwise the native console remains available.
+The VM-window installer keeps the kernel's detected terminal size; only the serial harness uses a fixed 80×25 size.
+Concealed account fields accept printable ASCII characters and preserve spaces exactly. Rejected password input is
+cleared before retrying. **Go Back** on confirmation returns to the first password field for that account; **Go Back**
+on that first field cancels installation before any disk writes.
+For the automated serial-console harness, add `--serial-console` to the development build command to make the serial
+entry the default; both entries remain available. The build result's `console` field records that default as
+`graphical` or `serial`, not a later operator selection. Retain the default, actual selected entry and exact ISO
 digest so validation for one console mode is not reported as validation of the other. Neither image is publishable
 as an Atlaso release or establishes production or physical-hardware acceptance.
 
@@ -257,8 +266,9 @@ within its process deadline. To repeat verification afterward:
 The built-in Workstation VNC server can be controlled with a command-line client without using the host keyboard or
 mouse. Keep the original VM and disk-baseline receipts. Configure only that stopped VM, use an unused port bound
 exclusively to `127.0.0.1`, and verify the live listener belongs to its exact VMX. Keep the VM's network adapters absent.
-Use the default graphical development ISO for this path; it selects `console=tty0` without an override. Images
-built with `--serial-console` are a separate serial-test mode. Historical serial images require a one-boot GRUB edit
+Use the default graphical development ISO for this path; it selects `console=tty0` without an override. On images
+built with `--serial-console`, select **VM window (tty0)** from the boot menu and record that non-default selection.
+Historical serial images without this menu require a one-boot GRUB edit
 to use `console=tty0` for a graphical test; record that override rather than claiming default graphical startup.
 
 For an initial installer password field, `VncCredential` reuses the bounded SDK bridge, source/runtime pins, native

@@ -220,6 +220,7 @@ def test_prompt_masks_secret_and_does_not_invoke_native_confirmation_lookup(monk
             """
             calls.append(args)
             args[13]["value"] = "synthetic operator input"
+            self.read_text = SimpleNamespace(textwin=SimpleNamespace())
 
         def get_user_string(self):
             return SimpleNamespace(success=True)
@@ -229,6 +230,98 @@ def test_prompt_masks_secret_and_does_not_invoke_native_confirmation_lookup(monk
     assert calls[0][5] is None
     assert calls[0][6] == "*"
     assert calls[0][12] > 1
+
+
+def test_rejected_secret_is_cleared_before_retry_without_revealing_input(monkeypatch):
+    """A second attempt replaces a rejected secret instead of appending to it.
+
+    Args:
+        monkeypatch: Controlled native reader and screen dependencies.
+    """
+    module = load_installer(monkeypatch)
+    events = []
+
+    class Reader:
+        def __init__(self, *args):
+            """Retain the native validator and its memory-only input state.
+
+            Args:
+                *args: Native reader arguments.
+            """
+            self.args = args
+            self.read_text = SimpleNamespace(textwin=SimpleNamespace(), init_text=lambda: events.append("cleared"))
+
+        def get_user_string(self):
+            """Exercise rejection, retry and exact whitespace comparison."""
+            validate = self.args[8]
+            assert validate("fixture-value") == (False, "Passwords do not match.")
+            assert events == ["cleared"]
+            assert validate(" fixture-value ") == (True, "")
+            assert events == ["cleared"]
+            self.args[13]["value"] = " fixture-value "
+            return SimpleNamespace(success=True)
+
+    monkeypatch.setitem(sys.modules, "windowstringreader", SimpleNamespace(WindowStringReader=Reader))
+    result = module.prompt(25, 80, "Confirm", "Enter again", secret=True,
+                           validator=lambda value: (True, "") if value == " fixture-value " else (False, "Passwords do not match."))
+    assert result == " fixture-value "
+
+
+@pytest.mark.parametrize("key,expected", [(8, 263), (127, 263), (13, 343), (263, 263), (65, 65)])
+def test_concealed_input_accepts_terminal_backspace_codes(monkeypatch, key, expected):
+    """Backspace variants reach the same native editing path; text is unchanged.
+
+    Args:
+        monkeypatch: Controlled curses constants.
+        key: Incoming terminal key.
+        expected: Normalized native key.
+    """
+    module = load_installer(monkeypatch)
+    module.curses.KEY_BACKSPACE = 263
+    module.curses.KEY_ENTER = 343
+    window = SimpleNamespace(getch=lambda *_args: key, getmaxyx=lambda: (12, 70))
+    adapter = module.ConsoleInputKeys(window)
+    assert adapter.getch(2, 5) == expected
+    assert adapter.getmaxyx() == (12, 70)
+
+
+def test_password_confirmation_back_restarts_only_current_account(monkeypatch):
+    """After mismatch and Back, confirm the replacement and keep policy checks.
+
+    Args:
+        monkeypatch: Controlled prompts without credentials or disk consumers.
+    """
+    module = load_installer(monkeypatch)
+    titles = []
+
+    def prompt(_maxy, _maxx, title, _message, *, secret, validator):
+        """Drive a public fixture through mismatch, Back and replacement.
+
+        Args:
+            _maxy: Console height.
+            _maxx: Console width.
+            title: Account field title.
+            _message: Operator guidance.
+            secret: Required concealment.
+            validator: Unchanged policy or exact-match validator.
+        """
+        titles.append(title)
+        assert secret
+        if len(titles) == 1:
+            assert not validator("short")[0]
+            return "Fixture-Password42!"
+        if len(titles) == 2:
+            assert not validator("Other-Password42!")[0]
+            raise module.Cancelled()
+        assert validator("Replacement-Password42!")[0]
+        return "Replacement-Password42!"
+
+    monkeypatch.setattr(module, "prompt", prompt)
+    assert module.password_prompt(25, 80, "admin") == "Replacement-Password42!"
+    assert titles == ["Set admin password", "Confirm admin password"] * 2
+    monkeypatch.setattr(module, "prompt", lambda *_args, **_kwargs: (_ for _ in ()).throw(module.Cancelled()))
+    with pytest.raises(module.Cancelled):
+        module.password_prompt(25, 80, "root")
 
 
 @pytest.mark.parametrize("line_count", [1, 4, 5, 15])

@@ -123,6 +123,39 @@ class Cancelled(Exception):
     """Represent cancellation before admitting destructive installation."""
 
 
+class ConsoleInputKeys:
+    """Retain Photon's concealed field while accepting common terminal key codes."""
+
+    def __init__(self, window):
+        """Wrap the native field window.
+
+        Args:
+            window: Native curses input window.
+        """
+        self.window = window
+
+    def __getattr__(self, name):
+        """Forward rendering and geometry to the native window.
+
+        Args:
+            name: Native window attribute.
+        """
+        return getattr(self.window, name)
+
+    def getch(self, *args):
+        """Normalize terminal Backspace and Enter without altering password text.
+
+        Args:
+            *args: Native cursor coordinates.
+        """
+        key = self.window.getch(*args)
+        if key in (8, 127):
+            return curses.KEY_BACKSPACE
+        if key == 13:
+            return curses.KEY_ENTER
+        return key
+
+
 def environment_value(value: str) -> str:
     """Quote for the existing systemd environment file and shell consumers.
 
@@ -149,16 +182,67 @@ def prompt(maxy: int, maxx: int, title: str, message: str, *, secret: bool = Fal
     lines = [part for line in message.splitlines() for part in (textwrap.wrap(line, width - 4) or [""])]
     if len(lines) > maxy - 10:
         raise ValueError("installer review exceeds the console page size")
+    def validate(value):
+        """Clear rejected concealed input before Photon displays its error.
+
+        Args:
+            value: Concealed input retained only in memory.
+        """
+        result = validator(value)
+        if secret and not result[0]:
+            reader.read_text.init_text()
+        return result
+
     reader = WindowStringReader(
         # Native ReadText reserves two rows below input for validation errors;
         # Window's content area is five rows shorter than its outer height.
         maxy, maxx, max(12, len(lines) + 9), width, "value", None,
-        "*" if secret else None, list(range(32, 127)), validator, None, title,
+        "*" if secret else None, list(range(32, 127)), validate if validator else None, None, title,
         "\n".join(lines), len(lines) + 1, state,
     )
+    if secret:
+        reader.read_text.textwin = ConsoleInputKeys(reader.read_text.textwin)
     if not reader.get_user_string().success:
         raise Cancelled()
     return state["value"]
+
+
+def password_prompt(maxy: int, maxx: int, username: str) -> str:
+    """Let confirmation Back re-enter both concealed fields for this account.
+
+    Args:
+        maxy: Console height.
+        maxx: Console width.
+        username: Local account being configured.
+    """
+    def validator(value):
+        """Apply the unchanged local account password policy.
+
+        Args:
+            value: Concealed password entered by the operator.
+        """
+        errors = validate_password(value, username, DEFAULT_PASSWORD_POLICY)
+        return not errors, " ".join(errors)
+
+    while True:
+        first = prompt(maxy, maxx, f"Set {username} password", "Enter the local account password. Use printable ASCII characters.", secret=True, validator=validator)
+
+        def matching_validator(value, expected=first):
+            """Compare exact input without trimming or exposing either value.
+
+            Args:
+                value: Concealed confirmation.
+                expected: Concealed first entry.
+            """
+            return (True, "") if value == expected else (False, "Passwords do not match.")
+
+        try:
+            prompt(maxy, maxx, f"Confirm {username} password",
+                   "Enter the same password again. Rejected input is cleared. Go Back to re-enter both passwords.",
+                   secret=True, validator=matching_validator)
+        except Cancelled:
+            continue
+        return first
 
 
 def confirm_installation(maxy: int, maxx: int, message: str) -> bool:
@@ -393,34 +477,7 @@ def configure_console(screen, initial: dict[str, dict], mount_aliases: dict[str,
         ]
     if not confirm_installation(maxy, maxx, "\n".join(confirmation_lines)):
         raise Cancelled()
-    passwords = []
-    for username in ("admin", "root"):
-        def validator(value, account=username):
-            """Apply the local password policy to one concealed password entry.
-
-            Args:
-                value: Value to validate or serialize.
-                account: Local account whose password policy is being applied."""
-            errors = validate_password(value, account, DEFAULT_PASSWORD_POLICY)
-            return not errors, " ".join(errors)
-
-        first = prompt(maxy, maxx, f"Set {username} password", "Enter the local account password.", secret=True, validator=validator)
-        def matching_validator(value, expected=first):
-            """Require confirmation to match without exposing the first entry.
-
-            Args:
-                value: Concealed confirmation value.
-                expected: Concealed first entry retained only for comparison.
-            """
-            if value == expected:
-                return True, ""
-            return False, "Passwords do not match."
-
-        prompt(
-            maxy, maxx, f"Confirm {username} password", "Enter the same password again.",
-            secret=True, validator=matching_validator,
-        )
-        passwords.append(first)
+    passwords = [password_prompt(maxy, maxx, username) for username in ("admin", "root")]
     revalidate_disks(config, consent, disk_inventory())
     # Secret material never enters Photon configuration, dynamic substitutions,
     # native modules, command arguments, or its persistent installation log.

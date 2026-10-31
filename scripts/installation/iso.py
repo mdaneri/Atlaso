@@ -47,6 +47,24 @@ menuentry 'Install Atlaso offline' {
     initrd /isolinux/initrd.img
 }
 """
+_DEVELOPMENT_GRUB_CONFIG = """set default=atlaso-graphical
+set timeout=5
+
+if serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1; then
+    terminal_input console serial
+    terminal_output console serial
+fi
+
+menuentry 'DEVELOPMENT ONLY - Install Atlaso offline - VM window (tty0)' --id=atlaso-graphical {
+    linux /isolinux/vmlinuz root=/dev/ram0 loglevel=3 photon.media=cdrom console=tty0
+    initrd /isolinux/initrd.img
+}
+
+menuentry 'DEVELOPMENT ONLY - Install Atlaso offline - Serial (ttyS0, 115200)' --id=atlaso-serial {
+    linux /isolinux/vmlinuz root=/dev/ram0 loglevel=3 photon.media=cdrom console=ttyS0,115200n8
+    initrd /isolinux/initrd.img
+}
+"""
 _LAUNCHER = b"""#!/bin/sh
 set -u
 
@@ -75,7 +93,9 @@ if [ ! -c "$console" ] || [ "$(tty 2>/dev/null)" != "$console" ]; then
     rescue 'Start the Atlaso installer on the active console.'
 fi
 exec <"$console" >"$console" 2>&1
-stty rows 25 cols 80 <"$console" 2>/dev/null || rescue 'Could not configure the installer console to 80 by 25.'
+case "$active_console" in
+    ttyS*) stty rows 25 cols 80 <"$console" 2>/dev/null || rescue 'Could not configure the serial installer console to 80 by 25.' ;;
+esac
 
 media=/mnt/atlaso-install
 if ! mkdir -p "$media"; then
@@ -703,7 +723,7 @@ def build_iso(
         output: Destination path for the generated output.
         trust_key: Trusted public key used to verify signed metadata.
         development: Build an explicitly marked VMware-only test ISO.
-        serial_console: Opt a development ISO into the automated serial console.
+        serial_console: Default a development ISO's console menu to serial.
     """
     if serial_console and not development:
         raise ValueError("serial console selection is restricted to development images")
@@ -783,8 +803,9 @@ def build_iso(
         for iso_path, rr_name in grub_paths:
             grub = _GRUB_CONFIG
             if development:
-                console = "ttyS0,115200n8" if serial_console else "tty0"
-                grub = grub.replace("set timeout=-1", "set timeout=5").replace("Install Atlaso offline", "DEVELOPMENT ONLY - Install Atlaso offline").replace("photon.media=cdrom", f"photon.media=cdrom console={console}")
+                grub = _DEVELOPMENT_GRUB_CONFIG
+                if serial_console:
+                    grub = grub.replace("set default=atlaso-graphical", "set default=atlaso-serial")
             replace_text_file(iso, iso_path=iso_path, rr_name=rr_name, text=grub)
 
         iso.pvd.volume_identifier = VOLUME_IDENTIFIER
