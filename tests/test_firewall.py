@@ -139,6 +139,24 @@ def test_default_management_firewall_source_cidr_can_follow_image_network():
     assert "192.168.49.0/24" not in config
 
 
+def test_icmpv6_diagnostics_do_not_require_a_protocol_name_database():
+    """Keep every enabled chain loadable on minimal Photon without /etc/protocols."""
+    settings = FirewallSettings(enabled=True, allow_icmp=True, default_input_policy="drop",
+                                default_forward_policy="drop", default_output_policy="accept")
+    config = render_nftables_config(settings, [], management_source_cidr="192.168.167.0/24")
+    for name in ("input", "forward", "output"):
+        chain = config.split(f"  chain {name} {{", 1)[1].split("\n  }", 1)[0]
+        assert 'meta l4proto 58 accept comment "Atlaso IPv6 ICMP diagnostics"' in chain
+        assert 'meta l4proto icmp accept comment "Atlaso ICMP diagnostics"' in chain
+    assert "ipv6-icmp" not in config
+
+    settings.allow_icmp = False
+    without_diagnostics = render_nftables_config(settings, [], management_source_cidr="192.168.167.0/24")
+    assert "ICMP diagnostics" not in without_diagnostics
+    assert "meta l4proto 58" not in without_diagnostics
+    assert "policy drop" in without_diagnostics
+
+
 def test_generated_management_rules_do_not_validate_unused_empty_legacy_source(monkeypatch):
     """Verify DHCP first boot can replace the legacy CIDR rule safely.
 

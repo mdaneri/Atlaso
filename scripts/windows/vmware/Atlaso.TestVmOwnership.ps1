@@ -2,9 +2,477 @@
 .SYNOPSIS
 Create durable ownership records for normal VMware test VMs.
 .DESCRIPTION
-Records the task and source intent before test-VM creation, then publishes the
-original output-directory and VMX identities from the clone-created callback.
+Records preserve task/source intent before creation and publish original VM identities afterward.
 #>
+
+<#
+.SYNOPSIS
+Test whether one canonical path is strictly beneath another.
+.PARAMETER ParentPath
+Canonical parent path.
+.PARAMETER ChildPath
+Candidate descendant path.
+#>
+function Test-AtlasoTestVmStrictDescendantPath {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory = $true)][string]$ParentPath,
+        [Parameter(Mandatory = $true)][string]$ChildPath
+    )
+
+    $parent = [System.IO.Path]::GetFullPath($ParentPath).TrimEnd('\', '/')
+    $child = [System.IO.Path]::GetFullPath($ChildPath).TrimEnd('\', '/')
+    if ($parent -eq $child) { return $false }
+    $prefix = $parent + [System.IO.Path]::DirectorySeparatorChar
+    return $child.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+<#
+.SYNOPSIS
+Validate the canonical installation-ISO VM name for its task identity.
+.PARAMETER Name
+VM display name to validate.
+.PARAMETER SourceCommit
+Exact source commit used by a local VM identity.
+.PARAMETER PullRequestNumber
+Owning pull request number, or zero for a local VM.
+.PARAMETER LocalBuilder
+Select a local VM identity instead of a pull-request identity.
+#>
+function Test-AtlasoTestVmCanonicalInstallationIsoName {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$SourceCommit,
+        [Parameter(Mandatory = $true)][int]$PullRequestNumber,
+        [Parameter(Mandatory = $true)][bool]$LocalBuilder
+    )
+
+    if (-not (Get-Command New-AtlasoVmwareTestIdentity -CommandType Function -ErrorAction SilentlyContinue)) {
+        return $false
+    }
+    try {
+        if ($LocalBuilder) {
+            if ($PullRequestNumber -ne 0 -or $SourceCommit -cnotmatch '^[0-9a-f]{40}$') { return $false }
+            $identity = New-AtlasoVmwareTestIdentity -LocalBuilder -SourceCommit $SourceCommit -Purpose installation-iso
+        }
+        else {
+            if ($PullRequestNumber -le 0) { return $false }
+            $identity = New-AtlasoVmwareTestIdentity -PullRequestNumber $PullRequestNumber -Purpose installation-iso
+        }
+        if ($Name -ceq $identity.Name) { return $true }
+        if (-not $Name.StartsWith($identity.Name + '-', [System.StringComparison]::Ordinal)) { return $false }
+        $suffix = $Name.Substring($identity.Name.Length + 1)
+        $withSuffix = if ($LocalBuilder) {
+            New-AtlasoVmwareTestIdentity -LocalBuilder -SourceCommit $SourceCommit `
+                -Purpose installation-iso -CollisionSuffix $suffix
+        }
+        else {
+            New-AtlasoVmwareTestIdentity -PullRequestNumber $PullRequestNumber `
+                -Purpose installation-iso -CollisionSuffix $suffix
+        }
+        return $Name -ceq $withSuffix.Name
+    }
+    catch { return $false }
+}
+
+<#
+.SYNOPSIS
+Preserve ordinary output containment or require a paired external-root receipt.
+.PARAMETER Worktree
+Exact source checkout.
+.PARAMETER OutputDirectory
+Canonical VM output directory.
+.PARAMETER Name
+Canonical VM display name.
+.PARAMETER SourceCommit
+Exact checked-out source commit.
+.PARAMETER PullRequestNumber
+Owning pull request number, or zero for a local VM.
+.PARAMETER LocalBuilder
+Select a local VM identity instead of a pull-request identity.
+.PARAMETER ReceiptPath
+Original validation-root receipt path, if external output is requested.
+.PARAMETER ReceiptSha256
+Independently preserved creation-time digest for ReceiptPath.
+#>
+function Assert-AtlasoTestVmValidationRootSelector {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory = $true)][string]$Worktree,
+        [Parameter(Mandatory = $true)][string]$OutputDirectory,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$SourceCommit,
+        [Parameter(Mandatory = $true)][int]$PullRequestNumber,
+        [Parameter(Mandatory = $true)][bool]$LocalBuilder,
+        [string]$ReceiptPath = '',
+        [string]$ReceiptSha256 = ''
+    )
+
+    $hasPath = -not [string]::IsNullOrWhiteSpace($ReceiptPath)
+    $hasDigest = -not [string]::IsNullOrWhiteSpace($ReceiptSha256)
+    if ($hasPath -xor $hasDigest) {
+        throw 'External installation VM admission requires the original validation-root receipt and its independently preserved SHA-256.'
+    }
+    if (-not $hasPath) {
+        if (-not (Test-AtlasoTestVmStrictDescendantPath -ParentPath $Worktree -ChildPath $OutputDirectory)) {
+            throw 'Ordinary test-VM output must remain beneath the task checkout.'
+        }
+        return $false
+    }
+    if ($ReceiptSha256 -cnotmatch '^[0-9a-fA-F]{64}$' -or
+        -not (Test-AtlasoTestVmCanonicalInstallationIsoName -Name $Name -SourceCommit $SourceCommit `
+            -PullRequestNumber $PullRequestNumber -LocalBuilder:$LocalBuilder)) {
+        throw 'External validation-root admission requires its original receipt digest and a canonical installation-ISO VM identity.'
+    }
+    return $true
+}
+
+<#
+.SYNOPSIS
+Validate a preserved external validation-root creation record.
+.PARAMETER Context
+Admitted task identity, checkout, and durable evidence context.
+.PARAMETER Record
+Parsed original validation-root creation receipt.
+.PARAMETER ReceiptPath
+Canonical path of the original receipt inside task evidence.
+.PARAMETER ReceiptSha256
+Independently preserved creation-time digest.
+.PARAMETER ObservedRootIdentity
+Native identity of the pinned validation root.
+#>
+function Assert-AtlasoTestVmValidationRootReceiptRecord {
+    [CmdletBinding()]
+    [OutputType([psobject])]
+    param(
+        [Parameter(Mandatory = $true)][psobject]$Context,
+        [Parameter(Mandatory = $true)][psobject]$Record,
+        [Parameter(Mandatory = $true)][string]$ReceiptPath,
+        [Parameter(Mandatory = $true)][string]$ReceiptSha256,
+        [Parameter(Mandatory = $true)][string]$ObservedRootIdentity
+    )
+
+    $requiredProperties = @(
+        'schema', 'phase', 'kind', 'task_id', 'repository', 'source_branch', 'source_commit',
+        'worktree', 'worktree_directory_identity', 'pull_request_number', 'local_builder',
+        'path', 'directory_identity', 'created_utc', 'cleanup_tool'
+    )
+    $actualProperties = @($Record.PSObject.Properties | ForEach-Object { $_.Name } | Sort-Object)
+    $expectedProperties = @($requiredProperties | Sort-Object)
+    if (@(Compare-Object -ReferenceObject $expectedProperties -DifferenceObject $actualProperties).Count -ne 0 -or
+        $Record.schema -ne 1 -or $Record.phase -cne 'installation-validation-root-created' -or
+        $Record.kind -cne 'artifact' -or $Record.task_id -cne $Context.TaskId -or
+        $Record.repository -cne $Context.Repository -or $Record.source_branch -cne $Context.Branch -or
+        $Record.worktree -cne $Context.Worktree -or
+        $Record.worktree_directory_identity -cne $Context.WorktreeDirectoryId -or
+        [int]$Record.pull_request_number -ne [int]$Context.PullRequestNumber -or
+        [bool]$Record.local_builder -ne [bool]$Context.LocalBuilder -or
+        [string]$Record.source_commit -cnotmatch '^[0-9a-f]{40}$' -or
+        [string]$Record.worktree_directory_identity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$' -or
+        [string]$Record.directory_identity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$' -or
+        $ObservedRootIdentity -cne [string]$Record.directory_identity -or
+        [string]$ReceiptSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        [string]$Record.cleanup_tool -cne 'Remove-AtlasoWorkstationArtifactRoot -ExpectedRemovalRoot <exact originally recorded path>') {
+        throw 'Validation-root creation receipt does not match the admitted task and supported ownership contract.'
+    }
+    $created = [DateTimeOffset]::MinValue
+    if (-not [DateTimeOffset]::TryParse(
+            [string]$Record.created_utc,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind,
+            [ref]$created
+        ) -or $created.Offset -ne [TimeSpan]::Zero) {
+        throw 'Validation-root creation receipt timestamp is malformed.'
+    }
+    if ([string]$Record.path -cne [System.IO.Path]::GetFullPath([string]$Record.path).TrimEnd('\', '/') -or
+        -not [System.IO.Path]::IsPathFullyQualified([string]$Record.path)) {
+        throw 'Validation-root creation receipt path is not canonical and absolute.'
+    }
+    $rootPath = [System.IO.Path]::GetFullPath([string]$Record.path).TrimEnd('\', '/')
+    $volumeRoot = [System.IO.Path]::GetPathRoot($rootPath).TrimEnd('\', '/')
+    if (-not $volumeRoot -or $rootPath.Equals($volumeRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Validation-root creation receipt cannot designate a volume root.'
+    }
+    foreach ($protectedPath in @($Context.Worktree, $Context.EvidenceDirectory)) {
+        $protected = [System.IO.Path]::GetFullPath([string]$protectedPath).TrimEnd('\', '/')
+        if ($rootPath.Equals($protected, [System.StringComparison]::OrdinalIgnoreCase) -or
+            (Test-AtlasoTestVmStrictDescendantPath -ParentPath $rootPath -ChildPath $protected) -or
+            (Test-AtlasoTestVmStrictDescendantPath -ParentPath $protected -ChildPath $rootPath)) {
+            throw 'Validation-root overlaps the task source or durable ownership evidence.'
+        }
+    }
+    if (-not (Test-AtlasoTestVmStrictDescendantPath -ParentPath $rootPath -ChildPath $Context.OutputDirectory)) {
+        throw 'Installation VM output must be strictly beneath its receipted validation root.'
+    }
+    if (-not (Test-AtlasoTestVmCanonicalInstallationIsoName -Name $Context.Name `
+            -SourceCommit $Context.SourceCommit -PullRequestNumber $Context.PullRequestNumber `
+            -LocalBuilder:$Context.LocalBuilder)) {
+        throw 'External validation-root receipt cannot admit a noncanonical installation-ISO VM.'
+    }
+    & git -C $Context.Worktree merge-base --is-ancestor ([string]$Record.source_commit) $Context.SourceCommit 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Validation-root receipt source is not an ancestor of the admitted checkout.'
+    }
+    return [pscustomobject]@{
+        Path = $rootPath
+        DirectoryIdentity = [string]$Record.directory_identity
+        ReceiptPath = [System.IO.Path]::GetFullPath($ReceiptPath)
+        ReceiptSha256 = $ReceiptSha256.ToLowerInvariant()
+        SourceCommit = [string]$Record.source_commit
+    }
+}
+
+<#
+.SYNOPSIS
+Check receipt size and digest before parsing its original JSON bytes.
+.PARAMETER Text
+UTF-8 receipt text read through the caller's retained single-link file pin.
+.PARAMETER ExpectedSha256
+Independently preserved creation-time digest.
+.PARAMETER ObservedSha256
+Digest calculated from the pinned receipt file.
+.PARAMETER Length
+Byte length reported for the pinned receipt file.
+#>
+function Read-AtlasoTestVmValidationRootReceiptEnvelope {
+    [CmdletBinding()]
+    [OutputType([psobject])]
+    param(
+        [Parameter(Mandatory = $true)][string]$Text,
+        [Parameter(Mandatory = $true)][string]$ExpectedSha256,
+        [Parameter(Mandatory = $true)][string]$ObservedSha256,
+        [Parameter(Mandatory = $true)][long]$Length
+    )
+
+    if ($Length -lt 1 -or $Length -gt 65536 -or
+        $ExpectedSha256 -cnotmatch '^[0-9a-fA-F]{64}$' -or
+        $ObservedSha256 -ine $ExpectedSha256) {
+        throw 'Validation-root receipt differs from its independently preserved creation digest.'
+    }
+    $document = $null
+    try {
+        $record = $Text | ConvertFrom-Json -ErrorAction Stop
+        # Recent PowerShell versions deserialize ISO timestamps as local DateTime.
+        # Preserve the original UTC string before checking its recorded offset.
+        $document = [System.Text.Json.JsonDocument]::Parse($Text)
+        $timestamp = $document.RootElement.GetProperty('created_utc')
+        if ($timestamp.ValueKind -ne [System.Text.Json.JsonValueKind]::String) {
+            throw 'The creation timestamp must be a JSON string.'
+        }
+        $record.created_utc = $timestamp.GetString()
+        return $record
+    }
+    catch { throw 'Validation-root creation receipt is not valid JSON with a creation timestamp.' }
+    finally { if ($document) { $document.Dispose() } }
+}
+
+<#
+.SYNOPSIS
+Hold external root and receipt pins for the lifetime of one VM operation.
+.PARAMETER RootPath
+Original external validation-root path.
+.PARAMETER DirectoryIdentity
+Original native identity of RootPath.
+.PARAMETER ReceiptPath
+Original root receipt path in task evidence.
+.PARAMETER ReceiptSha256
+Independently preserved root receipt digest.
+.PARAMETER SourceCommit
+Original source commit recorded by the root creation receipt.
+.PARAMETER Pins
+IDisposable containing retained native root and receipt pins.
+#>
+function ConvertTo-AtlasoTestVmValidationRootAdmission {
+    [CmdletBinding()]
+    [OutputType([psobject])]
+    param(
+        [Parameter(Mandatory = $true)][string]$RootPath,
+        [Parameter(Mandatory = $true)][string]$DirectoryIdentity,
+        [Parameter(Mandatory = $true)][string]$ReceiptPath,
+        [Parameter(Mandatory = $true)][string]$ReceiptSha256,
+        [Parameter(Mandatory = $true)][string]$SourceCommit,
+        [Parameter(Mandatory = $true)][System.IDisposable]$Pins
+    )
+
+    $admission = [pscustomobject]@{
+        RootPath = $RootPath
+        DirectoryIdentity = $DirectoryIdentity
+        ReceiptPath = $ReceiptPath
+        ReceiptSha256 = $ReceiptSha256.ToLowerInvariant()
+        SourceCommit = $SourceCommit
+        Pins = $Pins
+        Disposed = $false
+    }
+    $admission | Add-Member -MemberType ScriptMethod -Name Dispose -Value {
+        if (-not $this.Disposed) {
+            $this.Pins.Dispose()
+            $this.Disposed = $true
+        }
+    }
+    return $admission
+}
+
+<#
+.SYNOPSIS
+Read and pin the original external validation-root creation receipt.
+.PARAMETER Context
+Admitted task identity, checkout, and durable evidence context.
+.PARAMETER ReceiptPath
+Original receipt path preserved in task ownership evidence.
+.PARAMETER ReceiptSha256
+Independently preserved creation-time digest.
+#>
+function Read-AtlasoTestVmValidationRootReceipt {
+    [CmdletBinding()]
+    [OutputType([psobject])]
+    param(
+        [Parameter(Mandatory = $true)][psobject]$Context,
+        [Parameter(Mandatory = $true)][string]$ReceiptPath,
+        [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$ReceiptSha256
+    )
+
+    $evidencePath = [System.IO.Path]::GetFullPath([string]$Context.EvidenceDirectory).TrimEnd('\', '/')
+    $receipt = [System.IO.Path]::GetFullPath($ReceiptPath)
+    $normalizedReceiptSha256 = $ReceiptSha256.ToLowerInvariant()
+    if (-not [System.IO.Path]::IsPathFullyQualified($ReceiptPath) -or
+        $receipt -cne $ReceiptPath -or
+        [System.IO.Path]::GetDirectoryName($receipt) -ine $evidencePath) {
+        throw 'Validation-root receipt must be a direct child of task ownership evidence.'
+    }
+    $pins = [Atlaso.WorkstationFileIdentity+ReadOnlySourcePins]::new()
+    try {
+        # The native pin checks every ancestor without following reparse points.
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($evidencePath, $true))
+        if ([Atlaso.WorkstationFileIdentity]::Get($evidencePath) -cne [string]$Context.EvidenceDirectoryId) {
+            throw 'Task ownership evidence identity changed before validation-root admission.'
+        }
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($receipt, $true))
+        $item = Get-Item -LiteralPath $receipt -Force -ErrorAction Stop
+        if ($item.Length -gt 65536 -or
+            $item.Length -lt 1) { throw 'Validation-root receipt size is outside its bounded ownership format.' }
+        $recordText = Get-Content -LiteralPath $receipt -Raw -ErrorAction Stop
+        $recordHash = (Get-FileHash -LiteralPath $receipt -Algorithm SHA256).Hash
+        $record = Read-AtlasoTestVmValidationRootReceiptEnvelope -Text $recordText `
+            -ExpectedSha256 $normalizedReceiptSha256 -ObservedSha256 $recordHash -Length $item.Length
+        if (-not [System.IO.Path]::IsPathFullyQualified([string]$record.path)) {
+            throw 'Validation-root creation receipt path is not absolute.'
+        }
+        $rootPath = [System.IO.Path]::GetFullPath([string]$record.path).TrimEnd('\', '/')
+        # Refuse unrelated receipt paths before consulting their filesystem metadata.
+        if (-not (Test-AtlasoTestVmStrictDescendantPath -ParentPath $rootPath -ChildPath $Context.OutputDirectory) -or
+            $rootPath.Equals([System.IO.Path]::GetPathRoot($rootPath).TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Validation-root receipt cannot designate a volume root or a root outside the requested VM output.'
+        }
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($rootPath, $true))
+        $rootIdentity = [Atlaso.WorkstationFileIdentity]::Get($rootPath)
+        $validated = Assert-AtlasoTestVmValidationRootReceiptRecord -Context $Context -Record $record `
+            -ReceiptPath $receipt -ReceiptSha256 $normalizedReceiptSha256 -ObservedRootIdentity $rootIdentity
+        $admission = ConvertTo-AtlasoTestVmValidationRootAdmission -RootPath $validated.Path `
+            -DirectoryIdentity $validated.DirectoryIdentity -ReceiptPath $validated.ReceiptPath `
+            -ReceiptSha256 $validated.ReceiptSha256 -SourceCommit $validated.SourceCommit -Pins $pins
+        return $admission
+    }
+    catch {
+        $pins.Dispose()
+        throw
+    }
+}
+
+<#
+.SYNOPSIS
+Compare a VM record's root map with the admitted external-root receipt.
+.PARAMETER Context
+Admitted VM ownership context.
+.PARAMETER Record
+VM ownership record being published or read.
+#>
+function Assert-AtlasoTestVmValidationRootRecordBinding {
+    [CmdletBinding()]
+    [OutputType([void])]
+    param(
+        [Parameter(Mandatory = $true)][psobject]$Context,
+        [Parameter(Mandatory = $true)][psobject]$Record
+    )
+
+    $hasRecordBinding = $false
+    $recordBinding = $null
+    if ($Record -is [System.Collections.IDictionary]) {
+        $hasRecordBinding = $Record.Contains('validation_root')
+        if ($hasRecordBinding) { $recordBinding = $Record['validation_root'] }
+    }
+    else {
+        $recordProperty = $Record.PSObject.Properties['validation_root']
+        $hasRecordBinding = $null -ne $recordProperty
+        if ($hasRecordBinding) { $recordBinding = $recordProperty.Value }
+    }
+    if (-not $hasRecordBinding -or $null -eq $recordBinding) {
+        throw 'External installation VM ownership record lacks its original validation-root binding.'
+    }
+    $binding = $recordBinding
+    $expectedFields = @('path', 'directory_identity', 'receipt_path', 'receipt_sha256')
+    $actualFields = if ($binding -is [System.Collections.IDictionary]) {
+        @($binding.Keys | ForEach-Object { [string]$_ } | Sort-Object)
+    } else {
+        @($binding.PSObject.Properties | ForEach-Object { $_.Name } | Sort-Object)
+    }
+    $bindingPath = if ($binding -is [System.Collections.IDictionary]) { $binding['path'] } else { $binding.path }
+    $bindingIdentity = if ($binding -is [System.Collections.IDictionary]) { $binding['directory_identity'] } else { $binding.directory_identity }
+    $bindingReceiptPath = if ($binding -is [System.Collections.IDictionary]) { $binding['receipt_path'] } else { $binding.receipt_path }
+    $bindingReceiptSha256 = if ($binding -is [System.Collections.IDictionary]) { $binding['receipt_sha256'] } else { $binding.receipt_sha256 }
+    if (@(Compare-Object -ReferenceObject @($expectedFields | Sort-Object) -DifferenceObject $actualFields).Count -ne 0 -or
+        [string]$bindingPath -cne [string]$Context.ValidationRootAdmission.RootPath -or
+        [string]$bindingIdentity -cne [string]$Context.ValidationRootAdmission.DirectoryIdentity -or
+        [string]$bindingReceiptPath -cne [string]$Context.ValidationRootAdmission.ReceiptPath -or
+        [string]$bindingReceiptSha256 -cne [string]$Context.ValidationRootAdmission.ReceiptSha256) {
+        throw 'VM ownership record validation-root binding differs from the original admitted receipt.'
+    }
+}
+
+<#
+.SYNOPSIS
+Require a VM ownership record to match its admitted validation-root receipt.
+.PARAMETER Context
+Admitted VM ownership context.
+.PARAMETER Record
+VM ownership record being published or read.
+#>
+function Assert-AtlasoTestVmValidationRootBinding {
+    [CmdletBinding()]
+    [OutputType([void])]
+    param(
+        [Parameter(Mandatory = $true)][psobject]$Context,
+        [Parameter(Mandatory = $true)][psobject]$Record
+    )
+
+    $admission = if ($Context.PSObject.Properties['ValidationRootAdmission']) {
+        $Context.ValidationRootAdmission
+    } else { $null }
+    $hasRecordBinding = $false
+    $recordBinding = $null
+    if ($Record -is [System.Collections.IDictionary]) {
+        $hasRecordBinding = $Record.Contains('validation_root')
+        if ($hasRecordBinding) { $recordBinding = $Record['validation_root'] }
+    }
+    else {
+        $recordProperty = $Record.PSObject.Properties['validation_root']
+        $hasRecordBinding = $null -ne $recordProperty
+        if ($hasRecordBinding) { $recordBinding = $recordProperty.Value }
+    }
+    if (-not $admission) {
+        if ($hasRecordBinding -and $null -ne $recordBinding) {
+            throw 'Ordinary task-worktree VM records cannot claim an external validation root.'
+        }
+        return
+    }
+    if ($admission.Disposed -or [Atlaso.WorkstationFileIdentity]::Get([string]$admission.RootPath) -cne [string]$admission.DirectoryIdentity) {
+        throw 'The admitted external validation root changed or its retained pins were released.'
+    }
+    Assert-AtlasoTestVmValidationRootRecordBinding -Context $Context -Record $Record
+}
 
 <#
 .SYNOPSIS
@@ -19,6 +487,10 @@ Exact task identity for an explicit human CLI run.
 Original receipt path preserved in the task resource inventory for redeployment.
 .PARAMETER OwnershipReceiptSha256
 Creation-time receipt digest preserved independently in the task inventory.
+.PARAMETER ValidationRootReceiptPath
+Original receipt path for the separately approved external installation-ISO validation root.
+.PARAMETER ValidationRootReceiptSha256
+Independently preserved creation-time digest for ValidationRootReceiptPath.
 .PARAMETER OutputDirectory
 Canonical test-VM output directory.
 .PARAMETER VmxPath
@@ -43,6 +515,8 @@ function New-AtlasoTestVmOwnershipContext {
         [string]$OwnershipTaskId = '',
         [string]$OwnershipReceiptPath = '',
         [string]$OwnershipReceiptSha256 = '',
+        [string]$ValidationRootReceiptPath = '',
+        [string]$ValidationRootReceiptSha256 = '',
         [Parameter(Mandatory = $true)][string]$OutputDirectory,
         [Parameter(Mandatory = $true)][string]$VmxPath,
         [Parameter(Mandatory = $true)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]{1,127}$')][string]$Name,
@@ -55,6 +529,11 @@ function New-AtlasoTestVmOwnershipContext {
     $agentTaskId = [string]$env:CODEX_THREAD_ID
     $manualRootSupplied = -not [string]::IsNullOrWhiteSpace($OwnershipRoot)
     $manualTaskSupplied = -not [string]::IsNullOrWhiteSpace($OwnershipTaskId)
+    $validationReceiptSupplied = -not [string]::IsNullOrWhiteSpace($ValidationRootReceiptPath) -or
+        -not [string]::IsNullOrWhiteSpace($ValidationRootReceiptSha256)
+    if ($validationReceiptSupplied -and -not ($manualRootSupplied -or $agentTaskId)) {
+        throw 'External validation-root selectors require an enabled, receipt-backed task ownership context.'
+    }
     if ($manualRootSupplied -xor $manualTaskSupplied) {
         throw 'Pass both -OwnershipRoot and -OwnershipTaskId to opt in to human CLI ownership receipts.'
     }
@@ -63,7 +542,8 @@ function New-AtlasoTestVmOwnershipContext {
         throw 'Agent ownership receipts use the active Codex task and configured worktree root; explicit human selectors are not accepted.'
     }
     if (-not $manualRootSupplied -and -not $agentMode) {
-        if ($OwnershipReceiptPath -or $OwnershipReceiptSha256) {
+        if ($OwnershipReceiptPath -or $OwnershipReceiptSha256 -or
+            $ValidationRootReceiptPath -or $ValidationRootReceiptSha256) {
             throw 'Human receipt verification requires the paired permitted ownership root and task identity.'
         }
         return [pscustomobject]@{ Enabled = $false }
@@ -78,10 +558,12 @@ function New-AtlasoTestVmOwnershipContext {
     $worktreePath = [System.IO.Path]::GetFullPath($Worktree).TrimEnd('\', '/')
     $outputPath = [System.IO.Path]::GetFullPath($OutputDirectory).TrimEnd('\', '/')
     $vmxFullPath = [System.IO.Path]::GetFullPath($VmxPath)
-    $worktreePrefix = $worktreePath + [System.IO.Path]::DirectorySeparatorChar
-    if (-not $outputPath.StartsWith($worktreePrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
-        -not $vmxFullPath.Equals((Join-Path $outputPath "$Name.vmx"), [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw 'Test-VM ownership paths must use the canonical output directory and VMX beneath the task checkout.'
+    $hasValidationRootReceiptPath = Assert-AtlasoTestVmValidationRootSelector `
+        -Worktree $worktreePath -OutputDirectory $outputPath -Name $Name -SourceCommit $SourceCommit `
+        -PullRequestNumber $PullRequestNumber -LocalBuilder:$LocalBuilder `
+        -ReceiptPath $ValidationRootReceiptPath -ReceiptSha256 $ValidationRootReceiptSha256
+    if (-not $vmxFullPath.Equals((Join-Path $outputPath "$Name.vmx"), [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Test-VM ownership VMX paths must use the canonical name inside the output directory.'
     }
 
     $taskId = if ($manualRootSupplied) { $OwnershipTaskId } else { $agentTaskId }
@@ -142,6 +624,7 @@ function New-AtlasoTestVmOwnershipContext {
     $rootPin = $null
     $worktreePin = $null
     $outputAncestorPin = $null
+    $validationRootAdmission = $null
     try {
         $configuredRootPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($configuredRoot, $true)
         $rootPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($evidenceFullPath, $true)
@@ -187,6 +670,31 @@ function New-AtlasoTestVmOwnershipContext {
         }
         $admittedEvidenceDirectoryId = [Atlaso.WorkstationFileIdentity]::Get($evidenceFullPath)
         $admittedWorktreeDirectoryId = [Atlaso.WorkstationFileIdentity]::Get($worktreePath)
+        if ($hasValidationRootReceiptPath) {
+            $contextForValidationRoot = [pscustomobject]@{
+                TaskId = $taskId
+                Repository = 'mdaneri/Atlaso'
+                Worktree = $worktreePath
+                WorktreeDirectoryId = $admittedWorktreeDirectoryId
+                PermittedRoot = $configuredRoot
+                Branch = $SourceBranch
+                SourceCommit = $SourceCommit
+                PullRequestNumber = $PullRequestNumber
+                LocalBuilder = [bool]$LocalBuilder
+                Name = $Name
+                EvidenceDirectory = $evidenceFullPath
+                EvidenceDirectoryId = $admittedEvidenceDirectoryId
+                OutputDirectory = $outputPath
+            }
+            $validationRootAdmission = Read-AtlasoTestVmValidationRootReceipt `
+                -Context $contextForValidationRoot `
+                -ReceiptPath $ValidationRootReceiptPath `
+                -ReceiptSha256 $ValidationRootReceiptSha256
+        }
+    }
+    catch {
+        if ($validationRootAdmission) { $validationRootAdmission.Dispose() }
+        throw
     }
     finally {
         if ($rootPin) { $rootPin.Dispose() }
@@ -213,6 +721,7 @@ function New-AtlasoTestVmOwnershipContext {
         EvidenceDirectoryId = $admittedEvidenceDirectoryId
         ReceiptPath         = $OwnershipReceiptPath
         ReceiptSha256       = $OwnershipReceiptSha256.ToLowerInvariant()
+        ValidationRootAdmission = $validationRootAdmission
     }
 }
 
@@ -243,6 +752,13 @@ function Assert-AtlasoTestVmCheckoutSource {
     $worktreePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath([string]$Context.Worktree, $true)
     try {
     if ($sourcePin.Disposed) { throw 'Verified checkout source handles were already released; mutation refused.' }
+    if ($Context.PSObject.Properties['ValidationRootAdmission'] -and $Context.ValidationRootAdmission) {
+        if ($Context.ValidationRootAdmission.Disposed -or
+            [Atlaso.WorkstationFileIdentity]::Get([string]$Context.ValidationRootAdmission.RootPath) -cne
+            [string]$Context.ValidationRootAdmission.DirectoryIdentity) {
+            throw 'The original external validation-root identity or retained pins changed; mutation refused.'
+        }
+    }
     if (-not $Context.PSObject.Properties['WorktreeDirectoryId'] -or
         [Atlaso.WorkstationFileIdentity]::Get([string]$Context.Worktree) -cne [string]$Context.WorktreeDirectoryId) {
         throw 'The admitted task worktree filesystem identity changed; infrastructure mutation refused.'
@@ -695,10 +1211,25 @@ function Publish-AtlasoTestVmOwnershipRecord {
     param(
         [Parameter(Mandatory = $true)][psobject]$Context,
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Record,
-        [Parameter(Mandatory = $true)][ValidateSet('intent', 'original', 'directory', 'clone-process', 'ca-marker', 'restored-directory')][string]$Kind
+        [Parameter(Mandatory = $true)][ValidateSet('intent', 'original', 'directory', 'clone-process', 'ca-marker', 'restored-directory', 'installation-baseline', 'installation-boot', 'installation-resume', 'installation-interruption', 'installation-recovery-boot')][string]$Kind
     )
 
     if (-not $Context.Enabled) { throw 'Cannot publish ownership for a disabled task context.' }
+    if ($Context.PSObject.Properties['ValidationRootAdmission'] -and $Context.ValidationRootAdmission) {
+        $rootBinding = [ordered]@{
+            path = [string]$Context.ValidationRootAdmission.RootPath
+            directory_identity = [string]$Context.ValidationRootAdmission.DirectoryIdentity
+            receipt_path = [string]$Context.ValidationRootAdmission.ReceiptPath
+            receipt_sha256 = [string]$Context.ValidationRootAdmission.ReceiptSha256
+        }
+        if ($Record.Contains('validation_root') -and $null -ne $Record['validation_root']) {
+            Assert-AtlasoTestVmValidationRootBinding -Context $Context -Record $Record
+        }
+        else {
+            $Record['validation_root'] = $rootBinding
+        }
+    }
+    Assert-AtlasoTestVmValidationRootBinding -Context $Context -Record $Record
     $root = [System.IO.Path]::GetFullPath([string]$Context.EvidenceDirectory).TrimEnd('\', '/')
     $output = [System.IO.Path]::GetFullPath([string]$Context.OutputDirectory).TrimEnd('\', '/')
     $rootPrefix = $root + [System.IO.Path]::DirectorySeparatorChar
@@ -1042,6 +1573,7 @@ function Read-AtlasoTestVmSealedRecord {
             [bool]$record.local_builder -ne [bool]$Context.LocalBuilder) { throw 'Recovery receipt does not match the original task and VM.' }
         & git -C $Context.Worktree merge-base --is-ancestor $record.source_commit $Context.SourceCommit 2>$null
         if ($LASTEXITCODE -ne 0) { throw 'Recovery receipt source ancestry changed.' }
+        Assert-AtlasoTestVmValidationRootBinding -Context $Context -Record $record
         return $record
     }
     finally { if ($filePin) { $filePin.Dispose() }; $rootPin.Dispose() }

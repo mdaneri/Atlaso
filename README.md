@@ -95,6 +95,8 @@ For native same-address static-to-DHCP management acceptance, use the
 
 - [Documentation](https://mdaneri.github.io/Atlaso/docs/) — browse the published Atlaso documentation.
 - [Getting started](docs/getting-started/index.md) — choose an appliance path and complete initial configuration.
+- [Physical installation](docs/getting-started/physical-installation.md) — review the planned signed offline ISO installation
+  flow; physical hardware validation is pending.
 - [Operate](docs/operate/index.md) — manage daily appliance tasks, changes, updates, and troubleshooting.
 - [Services](docs/services/index.md) — configure infrastructure, identity, storage, and VCF integrations.
 - [Reference](docs/reference/index.md) — review APIs, image building, interoperability, and technical behavior.
