@@ -217,6 +217,35 @@ function Get-InstallationVmFunctionText {
         'Custom Back must reach disk selection before explicitly cancelling; it must never admit erasure.'
 }
 
+& {
+    . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Keep-InstallationServiceStorage')))
+    $events = [Collections.Generic.List[string]]::new()
+    <#
+    .SYNOPSIS
+    Admit only the two fixed public service-storage prompts.
+    .PARAMETER Pattern
+    Expected public service label.
+    #>
+    function Wait-InstallationConsoleState {
+        param([string]$Pattern)
+        $events.Add($Pattern)
+    }
+    <#
+    .SYNOPSIS
+    Record the unchanged shared-storage defaults without a VM.
+    .PARAMETER Text
+    Non-secret native input.
+    #>
+    function Send-InstallationConsoleText {
+        param([string]$Text)
+        Assert-InstallationVmCondition ($Text -ceq "`n") 'Finite fixtures must never choose an extra data disk.'
+        $events.Add('keep')
+    }
+    Keep-InstallationServiceStorage -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -CursorState @{}
+    Assert-InstallationVmCondition (($events -join '|') -ceq 'SFTP backup storage|keep|VCFDT depot storage|keep') `
+        'Canonical native consumers must explicitly retain both service-storage defaults before erasure review.'
+}
+
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'ConvertTo-InstallationVmxString')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Resolve-InstallationVmTool')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Switch-InstallationOutputPinToMutationMode')))

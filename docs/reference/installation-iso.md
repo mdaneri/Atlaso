@@ -48,6 +48,14 @@ Apply executes the reviewed helper operations. Completion refuses a missing, sim
 This does not automatically apply pending configuration during installation. Existing appliances installed with an
 older ISO retain their original setting; producing a replacement ISO does not modify them.
 
+Auto and Custom both offer named **SFTP backup storage** and **VCFDT depot storage** screens before destructive review.
+Keep the default to preserve an existing service partition or shared storage. Other choices explicitly assign a
+compatible Custom `/mnt/` partition, or an otherwise unused disk as a full-disk ext4 partition at the fixed service
+mount. The installer does not infer roles from capacity, order, labels, or old filesystems. A previously selected disk
+cannot also be chosen for whole-disk replacement, and the two roles cannot take the same partition. Returning Back
+discards tentative choices; all selected identities and mount layouts still require the complete No-default review.
+These choices create the installation layout only; they do not enable the SFTP or depot service or expose credentials.
+
 The shared boot-branding installer handles both native Photon kernel paths. The root-only Auto layout uses
 `/boot/$photon_linux` and points GRUB at `/boot/grub2/themes/atlaso/theme.txt`; a Custom layout with a separate `/boot`
 uses `/$photon_linux` and `/grub2/themes/atlaso/theme.txt`. Theme files remain under `/boot/grub2/themes/atlaso` in

@@ -866,12 +866,33 @@ function Invoke-InstallationCustomLayout {
             $next = if ($index + 1 -lt $partitions.Count) { "`n" } else { "`eOC`n" }
             Send-InstallationConsoleText -Pipe $Pipe -Text ("`eOBext4`eOB" + $definition.Mount + "`n" + $next)
         }
+        Keep-InstallationServiceStorage -Pipe $Pipe -Deadline $Deadline -CursorState $CursorState
         $review = if ($MultiDisk) { 'MultiReview' } else { 'Review' }
         Wait-InstallationCustomPublicState @common -Kind $review -ExpectedDisk $target.DiskPath -ExpectedDataDisk $dataDisk
         if ($MultiDisk) { Write-Host 'Custom multi-disk native destructive review admitted before consent.' }
         else { Write-Host 'Custom single-root native destructive review admitted before consent.' }
     }
     finally { $state.Text = ''; $state.Clear() }
+}
+
+<#
+.SYNOPSIS
+Keep the finite fixture's explicit shared or existing service partitions.
+.PARAMETER Pipe
+Original receipt-bound private serial pipe.
+.PARAMETER Deadline
+Unchanged whole-consumer deadline.
+.PARAMETER CursorState
+Public terminal-parser state shared with the canonical consumer.
+#>
+function Keep-InstallationServiceStorage {
+    param([IO.Pipes.NamedPipeServerStream]$Pipe, [DateTimeOffset]$Deadline, [hashtable]$CursorState)
+    foreach ($title in @('SFTP backup storage', 'VCFDT depot storage')) {
+        Wait-InstallationConsoleState -Pipe $Pipe -Pattern $title -Deadline $Deadline -ReadBootProgress -CursorState $CursorState
+        # The default keeps the existing/shared layout. Never select an extra
+        # fixture disk implicitly while admitting the unchanged native cases.
+        Send-InstallationConsoleText -Pipe $Pipe -Text "`n"
+    }
 }
 
 <#
@@ -1806,6 +1827,7 @@ try {
                     Wait-InstallationConsoleState -Pipe $pipe -Pattern 'default installation requires a disk of at least 64 GiB' `
                         -Deadline $deadline -ExpectedCapacityDisk $target.DiskPath
                 } else {
+                    Keep-InstallationServiceStorage -Pipe $pipe -Deadline $deadline -CursorState $cursorState
                     Wait-InstallationConsoleState -Pipe $pipe -Pattern 'Erase selected disks?' -Deadline $deadline
                     if ($Scenario -eq 'CancelReview') {
                         # Photon's confirmation defaults to No; Enter declines erasure.

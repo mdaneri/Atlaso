@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import curses
 import logging
 import os
@@ -48,6 +49,117 @@ NATIVE_PATH = Path("/usr/lib/python3.11/site-packages/photon_installer")
 TRUST_KEY = Path("/etc/atlaso-installer/trust.pem")
 MINIMUM_DISK_BYTES = 64 * 1024**3
 MAX_INSPECTION_SOFTWARE_BYTES = 2 * 1024**3
+SERVICE_STORAGE = (
+    ("SFTP backup storage", "/mnt/atlaso-vcf-backups"),
+    ("VCFDT depot storage", "/mnt/atlaso-vcf-offline-depot"),
+)
+
+
+def storage_choice(maxy: int, maxx: int, title: str, mountpoint: str, choices: list[tuple]) -> int | None:
+    """Reuse Photon's native scrolling menu for one named storage assignment.
+
+    Args:
+        maxy: Console rows.
+        maxx: Console columns.
+        title: Fixed service label.
+        mountpoint: Fixed appliance mount path.
+        choices: Public labels and exact proposed assignment actions.
+
+    Returns:
+        Explicit selected row, or None for Back.
+    """
+    from actionresult import ActionResult
+    from menu import Menu
+    from window import Window
+
+    def select(index):
+        """Return an explicit native menu selection.
+
+        Args:
+            index: Selected row bound by the native menu.
+        """
+        return ActionResult(True, {"choice": index})
+
+    height, width = 18, 70
+    window = Window(height, width, maxy, maxx, title, True)
+    window.addstr(0, 0, f"Mount: {mountpoint}\nChoose storage; new disks are erased only after review.")
+    items = [(textwrap.shorten(f"{index + 1}. {label}", width - 8), select, index)
+             for index, (label, *_action) in enumerate(choices)]
+    window.set_action_panel(Menu((maxy - height) // 2 + 5, maxx, items, 7))
+    result = window.do_action()
+    if not result.success:
+        return None
+    index = result.result["choice"]
+    if type(index) is not int or not 0 <= index < len(choices):
+        raise ValueError("storage selection is invalid")
+    return index
+
+
+def service_storage_choices(config: dict, mountpoint: str, eligible: dict) -> list[tuple]:
+    """Offer shared storage, compatible Custom rows, and unused eligible disks.
+
+    Args:
+        config: Tentative native partition layout.
+        mountpoint: Fixed service mount to assign.
+        eligible: Fresh disks still equal to their original inventory identities.
+    """
+    existing = next((p for p in config["partitions"] if p.get("mountpoint") == mountpoint), None)
+    label = f"Keep existing partition on {existing.get('disk', config['disk'])}" if existing else "Keep shared storage (no separate partition)"
+    choices = [(label, "keep", None)]
+    reserved = {path for _label, path in SERVICE_STORAGE}
+    for index, partition in enumerate(config["partitions"]):
+        target = partition.get("mountpoint") or ""
+        if (target.startswith("/mnt/") and target not in reserved
+                and partition.get("filesystem") in {"ext4", "xfs", "btrfs"}):
+            disk = partition.get("disk", config["disk"])
+            choices.append((f"Partition {target} on {disk}", "partition", index))
+    used = set(selected_disks(config))
+    # The persisted layout admits 32 mounts, including Photon's generated EFI
+    # mount. Reassigning an existing role does not consume another mount slot.
+    mounted = sum(bool(p.get("mountpoint")) and p.get("filesystem") not in {"swap", "bios"}
+                  for p in config["partitions"])
+    for disk, identity in eligible.items():
+        if disk not in used and (existing is not None or mounted < 31):
+            choices.append((f"Erase whole disk {disk} ({identity['size'] // 1024**3} GiB)", "disk", disk))
+    return choices
+
+
+def assign_service_storage(maxy: int, maxx: int, config: dict, initial: dict) -> bool:
+    """Collect reversible service assignments before any destructive consent.
+
+    Args:
+        maxy: Console rows.
+        maxx: Console columns.
+        config: Auto or Custom native layout to update only after both choices.
+        initial: Original read-only eligible disk identities.
+    """
+    working = copy.deepcopy(config)
+    snapshots = []
+    index = 0
+    while index < len(SERVICE_STORAGE):
+        title, mountpoint = SERVICE_STORAGE[index]
+        current = disk_inventory()
+        eligible = {path: item for path, item in current.items() if path in initial and item == initial[path]}
+        choices = service_storage_choices(working, mountpoint, eligible)
+        selected = storage_choice(maxy, maxx, title, mountpoint, choices)
+        if selected is None:
+            if index == 0:
+                return False
+            index -= 1
+            working["partitions"] = snapshots.pop()
+            continue
+        snapshots.append(copy.deepcopy(working["partitions"]))
+        _label, action, value = choices[selected]
+        if action != "keep":
+            partition = (working["partitions"][value] if action == "partition"
+                         else {"disk": value, "size": 0, "filesystem": "ext4"})
+            working["partitions"] = [p for p in working["partitions"] if p.get("mountpoint") != mountpoint]
+            partition["mountpoint"] = mountpoint
+            if action == "disk":
+                working["partitions"].append(partition)
+        index += 1
+    config["partitions"] = working["partitions"]
+    return True
 
 
 def require_network_adapter(sysfs: Path = Path("/sys/class/net")) -> None:
@@ -620,6 +732,13 @@ def configure_console(screen, initial: dict[str, dict], mount_aliases: dict[str,
         consent = {path: initial[path] for path in paths}
         revalidate_disks(config, consent, disk_inventory())
         if not config.get("autopartition") or consent[config["disk"]]["size"] >= MINIMUM_DISK_BYTES:
+            if not assign_service_storage(maxy, maxx, config, initial):
+                continue
+            for partition in config["partitions"]:
+                if partition.get("mountpoint"):
+                    validate_custom_mountpoint(partition["mountpoint"], mount_aliases)
+            paths = selected_disks(config)
+            consent = {path: initial[path] for path in paths}
             break
 
         # Keep the admission error inside Photon's native informational dialog.

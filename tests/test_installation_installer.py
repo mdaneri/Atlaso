@@ -13,17 +13,195 @@ from types import SimpleNamespace
 import pytest
 
 
-def load_installer(monkeypatch):
+def load_installer(monkeypatch, *, native_choices=False):
     """Load the native-console adapter on Windows with a noninteractive console.
 
 Args:
     monkeypatch: Pytest fixture for replacing controlled dependencies.
+    native_choices: Preserve the native storage-menu renderer for its isolated tests.
 """
     monkeypatch.setitem(sys.modules, "curses", SimpleNamespace())
     spec = importlib.util.spec_from_file_location("installation_adapter", Path("scripts/installation/installer.py"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    if not native_choices:
+        monkeypatch.setattr(module, "storage_choice", lambda *_args: 0)
     return module
+
+
+@pytest.mark.parametrize("autopartition", [True, False])
+def test_named_service_storage_selects_only_explicit_disks(monkeypatch, autopartition):
+    """Assign both named services without inferring disk roles from size or order.
+
+    Args:
+        monkeypatch: Isolated native choices and disk inventory.
+        autopartition: Original Auto or Custom layout mode.
+    """
+    module = load_installer(monkeypatch)
+    initial = {f"/dev/sd{letter}": {"size": size * 1024**3, "serial": letter}
+               for letter, size in zip("abcd", (64, 20, 500, 500), strict=True)}
+    config = {"disk": "/dev/sda", "arch": "x86_64", "bootmode": "efi", "autopartition": autopartition,
+              "partitions": [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]}
+    targets = iter(["/dev/sdd", "/dev/sdc"])
+
+    def choose(_height, _width, title, mountpoint, choices):
+        """Explicitly select two disks while checking the named public choices.
+
+        Args:
+            _height: Console rows.
+            _width: Console columns.
+            title: Service name.
+            mountpoint: Fixed service mount path.
+            choices: Tentative assignments offered by the installer.
+        """
+        assert (title, mountpoint) in module.SERVICE_STORAGE
+        assert choices[0][1] == "keep"
+        assert not any(action == "disk" and value == "/dev/sda" for _label, action, value in choices)
+        if mountpoint.endswith("offline-depot"):
+            assert not any(action == "disk" and value == "/dev/sdd" for _label, action, value in choices)
+        target = next(targets)
+        return next(i for i, (_label, action, value) in enumerate(choices) if action == "disk" and value == target)
+
+    monkeypatch.setattr(module, "disk_inventory", lambda: initial)
+    monkeypatch.setattr(module, "storage_choice", choose)
+    assert module.assign_service_storage(25, 80, config, initial)
+    assert config["autopartition"] is autopartition
+    assert [(p["mountpoint"], p.get("disk", config["disk"])) for p in config["partitions"]] == [
+        ("/", "/dev/sda"), ("/mnt/atlaso-vcf-backups", "/dev/sdd"), ("/mnt/atlaso-vcf-offline-depot", "/dev/sdc")]
+    assert module.selected_disks(config) == ["/dev/sda", "/dev/sdc", "/dev/sdd"]
+    consent = {path: initial[path] for path in module.selected_disks(config)}
+    module.revalidate_disks(config, consent, initial)
+    changed = {**initial, "/dev/sdd": {"size": initial["/dev/sdd"]["size"], "serial": "replacement"}}
+    with pytest.raises(ValueError, match="identity"):
+        module.revalidate_disks(config, consent, changed)
+
+
+def test_service_storage_assigns_custom_partition_and_preserves_existing_role(monkeypatch):
+    """Rename only a selected data mount and preserve another service's layout.
+
+    Args:
+        monkeypatch: Isolated disk inventory and native menu selections.
+    """
+    module = load_installer(monkeypatch)
+    config = {"disk": "/dev/sda", "partitions": [
+        {"mountpoint": "/", "size": 0, "filesystem": "ext4"},
+        {"mountpoint": "/var", "disk": "/dev/sdb", "size": 4096, "filesystem": "ext4"},
+        {"mountpoint": "/mnt/data", "disk": "/dev/sdb", "size": 8192, "filesystem": "xfs"},
+        {"mountpoint": "/mnt/atlaso-vcf-offline-depot", "disk": "/dev/sdc", "size": 0, "filesystem": "ext4"},
+    ]}
+    initial = {f"/dev/sd{letter}": {"size": 64 * 1024**3} for letter in "abc"}
+
+    def choose(_height, _width, _title, mountpoint, choices):
+        """Choose the compatible custom data row, then keep the existing depot.
+
+        Args:
+            _height: Console rows.
+            _width: Console columns.
+            _title: Public service label.
+            mountpoint: Fixed service mount.
+            choices: Offered assignments.
+        """
+        if mountpoint.endswith("backups"):
+            assert [value for _label, action, value in choices if action == "partition"] == [2]
+            return 1
+        assert choices[0][0] == "Keep existing partition on /dev/sdc"
+        return 0
+
+    monkeypatch.setattr(module, "disk_inventory", lambda: initial)
+    monkeypatch.setattr(module, "storage_choice", choose)
+    assert module.assign_service_storage(25, 80, config, initial)
+    assert config["partitions"][1]["mountpoint"] == "/var"
+    assert config["partitions"][2] == {"mountpoint": "/mnt/atlaso-vcf-backups", "disk": "/dev/sdb",
+                                       "size": 8192, "filesystem": "xfs"}
+    assert config["partitions"][3]["mountpoint"] == "/mnt/atlaso-vcf-offline-depot"
+
+
+def test_service_storage_back_discards_tentative_assignments(monkeypatch):
+    """Back through named roles without leaking tentative disk selections.
+
+    Args:
+        monkeypatch: Isolated inventory and native Back results.
+    """
+    module = load_installer(monkeypatch)
+    config = {"disk": "/dev/sda", "partitions": [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]}
+    original = module.copy.deepcopy(config)
+    initial = {f"/dev/sd{letter}": {"size": 64 * 1024**3} for letter in "ab"}
+    selections = iter([1, None, None])
+    monkeypatch.setattr(module, "disk_inventory", lambda: initial)
+    monkeypatch.setattr(module, "storage_choice", lambda *_args: next(selections))
+    assert not module.assign_service_storage(25, 80, config, initial)
+    assert config == original
+
+
+def test_service_storage_reserves_native_efi_slot_and_accepts_swap(monkeypatch):
+    """Keep new data filesystems inside the existing persisted-profile bound.
+
+    Args:
+        monkeypatch: Isolated installer loader.
+    """
+    module = load_installer(monkeypatch)
+    config = {"disk": "/dev/sda", "partitions": [
+        {"mountpoint": "/", "size": 4096, "filesystem": "ext4"},
+        {"mountpoint": None, "size": 1024, "filesystem": "swap"},
+        *({"mountpoint": f"/mnt/data-{i}", "size": 512, "filesystem": "ext4"} for i in range(30)),
+    ]}
+    eligible = {"/dev/sda": {"size": 64 * 1024**3}, "/dev/sdb": {"size": 500 * 1024**3}}
+    choices = module.service_storage_choices(config, "/mnt/atlaso-vcf-backups", eligible)
+    assert choices[0][1] == "keep"
+    assert not any(action == "disk" for _label, action, _value in choices)
+    assert len([action for _label, action, _value in choices if action == "partition"]) == 30
+    config["partitions"].pop()
+    assert any(action == "disk" and value == "/dev/sdb"
+               for _label, action, value in module.service_storage_choices(config, "/mnt/atlaso-vcf-backups", eligible))
+
+
+@pytest.mark.parametrize("back", [True, False])
+def test_storage_menu_keeps_exact_actions_behind_bounded_native_labels(monkeypatch, back):
+    """Exercise Photon-compatible native callbacks without a console or disk.
+
+    Args:
+        monkeypatch: Native Window/Menu doubles.
+        back: Whether the native window returns Back.
+    """
+    module = load_installer(monkeypatch, native_choices=True)
+    observed = {}
+
+    class Window:
+        """Retain one native panel for the public selection test."""
+        def __init__(self, *args):
+            """Capture native geometry and title.
+
+            Args:
+                *args: Native constructor parameters.
+            """
+            observed["window"] = args
+        def addstr(self, *_args):
+            """Accept public mount instructions.
+
+            Args:
+                *_args: Native text coordinates and content.
+            """
+        def set_action_panel(self, panel):
+            """Bind the native menu.
+
+            Args:
+                panel: Native menu double.
+            """
+            self.panel = panel
+        def do_action(self):
+            """Return Back or the exact second native callback."""
+            if back:
+                return SimpleNamespace(success=False)
+            _label, callback, value = self.panel[2][1]
+            return callback(value)
+
+    monkeypatch.setitem(sys.modules, "window", SimpleNamespace(Window=Window))
+    monkeypatch.setitem(sys.modules, "menu", SimpleNamespace(Menu=lambda *args: args))
+    monkeypatch.setitem(sys.modules, "actionresult", SimpleNamespace(
+        ActionResult=lambda success, result: SimpleNamespace(success=success, result=result)))
+    choices = [("Keep shared storage", "keep", None), ("Erase whole disk " + "x" * 100, "disk", "/dev/exact")]
+    assert module.storage_choice(25, 80, "SFTP backup storage", "/mnt/atlaso-vcf-backups", choices) == (None if back else 1)
+    assert observed["window"] == (18, 70, 25, 80, "SFTP backup storage", True)
 
 
 @pytest.mark.parametrize("hardware,kind,accepted", [
@@ -586,7 +764,7 @@ def test_root_password_back_discards_prior_admin_and_returns_to_admin(monkeypatc
     assert module.account_passwords(25, 80) is None
 
 
-@pytest.mark.parametrize("flow", ["custom-back", "admin-back", "admin-back-decline", "admin-back-disk-changed"])
+@pytest.mark.parametrize("flow", ["custom-back", "admin-back", "admin-back-decline", "admin-back-disk-changed", "service-disks"])
 def test_setup_back_navigation_preserves_prewrite_boundaries(monkeypatch, flow):
     """Exercise real wizard control flow with isolated native window doubles.
 
@@ -596,10 +774,28 @@ def test_setup_back_navigation_preserves_prewrite_boundaries(monkeypatch, flow):
     """
     module = load_installer(monkeypatch)
     events = []
+    review_lines = []
     configurations = []
     password_calls = []
     revalidations = []
     initial = {"/dev/sda": {"size": 64 * 1024**3, "serial": "target"}}
+    if flow == "service-disks":
+        initial.update({f"/dev/sd{letter}": {"size": 500 * 1024**3, "serial": letter} for letter in "bc"})
+
+        def storage(_height, _width, _title, mountpoint, choices):
+            """Bind both named roles to explicit data disks in the real wizard.
+
+            Args:
+                _height: Console rows.
+                _width: Console columns.
+                _title: Service title.
+                mountpoint: Fixed service mount.
+                choices: Exact offered assignments.
+            """
+            target = "/dev/sdb" if mountpoint.endswith("backups") else "/dev/sdc"
+            return next(i for i, (_label, action, value) in enumerate(choices) if action == "disk" and value == target)
+
+        monkeypatch.setattr(module, "storage_choice", storage)
 
     class SelectDisk:
         """Model explicit disk/layout selection only."""
@@ -650,7 +846,8 @@ def test_setup_back_navigation_preserves_prewrite_boundaries(monkeypatch, flow):
     module.curses.color_pair = lambda _index: 0
     screen = SimpleNamespace(getmaxyx=lambda: (25, 80), bkgd=lambda *_args: None)
     monkeypatch.setattr(module, "disk_inventory", lambda: initial)
-    monkeypatch.setattr(module, "show_layout_review_pages", lambda *_args, **_kwargs: events.append("review-page"))
+    monkeypatch.setattr(module, "show_layout_review_pages", lambda *_args, **_kwargs:
+                        (events.append("review-page"), review_lines.extend(_args[2])))
 
     def revalidate(config, consent, current):
         """Refuse changed evidence on return instead of retaining prior Yes.
@@ -660,8 +857,9 @@ def test_setup_back_navigation_preserves_prewrite_boundaries(monkeypatch, flow):
             consent: Original identities.
             current: Read-only current inventory.
         """
-        assert consent == current == initial
-        assert all(p.get("disk", "/dev/sda") == "/dev/sda" for p in config["partitions"])
+        assert current == initial
+        assert consent == {path: current[path] for path in module.selected_disks(config)}
+        assert all(p.get("disk", "/dev/sda") in initial for p in config["partitions"])
         revalidations.append(True)
         if flow == "admin-back-disk-changed" and len(revalidations) == 3:
             raise ValueError("disk changed before renewed review")
@@ -673,6 +871,12 @@ def test_setup_back_navigation_preserves_prewrite_boundaries(monkeypatch, flow):
             *_args: Complete reviewed native confirmation.
         """
         events.append("confirm")
+        if flow == "service-disks":
+            reviewed = "\n".join([*review_lines, _args[2]])
+            for path in initial:
+                assert path in reviewed
+            for _label, mountpoint in module.SERVICE_STORAGE:
+                assert mountpoint in reviewed
         return not (flow == "admin-back-decline" and events.count("confirm") == 2)
 
     def password(_height, _width, username):
@@ -704,7 +908,8 @@ def test_setup_back_navigation_preserves_prewrite_boundaries(monkeypatch, flow):
     else:
         config, consent, passwords = module.configure_console(screen, initial, {})
         assert passwords == ("fresh-admin", "fresh-root") and consent == initial
-        assert config["partitions"] == [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]
+        assert config["partitions"][0] == {"mountpoint": "/", "size": 0, "filesystem": "ext4"}
+        assert len(config["partitions"]) == (3 if flow == "service-disks" else 1)
         assert not any("password" in key for key in config)
         assert len(configurations) == (2 if flow == "custom-back" else 1)
         assert events.count("confirm") == (2 if flow == "admin-back" else 1)

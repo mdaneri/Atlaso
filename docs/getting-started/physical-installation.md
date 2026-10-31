@@ -33,12 +33,22 @@ package repository.
 The installer requires you to select installation disks, even when it finds only one eligible disk. Review the disk
 identity and proposed layout for every selected disk before confirming.
 
-- **Auto** installs the complete system to one selected disk using Photon’s default UEFI layout. Atlaso, its depot, and
-  backups use space on that disk’s root filesystem.
+- **Auto** installs the system to one selected disk using Photon’s default UEFI layout. The following service-storage
+  screens let you keep shared storage or explicitly select separate disks for SFTP backups and the VCFDT depot.
 - **Custom** uses Photon’s native partition editor for ext4, xfs, btrfs, and swap partitions. It lets you define a
   layout across multiple disks and place Atlaso paths on separate filesystems when desired. Only the disks you
   explicitly select for the layout are replaced. The boot filesystem must be ext4: use ext4 for `/`, or create a
   separate ext4 `/boot` when `/` uses xfs or btrfs. Root filesystems must be ext4, xfs, or btrfs.
+
+Both flows finish with **SFTP backup storage** and **VCFDT depot storage** choices. The default preserves an existing
+service partition or keeps shared storage. You can assign a compatible Custom partition currently mounted under
+`/mnt/`, or select an unused disk to create a full-disk ext4 data partition. The fixed service paths are
+`/mnt/atlaso-vcf-backups` and `/mnt/atlaso-vcf-offline-depot`. A disk already used by the layout is never offered as a
+whole-disk replacement. **Go Back** returns through the storage choices without committing tentative assignments.
+
+For example, select the 64 GiB OS disk with Auto, the intended 500 GiB Backups disk for SFTP, and the other 500 GiB
+disk for VCFDT. Review the actual disk identities; equal sizes do not identify their roles. A fourth 20 GiB disk stays
+untouched unless you explicitly assign it in Custom, for example as `/opt/atlaso` for the application files.
 
 Every selected disk is erased. Disks you do not select, including disks with existing Atlaso labels, must remain
 untouched. Do not continue if a disk identity or proposed layout differs from what you intend. Cancel before
@@ -59,7 +69,7 @@ into ordered parts, the verifier checks each part and the reconstructed image.
 
 1. Boot the removable media in UEFI mode with Secure Boot disabled.
    If no Ethernet adapter is detected, power off and add one before continuing; the installer stops before disk selection.
-2. Select Auto or Custom, choose the disk or disks, and review the complete proposed layout.
+2. Select Auto or Custom, choose the disk or disks, assign service storage, and review the complete proposed layout.
 3. Check the displayed disk identities and proposed partitions, then select **Yes** at **Erase selected disks?**
    only when all data on those disks may be erased. The confirmation defaults to **No**; decline if anything is unexpected.
 4. Enter the administrator and root passwords at the installer’s concealed prompts. Passwords must use ASCII
