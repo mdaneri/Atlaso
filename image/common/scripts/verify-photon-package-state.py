@@ -68,7 +68,7 @@ INSTALLATION_MODULE_GENERATED_PATHS = frozenset(
     "/lib/modules/6.12.114-1.ph5/" + name for name in INSTALLATION_MODULE_GENERATED
 )
 INSTALLATION_LAYOUT_HELPER_PATH = Path(__file__).resolve().parents[3] / "scripts/installation/layout.py"
-INSTALLATION_LAYOUT_HELPER_SHA256 = "52e6bf44667e7e3f8d176164a76267bed7c8d9718cfcd4286e510658cf61e257"
+INSTALLATION_LAYOUT_HELPER_SHA256 = "1feb571697f3a1e592e3839bc303cd4c20cd8d40f7acd4e3d7df93449de99608"
 INSTALLATION_EFI_PATH = Path("/boot/efi")
 # Public sizes, hashes and modification times from the admitted shim/GRUB RPMs.
 INSTALLATION_EFI_FILES = (

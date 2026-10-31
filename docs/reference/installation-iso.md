@@ -580,6 +580,10 @@ comparison. Only those files' mode and timestamp discrepancies are reconciled; o
 still fail. These checks follow [Linux's VFAT mount masks](https://cdn.kernel.org/doc/html/latest/filesystems/vfat.html)
 and [FAT timestamp encoding](https://github.com/torvalds/linux/blob/v6.1/fs/fat/misc.c).
 
+Changes to `scripts/installation/layout.py` require reviewing its exact bytes and updating both the host content
+preparation pin and the guest package-state verifier pin together. Focused content and package-state tests compare
+those pins with the actual checked-in helper. Existing media keeps its original helper and validation evidence.
+
 Use `-CollisionSuffix inspection-a` and `-CollisionSuffix inspection-b` for two fresh installations in separate
 canonical VM directories. The wrappers reuse the shared identity helper to preserve the PR number while giving each
 VM a distinct name. Supply the same suffix with that VM's original receipt selectors for every subsequent login,

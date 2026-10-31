@@ -25,6 +25,17 @@ from scripts import verify_virtualization_guest_wheel
 from scripts.installation import content_inspection, inspection
 
 
+def test_layout_helper_pins_match_actual_repository_bytes():
+    """Keep host admission and guest verification bound to the reviewed helper."""
+    expected = hashlib.sha256(Path("scripts/installation/layout.py").read_bytes()).hexdigest()
+    assert content_inspection.PHOTON_LAYOUT_HELPER_SHA256 == expected
+    guest = ast.parse(Path("image/common/scripts/verify-photon-package-state.py").read_text(encoding="utf-8"))
+    pins = [ast.literal_eval(node.value) for node in guest.body if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "INSTALLATION_LAYOUT_HELPER_SHA256"
+                    for target in node.targets)]
+    assert pins == [expected]
+
+
 def _inventory(value):
     """Encode a public synthetic inventory in the guest report format.
 
@@ -255,7 +266,8 @@ def _prepare_fixture():
             records.append({"path": f"rpms/{name}.rpm", "sha256": checksum})
             rpms.append({"file": f"{name}.rpm", "name": name, "version": version,
                          "architecture": "x86_64", "sha256": checksum})
-    records.append({"path": "source/scripts/installation/layout.py", "sha256": content_inspection.PHOTON_LAYOUT_HELPER_SHA256})
+    records.append({"path": "source/scripts/installation/layout.py",
+                    "sha256": hashlib.sha256(Path("scripts/installation/layout.py").read_bytes()).hexdigest()})
     manifest = {
         "files": records,
         "packages": ["linux", "linux-firmware", "python3"],
