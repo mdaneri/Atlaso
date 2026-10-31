@@ -71,6 +71,8 @@ Optional exact qemu-img executable path used for logical disk comparisons.
 .PARAMETER FixtureProfile
 Creation-time fixed disk recipe. MultiDisk adds an 8 GiB selected data disk while retaining the 4 GiB unselected disk.
 Existing operations derive this from original sealed receipts; an explicit value must agree.
+.PARAMETER ReceiptDirectory
+Optional existing durable workflow directory receiving original selectors before disk or boot mutations.
 #>
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
@@ -102,7 +104,8 @@ param(
     [string]$QemuImgPath = '',
     [switch]$NoStart,
     [switch]$VerifyTarget,
-    [ValidateSet('SingleDisk', 'MultiDisk', 'OldSystemLabel')][string]$FixtureProfile = 'SingleDisk'
+    [ValidateSet('SingleDisk', 'MultiDisk', 'OldSystemLabel')][string]$FixtureProfile = 'SingleDisk',
+    [string]$ReceiptDirectory = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -112,6 +115,7 @@ Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.InstallationFixture.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.InstallationOldLabel.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.InstallationRefreshReceipt.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot '..\virtualization\Atlaso.VirtualizationArtifacts.psm1') -Force
 
 <#
@@ -939,6 +943,10 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 }
 $resolvedWorktree = (Resolve-Path -LiteralPath $Worktree).Path
 $resolvedOutput = [System.IO.Path]::GetFullPath($OutputDirectory)
+$receiptDirectoryContext = if ($ReceiptDirectory) {
+    Assert-AtlasoInstallationRefreshReceiptDirectory -ReceiptDirectory $ReceiptDirectory `
+        -Worktree $resolvedWorktree -OutputDirectory $resolvedOutput
+} else { $null }
 $name = if ($PullRequestNumber -gt 0) {
     (New-AtlasoVmwareTestIdentity -PullRequestNumber $PullRequestNumber -Purpose installation-iso -CollisionSuffix $CollisionSuffix).Name
 } else {
@@ -1215,6 +1223,8 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
                     after_sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($after)).ToLowerInvariant()
                     created_utc = [DateTimeOffset]::UtcNow.ToString('o')
                 }
+                # Publish the original transition selector before touching the
+                # stopped VMX, so interruption never requires reconstruction.
                 if ($Mode -eq 'ResumeInstaller') {
                     $transition.interruption_receipt_path = $InterruptionReceiptPath
                     $transition.interruption_receipt_sha256 = $InterruptionReceiptSha256
@@ -1223,6 +1233,18 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
                 } else {
                     $published = Publish-AtlasoTestVmOwnershipRecord -Context $context -Record $transition -Kind installation-boot
                     Write-Host ('Installed boot transition receipt: ' + ($published | ConvertTo-Json -Compress))
+                    if ($receiptDirectoryContext) {
+                        $null = Publish-AtlasoInstallationRefreshSelector -Directory $receiptDirectoryContext -Filename 'boot-selectors.json' -Record ([ordered]@{
+                            schema = 1; task_id = $context.TaskId; repository = $context.Repository
+                            source_commit = $context.SourceCommit; worktree = $context.Worktree
+                            media = $original.installation_iso
+                            selectors = [ordered]@{
+                                OriginalReceiptPath = $OriginalReceiptPath; OriginalReceiptSha256 = $OriginalReceiptSha256
+                                BaselineReceiptPath = $BaselineReceiptPath; BaselineReceiptSha256 = $BaselineReceiptSha256
+                                BootReceiptPath = $published.Path; BootReceiptSha256 = $published.Sha256
+                            }
+                        })
+                    }
                 }
                 $writer.Position = 0
                 $writer.Write($after, 0, $after.Length)
@@ -1394,6 +1416,13 @@ try {
         $vmxStream.Write($vmxBytes, 0, $vmxBytes.Length)
         $vmxStream.Flush($true)
         $original = Publish-InstallationVmOriginalReceipt -Context $context -CleanupIdentity $cleanupIdentity -Iso $iso -VmxStream $vmxStream
+        if ($receiptDirectoryContext) {
+            $null = Publish-AtlasoInstallationRefreshSelector -Directory $receiptDirectoryContext -Filename 'vm-original-selectors.json' -Record ([ordered]@{
+                schema = 1; task_id = $context.TaskId; repository = $context.Repository
+                source_commit = $context.SourceCommit; worktree = $context.Worktree; media = $iso
+                selectors = [ordered]@{ OriginalReceiptPath = $original.Path; OriginalReceiptSha256 = $original.Sha256 }
+            })
+        }
     }
     finally { $vmxStream.Dispose() }
     Write-Host ("Original installation VM receipt: path={0} sha256={1}" -f $original.Path, $original.Sha256)
@@ -1418,6 +1447,16 @@ try {
     $baseline = Publish-InstallationDiskBaseline -Context $context -Original $original -DiskTool $qemuImg `
         -TargetDisk $targetDisk -UnselectedDisk $unselectedDisk
     Write-Host ("Installation disk baseline receipt: path={0} sha256={1}" -f $baseline.Path, $baseline.Sha256)
+    if ($receiptDirectoryContext) {
+        $null = Publish-AtlasoInstallationRefreshSelector -Directory $receiptDirectoryContext -Filename 'vm-selectors.json' -Record ([ordered]@{
+            schema = 1; task_id = $context.TaskId; repository = $context.Repository
+            source_commit = $context.SourceCommit; worktree = $context.Worktree; media = $iso
+            selectors = [ordered]@{
+                OriginalReceiptPath = $original.Path; OriginalReceiptSha256 = $original.Sha256
+                BaselineReceiptPath = $baseline.Path; BaselineReceiptSha256 = $baseline.Sha256
+            }
+        })
+    }
     $outputPin = Switch-InstallationOutputPinToMutationMode `
         -OutputDirectory $resolvedOutput `
         -ExpectedDirectoryIdentity ([string]$original.Record.original_identities.directory) `

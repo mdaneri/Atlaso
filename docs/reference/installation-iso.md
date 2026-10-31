@@ -20,6 +20,10 @@ passed, while an initial failed API probe and broader installer acceptance remai
 SATA/NVMe and wired-Ethernet acceptance remains outstanding. This VM result does not establish physical-platform
 support or complete issue acceptance.
 
+For recurring admitted package refreshes, use the
+[Offline installation ISO refresh workflow](installation-iso-refresh.md) to review Photon drift, bind capture
+inputs, assemble development media, and follow the receipt-bound VMware validation phases.
+
 The installation image reuses the pinned Photon 5.0 ISO and Photon installer 2.2. Remastering preserves the source EFI
 boot image and native installer flow. The Atlaso deployment source comes from an immutable Git archive at the
 selected full commit. The signed software release, its exact application wheel, locked CPython wheelhouse, shared

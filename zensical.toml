@@ -66,6 +66,7 @@ nav = [
   { "Reference" = [
     { "Overview" = "reference/index.md" },
     { "Installation ISO" = "reference/installation-iso.md" },
+    { "Installation ISO refresh workflow" = "reference/installation-iso-refresh.md" },
     { "API reference" = "reference/api.md" },
     { "Verified interface gallery" = "reference/interface-gallery.md" },
     { "Appliance Apply technical reference" = "reference/appliance-apply-technical.md" },

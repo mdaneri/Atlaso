@@ -11,6 +11,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import re
 import shutil
 import stat
@@ -1458,6 +1459,10 @@ def _run_runtime_tool(arguments: list[str], *, cwd: Path | None = None) -> str:
         Combined standard output and error for semantic checks.
     """
 
+    if os.environ.get("ATLASO_NATIVE_RPM_CONTEXT"):
+        from scripts.native_rpm_tools import run
+
+        return run(arguments, cwd=cwd)
     try:
         result = subprocess.run(
             arguments,

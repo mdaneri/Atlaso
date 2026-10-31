@@ -417,11 +417,14 @@ def rebuild_repository(rpms: Path, scratch: Path) -> None:
     if metadata.exists():
         os.rename(metadata, untrusted)
     generated.mkdir()
-    subprocess.run(
-        ["createrepo_c", "--checksum", "sha256", "--general-compress-type", "gz",
-         "--outputdir", str(generated), str(repository)],
-        check=True,
-    )
+    command = ["createrepo_c", "--checksum", "sha256", "--general-compress-type", "gz",
+               "--outputdir", str(generated), str(repository)]
+    if os.environ.get("ATLASO_NATIVE_RPM_CONTEXT"):
+        from scripts.native_rpm_tools import run
+
+        run(command)
+    else:
+        subprocess.run(command, check=True)
     _validate_ordinary_tree(generated)
     generated_entries = list(generated.iterdir())
     generated_metadata = generated / "repodata"
