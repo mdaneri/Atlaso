@@ -40,6 +40,8 @@ identity and proposed layout for every selected disk before confirming.
   explicitly select for the layout are replaced. The boot filesystem must be ext4: use ext4 for `/`, or create a
   separate ext4 `/boot` when `/` uses xfs or btrfs. Root filesystems must be ext4, xfs, or btrfs.
   Mount points must not contain whitespace or backslashes: Photon's native `fstab` writer cannot escape those fields.
+  Keep GRUB and kernel files on `/` or the supported separate `/boot`; nested mounts such as `/boot/grub2` are refused.
+  Photon creates its own `/boot/efi` partition; do not create that mount or any of its descendants in Custom.
 
 Both flows finish with **SFTP backup storage** and **VCFDT depot storage** choices. The default preserves an existing
 service partition or keeps shared storage. You can assign a compatible Custom partition currently mounted under

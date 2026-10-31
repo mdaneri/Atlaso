@@ -24,6 +24,18 @@ def require_fstab_safe_mountpoint(target: str) -> None:
         raise ValueError("No spaces or \\")
 
 
+def require_bootloader_mountpoint(target: str) -> None:
+    """Keep kernel and GRUB paths on Photon's supported root or boot filesystem.
+
+    Args:
+        target: Canonical mount point, including the native generated EFI mount.
+    """
+    if target.startswith("/boot/") and target != "/boot/efi":
+        # EFI's bootstrap selects the root/boot UUID and cannot discover a
+        # separate grub2, theme, kernel or nested EFI filesystem.
+        raise ValueError("Use /boot")
+
+
 def eligible_disks(inventory: dict, *, swaps: set[str], held: set[str]) -> dict[str, dict]:
     """Exclude installation media, mounted trees, active swap, and held devices.
 
@@ -117,6 +129,7 @@ def revalidate_disks(config: dict, consent: dict[str, dict], current: dict[str, 
             raise ValueError("custom installation requires supported plain filesystems")
         if target:
             require_fstab_safe_mountpoint(target)
+            require_bootloader_mountpoint(target)
             mountpoints.append(target)
             candidate = PurePosixPath(target)
             if not candidate.is_absolute() or str(candidate) != target or ".." in candidate.parts:

@@ -131,6 +131,23 @@ def test_revalidate_accepts_unchanged_consent_for_root_efi_and_custom_mounts() -
     assert disks.revalidate_disks(config, consent, dict(consent)) is None
 
 
+@pytest.mark.parametrize("target", ["/boot/grub2", "/boot/grub2/themes", "/boot/efi/EFI", "/boot/kernel"])
+def test_revalidate_refuses_split_bootloader_filesystems(monkeypatch, target):
+    """Refuse layouts the native EFI bootstrap cannot search before disk work.
+
+    Args:
+        monkeypatch: Detect unexpected native commands.
+        target: Unsupported nested boot mount.
+    """
+    config = _config()
+    config["partitions"].append({"disk": "/dev/nvme0n1", "mountpoint": target, "filesystem": "ext4"})
+    consent = {path: _identity(path) for path in disks.selected_disks(config)}
+    monkeypatch.setattr(disks.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("boot refusal must precede native work"))
+    monkeypatch.setattr(disks.subprocess, "check_output", lambda *_args, **_kwargs: pytest.fail("boot refusal must precede native work"))
+    with pytest.raises(ValueError, match="Use /boot"):
+        disks.revalidate_disks(config, consent, dict(consent))
+
+
 @pytest.mark.parametrize("target", ["/mnt/my data", "/mnt/my\tdata", "/mnt/my\ndata", r"/mnt/my\040data",
                                    r"/mnt/my\data", "/mnt/my\u00a0data", "/mnt/my\x7fdata"])
 def test_revalidate_refuses_fstab_field_changes_before_native_work(monkeypatch, target):

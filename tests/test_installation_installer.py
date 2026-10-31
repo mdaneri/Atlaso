@@ -435,6 +435,7 @@ def test_install_console_closes_output_and_withholds_completion_on_failure(monke
 
 @pytest.mark.parametrize("mountpoint,expected", [
     ("/", None), ("/var/srv", None), ("/var/srv/app", None),
+    ("/boot", None), ("/boot-data", None), ("/boot/grub2", "Use /boot"), ("/boot/efi/EFI", "Use /boot"),
     ("/srv", "Use /var/srv"), ("/srv/app", "Use /var/srv/app"),
     ("/bin/app", "Use /usr/bin/app"), ("/var/run/app", "Use /run/app"),
     ("//srv", "canonical"), ("/srv/../var/srv", "canonical"), ("/var/srv\n", "No spaces"),
