@@ -1155,6 +1155,8 @@ Optional exact named job used by durable same-boot recovery.
 Callback that durably records the suspended root before it is resumed.
 .PARAMETER DiscardOutput
 Suppress untrusted console output while retaining Windows job completion proof.
+.PARAMETER DeadlineUtc
+Optional original absolute deadline, including suspended-child publication and startup overhead.
 #>
 function Invoke-AtlasoBoundedStreamingProcess {
     param(
@@ -1164,7 +1166,8 @@ function Invoke-AtlasoBoundedStreamingProcess {
         [Parameter(Mandatory = $true)][string]$Action,
         [string]$ProcessJobName = '',
         [scriptblock]$ProcessOwnershipPublisher,
-        [switch]$DiscardOutput
+        [switch]$DiscardOutput,
+        [DateTimeOffset]$DeadlineUtc = [DateTimeOffset]::MaxValue
     )
 
     # DiscardOutput gives untrusted diagnostic tools no console output channel.
@@ -1185,9 +1188,17 @@ function Invoke-AtlasoBoundedStreamingProcess {
     try {
         if ($recoverable) {
             & $ProcessOwnershipPublisher $processJob
+            if ([DateTimeOffset]::UtcNow -ge $DeadlineUtc) {
+                throw 'Original process deadline expired during ownership publication; child was not resumed.'
+            }
             $processJob.Resume()
         }
-        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+        # Receipt publication may itself take time. Clip the wait after resume
+        # against the original absolute deadline rather than renewing its budget.
+        $remainingMilliseconds = [Math]::Max(0, [Math]::Min(
+            [double]$TimeoutSeconds * 1000, ($DeadlineUtc - [DateTimeOffset]::UtcNow).TotalMilliseconds
+        ))
+        if (-not $process.WaitForExit([int][Math]::Floor($remainingMilliseconds))) {
             try {
                 Stop-AtlasoBoundedProcessTree `
                     -Process $process `

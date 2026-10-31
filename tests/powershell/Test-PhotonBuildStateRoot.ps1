@@ -3,9 +3,15 @@
 Verify Photon image build-state roots remain beneath the exact task repository.
 .PARAMETER RepositoryRoot
 Atlaso repository root containing the supported Photon build wrapper.
+.PARAMETER FixtureRoot
+Optional existing empty task-owned fixture directory beneath RepositoryRoot, originally receipted before use.
+.PARAMETER OriginalFixtureIdentity
+Original native identity of FixtureRoot, supplied together with that exact directory.
 #>
 param(
-    [Parameter(Mandatory = $true)][string]$RepositoryRoot
+    [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+    [string]$FixtureRoot = '',
+    [string]$OriginalFixtureIdentity = ''
 )
 
 Set-StrictMode -Version Latest
@@ -203,9 +209,20 @@ if (-not (Test-AtlasoWindowsBootIdentityCurrent -BootIdentity $legacyRoundTrip.B
     throw 'A legacy JSON ISO boot identity did not match the same Windows boot.'
 }
 
-$fixtureRoot = Join-Path $resolvedRepositoryRoot (
-    '.atlaso-local\photon-build-state-test-' + [guid]::NewGuid().ToString('N')
-)
+$fixtureRoot = if ($FixtureRoot) { [IO.Path]::GetFullPath($FixtureRoot) } else {
+    Join-Path $resolvedRepositoryRoot ('.atlaso-local\photon-build-state-test-' + [guid]::NewGuid().ToString('N'))
+}
+if ($PSBoundParameters.ContainsKey('FixtureRoot') -xor [bool]$OriginalFixtureIdentity) { throw 'Pass both original fixture selectors.' }
+if ($OriginalFixtureIdentity) {
+    Assert-AtlasoStrictDescendantPath -ParentPath $resolvedRepositoryRoot -ChildPath $fixtureRoot `
+        -FailureMessage 'Original Photon fixture escaped the repository'
+    $fixturePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($fixtureRoot, $true)
+    try {
+        if ([Atlaso.WorkstationFileIdentity]::Get($fixtureRoot) -cne $OriginalFixtureIdentity -or
+            @(Get-ChildItem -LiteralPath $fixtureRoot -Force).Count -ne 0) { throw 'Original Photon fixture is replaced or not empty.' }
+    }
+    finally { $fixturePin.Dispose() }
+}
 try {
     $selectiveRepository = Join-Path $fixtureRoot 'selective-ignore-repository'
     [void][System.IO.Directory]::CreateDirectory($selectiveRepository)
@@ -985,6 +1002,9 @@ finally {
             -ParentPath $resolvedRepositoryRoot `
             -ChildPath $fixtureRoot `
             -FailureMessage 'Photon build-state test fixture escaped the repository'
+        if ($OriginalFixtureIdentity -and [Atlaso.WorkstationFileIdentity]::Get($fixtureRoot) -cne $OriginalFixtureIdentity) {
+            throw 'Original Photon fixture identity changed; preserve it.'
+        }
         Remove-Item -LiteralPath $fixtureRoot -Recurse -Force
     }
 }

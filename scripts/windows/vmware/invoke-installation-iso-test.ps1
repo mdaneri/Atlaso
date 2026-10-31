@@ -11,6 +11,8 @@ Verified development installation ISO.
 Independently retained ISO digest.
 .PARAMETER OutputDirectory
 Absent task-owned VM output directory.
+.PARAMETER ReceiptDirectory
+Existing durable directory beneath the configured Codex worktree root for immutable VM and boot selector documents.
 .PARAMETER ValidationRootReceiptPath
 Original creation receipt admitting an explicitly approved external installation validation root.
 .PARAMETER ValidationRootReceiptSha256
@@ -83,6 +85,7 @@ param(
     [Parameter(Mandatory = $true)][string]$IsoPath,
     [Parameter(Mandatory = $true)][string]$IsoSha256,
     [Parameter(Mandatory = $true)][string]$OutputDirectory,
+    [string]$ReceiptDirectory = '',
     [string]$ValidationRootReceiptPath = '',
     [string]$ValidationRootReceiptSha256 = '',
     [Parameter(Mandatory = $true)][ValidateRange(1, 2147483647)][int]$PullRequestNumber,
@@ -116,10 +119,18 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.InstallationFixture.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.InstallationRefreshReceipt.psm1') -Force
+$receiptDirectoryContext = $null
+if ($ReceiptDirectory) {
+    $receiptWorktree = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+    $receiptDirectoryContext = Assert-AtlasoInstallationRefreshReceiptDirectory -ReceiptDirectory $ReceiptDirectory `
+        -Worktree $receiptWorktree -OutputDirectory $OutputDirectory
+}
 if (-not $Child) {
     $childArguments = @(
         '-NoProfile', '-File', $PSCommandPath, '-Child', '-IsoPath', $IsoPath,
         '-IsoSha256', $IsoSha256, '-OutputDirectory', $OutputDirectory,
+        '-ReceiptDirectory', $ReceiptDirectory,
         '-PullRequestNumber', [string]$PullRequestNumber, '-CollisionSuffix', $CollisionSuffix, '-Scenario', $Scenario,
         '-ValidationRootReceiptPath', $ValidationRootReceiptPath, '-ValidationRootReceiptSha256', $ValidationRootReceiptSha256,
         '-TimeoutSeconds', [string]$TimeoutSeconds,
@@ -1759,13 +1770,13 @@ try {
     } elseif ($Scenario -eq 'BootInstalled') {
         $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
-            -Mode BootInstalled -Worktree $worktree `
+            -Mode BootInstalled -ReceiptDirectory $ReceiptDirectory -Worktree $worktree `
             -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix @resumeSelectors -Confirm:$false
         Write-Host ('Installed boot ownership: ' + ($boot | ConvertTo-Json -Depth 4 -Compress))
     } else {
         $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
-            -Mode Create -Worktree $worktree `
+            -Mode Create -ReceiptDirectory $ReceiptDirectory -Worktree $worktree `
         -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix -IsoPath $IsoPath -IsoSha256 $IsoSha256 `
         -SerialPipePath "\\.\pipe\$pipeName" -FixtureProfile $creationFixture.Profile -Confirm:$false
     }
@@ -1880,7 +1891,7 @@ try {
         $connection = $pipe.WaitForConnectionAsync()
         $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
-            -Mode BootInstalled -Worktree $worktree `
+            -Mode BootInstalled -ReceiptDirectory $ReceiptDirectory -Worktree $worktree `
             -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix `
             -OriginalReceiptPath $vm.ReceiptPath -OriginalReceiptSha256 $vm.ReceiptSha256 `
             -BaselineReceiptPath $vm.BaselineReceiptPath -BaselineReceiptSha256 $vm.BaselineReceiptSha256 -Confirm:$false
