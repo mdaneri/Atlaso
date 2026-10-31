@@ -3,7 +3,7 @@
 Create, admit, verify, or remove an owned, isolated VMware VM for Atlaso installation ISO testing.
 .DESCRIPTION
 Creates a receipt-bound, EFI-only VM with an installation ISO, the default two blank SCSI disks,
-no network adapters, and a serial named-pipe endpoint supplied by the caller. Before
+one disconnected Ethernet adapter, and a serial named-pipe endpoint supplied by the caller. Before
 first start it records logical-content baselines for every disk. MultiDisk adds an 8 GiB selected data disk. Verify stops the
 receipt-bound VM if needed and compares selected disk contents against those baselines.
 .PARAMETER Mode
@@ -331,7 +331,11 @@ function New-InstallationVmConfiguration {
         'sata0:0.deviceType = "cdrom-image"', 'sata0:0.startConnected = "TRUE"',
         'serial0.present = "TRUE"', 'serial0.fileType = "pipe"', ('serial0.fileName = ' + (ConvertTo-InstallationVmxString $SerialPipe)),
         'serial0.pipe.endPoint = "client"', 'serial0.tryNoRxLoss = "FALSE"',
-        'ethernet0.present = "FALSE"', ('guestinfo.atlaso.test_vm_cleanup_identity = ' + (ConvertTo-InstallationVmxString $CleanupIdentity))
+        # Hardware presence satisfies installer preflight while the cable stays
+        # disconnected throughout offline installation and disk-only reboot.
+        'ethernet0.present = "TRUE"', 'ethernet0.startConnected = "FALSE"',
+        'ethernet0.connectionType = "hostonly"', 'ethernet0.virtualDev = "e1000"', 'ethernet0.addressType = "generated"',
+        ('guestinfo.atlaso.test_vm_cleanup_identity = ' + (ConvertTo-InstallationVmxString $CleanupIdentity))
     )
     if ($FixtureProfile -ceq 'MultiDisk') {
         $lines += @('scsi0:2.present = "TRUE"', "scsi0:2.fileName = $(ConvertTo-InstallationVmxString $DataDisk)", 'scsi0:2.deviceType = "scsi-hardDisk"')
@@ -690,7 +694,7 @@ Pinned installation ISO path from the original VM receipt.
 function Assert-InstallationConsoleBindings {
     param([string[]]$VmxLines, [psobject]$Context, [string]$IsoPath)
     Assert-InstallationVmDiskBindings -VmxLines $VmxLines -Context $Context -IsoPath $IsoPath
-    # This pure validator also refuses extra devices, network adapters, a changed
+    # This pure validator also refuses extra devices, connected/extra adapters, a changed
     # firmware mode, a detached ISO, or a non-local serial endpoint. Discarding
     # its transformed text keeps the running VMX entirely read-only.
     $null = ConvertTo-InstallationDiskBootConfiguration -Text ([string]::Join("`n", $VmxLines)) -FixtureProfile (Get-AtlasoInstallationContextFixture -Context $Context).Profile
@@ -878,11 +882,13 @@ function ConvertTo-InstallationDiskBootConfiguration {
         'firmware = "efi"', 'uefi.secureBoot.enabled = "FALSE"',
         'scsi0:0.present = "TRUE"', 'scsi0:1.present = "TRUE"',
         'sata0:0.present = "TRUE"', 'sata0:0.startConnected = "TRUE"',
-        'sata0:0.deviceType = "cdrom-image"', 'ethernet0.present = "FALSE"',
+        'sata0:0.deviceType = "cdrom-image"',
+        'ethernet0.present = "TRUE"', 'ethernet0.startConnected = "FALSE"',
+        'ethernet0.connectionType = "hostonly"', 'ethernet0.virtualDev = "e1000"', 'ethernet0.addressType = "generated"',
         'serial0.present = "TRUE"', 'serial0.fileType = "pipe"', 'serial0.pipe.endPoint = "client"'
     )) {
         $key = $assignment.Split('=')[0].Trim()
-        $matchesForKey = @([regex]::Matches($Text, '(?m)^' + [regex]::Escape($key) + '\s*=.*$'))
+        $matchesForKey = @([regex]::Matches($Text, '(?im)^\s*' + [regex]::Escape($key) + '\s*=.*$'))
         if ($matchesForKey.Count -ne 1 -or $matchesForKey[0].Value.TrimEnd("`r") -cne $assignment) {
             throw 'Installed boot requires the exact isolated EFI fixture with connected installation media.'
         }
@@ -894,7 +900,8 @@ function ConvertTo-InstallationDiskBootConfiguration {
         }
     }
     $allowedSlots = if ($fixture.Profile -ceq 'MultiDisk') { '012' } else { '01' }
-    if ([regex]::IsMatch($Text, '(?im)^ethernet[1-9][0-9]*\.present\s*=\s*"TRUE"') -or
+    if ([regex]::IsMatch($Text, '(?im)^\s*ethernet0\.(?:vnet|address)\s*=') -or
+        [regex]::IsMatch($Text, '(?im)^\s*ethernet[1-9][0-9]*\.present\s*=\s*"TRUE"') -or
         [regex]::IsMatch($Text, ('(?im)^(?!scsi0:[' + $allowedSlots + ']\.|sata0:0\.)(?:scsi|sata|ide|nvme)[0-9]+:[0-9]+\.present\s*=\s*"TRUE"'))) {
         throw 'Installed boot refuses additional network adapters or storage devices.'
     }

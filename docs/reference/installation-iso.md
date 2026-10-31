@@ -179,7 +179,8 @@ as UTC. Verify that the host clock is correct before starting a disconnected ins
 signature creation time can cause native package verification to reject an otherwise authentic package; retain signature
 checks and correct the clock before retrying with a fresh installation fixture.
 
-The VMware harness creates an isolated EFI VM with no network adapters, two blank SCSI disks, and a private serial
+The VMware harness creates an isolated EFI VM with one disconnected E1000 Ethernet adapter, two blank SCSI disks,
+and a private serial
 console. Its VMX configuration uses UTF-8 to preserve non-ASCII worktree, ISO, and output paths.
 The serial reader recognizes the native menu's overwrite-mode reset and nonmoving character-set shifts when
 reconstructing visible disk rows. Unsupported modes still invalidate cursor certainty; a supported reset does not
@@ -283,7 +284,8 @@ within its process deadline. To repeat verification afterward:
 
 The built-in Workstation VNC server can be controlled with a command-line client without using the host keyboard or
 mouse. Keep the original VM and disk-baseline receipts. Configure only that stopped VM, use an unused port bound
-exclusively to `127.0.0.1`, and verify the live listener belongs to its exact VMX. Keep the VM's network adapters absent.
+exclusively to `127.0.0.1`, and verify the live listener belongs to its exact VMX. Keep the fixture's sole E1000 adapter
+disconnected (`ethernet0.startConnected = "FALSE"`); console admission refuses a connected adapter or extra adapters.
 Use the default graphical development ISO for this path; it selects `console=tty0` without an override. On images
 built with `--serial-console`, select **VM window (tty0)** from the boot menu and record that non-default selection.
 Historical serial images without this menu require a one-boot GRUB edit

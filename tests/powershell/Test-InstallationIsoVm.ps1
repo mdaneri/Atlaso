@@ -346,7 +346,10 @@ $rejectedVmxValue = foreach ($value in @('bad"quote', "bad`rcontrol", "bad`ncont
 }
 Assert-InstallationVmCondition (@($rejectedVmxValue | Where-Object { $_ }).Count -eq 0) `
     'VMX serialization must reject embedded quotes, control characters, and pipe characters.'
-Assert-InstallationVmCondition ($configuration.Contains('ethernet0.present = "FALSE"')) 'The VM must have no network adapter.'
+Assert-InstallationVmCondition ($configuration.Contains('ethernet0.present = "TRUE"') -and
+    $configuration.Contains('ethernet0.startConnected = "FALSE"') -and
+    $configuration.Contains('ethernet0.connectionType = "hostonly"') -and
+    $configuration.Contains('ethernet0.virtualDev = "e1000"')) 'The VM must expose hardware Ethernet with its cable disconnected.'
 Assert-InstallationVmCondition (-not $configuration.Contains('ethernet1.present')) 'The VM must not contain additional network adapters.'
 Assert-InstallationVmCondition (-not $configuration.Contains('ethernet0.connectionType = "nat"')) 'The VM must not configure a network connection.'
 $bindingContext = [pscustomobject]@{ Name = 'Atlaso-Test-installation-iso'; OutputDirectory = 'C:\vm' }
@@ -363,6 +366,12 @@ $unsafeConsoleFixtures = [Collections.Generic.List[object]]::new()
 $unsafeConsoleFixtures.Add([string[]](@($lines) + 'ethernet1.present = "TRUE"'))
 $unsafeConsoleFixtures.Add([string[]](@($lines) + 'scsi0:2.present = "TRUE"'))
 $unsafeConsoleFixtures.Add([string[]]@($lines | ForEach-Object {
+        if ($_ -ceq 'ethernet0.startConnected = "FALSE"') { 'ethernet0.startConnected = "TRUE"' } else { $_ }
+    }))
+$unsafeConsoleFixtures.Add([string[]]@($lines | Where-Object { $_ -cne 'ethernet0.present = "TRUE"' }))
+$unsafeConsoleFixtures.Add([string[]](@($lines) + 'Ethernet0.startConnected = "TRUE"'))
+$unsafeConsoleFixtures.Add([string[]](@($lines) + 'ethernet0.vnet = "vmnet2"'))
+$unsafeConsoleFixtures.Add([string[]]@($lines | ForEach-Object {
         if ($_ -ceq 'sata0:0.startConnected = "TRUE"') { 'sata0:0.startConnected = "FALSE"' } else { $_ }
     }))
 $unsafeConsoleFixtures.Add([string[]]@($lines | ForEach-Object {
@@ -375,9 +384,9 @@ foreach ($unsafeConsoleLines in $unsafeConsoleFixtures) {
     Assert-InstallationVmCondition $unsafeConsoleRejected 'Console admission must reject changed isolation, storage, media, and serial bindings.'
 }
 
-$networkLines = @((ConvertTo-InstallationDiskBootConfiguration -Text $configuration).Split("`n") | ForEach-Object {
-        if ($_ -ceq 'ethernet0.present = "FALSE"') { 'ethernet0.present = "TRUE"' } else { $_ }
-    }) + @('ethernet0.connectionType = "custom"', 'ethernet0.vnet = "vmnet2"', 'ethernet0.virtualDev = "e1000"',
+$networkLines = @((ConvertTo-InstallationDiskBootConfiguration -Text $configuration).Split("`n") | Where-Object {
+        $_ -notmatch '^ethernet0\.'
+    }) + @('ethernet0.present = "TRUE"', 'ethernet0.connectionType = "custom"', 'ethernet0.vnet = "vmnet2"', 'ethernet0.virtualDev = "e1000"',
     'ethernet0.startConnected = "TRUE"', 'ethernet0.addressType = "generated"', 'ethernet0.generatedAddress = "00:0c:29:12:34:56"')
 $networkText = [string]::Join("`n", $networkLines)
 $hostNetworks = "Total host networks: 1`nINDEX NAME TYPE DHCP SUBNET MASK`n2 vmnet2 hostOnly true 192.168.84.0 255.255.255.0`n"
@@ -387,7 +396,7 @@ Assert-InstallationVmCondition ($network.Mac -ceq '00:0c:29:12:34:56' -and $netw
 $legacyConsoleRefused = $false
 try { $null = Assert-InstallationConsoleBindings -VmxLines $networkLines -Context $bindingContext -IsoPath 'C:\offline media\atlaso.iso' }
 catch { $legacyConsoleRefused = $true }
-Assert-InstallationVmCondition $legacyConsoleRefused 'Initial installer/VNC console admission must continue refusing a network adapter.'
+Assert-InstallationVmCondition $legacyConsoleRefused 'Initial installer/VNC console admission must continue refusing a connected network adapter.'
 foreach ($fixture in @(
         @{ Text = $networkText.Replace('sata0:0.present = "FALSE"', 'sata0:0.present = "TRUE"'); Inventory = $hostNetworks },
         @{ Text = $networkText.Replace('virtualDev = "e1000"', 'virtualDev = "vmxnet3"'); Inventory = $hostNetworks },
@@ -1452,7 +1461,7 @@ $bootText = ConvertTo-InstallationDiskBootConfiguration -Text $bootSource
 Assert-InstallationVmCondition ($bootText.Contains('sata0:0.present = "FALSE"') -and $bootText.Contains('sata0:0.startConnected = "FALSE"')) 'Installed boot must disconnect the CD drive.'
 Assert-InstallationVmCondition ($bootText.Replace('sata0:0.present = "FALSE"', 'sata0:0.present = "TRUE"').Replace('sata0:0.startConnected = "FALSE"', 'sata0:0.startConnected = "TRUE"') -ceq $bootSource) 'Installed boot must preserve all other VMX bytes.'
 foreach ($bad in @(
-    $bootSource.Replace('ethernet0.present = "FALSE"', 'ethernet0.present = "TRUE"'),
+    $bootSource.Replace('ethernet0.startConnected = "FALSE"', 'ethernet0.startConnected = "TRUE"'),
     ($bootSource + 'ethernet1.present = "TRUE"'),
     ($bootSource + 'scsi0:2.present = "TRUE"'),
     $bootSource.Replace('firmware = "efi"', 'firmware = "bios"'),
