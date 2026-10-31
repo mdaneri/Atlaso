@@ -1393,6 +1393,20 @@ def test_provisioning_firewall_replays_through_installed_guard_aware_helper():
     )
 
 
+def test_provisioning_firewall_icmpv6_does_not_require_protocol_database():
+    """Bootstrap rules must also load without an ipv6-icmp name in /etc/protocols."""
+    script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    rules = script.split("cat >/etc/atlaso/nftables.d/atlaso.nft <<EOF\n", 1)[1].split("\nEOF", 1)[0]
+    for name in ("input", "forward", "output"):
+        chain = rules.split(f"  chain {name} {{", 1)[1].split("\n  }", 1)[0]
+        assert 'meta l4proto 58 accept comment "Atlaso IPv6 ICMP diagnostics"' in chain
+        assert 'meta l4proto icmp accept comment "Atlaso ICMP diagnostics"' in chain
+    assert "ipv6-icmp" not in rules
+    assert "$ATLASO_MGMT_ACCESS_RULE" in rules
+    assert "type filter hook input priority filter; policy drop;" in rules
+    assert "type filter hook forward priority filter; policy drop;" in rules
+
+
 @pytest.mark.parametrize(
     ("address", "method", "source", "expected_source"),
     [

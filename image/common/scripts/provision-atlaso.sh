@@ -1267,6 +1267,7 @@ else
   ATLASO_MGMT_ACCESS_RULE="    iifname \"$ATLASO_MGMT_INTERFACE\" meta nfproto ipv4 tcp dport { 22, 80, 443 } accept comment \"Atlaso management access\""
 fi
 install -d -o root -g root -m 0755 /etc/atlaso/nftables.d
+# Numeric ICMPv6 avoids a protocol-name lookup when /etc/protocols is absent.
 cat >/etc/atlaso/nftables.d/atlaso.nft <<EOF
 # Managed by Atlaso. Local changes may be overwritten.
 # nftables firewall state for Photon OS appliance images.
@@ -1278,19 +1279,19 @@ table inet atlaso {
     ct state established,related accept comment "Atlaso established traffic"
 $ATLASO_MGMT_ACCESS_RULE
     meta l4proto icmp accept comment "Atlaso ICMP diagnostics"
-    meta l4proto ipv6-icmp accept comment "Atlaso IPv6 ICMP diagnostics"
+    meta l4proto 58 accept comment "Atlaso IPv6 ICMP diagnostics"
   }
   chain forward {
     type filter hook forward priority filter; policy drop;
     ct state established,related accept comment "Atlaso established traffic"
     meta l4proto icmp accept comment "Atlaso ICMP diagnostics"
-    meta l4proto ipv6-icmp accept comment "Atlaso IPv6 ICMP diagnostics"
+    meta l4proto 58 accept comment "Atlaso IPv6 ICMP diagnostics"
   }
   chain output {
     type filter hook output priority filter; policy accept;
     ct state established,related accept comment "Atlaso established traffic"
     meta l4proto icmp accept comment "Atlaso ICMP diagnostics"
-    meta l4proto ipv6-icmp accept comment "Atlaso IPv6 ICMP diagnostics"
+    meta l4proto 58 accept comment "Atlaso IPv6 ICMP diagnostics"
   }
 }
 EOF
