@@ -833,8 +833,12 @@ function Invoke-InstallationCustomLayout {
             Send-InstallationConsoleText -Pipe $Pipe -Text "`eOC`n"
             Wait-InstallationCustomPublicState -Pipe $Pipe -State $state -CursorState $CursorState -Deadline $Deadline -Kind Empty
             Send-InstallationConsoleText -Pipe $Pipe -Text "`n`eOD`eOD`n"
+            # Custom Back returns to selection. Cancel there explicitly; never
+            # mistake navigation for the terminal pre-consent cancellation.
+            Wait-InstallationConsoleState -Pipe $Pipe -Pattern 'Select a disk' -Deadline $Deadline -ReadBootProgress -CursorState $CursorState
+            Send-InstallationConsoleText -Pipe $Pipe -Text "`eOD`eOD`n"
             Wait-InstallationConsoleState -Pipe $Pipe -Pattern 'Installation cancelled' -Deadline $Deadline -ReadBootProgress -CursorState $CursorState
-            Write-Host 'Custom empty-layout refusal and pre-consent cancellation passed.'
+            Write-Host 'Custom empty-layout refusal, Back navigation, and pre-consent cancellation passed.'
             return
         }
         $partitions = @([pscustomobject]@{ SizeGiB = 64; Path = $target.DiskPath; Mount = '/' })

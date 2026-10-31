@@ -156,10 +156,15 @@ The five-second GRUB menu offers **VM window (tty0)** and **Serial (ttyS0, 11520
 and Enter to choose the installer console. Each entry selects exactly one kernel console. When serial initialization
 succeeds, the boot menu accepts input and displays output on both the VM window and COM1 at 115200 baud, 8N1;
 otherwise the native console remains available.
+Native logger propagation and Python prints are isolated from the progress terminal; detailed output remains available
+on the separate terminal or in the private volatile log.
 The VM-window installer keeps the kernel's detected terminal size; only the serial harness uses a fixed 80×25 size.
 Concealed account fields accept printable ASCII characters and preserve spaces exactly. Rejected password input is
 cleared before retrying. **Go Back** on confirmation returns to the first password field for that account; **Go Back**
-on that first field cancels installation before any disk writes.
+on the first admin field returns to the full disk review and requires a new **Yes** (the default remains **No**).
+**Go Back** on the first root field returns to admin password entry and discards collected passwords. No disk writes
+occur during these setup screens. Explicitly declining the disk review still cancels installation.
+**Go Back** from Custom partitioning returns to disk/layout selection and discards the abandoned partition plan.
 For the automated serial-console harness, add `--serial-console` to the development build command to make the serial
 entry the default; both entries remain available. The build result's `console` field records that default as
 `graphical` or `serial`, not a later operator selection. Retain the default, actual selected entry and exact ISO

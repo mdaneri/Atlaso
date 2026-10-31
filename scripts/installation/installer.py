@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path, PurePosixPath
 
 SOURCE = Path(__file__).resolve().parents[2]
@@ -113,6 +114,35 @@ def bind_installation_progress(engine, progress) -> None:
         setattr(engine, name, observe(getattr(engine, name), label))
 
 
+@contextmanager
+def installation_output(output):
+    """Keep native logs and Python prints away from the curses progress terminal.
+
+    Args:
+        output: Guest-local detailed-output terminal or private volatile log.
+    """
+    # The hash-pinned Photon backend uses this named logger. Its default root
+    # propagation can otherwise duplicate records onto the progress terminal.
+    logger = logging.getLogger("installer")
+    propagate = logger.propagate
+    streams = {}
+    stderr = sys.stderr
+    try:
+        logger.propagate = False
+        for handler in logger.handlers:
+            if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
+                streams[handler] = handler.stream
+                handler.setStream(output)
+        # Keep OS descriptors unchanged: ncurses owns the original tty1 stream.
+        with redirect_stdout(output), redirect_stderr(output):
+            yield
+    finally:
+        for handler in logger.handlers:
+            if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
+                handler.setStream(streams.get(handler, stderr))
+        logger.propagate = propagate
+
+
 def install_console(screen, media, identity, config, consent, credentials) -> None:
     """Reuse Photon's progress control and guest-local detailed output terminal.
 
@@ -173,7 +203,8 @@ def install_console(screen, media, identity, config, consent, credentials) -> No
         progress.initialize("Preparing installation (progress counts completed stages)")
         progress.update_num_items(len(INSTALLATION_STAGES) + 1)
         progress.show()
-        install(media, identity, config, consent, credentials, progress=progress, output=terminal or output, log_path=logs)
+        with installation_output(terminal or output):
+            install(media, identity, config, consent, credentials, progress=progress, output=terminal or output, log_path=logs)
         progress.update_message("Installation completed")
         progress.increment()
     finally:
@@ -380,6 +411,33 @@ def password_prompt(maxy: int, maxx: int, username: str) -> str:
         return first
 
 
+def account_passwords(maxy: int, maxx: int) -> tuple[str, str] | None:
+    """Navigate account fields without turning Go Back into installer exit.
+
+    Args:
+        maxy: Available console rows.
+        maxx: Available console columns.
+
+    Returns:
+        Both chosen passwords, or None to return to disk review without consent.
+    """
+    passwords = []
+    accounts = ("admin", "root")
+    try:
+        while len(passwords) < len(accounts):
+            try:
+                passwords.append(password_prompt(maxy, maxx, accounts[len(passwords)]))
+            except Cancelled:
+                if not passwords:
+                    return None
+                # Root's first-field Back returns to admin. Re-enter both
+                # accounts rather than retaining a secret from an earlier step.
+                passwords.clear()
+        return passwords[0], passwords[1]
+    finally:
+        passwords.clear()
+
+
 def confirm_installation(maxy: int, maxx: int, message: str) -> bool:
     """Show a native Photon confirmation with No selected initially.
 
@@ -550,7 +608,9 @@ def configure_console(screen, initial: dict[str, dict], mount_aliases: dict[str,
             raise Cancelled()
         if not config.get("autopartition"):
             if not MultiDiskPartitions(maxy, maxx, config).display().success:
-                raise Cancelled()
+                # Back from Custom returns to disk/layout selection. A fresh
+                # configuration drops every abandoned partition mapping.
+                continue
         else:
             config["partitions"] = [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]
         for partition in config["partitions"]:
@@ -602,21 +662,28 @@ def configure_console(screen, initial: dict[str, dict], mount_aliases: dict[str,
     confirmation_lines = wrapped_summary + ["", "Planned layout:"] + wrapped_layout + [
         "", "ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.", "Select Yes to continue or No to cancel."
     ]
-    if len(confirmation_lines) > maxy - 10:
-        show_layout_review_pages(maxy, maxx, summary_lines[1:], heading="Selected disk identities")
-        show_layout_review_pages(maxy, maxx, layout_lines)
-        confirmation_lines = [
-            "Erase selected disks?", "Selected disk identities and planned layouts were reviewed above.",
-            "", "ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.",
-            "Select Yes to continue or No to cancel.",
-        ]
-    if not confirm_installation(maxy, maxx, "\n".join(confirmation_lines)):
-        raise Cancelled()
-    passwords = [password_prompt(maxy, maxx, username) for username in ("admin", "root")]
-    revalidate_disks(config, consent, disk_inventory())
-    # Secret material never enters Photon configuration, dynamic substitutions,
-    # native modules, command arguments, or its persistent installation log.
-    return config, consent, (passwords[0], passwords[1])
+    while True:
+        revalidate_disks(config, consent, disk_inventory())
+        review = confirmation_lines
+        if len(review) > maxy - 10:
+            show_layout_review_pages(maxy, maxx, summary_lines[1:], heading="Selected disk identities")
+            show_layout_review_pages(maxy, maxx, layout_lines)
+            review = [
+                "Erase selected disks?", "Selected disk identities and planned layouts were reviewed above.",
+                "", "ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.",
+                "Select Yes to continue or No to cancel.",
+            ]
+        if not confirm_installation(maxy, maxx, "\n".join(review)):
+            raise Cancelled()
+        passwords = account_passwords(maxy, maxx)
+        if passwords is None:
+            # Admin's first-field Back revokes the earlier Yes. Re-display the
+            # complete review, with No selected, before collecting any secrets.
+            continue
+        revalidate_disks(config, consent, disk_inventory())
+        # Secret material never enters Photon configuration, dynamic substitutions,
+        # native modules, command arguments, or its persistent installation log.
+        return config, consent, passwords
 
 
 def verify_installed_boot_artifacts(target: Path) -> None:
@@ -946,6 +1013,9 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (Cancelled, KeyboardInterrupt):
-        print("Installation cancelled. Any installation already in progress may require reinstalling selected disks.")
+    except Cancelled:
+        print("Installation cancelled before any disks were changed.")
+        raise SystemExit(2) from None
+    except KeyboardInterrupt:
+        print("Installation interrupted. Selected disks may require reinstalling.")
         raise SystemExit(2) from None

@@ -2,6 +2,8 @@
 
 import hashlib
 import importlib.util
+import io
+import logging
 import shutil
 import subprocess
 import sys
@@ -119,6 +121,56 @@ def test_installed_dry_run_refuses_completion_before_credentials(monkeypatch, tm
         module.install(tmp_path / "media", {"packages": ["linux"]}, {}, {}, ("Synthetic admin", "Synthetic root"))
     assert env.read_text() == original
     assert not (env.parent / "installation-profile").exists()
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_native_output_does_not_propagate_to_progress_console(monkeypatch, tmp_path, fails):
+    """Exercise real logging propagation, prints, and restoration on both outcomes.
+
+    Args:
+        monkeypatch: Isolated logger configuration.
+        tmp_path: Native private-log fixture.
+        fails: Whether the native operation fails inside the output boundary.
+    """
+    module = load_installer(monkeypatch)
+    console, output = io.StringIO(), io.StringIO()
+    logger = logging.getLogger("installer")
+    parent = logging.Logger("installation-test-parent")
+    parent.addHandler(logging.StreamHandler(console))
+    existing = logging.StreamHandler(console)
+    native_file = logging.FileHandler(tmp_path / "native.log")
+    monkeypatch.setattr(logger, "parent", parent)
+    monkeypatch.setattr(logger, "handlers", [existing, native_file])
+    monkeypatch.setattr(logger, "propagate", True)
+    monkeypatch.setattr(logger, "level", logging.INFO)
+    descriptors = [module.os.fstat(fd) for fd in (1, 2)]
+    original_stdout, original_stderr = sys.stdout, sys.stderr
+    late = None
+    try:
+        try:
+            with module.installation_output(output):
+                logger.info("Skipping module for phase pre-install")
+                print("native stdout")
+                print("native stderr", file=sys.stderr)
+                late = logging.StreamHandler()
+                logger.addHandler(late)
+                logger.info("Executing native stage")
+                if fails:
+                    raise RuntimeError("native failure")
+        except RuntimeError:
+            assert fails
+        assert console.getvalue() == ""
+        assert "Skipping module" in output.getvalue()
+        assert "native stdout" in output.getvalue() and "native stderr" in output.getvalue()
+        assert "Executing native stage" in output.getvalue()
+        assert "Skipping module" in (tmp_path / "native.log").read_text()
+        assert logger.propagate and existing.stream is console and late.stream is original_stderr
+        assert sys.stdout is original_stdout and sys.stderr is original_stderr
+        for fd, before in zip((1, 2), descriptors, strict=True):
+            after = module.os.fstat(fd)
+            assert (after.st_dev, after.st_ino, after.st_mode) == (before.st_dev, before.st_ino, before.st_mode)
+    finally:
+        native_file.close()
 
 
 @pytest.mark.parametrize("fails", [False, True])
@@ -501,6 +553,161 @@ def test_password_confirmation_back_restarts_only_current_account(monkeypatch):
     monkeypatch.setattr(module, "prompt", lambda *_args, **_kwargs: (_ for _ in ()).throw(module.Cancelled()))
     with pytest.raises(module.Cancelled):
         module.password_prompt(25, 80, "root")
+
+
+def test_root_password_back_discards_prior_admin_and_returns_to_admin(monkeypatch):
+    """Back through accounts without returning an earlier password pair.
+
+    Args:
+        monkeypatch: Isolated account prompt responses.
+    """
+    module = load_installer(monkeypatch)
+    names = []
+    values = iter(["old-admin", module.Cancelled(), "new-admin", "new-root"])
+
+    def password(_height, _width, username):
+        """Return synthetic inputs and one first-field Back.
+
+        Args:
+            _height: Console height.
+            _width: Console width.
+            username: Account whose first field is shown.
+        """
+        names.append(username)
+        value = next(values)
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(module, "password_prompt", password)
+    assert module.account_passwords(25, 80) == ("new-admin", "new-root")
+    assert names == ["admin", "root", "admin", "root"]
+    monkeypatch.setattr(module, "password_prompt", lambda *_args: (_ for _ in ()).throw(module.Cancelled()))
+    assert module.account_passwords(25, 80) is None
+
+
+@pytest.mark.parametrize("flow", ["custom-back", "admin-back", "admin-back-decline", "admin-back-disk-changed"])
+def test_setup_back_navigation_preserves_prewrite_boundaries(monkeypatch, flow):
+    """Exercise real wizard control flow with isolated native window doubles.
+
+    Args:
+        monkeypatch: Isolated native UI and inventory dependencies.
+        flow: Navigation or refusal to exercise before returning installation inputs.
+    """
+    module = load_installer(monkeypatch)
+    events = []
+    configurations = []
+    password_calls = []
+    revalidations = []
+    initial = {"/dev/sda": {"size": 64 * 1024**3, "serial": "target"}}
+
+    class SelectDisk:
+        """Model explicit disk/layout selection only."""
+        def __init__(self, _height, _width, config):
+            """Retain each fresh configuration.
+
+            Args:
+                _height: Console rows.
+                _width: Console columns.
+                config: Native selection configuration.
+            """
+            assert "partitions" not in config
+            self.config = config
+            configurations.append(config)
+
+        def display(self):
+            """Choose Custom once or the supported Auto target."""
+            self.config.update(disk="/dev/sda", autopartition=not (flow == "custom-back" and len(configurations) == 1))
+            events.append("select")
+            return SimpleNamespace(success=True)
+
+    class CustomPartition:
+        """Model an abandoned native Custom plan."""
+        def __init__(self, _height, _width, config):
+            """Retain a plan that must never reach disk consent.
+
+            Args:
+                _height: Console rows.
+                _width: Console columns.
+                config: Native Custom configuration.
+            """
+            self.config = config
+
+        def display(self):
+            """Return Back with deliberately unusable abandoned rows."""
+            self.config["partitions"] = [{"disk": "/dev/abandoned", "mountpoint": "/old"}]
+            events.append("custom-back")
+            return SimpleNamespace(success=False)
+
+    monkeypatch.setitem(sys.modules, "selectdisk", SimpleNamespace(SelectDisk=SelectDisk))
+    monkeypatch.setitem(sys.modules, "custompartition", SimpleNamespace(CustomPartition=CustomPartition))
+    monkeypatch.setitem(sys.modules, "partitionpane", SimpleNamespace(PartitionPane=type("Pane", (), {})))
+    monkeypatch.setitem(sys.modules, "device", SimpleNamespace(Device=type("Device", (), {})))
+    for name in ["COLOR_WHITE", "COLOR_BLUE", "COLOR_BLACK", "COLOR_GREEN", "COLOR_RED"]:
+        setattr(module.curses, name, 0)
+    for name in ["init_pair", "curs_set"]:
+        setattr(module.curses, name, lambda *_args: None)
+    module.curses.color_pair = lambda _index: 0
+    screen = SimpleNamespace(getmaxyx=lambda: (25, 80), bkgd=lambda *_args: None)
+    monkeypatch.setattr(module, "disk_inventory", lambda: initial)
+    monkeypatch.setattr(module, "show_layout_review_pages", lambda *_args, **_kwargs: events.append("review-page"))
+
+    def revalidate(config, consent, current):
+        """Refuse changed evidence on return instead of retaining prior Yes.
+
+        Args:
+            config: Current plan.
+            consent: Original identities.
+            current: Read-only current inventory.
+        """
+        assert consent == current == initial
+        assert all(p.get("disk", "/dev/sda") == "/dev/sda" for p in config["partitions"])
+        revalidations.append(True)
+        if flow == "admin-back-disk-changed" and len(revalidations) == 3:
+            raise ValueError("disk changed before renewed review")
+
+    def confirm(*_args):
+        """Record each new destructive decision.
+
+        Args:
+            *_args: Complete reviewed native confirmation.
+        """
+        events.append("confirm")
+        return not (flow == "admin-back-decline" and events.count("confirm") == 2)
+
+    def password(_height, _width, username):
+        """Go Back once, then provide fresh synthetic inputs.
+
+        Args:
+            _height: Console rows.
+            _width: Console columns.
+            username: Current local account.
+        """
+        password_calls.append(username)
+        if flow.startswith("admin-back") and len(password_calls) == 1:
+            raise module.Cancelled()
+        return "fresh-" + username
+
+    monkeypatch.setattr(module, "revalidate_disks", revalidate)
+    monkeypatch.setattr(module, "confirm_installation", confirm)
+    monkeypatch.setattr(module, "password_prompt", password)
+    if flow == "admin-back-decline":
+        with pytest.raises(module.Cancelled):
+            module.configure_console(screen, initial, {})
+        assert password_calls == ["admin"]
+        assert events.count("confirm") == 2
+    elif flow == "admin-back-disk-changed":
+        with pytest.raises(ValueError, match="disk changed"):
+            module.configure_console(screen, initial, {})
+        assert password_calls == ["admin"]
+        assert events.count("confirm") == 1
+    else:
+        config, consent, passwords = module.configure_console(screen, initial, {})
+        assert passwords == ("fresh-admin", "fresh-root") and consent == initial
+        assert config["partitions"] == [{"mountpoint": "/", "size": 0, "filesystem": "ext4"}]
+        assert not any("password" in key for key in config)
+        assert len(configurations) == (2 if flow == "custom-back" else 1)
+        assert events.count("confirm") == (2 if flow == "admin-back" else 1)
 
 
 @pytest.mark.parametrize("line_count", [1, 4, 5, 15])
@@ -969,7 +1176,7 @@ def test_disk_review_cancellation_returns_before_passwords_or_install(monkeypatc
     else:
         with pytest.raises(module.Cancelled):
             module.configure_console(Screen(), initial, {"/srv": "/var/srv"})
-        assert calls == ["revalidate"]
+        assert calls == ["revalidate", "revalidate"]
         assert confirmation["default"] == 1
         assert "Erase selected disks?" in confirmation["message"]
         assert f"/dev/nvme0n1: Test NVMe {size_gib} GiB" in confirmation["message"]
@@ -1077,7 +1284,7 @@ def test_small_default_disk_refusal_returns_to_native_disk_selection(monkeypatch
         module.configure_console(Screen(), initial, {"/srv": "/var/srv"})
 
     assert selected == ["/dev/sdb", "/dev/nvme0n1"]
-    assert len(revalidated) == 2
+    assert len(revalidated) == 3
     assert messages[0][1] is True
     assert "Selected /dev/sdb has 4294967296 bytes." in messages[0][0]
     assert messages[1][1] is False

@@ -176,6 +176,47 @@ function Get-InstallationVmFunctionText {
     return $definition.Extent.Text
 }
 
+& {
+    . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Invoke-InstallationCustomLayout')))
+    $events = [Collections.Generic.List[string]]::new()
+    <#
+    .SYNOPSIS
+    Supply public Custom screens without accessing a VM.
+    .PARAMETER Kind
+    Expected Custom screen.
+    #>
+    function Wait-InstallationCustomPublicState {
+        param([string]$Kind)
+        $events.Add('custom:' + $Kind)
+        if ($Kind -eq 'Disk') { return [pscustomobject]@{ SizeGiB = 64; Index = 0; DiskPath = '/dev/sda' } }
+    }
+    <#
+    .SYNOPSIS
+    Record public navigation keys without sending them.
+    .PARAMETER Text
+    Non-secret console input.
+    #>
+    function Send-InstallationConsoleText {
+        param([string]$Text)
+        $events.Add('keys:' + $Text)
+    }
+    <#
+    .SYNOPSIS
+    Record public screen acknowledgements without a console.
+    .PARAMETER Pattern
+    Required public prompt.
+    #>
+    function Wait-InstallationConsoleState {
+        param([string]$Pattern)
+        $events.Add('screen:' + $Pattern)
+    }
+    Invoke-InstallationCustomLayout -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(5)) -CursorState @{} -Cancel
+    $expected = @('custom:Disk', "keys:`eOA`eOA`eOD`n", 'custom:Editor', "keys:`eOC`n", 'custom:Empty',
+        "keys:`n`eOD`eOD`n", 'screen:Select a disk', "keys:`eOD`eOD`n", 'screen:Installation cancelled')
+    Assert-InstallationVmCondition (($events -join '|') -ceq ($expected -join '|')) `
+        'Custom Back must reach disk selection before explicitly cancelling; it must never admit erasure.'
+}
+
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'ConvertTo-InstallationVmxString')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Resolve-InstallationVmTool')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Switch-InstallationOutputPinToMutationMode')))
