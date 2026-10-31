@@ -29,6 +29,7 @@ from atlaso.local_user_password_policy import (  # noqa: E402 - boot media suppl
 )
 from scripts.installation.disks import (  # noqa: E402 - boot media is added before local imports.
     disk_inventory,
+    require_fstab_safe_mountpoint,
     revalidate_disks,
     selected_disks,
 )
@@ -374,6 +375,7 @@ def validate_custom_mountpoint(mountpoint: str, aliases: dict[str, str]) -> None
         mountpoint: Native Custom mount field supplied by the operator.
         aliases: Filesystem aliases derived from the authenticated Photon RPM.
     """
+    require_fstab_safe_mountpoint(mountpoint)
     path = PurePosixPath(mountpoint)
     if (not path.is_absolute() or mountpoint.startswith("//") or str(path) != mountpoint or ".." in path.parts
             or any(ord(char) < 32 or ord(char) == 127 for char in mountpoint)):

@@ -11,6 +11,19 @@ from pathlib import Path, PurePosixPath
 IDENTITY_FIELDS = ("path", "size", "serial", "wwn", "maj:min")
 
 
+def require_fstab_safe_mountpoint(target: str) -> None:
+    """Refuse mount text that Photon's verbatim fstab writer cannot preserve.
+
+    Args:
+        target: Proposed native mount-point field.
+    """
+    # Photon 2.2 does not escape whitespace or backslashes when writing fstab.
+    # A literal backslash-octal sequence can silently identify a different path.
+    if not isinstance(target, str) or any(char.isspace() or char == "\\" or ord(char) < 32 or ord(char) == 127 for char in target):
+        # This text also occupies Photon's narrow inline validation row.
+        raise ValueError("No spaces or \\")
+
+
 def eligible_disks(inventory: dict, *, swaps: set[str], held: set[str]) -> dict[str, dict]:
     """Exclude installation media, mounted trees, active swap, and held devices.
 
@@ -103,6 +116,7 @@ def revalidate_disks(config: dict, consent: dict[str, dict], current: dict[str, 
         if partition.get("filesystem") not in {"ext4", "xfs", "btrfs", "vfat", "swap"} or "lvm" in partition:
             raise ValueError("custom installation requires supported plain filesystems")
         if target:
+            require_fstab_safe_mountpoint(target)
             mountpoints.append(target)
             candidate = PurePosixPath(target)
             if not candidate.is_absolute() or str(candidate) != target or ".." in candidate.parts:

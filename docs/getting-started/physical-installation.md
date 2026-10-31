@@ -39,6 +39,7 @@ identity and proposed layout for every selected disk before confirming.
   layout across multiple disks and place Atlaso paths on separate filesystems when desired. Only the disks you
   explicitly select for the layout are replaced. The boot filesystem must be ext4: use ext4 for `/`, or create a
   separate ext4 `/boot` when `/` uses xfs or btrfs. Root filesystems must be ext4, xfs, or btrfs.
+  Mount points must not contain whitespace or backslashes: Photon's native `fstab` writer cannot escape those fields.
 
 Both flows finish with **SFTP backup storage** and **VCFDT depot storage** choices. The default preserves an existing
 service partition or keeps shared storage. You can assign a compatible Custom partition currently mounted under

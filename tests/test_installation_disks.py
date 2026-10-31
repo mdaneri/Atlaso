@@ -131,6 +131,24 @@ def test_revalidate_accepts_unchanged_consent_for_root_efi_and_custom_mounts() -
     assert disks.revalidate_disks(config, consent, dict(consent)) is None
 
 
+@pytest.mark.parametrize("target", ["/mnt/my data", "/mnt/my\tdata", "/mnt/my\ndata", r"/mnt/my\040data",
+                                   r"/mnt/my\data", "/mnt/my\u00a0data", "/mnt/my\x7fdata"])
+def test_revalidate_refuses_fstab_field_changes_before_native_work(monkeypatch, target):
+    """Refuse malformed or escape-decoded mounts at the independent write gate.
+
+    Args:
+        monkeypatch: Detect any accidental native command.
+        target: Custom mount text that cannot survive native fstab serialization.
+    """
+    config = _config()
+    config["partitions"][2]["mountpoint"] = target
+    consent = {path: _identity(path) for path in disks.selected_disks(config)}
+    monkeypatch.setattr(disks.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("refusal must precede native work"))
+    monkeypatch.setattr(disks.subprocess, "check_output", lambda *_args, **_kwargs: pytest.fail("refusal must precede native work"))
+    with pytest.raises(ValueError, match="No spaces"):
+        disks.revalidate_disks(config, consent, dict(consent))
+
+
 @pytest.mark.parametrize(
     ("root_filesystem", "boot_filesystem", "accepted"),
     [
