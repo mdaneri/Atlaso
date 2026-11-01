@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
+import subprocess
 import sys
+import sysconfig
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +15,31 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/interop"))
 import certificate_iso_bootstrap as bootstrap  # noqa: E402 - Reviewed interop entrypoint.
+
+
+def test_bootstrap_imports_through_the_actual_isolated_wrapper_launcher(tmp_path: Path) -> None:
+    """Exercise the wrapper's real runpy bootstrap without pytest's import path.
+
+    Args:
+        tmp_path: Unrelated working directory containing a hostile sibling name.
+    """
+    root = Path(__file__).resolve().parents[1]
+    wrapper = (root / "scripts/windows/vmware/Atlaso.SourceSnapshot.psm1").read_text()
+    function = wrapper.split("function New-AtlasoCertificatePythonArguments {", 1)[1]
+    matches = re.findall(r"^\s*\$bootstrap = '([^'\r\n]+)'\s*$", function, re.MULTILINE)
+    assert len(matches) == 1
+    assert "return @('-I', '-S', '-B', '-c', $bootstrap, $sitePackages, $ScriptPath)" in function
+    (tmp_path / "certificate_handoff_native.py").write_text("raise AssertionError('untrusted cwd import')\n")
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith("ATLASO_NATIVE_") and key not in {"PYTHONPATH", "PYTHONHOME"}}
+    result = subprocess.run(
+        [sys.executable, "-I", "-S", "-B", "-c", matches[0], sysconfig.get_path("purelib"),
+         str(root / "scripts/interop/certificate_iso_bootstrap.py"), "--help"],
+        cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--preflight-only" in result.stdout
+    assert "--execute" in result.stdout
 
 
 @pytest.mark.parametrize("review,reason", [

@@ -18,6 +18,10 @@ import sys
 from contextlib import contextmanager
 from pathlib import Path
 
+# The reviewed wrapper uses isolated runpy startup, which deliberately does not
+# add this entrypoint's directory. Only its pinned sibling namespace is added.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from certificate_handoff_native import (
     Client,
     clean_baseline,
