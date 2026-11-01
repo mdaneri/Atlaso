@@ -360,6 +360,7 @@ ATLASO_GUEST_AGENT_SELECTOR_PATH = Path("/opt/atlaso/bin/atlaso-select-guest-age
 ATLASO_MACHINE_IDENTITY_INITIALIZER_PATH = Path("/opt/atlaso/bin/atlaso-initialize-machine-identity.py")
 ATLASO_GUEST_AGENT_SELECT_UNIT_PATH = Path("/etc/systemd/system/atlaso-guest-agent-select.service")
 ATLASO_GUEST_TOOLS_PAYLOAD_DIR = Path("/var/lib/atlaso-privileged/guest-tools")
+ATLASO_GUEST_TOOLS_STATUS_PATH = ATLASO_PRIVILEGED_STATE_DIR / "guest-tools-status.json"
 ATLASO_FIRST_BOOT_GUEST_TOOLS_DIR = Path("/var/lib/atlaso/first-boot-packages")
 ATLASO_GUEST_TOOLS_CLOCK_GUARD_UNIT_PATH = Path(
     "/etc/systemd/system/atlaso-guest-tools-clock-guard.service"
@@ -21723,6 +21724,20 @@ def _write_update_info(info: dict) -> None:
     _fsync_directory(APPLIANCE_UPDATE_INFO_PATH.parent)
 
 
+def _write_guest_tools_evidence(info: dict) -> None:
+    """Persist guest-tools maintenance separately from OS and release updater evidence.
+
+    Args:
+        info: Verified guest-tools maintenance result.
+    """
+    payload = {"schema": 1, "result": info}
+    _write_appliance_update_runtime_file(
+        ATLASO_GUEST_TOOLS_STATUS_PATH,
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        mode=0o600,
+    )
+
+
 def _powershell_encoded_command(script: str) -> str:
     """Perform powershell encoded command.
 
@@ -23251,9 +23266,18 @@ def _guest_tools_apply(payload: dict) -> dict[str, object]:
         return {"status": "failed", "selected_streams": ["guest_tools"], "error": str(state.get("reason") or "Guest-tools maintenance is unavailable."),
                 "attempted": {"guest_tools": {"provider": provider, "state": "failed", "reason": state.get("reason")}}}
     if state.get("state") == "healthy" and not state.get("plan", {}).get("package_change"):
-        return {"status": "succeeded", "selected_streams": ["guest_tools"], "commands": [],
-                "applied": {"guest_tools": {"provider": provider, "version": state["version"], "no_change": True}},
-                "guest_tools": state, "reboot_recommended": False, "restart_required": False}
+        result = {
+            "status": "succeeded",
+            "selected_streams": ["guest_tools"],
+            "commands": [],
+            "applied": {"guest_tools": {"provider": provider, "version": state["version"], "no_change": True}},
+            "guest_tools": state,
+            "reboot_recommended": False,
+            "restart_required": False,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        }
+        _write_guest_tools_evidence(result)
+        return result
     checked = _guest_tools_check(payload)
     if checked.get("state") not in {"available", "up_to_date"}:
         return {"status": "failed", "selected_streams": ["guest_tools"],
@@ -23338,7 +23362,7 @@ def _guest_tools_apply(payload: dict) -> dict[str, object]:
     }
     if not success:
         result["error"] = "Guest-tools commands completed, but package, service, provider, or clock-safety verification did not pass. Review the task and retry."
-    _write_update_info(result)
+    _write_guest_tools_evidence(result)
     return result
 
 

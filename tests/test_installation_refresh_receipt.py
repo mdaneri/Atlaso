@@ -1,11 +1,41 @@
 """Static contract checks for durable installation refresh selectors."""
 
+import os
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 HARNESS = ROOT / "scripts/windows/vmware/invoke-installation-iso-test.ps1"
 NATIVE = ROOT / "scripts/windows/vmware/test-installation-iso.ps1"
 HELPER = ROOT / "scripts/windows/vmware/Atlaso.InstallationRefreshReceipt.psm1"
+
+
+@pytest.mark.skipif(os.name != "nt" or shutil.which("pwsh") is None, reason="Native PowerShell module scopes")
+def test_selector_import_preserves_the_callers_cleanup_commands(tmp_path: Path) -> None:
+    """Keep post-install stop and disk verification available after receipt publication.
+
+    Args:
+        tmp_path: Owned temporary directory for the isolated PowerShell process.
+    """
+    script = r"""
+$ErrorActionPreference='Stop'
+$vmware=Join-Path $env:ISO_RECEIPT_REPOSITORY 'scripts/windows/vmware'
+Import-Module (Join-Path $vmware 'Atlaso.WorkstationCleanup.psm1') -Force
+$before=Get-Command Confirm-AtlasoWorkstationVmInactive -ErrorAction Stop
+Import-Module (Join-Path $vmware 'Atlaso.InstallationRefreshReceipt.psm1') -Force
+$after=Get-Command Confirm-AtlasoWorkstationVmInactive -ErrorAction Stop
+if ($before.Module -ne $after.Module) { throw 'Caller cleanup module was replaced' }
+Get-Command Get-AtlasoPathIdentity -ErrorAction Stop | Out-Null
+Get-Command Publish-AtlasoInstallationRefreshSelector -ErrorAction Stop | Out-Null
+"""
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-Command", script], capture_output=True, encoding="utf-8", timeout=60,
+        env={**os.environ, "ISO_RECEIPT_REPOSITORY": str(ROOT), "TEMP": str(tmp_path), "TMP": str(tmp_path)},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_receipt_directory_is_validated_before_child_or_vm_work() -> None:

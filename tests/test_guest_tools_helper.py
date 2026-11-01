@@ -4,6 +4,7 @@ import hashlib
 import json
 import stat
 import subprocess
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -97,14 +98,16 @@ def test_status_does_not_confuse_missing_stopped_conflicting_or_unknown(
     assert len(result["review_digest"]) == 64
 
 
-def test_changed_review_refuses_mutation_and_healthy_repeat_is_noop(helper, monkeypatch):
+def test_changed_review_refuses_mutation_and_healthy_repeat_is_noop(helper, monkeypatch, tmp_path):
     """A stale review changes nothing; repeated healthy install does no host work.
 
     Args:
         helper: Isolated helper module.
         monkeypatch: Stable status fixture and mutation tripwire.
+        tmp_path: Isolated durable guest-tools evidence location.
     """
     status = {"provider": "vmware", "review_digest": "a" * 64, "state": "healthy", "available": True, "version": "0:1-1"}
+    monkeypatch.setattr(helper, "ATLASO_GUEST_TOOLS_STATUS_PATH", tmp_path / "guest-tools-status.json")
     monkeypatch.setattr(helper, "_guest_tools_status", lambda: dict(status))
     monkeypatch.setattr(helper, "_guest_tools_clock_guard", lambda **kwargs: pytest.fail("A no-op must not change clock services"))
     stale = helper._guest_tools_apply({"guest_tools": {"provider": "vmware", "review_digest": "b" * 64}})
@@ -112,6 +115,8 @@ def test_changed_review_refuses_mutation_and_healthy_repeat_is_noop(helper, monk
     repeat = helper._guest_tools_apply({"guest_tools": {"provider": "vmware", "review_digest": "a" * 64}})
     assert repeat["status"] == "succeeded"
     assert repeat["applied"]["guest_tools"]["no_change"] is True
+    evidence = json.loads((tmp_path / "guest-tools-status.json").read_text(encoding="utf-8"))
+    assert evidence["result"]["applied"]["guest_tools"]["no_change"] is True
 
 
 @pytest.mark.parametrize("defect", [
@@ -253,7 +258,24 @@ def test_guest_tools_apply_uses_only_solver_selected_rpms(helper, monkeypatch, t
     monkeypatch.setattr(helper, "_guest_tools_status", lambda: next(statuses))
     monkeypatch.setattr(helper, "_guest_tools_payload", lambda provider: payload_info)
     monkeypatch.setattr(helper, "_guest_tools_clock_guard", lambda **kwargs: {"success": True})
-    monkeypatch.setattr(helper, "_write_update_info", lambda result: None)
+    update_info_path = tmp_path / "update-info.json"
+    update_info = {
+        "status": "succeeded",
+        "job_id": "job_prior_photon",
+        "applied": {"photon_os": {"updated": True}},
+        "attempted": {"photon_os": {"updated": True}},
+        "commands": [],
+        "reboot_recommended": False,
+        "restart_required": False,
+        "selected_streams": ["photon_os"],
+        "finished_at": "2026-10-31T18:00:00+00:00",
+        "finalizer_status_path": "",
+    }
+    update_info_path.write_text(json.dumps(update_info, indent=2) + "\n", encoding="utf-8")
+    original_update_info = update_info_path.read_bytes()
+    guest_tools_status_path = tmp_path / "guest-tools-status.json"
+    monkeypatch.setattr(helper, "APPLIANCE_UPDATE_INFO_PATH", update_info_path)
+    monkeypatch.setattr(helper, "ATLASO_GUEST_TOOLS_STATUS_PATH", guest_tools_status_path)
     monkeypatch.setattr(helper.shutil, "which", lambda name: name)
     rows = [
         {"Name": "open-vm-tools", "Arch": "x86_64", "Evr": "13.1.0-2.ph5", "InstallSize": 1,
@@ -286,6 +308,21 @@ def test_guest_tools_apply_uses_only_solver_selected_rpms(helper, monkeypatch, t
     assert calls[2] == ["rpm", "-Uvh", "--replacepkgs", "--test", *selected]
     assert calls[3] == ["rpm", "-Uvh", "--replacepkgs", *selected]
     assert str(conflict_path) not in calls[1] + calls[2] + calls[3]
+    assert update_info_path.read_bytes() == original_update_info
+    from atlaso.app.services.appliance_update import appliance_update_evidence_state
+
+    updater_state = appliance_update_evidence_state(
+        qualifying_install_job_id="job_prior_photon",
+        qualifying_install_stream="photon_os",
+        qualifying_install_started_at=datetime(2026, 10, 31, 17, 59, tzinfo=timezone.utc),
+        update_info_path=str(update_info_path),
+        finalizer_path=str(tmp_path / "missing-finalizer.json"),
+    )
+    assert updater_state["state"] == "available"
+    guest_tools_evidence = json.loads(guest_tools_status_path.read_text(encoding="utf-8"))
+    assert guest_tools_evidence["schema"] == 1
+    assert guest_tools_evidence["result"]["status"] == "succeeded"
+    assert guest_tools_evidence["result"]["guest_tools"]["provider"] == "vmware"
 
 
 @pytest.mark.parametrize("failure", ["stale_review", "clock_guard", "final_verification"])
@@ -305,7 +342,7 @@ def test_guest_tools_apply_cli_propagates_verification_failure(helper, monkeypat
     monkeypatch.setattr(helper, "_guest_tools_clock_guard", lambda **kwargs: {"success": failure != "clock_guard"})
     monkeypatch.setattr(helper.shutil, "which", lambda name: name)
     monkeypatch.setattr(helper, "_command_payload", lambda command, **kwargs: {"command": command, "success": True})
-    monkeypatch.setattr(helper, "_write_update_info", lambda result: None)
+    monkeypatch.setattr(helper, "_write_guest_tools_evidence", lambda result: None)
     monkeypatch.setattr(helper, "_validate_appliance_update_config_path", lambda path: path)
     monkeypatch.setattr(helper, "_load_appliance_update_config", lambda path: payload)
     monkeypatch.setattr(helper, "_load_appliance_update_credentials", lambda args: {})

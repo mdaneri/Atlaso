@@ -448,6 +448,11 @@ For the administrator's PowerShell shell, the adapter waits for the cursor hands
 that challenge. Prompt bytes alone do not establish terminal readiness.
 PowerShell commands use carriage return for ordinary Enter; the Unix .NET console treats line feed as Ctrl+Enter.
 
+If installation completed but the initial stop or reboot verification failed before a boot receipt was published,
+retain the original VM and disk-baseline selectors. Resume with `-Scenario BootInstalled`, the original ISO path and
+digest, and `-InspectInstalled -InspectContent`; this verifies the existing disks and boots without media. Do not
+repeat installation or recreate its baseline to recover a verification failure.
+
 To retry login diagnostics on a retained installed VM, use `-Scenario LoginInstalled` with the same ISO identity and
 existing VM directory. Supply `-OriginalReceiptPath`, `-OriginalReceiptSha256`, `-BaselineReceiptPath`,
 `-BaselineReceiptSha256`, `-BootReceiptPath`, and `-BootReceiptSha256` from the original live creation/boot output.

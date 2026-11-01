@@ -6,7 +6,9 @@ Receipt documents preserve the original VM and boot selector objects returned
 by the canonical VMware harness. Publication is bounded, pinned and no-overwrite.
 #>
 
-Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
+# Reuse an existing caller import: forcing a nested reload removes the caller's
+# cleanup commands before the installer can stop and verify its original VM.
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1')
 
 <#
 .SYNOPSIS
