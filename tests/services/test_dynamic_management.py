@@ -526,6 +526,7 @@ def test_publication_receipt_is_fresh_and_bound_to_applied_inputs(client, tmp_pa
 
     from sqlalchemy import select
 
+    from atlaso.app import ui
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import PhysicalInterface
     from atlaso.app.services import dynamic_management as admission
@@ -533,6 +534,10 @@ def test_publication_receipt_is_fresh_and_bound_to_applied_inputs(client, tmp_pa
     path = tmp_path / "publication.json"
     with SessionLocal() as db:
         identity = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        identity.ipv4_method, identity.ip_cidr, identity.host_ip_cidr = "dhcp", None, None
+        identity.host_ip_cidrs = []
+        identity.ipv6_enabled = False
+        db.commit()
         value = {"phase": "ready", "observed_at": datetime.now(timezone.utc).isoformat(),
                  "interface": identity.name, "mac": identity.mac_address,
                  "network_digest": admission.snapshot_digest(admission.applied_snapshots(db).get("network")),
@@ -554,6 +559,13 @@ def test_publication_receipt_is_fresh_and_bound_to_applied_inputs(client, tmp_pa
         monkeypatch.setattr(admission.os, "fstat", lambda _fd: SimpleNamespace(
             st_mode=stat.S_IFREG | 0o644, st_uid=0, st_size=path.stat().st_size, st_nlink=1))
         assert bool(admission.read_publication(db)) == (change == "none")
+        context = ui.appliance_settings_context(db, reconcile_dns=False)
+        settings_payload = json.loads(context["appliance_settings_config_preview"])
+        assert settings_payload["management_ip"] == ("169.254.20.10" if change == "none" else "")
+        ordinary, _dns = ui.management_dhcp_dns_context([identity], [])
+        assert not ordinary.get("ip")
+        assert identity.host_ip_cidr is None
+        assert identity.host_ip_cidrs == []
 
 
 def test_console_uses_only_ready_setup_receipt_for_apipa_url(client, monkeypatch):

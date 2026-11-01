@@ -2670,6 +2670,10 @@ def appliance_settings_context(
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
     management, observed_dhcp_dns_servers = management_dhcp_dns_context(interfaces, vlans)
+    if not management.get("ip"):
+        setup_management = appliance_settings_management_context(db)
+        if setup_management.get("ip"):
+            management = setup_management
     terminal_options = web_terminal_interface_options(interfaces, vlans)
     ca_settings = get_ca_settings_row(db)
     management_https_cert_path, management_https_key_path, _management_https_chain_path = ca_managed_certificate_paths(db, "appliance:https")

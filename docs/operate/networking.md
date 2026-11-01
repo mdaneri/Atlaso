@@ -76,6 +76,8 @@ observation and applied-state admission before activating a listener, keeping au
 initialization without accepting stale address or CA inputs.
 Protected Network Apply can admit a newly acquired fallback address from the reviewed NIC identity and fresh native
 evidence; the normal TLS certificate-coverage and readiness checks still apply.
+Settings-only Apply uses the same verified APIPA management context while keeping that address out of ordinary
+DHCP, DNS and service-listener inventory.
 
 This path serves management UI/API and their static and CA-download dependencies only, to link-local source addresses.
 Existing authentication and management firewall source restrictions still apply. It does not enable public protocols,
