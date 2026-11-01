@@ -98,6 +98,14 @@ def test_optional_instance_id_is_quoted_and_safe_for_cloud_init() -> None:
     }
 
 
+def test_authorized_reseed_preserves_original_console_host_key() -> None:
+    parsed = yaml.safe_load(peer_files(_args(preserve_host_keys=True, publish_host_key_to_serial=True))["user-data"])
+    assert parsed["ssh_deletekeys"] is False
+    assert parsed["ssh_pwauth"] is False
+    assert "iproute2" in parsed["packages"] and "sudo" in parsed["packages"]
+    assert "ssh_deletekeys" not in yaml.safe_load(peer_files(_args())["user-data"])
+
+
 @pytest.mark.parametrize(
     "bad",
     [

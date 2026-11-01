@@ -710,6 +710,7 @@ def main():
         peer_transport = PinnedPeerTransport(
             peer_plan["host"], peer_plan["user"], peer_plan["ssh_public_key"],
             peer_plan["ssh_host_key"], peer_plan["private_subnet"],
+            **({"authentication_mode": peer_plan["authentication_mode"]} if "authentication_mode" in peer_plan else {}),
         )
         peer_transport.__enter__()
         if plan.get("trust_model") == "trusted-host":

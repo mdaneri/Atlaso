@@ -69,6 +69,9 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
     if not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/]+={0,2}(?: [^\r\n]{1,128})?", args.public_key):
         raise ValueError("An exact Ed25519 peer SSH public key is required.")
     publish_host_key = getattr(args, "publish_host_key_to_serial", False)
+    preserve_host_keys = getattr(args, "preserve_host_keys", False)
+    if not isinstance(preserve_host_keys, bool):
+        raise ValueError("The host-key preservation option must be boolean.")
     if not isinstance(publish_host_key, bool):
         raise ValueError("The serial host-key publication option must be boolean.")
     instance_id = getattr(args, "instance_id", None)
@@ -92,7 +95,7 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
     extra_write_files = ""
     extra_commands = ""
     if publish_host_key:
-        extra_packages = "  - open-vm-tools\n  - open-vm-tools-openrc\n"
+        extra_packages = "  - open-vm-tools\n  - open-vm-tools-openrc\n  - iproute2\n  - sudo\n"
         publisher = _host_key_serial_script()
         extra_write_files = (
             "  - path: /usr/local/sbin/atlaso-certificate-peer-publish-host-key\n"
@@ -105,8 +108,9 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
             "  - rc-service open-vm-tools start\n"
             "  - /usr/local/sbin/atlaso-certificate-peer-publish-host-key\n"
         )
+    host_key_policy = "ssh_deletekeys: false\n" if preserve_host_keys else ""
     user_data = f"""#cloud-config
-hostname: {args.hostname}
+{host_key_policy}hostname: {args.hostname}
 manage_etc_hosts: true
 disable_root: true
 ssh_pwauth: false
@@ -174,6 +178,7 @@ def main() -> int:
     parser.add_argument("--lease-address", required=True)
     parser.add_argument("--client-mac", required=True)
     parser.add_argument("--publish-host-key-to-serial", action="store_true")
+    parser.add_argument("--preserve-host-keys", action="store_true")
     parser.add_argument("--instance-id")
     args = parser.parse_args()
     files = peer_files(args)

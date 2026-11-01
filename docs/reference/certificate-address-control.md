@@ -145,8 +145,21 @@ the peer's NoCloud seed with `scripts/interop/create_certificate_peer_seed_iso.p
 and publishes a fixed public Ed25519 host-key marker to its VMX-bound serial file. Read and record that exact marker
 from the admitted peer VMX/serial endpoint, bind the instance ID and observation to the original peer receipt, and
 pin the host key before any SSH connection. Do not establish peer SSH trust from a network scan, DNS, or an
-unverified first connection. The seed's `--public-key` remains the existing agent-backed public key; never stage its
-private half in the seed or receipts.
+unverified first connection. The seed's `--public-key` is the public key selected for this task's peer SSH identity;
+never stage its private half in the seed or receipts.
+
+The ordinary credential policy remains the default. A task-only peer SSH key protected with current-user Windows
+DPAPI is an optional exception only when the maintainer has explicitly approved that key and its lab lifetime. Before
+creating it, preserve the original approval receipt and bind it to this task, repository, PR, exact peer ownership, and
+the peer SSH purpose. Create a dedicated Ed25519 key through the approved credential workflow; preserve the original
+key-creation receipt and digest, and bind its public key and fingerprint to the same peer identity and seed. Keep the
+private key available to the bounded host-side credential bridge only as DPAPI ciphertext. Do not place ciphertext
+or plaintext private-key material in the seed, guest, VM directory, receipts, logs, or public evidence reports. Keep
+ciphertext in its separately restricted host credential artifact; plans contain only its path and digest. The explicit
+`peer_transport.authentication_mode` is `dpapi-task-key`, with pinned `peer_key`, `peer_key_authorization`, and
+`peer_key_creation` references. Admission checks the approval and creation bindings before credential access.
+Do not substitute an agent's personal key or fall back to another SSH identity if the approved task key is unavailable
+or rejected; stop and reconcile the approved key and its receipts.
 
 After the original ISO adapter is rewired and the trusted-host topology is admitted, use the reviewed Git-blob
 `scripts/windows/vmware/inspect-certificate-peer.ps1` entrypoint described in the
@@ -327,6 +340,12 @@ neither releases reservations and controls nor removes the result root. Release 
 supported owning tool, then release the exact quiescent artifact root only after preserving evidence and verifying
 its ownership and containment. Record host readback that the two VMs no longer reference the LAN segment and that the
 owned reservation, segment registration, and other task resources are absent.
+
+If the approved task-only DPAPI peer key was used, include its exact host-side ciphertext artifact and any bounded
+credential staging state in the same task cleanup handoff. After no diagnosis, retry, or recovery needs the key, remove
+only those receipt-bound artifacts through their supported owner and verify that they are absent. Preserve the public
+approval and key-creation receipts with the lab evidence; they contain no private-key material. Do not delete or alter
+shared 1Password items, other keys, or unreceipted host credentials as part of lab cleanup.
 
 Retained, shared, differently owned, unsupported, or ambiguously owned resources must be preserved and reported with
 the blocking condition. Do not substitute broad provider cleanup or recursive deletion, and do not mark the lab

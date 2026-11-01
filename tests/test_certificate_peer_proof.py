@@ -563,3 +563,43 @@ def test_original_iso_receipt_accepts_distinct_plan_and_installed_source_commits
     with pytest.raises(proof.Refusal, match="original_iso_source_not_reviewed_ancestor"):
         proof.original_iso_vm(plan, intent, ownership, reference, Path(root), vmx)
     assert calls[0][-4:] == ["merge-base", "--is-ancestor", ownership["source_commit"], plan["source_commit"]]
+
+
+@pytest.mark.parametrize("fault", [None, "approval", "public_key", "owner", "ciphertext", "legacy"])
+def test_protected_peer_key_requires_original_exception_binding(monkeypatch: pytest.MonkeyPatch, fault: str | None) -> None:
+    """Refuse substitute credentials and legacy-mode exception reuse.
+
+    Args:
+        monkeypatch: Replaces immutable receipt reads without filesystem or guest access.
+        fault: Independent approval, credential, resource, or trust-boundary mismatch.
+    """
+    fixture = {"peer_vmx": "peer.vmx", "peer_ownership_sha256": "o" * 64, "ssh_public_key": "ssh-ed25519 fixture"}
+    plan = {"task_id": "task", "repository": "mdaneri/Atlaso", "pr": 1085,
+            "source_commit": "a" * 40, "trust_model": "trusted-host",
+            "peer_transport": {"authentication_mode": "dpapi-task-key"},
+            "peer_key": {"path": "protected.dpapi", "sha256": "k" * 64},
+            "peer_key_authorization": {"path": "approval.json", "sha256": "p" * 64},
+            "peer_key_creation": {"path": "creation.json", "sha256": "c" * 64}}
+    common = {"schema": 1, "task_id": "task", "repository": "mdaneri/Atlaso", "pr": 1085,
+              "source_commit": "a" * 40, "peer_vmx": "peer.vmx", "peer_ownership_sha256": "o" * 64,
+              "key_path": "protected.dpapi"}
+    approval = dict(common, kind="certificate-peer-key-authorization", maintainer_approved=True,
+                    credential_policy_exception="task-only-current-user-dpapi-peer-ssh-key")
+    creation = dict(common, kind="certificate-peer-protected-key-created", authorization_sha256="p" * 64,
+                    key_sha256="k" * 64, ssh_public_key=fixture["ssh_public_key"])
+    if fault == "approval":
+        approval["maintainer_approved"] = False
+    elif fault == "public_key":
+        creation["ssh_public_key"] = "ssh-ed25519 replacement"
+    elif fault == "owner":
+        creation["peer_ownership_sha256"] = "different"
+    elif fault == "ciphertext":
+        creation["key_sha256"] = "different"
+    elif fault == "legacy":
+        plan["trust_model"] = "independent"
+    monkeypatch.setattr(proof, "bound_json", lambda reference: approval if reference["path"] == "approval.json" else creation)
+    if fault:
+        with pytest.raises(proof.Refusal):
+            proof.admit_peer_key(plan, fixture)
+    else:
+        proof.admit_peer_key(plan, fixture)

@@ -145,16 +145,33 @@ try {
     if ($ExecuteBootstrap) { $arguments += '--execute' }
     $pair = $null
     $plain = $null
+    $protectedPeerKey = $null
+    $peerPlain = $null
     try {
+        if ([string]$planIdentity.peer_transport.authentication_mode -ceq 'dpapi-task-key') {
+            $keyPath = [string]$planIdentity.peer_key.path
+            $null = Assert-AtlasoOnePasswordServiceAccountTokenFile -Path $keyPath
+            $keyCreation = Get-Content -LiteralPath $planIdentity.peer_key_creation.path -Raw | ConvertFrom-Json
+            if ([Atlaso.WorkstationFileIdentity]::Get($keyPath) -cne [string]$keyCreation.key_filesystem_identity) {
+                throw 'Original protected peer key file was replaced.'
+            }
+            if ((Get-FileHash -LiteralPath $keyPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$planIdentity.peer_key.sha256) {
+                throw 'Protected peer key changed after admission.'
+            }
+            $protectedPeerKey = ConvertTo-SecureString -String ([IO.File]::ReadAllText($keyPath))
+            $peerPlain = [Net.NetworkCredential]::new('', $protectedPeerKey).Password
+        }
         $pair = Get-AtlasoOnePasswordCredentialPair -RepositoryRoot $repoRoot -EnvironmentId $EnvironmentId `
             -OnePasswordServiceAccountTokenFile (Join-Path $repoRoot '.atlaso-local/onepassword-service-account-token.dpapi') `
             -OnePasswordPython $PythonPath -TimeoutSeconds 300 -ConsumerDescription 'Certificate private address observations'
         $plain = [Net.NetworkCredential]::new('', $pair.AdminPassword).Password
         Invoke-AtlasoBoundedProcess -FilePath $PythonPath -ArgumentList $arguments `
-            -EnvironmentVariables @{ ATLASO_NATIVE_ADMIN = $plain; TEMP = $evidenceRoot; TMP = $evidenceRoot } `
+            -EnvironmentVariables @{ ATLASO_NATIVE_ADMIN = $plain; ATLASO_NATIVE_PEER_KEY = $peerPlain; TEMP = $evidenceRoot; TMP = $evidenceRoot } `
             -TimeoutSeconds 900 -Action 'Certificate private address observations' -DiscardOutput | Out-Null
     } finally {
         $plain = $null
+        $peerPlain = $null
+        if ($protectedPeerKey) { $protectedPeerKey.Dispose() }
         if ($pair) { $pair.AdminPassword.Dispose(); $pair.RootPassword.Dispose() }
     }
 } finally {

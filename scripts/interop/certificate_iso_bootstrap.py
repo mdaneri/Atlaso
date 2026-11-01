@@ -221,6 +221,7 @@ def setup(plan: dict, output: Path, password: str, *, execute: bool) -> dict:
         with watched_topology(plan, topology) as monitor, PinnedPeerTransport(
             peer_plan["host"], peer_plan["user"], peer_plan["ssh_public_key"],
             peer_plan["ssh_host_key"], peer_plan["private_subnet"],
+            **({"authentication_mode": peer_plan["authentication_mode"]} if "authentication_mode" in peer_plan else {}),
         ) as peer:
             peer.topology_guard = monitor.check
             verify_peer_isolation(peer)

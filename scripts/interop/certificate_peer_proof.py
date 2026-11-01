@@ -358,7 +358,45 @@ def admit_fixture(plan: dict) -> dict:
             raise Refusal("peer_console_identity_invalid")
     elif identity.get("observation") != "owned-vmware-tools-and-agent-ssh-after-management-restart":
         raise Refusal("peer_original_identity_mismatch")
+    admit_peer_key(plan, fixture)
     return fixture
+
+
+def admit_peer_key(plan: dict, fixture: dict) -> None:
+    """Bind optional protected peer authentication to an explicit maintainer exception.
+
+    Args:
+        plan: Task-bound plan whose original fixture has already been admitted.
+        fixture: Original peer resource and public authentication identity.
+    """
+    mode = plan["peer_transport"].get("authentication_mode", "agent")
+    references = ("peer_key", "peer_key_authorization", "peer_key_creation")
+    if mode == "agent":
+        if any(name in plan for name in references):
+            raise Refusal("peer_key_mode_mismatch")
+        return
+    if mode != "dpapi-task-key" or plan.get("trust_model") != "trusted-host":
+        raise Refusal("peer_key_mode_mismatch")
+    if any(not isinstance(plan.get(name), dict) for name in references):
+        raise Refusal("peer_key_exception_required")
+    authorization = bound_json(plan["peer_key_authorization"])
+    creation = bound_json(plan["peer_key_creation"])
+    for record in (authorization, creation):
+        if (record.get("schema") != 1 or record.get("task_id") != plan["task_id"]
+                or record.get("repository") != "mdaneri/Atlaso" or record.get("pr") != plan_pr(plan)
+                or record.get("peer_vmx") != fixture["peer_vmx"]
+                or record.get("peer_ownership_sha256") != fixture["peer_ownership_sha256"]
+                or record.get("key_path") != plan["peer_key"]["path"]):
+            raise Refusal("peer_key_binding_mismatch")
+        require_reviewed_ancestor(plan, record.get("source_commit", ""), "peer_key_source_not_reviewed_ancestor")
+    if (authorization.get("kind") != "certificate-peer-key-authorization"
+            or authorization.get("maintainer_approved") is not True
+            or authorization.get("credential_policy_exception") != "task-only-current-user-dpapi-peer-ssh-key"
+            or creation.get("kind") != "certificate-peer-protected-key-created"
+            or creation.get("authorization_sha256") != plan["peer_key_authorization"]["sha256"]
+            or creation.get("key_sha256") != plan["peer_key"]["sha256"]
+            or creation.get("ssh_public_key") != fixture["ssh_public_key"]):
+        raise Refusal("peer_key_exception_required")
 
 
 def admit_receipts(plan: dict) -> tuple[dict, dict]:
@@ -575,6 +613,7 @@ def main() -> int:
         with PinnedPeerTransport(
             peer_plan["host"], peer_plan["user"], peer_plan["ssh_public_key"],
             peer_plan["ssh_host_key"], peer_plan["private_subnet"],
+            **({"authentication_mode": peer_plan["authentication_mode"]} if "authentication_mode" in peer_plan else {}),
         ) as peer:
             with PinnedApplianceSession(
                 peer, plan["baseline_address"], plan["appliance_user"],

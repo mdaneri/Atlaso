@@ -10,7 +10,9 @@ import base64
 import binascii
 import hashlib
 import http.client
+import io
 import ipaddress
+import os
 import socket
 import ssl
 import threading
@@ -61,15 +63,21 @@ def _run_bridge(bridge: socket.socket, channel: paramiko.Channel) -> None:
 class PinnedPeerTransport(AbstractContextManager["PinnedPeerTransport"]):
     """Open only private-subnet TCP channels through one pinned peer SSH key."""
 
-    def __init__(self, peer_ip: str, username: str, public_key: str, host_key: str, subnet: str):
+    def __init__(self, peer_ip: str, username: str, public_key: str, host_key: str, subnet: str,
+                 *, authentication_mode: str = "agent"):
         """Initialize the validated client or test double.
 
         Args:
             peer_ip: Private-LAN peer address.
             username: Account name for this request.
-            public_key: Exact public key selected from the local SSH agent.
+            public_key: Exact public key admitted for the selected peer credential.
             host_key: Expected SSH host key for the peer.
-            subnet: Expected private-LAN subnet."""
+            subnet: Expected private-LAN subnet.
+            authentication_mode: Explicit agent or separately approved DPAPI task-key selection.
+        """
+        if authentication_mode not in ("agent", "dpapi-task-key"):
+            raise PeerTransportRefusal("peer_authentication_mode_invalid")
+        self.authentication_mode = authentication_mode
         self.peer_ip = str(ipaddress.IPv4Address(peer_ip))
         self.username = username
         self.public_key = public_key
@@ -92,17 +100,35 @@ class PinnedPeerTransport(AbstractContextManager["PinnedPeerTransport"]):
         try:
             sock = socket.create_connection((self.peer_ip, 22), timeout=8)
             transport = paramiko.Transport(sock)
+            transport.banner_timeout = 8
+            transport.auth_timeout = 8
             transport.start_client(timeout=8)
             observed = "SHA256:" + base64.b64encode(
                 hashlib.sha256(transport.get_remote_server_key().asbytes()).digest()
             ).decode("ascii").rstrip("=")
             if observed != self.host_key:
                 raise PeerTransportRefusal("peer_host_key_changed")
-            matching_keys = [key for key in paramiko.Agent().get_keys()
-                             if key.get_name() == "ssh-ed25519" and key.asbytes() == self.public_blob]
-            if len(matching_keys) != 1:
-                raise PeerTransportRefusal("peer_agent_identity_unavailable")
-            transport.auth_publickey(self.username, matching_keys[0])
+            private_text = os.environ.pop("ATLASO_NATIVE_PEER_KEY", None)
+            if self.authentication_mode == "dpapi-task-key":
+                try:
+                    if not private_text or len(private_text) > 8192:
+                        raise PeerTransportRefusal("peer_protected_key_required")
+                    selected = paramiko.Ed25519Key.from_private_key(io.StringIO(private_text))
+                except (ValueError, paramiko.SSHException):
+                    raise PeerTransportRefusal("peer_protected_key_invalid") from None
+                finally:
+                    private_text = None
+                if selected.asbytes() != self.public_blob:
+                    raise PeerTransportRefusal("peer_protected_key_mismatch")
+            else:
+                if private_text:
+                    raise PeerTransportRefusal("peer_unexpected_protected_key")
+                matching_keys = [key for key in paramiko.Agent().get_keys()
+                                 if key.get_name() == "ssh-ed25519" and key.asbytes() == self.public_blob]
+                if len(matching_keys) != 1:
+                    raise PeerTransportRefusal("peer_agent_identity_unavailable")
+                selected = matching_keys[0]
+            transport.auth_publickey(self.username, selected)
             if not transport.is_authenticated():
                 raise PeerTransportRefusal("peer_authentication_failed")
             self.transport = transport
