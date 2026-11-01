@@ -61,7 +61,7 @@ sections. Resolve unknown applicability before mutation rather than treating it 
 | cleanup | Creating task worktrees or disposable validation resources (ownership section), resource release, destructive cleanup, completed-task handoff | [Cleanup policy](docs/contribute/completed-task-cleanup.md) |
 | community | Community participation | [Code of conduct](CODE_OF_CONDUCT.md) |
 
-[Routing](docs/operate/networking.md); [DHCP](docs/services/dhcp.md): native limits/report-only checks.
+[Routing and IPv4LL](docs/operate/networking.md); [DHCP](docs/services/dhcp.md): native limits and acceptance gates.
 
 [Reverse proxies](docs/services/reverse-proxies.md): Apply, ownership, trust, native acceptance.
 

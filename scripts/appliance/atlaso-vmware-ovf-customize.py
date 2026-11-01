@@ -1469,29 +1469,53 @@ def write_env_file(path: Path, updates: dict[str, object]) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def write_networkd_config(config: dict[str, object]) -> None:
-    """Persist networkd config.
+def ipv4ll_fallback_enabled(config: dict[str, object]) -> bool:
+    """Resolve explicit first-boot intent while preserving an applied global opt-out.
 
     Args:
-        config: Validated configuration consumed by the operation.
+        config: Validated first-boot configuration.
     """
-    lines = ["[Match]", f"Name={DEFAULT_INTERFACE}", "", "[Network]"]
+    # Preserve the applied global opt-out if customization is retried or a new
+    # deployment envelope arrives. A generic LinkLocalAddressing=no cannot
+    # express the global choice: it is also correct for a static IPv4 link.
+    fallback_enabled = config.get("ipv4_link_local_fallback_enabled")
+    if fallback_enabled is None:
+        fallback_enabled = read_env_file(ENV_PATH).get("ATLASO_IPV4_LINK_LOCAL_FALLBACK_ENABLED", "true").strip('"').lower() != "false"
+        if NETWORKD_PATH.exists():
+            choice = re.search(r"^# Atlaso IPv4LL fallback enabled=(true|false)$", NETWORKD_PATH.read_text(encoding="utf-8"), re.MULTILINE)
+            if choice:
+                fallback_enabled = choice[1] == "true"
+    return bool(fallback_enabled)
+
+
+def write_networkd_config(config: dict[str, object]) -> None:
+    """Persist networkd configuration with one global fallback policy.
+
+    Args:
+        config: Validated first-boot configuration.
+    """
+    fallback_enabled = ipv4ll_fallback_enabled(config)
+    lines = ["# Atlaso IPv4LL fallback enabled=" + ("true" if fallback_enabled else "false"),
+             "[Match]", f"Name={DEFAULT_INTERFACE}", "", "[Network]"]
     if config["management_mode"] == "dhcp":
         lines.append("DHCP=ipv4")
     else:
         lines.append(f"Gateway={config['gateway']}")
+    ipv4ll = config["management_mode"] == "dhcp" and fallback_enabled
     if config["ipv6_mode"] == "disabled":
-        lines.extend(["IPv6AcceptRA=no", "LinkLocalAddressing=no"])
+        lines.extend(["IPv6AcceptRA=no", "LinkLocalAddressing=" + ("ipv4" if ipv4ll else "no")])
     elif config["ipv6_mode"] == "auto":
-        lines.extend(["IPv6AcceptRA=yes", "LinkLocalAddressing=ipv6"])
+        lines.extend(["IPv6AcceptRA=yes", "LinkLocalAddressing=" + ("yes" if ipv4ll else "ipv6")])
     else:
-        lines.extend(["IPv6AcceptRA=no", "LinkLocalAddressing=ipv6"])
+        lines.extend(["IPv6AcceptRA=no", "LinkLocalAddressing=" + ("yes" if ipv4ll else "ipv6")])
         if config["ipv6_gateway"]:
             lines.append(f"Gateway={config['ipv6_gateway']}")
     lines.extend(f"DNS={server}" for server in config["dns_servers"])
+    if ipv4ll:
+        lines.extend(["ConfigureWithoutCarrier=no", "IPv4LLRoute=no"])
     if config["management_mode"] == "dhcp":
         # Match the portable image and Network Apply lease-retention policy.
-        lines.extend(["", "[DHCPv4]", "SendRelease=no", "SendDecline=yes"])
+        lines.extend(["", "[DHCPv4]", "SendRelease=no", "SendDecline=yes", "MaxAttempts=infinity"])
     if config["management_mode"] != "dhcp":
         lines.extend(["", "[Address]", f"Address={config['cidr']}", "DuplicateAddressDetection=ipv4"])
     if config["ipv6_mode"] == "static":
@@ -1531,7 +1555,8 @@ def wait_for_native_management_addresses(config: dict[str, object]) -> None:
             observation = json.loads(result.stdout)
             link = next((row for row in observation.get("links", []) if row.get("name") == DEFAULT_INTERFACE), {})
             records = link.get("addresses", [])
-            ready = bool(observation.get("complete") and link.get("configured") and link.get("ethernet") and link.get("mac"))
+            ready = bool(observation.get("complete") and link.get("configured") and link.get("ethernet") and link.get("mac")
+                         and link.get("up") and link.get("carrier"))
             for address in requirements:
                 static = "/" in address
                 candidate_ip = str(ip_interface(address).ip) if static else ""
@@ -1542,6 +1567,10 @@ def wait_for_native_management_addresses(config: dict[str, object]) -> None:
                     and not ip_address(row["address"]).is_link_local
                     and row.get("source") in ({"DHCPv4"} if address == "dhcp4" else {"DHCPv6", "NDisc"})
                 )]
+                if address == "dhcp4" and ipv4ll_fallback_enabled(config):
+                    matches.extend(row for row in records if row.get("source") == "IPv4LL"
+                                   and row.get("cidr") == f"{row['address']}/16"
+                                   and int(ip_address("169.254.1.0")) <= int(ip_address(row["address"])) <= int(ip_address("169.254.254.255")))
                 if any(row.get("state") == "conflict" for row in records
                        if row in matches or row.get("address") == candidate_ip) or any(
                     row.get("name") == DEFAULT_INTERFACE and row.get("address") == candidate_ip

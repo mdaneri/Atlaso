@@ -17,6 +17,38 @@ STATUS_KEY = "network.address_status.v1"
 MAX_RECORDS = 256
 
 
+def ipv4_acquisition_status(link: dict[str, Any], *, complete: bool, dhcp4: bool) -> dict[str, Any]:
+    """Classify current acquisition without promoting fallback to a general service IP.
+
+    Args:
+        link: Identity-matched native link and address-source evidence.
+        complete: Whether the native collection completed.
+        dhcp4: Whether the applied interface uses DHCPv4.
+    """
+    result: dict[str, Any] = {"ipv4_state": "unknown", "ipv4_detail": "Native IPv4 evidence is unavailable.", "ipv4ll_addresses": []}
+    if not complete or not link:
+        return result
+    if not link.get("up") or not link.get("carrier"):
+        return {**result, "ipv4_state": "no-carrier", "ipv4_detail": "No carrier; local setup is unavailable."}
+    if not dhcp4:
+        return {**result, "ipv4_state": "static", "ipv4_detail": "Static IPv4 configuration."}
+    assigned = [row for row in link.get("addresses", []) if row.get("state") == "assigned"]
+    leases = [row for row in assigned if (row.get("source") == "DHCPv4" or row.get("dhcp4_lease") is True)
+              and ip_address(row["address"]).version == 4 and not ip_address(row["address"]).is_link_local]
+    if leases:
+        return {**result, "ipv4_state": "dhcp-ready", "ipv4_detail": "DHCP lease acquired."}
+    fallback = []
+    for row in assigned:
+        address = ip_address(row["address"])
+        if (row.get("source") == "IPv4LL" and address.version == 4
+                and int(ip_address("169.254.1.0")) <= int(address) <= int(ip_address("169.254.254.255"))):
+            fallback.append(str(address))
+    if fallback:
+        return {**result, "ipv4_state": "apipa", "ipv4_detail": "Using APIPA fallback; DHCP continues retrying. Local link only.",
+                "ipv4ll_addresses": fallback}
+    return {**result, "ipv4_state": "waiting-dhcp", "ipv4_detail": "Waiting for DHCP; no usable IPv4 fallback observed."}
+
+
 def _event_after_identity_change(event: dict[str, Any], identity_since: str) -> bool:
     """Reject unbound journal history predating a detected link replacement.
 
@@ -128,7 +160,9 @@ def project_status(
         if last_conflict:
             address = last_conflict["address"]
             ipv6_conflict = ip_address(address).version == 6
-            declined_offer = resource.get("dhcp4") and not ipv6_conflict
+            # An IPv4LL conflict is handled by native re-selection, not a
+            # declined DHCP offer that must wait for a replacement DHCP lease.
+            declined_offer = resource.get("dhcp4") and not ipv6_conflict and not ip_address(address).is_link_local
             dynamic6_conflict = resource.get("auto6") and ipv6_conflict
             checking = ipv6_conflict or resource["checking"]
             # A lease already present when the decline is first observed cannot
@@ -162,6 +196,7 @@ def project_status(
         if not resource["checking"]:
             detail += " IPv4 checking is disabled in desired state; Apply is required to activate edits. IPv6 DAD is retained."
         result["rows"][key] = {
+            **ipv4_acquisition_status(link, complete=bool(observation.get("complete")), dhcp4=bool(resource.get("dhcp4"))),
             # An observation outage must not erase the last complete comparison
             # point or advance its timestamp past a newer conflict event.
             "lease_observed_at": now if lease_evidence else prior_lease_observed_at,
@@ -198,6 +233,9 @@ def refresh_status(db: Session) -> None:
     observation.setdefault("observed_at", datetime.now(timezone.utc).isoformat())
     resources = []
     physical = list(db.scalars(select(PhysicalInterface)))
+    from atlaso.app.services.management_bindings import applied_physical_ipv4_modes
+
+    applied_modes = applied_physical_ipv4_modes(db)
     parents = {row.name: row for row in physical}
     for kind, rows in (("physical", physical), ("vlan", list(db.scalars(select(VlanInterface))))):
         for row in rows:
@@ -219,7 +257,7 @@ def refresh_status(db: Session) -> None:
                     continue
             resources.append({"key": f"{kind}:{row.id}", "name": row.name, "identity": identity,
                               "desired": desired, "desired_cidrs": desired_cidrs, "physical": kind == "physical",
-                              "dhcp4": isinstance(row, PhysicalInterface) and row.ipv4_method == "dhcp",
+                              "dhcp4": isinstance(row, PhysicalInterface) and applied_modes.get(row.name, row.ipv4_method) == "dhcp",
                               "auto6": isinstance(row, PhysicalInterface) and row.ipv6_enabled and not row.ipv6_cidr,
                               "parent": row.parent_interface if isinstance(row, VlanInterface) else "",
                               "checking": row.check_duplicate_ip_addresses is not False})
@@ -246,6 +284,9 @@ def row_status(saved: dict[str, Any], kind: str, record_id: int) -> dict[str, An
     except (KeyError, TypeError, ValueError):
         stale = True
     if stale:
+        row["ipv4_state"] = "unknown"
+        row["ipv4_detail"] = "Live IPv4 evidence is unavailable or stale."
+        row["ipv4ll_addresses"] = []
         row["state"] = "unknown"
         row["detail"] = "Live address evidence is unavailable or stale. " + row.get("detail", "")
     return row

@@ -1432,7 +1432,9 @@ def managed_ca_certificate_specs(
         terminal_options = web_terminal_interface_options(interfaces, vlans)
         terminal_ips = web_terminal_addresses(normalized_web_terminal_interfaces(appliance, management), terminal_options) if appliance.web_terminal_enabled else []
         appliance_fqdn = appliance.fqdn
-    appliance_ips = management_ui_addresses(db)
+    appliance_ips = (list(management_snapshot["management_addresses"])
+                     if management_snapshot is not None and "management_addresses" in management_snapshot
+                     else management_ui_addresses(db))
     appliance_ips.extend(address for address in terminal_ips if address not in appliance_ips)
     if management_snapshot is not None:
         appliance_cert = management_snapshot["management_https_cert_path"]
@@ -2430,7 +2432,17 @@ def appliance_settings_management_context(db: Session) -> dict[str, Any]:
         .where(VlanInterface.enabled.is_(True))
         .order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)
     ).scalars().all()
-    return management_ui_context(interfaces, vlans)
+    context = management_ui_context(interfaces, vlans)
+    from atlaso.app.services.dynamic_management import read_publication
+
+    published = read_publication(db)
+    if published and (not context.get("ip") or context.get("name") == published["interface"]):
+        address = published["addresses"][0]
+        return {"name": published["interface"], "ip": address,
+                "ip_cidr": f"{address}/16" if address in published["apipa_addresses"] else "",
+                "ipv4_cidr": f"{address}/16" if address in published["apipa_addresses"] else "",
+                "ipv6_cidr": "", "addresses": published["addresses"], "ipv4_method": "dhcp"}
+    return context
 
 
 def management_ui_addresses(db: Session) -> list[str]:
@@ -2445,7 +2457,9 @@ def management_ui_addresses(db: Session) -> list[str]:
         .where(VlanInterface.enabled.is_(True))
         .order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)
     ).scalars().all()
-    addresses: list[str] = []
+    from atlaso.app.services.dynamic_management import publication_bindings
+
+    addresses: list[str] = [binding["address"] for binding in publication_bindings(db)]
     for interface in interfaces:
         role = normalize_interface_role(interface.role)
         enabled = role == "management" or (
@@ -2543,7 +2557,7 @@ def ensure_dns_for_appliance_settings(
     dns_settings = get_dns_settings_row(db)
     ensure_dns_domain_for_appliance_settings(dns_settings, settings.fqdn)
     fqdn = normalize_fqdn(settings.fqdn)
-    desired_addresses = management_ui_addresses(db)
+    desired_addresses = [address for address in management_ui_addresses(db) if not ip_address(address).is_link_local]
     if not fqdn or not desired_addresses:
         return None
     actions: list[str] = []
@@ -5642,7 +5656,10 @@ def network_context(db: Session) -> dict:
     for vlan in vlans:
         vlan_counts[vlan.parent_interface] = vlan_counts.get(vlan.parent_interface, 0) + 1
     observed_ipv4_gateways = discover_host_ipv4_default_gateways()
-    config_preview = render_network_config(interfaces=interfaces, vlans=vlans)
+    fallback_enabled = get_appliance_settings_row(db).ipv4_link_local_fallback_enabled is not False
+    config_preview = render_network_config(
+        interfaces=interfaces, vlans=vlans, ipv4_link_local_fallback_enabled=fallback_enabled,
+    )
     validation_errors = validate_network_state(interfaces=interfaces, vlans=vlans)
     trunk_interfaces = [
         interface
@@ -5651,6 +5668,7 @@ def network_context(db: Session) -> dict:
     ]
     return {
         "physical_interfaces": interfaces,
+        "ipv4_link_local_fallback_enabled": fallback_enabled,
         "physical_interface_rows": [
             dict(physical_interface_to_dict(
                 interface,
@@ -10963,7 +10981,19 @@ def refresh_management_handoff_dynamic_observations(
             )
         required = []
         if path.get("ipv4_method") == "dhcp":
-            required.append(("IPv4", observed.host_dhcp_ip_cidr, "host_ip_cidr"))
+            if not observed.host_dhcp_ip_cidr:
+                from atlaso.app.services.dynamic_management import read_publication
+
+                setup = read_publication(db, max_age_seconds=120)
+                if (setup.get("interface") == name and setup.get("mac") == interface.mac_address.lower()
+                        and set(setup.get("apipa_addresses", [])) & confirmed_addresses):
+                    # IPv4LL remains separate from DHCP/service inventory. The
+                    # helper already re-attested it before the handoff succeeded.
+                    pass
+                else:
+                    required.append(("IPv4", None, "host_ip_cidr"))
+            else:
+                required.append(("IPv4", observed.host_dhcp_ip_cidr, "host_ip_cidr"))
         if path.get("ipv6_enabled", "").lower() == "true" and not path.get("ipv6_cidr"):
             required.extend(("IPv6", cidr, "host_ipv6_cidr") for cidr in (native_automatic_ipv6_cidrs(observed) or (None,)))
         for family, cidr, attribute in required:

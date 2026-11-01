@@ -2606,7 +2606,7 @@ def test_first_boot_requires_native_address_activation(monkeypatch, outcome):
         records[1]["state"] = "checking" if outcome == "tentative" else "conflict"
     if outcome == "wrong-prefix":
         records[0]["cidr"] = "192.0.2.10/25"
-    payload = {"complete": outcome != "missing", "links": [{"name": "eth0", "configured": True,
+    payload = {"complete": outcome != "missing", "links": [{"name": "eth0", "configured": True, "up": True, "carrier": True,
                "ethernet": True, "mac": "00:11:22:33:44:55", "addresses": records}], "conflicts": []}
     calls = []
 

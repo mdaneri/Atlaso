@@ -194,6 +194,7 @@ CONSOLE_RECOVERY_FINAL_SECONDS = 12
 CONSOLE_RECOVERY_RUNTIME_SECONDS = 108
 CONSOLE_RECOVERY_STOP_SECONDS = 2
 _CONSOLE_RECOVERY_DEADLINE: ContextVar[float | None] = ContextVar("console_recovery_deadline", default=None)
+_IPV4LL_DISABLE_ONLY_LINKS: ContextVar[frozenset[str]] = ContextVar("ipv4ll_disable_only_links", default=frozenset())
 UPDATE_RELEASE_NOTES_URL_MAX_LENGTH = 2048
 NO_PATH_ACTIONS = {
     ("public-services", "reverse-proxy-status"),
@@ -342,6 +343,8 @@ ATLASO_SERVICE_DATA_DISK_DROPIN_PATH = Path("/etc/systemd/system/atlaso.service.
 ATLASO_BOOTSTRAP_HTTPS_UNIT_PATH = Path("/etc/systemd/system/atlaso-bootstrap-https.service")
 ATLASO_NGINX_DATA_DISK_DROPIN_PATH = Path("/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf")
 NETWORK_OBSERVATION_LOGGING_PATH = Path("/etc/systemd/system/systemd-networkd.service.d/atlaso-address-observation.conf")
+DYNAMIC_MANAGEMENT_UNIT_DIR = Path("/etc/systemd/system")
+DYNAMIC_MANAGEMENT_PUBLICATION_PATH = Path("/run/atlaso-dynamic-management/publication.json")
 NETWORK_OBSERVATION_LOGGING = (
     "# Managed by Atlaso: Photon emits static IPv4 ACD conflict evidence at debug level.\n"
     "[Service]\nEnvironment=SYSTEMD_LOG_LEVEL=debug\n"
@@ -611,7 +614,7 @@ def _run(
         source_index = command.index("-f") + 1
         if source_index < len(command) and command[source_index] != "-":
             program = Path(command[source_index]).read_text(encoding="utf-8")
-            guarded = _ntpd_preserve_client_packet_guard(program)
+            guarded = _ipv4ll_preserve_forward_guard(_ntpd_preserve_client_packet_guard(program))
             if guarded != program:
                 guarded_command = [*command]
                 guarded_command[source_index] = "-"
@@ -628,8 +631,23 @@ def _run_with_input(command: list[str], input_text: str, *, timeout: float | Non
         timeout: Optional maximum subprocess duration.
     """
     if Path(command[0]).name == "nft" and "-f" in command:
-        input_text = _ntpd_preserve_client_packet_guard(input_text)
+        input_text = _ipv4ll_preserve_forward_guard(_ntpd_preserve_client_packet_guard(input_text))
     return subprocess.run(command, input=input_text, check=False, capture_output=True, text=True, timeout=timeout)
+
+
+def _ipv4ll_preserve_forward_guard(program: str) -> str:
+    """Keep link-local traffic on its link through firewall replacement and replay.
+
+    Args:
+        program: Complete managed nftables program, possibly an older rollback snapshot.
+    """
+    if not re.search(r"(?m)^\s*flush ruleset\s*$", program) or "table inet atlaso_ipv4ll {" in program:
+        return program
+    return program.rstrip() + "\n" + (
+        "table inet atlaso_ipv4ll {\n  chain forward {\n"
+        "    type filter hook forward priority -300; policy accept;\n"
+        "    ip saddr 169.254.0.0/16 drop\n    ip daddr 169.254.0.0/16 drop\n  }\n}\n"
+    )
 
 
 def _vcfdt_atlaso_environment() -> tuple[dict[str, str], int | None, int | None]:
@@ -11039,6 +11057,23 @@ def _management_nginx_config(
     public_https_port = int(payload.get("management_public_https_port") or 443)
     upstream_host = str(payload.get("management_upstream_host") or "127.0.0.1")
     upstream_port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
+    if listen_addresses is not None:
+        local_setup = [value for value in listen_addresses if ip_address(value).version == 4 and ip_address(value).is_link_local]
+        if local_setup:
+            for override in (http_listen_addresses, https_listen_addresses):
+                if override is not None and not set(override) <= set(listen_addresses):
+                    raise ValueError("setup listener override is not a verified management address")
+            ordinary = [value for value in listen_addresses if value not in local_setup]
+            text = _management_nginx_config(
+                payload, cert_path, key_path, listen_addresses=ordinary,
+                http_listen_addresses=[value for value in (http_listen_addresses if http_listen_addresses is not None else listen_addresses) if value in ordinary],
+                https_listen_addresses=[value for value in (https_listen_addresses if https_listen_addresses is not None else listen_addresses) if value in ordinary],
+            )
+            return text + "\n" + "\n".join(
+                _ipv4ll_setup_nginx_server(payload, address, cert_path, key_path,
+                    http_allowed=http_listen_addresses is None or address in http_listen_addresses,
+                    https_allowed=https_listen_addresses is None or address in https_listen_addresses) for address in local_setup
+            )
     lines = ["# Managed by Atlaso. Local changes may be overwritten."]
     if listen_addresses is None:
         if http_listen_addresses is not None or https_listen_addresses is not None:
@@ -11108,6 +11143,47 @@ def _management_nginx_config(
     return "\n".join(lines)
 
 
+def _ipv4ll_setup_nginx_server(payload: dict, address: str, cert_path: Path | None, key_path: Path | None,
+                              *, http_allowed: bool = True, https_allowed: bool = True) -> str:
+    """Expose only authenticated management setup and its static/trust dependencies.
+
+    Args:
+        payload: Applied management protocol, ports and loopback upstream identity.
+        address: Native verified IPv4LL address, never a wildcard listener.
+        cert_path: Published management certificate covering this address.
+        key_path: Matching private-key path consumed only by nginx.
+        http_allowed: Whether this site owns the address's HTTP socket.
+        https_allowed: Whether this site owns the address's TLS socket.
+    """
+    parsed = ip_address(address)
+    if parsed.version != 4 or not int(ip_address("169.254.1.0")) <= int(parsed) <= int(ip_address("169.254.254.255")):
+        raise ValueError("local setup requires a native assignable IPv4LL address")
+    https = bool(payload.get("management_https_enabled"))
+    http_port = int(payload.get("management_public_http_port") or 80)
+    tls_port = int(payload.get("management_public_https_port") or 443)
+    lines = []
+    if https and http_allowed:
+        lines.extend(["server {", f"  listen {address}:{http_port} default_server;",
+                      "  server_name _;", '  if ($remote_addr !~ "^169\\.254\\.") { return 403; }',
+                      f"  return 308 https://$host:{tls_port}$request_uri;", "}"])
+    if not (https_allowed if https else http_allowed):
+        return "\n".join(lines) + "\n" if lines else ""
+    lines.extend(["server {", f"  listen {address}:{tls_port if https else http_port}" + (" ssl" if https else "") + " default_server;",
+                  "  server_name _;", '  if ($remote_addr !~ "^169\\.254\\.") { return 403; }'])
+    if https:
+        lines.extend([f"  ssl_certificate {cert_path};", f"  ssl_certificate_key {key_path};"])
+    upstream = str(payload.get("management_upstream_host") or "127.0.0.1")
+    port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
+    for location in ("^~ /ui/management/", "^~ /api/v1/", "^~ /static/", "= /openapi.json", "^~ /api/docs", "^~ /ca/downloads/",
+                     "= /manifest.webmanifest", "= /service-worker.js", "= /favicon.ico"):
+        block = _management_proxy_location(upstream, port, "https" if https else "http")
+        lines.extend(line.replace("location / {", f"location {location} {{") for line in block)
+    lines.extend(["  location = / { return 302 /ui/management/; }",
+                  "  location = /ui/management { return 302 /ui/management/; }",
+                  "  location / { return 404; }", "}"])
+    return "\n".join(lines) + "\n"
+
+
 def _existing_management_scoped_addresses() -> tuple[list[str], list[str], int, int | None] | None:
     """Carry committed listener scopes and ports through an ordinary Settings apply."""
     if NGINX_MANAGEMENT_SITE_PATH.is_symlink():
@@ -11139,7 +11215,7 @@ def _existing_management_scoped_addresses() -> tuple[list[str], list[str], int, 
             raise ValueError("existing management listener inventory is not canonical")
         address = ip_address(match.group(1) or match.group(2))
         if (address.version != (4 if match.group(1) else 6)
-                or address.is_unspecified or address.is_multicast or address.is_link_local
+                or address.is_unspecified or address.is_multicast or (address.is_link_local and not _published_ipv4ll_address(str(address)))
                 or str(address) != (match.group(1) or match.group(2))):
             raise ValueError("existing management listener address is invalid")
         protocol = match.group(4) is not None
@@ -13399,6 +13475,7 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
         ipv6_enabled = (interface.get("ipv6_enabled") or ("true" if interface.get("ipv6_cidr") else "false")).strip().lower() == "true"
         lines = [
             "# Managed by Atlaso. Local changes may be overwritten.",
+            "# Atlaso IPv4LL fallback enabled=" + interface.get("ipv4_link_local_fallback_enabled", "true"),
             "[Match]",
             f"Name={name}",
             "",
@@ -13407,13 +13484,19 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
         if ipv4_method == "dhcp":
             lines.append("DHCP=ipv4")
 
+        ipv4ll = ipv4_method == "dhcp" and interface.get("ipv4_link_local_fallback_enabled", "true") == "true"
         if not ipv6_enabled:
-            lines.extend(["IPv6AcceptRA=no", "LinkLocalAddressing=no"])
+            lines.extend(["IPv6AcceptRA=no", "LinkLocalAddressing=" + ("ipv4" if ipv4ll else "no")])
         elif interface.get("ipv6_cidr"):
-            lines.extend(["IPv6AcceptRA=no", "LinkLocalAddressing=ipv6"])
+            lines.extend(["IPv6AcceptRA=no", "LinkLocalAddressing=" + ("yes" if ipv4ll else "ipv6")])
 
         else:
-            lines.extend(["IPv6AcceptRA=yes", "LinkLocalAddressing=ipv6"])
+            lines.extend(["IPv6AcceptRA=yes", "LinkLocalAddressing=" + ("yes" if ipv4ll else "ipv6")])
+        if ipv4ll:
+            # IPv4LL always uses networkd's RFC 3927 conflict detection, even
+            # when an operator disables optional checking of DHCP/static IPv4.
+            # Carrier loss withdraws dynamic addresses; no gateway is invented.
+            lines.extend(["ConfigureWithoutCarrier=no", "IPv4LLRoute=no"])
         if name == resolver_name:
             for dns in preserved_management["DNS"]:
                 lines.append(f"DNS={dns}")
@@ -13457,6 +13540,7 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
             # Preserve the image's lease-retention policy when Network Apply rewrites this file.
             lines.extend(["", "[DHCPv4]", "SendRelease=no",
                           "SendDecline=" + ("no" if interface.get("check_duplicate_ip_addresses") == "false" else "yes"),
+                          "MaxAttempts=infinity",
                           f"RouteTable={MANAGEMENT_ROUTE_TABLE_ID if name == management_name else LAB_ROUTE_TABLE_ID}"])
             if name == management_name or name in flagged_dynamic_listener_names:
                 # Unbound host connections first consult main before selecting
@@ -13559,6 +13643,43 @@ def _network_row_has_usable_management_address(row: dict[str, str]) -> bool:
     return False
 
 
+def _published_ipv4ll_address(value: str) -> bool:
+    """Verify a root-published setup address against current native ownership.
+
+    Args:
+        value: Address being considered by an existing management handoff guard.
+    """
+    try:
+        address = ip_address(value)
+        if address.version != 4 or not int(ip_address("169.254.1.0")) <= int(address) <= int(ip_address("169.254.254.255")):
+            return False
+        path = DYNAMIC_MANAGEMENT_PUBLICATION_PATH
+        metadata = path.lstat()
+        parent = path.parent.lstat()
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_mode & 0o022
+                or metadata.st_nlink != 1 or metadata.st_size > 16384
+                or not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0 or parent.st_mode & 0o022):
+            return False
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(receipt["observed_at"])).total_seconds()
+        if receipt.get("phase") != "ready" or not 0 <= age <= 120 or value not in receipt.get("apipa_addresses", []):
+            return False
+        observation = _network_address_observation()
+        links = observation.get("links", [])
+        owners = [link for link in links for item in link.get("addresses", [])
+                  if item.get("address") == value and item.get("state") == "assigned"]
+        return bool(observation.get("complete") and len(owners) == 1 and any(
+            link.get("name") == receipt["interface"] and link.get("mac") == receipt["mac"]
+            and link.get("ethernet") and link.get("address_inventory_complete") and owners[0] is link
+            and link.get("up") and link.get("carrier") and any(
+                item.get("address") == value and item.get("cidr") == f"{value}/16"
+                and item.get("scope") == "link" and item.get("source") == "IPv4LL" and item.get("state") == "assigned"
+                for item in link.get("addresses", []))
+            for link in links))
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 def _network_interface_has_usable_runtime_address(
     interface_name: str,
     *,
@@ -13638,6 +13759,8 @@ def _network_config_errors(path: Path) -> list[str]:
     """
     physical_interfaces, vlan_interfaces, removed_vlan_interfaces = _parse_network_config(path)
     errors: list[str] = []
+    if len({row.get("ipv4_link_local_fallback_enabled", "true") for row in physical_interfaces}) > 1:
+        errors.append("IPv4 link-local fallback must use one global choice for every physical interface.")
     identity_pinned = NETWORK_IDENTITY_PIN_MARKER in path.read_text(encoding="utf-8").splitlines()
     if identity_pinned:
         for row in physical_interfaces:
@@ -13663,6 +13786,8 @@ def _network_config_errors(path: Path) -> list[str]:
     for interface in physical_interfaces:
         name = interface.get("name", "")
         role = interface.get("role", "")
+        if interface.get("ipv4_link_local_fallback_enabled", "true") not in {"true", "false"}:
+            errors.append(f"Interface {name or '<missing>'} has an invalid global IPv4 link-local fallback choice.")
         management_ui_enabled = interface.get("access_management_ui_enabled", "false").strip().lower() == "true"
         if management_ui_enabled and (role != "access" or interface.get("mode") != "access"):
             errors.append(
@@ -15281,6 +15406,8 @@ def _wait_network_addresses(
     """
     physical, vlans, _removed = _parse_network_config(path)
     requirements = []
+    fallback_links = {row["name"] for row in physical if row.get("ipv4_method") == "dhcp"
+                      and row.get("ipv4_link_local_fallback_enabled", "true") == "true"}
     for row in physical + vlans:
         if row.get("admin_state", "up") == "down":
             continue
@@ -15290,7 +15417,8 @@ def _wait_network_addresses(
             if row.get(key):
                 requirements.append((row["name"], str(ip_interface(row[key]))))
         if row.get("ipv4_method") == "dhcp":
-            requirements.append((row["name"], "dhcp4"))
+            if row["name"] not in _IPV4LL_DISABLE_ONLY_LINKS.get():
+                requirements.append((row["name"], "dhcp4"))
         if row.get("ipv6_enabled") == "true" and not row.get("ipv6_cidr"):
             requirements.append((row["name"], "auto6"))
     missing = []
@@ -15316,11 +15444,26 @@ def _wait_network_addresses(
                 and (item.get("source") in ({"DHCPv4"} if address == "dhcp4" else {"DHCPv6", "NDisc"})
                      or (address == "dhcp4" and item.get("dhcp4_lease") is True)))]
             candidate_ip = str(ip_interface(address).ip) if "/" in address else ""
+            if address == "dhcp4" and name in fallback_links:
+                matches.extend(item for item in records if item.get("source") == "IPv4LL"
+                               and item.get("cidr") == f"{item['address']}/16"
+                               and int(ip_address("169.254.1.0")) <= int(ip_address(item["address"])) <= int(ip_address("169.254.254.255")))
             if any(item["state"] == "conflict" for item in records
                    if item in matches or item["address"] == candidate_ip):
                 raise ValueError(f"IP conflict on {name}: {address}")
-            if not observation.get("complete") or not links.get(name, {}).get("configured") or not any(item["state"] == "assigned" for item in matches):
+            if (not observation.get("complete") or not links.get(name, {}).get("configured")
+                    or not links.get(name, {}).get("up") or not links.get(name, {}).get("carrier")
+                    or not any(item["state"] == "assigned" for item in matches)):
                 missing.append((name, address))
+        for name in _IPV4LL_DISABLE_ONLY_LINKS.get():
+            link = links.get(name, {})
+            expected_mac = next((row.get("mac") for row in physical if row.get("name") == name), None)
+            if (not observation.get("complete") or not link.get("address_inventory_complete")
+                    or expected_mac and str(link.get("mac", "")).lower() != expected_mac.lower()) or any(
+                item.get("source") == "IPv4LL" and item.get("state") == "assigned"
+                for item in link.get("addresses", [])
+            ):
+                missing.append((name, "IPv4LL withdrawal"))
         if not missing:
             ready_samples += 1
             if ready_samples >= max(1, stable_samples):
@@ -15515,6 +15658,7 @@ def _network_apply_transaction(path: Path):
     job_id = binding[1] if binding else "manual"
     _preflight_route_domain_capacity(path)
     files, _links, _down = _systemd_networkd_files(path)
+    disable_only = _ipv4ll_disable_only_links(path, files)
     physical, vlans, link_states = _management_handoff_candidate_links(
         {"network_config_path": str(path)}, include_removed=True,
     )
@@ -15561,7 +15705,11 @@ def _network_apply_transaction(path: Path):
             except FileNotFoundError:
                 published = False
         try:
-            yield
+            policy_token = _IPV4LL_DISABLE_ONLY_LINKS.set(frozenset(disable_only))
+            try:
+                yield
+            finally:
+                _IPV4LL_DISABLE_ONLY_LINKS.reset(policy_token)
             for target in paths:
                 if target.is_file():
                     _fsync_file(target)
@@ -15588,6 +15736,36 @@ def _network_apply_transaction(path: Path):
                 # Backup disposal cannot invalidate an already activated candidate
                 # or replace the original failure after successful restoration.
                 print(f"Network rollback backup cleanup incomplete: {backup_root}", file=sys.stderr)
+
+
+def _ipv4ll_disable_only_links(path: Path, files: dict[str, str]) -> set[str]:
+    """Admit intentional fallback withdrawal without inventing a replacement lease.
+
+    Args:
+        path: Reviewed Network intent.
+        files: Candidate native configurations before any file replacement.
+    """
+    physical, _vlans, _removed = _parse_network_config(path)
+    allowed = set()
+    def remaining(text: str) -> list[str]:
+        """Compare every directive except the explicitly changed fallback policy.
+
+        Args:
+            text: One owned old or candidate networkd file.
+        """
+        return [line for line in text.splitlines() if line.strip() and not line.startswith("#")
+                and not line.startswith(("LinkLocalAddressing=", "ConfigureWithoutCarrier=", "IPv4LLRoute="))]
+    for row in physical:
+        if row.get("ipv4_method") != "dhcp" or row.get("ipv4_link_local_fallback_enabled") != "false":
+            continue
+        filename = "00-atlaso-mgmt.network" if row.get("role") == "management" else _networkd_managed_filename(row["name"], "network")
+        old_path = NETWORKD_CONFIG_DIR / filename
+        if old_path.is_file() and not old_path.is_symlink():
+            old = old_path.read_text(encoding="utf-8")
+            if ("# Atlaso IPv4LL fallback enabled=true" in old and filename in files
+                    and remaining(old) == remaining(files[filename])):
+                allowed.add(row["name"])
+    return allowed
 
 
 def _prepare_network_observation() -> None:
@@ -15617,6 +15795,49 @@ def _prepare_network_observation() -> None:
     if _run(["systemctl", "is-active", "--quiet", "systemd-networkd.service"], timeout=15).returncode == 0:
         if _run(["systemctl", "service-log-level", "systemd-networkd.service", "debug"], timeout=15).returncode:
             raise ValueError("Unable to enable native address conflict evidence")
+    _install_dynamic_management_service()
+
+
+def _install_dynamic_management_service() -> None:
+    """Install the bounded applied-state observer for boot, upgrade and lease changes."""
+    units = {
+        "atlaso-dynamic-management.service": (
+            "[Unit]\nDescription=Atlaso applied dynamic management publication\n"
+            "After=atlaso-bootstrap-https.service atlaso.service nginx.service\n"
+            "RequiresMountsFor=/var/lib/atlaso /var/lib/atlaso-privileged /etc/atlaso/https\n"
+            "ConditionPathExists=/var/lib/atlaso/atlaso.db\n"
+            "[Service]\nType=oneshot\nUser=root\nGroup=root\n"
+            "WorkingDirectory=/var/lib/atlaso\nEnvironmentFile=/etc/atlaso/atlaso.env\n"
+            "Environment=PYTHONDONTWRITEBYTECODE=1\n"
+            "RuntimeDirectory=atlaso-dynamic-management\nRuntimeDirectoryMode=0755\nRuntimeDirectoryPreserve=yes\n"
+            "UMask=0077\nTimeoutStartSec=90\nTimeoutStopSec=10\nKillMode=control-group\n"
+            "ExecStart=/opt/atlaso/.venv/bin/python -I -m atlaso.dynamic_management\n"
+        ),
+        "atlaso-dynamic-management.timer": (
+            "[Unit]\nDescription=Refresh Atlaso native management addresses\n"
+            "[Timer]\nOnBootSec=15\nOnUnitInactiveSec=5\nAccuracySec=1\n"
+            "Unit=atlaso-dynamic-management.service\n[Install]\nWantedBy=timers.target\n"
+        ),
+    }
+    for name, content in units.items():
+        path = DYNAMIC_MANAGEMENT_UNIT_DIR / name
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError("dynamic management unit path is unsafe")
+        if path.exists() and path.read_text(encoding="utf-8") == content:
+            continue
+        temporary = path.with_suffix(".tmp")
+        try:
+            temporary.write_text(content, encoding="utf-8")
+            temporary.chmod(0o644)
+            _fsync_file(temporary)
+            os.replace(temporary, path)
+            _fsync_directory(path.parent)
+        finally:
+            temporary.unlink(missing_ok=True)
+    if _run(["systemctl", "daemon-reload"], timeout=15).returncode:
+        raise ValueError("dynamic management unit reload failed")
+    if _run(["systemctl", "enable", "--now", "atlaso-dynamic-management.timer"], timeout=15).returncode:
+        raise ValueError("dynamic management observation timer could not be enabled")
 
 
 def _handle_network(
@@ -30697,6 +30918,10 @@ def _management_handoff_resolve_pending_dhcp(
         and (record.get("dhcp4_lease") is True or record.get("source") == "DHCPv4")
         and ip_address(record["address"]).version == 4
     }
+    if not leases:
+        leases = {record["address"] for record in links[0].get("addresses", [])
+                  if record.get("state") == "assigned" and record.get("source") == "IPv4LL"
+                  and _published_ipv4ll_address(record["address"])}
     if len(leases) != 1:
         raise ValueError("candidate DHCP management lease is missing or ambiguous")
     address = leases.pop()
@@ -31820,6 +32045,7 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
                 or mac == "00:00:00:00:00:00" or int(mac[:2], 16) & 1):
             raise ValueError("previous routing-domain MAC identity is missing")
         cidrs = []
+        ipv4ll_cidrs = []
         addresses = rows[0].get("addr_info", [])
         if not isinstance(addresses, list) or len(addresses) > 4096:
             raise ValueError("previous routing-domain addresses are malformed")
@@ -31827,6 +32053,9 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
             if not isinstance(address, dict) or not isinstance(address.get("flags", []), list):
                 raise ValueError("previous routing-domain address is malformed")
             if address.get("scope") != "global":
+                local = str(address.get("local") or "")
+                if address.get("scope") == "link" and _published_ipv4ll_address(local):
+                    ipv4ll_cidrs.append(f"{local}/16")
                 continue
             flags = address.get("flags", [])
             if any(address.get(flag) or flag in flags for flag in ("tentative", "dadfailed")):
@@ -31840,7 +32069,7 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
             if parsed.ip.is_unspecified or parsed.ip.is_multicast or parsed.ip.is_loopback or parsed.ip.is_link_local:
                 continue
             cidrs.append(str(parsed))
-        if not cidrs:
+        if not cidrs and not ipv4ll_cidrs:
             raise ValueError("previous routing-domain assigned addresses are missing")
         routes = {}
         route_tables = {}
@@ -31887,6 +32116,8 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
                 destination = str(route.get("dst") or "default")
                 destination = ("0.0.0.0/0" if family == 4 else "::/0") if destination == "default" else destination
                 network = ip_network(destination, strict=False)
+                if network.is_link_local:
+                    continue
                 gateway = str(route.get("gateway") or "")
                 nhid = route.get("nhid")
                 if nhid is not None:
@@ -31944,7 +32175,7 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
             if not any(ip_network(route["destination"]).version == family for route in routes.values()):
                 raise ValueError(f"previous routing-domain IPv{family} family has no observed usable route "
                                  f"({observed_route_counts[family]})")
-        captured[name] = {"mac": mac, "table": tables[name], "cidrs": sorted(set(cidrs)),
+        captured[name] = {"mac": mac, "table": tables[name], "cidrs": sorted(set(cidrs)), "ipv4ll_cidrs": sorted(set(ipv4ll_cidrs)),
                           "routes": list(routes.values())}
     return captured
 
@@ -32525,7 +32756,7 @@ def _scope_management_handoff_old_listener(state: dict) -> None:
     if not site.startswith("# Managed by Atlaso. Local changes may be overwritten.\n"):
         raise ValueError("previous management nginx site is not canonical")
     addresses = [ip_address(value) for value in state["previous_management_addresses"]]
-    if not addresses or any(address.is_unspecified or address.is_multicast or address.is_link_local
+    if not addresses or any(address.is_unspecified or address.is_multicast or (address.is_link_local and not _published_ipv4ll_address(str(address)))
                             for address in addresses):
         raise ValueError("previous management listener addresses are invalid")
     public_tls = _management_handoff_previous_public_tls_addresses(state)
@@ -33301,6 +33532,14 @@ def _management_handoff_addresses(
                             or observed_address in configured_addresses):
                         addresses.append(observed_address)
     discovered: dict[tuple[str, str], list[str]] = {}
+    for row in rows:
+        if (row.get("role") == "management" and row.get("ipv4_method") == "dhcp"
+                and row.get("ipv4_link_local_fallback_enabled", "true") == "true"):
+            for link in (address_observation or {}).get("links", []):
+                if link.get("name") == row.get("name") and link.get("mac") == row.get("mac"):
+                    for record in link.get("addresses", []):
+                        if record.get("source") == "IPv4LL" and _published_ipv4ll_address(record["address"]):
+                            discovered.setdefault((row["name"], "inet"), []).append(record["address"])
     for attempt in range(max(1, discovery_attempts)):
         for interface, families in dynamic_requirements:
             if all(discovered.get((interface, family)) for family in families):
@@ -34073,7 +34312,7 @@ def _wait_restored_management_addresses(state: dict, *, attempts: int = 31) -> d
     for name, row in routing.items():
         if name not in paths or not _valid_network_mac(row.get("mac", "")):
             raise ValueError("restored management interface identity snapshot is missing")
-        for value in row["cidrs"]:
+        for value in [*row["cidrs"], *row.get("ipv4ll_cidrs", [])]:
             cidr = ip_interface(value)
             if str(cidr.ip) in expected:
                 path = paths[name]
@@ -34102,7 +34341,9 @@ def _wait_restored_management_addresses(state: dict, *, attempts: int = 31) -> d
             if any(row.get("state") == "conflict" for row in records):
                 raise ValueError("restored management address has a native conflict")
             family = ip_interface(cidr).version
+            ipv4ll = family == 4 and ip_interface(cidr).ip.is_link_local
             source_ready = (len(records) == 1 and (
+                records[0].get("source") == "IPv4LL" if ipv4ll else
                 records[0].get("dhcp4_lease") is True if dynamic and family == 4 else
                 records[0].get("source") in {"DHCPv6", "NDisc"} if dynamic else
                 records[0].get("source") == "static"
@@ -34111,8 +34352,8 @@ def _wait_restored_management_addresses(state: dict, *, attempts: int = 31) -> d
                       for record in other.get("addresses", []) if record.get("address") == str(ip_interface(cidr).ip)]
             ready = ready and bool(
                 link.get("mac") == mac and link.get("configured") and link.get("up")
-                and link.get("address_inventory_complete") and source_ready
-                and records[0].get("state") == "assigned" and records[0].get("scope") == "global"
+                and link.get("address_inventory_complete") and source_ready and (not ipv4ll or link.get("carrier"))
+                and records[0].get("state") == "assigned" and records[0].get("scope") == ("link" if ipv4ll else "global")
                 and type(link.get("ifindex")) is int and link["ifindex"] > 0
                 and len(owners) == 1 and owners[0] is link
             )

@@ -48,7 +48,7 @@
           <tr>
             <td>{{ interface["name"] }}</td>
             <td>{{ "enabled" if interface.check_duplicate_ip_addresses else "disabled" }}</td>
-            <td>{{ interface.address_status.detail }} {% if interface.address_status.last_conflict %}{{ interface.address_status.last_conflict.address }} — {{ interface.address_status.last_conflict.detected_at }}{% endif %}</td>
+            <td>{{ interface.address_status.ipv4_detail }} {% if interface.address_status.ipv4ll_addresses %}{{ interface.address_status.ipv4ll_addresses|join(', ') }}{% endif %} {{ interface.address_status.detail }} {% if interface.address_status.last_conflict %}{{ interface.address_status.last_conflict.address }} — {{ interface.address_status.last_conflict.detected_at }}{% endif %}</td>
             <td>{{ interface["mac_address"] }}</td>
             <td>{{ interface["driver"] or "" }}</td>
             <td>{{ interface["speed"] or "" }}</td>
@@ -92,6 +92,18 @@
 
   <aside class="side-stack">
     {% include "partials/appliance_apply_status.html" %}
+
+    <div class="panel">
+      <div class="panel-head"><h2>Network Settings</h2></div>
+      <form class="form-stack" action="{{ management_ui_root }}/physical-interfaces/link-local-fallback" method="post" data-autosave-form data-autosave-status-id="ipv4ll-autosave-status">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <label class="switch-row">
+          <span class="field-label"><span>Enable automatic IPv4 link-local fallback</span><button class="help-icon" type="button" data-help="Enabled by default for every Atlaso-managed DHCPv4 interface. With carrier and no lease, networkd conflict-checks a 169.254 address while DHCP retries. Reachability stays on the local link. Disabling removes owned fallback through Network Apply and preserves DHCP, static IPv4 and IPv6.">i</button></span>
+          <input class="switch-input" type="checkbox" name="enabled" {{ 'checked' if ipv4_link_local_fallback_enabled else '' }}>
+        </label>
+        <span class="autosave-status" id="ipv4ll-autosave-status" aria-live="polite"></span>
+      </form>
+    </div>
 
     <div class="panel">
       <div class="panel-head">

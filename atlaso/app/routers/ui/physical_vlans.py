@@ -14,7 +14,12 @@ from sqlalchemy.orm import Session
 
 from atlaso.app.audit import record_audit
 from atlaso.app.database import get_db
-from atlaso.app.models import PhysicalInterface, VlanInterface
+from atlaso.app.models import (
+    ApplianceSettings,
+    PhysicalInterface,
+    VlanInterface,
+    utcnow,
+)
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services.interface_updates import (
     PhysicalInterfaceUpdateError,
@@ -110,6 +115,38 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
                 "appliance_apply_status": dependencies.appliance_apply_status(db, "network"),
             },
         )
+
+    @router.post("/physical-interfaces/link-local-fallback", response_model=None)
+    def update_ipv4_link_local_fallback_from_ui(
+        request: Request,
+        csrf: str = Form(...),
+        enabled: bool = Form(False),
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> RedirectResponse | JSONResponse:
+        """Save the global DHCPv4 fallback choice without changing the host.
+
+        Args:
+            request: Authenticated management request.
+            csrf: Session-bound CSRF token.
+            enabled: Global fallback choice, enforced by Network Apply.
+            identity: Authenticated administrator saving desired state.
+            db: Desired-state writer transaction.
+        """
+        dependencies.verify_csrf(request, csrf)
+        if "admin:all" not in identity.scopes:
+            raise HTTPException(status_code=403, detail="Administrator access is required.")
+        acquire_network_objects_write_lock(db)
+        settings = db.scalar(select(ApplianceSettings).execution_options(populate_existing=True))
+        if settings is None:
+            raise HTTPException(status_code=409, detail="Appliance settings are initializing; retry shortly.")
+        settings.ipv4_link_local_fallback_enabled = enabled
+        settings.updated_at = utcnow()
+        record_audit(db, actor=identity.username, action="update_ipv4_link_local_fallback",
+                     resource_type="network", detail=f"Automatic IPv4 link-local fallback {'enabled' if enabled else 'disabled'}; Network Apply required.")
+        if "application/json" in request.headers.get("accept", "") or request.headers.get("x-requested-with") == "XMLHttpRequest":
+            return JSONResponse({"saved": True})
+        return RedirectResponse(f"{MANAGEMENT_UI_ROOT}/physical-interfaces", status_code=303)
 
     @router.post("/physical-interfaces/refresh", response_model=None)
     def refresh_physical_interfaces_from_ui(
@@ -624,6 +661,7 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
         return RedirectResponse("/vlan-interfaces", status_code=303)
 
     endpoints: dict[str, Endpoint] = {
+        "update_ipv4_link_local_fallback_from_ui": update_ipv4_link_local_fallback_from_ui,
         "physical_interfaces_page": physical_interfaces_page,
         "refresh_physical_interfaces_from_ui": refresh_physical_interfaces_from_ui,
         "edit_physical_interface_from_ui": edit_physical_interface_from_ui,

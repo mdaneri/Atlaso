@@ -40,6 +40,49 @@ unreachable after apply.
 4. Review validation and rendered network previews.
 5. Submit the selected network units through [Appliance Apply](appliance-apply.md).
 
+### Set up an appliance without DHCP
+
+**Enable automatic IPv4 link-local fallback** is enabled by default. Every Atlaso-managed physical interface using
+IPv4 DHCP can acquire a conflict-checked APIPA address, from `169.254.1.0` through `169.254.254.255` with prefix `/16`,
+when its link has carrier but DHCP does not provide a lease. DHCPv4 is currently supported on the dedicated management
+role; this setting does not expand role eligibility. Static IPv4 and existing IPv6 configuration are preserved.
+
+1. Connect the appliance's dedicated management adapter and your setup computer to the same isolated Ethernet link.
+   For a VMware lab, select the intended no-DHCP VMnet for the task-owned appliance and peer; verify its DHCP state.
+2. Give the setup computer an unused `169.254.x.y/16` address, or let its own IPv4 link-local mechanism acquire one.
+   A VMnet host adapter with only a `192.168.x.y` address cannot use this setup path until it also has a link-local address.
+3. Wait for the console to show **APIPA fallback**. Use its verified management URL, for example
+   `https://169.254.20.10:443/ui/management/`. Keep the normal authentication and CA trust checks.
+4. Confirm **Physical Interfaces** shows the same interface identity and acquired address. Configure the desired
+   network, review the complete dependency bundle, and submit through **Appliance Apply**.
+
+Photon's networkd starts IPv4LL after three unsuccessful DHCP retry attempts, normally within tens of seconds after
+carrier appears, followed by native ARP conflict checks. Conflicts cause selection of another address; repeated
+conflicts delay availability. This is an acquisition attempt bound, not a promise that an address is usable by a fixed
+wall-clock deadline. DHCP continues retrying with exponential backoff, up to approximately one attempt per minute.
+See the [networkd behavior](https://www.freedesktop.org/software/systemd/man/254/systemd.network.html#LinkLocalAddressing=)
+and [retry implementation](https://github.com/systemd/systemd/blob/v254/src/libsystemd-network/sd-dhcp-client.c).
+
+The applied-state observer checks every five seconds after initialization. For the dedicated DHCP management
+interface, it verifies native MAC identity, carrier and address provenance, refreshes only the existing management
+certificate, proves the served TLS fingerprint and listener readiness, then publishes the setup URL. Pending hostname,
+CA root, protocol, port and unrelated service changes remain pending. A later DHCP lease replaces the APIPA setup
+listener and URL; the obsolete SAN is retired after the listener transition. No-carrier and incomplete observations
+never establish usable fallback. Publication failures leave the URL unpublished or let its short receipt expire;
+use the local console to inspect networking and CA readiness, restore connectivity, and retry the normal Apply workflow.
+
+This path serves management UI/API and their static and CA-download dependencies only, to link-local source addresses.
+Existing authentication and management firewall source restrictions still apply. It does not enable public protocols,
+publish APIPA in DNS, invent a gateway or DNS server, or forward link-local traffic between interfaces. APIPA on other
+DHCP interfaces remains visible as acquisition status and is not a general service-listener address.
+
+To opt out, open **Physical Interfaces > Network Settings**, turn off **Enable automatic IPv4 link-local fallback**,
+and wait for autosave. Review and apply **Network**, including any required dependencies. Apply removes networkd-owned
+fallback addresses; without a DHCP lease that can remove your current setup connection. Keep the console available.
+An explicit disabled choice survives reboot, upgrade and supported settings archive/restore. Restoring an older archive
+without this field retains the target appliance's current choice. Before initial image provisioning, the equivalent
+configuration is `ATLASO_IPV4_LINK_LOCAL_FALLBACK_ENABLED=false`; first-boot customization preserves that explicit choice.
+
 ### Convert management DHCP to static IPv4
 
 Use **Convert DHCP lease to static** from the management interface row menu. Atlaso reviews the observed IPv4 CIDR and

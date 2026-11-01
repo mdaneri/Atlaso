@@ -11,6 +11,11 @@ ATLASO_MGMT_SOURCE_CIDR="${ATLASO_MGMT_SOURCE_CIDR:-}"
 ATLASO_MGMT_DNS="${ATLASO_MGMT_DNS:-1.1.1.1 9.9.9.9}"
 ATLASO_MGMT_INTERFACE="${ATLASO_MGMT_INTERFACE:-eth0}"
 ATLASO_MGMT_IPV4_METHOD="${ATLASO_MGMT_IPV4_METHOD:-}"
+ATLASO_IPV4_LINK_LOCAL_FALLBACK_ENABLED="${ATLASO_IPV4_LINK_LOCAL_FALLBACK_ENABLED:-true}"
+case "$ATLASO_IPV4_LINK_LOCAL_FALLBACK_ENABLED" in
+  true|false) ;;
+  *) echo 'Invalid global IPv4 link-local fallback choice' >&2; exit 1 ;;
+esac
 ATLASO_MGMT_USES_DHCP=false
 if [ "$ATLASO_MGMT_ADDRESS" = "dhcp" ] || [ "$ATLASO_MGMT_IPV4_METHOD" = "dhcp" ]; then
   ATLASO_MGMT_USES_DHCP=true
@@ -998,6 +1003,7 @@ ATLASO_REPOSITORY_PATH=/mnt/atlaso-vcf-offline-depot
 ATLASO_VCF_BACKUP_PATH=/mnt/atlaso-vcf-backups
 ATLASO_APPLIANCE_MANAGEMENT_CIDR=$ATLASO_MGMT_ADDRESS
 ATLASO_APPLIANCE_EXTERNAL_DNS_SERVERS=$(if [ "$ATLASO_MGMT_USES_DHCP" = "true" ]; then printf ''; else printf '%s' "$ATLASO_MGMT_DNS" | tr ' ' ','; fi)
+ATLASO_IPV4_LINK_LOCAL_FALLBACK_ENABLED=$ATLASO_IPV4_LINK_LOCAL_FALLBACK_ENABLED
 EOF
 chmod 0640 /etc/atlaso/atlaso.env
 chown root:atlaso /etc/atlaso/atlaso.env
@@ -1125,13 +1131,19 @@ fi
 
 log_step "configuring final appliance management network"
 {
+  printf '# Atlaso IPv4LL fallback enabled=%s\n' "$ATLASO_IPV4_LINK_LOCAL_FALLBACK_ENABLED"
   printf '[Match]\n'
   printf 'Name=%s\n\n' "$ATLASO_MGMT_INTERFACE"
   printf '[Network]\n'
   if [ "$ATLASO_MGMT_USES_DHCP" = "true" ]; then
     printf 'DHCP=ipv4\n'
+    if [ "$ATLASO_IPV4_LINK_LOCAL_FALLBACK_ENABLED" = "true" ]; then
+      printf 'LinkLocalAddressing=yes\nConfigureWithoutCarrier=no\nIPv4LLRoute=no\n'
+    else
+      printf 'LinkLocalAddressing=ipv6\n'
+    fi
     # Keep the server's lease through reboot, matching Photon's DHCP default.
-    printf '\n[DHCPv4]\nSendRelease=no\nSendDecline=yes\n'
+    printf '\n[DHCPv4]\nSendRelease=no\nSendDecline=yes\nMaxAttempts=infinity\n'
   else
     if [ -n "$ATLASO_MGMT_GATEWAY" ]; then
       printf 'Gateway=%s\n' "$ATLASO_MGMT_GATEWAY"

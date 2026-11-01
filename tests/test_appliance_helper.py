@@ -9673,11 +9673,11 @@ def test_network_helper_renders_management_dhcp_networkd(tmp_path):
     assert "DHCP=ipv4" in management_network
     assert "Address=" not in management_network
     assert "IPv6AcceptRA=no" in management_network
-    assert "LinkLocalAddressing=no" in management_network
+    assert "LinkLocalAddressing=ipv4" in management_network
     parsed = configparser.ConfigParser()
     parsed.read_string(management_network)
     assert parsed["DHCPv4"].getboolean("SendRelease") is False
-    assert parsed["Network"]["LinkLocalAddressing"] == "no"
+    assert parsed["Network"]["LinkLocalAddressing"] == "ipv4"
 
 
 def test_network_helper_preserves_automatic_ipv6_for_management(tmp_path):
