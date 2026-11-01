@@ -18,6 +18,36 @@ def fixture_observation():
     return row, {"complete": True, "links": [link], "conflicts": []}
 
 
+def test_observer_bootstrap_utilities_do_not_import_ui(tmp_path, monkeypatch):
+    """Keep steady observer startup independent of the large UI/schema import graph.
+
+    Args:
+        tmp_path: Owned public bootstrap marker fixture.
+        monkeypatch: Replace the UI module with a failing import boundary.
+    """
+    import runpy
+    import sys
+    from pathlib import Path
+    from types import ModuleType
+
+    unavailable = ModuleType("atlaso.app.ui")
+
+    def reject_ui_attribute(name):
+        """Reject an eagerly requested UI binding.
+
+        Args:
+            name: Attribute that would force the cold UI import.
+        """
+        raise AssertionError(f"marker-only bootstrap requested UI attribute {name}")
+
+    unavailable.__getattr__ = reject_ui_attribute
+    monkeypatch.setitem(sys.modules, "atlaso.app.ui", unavailable)
+    bootstrap = runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts/appliance/atlaso-bootstrap-https"))
+    marker = tmp_path / "complete"
+    marker.write_text(bootstrap["COMPLETION_MARKER_TEXT"])
+    assert bootstrap["read_regular_text"](marker, maximum_size=256) == bootstrap["COMPLETION_MARKER_TEXT"]
+
+
 @pytest.mark.parametrize("change", ["carrier", "identity", "tentative", "foreign", "opt-out", "duplicate", "incomplete", "access"])
 def test_apipa_admission_requires_applied_native_ownership(change):
     """Reject stale or unowned address candidates without widening ordinary service bindings.
@@ -45,6 +75,50 @@ def test_apipa_admission_requires_applied_native_ownership(change):
     elif change == "access":
         row["role"] = "access"
     assert native_management_addresses(row, observation)["apipa_addresses"] == []
+
+
+@pytest.mark.parametrize("change", ["none", "carrier", "identity", "tentative", "opt-out", "duplicate", "incomplete", "access"])
+def test_protected_handoff_admits_new_native_fallback_without_prior_publication(tmp_path, monkeypatch, change):
+    """Use captured Network identity while the observer is excluded by active Apply.
+
+    Args:
+        tmp_path: Owned candidate Network fixture root.
+        monkeypatch: Isolate native commands and prior-publication access.
+        change: Native or policy prerequisite invalidated after the positive control.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    row, observation = fixture_observation()
+    path = tmp_path / "candidate.network"
+    path.write_text("captured Network fixture\n")
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([row], [], []))
+    monkeypatch.setattr(helper, "_published_ipv4ll_address", lambda _value: pytest.fail("new candidates have no observer publication"))
+    settings = {"management_interface": "eth0", "management_ip": "", "web_terminal_enabled": False}
+    helper._management_handoff_resolve_pending_dhcp(settings, "eth0", observation, network_path=path)
+    assert settings["management_ip"] == "169.254.20.10"
+    assert helper._management_handoff_addresses(path, address_observation=observation, discovery_attempts=1) == ["169.254.20.10"]
+    if change == "none":
+        return
+    link = observation["links"][0]
+    if change == "carrier":
+        link["carrier"] = False
+    elif change == "identity":
+        link["mac"] = "02:00:00:00:10:78"
+    elif change == "tentative":
+        link["addresses"][0]["state"] = "checking"
+    elif change == "opt-out":
+        row["ipv4_link_local_fallback_enabled"] = "false"
+    elif change == "duplicate":
+        observation["links"].append({**deepcopy(link), "name": "eth1", "mac": "02:00:00:00:10:78"})
+    elif change == "incomplete":
+        observation["complete"] = False
+    elif change == "access":
+        row["role"] = "access"
+    settings["management_ip"] = ""
+    with pytest.raises(ValueError):
+        helper._management_handoff_resolve_pending_dhcp(settings, "eth0", observation, network_path=path)
+    assert settings["management_ip"] == ""
 
 
 def test_lease_later_retires_fallback_from_management_projection():
@@ -242,7 +316,8 @@ def test_disabling_only_fallback_requires_native_withdrawal(tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize("first_boot", [False, True])
-def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, monkeypatch, first_boot):
+@pytest.mark.parametrize("renamed", [False, True])
+def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, monkeypatch, first_boot, renamed):
     """Publish real signed leaves across APIPA, DHCP and carrier loss with isolated host seams.
 
     Args:
@@ -250,6 +325,7 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
         tmp_path: Receipted task-owned native configuration fixtures.
         monkeypatch: Replace host operations while retaining real certificate issuance and database behavior.
         first_boot: Freeze published first-boot identity before an explicit Settings Apply exists.
+        renamed: Preserve the original Settings name while reconciling the applied NIC through its MAC-bound alias.
     """
     import json
     import subprocess
@@ -268,6 +344,7 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
         PhysicalInterface,
         Setting,
     )
+    from atlaso.app.secrets import decrypt_secret
     from atlaso.app.services.ca import (
         CA_SERVER_PROFILE_NAME,
         ManagedCertificateSpec,
@@ -285,6 +362,7 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
     site = tmp_path / "management.conf"
     cert_path, key_path = tmp_path / "management.pem", tmp_path / "management.key"
     row, observation = fixture_observation()
+    current_name = "ens33" if renamed else "eth0"
     with SessionLocal() as db:
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
         interface.mac_address = row["mac"]
@@ -301,6 +379,7 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
         ensure_managed_certificate_rows(db, settings=ca, profiles=profiles, specs=[spec])
         leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
         issue_certificate(ca, profiles, leaf)
+        earlier_key = decrypt_secret(leaf.private_key_encrypted)
         settings = {"fqdn": "applied.atlaso.internal", "management_interface": "eth0", "management_ip": "",
                     "management_https_enabled": True, "management_https_cert_path": str(cert_path),
                     "management_https_key_path": str(key_path), "web_terminal_enabled": False, "web_terminal_addresses": []}
@@ -310,6 +389,10 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
             baseline["appliance_settings"] = {"config_preview": json.dumps(settings)}
         else:
             leaf.common_name = "pending.atlaso.internal"
+        if renamed:
+            baseline["network"]["physical_interface_aliases"] = {"eth0": current_name}
+            interface.name = current_name
+            observation["links"][0]["name"] = current_name
         saved = db.scalar(select(Setting).where(Setting.key == BASELINES_KEY))
         if saved is None:
             db.add(Setting(key=BASELINES_KEY, value=json.dumps(baseline)))
@@ -334,6 +417,9 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
             payload: Applied Settings identity, independent of pending desired state.
             **kwargs: Explicit verified HTTP/HTTPS listener scopes.
         """
+        writer = kwargs.pop("material_writer", None)
+        if writer is not None:
+            writer()
         publications.append((dict(payload), kwargs))
         site.write_text(helper_module._management_nginx_config(payload, cert_path, key_path, **kwargs))
         return 0, None
@@ -353,8 +439,16 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
     publisher.reconcile(helper, bootstrap)
     assert receipts[-1]["apipa_addresses"] == ["169.254.20.10"]
     assert publications[-1][0]["fqdn"] == "applied.atlaso.internal"
+    assert publications[-1][0]["management_interface"] == current_name
     first = x509.load_pem_x509_certificate(cert_path.read_bytes())
     assert str(first.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(x509.IPAddress)[0]) == "169.254.20.10"
+    key_path.write_text(earlier_key)
+    before_repair = len(publications)
+    publisher.reconcile(helper, bootstrap)
+    assert len(publications) == before_repair + 1
+    with SessionLocal() as db:
+        repaired = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        assert publisher.installed_pair_matches(repaired, cert_path, key_path)
     observation["links"][0]["addresses"] = [{"address": "192.168.50.10", "cidr": "192.168.50.10/24",
                                                  "scope": "global", "source": "DHCPv4", "state": "assigned"}]
     bootstrap["recovery_root_matches_baseline"] = lambda _db: False
@@ -373,7 +467,7 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
     assert "169.254.20.10" not in site.read_text()
     with SessionLocal() as db:
         assert db.scalar(select(CaSettings)).root_fingerprint == root_fingerprint
-        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == current_name))
         assert interface.host_ip_cidr == "192.168.50.10/24"
         assert interface.ip_cidr is None
     observation["links"][0]["carrier"] = False
@@ -381,7 +475,7 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
     assert receipts[-1]["phase"] == "withdrawn"
     assert "192.168.50.10" not in site.read_text()
     with SessionLocal() as db:
-        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == current_name))
         assert interface.host_ip_cidr is None
         assert interface.host_ip_cidrs == []
 

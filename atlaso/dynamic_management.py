@@ -11,11 +11,15 @@ import ssl
 import stat
 import subprocess
 import tempfile
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address, ip_interface
 from pathlib import Path
 from typing import Any
 
+from cryptography import x509
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives import hashes, serialization
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -54,6 +58,24 @@ from atlaso.app.services.network_objects import acquire_network_objects_write_lo
 HELPER_PATH = Path("/opt/atlaso/bin/atlaso-helper")
 BOOTSTRAP_PATH = Path("/opt/atlaso/bin/atlaso-bootstrap-https")
 BOOTSTRAP_NETWORK_PATH = Path("/etc/systemd/network/00-atlaso-mgmt.network")
+
+
+def installed_pair_matches(leaf: CaCertificate, certificate: Path, private_key: Path) -> bool:
+    """Require the installed pair and encrypted candidate to describe the same leaf.
+
+    Args:
+        leaf: Existing management-only encrypted certificate row.
+        certificate: Applied managed public certificate path.
+        private_key: Applied managed private-key path; its contents never leave this process.
+    """
+    try:
+        public = x509.load_pem_x509_certificate(certificate.read_bytes())
+        private = serialization.load_pem_private_key(private_key.read_bytes(), password=None)
+        return (public.fingerprint(hashes.SHA256()).hex() == leaf.fingerprint
+                and public.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+                == private.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo))
+    except (OSError, ValueError, TypeError, UnsupportedAlgorithm):
+        return False
 
 
 def write_publication(value: dict[str, Any]) -> None:
@@ -173,7 +195,10 @@ def reconcile(helper: dict[str, Any], bootstrap: dict[str, Any]) -> None:
                             "management_https_cert_path": published_leaf["cert_path"], "management_https_key_path": published_leaf["key_path"],
                             "web_terminal_enabled": False, "web_terminal_addresses": [], "management_upstream_host": "127.0.0.1",
                             "management_upstream_port": 8000, "management_public_http_port": 80, "management_public_https_port": 443}
-            if settings.get("management_interface") not in (None, "", row["name"]):
+            settings_interface = settings.get("management_interface")
+            if network:
+                settings_interface = network.get("physical_interface_aliases", {}).get(settings_interface, settings_interface)
+            if settings_interface not in (None, "", row["name"]):
                 return
             settings = {**settings, "management_interface": row["name"]}
             published = {"interface": row["name"], "mac": row["mac"], **native,
@@ -198,7 +223,11 @@ def reconcile(helper: dict[str, Any], bootstrap: dict[str, Any]) -> None:
                     and (not settings.get("management_https_enabled") or current_leaf is not None
                          and current_leaf.enabled and current_leaf.status != "revoked" and current_leaf.expires_at is not None
                          and ensure_aware(current_leaf.expires_at) > datetime.now(timezone.utc) + timedelta(seconds=90)
-                         and set((current_leaf.ip_addresses or "").splitlines()) == target_sans)
+                         and set((current_leaf.ip_addresses or "").splitlines()) == target_sans
+                         and current_leaf.fingerprint == previous.get("leaf_fingerprint")
+                         and installed_pair_matches(current_leaf,
+                             helper["_ca_managed_path"](settings["management_https_cert_path"], "management_https_cert_path"),
+                             helper["_ca_managed_path"](settings["management_https_key_path"], "management_https_key_path")))
                     and site_path.is_file()
                     and previous.get("site_digest") == hashlib.sha256(site_path.read_bytes()).hexdigest()
                     and helper["_run"](["systemctl", "is-active", "--quiet", "nginx.service"], timeout=5).returncode == 0):
@@ -233,6 +262,7 @@ def reconcile(helper: dict[str, Any], bootstrap: dict[str, Any]) -> None:
             leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
             ca = db.scalar(select(CaSettings))
             profiles = list(db.scalars(select(CaProfile)))
+            material_writer: Callable[[], None] | None = None
             if settings.get("management_https_enabled"):
                 if ca is None or not ca.enabled or leaf is None or not leaf.enabled or leaf.status == "revoked":
                     raise ValueError("applied management CA or leaf is unavailable or revoked")
@@ -268,14 +298,19 @@ def reconcile(helper: dict[str, Any], bootstrap: dict[str, Any]) -> None:
                         or snapshot_digest(applied_snapshots(db).get("appliance_settings")) != published["settings_digest"]
                         or not bootstrap["recovery_root_matches_baseline"](db)):
                     raise ValueError("management publication inputs changed before activation")
-                bootstrap["write_secret_text_atomic"](key_destination, decrypt_secret(leaf.private_key_encrypted))
-                bootstrap["write_text_atomic"](cert_destination, leaf.chain_pem, mode=0o644)
+                def install_pair() -> None:
+                    """Replace only the management pair after its rollback snapshot is durable."""
+                    bootstrap["write_secret_text_atomic"](key_destination, decrypt_secret(leaf.private_key_encrypted))
+                    bootstrap["write_text_atomic"](cert_destination, leaf.chain_pem, mode=0o644)
+
+                material_writer = install_pair
                 published["leaf_fingerprint"] = candidate
             # Native re-read excludes carrier/address changes during issuance.
             if native_management_addresses(row, helper["_network_address_observation"]()) != native:
                 raise ValueError("native management address changed during publication")
             result, _ = helper["_configure_atlaso_management_https"](
-                settings, listen_addresses=addresses, http_listen_addresses=addresses, https_listen_addresses=https_addresses)
+                settings, listen_addresses=addresses, http_listen_addresses=addresses, https_listen_addresses=https_addresses,
+                material_writer=material_writer)
             if result:
                 raise ValueError("dynamic management listener failed readiness; prior front door restored")
             if settings.get("management_https_enabled"):

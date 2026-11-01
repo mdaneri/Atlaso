@@ -70,6 +70,9 @@ CA root, protocol, port and unrelated service changes remain pending. A later DH
 listener and URL; the obsolete SAN is retired after the listener transition. No-carrier and incomplete observations
 never establish usable fallback. Publication failures leave the URL unpublished or let its short receipt expire;
 use the local console to inspect networking and CA readiness, restore connectivity, and retry the normal Apply workflow.
+An interrupted management certificate/key replacement restores the previous pair before retrying listener activation.
+Protected Network Apply can admit a newly acquired fallback address from the reviewed NIC identity and fresh native
+evidence; the normal TLS certificate-coverage and readiness checks still apply.
 
 This path serves management UI/API and their static and CA-download dependencies only, to link-local source addresses.
 Existing authentication and management firewall source restrictions still apply. It does not enable public protocols,

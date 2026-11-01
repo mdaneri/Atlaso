@@ -152,7 +152,10 @@ def main(argv: list[str] | None = None) -> int:
             if vncdotool.__version__ != "1.4.2":
                 raise ValueError("unsupported development VNC client")
             api = client_api
-            client = api.connect(f"127.0.0.1::{args.port}", timeout=10)
+            # Workstation advertises VNC authentication even with an explicitly
+            # empty console password. None asks vncdotool to request a password;
+            # an empty response completes this admitted loopback-only handshake.
+            client = api.connect(f"127.0.0.1::{args.port}", password="", timeout=10)
             # VMware's built-in console needs physical Shift events for upper
             # case and shifted ASCII symbols. Reuse the pinned client's native
             # force-caps behavior, also exposed by its command-line interface.
@@ -171,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
                 # which this pinned client deliberately waits past. A new
                 # read-only connection supplies a full initial frame. Keys and
                 # credentials stay on the original, separately admitted socket.
-                observer = api.connect(f"127.0.0.1::{args.port}", timeout=10)
+                observer = api.connect(f"127.0.0.1::{args.port}", password="", timeout=10)
                 try:
                     observer.captureScreen(destination, format="PNG")
                 finally:

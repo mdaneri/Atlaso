@@ -94,8 +94,11 @@ def observed_api(typing_client: Client, frame: bytes):
 
         Args:
             *args: Public loopback endpoint.
-            **kwargs: Public connection timeout.
+            **kwargs: Public connection timeout and empty VNC challenge selector.
         """
+        # The pinned client rejects None for Workstation's authentication type 2,
+        # even when this admitted loopback console has an empty password.
+        assert kwargs.get("password") == ""
         peer = Client(frame) if clients else typing_client
         peer.one_capture = True
         clients.append(peer)

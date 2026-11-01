@@ -18849,6 +18849,57 @@ def test_management_front_door_startup_recovery_restores_interrupted_activation(
     assert not helper.MANAGEMENT_FRONT_DOOR_BACKUP_DIR.exists()
 
 
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_management_front_door_recovers_interrupted_leaf_pair(monkeypatch, tmp_path, interrupted):
+    """Restore the old pair after either a write failure or process interruption.
+
+    Args:
+        monkeypatch: Isolate host operations while retaining the durable transaction implementation.
+        tmp_path: Originally owned validation directory.
+        interrupted: Model process loss that skips ordinary exception rollback.
+    """
+    helper = load_helper_module()
+    paths = patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path)
+    paths["management_site"].parent.mkdir(parents=True, exist_ok=True)
+    paths["management_site"].write_text("previous management site\n")
+    cert, key = tmp_path / "management.crt", tmp_path / "management.key"
+    cert.write_text("public synthetic previous certificate\n")
+    key.write_text("public synthetic previous key fixture\n")
+    expected = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in (cert, key)}
+    dropin = tmp_path / "systemd/atlaso.service.d/https.conf"
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin.parent)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    monkeypatch.setattr(helper, "_ca_managed_path", lambda value, _label: Path(value))
+    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: False)
+    monkeypatch.setattr(helper, "_management_handoff_upstream_readiness", lambda **_kwargs: {})
+    monkeypatch.setattr(helper.os, "chown", lambda *_args: None, raising=False)
+    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
+    monkeypatch.setattr(helper, "_nginx_test_command", lambda: subprocess.CompletedProcess([], 0, "", ""))
+    monkeypatch.setattr(helper, "_reload_nginx", lambda: 0)
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda *_args: pytest.fail("interrupted material must not activate nginx"))
+
+    def replace_key_then_fail():
+        """Interrupt between the two writes only after durable rollback publication."""
+        state = helper._load_management_front_door_state()
+        assert set(state["material_paths"]) == {str(cert), str(key)}
+        key.write_text("public synthetic replacement key fixture\n")
+        if interrupted:
+            raise KeyboardInterrupt
+        raise OSError("synthetic pair write failure")
+
+    payload = json.loads(appliance_settings_json(management_https_enabled=True,
+        management_https_cert_path=str(cert), management_https_key_path=str(key)))
+    if interrupted:
+        with pytest.raises(KeyboardInterrupt):
+            helper._configure_atlaso_management_https(payload, material_writer=replace_key_then_fail)
+        assert helper.MANAGEMENT_FRONT_DOOR_STATE_PATH.is_file()
+        assert helper._recover_management_front_door() == 0
+    else:
+        assert helper._configure_atlaso_management_https(payload, material_writer=replace_key_then_fail) == (1, None)
+    assert all(hashlib.sha256(path.read_bytes()).hexdigest() == digest for path, digest in expected.items())
+    assert not helper.MANAGEMENT_FRONT_DOOR_STATE_PATH.exists()
+
+
 def test_management_front_door_rejects_symlinked_durable_backup(monkeypatch, tmp_path):
     """Reject a recovery backup that redirects the privileged restore read.
 

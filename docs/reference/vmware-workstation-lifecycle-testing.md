@@ -400,7 +400,10 @@ readiness is unavailable. It does not establish network readiness or certificate
 
 Keep the optional `vncdotool==1.4.2` client in a task-owned isolated Python environment. Retain its deterministic
 site-packages SHA-256 and file count independently before credential use. The VM's VNC listener must bind exclusively
-to `127.0.0.1`; the consumer proves that its provider process owns the exact receipt-bound VMX. Observe the empty
+to `127.0.0.1`; the consumer proves that its provider process owns the exact receipt-bound VMX. Configure an explicitly
+empty VNC password for this loopback console, clearing any inherited builder VNC key through the supported powered-off
+VM configuration operation. Workstation still advertises a VNC challenge, which the client answers with the empty value.
+Observe the empty
 concealed field, save only that public frame beneath the owning checkout, and retain its SHA-256. Supply the single
 input-row rectangle as half-open coordinates `x0,y0,x1,y1`. The consumer compares the complete frame outside that
 rectangle before reading private input and again before typing; a changed dialog fails closed.

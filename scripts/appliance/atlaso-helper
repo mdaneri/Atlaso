@@ -11286,6 +11286,7 @@ def _configure_atlaso_management_https(
     http_listen_addresses: list[str] | None = None,
     https_listen_addresses: list[str] | None = None,
     handoff_reuseport: bool = False,
+    material_writer: Callable[[], None] | None = None,
 ) -> tuple[int, int | None]:
     """Install the management front door without interrupting its upstream.
 
@@ -11297,16 +11298,19 @@ def _configure_atlaso_management_https(
         http_listen_addresses: Addresses allowed on the HTTP redirect during a handoff.
         https_listen_addresses: Addresses owned by this site on HTTPS.
         handoff_reuseport: Preserve graceful wildcard rollback during a protected handoff.
+        material_writer: Optional in-process leaf-pair writer included in this recoverable activation.
     """
     enabled = bool(payload.get("management_https_enabled"))
     port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
     upstream_host = str(payload.get("management_upstream_host") or "127.0.0.1")
     cert_path: Path | None = None
     key_path: Path | None = None
+    if material_writer is not None and (not callable(material_writer) or not enabled or not verify_front_door):
+        raise ValueError("management material replacement requires verified HTTPS activation")
     if enabled:
         cert_path = _ca_managed_path(str(payload["management_https_cert_path"]), "management_https_cert_path")
         key_path = _ca_managed_path(str(payload["management_https_key_path"]), "management_https_key_path")
-        if verify_front_door and listen_addresses is not None:
+        if material_writer is None and verify_front_door and listen_addresses is not None:
             try:
                 _management_certificate_covers_scoped_addresses(
                     cert_path.read_text(encoding="utf-8"), listen_addresses,
@@ -11314,7 +11318,8 @@ def _configure_atlaso_management_https(
             except (OSError, ValueError) as exc:
                 print(str(exc), file=sys.stderr)
                 return 1, None
-        _grant_atlaso_service_key_read(key_path)
+        if material_writer is None:
+            _grant_atlaso_service_key_read(key_path)
     site_text = _management_nginx_config(
         payload, cert_path, key_path, listen_addresses=listen_addresses,
         http_listen_addresses=http_listen_addresses,
@@ -11328,6 +11333,8 @@ def _configure_atlaso_management_https(
         site_text = _management_handoff_reuseport_site(site_text)
 
     if _factory_reset_runtime_cleanup_is_admitted():
+        if material_writer is not None:
+            raise ValueError("management material replacement cannot skip verified activation")
         verify_front_door = False
 
     # Ordinary Appliance Settings apply runs inside the Atlaso worker. Restarting
@@ -11351,6 +11358,11 @@ def _configure_atlaso_management_https(
         NGINX_MAIN_CONFIG_PATH,
         ATLASO_SERVICE_HTTPS_DROPIN_PATH,
     )
+    material_paths: tuple[Path, ...] = ()
+    if material_writer is not None:
+        assert cert_path is not None and key_path is not None
+        material_paths = (cert_path, key_path)
+        tracked_paths += material_paths
     if verify_front_door:
         if _recover_management_front_door(quiet=True) != 0:
             print("management front-door recovery is incomplete", file=sys.stderr)
@@ -11358,12 +11370,31 @@ def _configure_atlaso_management_https(
     previous_files = {path: _runtime_file_snapshot(path) for path in tracked_paths}
     if verify_front_door:
         try:
-            _persist_management_front_door_state(tracked_paths)
+            if material_paths:
+                _persist_management_front_door_state(tracked_paths, material_paths=material_paths)
+            else:
+                _persist_management_front_door_state(tracked_paths)
         except (OSError, ValueError, shutil.Error) as exc:
             print(
                 f"management front-door snapshot persistence failed: {type(exc).__name__}",
                 file=sys.stderr,
             )
+            return 1, None
+    if material_writer is not None:
+        try:
+            # The old pair and listener configuration are durable before either
+            # replacement. Startup recovery restores both after an interruption.
+            material_writer()
+            assert cert_path is not None and key_path is not None
+            if listen_addresses is not None:
+                _management_certificate_covers_scoped_addresses(cert_path.read_text(encoding="utf-8"), listen_addresses)
+            _grant_atlaso_service_key_read(key_path)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            rollback_errors = _rollback_management_front_door(previous_files)
+            detail = f"management certificate-pair activation failed: {type(exc).__name__}"
+            if rollback_errors:
+                detail += "; rollback failed: " + ", ".join(rollback_errors)
+            print(detail, file=sys.stderr)
             return 1, None
     next_text = _atlaso_service_loopback_dropin(upstream_host, port)
     ATLASO_SERVICE_DROPIN_DIR.mkdir(parents=True, exist_ok=True)
@@ -11660,12 +11691,17 @@ def _read_management_front_door_member(
         os.close(descriptor)
 
 
-def _persist_management_front_door_state(paths: tuple[Path, ...]) -> None:
+def _persist_management_front_door_state(paths: tuple[Path, ...], *, material_paths: tuple[Path, ...] = ()) -> None:
     """Persist ordinary front-door rollback files before runtime mutation.
 
     Args:
         paths: Exact nginx and Atlaso service files owned by the transaction.
+        material_paths: Optional exact managed leaf certificate and key included in the transaction.
     """
+    if material_paths and (len(material_paths) != 2 or len(set(material_paths)) != 2
+            or not set(material_paths) <= set(paths)
+            or any(_ca_managed_path(str(path), "management recovery material") != path for path in material_paths)):
+        raise ValueError("management recovery material paths are invalid")
     directory_descriptor = _open_management_front_door_state_directory(create=True)
     if directory_descriptor is not None:
         os.close(directory_descriptor)
@@ -11693,7 +11729,8 @@ def _persist_management_front_door_state(paths: tuple[Path, ...]) -> None:
         snapshots.append(item)
     _fsync_directory(MANAGEMENT_FRONT_DOOR_BACKUP_DIR)
     _durable_management_handoff_state_write(
-        {"schema": 1, "phase": "prepared", "snapshots": snapshots},
+        {"schema": 1, "phase": "prepared", "snapshots": snapshots,
+         "material_paths": [str(path) for path in material_paths]},
         MANAGEMENT_FRONT_DOOR_STATE_PATH,
     )
 
@@ -11752,6 +11789,16 @@ def _rollback_management_front_door(
     Returns:
         Bounded names of rollback layers that did not complete.
     """
+    ordinary_paths = {NGINX_MANAGEMENT_SITE_PATH, NGINX_CONF_INCLUDE_PATH,
+                      NGINX_MAIN_CONFIG_PATH, ATLASO_SERVICE_HTTPS_DROPIN_PATH}
+    if set(snapshots) - ordinary_paths:
+        # Leaf material requires the durable snapshot's uid/gid as well as its
+        # bytes and mode. The legacy in-memory configuration snapshot has no
+        # ownership metadata and cannot restore service-readable key custody.
+        try:
+            return [] if _recover_management_front_door(quiet=True) == 0 else ["certificate-pair recovery"]
+        except (OSError, ValueError):
+            return ["certificate-pair recovery"]
     failures = _restore_management_front_door_files(snapshots)
     if failures:
         return failures
@@ -11800,6 +11847,14 @@ def _load_management_front_door_state() -> dict:
         str(NGINX_MAIN_CONFIG_PATH),
         str(ATLASO_SERVICE_HTTPS_DROPIN_PATH),
     }
+    material_paths = state.get("material_paths", [])
+    if (not isinstance(material_paths, list) or len(material_paths) not in {0, 2}
+            or any(not isinstance(path, str) for path in material_paths)
+            or len(set(material_paths)) != len(material_paths)
+            or any(str(_ca_managed_path(path, "management recovery material")) != path
+                   for path in material_paths)):
+        raise ValueError("management front-door recovery material paths are invalid")
+    allowed.update(material_paths)
     if not isinstance(snapshots, list) or {
         str(item.get("path")) for item in snapshots if isinstance(item, dict)
     } != allowed:
@@ -30900,8 +30955,42 @@ def _management_handoff_pending_dhcp_interface(payload: dict) -> str:
     return name if row.get("ipv4_method") == "dhcp" and not row.get("ip_cidr") else ""
 
 
+def _native_management_ipv4ll_candidates(row: dict, observation: dict) -> set[str]:
+    """Admit assigned fallback addresses from the captured candidate Network identity.
+
+    Args:
+        row: Reviewed dedicated-management Network row, including its applied MAC and fallback policy.
+        observation: Complete fresh privileged native address inventory.
+    """
+    if (not observation.get("complete") or row.get("role") != "management"
+            or row.get("mode") != "access" or row.get("admin_state") != "up"
+            or row.get("ipv4_method") != "dhcp" or row.get("ipv4_link_local_fallback_enabled", "true") != "true"
+            or not row.get("mac")):
+        return set()
+    links = [link for link in observation.get("links", []) if link.get("name") == row.get("name")]
+    if (len(links) != 1 or str(links[0].get("mac", "")).lower() != str(row["mac"]).lower()
+            or not all(links[0].get(key) for key in ("ethernet", "up", "carrier", "address_inventory_complete"))):
+        return set()
+    candidates = set()
+    for record in links[0].get("addresses", []):
+        value = record.get("address", "")
+        try:
+            address = ip_address(value)
+        except ValueError:
+            continue
+        if (address.version != 4 or not int(ip_address("169.254.1.0")) <= int(address) <= int(ip_address("169.254.254.255"))
+                or record.get("state") != "assigned" or record.get("source") != "IPv4LL"
+                or record.get("scope") != "link" or record.get("cidr") != f"{address}/16"):
+            continue
+        owners = [link for link in observation.get("links", []) for item in link.get("addresses", [])
+                  if item.get("address") == value and item.get("state") == "assigned"]
+        if len(owners) == 1 and owners[0] is links[0]:
+            candidates.add(str(address))
+    return candidates
+
+
 def _management_handoff_resolve_pending_dhcp(
-    settings: dict, interface: str, observation: dict,
+    settings: dict, interface: str, observation: dict, *, network_path: Path | None = None,
 ) -> None:
     """Bind a pending listener to one native, assigned DHCP lease before publication.
 
@@ -30909,6 +30998,7 @@ def _management_handoff_resolve_pending_dhcp(
         settings: In-memory handoff settings payload used by resolver and front door.
         interface: Reviewed DHCP management interface.
         observation: Complete native address readback after candidate activation.
+        network_path: Captured staged Network configuration required for a newly acquired fallback candidate.
     """
     if not interface:
         return
@@ -30925,9 +31015,9 @@ def _management_handoff_resolve_pending_dhcp(
         and ip_address(record["address"]).version == 4
     }
     if not leases:
-        leases = {record["address"] for record in links[0].get("addresses", [])
-                  if record.get("state") == "assigned" and record.get("source") == "IPv4LL"
-                  and _published_ipv4ll_address(record["address"])}
+        physical = _parse_network_config(network_path)[0] if network_path is not None else []
+        rows = [row for row in physical if row.get("name") == interface]
+        leases = _native_management_ipv4ll_candidates(rows[0], observation) if len(rows) == 1 else set()
     if len(leases) != 1:
         raise ValueError("candidate DHCP management lease is missing or ambiguous")
     address = leases.pop()
@@ -33539,13 +33629,9 @@ def _management_handoff_addresses(
                         addresses.append(observed_address)
     discovered: dict[tuple[str, str], list[str]] = {}
     for row in rows:
-        if (row.get("role") == "management" and row.get("ipv4_method") == "dhcp"
-                and row.get("ipv4_link_local_fallback_enabled", "true") == "true"):
-            for link in (address_observation or {}).get("links", []):
-                if link.get("name") == row.get("name") and link.get("mac") == row.get("mac"):
-                    for record in link.get("addresses", []):
-                        if record.get("source") == "IPv4LL" and _published_ipv4ll_address(record["address"]):
-                            discovered.setdefault((row["name"], "inet"), []).append(record["address"])
+        fallback = _native_management_ipv4ll_candidates(row, address_observation or {})
+        if fallback:
+            discovered.setdefault((row["name"], "inet"), []).extend(sorted(fallback))
     for attempt in range(max(1, discovery_attempts)):
         for interface, families in dynamic_requirements:
             if all(discovered.get((interface, family)) for family in families):
@@ -35614,6 +35700,7 @@ def _apply_management_handoff(payload: dict) -> int:
         address_observation = _wait_network_addresses(Path(str(payload["network_config_path"])), started_at=activation_started)
         _management_handoff_resolve_pending_dhcp(
             settings_payload, pending_dhcp_interface, address_observation,
+            network_path=Path(str(payload["network_config_path"])),
         )
         _wait_management_handoff_routes(state)
         _apply_route_domain_ingress(
@@ -35694,6 +35781,7 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         _management_handoff_resolve_pending_dhcp(
             settings_payload, pending_dhcp_interface, address_observation,
+            network_path=Path(str(payload["network_config_path"])),
         )
         protocol_holdover = _management_handoff_protocol_holdover(state, settings_payload)
         failing_layer = "candidate address discovery"
@@ -35866,6 +35954,7 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         _management_handoff_resolve_pending_dhcp(
             settings_payload, pending_dhcp_interface, final_address_observation,
+            network_path=Path(str(payload["network_config_path"])),
         )
         failing_layer = "post-retirement certificate prerequisite"
         candidate_addresses = _management_handoff_addresses(
