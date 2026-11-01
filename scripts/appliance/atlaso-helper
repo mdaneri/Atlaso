@@ -22350,6 +22350,7 @@ GUEST_TOOLS_PROFILE_DIRS = {
     frozenset({"hyperv", "qemu"}),
     frozenset({"vmware", "hyperv", "qemu"}),
 }
+GUEST_TOOLS_LOCAL_REPO_ID = "atlaso-guest-tools"
 
 
 def _guest_tools_detect_provider() -> tuple[str, str]:
@@ -22879,6 +22880,102 @@ def _guest_tools_status() -> dict[str, object]:
     }
 
 
+def _guest_tools_transaction_plan(provider: str, payload_info: dict[str, object]) -> dict[str, object]:
+    """Select a verified offline RPM transaction against the installed package state.
+
+    Args:
+        provider: Detected provider whose package is the transaction root.
+        payload_info: Previously validated provider payload, including its admitted root and RPM identities.
+    """
+    tdnf = shutil.which("tdnf")
+    if tdnf is None:
+        return {"success": False, "reason": "tdnf is unavailable for offline transaction resolution."}
+    expected = str(GUEST_TOOLS_PROVIDERS[provider]["package"])
+    try:
+        root = Path(str(payload_info["path"]))
+        allowed_roots = {ATLASO_GUEST_TOOLS_PAYLOAD_DIR, ATLASO_FIRST_BOOT_GUEST_TOOLS_DIR}
+        if root not in allowed_roots or root.is_symlink() or not root.is_dir() or root.resolve(strict=True) != root:
+            raise ValueError("payload root")
+        profile = root / provider
+        if profile.is_symlink() or not profile.is_dir() or profile.resolve(strict=True) != profile:
+            raise ValueError("payload profile")
+        identities = payload_info["packages"]
+        if not isinstance(identities, list) or not identities or len(identities) > 256:
+            raise ValueError("payload packages")
+        by_identity: dict[tuple[str, str, str], Path] = {}
+        target: tuple[str, str, str] | None = None
+        for item in identities:
+            if not isinstance(item, dict):
+                raise ValueError("RPM identity")
+            name, evr, architecture, raw_path = (item.get("name"), item.get("version"),
+                                                  item.get("architecture"), item.get("path"))
+            if (not isinstance(name, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+_.-]*", name) is None
+                    or not isinstance(evr, str) or re.fullmatch(r"(?:[0-9]+:)?[A-Za-z0-9.+_~-]+", evr) is None
+                    or architecture not in {"x86_64", "noarch"} or not isinstance(raw_path, str)):
+                raise ValueError("RPM identity")
+            package_path = Path(raw_path)
+            if (package_path.parent != profile or package_path.suffix != ".rpm" or package_path.is_symlink()
+                    or not package_path.is_file() or package_path.resolve(strict=True) != package_path):
+                raise ValueError("RPM path")
+            canonical_evr = evr.removeprefix("0:")
+            identity = (name, canonical_evr, str(architecture))
+            if identity in by_identity:
+                raise ValueError("duplicate RPM identity")
+            by_identity[identity] = package_path
+            if name == expected:
+                if target is not None:
+                    raise ValueError("ambiguous provider RPM")
+                target = identity
+        if target is None:
+            raise ValueError("missing provider RPM")
+        spec = f"{target[0]}-{target[1]}.{target[2]}"
+    except (KeyError, OSError, RuntimeError, TypeError, ValueError):
+        return {"success": False, "reason": "The verified offline guest-tools package plan is invalid."}
+
+    repo_id = GUEST_TOOLS_LOCAL_REPO_ID
+    command = [tdnf, "--disablerepo=*", f"--repofromdir={repo_id},{profile}",
+               f"--repoid={repo_id}", "--assumeno", "--json", "install", spec]
+    try:
+        result = _command_payload(command, stdout_limit=128 * 1024, timeout=30.0)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"success": False, "reason": "Offline guest-tools dependency resolution failed.",
+                "command": {"command": command, "success": False, "returncode": 1}}
+    if result.get("success") is not True:
+        return {"success": False, "reason": "The offline guest-tools dependencies are incompatible with the installed system.",
+                "command": result}
+    try:
+        plan = json.loads(str(result.get("stdout") or ""))
+        if (not isinstance(plan, dict) or not plan or set(plan) - {"Install", "Upgrade"}
+                or any(not isinstance(rows, list) for rows in plan.values())):
+            raise ValueError("unexpected transaction operations")
+        selected: list[Path] = []
+        seen: set[tuple[str, str, str]] = set()
+        for rows in plan.values():
+            for row in rows:
+                if not isinstance(row, dict) or set(row) != {"Name", "Arch", "Evr", "InstallSize", "Repo"}:
+                    raise ValueError("invalid transaction row")
+                name, evr, architecture = row["Name"], row["Evr"], row["Arch"]
+                if (row["Repo"] != repo_id or not isinstance(name, str) or not isinstance(evr, str)
+                        or architecture not in {"x86_64", "noarch"}
+                        or not isinstance(row["InstallSize"], int) or isinstance(row["InstallSize"], bool)
+                        or row["InstallSize"] < 0):
+                    raise ValueError("foreign or invalid transaction row")
+                identity = (name, evr.removeprefix("0:"), str(architecture))
+                path = by_identity.get(identity)
+                if path is None or identity in seen:
+                    raise ValueError("unverified or ambiguous transaction RPM")
+                seen.add(identity)
+                selected.append(path)
+        if not selected or target not in seen:
+            raise ValueError("provider RPM missing from transaction")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {"success": False, "reason": "Offline dependency resolution returned an unverified package plan.",
+                "command": result}
+    command_result = {key: result.get(key) for key in ("command", "returncode", "success", "stderr")}
+    command_result["stdout"] = json.dumps(plan, sort_keys=True, separators=(",", ":"))
+    return {"success": True, "command": command_result, "packages": [str(path) for path in selected]}
+
+
 def _guest_tools_check(payload: dict) -> dict[str, object]:
     """Return a read-only reviewed guest-tools plan for Appliance Update.
 
@@ -22894,27 +22991,34 @@ def _guest_tools_check(payload: dict) -> dict[str, object]:
     elif digest and digest != state.get("review_digest"):
         state.update({"available": False, "state": "unknown", "reason": "Guest-tools status changed after review. Check again before installation."})
     commands: list[dict[str, object]] = []
+    transaction_packages: list[str] = []
     if state.get("available") is True and state.get("plan", {}).get("package_change"):
         payload_info = state.get("payload") if isinstance(state.get("payload"), dict) else {}
         rpm = shutil.which("rpm")
-        package_files = [str(item.get("path") or "") for item in payload_info.get("packages", []) if isinstance(item, dict)]
-        if not rpm or not package_files:
+        if not rpm:
             state.update({"available": False, "state": "unknown", "reason": "The verified RPM transaction could not be prepared."})
         else:
-            try:
-                transaction = _command_payload([rpm, "-Uvh", "--replacepkgs", "--test", *package_files], timeout=30.0)
-            except (OSError, subprocess.TimeoutExpired):
-                transaction = {"success": False, "returncode": 1, "stdout": "", "stderr": "Offline RPM compatibility check failed."}
-            commands.append({key: transaction.get(key) for key in ("success", "returncode", "stdout", "stderr")})
-            if transaction.get("success") is not True:
-                state.update({"available": False, "state": "unsupported", "reason": "The staged RPM closure is incompatible with the installed system or has unsatisfied dependencies. Use the supported Atlaso payload preparation workflow."})
+            plan = _guest_tools_transaction_plan(provider, payload_info)
+            if isinstance(plan.get("command"), dict):
+                commands.append(plan["command"])
+            if plan.get("success") is not True:
+                state.update({"available": False, "state": "unsupported", "reason": str(plan.get("reason") or "Offline guest-tools resolution failed.")})
+            else:
+                transaction_packages = [str(path) for path in plan["packages"]]
+                try:
+                    transaction = _command_payload([rpm, "-Uvh", "--replacepkgs", "--test", *transaction_packages], timeout=30.0)
+                except (OSError, subprocess.TimeoutExpired):
+                    transaction = {"success": False, "returncode": 1, "stdout": "", "stderr": "Offline RPM compatibility check failed."}
+                commands.append(transaction)
+                if transaction.get("success") is not True:
+                    state.update({"available": False, "state": "unsupported", "reason": "The staged RPM transaction is incompatible with the installed system or has unsatisfied dependencies. Use the supported Atlaso payload preparation workflow."})
     result = {key: value for key, value in state.items() if key not in {"plan", "payload"}}
     no_change = result["state"] == "healthy" and not state.get("plan", {}).get("package_change")
     return {"state": "up_to_date" if no_change else "available" if result["available"] else "failed", "change_count": 0 if no_change else 1,
             "changes": [{"name": str(state.get("provider") or "guest_tools"), "action": "maintenance",
                          "summary": str(result["reason"])}], "details_incomplete": False,
             "summary": str(result["reason"]), "remediation": str(result["reason"]), "guest_tools": result,
-            "commands": commands}
+            "commands": commands, "_transaction_packages": transaction_packages}
 
 
 def _guest_tools_qemu_unit_contract() -> tuple[Path | None, str]:
@@ -23168,7 +23272,8 @@ def _guest_tools_apply(payload: dict) -> dict[str, object]:
     commands: list[dict[str, object]] = []
     if state.get("plan", {}).get("package_change"):
         rpm = shutil.which("rpm")
-        files = [str(item.get("path") or "") for item in payload_info.get("packages", []) if isinstance(item, dict)]
+        files = checked.get("_transaction_packages")
+        files = [str(path) for path in files] if isinstance(files, list) else []
         if rpm is None or not files or not payload_info.get("digest"):
             return {"status": "failed", "selected_streams": ["guest_tools"],
                     "error": str(payload_info.get("reason") or "No compatible verified offline guest-tools payload is staged."),

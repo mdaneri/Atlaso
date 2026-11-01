@@ -114,6 +114,180 @@ def test_changed_review_refuses_mutation_and_healthy_repeat_is_noop(helper, monk
     assert repeat["applied"]["guest_tools"]["no_change"] is True
 
 
+@pytest.mark.parametrize("defect", [
+    None, "foreign_repo", "remove", "downgrade", "invalid_json", "unknown", "unverified", "duplicate", "foreign_path",
+    "duplicate_identity", "missing_target", "missing_tdnf", "nonzero_epoch",
+])
+def test_guest_tools_check_uses_only_verified_local_solver_packages(helper, monkeypatch, tmp_path, defect):
+    """The offline solver may select only exact verified RPMs from the active profile.
+
+    Args:
+        helper: Isolated privileged helper.
+        monkeypatch: Stable source state and local solver response.
+        tmp_path: Isolated local RPM profile.
+        defect: Foreign, missing, or ambiguous solver result to reject.
+    """
+    root = tmp_path / "payload"
+    profile = root / "vmware"
+    profile.mkdir(parents=True)
+    target_path = profile / "open-vm-tools.rpm"
+    dependency_path = profile / "libvmtools.rpm"
+    conflict_path = profile / "hostname.rpm"
+    for path in (target_path, dependency_path, conflict_path):
+        path.write_bytes(b"verified fixture RPM")
+    foreign_path = tmp_path / "foreign.rpm"
+    foreign_path.write_bytes(b"unverified package")
+    duplicate_path = profile / "duplicate.rpm"
+    duplicate_path.write_bytes(b"duplicate package")
+    monkeypatch.setattr(helper, "ATLASO_GUEST_TOOLS_PAYLOAD_DIR", root)
+    monkeypatch.setattr(helper, "ATLASO_FIRST_BOOT_GUEST_TOOLS_DIR", tmp_path / "other-payload")
+    monkeypatch.setattr(helper.shutil, "which", lambda name: name)
+    packages = [
+        {"name": "open-vm-tools", "version": "0:13.1.0-2.ph5", "architecture": "x86_64", "path": str(target_path)},
+        {"name": "libvmtools", "version": "0:13.1.0-2.ph5", "architecture": "x86_64", "path": str(dependency_path)},
+        {"name": "hostname", "version": "0:3.25-3.ph5", "architecture": "x86_64", "path": str(conflict_path)},
+    ]
+    rows = [
+        {"Name": "open-vm-tools", "Arch": "x86_64", "Evr": "13.1.0-2.ph5", "InstallSize": 1,
+         "Repo": "atlaso-guest-tools"},
+        {"Name": "libvmtools", "Arch": "x86_64", "Evr": "13.1.0-2.ph5", "InstallSize": 1,
+         "Repo": "atlaso-guest-tools"},
+    ]
+    response = {"Install": rows}
+    if defect == "foreign_repo":
+        rows[1]["Repo"] = "photon"
+    elif defect == "remove":
+        response["Remove"] = [{"Name": "net-tools"}]
+    elif defect == "downgrade":
+        response = {"Downgrade": [dict(rows[0])]}
+    elif defect == "unknown":
+        response["Erase"] = []
+    elif defect == "unverified":
+        rows[1]["Name"] = "not-in-payload"
+    elif defect == "duplicate":
+        rows.append(dict(rows[0]))
+    elif defect == "foreign_path":
+        packages[1]["path"] = str(foreign_path)
+    elif defect == "duplicate_identity":
+        packages.append({**packages[1], "path": str(duplicate_path)})
+    elif defect == "missing_target":
+        packages = packages[1:]
+    elif defect == "nonzero_epoch":
+        packages[0]["version"] = "2:13.1.0-2.ph5"
+        rows[0]["Evr"] = "2:13.1.0-2.ph5"
+    commands = []
+
+    def command_payload(command, **kwargs):
+        """Provide a synthetic solver decision and RPM transaction result.
+
+        Args:
+            command: Bounded offline package command.
+            **kwargs: Captured command limits.
+        """
+        commands.append(command)
+        if command[0] == "tdnf":
+            return {"command": command, "success": True, "returncode": 0,
+                    "stdout": "not-json" if defect == "invalid_json" else json.dumps(response), "stderr": ""}
+        return {"command": command, "success": True, "returncode": 0, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr(helper, "_command_payload", command_payload)
+    if defect == "missing_tdnf":
+        monkeypatch.setattr(helper.shutil, "which", lambda name: None if name == "tdnf" else name)
+    state = {"provider": "vmware", "review_digest": "a" * 64, "state": "missing", "available": True,
+             "reason": "Verified VMware closure is available.", "plan": {"package_change": True},
+             "payload": {"available": True, "digest": "verified", "path": str(root), "packages": packages}}
+    monkeypatch.setattr(helper, "_guest_tools_status", lambda: dict(state))
+    result = helper._guest_tools_check({"guest_tools": {"provider": "vmware", "review_digest": "a" * 64}})
+
+    if defect not in {None, "nonzero_epoch"}:
+        assert result["state"] == "failed"
+        if defect in {"foreign_path", "duplicate_identity", "missing_target", "missing_tdnf"}:
+            assert commands == []
+        else:
+            assert commands[0][0] == "tdnf"
+            assert len(commands) == 1
+        return
+
+    assert result["state"] == "available"
+    assert result["_transaction_packages"] == [str(target_path), str(dependency_path)]
+    assert str(conflict_path) not in result["_transaction_packages"]
+    assert commands[0] == [
+        "tdnf", "--disablerepo=*", f"--repofromdir=atlaso-guest-tools,{profile}",
+        "--repoid=atlaso-guest-tools", "--assumeno", "--json", "install",
+        "open-vm-tools-2:13.1.0-2.ph5.x86_64" if defect == "nonzero_epoch"
+        else "open-vm-tools-13.1.0-2.ph5.x86_64",
+    ]
+    assert commands[1] == ["rpm", "-Uvh", "--replacepkgs", "--test", str(target_path), str(dependency_path)]
+    assert not {"--nodeps", "--replacefiles", "--nogpgcheck", "--skipconflicts"} & set(commands[0])
+
+
+def test_guest_tools_apply_uses_only_solver_selected_rpms(helper, monkeypatch, tmp_path):
+    """Check and apply carry only the local solver's verified package set into RPM.
+
+    Args:
+        helper: Isolated privileged helper.
+        monkeypatch: Native command and status replacements.
+        tmp_path: Isolated provider payload.
+    """
+    root = tmp_path / "payload"
+    profile = root / "vmware"
+    profile.mkdir(parents=True)
+    target_path = profile / "open-vm-tools.rpm"
+    dependency_path = profile / "libvmtools.rpm"
+    conflict_path = profile / "hostname.rpm"
+    for path in (target_path, dependency_path, conflict_path):
+        path.write_bytes(b"verified fixture RPM")
+    packages = [
+        {"name": "open-vm-tools", "version": "0:13.1.0-2.ph5", "architecture": "x86_64", "path": str(target_path)},
+        {"name": "libvmtools", "version": "0:13.1.0-2.ph5", "architecture": "x86_64", "path": str(dependency_path)},
+        {"name": "hostname", "version": "0:3.25-3.ph5", "architecture": "x86_64", "path": str(conflict_path)},
+    ]
+    payload_info = {"available": True, "digest": "verified", "path": str(root), "packages": packages}
+    installing = {"provider": "vmware", "review_digest": "a" * 64, "state": "missing", "available": True,
+                  "version": "", "reason": "Verified offline closure is available.",
+                  "plan": {"package_change": True}, "payload": payload_info}
+    healthy = {**installing, "state": "healthy", "version": "0:13.1.0-2.ph5", "payload": payload_info}
+    statuses = iter((installing, installing, healthy))
+    monkeypatch.setattr(helper, "ATLASO_GUEST_TOOLS_PAYLOAD_DIR", root)
+    monkeypatch.setattr(helper, "ATLASO_FIRST_BOOT_GUEST_TOOLS_DIR", tmp_path / "other-payload")
+    monkeypatch.setattr(helper, "_guest_tools_status", lambda: next(statuses))
+    monkeypatch.setattr(helper, "_guest_tools_payload", lambda provider: payload_info)
+    monkeypatch.setattr(helper, "_guest_tools_clock_guard", lambda **kwargs: {"success": True})
+    monkeypatch.setattr(helper, "_write_update_info", lambda result: None)
+    monkeypatch.setattr(helper.shutil, "which", lambda name: name)
+    rows = [
+        {"Name": "open-vm-tools", "Arch": "x86_64", "Evr": "13.1.0-2.ph5", "InstallSize": 1,
+         "Repo": "atlaso-guest-tools"},
+        {"Name": "libvmtools", "Arch": "x86_64", "Evr": "13.1.0-2.ph5", "InstallSize": 1,
+         "Repo": "atlaso-guest-tools"},
+    ]
+    calls = []
+
+    def command_payload(command, **kwargs):
+        """Record every test and install command and return the local solver plan.
+
+        Args:
+            command: Bounded native command.
+            **kwargs: Captured command limits.
+        """
+        calls.append(command)
+        stdout = json.dumps({"Install": rows}) if command[0] == "tdnf" else ""
+        return {"command": command, "success": True, "returncode": 0, "stdout": stdout, "stderr": ""}
+
+    monkeypatch.setattr(helper, "_command_payload", command_payload)
+
+    result = helper._guest_tools_apply({"guest_tools": {"provider": "vmware", "review_digest": "a" * 64}})
+
+    selected = [str(target_path), str(dependency_path)]
+    assert result["status"] == "succeeded"
+    assert calls[0][0] == "tdnf" and calls[0][1] == "--disablerepo=*"
+    assert calls[0][-1] == "open-vm-tools-13.1.0-2.ph5.x86_64"
+    assert calls[1] == ["rpm", "-Uvh", "--replacepkgs", "--test", *selected]
+    assert calls[2] == ["rpm", "-Uvh", "--replacepkgs", "--test", *selected]
+    assert calls[3] == ["rpm", "-Uvh", "--replacepkgs", *selected]
+    assert str(conflict_path) not in calls[1] + calls[2] + calls[3]
+
+
 @pytest.mark.parametrize("failure", ["stale_review", "clock_guard", "final_verification"])
 def test_guest_tools_apply_cli_propagates_verification_failure(helper, monkeypatch, capsys, failure):
     """Failed admission or final observation must fail even without a failed command.
@@ -312,6 +486,9 @@ def test_partial_package_failure_is_never_verified_success(helper, monkeypatch):
     monkeypatch.setattr(helper, "_guest_tools_status", lambda: dict(state))
     monkeypatch.setattr(helper, "_guest_tools_clock_guard", lambda **kwargs: {"success": True})
     monkeypatch.setattr(helper, "_guest_tools_payload", lambda provider: state["payload"])
+    monkeypatch.setattr(helper, "_guest_tools_check", lambda payload: {
+        "state": "available", "_transaction_packages": ["/verified/open-vm-tools.rpm"],
+    })
     monkeypatch.setattr(helper.shutil, "which", lambda name: name)
     monkeypatch.setattr(helper, "_command_payload", lambda command, **kwargs: {
         "command": command, "success": "--test" in command, "returncode": 0 if "--test" in command else 1,

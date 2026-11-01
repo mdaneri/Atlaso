@@ -96,6 +96,11 @@ task; follow its progress and final result in Tasks. Repeat the check after an i
 successful package command alone does not prove the service is healthy. The task preserves the appliance's selected
 clock authority; it does not introduce another time-source setting. See [Appliance time source](../services/ntp.md#appliance-clock-source).
 
+The retained closure supplies offline dependencies, while the package plan accounts for what is already installed.
+Only the detected agent and its required package changes enter the transaction. An incompatible dependency plan fails
+before package installation; the task does not remove conflicting appliance packages or use a network repository to
+work around the conflict.
+
 Appliance image builds and new offline ISO installations retain verified VMware, Hyper-V, and QEMU guest-tools
 closures under
 `/var/lib/atlaso-privileged/guest-tools` for this workflow. Existing installations may not have those closures,
