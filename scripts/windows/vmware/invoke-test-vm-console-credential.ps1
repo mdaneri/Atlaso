@@ -31,36 +31,48 @@ Independently retained deterministic site-packages inventory digest.
 Original number of files in that client inventory.
 .PARAMETER Child
 Internal bounded-child selector.
+.PARAMETER AdmissionOnly
+Verify original VM ownership and committed source without obtaining credentials or connecting to VNC.
+.PARAMETER VerifyConsoleOnly
+Verify original VM ownership, committed source and the existing loopback console provider without credentials.
 #>
-[CmdletBinding(SupportsShouldProcess = $true)]
+[CmdletBinding(SupportsShouldProcess = $true, DefaultParameterSetName = 'Credential')]
 param(
     [Parameter(Mandatory)][string]$VmxPath,
     [Parameter(Mandatory)][string]$OwnershipReceiptPath,
     [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{64}$')][string]$OwnershipReceiptSha256,
     [Parameter(Mandatory)][ValidateRange(1, 2147483647)][int]$PullRequestNumber,
     [ValidateSet('admin', 'root')][string]$Account = 'root',
-    [Parameter(Mandatory)][ValidateRange(1024, 65535)][int]$Port,
-    [Parameter(Mandatory)][string]$ScreenPath,
-    [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{64}$')][string]$ScreenSha256,
-    [Parameter(Mandatory)][ValidatePattern('^\d{1,4},\d{1,4},\d{1,4},\d{1,4}$')][string]$FieldRectangle,
-    [Parameter(Mandatory)][string]$PythonPath,
-    [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{64}$')][string]$RuntimeSha256,
-    [Parameter(Mandatory)][ValidateRange(1, 14000)][int]$RuntimeFileCount,
+    [Parameter(Mandatory, ParameterSetName = 'Credential')]
+    [Parameter(Mandatory, ParameterSetName = 'Console')][ValidateRange(1024, 65535)][int]$Port,
+    [Parameter(Mandatory, ParameterSetName = 'Credential')][string]$ScreenPath,
+    [Parameter(Mandatory, ParameterSetName = 'Credential')][ValidatePattern('^[0-9a-f]{64}$')][string]$ScreenSha256,
+    [Parameter(Mandatory, ParameterSetName = 'Credential')][ValidatePattern('^\d{1,4},\d{1,4},\d{1,4},\d{1,4}$')][string]$FieldRectangle,
+    [Parameter(Mandatory, ParameterSetName = 'Credential')][string]$PythonPath,
+    [Parameter(Mandatory, ParameterSetName = 'Credential')][ValidatePattern('^[0-9a-f]{64}$')][string]$RuntimeSha256,
+    [Parameter(Mandatory, ParameterSetName = 'Credential')][ValidateRange(1, 14000)][int]$RuntimeFileCount,
+    [Parameter(Mandatory, ParameterSetName = 'Admission')][switch]$AdmissionOnly,
+    [Parameter(Mandatory, ParameterSetName = 'Console')][switch]$VerifyConsoleOnly,
     [switch]$Child
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
-if (-not $PSCmdlet.ShouldProcess($VmxPath, 'Submit one concealed account value to the original VM console')) { return }
+$operation = if ($AdmissionOnly -or $VerifyConsoleOnly) { 'Verify original VM admission' } else { 'Submit one concealed account value to the original VM console' }
+if (-not $PSCmdlet.ShouldProcess($VmxPath, $operation)) { return }
 if (-not $Child) {
     $arguments = @('-NoProfile', '-NonInteractive', '-File', $PSCommandPath, '-Child',
         '-VmxPath', $VmxPath, '-OwnershipReceiptPath', $OwnershipReceiptPath,
-        '-OwnershipReceiptSha256', $OwnershipReceiptSha256, '-PullRequestNumber', [string]$PullRequestNumber,
-        '-Account', $Account, '-Port', [string]$Port, '-ScreenPath', $ScreenPath,
-        '-ScreenSha256', $ScreenSha256, '-FieldRectangle', $FieldRectangle,
-        '-PythonPath', $PythonPath, '-RuntimeSha256', $RuntimeSha256,
-        '-RuntimeFileCount', [string]$RuntimeFileCount)
+        '-OwnershipReceiptSha256', $OwnershipReceiptSha256, '-PullRequestNumber', [string]$PullRequestNumber)
+    if ($AdmissionOnly) { $arguments += '-AdmissionOnly' }
+    elseif ($VerifyConsoleOnly) { $arguments += @('-VerifyConsoleOnly', '-Port', [string]$Port) }
+    else {
+        $arguments += @('-Account', $Account, '-Port', [string]$Port, '-ScreenPath', $ScreenPath,
+            '-ScreenSha256', $ScreenSha256, '-FieldRectangle', $FieldRectangle,
+            '-PythonPath', $PythonPath, '-RuntimeSha256', $RuntimeSha256,
+            '-RuntimeFileCount', [string]$RuntimeFileCount)
+    }
     Invoke-AtlasoBoundedStreamingProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList $arguments `
         -TimeoutSeconds 420 -Action 'Receipt-bound normal VM console credential'
     return
@@ -86,6 +98,10 @@ $consumer = $null
 try {
     Assert-AtlasoTestVmCheckoutSource -Context $context
     $null = Assert-AtlasoTestVmOriginalOwnership -Context $context
+    if ($AdmissionOnly) {
+        Write-Host 'Original task VM and exact clean source admitted; no credentials accessed.'
+        return
+    }
     # Reuse only these declarations from the commit-verified installer consumer;
     # never dot-source its entry point or enter its different VM admission path.
     $parseErrors = $null
@@ -100,6 +116,10 @@ try {
         . ([scriptblock]::Create($functions[0].Extent.Text))
     }
     $peer = Get-InstallationVncPeer -VmxPath $VmxPath -Port $Port
+    if ($VerifyConsoleOnly) {
+        Write-Host 'Original task VM and loopback console provider admitted; no credentials accessed.'
+        return
+    }
     $ownedPrefix = $worktree.TrimEnd('\', '/') + '\'
     foreach ($path in @($PythonPath, $ScreenPath)) {
         if (-not [IO.Path]::IsPathFullyQualified($path) -or

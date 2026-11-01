@@ -402,8 +402,8 @@ Keep the optional `vncdotool==1.4.2` client in a task-owned isolated Python envi
 site-packages SHA-256 and file count independently before credential use. The VM's VNC listener must bind exclusively
 to `127.0.0.1`; the consumer proves that its provider process owns the exact receipt-bound VMX. Observe the empty
 concealed field, save only that public frame beneath the owning checkout, and retain its SHA-256. Supply the single
-input-row rectangle as `x,y,width,height`. The consumer compares the complete frame outside that rectangle before
-reading private input and again before typing; a changed dialog fails closed.
+input-row rectangle as half-open coordinates `x0,y0,x1,y1`. The consumer compares the complete frame outside that
+rectangle before reading private input and again before typing; a changed dialog fails closed.
 
 ```powershell
 .\scripts\windows\vmware\invoke-test-vm-console-credential.ps1 `
@@ -419,6 +419,9 @@ The supported bounded 1Password child retrieves the existing account value; no p
 or written to the frame. Both the runtime and frame must be Git-ignored resources in the VM's clean owning checkout.
 No Windows trust store or network configuration changes are performed. Keep the original receipt and source bindings
 for subsequent console operations and release the VM through its normal owning procedure.
+Use `-AdmissionOnly` with the VMX, PR and original receipt selectors for a read-only ownership/source preflight;
+`-VerifyConsoleOnly -Port $loopbackVncPort` also checks the existing console provider. These modes do not obtain
+credentials, send keys, create a listener, or change VM power/configuration.
 
 ## Same-interface gateway acceptance
 
