@@ -117,6 +117,8 @@ def test_settings_backup_router_owns_exact_transport_set():
             "factory_reset_backup_restore",
         ),
         ("/ui/management/settings", ("GET",), "settings_page"),
+        ("/ui/management/settings/hardware/status", ("GET",), "settings_hardware_status"),
+        ("/ui/management/settings/hardware/guest-tools/{operation}", ("POST",), "submit_settings_guest_tools"),
         ("/ui/management/settings", ("POST",), "update_settings_from_ui"),
         (
             "/ui/management/settings/authentication-lifetimes",
@@ -190,7 +192,7 @@ def test_settings_page_renders_autosave_validation_and_preview(client, monkeypat
         'data-autosave-status-id="appliance-settings-autosave-status"' in response.text
     )
     assert response.text.count('class="help-icon"') >= 2
-    assert 'textarea name="external_dns_servers"' in response.text
+    assert 'textarea form="appliance-settings-form" name="external_dns_servers"' in response.text
     assert 'input type="hidden" name="external_dns_servers"' not in response.text
     assert "Appliance Settings has pending appliance changes" in response.text
     assert "Validation" in response.text
@@ -214,7 +216,7 @@ def test_settings_page_renders_autosave_validation_and_preview(client, monkeypat
     )
     assert "Service DNS target names" in response.text
     assert response.text.count('class="settings-inline-field"') >= 2
-    assert 'select name="service_dns_target_naming"' in response.text
+    assert 'select form="appliance-settings-form" name="service_dns_target_naming"' in response.text
     assert '<option value="ip" selected>IP address</option>' in response.text
     assert "Operational Logging" in response.text
     assert "External NTP servers" not in response.text
@@ -415,7 +417,7 @@ def test_settings_page_shows_external_dns_editor_when_local_dns_is_disabled(clie
 
     assert response.status_code == 200
     assert "External DNS servers" in response.text
-    assert 'textarea name="external_dns_servers"' in response.text
+    assert 'textarea form="appliance-settings-form" name="external_dns_servers"' in response.text
     assert "Local DNS is disabled. External DNS servers are required" in response.text
 
 

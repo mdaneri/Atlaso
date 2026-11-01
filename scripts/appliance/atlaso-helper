@@ -128,6 +128,8 @@ COMMANDS: dict[str, set[str]] = {
         "status-finish",
         "status-inspect",
         "quiesce-action",
+        "guest-tools-status",
+        "guest-tools-clock-guard",
     },
     "automation": {"run"},
     "appliance-power": {"reboot", "shutdown"},
@@ -247,6 +249,8 @@ NO_PATH_ACTIONS = {
     ("appliance-update", "restart-complete"),
     ("appliance-update", "restart-inspect"),
     ("appliance-update", "quiesce-action"),
+    ("appliance-update", "guest-tools-status"),
+    ("appliance-update", "guest-tools-clock-guard"),
     ("appliance-update", "wheel-deploy-lock-v1"),
 }
 NON_PATH_ARGUMENT_ACTIONS = {
@@ -273,6 +277,8 @@ NON_PATH_ARGUMENT_ACTIONS = {
     ("appliance-update", "restart-complete"),
     ("appliance-update", "restart-inspect"),
     ("appliance-update", "quiesce-action"),
+    ("appliance-update", "guest-tools-status"),
+    ("appliance-update", "guest-tools-clock-guard"),
 }
 ATLASO_SERVICE_USER = "atlaso"
 ATLASO_STATE_DIR = Path("/var/lib/atlaso")
@@ -353,6 +359,21 @@ ATLASO_GUEST_AGENT_MARKER_PATH = Path("/var/lib/atlaso-privileged/guest-agent/gu
 ATLASO_GUEST_AGENT_SELECTOR_PATH = Path("/opt/atlaso/bin/atlaso-select-guest-agent")
 ATLASO_MACHINE_IDENTITY_INITIALIZER_PATH = Path("/opt/atlaso/bin/atlaso-initialize-machine-identity.py")
 ATLASO_GUEST_AGENT_SELECT_UNIT_PATH = Path("/etc/systemd/system/atlaso-guest-agent-select.service")
+ATLASO_GUEST_TOOLS_PAYLOAD_DIR = Path("/var/lib/atlaso-privileged/guest-tools")
+ATLASO_FIRST_BOOT_GUEST_TOOLS_DIR = Path("/var/lib/atlaso/first-boot-packages")
+ATLASO_GUEST_TOOLS_CLOCK_GUARD_UNIT_PATH = Path(
+    "/etc/systemd/system/atlaso-guest-tools-clock-guard.service"
+)
+ATLASO_GUEST_TOOLS_HYPERV_UDEV_RULE_PATH = Path(
+    "/etc/udev/rules.d/90-atlaso-hyperv-time-sync.rules"
+)
+ATLASO_GUEST_TOOLS_QEMU_DROPIN_PATH = Path(
+    "/etc/systemd/system/qemu-guest-agent.service.d/atlaso-clock-safety.conf"
+)
+ATLASO_GUEST_TOOLS_PACKAGE_LOCK_PATH = Path("/run/atlaso-package-transactions.lock")
+ATLASO_HYPERV_TIMESYNC_CLASS_ID = "9527e630-d0ae-497b-adce-e80ab0175caf"
+ATLASO_HYPERV_DEVICES_PATH = Path("/sys/bus/vmbus/devices")
+ATLASO_HYPERV_CAPABILITY_PATHS = (Path("/dev/vmbus/hv_kvp"), Path("/dev/vmbus/hv_vss"))
 ATLASO_DMI_SYS_VENDOR_PATH = Path("/sys/class/dmi/id/sys_vendor")
 ATLASO_DMI_PRODUCT_NAME_PATH = Path("/sys/class/dmi/id/product_name")
 SUPPORTED_RELEASE_PYTHON_ABIS = {"cp314"}
@@ -760,7 +781,7 @@ def _appliance_update_action_unit_name(job_id: str, stream: str) -> str:
     """
     if re.fullmatch(r"job_[0-9a-f]{12}", job_id) is None:
         raise ValueError("Appliance Update helper action task identity is invalid")
-    if stream not in {"photon_os", "powershell_modules", "atlaso_release"}:
+    if stream not in {"photon_os", "powershell_modules", "atlaso_release", "guest_tools"}:
         raise ValueError("Appliance Update helper action stream identity is invalid")
     identity = hashlib.sha256(f"{job_id}:{stream}".encode("utf-8")).hexdigest()[:32]
     return f"{SYSTEMD_RUN_ACTION_UNIT_PREFIX}-{identity}"
@@ -3775,6 +3796,8 @@ def _dhcp_pool_candidates(config: str, scope_id: int) -> tuple[dict, list[str]]:
     prefix = "# atlaso-dhcp-pool="
     matches = [json.loads(line[len(prefix):]) for line in config.splitlines() if line.startswith(prefix)]
     matches = [pool for pool in matches if pool.get("scope_id") == scope_id]
+    if not matches:
+        return None, "absent"
     if len(matches) != 1:
         raise ValueError("No unique applied pool identity; apply DNS/DHCP before verification.")
     pool = matches[0]
@@ -8694,6 +8717,14 @@ def _ntpd_guard(phase: str) -> int:
     if phase not in {"boot", "pre-vmtoolsd", "post-vmtoolsd", "pre-ntpd"}:
         print("ntpd guard requires boot, pre-vmtoolsd, post-vmtoolsd, or pre-ntpd", file=sys.stderr)
         return 2
+    if phase in {"boot", "pre-ntpd"} and ATLASO_GUEST_TOOLS_CLOCK_GUARD_UNIT_PATH.exists():
+        # A legitimate NTP Apply is prepared while its candidate starts. Inhibit
+        # the competing host capability first, then leave candidate ownership
+        # and recovery decisions to the existing NTP transaction guard below.
+        protection = _guest_tools_hyperv_inhibit()
+        if protection.get("success") is not True or not _guest_tools_hyperv_guard_files_valid():
+            print("Guest-tools clock protection needs recovery; refusing competing clock activation.", file=sys.stderr)
+            return 1
     try:
         _ntpd_recover_interrupted_apply(allow_active=True)
     except (OSError, RuntimeError, ValueError) as exc:
@@ -20931,10 +20962,22 @@ def _appliance_update_config_errors(
     if not isinstance(selected, list) or (require_streams and not selected):
         errors.append("selected_streams must include at least one update stream.")
     else:
-        allowed = {"photon_os", "powershell_modules", "atlaso_release"}
+        allowed = {"photon_os", "powershell_modules", "atlaso_release", "guest_tools"}
         for stream in selected:
             if stream not in allowed:
                 errors.append(f"unsupported update stream {stream}.")
+        if "guest_tools" in selected and len(selected) != 1:
+            errors.append("Guest Tools must be selected alone so its provider-specific maintenance remains bounded.")
+        if "guest_tools" in selected:
+            guest_tools = payload.get("guest_tools")
+            if not isinstance(guest_tools, dict):
+                errors.append("guest_tools must include the reviewed provider and status digest.")
+            else:
+                if guest_tools.get("provider") not in GUEST_TOOLS_PROVIDERS:
+                    errors.append("guest_tools.provider must be the detected supported provider.")
+                digest = str(guest_tools.get("review_digest") or "")
+                if digest and re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+                    errors.append("guest_tools.review_digest must be a lowercase SHA-256 digest when supplied.")
     sources = payload.get("sources")
     if not isinstance(sources, dict):
         errors.append("sources must be an object.")
@@ -21202,6 +21245,7 @@ def _command_payload(
     env: dict[str, str] | None = None,
     stdout_limit: int = 4000,
     update_diagnostic_stage: str | None = None,
+    timeout: float | None = None,
 ) -> dict:
     """Perform command payload.
 
@@ -21211,9 +21255,11 @@ def _command_payload(
         env: Environment variables supplied to the child process.
         stdout_limit: Maximum trailing standard-output characters to retain.
         update_diagnostic_stage: Fixed stage for the updater diagnostic projection.
+        timeout: Optional maximum time allowed for the child command.
     """
     started = time.monotonic()
-    result = _run(command, env=env) if env is not None else _run(command)
+    options = {"timeout": timeout} if timeout is not None else {}
+    result = _run(command, env=env, **options) if env is not None else _run(command, **options)
     success_codes = success_codes or {0}
     raw_stdout = result.stdout
     raw_stderr = result.stderr
@@ -22273,6 +22319,924 @@ def _update_version_key(value: str) -> tuple:
     )
 
 
+GUEST_TOOLS_PROVIDERS = {
+    "vmware": {
+        "package": "open-vm-tools",
+        "foreign_packages": ("hyper-v", "atlaso-qemu-guest-agent", "qemu-guest-agent"),
+        "services": ("vmtoolsd.service",),
+        "foreign_services": (
+            "qemu-guest-agent.service", "hv_kvp_daemon.service", "hv_vss_daemon.service",
+        ),
+    },
+    "hyperv": {
+        "package": "hyper-v",
+        "foreign_packages": ("open-vm-tools", "atlaso-qemu-guest-agent", "qemu-guest-agent"),
+        "services": ("hv_kvp_daemon.service", "hv_vss_daemon.service"),
+        "foreign_services": ("vmtoolsd.service", "qemu-guest-agent.service"),
+    },
+    "qemu": {
+        "package": "atlaso-qemu-guest-agent",
+        "foreign_packages": ("open-vm-tools", "hyper-v", "qemu-guest-agent"),
+        "services": ("qemu-guest-agent.service",),
+        "foreign_services": ("vmtoolsd.service", "hv_kvp_daemon.service", "hv_vss_daemon.service"),
+    },
+}
+GUEST_TOOLS_SERVICE_UNITS = tuple(
+    dict.fromkeys(
+        unit
+        for provider in GUEST_TOOLS_PROVIDERS.values()
+        for unit in (*provider["services"], *provider["foreign_services"])
+    )
+) + ("hv_fcopy_daemon.service",)
+GUEST_TOOLS_PROFILE_DIRS = {
+    frozenset({"hyperv", "qemu"}),
+    frozenset({"vmware", "hyperv", "qemu"}),
+}
+
+
+def _guest_tools_detect_provider() -> tuple[str, str]:
+    """Detect the actual virtual platform from systemd and DMI evidence."""
+    systemd = shutil.which("systemd-detect-virt")
+    if systemd is None:
+        return "unknown", "systemd virtualization detection is unavailable."
+    try:
+        result = _run([systemd, "--vm"], timeout=1.0)
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown", "Virtual platform detection failed. Retry the status check."
+    value = result.stdout.strip().casefold()
+    if result.returncode not in {0, 1}:
+        return "unknown", "Virtual platform detection failed. Retry the status check."
+    systemd_provider = {
+        "vmware": "vmware",
+        "kvm": "qemu",
+        "qemu": "qemu",
+        "microsoft": "hyperv",
+        "none": "baremetal",
+        "": "baremetal",
+    }.get(value)
+    if systemd_provider is None:
+        return "unknown", "The detected virtual platform is not supported."
+    dmi_values: list[str] = []
+    for path in (ATLASO_DMI_SYS_VENDOR_PATH, ATLASO_DMI_PRODUCT_NAME_PATH):
+        try:
+            dmi_values.append(path.read_text(encoding="utf-8").strip().casefold())
+        except FileNotFoundError:
+            dmi_values.append("")
+        except OSError:
+            return "unknown", "Virtual platform identity could not be read."
+    dmi_text = "\n".join(dmi_values)
+    dmi_provider = ""
+    if "vmware" in dmi_text:
+        dmi_provider = "vmware"
+    if "microsoft" in dmi_text and "virtual machine" in dmi_text:
+        if dmi_provider:
+            return "unknown", "System and firmware identify conflicting virtual platforms."
+        dmi_provider = "hyperv"
+    if "qemu" in dmi_text or "kvm" in dmi_text:
+        if dmi_provider:
+            return "unknown", "System and firmware identify conflicting virtual platforms."
+        dmi_provider = "qemu"
+    if dmi_provider and dmi_provider != systemd_provider:
+        return "unknown", "System and firmware identify conflicting virtual platforms."
+    return systemd_provider, ""
+
+
+def _guest_tools_service_state(unit: str) -> dict[str, object]:
+    """Read bounded load, active, and enablement state for a fixed service.
+
+    Args:
+        unit: Fixed provider service unit to observe.
+    """
+    systemctl = shutil.which("systemctl")
+    if systemctl is None:
+        return {"unit": unit, "load_state": "unknown", "active": None, "enabled": None,
+                "active_state": "unknown", "enabled_state": "unknown"}
+    values: dict[str, str] = {}
+    for property_name in ("LoadState", "ActiveState", "UnitFileState"):
+        try:
+            result = _run(
+                [systemctl, "show", f"--property={property_name}", "--value", unit],
+                timeout=0.5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return {"unit": unit, "load_state": "unknown", "active": None, "enabled": None,
+                    "active_state": "unknown", "enabled_state": "unknown"}
+        if result.returncode != 0:
+            return {"unit": unit, "load_state": "unknown", "active": None, "enabled": None,
+                    "active_state": "unknown", "enabled_state": "unknown"}
+        values[property_name] = result.stdout.strip().casefold()
+    load_state = values["LoadState"] or "unknown"
+    active_state = values["ActiveState"] or "unknown"
+    enabled_state = values["UnitFileState"] or "unknown"
+    if load_state == "not-found":
+        active: bool | None = False
+        enabled: bool | None = False
+    else:
+        active = True if active_state == "active" else False if active_state in {"inactive", "failed"} else None
+        enabled = True if enabled_state in {"enabled", "enabled-runtime", "static", "indirect"} else (
+            False if enabled_state in {"disabled", "masked", "masked-runtime"} else None
+        )
+    return {
+        "unit": unit,
+        "load_state": load_state,
+        "active": active,
+        "enabled": enabled,
+        "active_state": active_state,
+        "enabled_state": enabled_state,
+    }
+
+
+def _guest_tools_package_state(name: str) -> dict[str, object]:
+    """Read the exact installed RPM identity without interpreting probe errors as absence.
+
+    Args:
+        name: Allowlisted provider package name.
+    """
+    rpm = shutil.which("rpm")
+    if rpm is None:
+        return {"name": name, "installed": None, "version": "", "architecture": "unknown"}
+    try:
+        result = _run(
+            [rpm, "-q", "--qf", "%{NAME}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\t%{ARCH}\n", name],
+            timeout=2.0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {"name": name, "installed": None, "version": "", "architecture": "unknown"}
+    if result.returncode == 0:
+        fields = result.stdout.strip().split("\t")
+        if len(fields) == 3 and fields[0] == name and fields[1] and fields[2]:
+            return {"name": name, "installed": True, "version": fields[1], "architecture": fields[2]}
+        return {"name": name, "installed": None, "version": "", "architecture": "unknown"}
+    if result.returncode == 1 and not result.stderr.strip() and result.stdout.strip() == f"package {name} is not installed":
+        return {"name": name, "installed": False, "version": "", "architecture": "unknown"}
+    return {"name": name, "installed": None, "version": "", "architecture": "unknown"}
+
+
+def _guest_tools_hyperv_device() -> tuple[Path | None, str]:
+    """Find exactly one Hyper-V timesync class device bound to hv_utils."""
+    root = ATLASO_HYPERV_DEVICES_PATH
+    if not root.is_dir() or root.is_symlink():
+        return None, "The Hyper-V VMBus device inventory is unavailable."
+    matches: list[Path] = []
+    try:
+        children = sorted(root.iterdir())
+        for child in children:
+            # The kernel deliberately exposes bus inventory entries as links
+            # into /sys/devices. These are observations, never cleanup targets.
+            if not child.is_dir():
+                continue
+            class_path = child / "class_id"
+            if not class_path.is_file() or class_path.is_symlink():
+                continue
+            if class_path.read_text(encoding="ascii").strip().strip("{}").casefold() == ATLASO_HYPERV_TIMESYNC_CLASS_ID:
+                matches.append(child)
+    except (OSError, UnicodeError):
+        return None, "The Hyper-V VMBus capability probe failed."
+    if len(matches) != 1:
+        return None, "The Hyper-V Linux timesync class is absent or ambiguous."
+    device = matches[0]
+    if not (device / "driver_override").is_file():
+        return None, "The kernel does not expose the supported Hyper-V timesync driver controls."
+    return device, ""
+
+
+def _guest_tools_qemu_clock_capability() -> tuple[bool, str]:
+    """Check that qemu-ga supports denying host time-setting RPCs."""
+    binary = Path("/usr/bin/qemu-ga")
+    if not binary.is_file():
+        # Missing QEMU tools are admissible only when the offline closure has
+        # already passed its root-owned manifest and RPM-header checks.
+        if not any((root / "qemu").is_dir() and (root / "qemu").exists() for root in (
+            ATLASO_GUEST_TOOLS_PAYLOAD_DIR, ATLASO_FIRST_BOOT_GUEST_TOOLS_DIR,
+        )):
+            return False, "The packaged QEMU guest-agent executable and verified offline closure are unavailable."
+        return True, ""
+    if binary.is_symlink():
+        return False, "The packaged QEMU guest-agent executable is unsafe."
+    try:
+        help_result = _run([str(binary), "--help"], timeout=1.5)
+    except (OSError, subprocess.TimeoutExpired):
+        return False, "The QEMU guest-agent clock-safety capability check failed."
+    if help_result.returncode != 0 or "--block-rpcs" not in f"{help_result.stdout}\n{help_result.stderr}":
+        return False, "This QEMU guest-agent build cannot block host time-setting requests."
+    return True, ""
+
+
+def _guest_tools_platform_evidence(provider: str) -> tuple[bool | None, str]:
+    """Check provider-specific kernel or virtio channel evidence.
+
+    Args:
+        provider: Detected compatible provider.
+    """
+    if provider == "qemu":
+        channel = Path("/dev/virtio-ports/org.qemu.guest_agent.0")
+        if channel.is_char_device():
+            return True, ""
+        return False, "The QEMU guest-agent virtio channel is not present; configure the host agent channel first."
+    if provider == "hyperv":
+        if any(not path.is_char_device() for path in ATLASO_HYPERV_CAPABILITY_PATHS):
+            return False, "Required Linux Hyper-V KVP/VSS kernel channels are missing. Enable Data Exchange and backup integration on the host and verify hv_utils support. Legacy file-copy transport is not required."
+        _device, detail = _guest_tools_hyperv_device()
+        return (False, detail) if detail and detail != "absent" else (True, "")
+    if provider == "vmware":
+        return True, ""
+    return False, "Guest integration is not supported on bare-metal systems."
+
+
+def _guest_tools_runtime_compatibility() -> dict[str, object]:
+    """Read the supported appliance OS and architecture without using desired state."""
+    values = {}
+    for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key in {"ID", "VERSION_ID"}:
+            values[key] = value.strip().strip('"')
+    return {"schema": 1, "distribution": values.get("ID"), "release": values.get("VERSION_ID"),
+            "architecture": os.uname().machine if hasattr(os, "uname") else "unknown"}
+
+
+def _guest_tools_payload(provider: str) -> dict[str, object]:
+    """Validate the fixed offline guest-tools closure and return its digest and RPM identities.
+
+    Args:
+        provider: Detected provider whose package closure is needed.
+    """
+    candidates = (ATLASO_GUEST_TOOLS_PAYLOAD_DIR, ATLASO_FIRST_BOOT_GUEST_TOOLS_DIR)
+    rpm = shutil.which("rpm")
+    for root in candidates:
+        if not root.exists():
+            continue
+        try:
+            root_stat = root.lstat()
+            if (not stat.S_ISDIR(root_stat.st_mode) or root.is_symlink() or root_stat.st_uid != 0
+                    or root_stat.st_gid != 0 or stat.S_IMODE(root_stat.st_mode) != 0o700 or root.resolve(strict=True) != root):
+                continue
+            unsafe_parent = False
+            for ancestor in root.parents:
+                metadata = ancestor.lstat()
+                if ancestor.is_symlink() or metadata.st_uid != 0 or stat.S_IMODE(metadata.st_mode) & 0o022:
+                    unsafe_parent = True
+                    break
+            if unsafe_parent:
+                continue
+            compatibility = _guest_tools_runtime_compatibility()
+            if compatibility != {"schema": 1, "distribution": "photon", "release": "5.0", "architecture": "x86_64"}:
+                continue
+            profile_dirs = {entry.name for entry in root.iterdir() if entry.is_dir() and not entry.is_symlink()}
+            if frozenset(profile_dirs) not in GUEST_TOOLS_PROFILE_DIRS or provider not in profile_dirs:
+                continue
+            manifest = root / "SHA256SUMS"
+            manifest_stat = manifest.lstat()
+            if (not stat.S_ISREG(manifest_stat.st_mode) or manifest.is_symlink() or manifest_stat.st_uid != 0
+                    or manifest_stat.st_gid != 0 or manifest_stat.st_nlink != 1 or manifest_stat.st_size > 65536
+                    or stat.S_IMODE(manifest_stat.st_mode) != 0o600):
+                continue
+            compatibility_path = root / "compatibility.json"
+            allowed_files = {"SHA256SUMS"}
+            if "vmware" in profile_dirs:
+                metadata = compatibility_path.lstat()
+                if (not stat.S_ISREG(metadata.st_mode) or compatibility_path.is_symlink() or metadata.st_uid != 0
+                        or metadata.st_gid != 0 or metadata.st_nlink != 1 or metadata.st_size > 4096
+                        or stat.S_IMODE(metadata.st_mode) != 0o600
+                        or json.loads(compatibility_path.read_text(encoding="utf-8")) != compatibility):
+                    continue
+                allowed_files.add("compatibility.json")
+            files: list[Path] = []
+            safe = True
+            for profile in sorted(profile_dirs):
+                directory = root / profile
+                directory_stat = directory.lstat()
+                if not stat.S_ISDIR(directory_stat.st_mode) or directory.is_symlink() or directory_stat.st_uid != 0 or stat.S_IMODE(directory_stat.st_mode) != 0o700:
+                    safe = False
+                    break
+                for entry in sorted(directory.iterdir()):
+                    metadata = entry.lstat()
+                    if (not stat.S_ISREG(metadata.st_mode) or entry.is_symlink() or metadata.st_uid != 0
+                            or metadata.st_gid != 0 or metadata.st_nlink != 1 or metadata.st_size > 512 * 1024 * 1024
+                            or stat.S_IMODE(metadata.st_mode) != 0o600 or entry.suffix != ".rpm"):
+                        safe = False
+                        break
+                    files.append(entry)
+            direct_entries = {entry.name for entry in root.iterdir()}
+            if (not safe or not files or len(files) > 256 or sum(path.stat().st_size for path in files) > 2 * 1024**3
+                    or rpm is None or direct_entries != profile_dirs | allowed_files):
+                continue
+            raw_manifest = manifest.read_text(encoding="utf-8")
+            manifest_entries: dict[str, str] = {}
+            for line in raw_manifest.splitlines():
+                fields = line.split()
+                if len(fields) != 2 or re.fullmatch(r"[0-9a-fA-F]{64}", fields[0]) is None:
+                    safe = False
+                    break
+                relative = fields[1].removeprefix("*")
+                if Path(relative).is_absolute() or ".." in Path(relative).parts or relative in manifest_entries:
+                    safe = False
+                    break
+                manifest_entries[relative] = fields[0].casefold()
+            expected = {path.relative_to(root).as_posix() for path in files}
+            if not safe or set(manifest_entries) != expected:
+                continue
+            computed = {path.relative_to(root).as_posix(): _sha256_file(path) for path in files}
+            if computed != manifest_entries:
+                continue
+            identities: list[dict[str, str]] = []
+            for path in files:
+                if path.parent.name != provider:
+                    continue
+                query = _run([rpm, "-qp", "--qf", "%{NAME}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\t%{ARCH}\n", str(path)], timeout=3.0)
+                fields = query.stdout.strip().split("\t")
+                if query.returncode != 0 or len(fields) != 3 or not fields[0] or not fields[1] or fields[2] not in {"x86_64", "noarch"}:
+                    safe = False
+                    break
+                if fields[0] != "atlaso-qemu-guest-agent":
+                    integrity = _run([rpm, "--checksig", str(path)], timeout=5.0)
+                    if integrity.returncode != 0 or "signatures OK" not in integrity.stdout or not fields[1].endswith(".ph5"):
+                        safe = False
+                        break
+                identities.append({"name": fields[0], "version": fields[1], "architecture": fields[2], "path": str(path)})
+            expected_agent = str(GUEST_TOOLS_PROVIDERS[provider]["package"])
+            if not safe or not any(item["name"] == expected_agent for item in identities):
+                continue
+            closure_digest = hashlib.sha256(
+                json.dumps(
+                    {"manifest": manifest_entries, "provider": provider, "packages": identities, "compatibility": compatibility},
+                    sort_keys=True, separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            return {"available": True, "digest": closure_digest, "packages": identities, "path": str(root)}
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            continue
+    return {
+        "available": False,
+        "digest": "",
+        "packages": [],
+        "path": "",
+        "reason": "No compatible verified offline guest-tools payload is staged. Use a supported Atlaso image containing retained guest-tools payloads; software-only updates do not supply missing RPM closures. Existing installed tools can still be repaired.",
+    }
+
+
+def _guest_tools_clock_safety(provider: str) -> dict[str, object]:
+    """Build the time-authority plan from the verified applied NTP configuration.
+
+    Args:
+        provider: Detected provider whose host time capability must be controlled.
+    """
+    try:
+        transaction = _ntpd_read_transaction()
+        if transaction is not None and (transaction.get("phase") != "verified"
+                or not NTP_CONFIG_PATH.is_file()
+                or hashlib.sha256(NTP_CONFIG_PATH.read_bytes()).hexdigest() != transaction.get("config_sha256")):
+            raise ValueError("Clock Apply or recovery is still pending.")
+        mode = _ntpd_applied_time_mode(NTP_CONFIG_PATH)
+        if mode not in {"ntp_client", "ntp_server", "vmware_tools"}:
+            raise ValueError("The applied clock authority is not verified.")
+    except (OSError, RuntimeError, ValueError):
+        return {"status": "unknown", "authority": "unknown", "protected": False,
+                "reason": "Apply or recover the appliance time-source settings before changing guest tools."}
+    if provider == "vmware":
+        time_state = _ntpd_vmware_timesync_state()
+        periodic = time_state.get("periodic_enabled")
+        expected = mode == "vmware_tools"
+        protected = periodic is expected
+        if periodic is None:
+            state = "pending" if shutil.which("vmware-toolbox-cmd") else "pending"
+            reason = "The VMware Tools time-sync setting will be verified after the reviewed service operation."
+        else:
+            state = "verified" if protected else "pending"
+            reason = "" if protected else "The reviewed operation will restore the selected appliance clock authority."
+        return {"status": state, "authority": mode, "protected": protected, "reason": reason}
+    if mode == "vmware_tools":
+        return {"status": "blocked", "authority": mode, "protected": False,
+                "reason": "VMware Tools is the selected clock authority, but the detected provider is not VMware. Select an available appliance clock source through NTP settings first."}
+    if provider == "qemu":
+        supported, reason = _guest_tools_qemu_clock_capability()
+        if not supported:
+            return {"status": "blocked", "authority": mode, "protected": False, "reason": reason}
+        unit, reason = _guest_tools_qemu_unit_contract()
+        if unit is None:
+            return {"status": "blocked", "authority": mode, "protected": False, "reason": reason}
+        installed = False
+        if ATLASO_GUEST_TOOLS_QEMU_DROPIN_PATH.is_file() and not ATLASO_GUEST_TOOLS_QEMU_DROPIN_PATH.is_symlink():
+            systemctl = shutil.which("systemctl")
+            if systemctl is not None:
+                try:
+                    effective = _run([systemctl, "show", "--property=ExecStart", "--value", "qemu-guest-agent.service"], timeout=0.75)
+                    installed = effective.returncode == 0 and "--block-rpcs=guest-set-time" in effective.stdout
+                    main_pid = _run([systemctl, "show", "--property=MainPID", "--value", "qemu-guest-agent.service"], timeout=0.75)
+                    pid = main_pid.stdout.strip()
+                    installed = installed and main_pid.returncode == 0 and pid.isdecimal() and int(pid) > 0
+                    if installed:
+                        with Path(f"/proc/{pid}/cmdline").open("rb") as command_file:
+                            installed = b"--block-rpcs=guest-set-time" in command_file.read(8192).split(b"\0")
+                except (OSError, subprocess.TimeoutExpired):
+                    installed = False
+        return {"status": "verified" if installed else "pending", "authority": mode,
+                "protected": installed, "reason": "" if installed else "The reviewed operation will block QEMU guest time-setting RPCs persistently."}
+    if provider == "hyperv":
+        device, reason = _guest_tools_hyperv_device()
+        persisted = _guest_tools_hyperv_guard_files_valid()
+        if device is None and reason == "absent":
+            return {"status": "verified" if persisted else "pending", "authority": mode,
+                    "protected": persisted, "reason": "The host does not expose a time-sync channel; persistent guards prevent later binding."}
+        if device is None:
+            return {"status": "blocked", "authority": mode, "protected": False, "reason": reason}
+        try:
+            override = (device / "driver_override").read_text(encoding="ascii").strip()
+            driver = (device / "driver").resolve().name if (device / "driver").is_symlink() else ""
+        except OSError:
+            return {"status": "unknown", "authority": mode, "protected": False,
+                    "reason": "The Hyper-V time-sync driver state could not be read."}
+        protected = override == "none" and driver != "hv_utils" and persisted
+        return {"status": "verified" if protected else "pending", "authority": mode,
+                "protected": protected, "reason": "" if protected else "The reviewed operation will prevent the Hyper-V time-sync device from binding persistently."}
+    return {"status": "blocked", "authority": mode, "protected": False,
+            "reason": "The detected provider has no supported guest clock-safety plan."}
+
+
+def _guest_tools_newer_version(candidate: str, installed: str) -> bool | None:
+    """Compare RPM epoch/version/release using the package manager's own comparator.
+
+    Args:
+        candidate: Verified offline agent EVR.
+        installed: Installed agent EVR.
+    """
+    if candidate == installed:
+        return False
+    if any(re.fullmatch(r"[0-9]+:[A-Za-z0-9._+~^-]+", value) is None for value in (candidate, installed)):
+        return None
+    candidate_epoch, candidate_version = candidate.split(":", 1)
+    installed_epoch, installed_version = installed.split(":", 1)
+    if int(candidate_epoch) != int(installed_epoch):
+        return int(candidate_epoch) > int(installed_epoch)
+    rpm = shutil.which("rpm")
+    if rpm is None:
+        return None
+    try:
+        for left, right in zip(candidate_version.rsplit("-", 1), installed_version.rsplit("-", 1), strict=True):
+            # The accepted RPM alphabet contains neither Lua quotes nor macros.
+            comparison = _run([rpm, "--eval", f'%{{lua:print(rpm.vercmp("{left}","{right}"))}}'], timeout=2)
+            value = int(comparison.stdout.strip()) if comparison.returncode == 0 else None
+            if value is None:
+                return None
+            if value:
+                return value > 0
+        return False
+    except (ValueError, OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _guest_tools_status() -> dict[str, object]:
+    """Return bounded read-only guest-tools state, compatibility, and reviewed plan."""
+    provider, detection_error = _guest_tools_detect_provider()
+    if provider == "baremetal":
+        return {
+            "provider": "baremetal", "state": "unsupported", "version": "", "services": [], "packages": [],
+            "available": False, "reason": "Bare-metal systems may run without guest tools.",
+            "reboot_required": False, "reboot_impact": "No reboot required.", "review_digest": "",
+            "clock_safety": {"status": "not_applicable", "authority": "", "protected": True, "reason": ""},
+        }
+    if provider not in GUEST_TOOLS_PROVIDERS:
+        return {
+            "provider": "unknown", "state": "unknown", "version": "", "services": [], "packages": [],
+            "available": False, "reason": detection_error or "Virtual platform is unknown.",
+            "reboot_required": False, "reboot_impact": "Unknown until platform detection succeeds.",
+            "review_digest": "", "clock_safety": {"status": "unknown", "authority": "unknown", "protected": False, "reason": detection_error},
+        }
+    platform_supported, platform_reason = _guest_tools_platform_evidence(provider)
+    config = GUEST_TOOLS_PROVIDERS[provider]
+    package_names = (str(config["package"]), *[str(name) for name in config["foreign_packages"]])
+    packages = [_guest_tools_package_state(name) for name in package_names]
+    service_units = tuple(dict.fromkeys((*config["services"], *config["foreign_services"], "hv_fcopy_daemon.service")))
+    services = [_guest_tools_service_state(str(unit)) for unit in service_units]
+    package_unknown = any(item["installed"] is None for item in packages)
+    service_unknown = any(item["load_state"] == "unknown" or item["active"] is None or item["enabled"] is None for item in services)
+    foreign_packages = [item["name"] for item in packages[1:] if item["installed"] is True]
+    foreign_services = [item["unit"] for item in services if item["unit"] in config["foreign_services"]
+                        and (item["active"] is True or item["enabled"] is True)]
+    fcopy = next((item for item in services if item["unit"] == "hv_fcopy_daemon.service"), None)
+    clock = _guest_tools_clock_safety(provider)
+    payload = _guest_tools_payload(provider)
+    installed = packages[0]["installed"] is True
+    target = next((item for item in payload.get("packages", []) if item.get("name") == config["package"]), {})
+    newer = _guest_tools_newer_version(str(target["version"]), str(packages[0]["version"])) if installed and target else False
+    package_change = not installed or newer is True
+    expected_services = [item for item in services if item["unit"] in config["services"]]
+    services_healthy = all(item["active"] is True and item["enabled"] is True for item in expected_services)
+    if provider == "hyperv":
+        services_healthy = services_healthy and fcopy is not None and fcopy["active"] is False and fcopy["enabled"] is False
+    conflicts = bool(foreign_packages or foreign_services)
+    if package_unknown or service_unknown or platform_supported is None or newer is None:
+        state, reason = "unknown", "One or more required state checks failed. Retry the status check."
+    elif platform_supported is False:
+        state, reason = "unsupported", platform_reason
+    elif conflicts:
+        state, reason = "unsupported", "A conflicting guest-tools package or service is present. Remove or disable it through its supported owner before continuing."
+    elif clock["status"] in {"unknown", "blocked"}:
+        state, reason = "unknown", str(clock["reason"])
+    elif installed and services_healthy and clock["status"] == "verified":
+        state, reason = "healthy", ("Installed guest integration is healthy; a newer verified package is available."
+                                    if package_change else "The detected guest integration and required services are healthy.")
+    elif installed:
+        state, reason = "stopped", "The supported guest tools are installed but their required services or clock guard need attention."
+    else:
+        state, reason = "missing", str(payload.get("reason") or "The supported guest tools package is not installed.")
+    available = bool(
+        state in {"missing", "stopped", "healthy"}
+        and not conflicts
+        and clock["status"] in {"pending", "verified"}
+        and (installed or payload["available"] is True)
+    )
+    plan = {
+        "provider": provider,
+        "platform_supported": platform_supported,
+        "installed": installed,
+        "package_version": packages[0]["version"],
+        "target_version": target.get("version", packages[0]["version"]),
+        "package_change": package_change,
+        "payload_digest": payload["digest"],
+        "clock_authority": clock["authority"],
+        "clock_guard": clock["status"],
+        "foreign_packages": foreign_packages,
+        "foreign_services": foreign_services,
+        "services": [{key: item[key] for key in ("unit", "active", "enabled", "load_state")} for item in services],
+        "actions": [] if state == "healthy" and not package_change else ["verify-clock-safety", "install-or-repair-agent", "enable-required-services"],
+    }
+    review_digest = hashlib.sha256(json.dumps(plan, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    return {
+        "provider": provider,
+        "state": state,
+        "version": str(packages[0]["version"] or ""),
+        "services": services,
+        "packages": packages,
+        "available": available,
+        "reason": reason,
+        "reboot_required": False,
+        "reboot_impact": "No reboot is expected; the task verifies service state after maintenance.",
+        "review_digest": review_digest,
+        "clock_safety": clock,
+        "plan": plan,
+        "payload": payload,
+        "target_packages": payload.get("packages", []),
+    }
+
+
+def _guest_tools_check(payload: dict) -> dict[str, object]:
+    """Return a read-only reviewed guest-tools plan for Appliance Update.
+
+    Args:
+        payload: Durable task manifest containing the expected provider and review.
+    """
+    state = _guest_tools_status()
+    requested = payload.get("guest_tools") if isinstance(payload.get("guest_tools"), dict) else {}
+    provider = str(requested.get("provider") or "")
+    digest = str(requested.get("review_digest") or "")
+    if provider != state.get("provider") or state.get("provider") not in GUEST_TOOLS_PROVIDERS:
+        state.update({"available": False, "state": "unknown", "reason": "The selected guest-tools provider no longer matches detected platform evidence."})
+    elif digest and digest != state.get("review_digest"):
+        state.update({"available": False, "state": "unknown", "reason": "Guest-tools status changed after review. Check again before installation."})
+    commands: list[dict[str, object]] = []
+    if state.get("available") is True and state.get("plan", {}).get("package_change"):
+        payload_info = state.get("payload") if isinstance(state.get("payload"), dict) else {}
+        rpm = shutil.which("rpm")
+        package_files = [str(item.get("path") or "") for item in payload_info.get("packages", []) if isinstance(item, dict)]
+        if not rpm or not package_files:
+            state.update({"available": False, "state": "unknown", "reason": "The verified RPM transaction could not be prepared."})
+        else:
+            try:
+                transaction = _command_payload([rpm, "-Uvh", "--replacepkgs", "--test", *package_files], timeout=30.0)
+            except (OSError, subprocess.TimeoutExpired):
+                transaction = {"success": False, "returncode": 1, "stdout": "", "stderr": "Offline RPM compatibility check failed."}
+            commands.append({key: transaction.get(key) for key in ("success", "returncode", "stdout", "stderr")})
+            if transaction.get("success") is not True:
+                state.update({"available": False, "state": "unsupported", "reason": "The staged RPM closure is incompatible with the installed system or has unsatisfied dependencies. Use the supported Atlaso payload preparation workflow."})
+    result = {key: value for key, value in state.items() if key not in {"plan", "payload"}}
+    no_change = result["state"] == "healthy" and not state.get("plan", {}).get("package_change")
+    return {"state": "up_to_date" if no_change else "available" if result["available"] else "failed", "change_count": 0 if no_change else 1,
+            "changes": [{"name": str(state.get("provider") or "guest_tools"), "action": "maintenance",
+                         "summary": str(result["reason"])}], "details_incomplete": False,
+            "summary": str(result["reason"]), "remediation": str(result["reason"]), "guest_tools": result,
+            "commands": commands}
+
+
+def _guest_tools_qemu_unit_contract() -> tuple[Path | None, str]:
+    """Admit only the exact packaged QEMU guest-agent service command."""
+    systemctl = shutil.which("systemctl")
+    if systemctl is None:
+        return None, "systemctl is unavailable; QEMU guest-agent service ownership cannot be verified."
+    try:
+        fragment = _run([systemctl, "show", "--property=FragmentPath", "--value", "qemu-guest-agent.service"], timeout=0.75)
+        dropins = _run([systemctl, "show", "--property=DropInPaths", "--value", "qemu-guest-agent.service"], timeout=0.75)
+    except (OSError, subprocess.TimeoutExpired):
+        return None, "The QEMU guest-agent service contract could not be read."
+    path_value = fragment.stdout.strip()
+    if (not path_value and dropins.returncode == 0
+            and not set(dropins.stdout.split()) - {str(ATLASO_GUEST_TOOLS_QEMU_DROPIN_PATH)}
+            and _guest_tools_payload("qemu").get("available") is True):
+        return Path("/usr/lib/systemd/system/qemu-guest-agent.service"), ""
+    if fragment.returncode != 0 or not path_value:
+        return None, "The packaged QEMU guest-agent service is unavailable."
+    path = Path(path_value)
+    try:
+        metadata = path.lstat()
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        return None, "The packaged QEMU guest-agent service could not be verified."
+    expected = "ExecStart=/usr/bin/qemu-ga --method=virtio-serial --path=/dev/virtio-ports/org.qemu.guest_agent.0"
+    commands = [line.strip() for line in content.splitlines() if line.strip().startswith("ExecStart=")]
+    if (
+        not stat.S_ISREG(metadata.st_mode) or path.is_symlink() or metadata.st_uid != 0
+        or len(commands) != 1 or commands[0] != expected
+        or dropins.returncode != 0
+        or set(dropins.stdout.split()) - {str(ATLASO_GUEST_TOOLS_QEMU_DROPIN_PATH)}
+    ):
+        return None, "The QEMU guest-agent unit is customized or does not match the supported Atlaso package."
+    return path, ""
+
+
+def _guest_tools_qemu_guard_text() -> str:
+    """Return the persistent QEMU clock-safety override for the admitted package unit."""
+    return "\n".join([
+        "# Managed by Atlaso guest-tools maintenance.",
+        "[Service]",
+        "ExecStart=",
+        "ExecStart=/usr/bin/qemu-ga --method=virtio-serial --path=/dev/virtio-ports/org.qemu.guest_agent.0 --block-rpcs=guest-set-time",
+        "ExecStartPre=/opt/atlaso/bin/atlaso-helper appliance-update guest-tools-clock-guard --real",
+        "",
+    ])
+
+
+def _guest_tools_hyperv_guard_text() -> str:
+    """Return the persistent Hyper-V clock guard service for the admitted device class."""
+    return "\n".join([
+        "[Unit]",
+        "Description=Prevent Hyper-V guest time synchronization from changing the Atlaso clock",
+        "After=systemd-udevd.service",
+        "Before=ntpd.service hv_kvp_daemon.service hv_vss_daemon.service",
+        "[Service]",
+        "Type=oneshot",
+        "ExecStart=/opt/atlaso/bin/atlaso-helper appliance-update guest-tools-clock-guard --real",
+        "RemainAfterExit=yes",
+        "[Install]",
+        "WantedBy=multi-user.target",
+        "",
+    ])
+
+
+def _guest_tools_hyperv_udev_text() -> str:
+    """Return a udev rule that prevents the Hyper-V timesync class from binding."""
+    return (
+        "# Managed by Atlaso guest-tools maintenance.\n"
+        f'ACTION=="add|bind", SUBSYSTEM=="vmbus", ATTR{{class_id}}=="{{{ATLASO_HYPERV_TIMESYNC_CLASS_ID}}}", '
+        'ATTR{driver_override}="none", RUN+="/opt/atlaso/bin/atlaso-helper appliance-update guest-tools-clock-guard --real"\n'
+    )
+
+
+def _guest_tools_hyperv_guard_files_valid() -> bool:
+    """Verify the durable guard configuration and boot intent without changing them."""
+    try:
+        return (
+            _read_appliance_update_runtime_file(ATLASO_GUEST_TOOLS_CLOCK_GUARD_UNIT_PATH) == _guest_tools_hyperv_guard_text()
+            and _read_appliance_update_runtime_file(ATLASO_GUEST_TOOLS_HYPERV_UDEV_RULE_PATH) == _guest_tools_hyperv_udev_text()
+            and _guest_tools_service_state(ATLASO_GUEST_TOOLS_CLOCK_GUARD_UNIT_PATH.name).get("enabled") is True
+        )
+    except (OSError, ValueError):
+        return False
+
+
+def _guest_tools_hyperv_inhibit() -> dict[str, object]:
+    """Disable only the Hyper-V timesync VMBus class through supported sysfs controls."""
+    device, reason = _guest_tools_hyperv_device()
+    if device is None and reason == "absent":
+        return {"success": True, "reason": "The host does not expose a Hyper-V time-sync channel."}
+    if device is None:
+        return {"success": False, "reason": reason}
+    try:
+        driver_path = device / "driver"
+        driver = driver_path.resolve().name if driver_path.is_symlink() else ""
+        override_path = device / "driver_override"
+        if not override_path.is_file() or override_path.is_symlink():
+            return {"success": False, "reason": "The Hyper-V timesync device has no safe driver override control."}
+        override_path.write_text("none\n", encoding="ascii")
+        if driver == "hv_utils":
+            unbind_path = Path("/sys/bus/vmbus/drivers/hv_utils/unbind")
+            if not unbind_path.is_file() or unbind_path.is_symlink():
+                return {"success": False, "reason": "The Hyper-V timesync driver cannot be safely unbound."}
+            unbind_path.write_text(device.name, encoding="ascii")
+        current_driver = device / "driver"
+        if current_driver.is_symlink() and current_driver.resolve().name == "hv_utils":
+            return {"success": False, "reason": "Hyper-V timesync remains bound after inhibition."}
+        if override_path.read_text(encoding="ascii").strip() != "none":
+            return {"success": False, "reason": "Hyper-V timesync driver inhibition could not be verified."}
+    except OSError:
+        return {"success": False, "reason": "Hyper-V timesync driver inhibition failed."}
+    return {"success": True, "reason": "Hyper-V timesync class is inhibited; KVP and VSS remain available."}
+
+
+def _guest_tools_clock_guard(*, install: bool = False) -> dict[str, object]:
+    """Verify and, only for an explicit maintenance action, install clock protection.
+
+    Args:
+        install: Install persistent guards only within explicitly reviewed maintenance.
+    """
+    provider, detection_error = _guest_tools_detect_provider()
+    if provider not in GUEST_TOOLS_PROVIDERS:
+        return {"success": False, "provider": provider, "reason": detection_error or "Guest clock protection is unsupported on this platform."}
+    if provider == "hyperv":
+        inhibited = _guest_tools_hyperv_inhibit()
+        if inhibited.get("success") is not True:
+            return {"success": False, "provider": provider, "reason": str(inhibited.get("reason") or "Hyper-V time inhibition failed.")}
+    status = _guest_tools_clock_safety(provider)
+    if status["status"] in {"blocked", "unknown"}:
+        return {"success": False, "provider": provider, "reason": str(status["reason"])}
+    if provider == "vmware":
+        try:
+            _ntpd_install_guards()
+            mode = str(status["authority"])
+            if install and shutil.which("vmware-toolbox-cmd") is None:
+                return {"success": True, "provider": provider, "authority": mode,
+                        "protected": False, "reason": "VMware startup guards installed before package installation; final verification is required."}
+            _ntpd_set_vmware_timesync(mode == "vmware_tools", require_active=False)
+            observed = _ntpd_vmware_timesync_state()
+            expected = mode == "vmware_tools"
+            success = observed.get("periodic_enabled") is expected
+            return {"success": success, "provider": provider, "authority": mode,
+                    "protected": success, "reason": "" if success else "VMware Tools time-sync state does not match the selected appliance clock authority."}
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired):
+            return {"success": False, "provider": provider, "authority": status["authority"],
+                    "protected": False, "reason": "VMware Tools clock protection could not be verified."}
+    if provider == "qemu":
+        unit_path, reason = _guest_tools_qemu_unit_contract()
+        if unit_path is None:
+            return {"success": False, "provider": provider, "reason": reason}
+        if install:
+            _ntpd_install_guards()
+            _write_appliance_update_runtime_file(ATLASO_GUEST_TOOLS_QEMU_DROPIN_PATH, _guest_tools_qemu_guard_text())
+            systemctl = shutil.which("systemctl")
+            if systemctl is None:
+                return {"success": False, "provider": provider, "reason": "systemctl is unavailable."}
+            reload_result = _run([systemctl, "daemon-reload"], timeout=5.0)
+            if reload_result.returncode != 0:
+                return {"success": False, "provider": provider, "reason": "The QEMU guest-agent clock guard could not be loaded."}
+        expected = _guest_tools_qemu_guard_text()
+        try:
+            guard_metadata = ATLASO_GUEST_TOOLS_QEMU_DROPIN_PATH.lstat()
+            guard_content = ATLASO_GUEST_TOOLS_QEMU_DROPIN_PATH.read_text(encoding="utf-8")
+        except OSError:
+            return {"success": False, "provider": provider,
+                    "reason": "The persistent QEMU guest-set-time RPC block is not installed."}
+        protected = (stat.S_ISREG(guard_metadata.st_mode) and guard_metadata.st_uid == 0
+                     and ATLASO_GUEST_TOOLS_QEMU_DROPIN_PATH.is_file()
+                     and not ATLASO_GUEST_TOOLS_QEMU_DROPIN_PATH.is_symlink()
+                     and guard_content == expected)
+        return {"success": protected, "provider": provider, "authority": status["authority"],
+                "protected": protected,
+                "reason": "" if protected else "The persistent QEMU guest-set-time RPC block could not be verified."}
+    if provider == "hyperv":
+        if install:
+            _ntpd_install_guards()
+            _write_appliance_update_runtime_file(ATLASO_GUEST_TOOLS_CLOCK_GUARD_UNIT_PATH, _guest_tools_hyperv_guard_text())
+            _write_appliance_update_runtime_file(ATLASO_GUEST_TOOLS_HYPERV_UDEV_RULE_PATH, _guest_tools_hyperv_udev_text())
+            inhibit = _guest_tools_hyperv_inhibit()
+            if inhibit.get("success") is not True:
+                return {"success": False, "provider": provider, "authority": status["authority"],
+                        "protected": False, "reason": str(inhibit["reason"])}
+            systemctl = shutil.which("systemctl")
+            udevadm = shutil.which("udevadm")
+            if systemctl is None or udevadm is None:
+                return {"success": False, "provider": provider, "reason": "systemd or udev cannot load persistent Hyper-V clock protection."}
+            reload_commands = (
+                _run([systemctl, "daemon-reload"], timeout=5.0),
+                _run([udevadm, "control", "--reload"], timeout=5.0),
+                _run([systemctl, "enable", "--now", ATLASO_GUEST_TOOLS_CLOCK_GUARD_UNIT_PATH.name], timeout=10.0),
+            )
+            if any(command.returncode != 0 for command in reload_commands):
+                return {"success": False, "provider": provider, "reason": "Hyper-V persistent clock protection could not be activated."}
+        expected_unit = _guest_tools_hyperv_guard_text()
+        expected_rule = _guest_tools_hyperv_udev_text()
+        try:
+            unit = ATLASO_GUEST_TOOLS_CLOCK_GUARD_UNIT_PATH
+            rule = ATLASO_GUEST_TOOLS_HYPERV_UDEV_RULE_PATH
+            protected_files = all(
+                path.is_file() and not path.is_symlink() and path.stat().st_uid == 0
+                for path in (unit, rule)
+            ) and unit.read_text(encoding="utf-8") == expected_unit and rule.read_text(encoding="utf-8") == expected_rule
+        except OSError:
+            protected_files = False
+        inhibit = _guest_tools_hyperv_inhibit()
+        protected = protected_files and inhibit.get("success") is True
+        return {"success": protected, "provider": provider, "authority": status["authority"],
+                "protected": protected, "reason": "" if protected else str(inhibit.get("reason") or "Persistent Hyper-V clock protection could not be verified.")}
+    return {"success": False, "provider": provider, "reason": "Guest clock protection is unsupported."}
+
+
+def _guest_tools_apply(payload: dict) -> dict[str, object]:
+    """Apply one bounded, digest-bound guest-tools maintenance transaction.
+
+    Args:
+        payload: Exact manifest and provider plan reviewed by the administrator.
+    """
+    state = _guest_tools_status()
+    request = payload.get("guest_tools") if isinstance(payload.get("guest_tools"), dict) else {}
+    provider = str(request.get("provider") or "")
+    if provider != state.get("provider") or provider not in GUEST_TOOLS_PROVIDERS:
+        return {"status": "failed", "selected_streams": ["guest_tools"], "error": "Detected guest-tools provider changed after review.",
+                "attempted": {"guest_tools": {"provider": provider, "state": "failed"}}}
+    if not request.get("review_digest") or request.get("review_digest") != state.get("review_digest"):
+        return {"status": "failed", "selected_streams": ["guest_tools"], "error": "Guest-tools status or compatibility changed after review. Check again before installation.",
+                "attempted": {"guest_tools": {"provider": provider, "state": "failed"}}}
+    if state.get("available") is not True:
+        return {"status": "failed", "selected_streams": ["guest_tools"], "error": str(state.get("reason") or "Guest-tools maintenance is unavailable."),
+                "attempted": {"guest_tools": {"provider": provider, "state": "failed", "reason": state.get("reason")}}}
+    if state.get("state") == "healthy" and not state.get("plan", {}).get("package_change"):
+        return {"status": "succeeded", "selected_streams": ["guest_tools"], "commands": [],
+                "applied": {"guest_tools": {"provider": provider, "version": state["version"], "no_change": True}},
+                "guest_tools": state, "reboot_recommended": False, "restart_required": False}
+    checked = _guest_tools_check(payload)
+    if checked.get("state") not in {"available", "up_to_date"}:
+        return {"status": "failed", "selected_streams": ["guest_tools"],
+                "error": str(checked.get("remediation") or "Guest-tools compatibility could not be verified before mutation."),
+                "commands": checked.get("commands", []), "guest_tools": checked.get("guest_tools", {})}
+    if provider == "qemu" and any(item.get("unit") == "qemu-guest-agent.service" and item.get("active") is True
+                                  for item in state.get("services", [])):
+        stopped = _command_payload(["systemctl", "stop", "qemu-guest-agent.service"], timeout=15.0)
+        if not stopped.get("success"):
+            return {"status": "failed", "commands": [stopped], "error": "QEMU agent could not be stopped before clock protection."}
+    clock = _guest_tools_clock_guard(install=True)
+    if clock.get("success") is not True:
+        return {"status": "failed", "selected_streams": ["guest_tools"], "error": str(clock.get("reason") or "Guest clock protection failed."),
+                "attempted": {"guest_tools": {"provider": provider, "state": "failed", "clock_safety": clock}}}
+    payload_info = state.get("payload") if isinstance(state.get("payload"), dict) else {}
+    commands: list[dict[str, object]] = []
+    if state.get("plan", {}).get("package_change"):
+        rpm = shutil.which("rpm")
+        files = [str(item.get("path") or "") for item in payload_info.get("packages", []) if isinstance(item, dict)]
+        if rpm is None or not files or not payload_info.get("digest"):
+            return {"status": "failed", "selected_streams": ["guest_tools"],
+                    "error": str(payload_info.get("reason") or "No compatible verified offline guest-tools payload is staged."),
+                    "attempted": {"guest_tools": {"provider": provider, "state": "failed"}}, "commands": commands}
+        current_payload = _guest_tools_payload(provider)
+        if current_payload.get("digest") != payload_info.get("digest"):
+            return {"status": "failed", "selected_streams": ["guest_tools"], "error": "Verified guest-tools payload changed after review.",
+                    "attempted": {"guest_tools": {"provider": provider, "state": "failed"}}, "commands": commands}
+        transaction = _command_payload([rpm, "-Uvh", "--replacepkgs", "--test", *files], timeout=30.0)
+        commands.append(transaction)
+        if transaction.get("success") is not True:
+            return {"status": "failed", "selected_streams": ["guest_tools"],
+                    "error": "The offline RPM transaction is incompatible or has unsatisfied dependencies; no packages were installed.",
+                    "attempted": {"guest_tools": {"provider": provider, "state": "failed"}}, "commands": commands}
+        install_result = _command_payload([rpm, "-Uvh", "--replacepkgs", *files], timeout=120.0)
+        commands.append(install_result)
+        if install_result.get("success") is not True:
+            return {"status": "failed", "selected_streams": ["guest_tools"],
+                    "error": "Guest-tools package installation stopped partway. Review the sanitized task output, correct the package state, and retry.",
+                    "attempted": {"guest_tools": {"provider": provider, "state": "partial_failure"}}, "commands": commands,
+                    "reboot_recommended": False}
+    systemctl = shutil.which("systemctl")
+    if systemctl is None:
+        return {"status": "failed", "selected_streams": ["guest_tools"], "error": "systemctl is unavailable after package maintenance.",
+                "attempted": {"guest_tools": {"provider": provider, "state": "partial_failure"}}, "commands": commands}
+    commands.append(_command_payload([systemctl, "daemon-reload"], timeout=10.0))
+    if provider == "vmware":
+        service_actions = [[systemctl, "enable", "--now", "vmtoolsd.service"]]
+    elif provider == "qemu":
+        service_actions = [[systemctl, "enable", "--now", "qemu-guest-agent.service"]]
+    else:
+        service_actions = [
+            [systemctl, "disable", "--now", "hv_fcopy_daemon.service"],
+            [systemctl, "enable", "hv_kvp_daemon.service"],
+            [systemctl, "enable", "--now", "hv_vss_daemon.service"],
+            [systemctl, "enable", "--now", ATLASO_GUEST_TOOLS_CLOCK_GUARD_UNIT_PATH.name],
+            [systemctl, "start", "hv_kvp_daemon.service"],
+        ]
+    for command in service_actions:
+        result = _command_payload(command, timeout=15.0)
+        commands.append(result)
+        if result.get("success") is not True:
+            return {"status": "failed", "selected_streams": ["guest_tools"],
+                    "error": "Guest-tools service maintenance stopped partway. Review the task and service state, then retry.",
+                    "attempted": {"guest_tools": {"provider": provider, "state": "partial_failure", "clock_safety": clock}},
+                    "commands": commands, "reboot_recommended": False}
+    verified = _guest_tools_status()
+    success = verified.get("state") == "healthy" and verified.get("provider") == provider
+    result = {
+        "status": "succeeded" if success else "failed",
+        "selected_streams": ["guest_tools"],
+        "attempted": {"guest_tools": {"provider": provider, "state": "healthy" if success else str(verified.get("state") or "unknown"),
+                                        "version": verified.get("version"), "services": verified.get("services"),
+                                        "clock_safety": verified.get("clock_safety"),
+                                        "reboot_required": False}},
+        "applied": {"guest_tools": {"provider": provider, "version": verified.get("version")}} if success else {},
+        "commands": commands,
+        "reboot_recommended": False,
+        "restart_required": False,
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "guest_tools": verified,
+    }
+    if not success:
+        result["error"] = "Guest-tools commands completed, but package, service, provider, or clock-safety verification did not pass. Review the task and retry."
+    _write_update_info(result)
+    return result
+
+
 def _check_appliance_update(payload: dict, credentials: dict[str, dict[str, str]] | None = None) -> dict:
     """Check appliance update.
 
@@ -22509,7 +23473,11 @@ def _check_appliance_update(payload: dict, credentials: dict[str, dict[str, str]
                     "stderr": str(exc)[:4000],
                 }
             )
-    return {"checks": checks, "commands": commands}
+    if "guest_tools" in selected:
+        guest_check = _guest_tools_check(payload)
+        checks["guest_tools"] = guest_check
+        commands.extend(guest_check.get("commands", []))
+    return {"checks": checks, "commands": commands, "guest_tools": checks.get("guest_tools", {}).get("guest_tools", {})}
 
 
 def _apply_powershell_modules(payload: dict, credentials: dict[str, dict[str, str]] | None = None) -> list[dict]:
@@ -24692,13 +25660,14 @@ def _appliance_update_status_task(
     transaction_id = str(config.get("status_transaction_id") or "")
     if re.fullmatch(r"[0-9a-f]{32}", transaction_id) is None:
         raise ValueError("appliance update task has no durable status transaction identity")
-    allowed_streams = {"photon_os", "powershell_modules", "atlaso_release"}
+    allowed_streams = {"photon_os", "powershell_modules", "atlaso_release", "guest_tools"}
     selected = config.get("selected_streams")
     execution_order = config.get("execution_order")
     if (
         not isinstance(selected, list)
         or not isinstance(execution_order, list)
         or not 1 <= len(selected) <= 3
+        or ("guest_tools" in selected and selected != ["guest_tools"])
         or len(set(str(value) for value in selected)) != len(selected)
         or set(str(value) for value in selected) != set(str(value) for value in execution_order)
         or any(str(value) not in allowed_streams for value in selected)
@@ -24707,7 +25676,7 @@ def _appliance_update_status_task(
     expected_order = [str(value) for value in execution_order]
     current_order = [
         stream
-        for stream in ("photon_os", "powershell_modules", "atlaso_release")
+        for stream in ("photon_os", "powershell_modules", "atlaso_release", "guest_tools")
         if stream in set(expected_order)
     ]
     legacy_order = [
@@ -27289,6 +28258,8 @@ def _apply_appliance_update(
     """
     credentials = credentials or {}
     selected = set(payload.get("selected_streams") or [])
+    if selected == {"guest_tools"}:
+        return _guest_tools_apply(payload)
     commands: list[dict] = []
     attempted: dict[str, object] = {}
     reboot_recommended = False
@@ -35871,6 +36842,38 @@ class _DeploymentAdmissionBusy(Exception):
     """No update mutation was admitted because wheel deployment owns the lock."""
 
 
+@contextmanager
+def _appliance_update_package_guard():
+    """Serialize package checks and transactions across all maintenance streams."""
+    if os.name != "posix" or fcntl is None:
+        yield
+        return
+    flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(ATLASO_GUEST_TOOLS_PACKAGE_LOCK_PATH, flags, 0o600)
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_gid != 0
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+        ):
+            raise ValueError("package transaction lock identity is unsafe")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise _DeploymentAdmissionBusy from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
+
+
 def _handle_appliance_update(action: str, args: list[str]) -> int:
     """Serialize update mutation against exclusive development wheel deployment.
 
@@ -35883,9 +36886,29 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
             return 2
         print("wheel-deploy-lock-v1")
         return 0
-    return _with_appliance_update_deployment_guard(
-        action, lambda: _handle_appliance_update_locked(action, args),
-    )
+    def operation() -> int:
+        """Admit package work after deployment admission and package serialization."""
+        if action in {"check", "apply", "sync-sources"}:
+            return _with_package_transaction_guard(lambda: _handle_appliance_update_locked(action, args))
+        return _handle_appliance_update_locked(action, args)
+    return _with_appliance_update_deployment_guard(action, operation)
+
+
+def _with_package_transaction_guard(operation: Callable[[], int]) -> int:
+    """Run package maintenance while holding the one system package lock.
+
+    Args:
+        operation: Admitted bounded maintenance callback.
+    """
+    try:
+        with _appliance_update_package_guard():
+            return operation()
+    except _DeploymentAdmissionBusy:
+        print(json.dumps({"status": "package-transaction-busy", "mutation_started": False}, sort_keys=True))
+        return 73
+    except (OSError, ValueError) as exc:
+        print(f"Package transaction serialization refused: {type(exc).__name__}.", file=sys.stderr)
+        return 75
 
 
 def _with_appliance_update_deployment_guard(action: str, operation: Callable[[], int]) -> int:
@@ -35913,7 +36936,7 @@ def _appliance_update_deployment_guard(action: str):
     Args:
         action: Action deciding whether startup recovery has evidence to consume.
     """
-    observational = {"status-inspect", "restart-inspect"}
+    observational = {"status-inspect", "restart-inspect", "guest-tools-status"}
     recovery_evidence = (
         ATLASO_UPDATE_FINALIZER_PATH, ATLASO_UPDATE_STATUS_PATH,
         ATLASO_UPDATE_MAINTENANCE_PATH, ATLASO_UPDATE_STATUS_MARKER_PATH,
@@ -35965,6 +36988,21 @@ def _handle_appliance_update_locked(action: str, args: list[str]) -> int:
         action: Action consumed by handle appliance update.
         args: Parsed command-line options consumed by the operation.
     """
+    if action == "guest-tools-status":
+        if args:
+            print("guest-tools-status does not accept arguments", file=sys.stderr)
+            return 2
+        print(json.dumps(_guest_tools_status(), sort_keys=True))
+        return 0
+
+    if action == "guest-tools-clock-guard":
+        if args:
+            print("guest-tools-clock-guard does not accept arguments", file=sys.stderr)
+            return 2
+        result = _guest_tools_clock_guard(install=False)
+        print(json.dumps(result, sort_keys=True))
+        return 0 if result.get("success") is True else 1
+
     if action == "quiesce-action":
         if len(args) != 2:
             print("quiesce-action requires exactly one task id and stream", file=sys.stderr)
@@ -36357,6 +37395,8 @@ def main(argv: list[str]) -> int:
     if group == "ldap":
         return _handle_ldap(action, normalized_args)
     if group == "ntpd":
+        if action == "apply":
+            return _with_package_transaction_guard(lambda: _handle_ntpd(action, normalized_args))
         return _handle_ntpd(action, normalized_args)
     if group == "nginx":
         return _handle_nginx(action, normalized_args)

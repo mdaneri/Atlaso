@@ -4,6 +4,7 @@ set -eu
 ATLASO_SRC="${ATLASO_SRC:-/tmp/atlaso-src}"
 ATLASO_HOME="${ATLASO_HOME:-/opt/atlaso}"
 ATLASO_STATE="${ATLASO_STATE:-/var/lib/atlaso}"
+ATLASO_PRIVILEGED_STATE=/var/lib/atlaso-privileged
 ATLASO_LOG="${ATLASO_LOG:-/var/log/atlaso}"
 ATLASO_MGMT_ADDRESS="${ATLASO_MGMT_ADDRESS:-192.168.49.1/24}"
 ATLASO_MGMT_GATEWAY="${ATLASO_MGMT_GATEWAY:-192.168.49.254}"
@@ -319,6 +320,33 @@ ensure_ntpsec_runtime_packages() {
 }
 
 stage_guest_agent_packages() {
+  # Maintenance payloads survive the one-shot selector's secure staging cleanup.
+  # Installation media carries the same supported closures without enabling an agent.
+  maintenance_staging="$ATLASO_PRIVILEGED_STATE/guest-tools"
+  install -d -o root -g root -m 0700 "$ATLASO_PRIVILEGED_STATE"
+  rm -rf "$maintenance_staging"
+  install -d -o root -g root -m 0700 "$maintenance_staging" \
+    "$maintenance_staging/vmware" "$maintenance_staging/hyperv" "$maintenance_staging/qemu"
+  printf '%s\n' '{"schema":1,"distribution":"photon","release":"5.0","architecture":"x86_64"}' >"$maintenance_staging/compatibility.json"
+  run_tdnf "VMware guest-tools maintenance closure" \
+    install --downloadonly --downloaddir "$maintenance_staging/vmware" --alldeps open-vm-tools
+  run_tdnf "Hyper-V guest-tools maintenance closure" \
+    install --downloadonly --downloaddir "$maintenance_staging/hyperv" --alldeps hyper-v
+  run_tdnf "QEMU guest-tools maintenance dependencies" \
+    install --downloadonly --downloaddir "$maintenance_staging/qemu" --alldeps glib systemd
+  install -o root -g root -m 0600 \
+    "$QEMU_GUEST_AGENT_RPM" "$maintenance_staging/qemu/$(basename "$QEMU_GUEST_AGENT_RPM")"
+  for maintenance_profile in vmware hyperv qemu; do
+    [ "$(find "$maintenance_staging/$maintenance_profile" -maxdepth 1 -type f -name '*.rpm' | wc -l)" -gt 0 ] || {
+      echo "Guest-tools maintenance RPM closure is empty: $maintenance_profile" >&2
+      exit 2
+    }
+  done
+  find "$maintenance_staging" -type d -exec chown root:root {} + -exec chmod 0700 {} +
+  find "$maintenance_staging" -type f -exec chown root:root {} + -exec chmod 0600 {} +
+  (cd "$maintenance_staging" && find vmware hyperv qemu -type f -name '*.rpm' -print | LC_ALL=C sort | xargs sha256sum >SHA256SUMS)
+  chown root:root "$maintenance_staging/SHA256SUMS"
+  chmod 0600 "$maintenance_staging/SHA256SUMS"
   if [ "$ATLASO_GUEST_PLATFORM" = "none" ]; then
     log_step "staging empty guest-agent inventory for physical installation"
     rm -rf "$GUEST_AGENT_STAGING"
@@ -655,9 +683,7 @@ if [ -n "$ATLASO_PIP_GLOBAL_INDEX_URL" ]; then
   export PIP_INDEX_URL="$ATLASO_PIP_GLOBAL_INDEX_URL"
 fi
 
-if [ "$ATLASO_GUEST_PLATFORM" = "none" ]; then
-  log_step "skipping virtual guest-agent build for installation media"
-else
+if [ -n "$QEMU_GUEST_AGENT_BUILDER" ]; then
   log_step "building the pinned QEMU guest-agent RPM"
   QEMU_GUEST_AGENT_OUTPUT=/tmp/atlaso-qemu-guest-agent-rpm
   rm -rf "$QEMU_GUEST_AGENT_OUTPUT"

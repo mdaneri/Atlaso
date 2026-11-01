@@ -1188,6 +1188,14 @@ class SystemAdapter:
         """
         return self._helper_result("public-services", "apply", config_path, dry_run_message="dry-run: public services nginx apply command recorded")
 
+    def guest_tools_status(self) -> AdapterResult:
+        """Observe provider, package and effective service state without installation."""
+        return self._helper_result(
+            "appliance-update", "guest-tools-status", execute_in_dry_run=True,
+            dry_run_message="Guest-tools hardware observation is unavailable.",
+            timeout_seconds=45,
+        )
+
     def check_appliance_update_config(self, config_path: str, credentials_path: str = "") -> AdapterResult:
         """Check appliance update config.
 
@@ -1537,7 +1545,8 @@ class SystemAdapter:
                 admission = json.loads(result.stdout.strip().splitlines()[-1])
             except (IndexError, ValueError):
                 admission = None
-            if admission == {"status": "deployment-busy", "mutation_started": False}:
+            if admission in ({"status": "deployment-busy", "mutation_started": False},
+                             {"status": "package-transaction-busy", "mutation_started": False}):
                 raise ApplianceUpdateDeploymentBusy("Wheel deployment is active; retry update admission.")
         _log_helper_outcome(group, action, result)
         return result

@@ -17,13 +17,15 @@ from sqlalchemy.orm import Session
 from atlaso.app.audit import record_audit
 from atlaso.app.database import get_db
 from atlaso.app.kmip.recovery import MAX_ARCHIVE_BYTES
-from atlaso.app.models import PhysicalInterface, VlanInterface, utcnow
+from atlaso.app.models import Job, JobStatus, PhysicalInterface, VlanInterface, utcnow
 from atlaso.app.routers.chunk_uploads import ChunkedUploadRoute
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services import kmip_recovery
+from atlaso.app.services.appliance_hardware import hardware_inventory
 from atlaso.app.services.authentication_lifetimes import (
     authentication_lifetime_validation_error,
 )
+from atlaso.app.services.guest_tools import guest_tools_observation, queue_guest_tools
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
@@ -521,6 +523,74 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
             },
         )
 
+    @router.get("/settings/hardware/status", response_model=None)
+    def settings_hardware_status(
+        request: Request,
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> JSONResponse:
+        """Observe hardware and guest integration without reconciling or installing.
+
+        Args:
+            request: Management listener request.
+            identity: Authenticated administrator reading native observations.
+            db: Read-only session projecting active maintenance ownership.
+        """
+        require_admin_identity(identity)
+        active = db.scalar(select(Job).where(
+            Job.type.in_(["appliance-update", "appliance-apply"]),
+            Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
+        ))
+        return JSONResponse({"hardware": hardware_inventory(), "guest_tools": guest_tools_observation(
+            system_adapter_factory().guest_tools_status(),
+        ), "maintenance_task": {"job_id": active.id, "status": active.status,
+                                  "progress_percent": active.progress_percent or 0} if active else None},
+            headers={"Cache-Control": "no-store"})
+
+    @router.post("/settings/hardware/guest-tools/{operation}", response_model=None)
+    def submit_settings_guest_tools(
+        request: Request,
+        operation: str,
+        csrf: str = Form(...),
+        provider: str = Form(...),
+        review_digest: str = Form(""),
+        confirmed: str = Form(""),
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> JSONResponse | RedirectResponse:
+        """Queue a check or explicitly reviewed maintenance task; never install inline.
+
+        Args:
+            request: Management request carrying session and CSRF authorization.
+            operation: Check or install operation selected explicitly by the administrator.
+            csrf: Session-bound anti-forgery token.
+            provider: Detected compatible guest provider selected for this task.
+            review_digest: Exact observed package/service/clock plan accepted by the operator.
+            confirmed: Explicit confirmation required only for installation.
+            identity: Administrator who owns the durable task and audit entry.
+            db: Task admission session.
+        """
+        verify_csrf(request, csrf)
+        require_admin_identity(identity)
+        if operation not in {"check", "install"}:
+            raise HTTPException(status_code=404, detail="Unknown guest-tools operation.")
+        if operation == "install":
+            observed = guest_tools_observation(system_adapter_factory().guest_tools_status())
+            if (confirmed != "yes" or observed.get("available") is not True
+                    or observed.get("provider") != provider or not review_digest
+                    or observed.get("review_digest") != review_digest):
+                raise HTTPException(status_code=409, detail="Guest-tools plan is unavailable or changed. Check, review and confirm again.")
+        try:
+            job = queue_guest_tools(db, actor=identity.username, provider=provider,
+                                    mode="run" if operation == "install" else "check", review_digest=review_digest)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if "application/json" in request.headers.get("accept", ""):
+            return JSONResponse({"status": "pending", "job_id": job.id}, status_code=202)
+        return RedirectResponse(f"{MANAGEMENT_UI_ROOT}/tasks?job_id={job.id}", status_code=303)
+
     @router.post("/settings", response_model=None)
     def update_settings_from_ui(
         request: Request,
@@ -978,6 +1048,8 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
             restore_backup_restore_archive,
             factory_reset_backup_restore,
             settings_page,
+            settings_hardware_status,
+            submit_settings_guest_tools,
             update_settings_from_ui,
             update_authentication_lifetimes_from_ui,
             update_vmware_ceip_from_ui,

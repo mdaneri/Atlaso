@@ -14487,7 +14487,7 @@ def execute_appliance_update_job(
     unit_id = selected_stream_ids[0] if len(selected_stream_ids) == 1 else "appliance_update"
     label = UPDATE_STREAM_LABELS[unit_id] if unit_id in UPDATE_STREAM_LABELS else "Appliance Update"
     availability: dict[str, Any] = {}
-    if unit_id in UPDATE_STREAM_LABELS and mode in {"check", "run"}:
+    if unit_id in UPDATE_STREAMS and mode in {"check", "run"}:
         check_payload = helper_payloads[0] if helper_payloads else {}
         checks = check_payload.get("checks") if isinstance(check_payload.get("checks"), dict) else {}
         availability = normalized_availability_result(checks.get(unit_id))
@@ -14546,6 +14546,7 @@ def execute_appliance_update_job(
         "release_transaction": release_transaction,
         "source_results": source_results,
         "availability": availability,
+        "guest_tools": helper_payloads[-1].get("guest_tools", {}) if helper_payloads else {},
     }
 
 
@@ -14570,7 +14571,7 @@ def aggregate_appliance_update_results(
         job_id: Identifier of the job.
         execution_order: Stored stream order used for execution and reporting.
     """
-    selected = selected_update_streams(selected_stream_ids)
+    selected = selected_update_streams(selected_stream_ids, include_guest_tools=True)
     results_by_stream = {
         str(result.get("unit_id") or ""): result
         for result in stream_results
@@ -17721,6 +17722,9 @@ def submit_appliance_update(
         if mode == "check"
         else selected_streams
     )
+    # Guest tools have their own reviewed Hardware admission; stream controls
+    # must not bypass its compatibility and plan confirmation.
+    selected = [stream for stream in selected if stream in UPDATE_STREAMS]
     settings = appliance_update_settings(db)
     availability = appliance_update_availability_summary(db) if mode == "run" else None
     if mode == "run" and availability is not None:
