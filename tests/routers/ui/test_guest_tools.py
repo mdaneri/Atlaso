@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 from sqlalchemy import select
 
 from tests.routers.ui.helpers import login
@@ -125,3 +126,52 @@ def test_guest_tools_child_executes_and_terminal_evidence_survives_worker_pass(c
         assert json.loads(job.steps[0].result)["guest_tools"]["state"] == "healthy"
     assert worker.run_worker_once() is None
     assert calls == [["guest_tools"]]
+
+
+@pytest.mark.parametrize("commands", [[], [{"success": True}]])
+def test_failed_guest_tools_helper_fails_child_parent_and_audit(client, monkeypatch, capsys, commands):
+    """Carry verification failures through the CLI, executor, worker and audit.
+
+    Args:
+        client: Isolated application and task database.
+        monkeypatch: Safe helper and staging boundary replacements.
+        capsys: Captured helper JSON output.
+        commands: Empty admission failure or successful commands with failed verification.
+    """
+    from atlaso.app import ui, worker
+    from atlaso.app.adapters.system import AdapterResult, SystemAdapter
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, Job
+    from atlaso.app.services.guest_tools import queue_guest_tools
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    failed = {"status": "failed", "commands": commands, "error": "Guest-tools verification failed."}
+    monkeypatch.setattr(helper, "_validate_appliance_update_config_path", lambda path: path)
+    monkeypatch.setattr(helper, "_load_appliance_update_config", lambda path: {})
+    monkeypatch.setattr(helper, "_load_appliance_update_credentials", lambda args: {})
+    monkeypatch.setattr(helper, "_appliance_update_config_errors", lambda *args, **kwargs: [])
+    monkeypatch.setattr(helper, "_apply_appliance_update", lambda *args: failed)
+    returncode = helper._handle_appliance_update_locked("apply", ["synthetic-config"])
+    stdout = capsys.readouterr().out
+    monkeypatch.setattr(SystemAdapter, "check_appliance_update_config", lambda *args: AdapterResult(
+        command=["synthetic-check"], returncode=0, stdout='{"checks":{}}', dry_run=False,
+    ))
+    monkeypatch.setattr(SystemAdapter, "apply_appliance_update_config", lambda *args: AdapterResult(
+        command=["synthetic-apply"], returncode=returncode, stdout=stdout, dry_run=False,
+    ))
+    monkeypatch.setattr(ui, "stage_appliance_apply_config", lambda *args: "synthetic-config")
+    client.get("/ui/management/login")
+    with SessionLocal() as db:
+        job_id = queue_guest_tools(db, actor="admin", provider="vmware", mode="run", review_digest="a" * 64).id
+    assert worker.run_worker_once() == job_id
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        assert job.status == "failed"
+        assert job.steps[0].status == "failed"
+        result = json.loads(job.steps[0].result)
+        assert result["apply_started"] is True
+        assert result["commands"][-1]["returncode"] == 1
+        assert json.loads(result["commands"][-1]["stdout"])["status"] == "failed"
+        audits = db.scalars(select(AuditEvent).where(AuditEvent.resource_id == job_id)).all()
+        assert any(not event.success for event in audits)

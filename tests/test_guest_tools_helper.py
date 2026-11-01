@@ -114,6 +114,36 @@ def test_changed_review_refuses_mutation_and_healthy_repeat_is_noop(helper, monk
     assert repeat["applied"]["guest_tools"]["no_change"] is True
 
 
+@pytest.mark.parametrize("failure", ["stale_review", "clock_guard", "final_verification"])
+def test_guest_tools_apply_cli_propagates_verification_failure(helper, monkeypatch, capsys, failure):
+    """Failed admission or final observation must fail even without a failed command.
+
+    Args:
+        helper: Isolated privileged helper.
+        monkeypatch: Safe observations and host operation replacements.
+        capsys: Captured helper JSON output.
+        failure: Admission or verification stage to reject.
+    """
+    state = {"provider": "vmware", "review_digest": "a" * 64, "state": "stopped", "available": True}
+    payload = {"guest_tools": {"provider": "vmware", "review_digest": ("b" if failure == "stale_review" else "a") * 64}}
+    monkeypatch.setattr(helper, "_guest_tools_status", lambda: dict(state))
+    monkeypatch.setattr(helper, "_guest_tools_check", lambda payload: {"state": "available"})
+    monkeypatch.setattr(helper, "_guest_tools_clock_guard", lambda **kwargs: {"success": failure != "clock_guard"})
+    monkeypatch.setattr(helper.shutil, "which", lambda name: name)
+    monkeypatch.setattr(helper, "_command_payload", lambda command, **kwargs: {"command": command, "success": True})
+    monkeypatch.setattr(helper, "_write_update_info", lambda result: None)
+    monkeypatch.setattr(helper, "_validate_appliance_update_config_path", lambda path: path)
+    monkeypatch.setattr(helper, "_load_appliance_update_config", lambda path: payload)
+    monkeypatch.setattr(helper, "_load_appliance_update_credentials", lambda args: {})
+    monkeypatch.setattr(helper, "_appliance_update_config_errors", lambda *args, **kwargs: [])
+    monkeypatch.setattr(helper, "_apply_appliance_update", lambda payload, *args: helper._guest_tools_apply(payload))
+    assert helper._handle_appliance_update_locked("apply", ["synthetic-config"]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "failed"
+    assert all(command["success"] for command in result.get("commands", []))
+    assert bool(result.get("commands")) is (failure == "final_verification")
+
+
 @pytest.mark.parametrize("provider", ["qemu", "hyperv"])
 def test_foreign_selected_clock_authority_blocks_non_vmware(helper, monkeypatch, provider):
     """Installing another provider must not normalize away a selected VMware clock.
@@ -155,6 +185,39 @@ def test_hyperv_requires_real_userspace_kernel_channels_not_legacy_file_copy(hel
     monkeypatch.setattr(helper, "_guest_tools_hyperv_device", lambda: (None, "absent"))
     assert helper._guest_tools_platform_evidence("hyperv") == (True, "")
     assert helper._guest_tools_hyperv_inhibit()["success"] is True
+
+
+@pytest.mark.parametrize("devices", [0, 1, 2])
+def test_hyperv_timesync_discovery_distinguishes_absence_from_ambiguity(helper, monkeypatch, tmp_path, devices):
+    """An empty valid inventory is safe; duplicate timesync devices remain a refusal.
+
+    Args:
+        helper: Isolated privileged helper.
+        monkeypatch: Synthetic VMBus inventory and kernel capability paths.
+        tmp_path: Receipt-bound kernel inventory fixture.
+        devices: Number of matching timesync devices to expose.
+    """
+    for index in range(devices):
+        device = tmp_path / str(index)
+        device.mkdir()
+        (device / "class_id").write_text("{" + helper.ATLASO_HYPERV_TIMESYNC_CLASS_ID + "}")
+        (device / "driver_override").write_text("none")
+    unrelated = tmp_path / "kvp"
+    unrelated.mkdir()
+    (unrelated / "class_id").write_text("unrelated-class")
+    monkeypatch.setattr(helper, "ATLASO_HYPERV_DEVICES_PATH", tmp_path)
+    monkeypatch.setattr(helper, "ATLASO_HYPERV_CAPABILITY_PATHS", (SimpleNamespace(is_char_device=lambda: True),))
+    device, reason = helper._guest_tools_hyperv_device()
+    if devices == 0:
+        assert (device, reason) == (None, "absent")
+        assert helper._guest_tools_platform_evidence("hyperv") == (True, "")
+        assert helper._guest_tools_hyperv_inhibit()["success"] is True
+    elif devices == 1:
+        assert device == tmp_path / "0" and reason == ""
+    else:
+        assert device is None and "ambiguous" in reason
+        assert helper._guest_tools_platform_evidence("hyperv")[0] is False
+        assert helper._guest_tools_hyperv_inhibit()["success"] is False
 
 
 def test_hyperv_clock_inhibition_does_not_block_owned_prepared_ntp_apply(helper, monkeypatch, tmp_path):

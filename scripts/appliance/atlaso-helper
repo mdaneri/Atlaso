@@ -3796,8 +3796,6 @@ def _dhcp_pool_candidates(config: str, scope_id: int) -> tuple[dict, list[str]]:
     prefix = "# atlaso-dhcp-pool="
     matches = [json.loads(line[len(prefix):]) for line in config.splitlines() if line.startswith(prefix)]
     matches = [pool for pool in matches if pool.get("scope_id") == scope_id]
-    if not matches:
-        return None, "absent"
     if len(matches) != 1:
         raise ValueError("No unique applied pool identity; apply DNS/DHCP before verification.")
     pool = matches[0]
@@ -22492,8 +22490,10 @@ def _guest_tools_hyperv_device() -> tuple[Path | None, str]:
                 matches.append(child)
     except (OSError, UnicodeError):
         return None, "The Hyper-V VMBus capability probe failed."
+    if not matches:
+        return None, "absent"
     if len(matches) != 1:
-        return None, "The Hyper-V Linux timesync class is absent or ambiguous."
+        return None, "The Hyper-V Linux timesync class is ambiguous."
     device = matches[0]
     if not (device / "driver_override").is_file():
         return None, "The kernel does not expose the supported Hyper-V timesync driver controls."
@@ -37226,7 +37226,7 @@ def _handle_appliance_update_locked(action: str, args: list[str]) -> int:
             print(str(exc), file=sys.stderr)
             return 1
         print(json.dumps(result, indent=2, sort_keys=True))
-        if any(not command.get("success") for command in result.get("commands", [])):
+        if result.get("status") == "failed" or any(not command.get("success") for command in result.get("commands", [])):
             return 1
         return 0
     if action == "sync-sources":
