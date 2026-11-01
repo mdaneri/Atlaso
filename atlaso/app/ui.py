@@ -13904,6 +13904,7 @@ def appliance_update_context(
         .where(
             Job.type == "appliance-update",
             Job.status.in_([JobStatus.SUCCEEDED.value, JobStatus.FAILED.value]),
+            JobStep.component_key.in_(UPDATE_STREAMS),
             _appliance_update_mode_filter_clause("run"),
             or_(
                 *(
