@@ -16,8 +16,11 @@ import sys
 import tempfile
 import time
 from datetime import datetime, timezone
+from functools import partial
 from ipaddress import ip_interface
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 from cryptography import x509
 from cryptography.exceptions import UnsupportedAlgorithm
@@ -55,15 +58,35 @@ from atlaso.app.services.networking import (
     sync_host_physical_interfaces,
     verify_native_management_vlans,
 )
-from atlaso.app.ui import (
-    ca_managed_certificate_paths,
-    ensure_ca_state,
-    load_appliance_apply_baselines,
-    make_appliance_apply_unit,
-    network_management_paths,
-    redact_config_preview,
-    update_appliance_apply_baselines,
-)
+
+
+def _ui_functions() -> ModuleType:
+    """Load UI publication helpers only for a transition that needs them."""
+    from atlaso.app import ui
+
+    return ui
+
+
+def _ui_call(name: str, *args: Any, **kwargs: Any) -> Any:
+    """Defer the large UI/schema import during marker-only observer heartbeats.
+
+    Args:
+        name: Fixed helper name selected by this module's bindings below.
+        *args: Existing helper positional inputs.
+        **kwargs: Existing helper keyword inputs.
+    """
+    return getattr(_ui_functions(), name)(*args, **kwargs)
+
+
+# Keep the existing callable surface for bootstrap/recovery consumers. The
+# periodic observer's unchanged publication needs none of the UI/schema graph.
+ca_managed_certificate_paths = partial(_ui_call, "ca_managed_certificate_paths")
+ensure_ca_state = partial(_ui_call, "ensure_ca_state")
+load_appliance_apply_baselines = partial(_ui_call, "load_appliance_apply_baselines")
+make_appliance_apply_unit = partial(_ui_call, "make_appliance_apply_unit")
+network_management_paths = partial(_ui_call, "network_management_paths")
+redact_config_preview = partial(_ui_call, "redact_config_preview")
+update_appliance_apply_baselines = partial(_ui_call, "update_appliance_apply_baselines")
 
 CONSOLE_PUBLICATION_DIRECTORY = Path("/run/atlaso-console-recovery")
 ENV_PATH = Path("/var/lib/atlaso/apply/ca/first-boot-management.env")
@@ -1062,6 +1085,9 @@ def main(network_job_id: str | None = None) -> int:
         publish_first_boot_stage("https-development-root-proof-complete")
         return 0
 
+    # Full bootstrap needs UI publication helpers; load them before admitting a
+    # writer rather than adding their cold import to the database lock interval.
+    _ui_functions()
     if network_job_id is None:
         init_db()
     development_root_fingerprint = ""

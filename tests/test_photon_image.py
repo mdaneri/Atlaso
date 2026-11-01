@@ -1145,11 +1145,13 @@ def test_photon_provisioning_management_network_matches_eth0_only():
 
 @pytest.mark.skipif(os.name == "nt", reason="executes the image's POSIX shell renderer")
 @pytest.mark.parametrize("dhcp", ["true", "false"])
-def test_photon_management_lease_retention(dhcp: str) -> None:
+@pytest.mark.parametrize("fallback", ["true", "false"])
+def test_photon_management_lease_retention(dhcp: str, fallback: str) -> None:
     """Execute the image renderer and keep DHCP options out of static networking.
 
     Args:
         dhcp: Whether the image uses dynamic management addressing.
+        fallback: Persisted global IPv4LL fallback policy.
     """
     script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
     renderer = script.split('log_step "configuring final appliance management network"\n', 1)[1]
@@ -1160,6 +1162,7 @@ def test_photon_management_lease_retention(dhcp: str) -> None:
             **os.environ,
             "ATLASO_MGMT_INTERFACE": "eth0",
             "ATLASO_MGMT_USES_DHCP": dhcp,
+            "ATLASO_IPV4_LINK_LOCAL_FALLBACK_ENABLED": fallback,
             "ATLASO_MGMT_ADDRESS": "192.0.2.10/24",
             "ATLASO_MGMT_GATEWAY": "192.0.2.1",
             "ATLASO_MGMT_DNS": "192.0.2.53",
@@ -1175,6 +1178,8 @@ def test_photon_management_lease_retention(dhcp: str) -> None:
         assert parsed["Network"]["DHCP"] == "ipv4"
         assert parsed["DHCPv4"].getboolean("SendRelease") is False
         assert parsed["DHCPv4"].getboolean("SendDecline") is True
+        assert parsed["DHCPv4"]["MaxAttempts"] == "infinity"
+        assert parsed["Network"]["LinkLocalAddressing"] == ("yes" if fallback == "true" else "ipv6")
         assert "Address" not in parsed["Network"]
     else:
         assert "DHCPv4" not in parsed

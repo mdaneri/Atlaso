@@ -37,6 +37,7 @@ def test_authentication_lifetime_schema_reconciliation_is_portable_and_idempoten
     """
     existing_columns = [
         {"name": "id"},
+        {"name": "ipv4_link_local_fallback_enabled"},
         {"name": "browser_session_idle_timeout_minutes"},
     ]
 

@@ -477,6 +477,7 @@ def _reconcile_authentication_lifetime_columns(connection: Connection) -> None:
         column["name"] for column in inspect(connection).get_columns("appliance_settings")
     }
     additions = {
+        "ipv4_link_local_fallback_enabled": "BOOLEAN NOT NULL DEFAULT TRUE",
         "browser_session_idle_timeout_minutes": "INTEGER NOT NULL DEFAULT 30",
         "api_token_max_lifetime_days": "INTEGER NOT NULL DEFAULT 90",
     }

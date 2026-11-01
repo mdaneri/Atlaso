@@ -2542,6 +2542,7 @@ class SettingsResponse(BaseModel):
         web_terminal_interfaces: Ordered optional Web Terminal interface bindings; the management
             listener remains mandatory while Web Terminal is enabled.
         root_ssh_enabled: Whether root ssh enabled is enabled for this settings resource.
+        ipv4_link_local_fallback_enabled: Global default-on DHCPv4 fallback choice; Network Apply enforces it.
         browser_session_idle_timeout_minutes: Maximum browser inactivity before Atlaso expires the session.
         api_token_max_lifetime_days: Maximum lifetime allowed for newly issued API tokens.
         external_dns_servers: Ordered collection of external dns servers values represented by this
@@ -2570,6 +2571,7 @@ class SettingsResponse(BaseModel):
     web_terminal_enabled: Annotated[bool, Field(description='Whether web terminal enabled is enabled for this settings resource.')] = False
     web_terminal_interfaces: Annotated[list[str], Field(description='Ordered collection of web terminal interfaces values represented by this settings schema.')] = Field(default_factory=list)
     root_ssh_enabled: Annotated[bool, Field(description='Whether root ssh enabled is enabled for this settings resource.')] = False
+    ipv4_link_local_fallback_enabled: Annotated[bool, Field(description='Global automatic IPv4 link-local fallback for Atlaso-managed DHCPv4 interfaces. Defaults to enabled; changing it requires Network Apply.')] = True
     browser_session_idle_timeout_minutes: Annotated[int, Field(description='Maximum period of authenticated browser inactivity, in minutes, before Atlaso expires the session on its next protected request.')] = Field(default=30, ge=5, le=1440)
     api_token_max_lifetime_days: Annotated[int, Field(description='Maximum lifetime, in days, applied to newly issued API bearer tokens; existing tokens are unchanged.')] = Field(default=90, ge=1, le=365)
     external_dns_servers: Annotated[list[str], Field(description='Ordered collection of external dns servers values represented by this settings schema.')]
@@ -2604,6 +2606,7 @@ class SettingsUpdate(BaseModel):
         web_terminal_interfaces: Ordered collection of web terminal interfaces values represented by
             this settings schema.
         root_ssh_enabled: Whether root ssh enabled is enabled for this settings resource.
+        ipv4_link_local_fallback_enabled: Optional global DHCPv4 fallback choice; omission preserves it.
         browser_session_idle_timeout_minutes: Maximum browser inactivity before Atlaso expires the session.
         api_token_max_lifetime_days: Maximum lifetime allowed for newly issued API tokens.
         external_dns_servers: Ordered collection of external dns servers values represented by this
@@ -2617,6 +2620,7 @@ class SettingsUpdate(BaseModel):
     web_terminal_enabled: Annotated[bool | SkipJsonSchema[None], Field(description='Whether Web Terminal is enabled in desired state. Omit it to preserve the current value; null is not accepted.')] = None
     web_terminal_interfaces: Annotated[list[str] | SkipJsonSchema[None], Field(description='Ordered optional Web Terminal interface bindings. Omit the property to preserve them; submit an empty list to clear additional bindings. While Web Terminal is enabled, Atlaso retains the mandatory management listener. Null is not accepted.')] = None
     root_ssh_enabled: Annotated[bool | SkipJsonSchema[None], Field(description='Whether root SSH login is enabled in desired state. Omit it to preserve the current value; null is not accepted.')] = None
+    ipv4_link_local_fallback_enabled: Annotated[bool | SkipJsonSchema[None], Field(description='Global DHCPv4 link-local fallback choice. Network Apply enforces changes. Omit to preserve the saved choice; null is not accepted.')] = None
     browser_session_idle_timeout_minutes: Annotated[Annotated[int, Field(ge=5, le=1440)] | SkipJsonSchema[None], Field(description='Maximum period of authenticated browser inactivity, in minutes, before Atlaso expires the session on its next protected request. Omit it to preserve the current value; null is not accepted.')] = None
     api_token_max_lifetime_days: Annotated[Annotated[int, Field(ge=1, le=365)] | SkipJsonSchema[None], Field(description='Maximum lifetime, in days, applied to newly issued API bearer tokens; existing tokens are unchanged. Omit it to preserve the current value; null is not accepted.')] = None
     external_dns_servers: Annotated[list[str] | SkipJsonSchema[None], Field(description='Ordered external DNS server values. Omit the property to preserve the current servers; submit an empty list to clear them; null is not accepted.')] = None

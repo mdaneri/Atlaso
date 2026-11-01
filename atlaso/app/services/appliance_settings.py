@@ -50,6 +50,7 @@ def appliance_settings_to_dict(settings: ApplianceSettings) -> dict[str, Any]:
         "web_terminal_enabled": settings.web_terminal_enabled,
         "web_terminal_interfaces": web_terminal_interfaces_from_json(settings.web_terminal_interfaces_json),
         "root_ssh_enabled": settings.root_ssh_enabled,
+        "ipv4_link_local_fallback_enabled": settings.ipv4_link_local_fallback_enabled is not False,
         "vmware_ceip_enabled": settings.vmware_ceip_enabled,
         "service_dns_target_naming": normalize_service_dns_target_naming(settings.service_dns_target_naming),
         "external_dns_servers": split_servers(settings.external_dns_servers),

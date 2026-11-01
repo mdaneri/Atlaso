@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.471"
+version = "0.9.472"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -160,6 +160,8 @@ files = [
   "atlaso/app/services/interface_updates.py",
   "atlaso/app/services/management_bindings.py",
   "atlaso/app/services/network_address_status.py",
+  "atlaso/app/services/dynamic_management.py",
+  "atlaso/dynamic_management.py",
   "atlaso/app/services/physical_interfaces.py",
   "atlaso/app/services/port_forwarding.py",
   "atlaso/app/services/service_dns_defaults.py",

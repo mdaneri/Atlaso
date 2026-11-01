@@ -1712,9 +1712,12 @@ def test_firewall_replay_uses_atomic_nft_wrapper_for_applied_time_mode(
 
     assert len(calls) == 1
     command, kwargs = calls[0]
+    assert command == ["nft", "-f", "-"]
+    assert kwargs["input"].startswith(firewall.read_text(encoding="utf-8"))
+    assert "table inet atlaso_ipv4ll {" in kwargs["input"]
+    assert "ip saddr 169.254.0.0/16 drop" in kwargs["input"]
+    assert "ip daddr 169.254.0.0/16 drop" in kwargs["input"]
     if guard_expected:
-        assert command == ["nft", "-f", "-"]
-        assert kwargs["input"].startswith(firewall.read_text(encoding="utf-8"))
         assert "table inet atlaso_time_sync" in kwargs["input"]
         if mode == "ntp_server":
             assert 'ip daddr 192.0.2.10 udp dport 123 return comment "Atlaso time-sync selected listener"' in kwargs[
@@ -1727,9 +1730,7 @@ def test_firewall_replay_uses_atomic_nft_wrapper_for_applied_time_mode(
         else:
             assert 'udp dport 123 drop comment "Atlaso time-sync client-only"' in kwargs["input"]
     else:
-        assert command == ["nft", "-f", str(firewall)]
-        assert "input" not in kwargs
-        assert "atlaso_time_sync" not in firewall.read_text(encoding="utf-8")
+        assert "atlaso_time_sync" not in kwargs["input"]
     assert firewall.read_text(encoding="utf-8") == "flush ruleset\ntable inet atlaso { }\n"
 
 
@@ -9673,11 +9674,11 @@ def test_network_helper_renders_management_dhcp_networkd(tmp_path):
     assert "DHCP=ipv4" in management_network
     assert "Address=" not in management_network
     assert "IPv6AcceptRA=no" in management_network
-    assert "LinkLocalAddressing=no" in management_network
+    assert "LinkLocalAddressing=ipv4" in management_network
     parsed = configparser.ConfigParser()
     parsed.read_string(management_network)
     assert parsed["DHCPv4"].getboolean("SendRelease") is False
-    assert parsed["Network"]["LinkLocalAddressing"] == "no"
+    assert parsed["Network"]["LinkLocalAddressing"] == "ipv4"
 
 
 def test_network_helper_preserves_automatic_ipv6_for_management(tmp_path):
@@ -9714,7 +9715,7 @@ def test_network_helper_preserves_automatic_ipv6_for_management(tmp_path):
     management_network = files["00-atlaso-mgmt.network"]
     assert "DHCP=ipv4" in management_network
     assert "IPv6AcceptRA=yes" in management_network
-    assert "LinkLocalAddressing=ipv6" in management_network
+    assert "LinkLocalAddressing=yes" in management_network
     # Networkd permits repeated Route sections; this parser inspects only Network/DHCP.
     parsed = configparser.ConfigParser(strict=False)
     parsed.read_string(management_network)
@@ -9812,7 +9813,7 @@ def test_network_helper_renders_static_management_ipv6_gateway_in_main_and_table
     files, _reconfigure_links, _admin_down_links = helper._systemd_networkd_files(config_path)
     rendered = files["00-atlaso-mgmt.network"]
     assert "IPv6AcceptRA=no" in rendered
-    assert "LinkLocalAddressing=ipv6" in rendered
+    assert "LinkLocalAddressing=yes" in rendered
     assert "Address=2001:db8:49::10/64" in rendered
     assert "Destination=2001:db8:49::/64\nScope=link\nPreferredSource=2001:db8:49::10\nTable=100" in rendered
     assert "[RoutingPolicyRule]" not in rendered
@@ -18849,6 +18850,57 @@ def test_management_front_door_startup_recovery_restores_interrupted_activation(
     assert not helper.MANAGEMENT_FRONT_DOOR_BACKUP_DIR.exists()
 
 
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_management_front_door_recovers_interrupted_leaf_pair(monkeypatch, tmp_path, interrupted):
+    """Restore the old pair after either a write failure or process interruption.
+
+    Args:
+        monkeypatch: Isolate host operations while retaining the durable transaction implementation.
+        tmp_path: Originally owned validation directory.
+        interrupted: Model process loss that skips ordinary exception rollback.
+    """
+    helper = load_helper_module()
+    paths = patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path)
+    paths["management_site"].parent.mkdir(parents=True, exist_ok=True)
+    paths["management_site"].write_text("previous management site\n")
+    cert, key = tmp_path / "management.crt", tmp_path / "management.key"
+    cert.write_text("public synthetic previous certificate\n")
+    key.write_text("public synthetic previous key fixture\n")
+    expected = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in (cert, key)}
+    dropin = tmp_path / "systemd/atlaso.service.d/https.conf"
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin.parent)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    monkeypatch.setattr(helper, "_ca_managed_path", lambda value, _label: Path(value))
+    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: False)
+    monkeypatch.setattr(helper, "_management_handoff_upstream_readiness", lambda **_kwargs: {})
+    monkeypatch.setattr(helper.os, "chown", lambda *_args: None, raising=False)
+    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
+    monkeypatch.setattr(helper, "_nginx_test_command", lambda: subprocess.CompletedProcess([], 0, "", ""))
+    monkeypatch.setattr(helper, "_reload_nginx", lambda: 0)
+    monkeypatch.setattr(helper, "_install_nginx_site", lambda *_args: pytest.fail("interrupted material must not activate nginx"))
+
+    def replace_key_then_fail():
+        """Interrupt between the two writes only after durable rollback publication."""
+        state = helper._load_management_front_door_state()
+        assert set(state["material_paths"]) == {str(cert), str(key)}
+        key.write_text("public synthetic replacement key fixture\n")
+        if interrupted:
+            raise KeyboardInterrupt
+        raise OSError("synthetic pair write failure")
+
+    payload = json.loads(appliance_settings_json(management_https_enabled=True,
+        management_https_cert_path=str(cert), management_https_key_path=str(key)))
+    if interrupted:
+        with pytest.raises(KeyboardInterrupt):
+            helper._configure_atlaso_management_https(payload, material_writer=replace_key_then_fail)
+        assert helper.MANAGEMENT_FRONT_DOOR_STATE_PATH.is_file()
+        assert helper._recover_management_front_door() == 0
+    else:
+        assert helper._configure_atlaso_management_https(payload, material_writer=replace_key_then_fail) == (1, None)
+    assert all(hashlib.sha256(path.read_bytes()).hexdigest() == digest for path, digest in expected.items())
+    assert not helper.MANAGEMENT_FRONT_DOOR_STATE_PATH.exists()
+
+
 def test_management_front_door_rejects_symlinked_durable_backup(monkeypatch, tmp_path):
     """Reject a recovery backup that redirects the privileged restore read.
 
@@ -22917,7 +22969,7 @@ def test_network_helper_keeps_dynamic_routes_in_interface_domain(tmp_path, role,
     ]), encoding="utf-8")
     files, _links, _down = helper._systemd_networkd_files(path)
     rendered = files["00-atlaso-mgmt.network" if role == "management" else "10-atlaso-eth0.network"]
-    assert f"[DHCPv4]\nSendRelease=no\nSendDecline=yes\nRouteTable={table}" in rendered
+    assert f"[DHCPv4]\nSendRelease=no\nSendDecline=yes\nMaxAttempts=infinity\nRouteTable={table}" in rendered
     assert f"[IPv6AcceptRA]\nRouteTable={table}" in rendered
     assert "[RoutingPolicyRule]" not in rendered
 

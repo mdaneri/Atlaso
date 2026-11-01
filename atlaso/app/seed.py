@@ -453,6 +453,7 @@ def seed_initial_data(
             fqdn=appliance_fqdn,
             management_https_enabled=False if factory_defaults else appliance_mode,
             root_ssh_enabled=False if factory_defaults else settings.appliance_root_ssh_enabled,
+            ipv4_link_local_fallback_enabled=True if factory_defaults else settings.ipv4_link_local_fallback_enabled,
             external_dns_servers=external_dns_servers,
         )
         db.add(appliance_settings)
