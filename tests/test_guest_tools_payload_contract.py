@@ -29,10 +29,10 @@ def test_verified_guest_tools_closures_are_retained_and_checksum_covered():
     assert 'rm -rf "$STAGING_DIRECTORY" "$RUNTIME_DIRECTORY"' in selector
 
 
-def test_installation_media_builds_maintenance_payload_without_selecting_agent():
-    """ISO image builds package verified options while physical defaults stay agent-free."""
+def test_online_builds_retain_maintenance_payload_without_selecting_physical_agent():
+    """Online image construction retains closures while offline installation skips builds."""
     provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
-    builder = provision.split('if [ -n "$QEMU_GUEST_AGENT_BUILDER" ]; then', 1)[1].split(
+    builder = provision.split('elif [ -n "$QEMU_GUEST_AGENT_BUILDER" ]; then', 1)[1].split(
         "\nstage_guest_agent_packages", 1,
     )[0]
     maintenance = provision.split("stage_guest_agent_packages() {", 1)[1].split(

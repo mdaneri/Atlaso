@@ -96,13 +96,16 @@ task; follow its progress and final result in Tasks. Repeat the check after an i
 successful package command alone does not prove the service is healthy. The task preserves the appliance's selected
 clock authority; it does not introduce another time-source setting. See [Appliance time source](../services/ntp.md#appliance-clock-source).
 
-New appliance builds retain verified VMware, Hyper-V, and QEMU guest-tools closures under
+Online appliance image builds retain verified VMware, Hyper-V, and QEMU guest-tools closures under
 `/var/lib/atlaso-privileged/guest-tools` for this workflow. Existing installations may not have those closures,
 especially after a
 portable first-boot selection has securely removed its separate temporary package staging. In that case Settings shows
 the supported compatible-payload prerequisite and does not download from arbitrary repositories or fall back to
 unreviewed network installation. Continue with the documented supported source or a compatible appliance image that
 carries the verified closure; checking and opening Hardware remain safe without it.
+Current offline ISO media does not carry the Atlaso-built QEMU RPM or retained maintenance closures. Its installer
+keeps guest agents uninstalled and never invokes the network-dependent guest-agent builder. Hardware inventory and
+provider checks still work, but maintenance requires a compatible image-built payload.
 
 Hyper-V reports only the supported Linux integration components. KVP and VSS are supported; the legacy file-copy
 daemon uses a transport absent from Atlaso's supported Linux 6.12 kernel. QEMU guest-agent host communication requires

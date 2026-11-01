@@ -515,7 +515,7 @@ safety, and reboot plan and explicitly submit installation or repair. The operat
 Update maintenance task and records progress and its final verified service state in Tasks. Concurrent package
 maintenance is rejected with retry guidance.
 
-New appliance builds retain the complete verified offline RPM closures for VMware `open-vm-tools`, Photon Hyper-V
+Online appliance image builds retain the complete verified offline RPM closures for VMware `open-vm-tools`, Photon Hyper-V
 integration, and the Atlaso-built QEMU guest agent plus its verified dependencies under the root-only protected
 `/var/lib/atlaso-privileged/guest-tools` directory. Its `compatibility.json` binds the closure to Photon 5.0 and x86-64;
 Atlaso checks the exact `SHA256SUMS` inventory and Photon RPM signatures before use. The provider is selected
@@ -523,8 +523,11 @@ from live virtualization and DMI evidence, including ISO-installed virtual machi
 one-shot first-boot selector: that service publishes machine identity and temporary access, removes foreign providers,
 and securely erases its own temporary package cache.
 
-An older appliance, including an ISO installation produced before retained maintenance closures were added, may have
-no compatible verified payload. The check reports this prerequisite and a supported-source recovery path; it does not
+Current offline ISO media does not include the Atlaso-built QEMU RPM or retained maintenance closures. Disconnected
+installation skips guest-agent compilation and staging; it never fetches QEMU source or enables guest agents. Hardware
+can detect the installed VM's provider, but guest-tools maintenance remains unavailable without a compatible payload.
+An older appliance may also have no compatible verified payload. The check reports this prerequisite and a
+supported-source recovery path; it does not
 silently use configured repositories, arbitrary package uploads, or an unverified download. The ordinary signed
 software update does not retroactively add these image-built RPM closures. Use an appliance image with the required
 closure or the supported verified package-source preparation when available.

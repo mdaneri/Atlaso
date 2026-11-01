@@ -321,7 +321,17 @@ ensure_ntpsec_runtime_packages() {
 
 stage_guest_agent_packages() {
   # Maintenance payloads survive the one-shot selector's secure staging cleanup.
-  # Installation media carries the same supported closures without enabling an agent.
+  # Current installation media does not carry the locally built QEMU RPM. Keep
+  # its existing agent-free installation path instead of downloading/building in
+  # the disconnected target. Missing maintenance payloads remain unavailable.
+  if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then
+    log_step "staging empty guest-agent inventory for physical installation"
+    install -d -o root -g root -m 0700 "$GUEST_AGENT_STAGING"
+    : >"$GUEST_AGENT_STAGING/SHA256SUMS"
+    chown root:root "$GUEST_AGENT_STAGING/SHA256SUMS"
+    chmod 0600 "$GUEST_AGENT_STAGING/SHA256SUMS"
+    return
+  fi
   maintenance_staging="$ATLASO_PRIVILEGED_STATE/guest-tools"
   install -d -o root -g root -m 0700 "$ATLASO_PRIVILEGED_STATE"
   rm -rf "$maintenance_staging"
@@ -589,7 +599,7 @@ if [ ! -r "$BOOTSTRAP_VENV_VALIDATOR" ]; then
   echo "Bootstrap virtualenv identity validator is missing from staged Atlaso sources." >&2
   exit 2
 fi
-if { [ "$ATLASO_GUEST_PLATFORM" != "none" ] && [ ! -r "$QEMU_GUEST_AGENT_BUILDER" ]; } ||
+if { [ -z "$ATLASO_INSTALLATION_MEDIA" ] && [ ! -r "$QEMU_GUEST_AGENT_BUILDER" ]; } ||
   [ ! -r "$GUEST_AGENT_SELECTOR_SOURCE" ] ||
   [ ! -r "$MACHINE_IDENTITY_INITIALIZER_SOURCE" ] || [ ! -r "$IMAGE_BUILD_FINALIZER_SOURCE" ] ||
   [ ! -r "$PHOTON_PACKAGE_STATE_VERIFIER" ] || [ ! -r "$GUEST_AGENT_UNIT_SOURCE" ]; then
@@ -683,7 +693,9 @@ if [ -n "$ATLASO_PIP_GLOBAL_INDEX_URL" ]; then
   export PIP_INDEX_URL="$ATLASO_PIP_GLOBAL_INDEX_URL"
 fi
 
-if [ -n "$QEMU_GUEST_AGENT_BUILDER" ]; then
+if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then
+  log_step "skipping virtual guest-agent build for offline installation"
+elif [ -n "$QEMU_GUEST_AGENT_BUILDER" ]; then
   log_step "building the pinned QEMU guest-agent RPM"
   QEMU_GUEST_AGENT_OUTPUT=/tmp/atlaso-qemu-guest-agent-rpm
   rm -rf "$QEMU_GUEST_AGENT_OUTPUT"
