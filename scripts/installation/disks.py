@@ -68,13 +68,14 @@ def require_bootloader_mountpoint(target: str) -> None:
         raise ValueError("Use /boot")
 
 
-def eligible_disks(inventory: dict, *, swaps: set[str], held: set[str]) -> dict[str, dict]:
+def eligible_disks(inventory: dict, *, swaps: set[str], held: set[str], source: str | None = None) -> dict[str, dict]:
     """Exclude installation media, mounted trees, active swap, and held devices.
 
     Args:
         inventory: Block-device inventory returned by the system.
         swaps: Device paths currently active as swap.
-        held: Device paths held by another block-device consumer."""
+        held: Device paths held by another block-device consumer.
+        source: Excluded physical source disk's kernel major:minor identity."""
     result = {}
 
     def busy(device: dict) -> bool:
@@ -89,7 +90,8 @@ def eligible_disks(inventory: dict, *, swaps: set[str], held: set[str]) -> dict[
         )
 
     for device in inventory.get("blockdevices", []):
-        if device.get("type") != "disk" or device.get("ro") or busy(device):
+        if (device.get("type") != "disk" or device.get("ro") or busy(device)
+                or device.get("maj:min") == source or device.get("tran") == "usb"):
             continue
         # Photon 2.2's Device.refresh_devices uses lsblk's supported major
         # allowlist (7, 8, 179, 202, 254, 259), which excludes floppy major 2.
@@ -109,7 +111,7 @@ def eligible_disks(inventory: dict, *, swaps: set[str], held: set[str]) -> dict[
 def disk_inventory() -> dict[str, dict]:
     """Read physical block identities without mounting or modifying any device."""
     raw = subprocess.check_output(
-        ["lsblk", "--json", "--bytes", "--paths", "--output", "PATH,TYPE,RO,SIZE,MODEL,SERIAL,WWN,MAJ:MIN,MOUNTPOINTS"],
+        ["lsblk", "--json", "--bytes", "--paths", "--output", "PATH,TYPE,RO,SIZE,MODEL,SERIAL,WWN,MAJ:MIN,MOUNTPOINTS,TRAN"],
         text=True,
     )
     swaps = {line.split()[0] for line in Path("/proc/swaps").read_text().splitlines()[1:] if line.split()}

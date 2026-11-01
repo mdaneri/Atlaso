@@ -7,6 +7,7 @@ import hashlib
 import io
 import os
 import stat
+import struct
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ import pytest
 from scripts import build_installation_iso
 from scripts.installation import build as installation_build
 from scripts.installation import iso as installation_iso
+from scripts.verify_installation_usb import inspect_layout
 
 
 def test_pinned_command_file_matches_path_and_descriptor_modes(tmp_path: Path) -> None:
@@ -108,6 +110,15 @@ def _add_iso_file(iso: pycdlib.PyCdlib, path: str, name: str, data: bytes) -> No
     iso.add_fp(io.BytesIO(data), len(data), iso_path=path, rr_name=name)
 
 
+def _efi_image() -> bytes:
+    """Build a bounded FAT header fixture matching the catalog's four sectors."""
+    result = bytearray(2048)
+    struct.pack_into("<H", result, 11, 512)
+    struct.pack_into("<H", result, 19, 4)
+    result[510:512] = b"\x55\xaa"
+    return bytes(result)
+
+
 def _source_iso(path: Path, *, unshare: bool = True) -> tuple[str, bytes]:
     """
     Args:
@@ -129,7 +140,9 @@ def _source_iso(path: Path, *, unshare: bool = True) -> tuple[str, bytes]:
     _add_iso_file(image, "/EFI/BOOT/GRUB.CFG;1", "grub.cfg", b"set timeout=10\n")
     _add_iso_file(image, "/ISOLINUX/INITRD.IMG;1", "initrd.img", initrd)
     _add_iso_file(image, "/ISOLINUX/VMLINUZ;1", "vmlinuz", b"kernel")
-    _add_iso_file(image, "/EFI/BOOT/EFIBOOT.IMG;1", "efiboot.img", b"EFI boot image")
+    _add_iso_file(image, "/EFI/BOOT/EFIBOOT.IMG;1", "efiboot.img", _efi_image())
+    _add_iso_file(image, "/ISOLINUX/ISOLINUX.BIN;1", "isolinux.bin", b"\x00" * 64 + b"\xfb\xc0\x78\x70" + b"\x00" * (2048 - 68))
+    image.add_eltorito("/ISOLINUX/ISOLINUX.BIN;1", boot_load_size=4)
     image.add_eltorito("/EFI/BOOT/EFIBOOT.IMG;1", efi=True)
     image.write(str(path))
     image.close()
@@ -199,12 +212,12 @@ def test_remaster_preserves_efi_boot_and_embeds_interactive_offline_installer(
         if remastered.joliet_vd is not None:
             assert remastered.joliet_vd.volume_identifier == installation_iso.VOLUME_IDENTIFIER
         assert remastered.get_record(iso_path="/BOOT.CAT;1")
-        assert _extract(remastered, rr_path="/efi/boot/efiboot.img") == b"EFI boot image"
+        assert _extract(remastered, rr_path="/efi/boot/efiboot.img") == _efi_image()
         assert _extract(remastered, rr_path="/boot/grub2/grub.cfg") == installation_iso._GRUB_CONFIG.encode()
         assert _extract(remastered, rr_path="/efi/boot/grub.cfg") == installation_iso._GRUB_CONFIG.encode()
         assert b"ks=" not in installation_iso._GRUB_CONFIG.encode()
         assert b"root=/dev/ram0" in installation_iso._GRUB_CONFIG.encode()
-        assert b"photon.media=cdrom" in installation_iso._GRUB_CONFIG.encode()
+        assert b"photon.media=cdrom" not in installation_iso._GRUB_CONFIG.encode()
         assert "timeout=-1" in installation_iso._GRUB_CONFIG
 
         initrd = gzip.decompress(_extract(remastered, rr_path="/isolinux/initrd.img"))
@@ -222,6 +235,15 @@ def test_remaster_preserves_efi_boot_and_embeds_interactive_offline_installer(
         assert _extract(remastered, rr_path="/atlaso/long directory name/a payload with spaces.bin") == b"offline payload"
     finally:
         remastered.close()
+    layout = inspect_layout(output)
+    assert layout["efi_sectors"] == 4
+    assert layout["minimum_device_bytes"] == output.stat().st_size
+    with output.open("rb") as stream:
+        mbr = stream.read(512)
+        assert mbr[:440] == bytes(440)  # UEFI only; no claimed legacy-BIOS bootstrap.
+        assert mbr[450] == 0x17
+        assert mbr[466] == 0xEF
+        assert mbr[478:510] == bytes(32)
 
 
 def test_rejects_unpinned_source_before_creating_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -238,6 +260,25 @@ def test_rejects_unpinned_source_before_creating_output(tmp_path: Path, monkeypa
         installation_iso.build_iso(source, payload, output, trust_key=trust)
 
     assert not output.exists()
+
+
+def test_usb_readback_refuses_optical_only_and_changed_efi_map(tmp_path, monkeypatch):
+    """Writing an optical image or a stale EFI offset cannot pass layout admission.
+
+    Args:
+        tmp_path: Isolated source and remastered ISO files.
+        monkeypatch: Admit only the synthetic source fixture.
+    """
+    source, payload, trust = _prepared_inputs(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="disk map"):
+        inspect_layout(source)
+    output = tmp_path / "usb.iso"
+    installation_iso.build_iso(source, payload, output, trust_key=trust)
+    with output.open("r+b") as stream:
+        stream.seek(470)
+        stream.write(struct.pack("<I", 64))
+    with pytest.raises(ValueError, match="differs"):
+        inspect_layout(output)
 
 
 @pytest.mark.parametrize("serial_console", [False, True])
@@ -274,7 +315,7 @@ def test_development_image_records_the_requested_console_in_both_boot_paths(
                 linux = next(line for line in entry.splitlines() if line.strip().startswith(b"linux "))
                 assert linux.split() == [
                     b"linux", b"/isolinux/vmlinuz", b"root=/dev/ram0", b"loglevel=3",
-                    b"photon.media=cdrom", b"console=" + console,
+                    b"console=" + console,
                 ]
                 assert b"initrd /isolinux/initrd.img" in entry
             assert b"if serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1; then" in grub

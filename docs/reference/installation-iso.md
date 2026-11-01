@@ -24,6 +24,45 @@ For recurring admitted package refreshes, use the
 [Offline installation ISO refresh workflow](installation-iso-refresh.md) to review Photon drift, bind capture
 inputs, assemble development media, and follow the receipt-bound VMware validation phases.
 
+For writing the completed image on Windows, macOS, or Linux, use
+[Create an Atlaso installation USB](../getting-started/usb-installation.md).
+
+## USB image layout and readback
+
+USB-capable assembly retains the existing ISO9660 level-3 payload and optical El Torito boot catalog. Its MBR maps
+partition 1 (type `0x17`, start sector zero) over the complete ISO and partition 2 (type `0xef`) over the existing
+EFI FAT boot image. The overlap is intentional: it exposes the same bytes to disk firmware and optical firmware.
+There is no GPT, separate USB image, extracted FAT32 payload, or supported legacy-BIOS bootstrap. Remastering derives
+the EFI partition's sector address from the final boot catalog, rather than copying offsets from the upstream ISO.
+Assembly reads back that address, length, image boundary and FAT header before accepting the output.
+
+After authenticating and reconstructing an installation release, use the trusted checkout's locked Python environment:
+
+```text
+python scripts/verify_installation_usb.py --image <verified-complete.iso>
+```
+
+The checker reports the exact image length/minimum device bytes and EFI partition sectors. It refuses an optical-only
+image, a mismatched disk/catalog offset, or a truncated EFI image. It does not authenticate a release signature,
+verify every installed payload file, or establish firmware compatibility; retain the existing release verifier first.
+
+After writing, optionally add the operator-selected whole USB device to compare **all ISO bytes** read-only:
+
+| Host | Device argument |
+| --- | --- |
+| Windows, elevated PowerShell | `--device '\\.\PhysicalDriveN'` using the exact independently inspected USB disk number |
+| macOS, Terminal with disk-read permission | `--device /dev/rdiskN` after `diskutil unmountDisk /dev/diskN` for that inspected external disk |
+| Linux, with disk-read permission | `--device /dev/disk/by-id/<exact-selected-whole-usb-identity>` |
+
+These device names are selectors for an independently identified device, not stable identity proof. Never substitute
+a partition such as `diskNs1` or a Linux `-part1` link. The checker opens both inputs read-only, bounds comparison to the
+ISO length, rejects short/different reads, and reports the verified prefix's SHA-256. Extra USB capacity is outside that
+comparison. Reconnect/reselect deliberately if the operating system has changed enumeration. Writer validation and
+this byte comparison do not replace actual disconnected USB boot/install, source/unselected-disk preservation, USB-free
+reboot, payload, first-boot and host OpenAPI acceptance. Record physical USB 2/3 and SATA/NVMe hardware results separately.
+
+## Installer image contract
+
 The installation image reuses the pinned Photon 5.0 ISO and Photon installer 2.2. Remastering preserves the source EFI
 boot image and native installer flow. The Atlaso deployment source comes from an immutable Git archive at the
 selected full commit. The signed software release, its exact application wheel, locked CPython wheelhouse, shared
