@@ -15,6 +15,7 @@ nav = [
   { "Getting started" = [
     { "Overview" = "getting-started/index.md" },
     { "Physical installation" = "getting-started/physical-installation.md" },
+    { "Create an installation USB" = "getting-started/usb-installation.md" },
   ] },
   { "Operate" = [
     { "Overview" = "operate/index.md" },

@@ -49,6 +49,9 @@ from scripts.installation.manifest import (  # noqa: E402 - boot media path boot
     inventory,
     verify_media,
 )
+from scripts.installation.media import (  # noqa: E402 - authenticated boot media path bootstrap.
+    SourceMedia,
+)
 
 NATIVE_PATH = Path("/usr/lib/python3.11/site-packages/photon_installer")
 TRUST_KEY = Path("/etc/atlaso-installer/trust.pem")
@@ -130,7 +133,7 @@ def service_storage_choices(config: dict, mountpoint: str, eligible: dict) -> li
     return choices
 
 
-def assign_service_storage(maxy: int, maxx: int, config: dict, initial: dict) -> bool:
+def assign_service_storage(maxy: int, maxx: int, config: dict, initial: dict, source: SourceMedia | None = None) -> bool:
     """Collect reversible service assignments before any destructive consent.
 
     Args:
@@ -138,13 +141,14 @@ def assign_service_storage(maxy: int, maxx: int, config: dict, initial: dict) ->
         maxx: Console columns.
         config: Auto or Custom native layout to update only after both choices.
         initial: Original read-only eligible disk identities.
+        source: Captured physical installation-source binding.
     """
     working = copy.deepcopy(config)
     snapshots = []
     index = 0
     while index < len(SERVICE_STORAGE):
         title, mountpoint = SERVICE_STORAGE[index]
-        current = disk_inventory()
+        current = bound_disk_inventory(source)
         eligible = {path: item for path, item in current.items() if path in initial and item == initial[path]}
         choices = service_storage_choices(working, mountpoint, eligible)
         selected = storage_choice(maxy, maxx, title, mountpoint, choices)
@@ -261,7 +265,7 @@ def installation_output(output):
         logger.propagate = propagate
 
 
-def install_console(screen, media, identity, config, consent, credentials) -> None:
+def install_console(screen, media, identity, config, consent, credentials, source=None) -> None:
     """Reuse Photon's progress control and guest-local detailed output terminal.
 
     Args:
@@ -271,6 +275,7 @@ def install_console(screen, media, identity, config, consent, credentials) -> No
         config: Confirmed native layout.
         consent: Original selected-disk identities.
         credentials: Concealed account inputs, never sent to the output terminal.
+        source: Captured physical installation-source binding.
     """
     from progressbar import ProgressBar
     from window import Window
@@ -322,7 +327,7 @@ def install_console(screen, media, identity, config, consent, credentials) -> No
         progress.update_num_items(len(INSTALLATION_STAGES) + 1)
         progress.show()
         with installation_output(terminal or output):
-            install(media, identity, config, consent, credentials, progress=progress, output=terminal or output, log_path=logs)
+            install(media, identity, config, consent, credentials, progress=progress, output=terminal or output, log_path=logs, source=source)
         progress.update_message("Installation completed")
         progress.increment()
     finally:
@@ -607,13 +612,14 @@ def show_layout_review_pages(maxy: int, maxx: int, lines: list[str], *, heading:
             raise Cancelled()
 
 
-def configure_console(screen, initial: dict[str, dict], mount_aliases: dict[str, str]) -> tuple[dict, dict, tuple[str, str]]:
+def configure_console(screen, initial: dict[str, dict], mount_aliases: dict[str, str], source: SourceMedia | None = None) -> tuple[dict, dict, tuple[str, str]]:
     """Collect the native layout, destructive consent, and concealed credentials.
 
     Args:
         screen: Active curses screen used by the installer.
         initial: Read-only disk identities captured before operator selection.
-        mount_aliases: Native symlinks from the authenticated filesystem RPM."""
+        mount_aliases: Native symlinks from the authenticated filesystem RPM.
+        source: Captured physical installation-source binding."""
     from custompartition import CustomPartition
     from device import Device
     from partitionpane import PartitionPane
@@ -649,7 +655,7 @@ def configure_console(screen, initial: dict[str, dict], mount_aliases: dict[str,
 
         Args:
             byte_sizes: Byte counts used to format device sizes."""
-        current = disk_inventory()
+        current = bound_disk_inventory(source)
         return [
             Device(item.get("model") or "Unknown", path, str(item["size"]) if byte_sizes else f"{item['size'] // 1024**3} GiB")
             for path, item in current.items() if path in initial and current[path] == initial[path]
@@ -747,9 +753,9 @@ def configure_console(screen, initial: dict[str, dict], mount_aliases: dict[str,
                 validate_custom_mountpoint(partition["mountpoint"], mount_aliases)
         paths = selected_disks(config)
         consent = {path: initial[path] for path in paths}
-        revalidate_disks(config, consent, disk_inventory())
+        revalidate_disks(config, consent, bound_disk_inventory(source))
         if not config.get("autopartition") or consent[config["disk"]]["size"] >= MINIMUM_DISK_BYTES:
-            if not assign_service_storage(maxy, maxx, config, initial):
+            if not assign_service_storage(maxy, maxx, config, initial, source):
                 continue
             for partition in config["partitions"]:
                 if partition.get("mountpoint"):
@@ -799,7 +805,7 @@ def configure_console(screen, initial: dict[str, dict], mount_aliases: dict[str,
         "", "ALL EXISTING DATA ON SELECTED DISKS WILL BE LOST.", "Select Yes to continue or No to cancel."
     ]
     while True:
-        revalidate_disks(config, consent, disk_inventory())
+        revalidate_disks(config, consent, bound_disk_inventory(source))
         review = confirmation_lines
         if len(review) > maxy - 10:
             show_layout_review_pages(maxy, maxx, summary_lines[1:], heading="Selected disk identities")
@@ -816,7 +822,7 @@ def configure_console(screen, initial: dict[str, dict], mount_aliases: dict[str,
             # Admin's first-field Back revokes the earlier Yes. Re-display the
             # complete review, with No selected, before collecting any secrets.
             continue
-        revalidate_disks(config, consent, disk_inventory())
+        revalidate_disks(config, consent, bound_disk_inventory(source))
         # Secret material never enters Photon configuration, dynamic substitutions,
         # native modules, command arguments, or its persistent installation log.
         return config, consent, passwords
@@ -955,7 +961,7 @@ def retain_development_inspection_inputs(media: Path, target: Path, identity: di
         raise
 
 
-def install(media: Path, identity: dict, config: dict, consent: dict, credentials: tuple[str, str], *, progress=None, output=None, log_path=None) -> None:
+def install(media: Path, identity: dict, config: dict, consent: dict, credentials: tuple[str, str], *, progress=None, output=None, log_path=None, source: SourceMedia | None = None) -> None:
     """Delegate partitions, base OS, bootloader and fstab to the pinned backend.
 
     Args:
@@ -966,7 +972,8 @@ def install(media: Path, identity: dict, config: dict, consent: dict, credential
         credentials: Administrator and root credentials collected by the installer.
         progress: Optional native stage progress observer.
         output: Optional guest-local output stream for native and provisioner logs.
-        log_path: Optional private native log directory."""
+        log_path: Optional private native log directory.
+        source: Captured physical installation-source binding."""
     from installer import Installer
 
     class AtlasoInstaller(Installer):
@@ -1017,7 +1024,13 @@ def install(media: Path, identity: dict, config: dict, consent: dict, credential
 
         def _partition_disks(self):
             require_network_adapter()
-            revalidate_disks(self.install_config, consent, disk_inventory())
+            if source is not None:
+                source.validate()
+                with tempfile.TemporaryDirectory(prefix="atlaso-prewrite-", dir="/run") as temporary:
+                    current = verify_media(media, TRUST_KEY, scratch=Path(temporary), expected_key_id=installer_key_id(), boot_crypto=True)
+                if current != identity:
+                    raise ValueError("authenticated installation payload changed before disk writes")
+            revalidate_disks(self.install_config, consent, bound_disk_inventory(source))
             super()._partition_disks()
 
         def _setup_grub(self):
@@ -1127,6 +1140,19 @@ def install(media: Path, identity: dict, config: dict, consent: dict, credential
             handler.setStream(stream)
 
 
+def bound_disk_inventory(source: SourceMedia | None) -> dict[str, dict]:
+    """Keep the source's complete physical disk out of every target review.
+
+    Args:
+        source: Captured source identity; production entry always supplies it.
+    """
+    if source is not None:
+        source.validate()
+    current = disk_inventory()
+    return {path: identity for path, identity in current.items()
+            if source is None or identity["maj:min"] != source.backing}
+
+
 def main() -> int:
     """Enter installation only after trusted media and explicit disk consent."""
     os.umask(0o077)
@@ -1138,13 +1164,14 @@ def main() -> int:
     if digest(NATIVE_PATH / "installer.py") != PHOTON_INSTALLER_SHA256:
         raise ValueError("the native Photon installer differs from the pinned version 2.2")
     sys.path.insert(0, str(NATIVE_PATH))
+    source = SourceMedia.capture(args.media)
     with tempfile.TemporaryDirectory(prefix="atlaso-installer-", dir="/run") as temporary:
         identity = verify_media(args.media, TRUST_KEY, scratch=Path(temporary), expected_key_id=installer_key_id(), boot_crypto=True)
     require_network_adapter()
     mount_aliases = filesystem_mount_aliases(args.media, identity)
-    config, consent, credentials = curses.wrapper(configure_console, disk_inventory(), mount_aliases)
+    config, consent, credentials = curses.wrapper(configure_console, bound_disk_inventory(source), mount_aliases, source)
     try:
-        curses.wrapper(install_console, args.media, identity, config, consent, credentials)
+        curses.wrapper(install_console, args.media, identity, config, consent, credentials, source)
     finally:
         credentials = ("", "")
     print("Atlaso installation completed. Remove the installation media before reboot.")

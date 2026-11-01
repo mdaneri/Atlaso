@@ -29,6 +29,96 @@ Args:
     return module
 
 
+def test_bound_inventory_excludes_source_without_mount_or_label_assumptions(monkeypatch):
+    """Every storage screen filters the physical source identity after kernel reads.
+
+    Args:
+        monkeypatch: Isolate kernel observations and detect disappeared media.
+    """
+    module = load_installer(monkeypatch)
+    observed = []
+    source = SimpleNamespace(backing="8:16", validate=lambda: observed.append("source"))
+    monkeypatch.setattr(module, "disk_inventory", lambda: {
+        "/dev/reordered": {"maj:min": "8:16"}, "/dev/nvme0n1": {"maj:min": "259:0"},
+    })
+    assert module.bound_disk_inventory(source) == {"/dev/nvme0n1": {"maj:min": "259:0"}}
+    assert observed == ["source"]
+
+    def disconnected():
+        """Model a detached USB even if a cached device enumeration survives."""
+        raise ValueError("source disconnected")
+
+    source.validate = disconnected
+    monkeypatch.setattr(module, "disk_inventory", lambda: pytest.fail("disconnected source must refuse first"))
+    with pytest.raises(ValueError, match="disconnected"):
+        module.bound_disk_inventory(source)
+
+
+@pytest.mark.parametrize("failure", ["disconnected", "corrupt", "replaced"])
+def test_usb_prewrite_refuses_invalid_source_before_partitioning(monkeypatch, tmp_path, failure):
+    """The native destructive call stays unreachable after source admission fails.
+
+    Args:
+        monkeypatch: Native backend and source observation doubles.
+        tmp_path: Task-owned verification scratch.
+        failure: Source/media failure introduced after operator consent.
+    """
+    module = load_installer(monkeypatch)
+    operations = []
+
+    class Backend:
+        def __init__(self, **kwargs):
+            """Construct only the native test backend.
+
+            Args:
+                **kwargs: Native repository constructor options.
+            """
+
+        def configure(self, config):
+            """Keep the native configuration in memory.
+
+            Args:
+                config: Operator-approved plan.
+            """
+            self.install_config = config
+
+        def _unsafe_install(self):
+            self._partition_disks()
+
+        def _partition_disks(self):
+            operations.append("partition")
+
+        def _unmount_all(self):
+            operations.append("unmount")
+
+    def validate():
+        """Model a source removed between consent and native disk mutation."""
+        if failure == "disconnected":
+            raise ValueError("source disconnected")
+
+    def verify(*args, **kwargs):
+        """Model a corrupt or different authenticated payload.
+
+        Args:
+            *args: Source and public trust paths.
+            **kwargs: Existing verifier options.
+        """
+        if failure == "corrupt":
+            raise ValueError("source corrupt")
+        return {"packages": ["different"]}
+
+    temporary_directory = module.tempfile.TemporaryDirectory
+    monkeypatch.setattr(module.tempfile, "TemporaryDirectory", lambda **_kwargs: temporary_directory(dir=tmp_path))
+    monkeypatch.setitem(sys.modules, "installer", SimpleNamespace(Installer=Backend))
+    monkeypatch.setattr(module, "require_network_adapter", lambda: None)
+    monkeypatch.setattr(module, "verify_media", verify)
+    monkeypatch.setattr(module, "disk_inventory", lambda: pytest.fail("invalid source must refuse first"))
+    with pytest.raises(ValueError, match="disconnected|corrupt|payload changed"):
+        module.install(tmp_path, {"packages": ["linux"]}, {}, {}, ("unused", "unused"),
+                       source=SimpleNamespace(backing="8:0", validate=validate))
+    assert operations == ["unmount"]
+
+
 @pytest.mark.parametrize("autopartition", [True, False])
 def test_named_service_storage_selects_only_explicit_disks(monkeypatch, autopartition):
     """Assign both named services without inferring disk roles from size or order.
