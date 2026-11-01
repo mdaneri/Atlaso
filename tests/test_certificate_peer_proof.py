@@ -7,6 +7,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -352,6 +353,9 @@ def test_original_iso_receipts_are_bound_to_task_source_hash_and_directory(
 
     from scripts.completed_task_files import WindowsFiles
 
+    monkeypatch.setattr(proof.subprocess, "run", lambda args, **_kwargs:
+                        SimpleNamespace(returncode=int("9" * 40 in args)))
+
     vmx = str(tmp_path / "appliance.vmx")
     root = str(tmp_path)
     intent = {
@@ -441,6 +445,8 @@ def test_original_iso_receipt_accepts_distinct_plan_and_installed_source_commits
 
     from scripts.completed_task_files import WindowsFiles
 
+    monkeypatch.setattr(proof.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0))
+
     vmx, root = str(tmp_path / "appliance.vmx"), str(tmp_path)
     intent = {"schema": 1, "phase": "installation-pending", "task_id": "task", "repository": "mdaneri/Atlaso",
               "pull_request_number": 1074, "vmx_path": vmx, "output_directory": root, "source_commit": "a" * 40}
@@ -488,3 +494,17 @@ def test_original_iso_receipt_accepts_distinct_plan_and_installed_source_commits
     boot["source_commit"] = "unreviewed"
     with pytest.raises(proof.Refusal, match="original_iso_boot_source_invalid"):
         proof.original_iso_vm(plan, intent, ownership, reference, Path(root), vmx)
+    # The boot receipt can share the creation commit without proving that either
+    # belongs to the current harness. Bootstrap must reject this before access.
+    boot["source_commit"] = ownership["source_commit"]
+    calls = []
+
+    def unrelated_source(arguments, **kwargs):
+        calls.append(arguments)
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr(proof.subprocess, "run", unrelated_source)
+    monkeypatch.setattr(WindowsFiles, "opened", lambda *args, **kwargs: pytest.fail("unrelated source reached live VM admission"))
+    with pytest.raises(proof.Refusal, match="original_iso_source_not_reviewed_ancestor"):
+        proof.original_iso_vm(plan, intent, ownership, reference, Path(root), vmx)
+    assert calls[0][-4:] == ["merge-base", "--is-ancestor", ownership["source_commit"], plan["source_commit"]]

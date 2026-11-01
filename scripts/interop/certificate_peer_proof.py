@@ -135,6 +135,29 @@ def original_vm(plan: dict, role: str, vmx_path: str) -> dict:
     return ownership
 
 
+def require_reviewed_ancestor(plan: dict, source: str, reason: str) -> None:
+    """Admit each creation/transition source independently before bootstrap access.
+
+    Args:
+        plan: Source-pinned current harness plan.
+        source: Unchanged commit recorded by an original receipt.
+        reason: Fixed public refusal for this receipt boundary.
+    """
+    head = plan.get("source_commit", "")
+    if (not isinstance(source, str) or not re.fullmatch(r"[0-9a-f]{40}", source)
+            or not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}", head)):
+        raise Refusal(reason)
+    if source == head:
+        return
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("ATLASO_NATIVE_")}
+    ancestry = subprocess.run(
+        ["git", "-C", str(Path(__file__).resolve().parents[2]), "merge-base", "--is-ancestor", source, head],
+        capture_output=True, env=environment, timeout=15,
+    )
+    if ancestry.returncode:
+        raise Refusal(reason)
+
+
 def original_iso_vm(plan: dict, intent: dict, ownership: dict, reference: dict, root: Path, vmx: str) -> dict:
     """Admit original installer receipts without relabelling their identity.
 
@@ -149,6 +172,12 @@ def original_iso_vm(plan: dict, intent: dict, ownership: dict, reference: dict, 
     boot = bound_json(plan["appliance_installed_boot"])
     transition = bound_json(plan["iso_private_lan_rewire"])
     transition_intent = bound_json(plan["iso_private_lan_intent"])
+    creation_source = ownership.get("source_commit", "")
+    if plan.get("resource_source_commit", creation_source) != creation_source:
+        raise Refusal("original_iso_creation_source_mismatch")
+    # Bootstrap deliberately precedes handoff's admit_execution(). Its original
+    # creation source therefore needs its own gate even when boot reused it.
+    require_reviewed_ancestor(plan, creation_source, "original_iso_source_not_reviewed_ancestor")
     for record in (intent, ownership, boot):
         if (record.get("schema") != 1 or record.get("task_id") != plan["task_id"]
                 or record.get("repository") != "mdaneri/Atlaso"
@@ -156,17 +185,7 @@ def original_iso_vm(plan: dict, intent: dict, ownership: dict, reference: dict, 
                 or record.get("vmx_path") != vmx or record.get("output_directory") != str(root)
                 or (record is not boot and record.get("source_commit") != ownership.get("source_commit"))):
             raise Refusal("original_iso_vm_binding_mismatch")
-    boot_source = boot.get("source_commit", "")
-    if not isinstance(boot_source, str) or not re.fullmatch(r"[0-9a-f]{40}", boot_source):
-        raise Refusal("original_iso_boot_source_invalid")
-    if boot_source not in {ownership.get("source_commit"), plan.get("source_commit")}:
-        environment = {key: value for key, value in os.environ.items() if not key.startswith("ATLASO_NATIVE_")}
-        ancestry = subprocess.run(
-            ["git", "-C", str(Path(__file__).resolve().parents[2]), "merge-base", "--is-ancestor", boot_source, plan["source_commit"]],
-            capture_output=True, env=environment, timeout=15,
-        )
-        if ancestry.returncode:
-            raise Refusal("original_iso_boot_source_invalid")
+    require_reviewed_ancestor(plan, boot.get("source_commit", ""), "original_iso_boot_source_invalid")
     if (intent.get("phase") != "installation-pending"
             or ownership.get("intent_sha256") != plan["appliance_intent"]["sha256"]
             or boot.get("phase") != "installation-boot-without-media"
@@ -177,6 +196,7 @@ def original_iso_vm(plan: dict, intent: dict, ownership: dict, reference: dict, 
     boot_reference = plan["appliance_installed_boot"]
     intent_reference = plan["iso_private_lan_intent"]
     for record in (transition, transition_intent):
+        require_reviewed_ancestor(plan, record.get("source_commit", ""), "original_iso_transition_source_invalid")
         if (record.get("schema") != 1 or record.get("task_id") != plan["task_id"]
                 or record.get("repository") != "mdaneri/Atlaso"
                 or record.get("pull_request_number") != plan_pr(plan)
