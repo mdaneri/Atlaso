@@ -256,7 +256,7 @@ def test_management_handoff_orders_publication_and_reports_final_observation(
         else [initial_observation, initial_observation, initial_observation]
     )
     monkeypatch.setattr(helper, "_wait_network_addresses", lambda *_args, **_kwargs: next(observations))
-    monkeypatch.setattr(helper, "_management_handoff_resolve_pending_dhcp", lambda *_args: None)
+    monkeypatch.setattr(helper, "_management_handoff_resolve_pending_dhcp", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_wait_management_handoff_routes", lambda *_args: None)
     monkeypatch.setattr(helper, "_apply_route_domain_ingress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(helper, "_install_route_domain_intent", lambda *_args, **_kwargs: None)

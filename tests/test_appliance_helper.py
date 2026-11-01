@@ -1712,9 +1712,12 @@ def test_firewall_replay_uses_atomic_nft_wrapper_for_applied_time_mode(
 
     assert len(calls) == 1
     command, kwargs = calls[0]
+    assert command == ["nft", "-f", "-"]
+    assert kwargs["input"].startswith(firewall.read_text(encoding="utf-8"))
+    assert "table inet atlaso_ipv4ll {" in kwargs["input"]
+    assert "ip saddr 169.254.0.0/16 drop" in kwargs["input"]
+    assert "ip daddr 169.254.0.0/16 drop" in kwargs["input"]
     if guard_expected:
-        assert command == ["nft", "-f", "-"]
-        assert kwargs["input"].startswith(firewall.read_text(encoding="utf-8"))
         assert "table inet atlaso_time_sync" in kwargs["input"]
         if mode == "ntp_server":
             assert 'ip daddr 192.0.2.10 udp dport 123 return comment "Atlaso time-sync selected listener"' in kwargs[
@@ -1727,9 +1730,7 @@ def test_firewall_replay_uses_atomic_nft_wrapper_for_applied_time_mode(
         else:
             assert 'udp dport 123 drop comment "Atlaso time-sync client-only"' in kwargs["input"]
     else:
-        assert command == ["nft", "-f", str(firewall)]
-        assert "input" not in kwargs
-        assert "atlaso_time_sync" not in firewall.read_text(encoding="utf-8")
+        assert "atlaso_time_sync" not in kwargs["input"]
     assert firewall.read_text(encoding="utf-8") == "flush ruleset\ntable inet atlaso { }\n"
 
 
@@ -9714,7 +9715,7 @@ def test_network_helper_preserves_automatic_ipv6_for_management(tmp_path):
     management_network = files["00-atlaso-mgmt.network"]
     assert "DHCP=ipv4" in management_network
     assert "IPv6AcceptRA=yes" in management_network
-    assert "LinkLocalAddressing=ipv6" in management_network
+    assert "LinkLocalAddressing=yes" in management_network
     # Networkd permits repeated Route sections; this parser inspects only Network/DHCP.
     parsed = configparser.ConfigParser(strict=False)
     parsed.read_string(management_network)
@@ -9812,7 +9813,7 @@ def test_network_helper_renders_static_management_ipv6_gateway_in_main_and_table
     files, _reconfigure_links, _admin_down_links = helper._systemd_networkd_files(config_path)
     rendered = files["00-atlaso-mgmt.network"]
     assert "IPv6AcceptRA=no" in rendered
-    assert "LinkLocalAddressing=ipv6" in rendered
+    assert "LinkLocalAddressing=yes" in rendered
     assert "Address=2001:db8:49::10/64" in rendered
     assert "Destination=2001:db8:49::/64\nScope=link\nPreferredSource=2001:db8:49::10\nTable=100" in rendered
     assert "[RoutingPolicyRule]" not in rendered
@@ -22968,7 +22969,7 @@ def test_network_helper_keeps_dynamic_routes_in_interface_domain(tmp_path, role,
     ]), encoding="utf-8")
     files, _links, _down = helper._systemd_networkd_files(path)
     rendered = files["00-atlaso-mgmt.network" if role == "management" else "10-atlaso-eth0.network"]
-    assert f"[DHCPv4]\nSendRelease=no\nSendDecline=yes\nRouteTable={table}" in rendered
+    assert f"[DHCPv4]\nSendRelease=no\nSendDecline=yes\nMaxAttempts=infinity\nRouteTable={table}" in rendered
     assert f"[IPv6AcceptRA]\nRouteTable={table}" in rendered
     assert "[RoutingPolicyRule]" not in rendered
 

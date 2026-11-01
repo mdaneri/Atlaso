@@ -53,7 +53,7 @@ def test_gateway_permission_is_explicit_family_scoped_and_default_denied(role):
                         enabled=True, policy="allow", ip_family=4, priority=100)
     generated = managed_routing_firewall_rules(interfaces, vlans, [allow])
     config = render_nftables_config(settings(), [], generated, replace_atlaso_service_rules=True)
-    forward = config.split("chain forward {", 1)[1].split("chain output {", 1)[0]
+    forward = config.split("table inet atlaso {", 1)[1].split("chain forward {", 1)[1].split("chain output {", 1)[0]
     assert 'oifname "a" iifname "a" ip saddr 10.0.0.0/24 ip daddr 0.0.0.0/0 accept comment "routing-80-gateway"' in config
     assert 'ip6 saddr 2001:db8:a::/64 ip6 daddr ::/0 accept comment "routing-80-gateway"' not in config
     assert not any(rule.routing_policy_phase == "automatic" and rule.interface_name == rule.routing_destination_interface for rule in generated)
@@ -63,7 +63,7 @@ def test_gateway_permission_is_explicit_family_scoped_and_default_denied(role):
     disabled = managed_routing_firewall_rules(interfaces, vlans, [allow])
     ipv4_deny = default_deny_name(disabled, "a", "a", 4)
     disabled_config = render_nftables_config(settings(), [], disabled, replace_atlaso_service_rules=True)
-    disabled_forward = disabled_config.split("chain forward {", 1)[1].split("chain output {", 1)[0]
+    disabled_forward = disabled_config.split("table inet atlaso {", 1)[1].split("chain forward {", 1)[1].split("chain output {", 1)[0]
     assert f'oifname "a" iifname "a" ip saddr 10.0.0.0/24 ip daddr 0.0.0.0/0 drop comment "{ipv4_deny}"' in disabled_config
     assert disabled_forward.index(f'comment "{ipv4_deny}"') < disabled_forward.index("ct state established,related accept")
     allow.enabled = True
@@ -119,7 +119,7 @@ def test_gateway_default_denial_preserves_owned_dnat_admission(family):
     composed, _ = port_forward_firewall_projection(base, [mapping], [], routing_enabled=True)
     assert 'ct mark 0xa7000007 ct status dnat ct direction original iifname "a"' in composed
     assert 'ct mark 0xa7000007 ct status dnat ct direction reply oifname "a"' in composed
-    assert composed.index(drops[0]) < composed.index("ct state established,related accept", composed.index("chain forward"))
+    assert composed.index(drops[0]) < composed.index("ct state established,related accept", composed.index("chain forward", composed.index("table inet atlaso {")))
     assert composed.index(drops[1]) < composed.index("# BEGIN ATLASO PORT FORWARD ADMISSION")
     deny = RoutingRule(id=88, name="Block hairpin", enabled=True, source_interface="a",
                        destination_interface="a", policy="deny", ip_family=family, priority=999)
@@ -141,7 +141,7 @@ def test_deny_precedes_established_diagnostics_and_overlapping_accepts():
                          enabled=True, priority=0)
     generated = managed_routing_firewall_rules(interfaces, vlans, [allow, deny])
     config = render_nftables_config(settings(), [broad], generated, replace_atlaso_service_rules=True)
-    forward = config.split("chain forward {", 1)[1].split("chain output {", 1)[0]
+    forward = config.split("table inet atlaso {", 1)[1].split("chain forward {", 1)[1].split("chain output {", 1)[0]
     denial = 'oifname "trunk.20" iifname "a" ip saddr 10.0.0.0/24 ip daddr 10.20.0.0/24 drop comment "routing-41-deny-vlan"'
     assert denial in forward
     assert forward.index(denial) < forward.index("ct state established")
@@ -150,7 +150,7 @@ def test_deny_precedes_established_diagnostics_and_overlapping_accepts():
     assert 'ip6 saddr 2001:db8:a::/64 ip6 daddr 2001:db8:20::/64 drop' not in forward
     assert 'oifname "other" iifname "a"' in forward
     assert 'oifname "a" iifname "trunk.20"' in forward
-    assert 'comment "routing-41-deny-vlan"' not in config.split("chain forward {", 1)[0]
+    assert 'comment "routing-41-deny-vlan"' not in config.split("table inet atlaso {", 1)[1].split("chain forward {", 1)[0]
 
 
 def test_long_permission_name_has_bounded_unique_nft_comment():
@@ -184,7 +184,7 @@ def test_operator_forward_drop_priority_precedes_routing_accepts(policy):
                         interface_name="a", enabled=True, priority=0)
     generated = managed_routing_firewall_rules(interfaces, vlans, [permission])
     config = render_nftables_config(settings(), [drop], generated, replace_atlaso_service_rules=True)
-    forward = config.split("chain forward {", 1)[1].split("chain output {", 1)[0]
+    forward = config.split("table inet atlaso {", 1)[1].split("chain forward {", 1)[1].split("chain output {", 1)[0]
     route_admission = next(
         item for item in generated
         if item.interface_name == "a" and item.routing_destination_interface == "b"
@@ -262,7 +262,7 @@ def test_access_automatic_denial_is_enforced_with_accept_forward_policy(destinat
     firewall.default_forward_policy = "accept"
     broad = FirewallRule(name="Broad", direction="forward", action="accept", protocol="any", source="any", destination="any", destination_port="", interface_name="", enabled=True, priority=0)
     config = render_nftables_config(firewall, [broad], generated, replace_atlaso_service_rules=True)
-    forward = config.split("chain forward {", 1)[1].split("chain output {", 1)[0]
+    forward = config.split("table inet atlaso {", 1)[1].split("chain forward {", 1)[1].split("chain output {", 1)[0]
     for version in (4, 6):
         marker = f'comment "{default_deny_name(generated, "a", "b", version)}"'
         assert marker in forward
