@@ -317,7 +317,8 @@ def test_disabling_only_fallback_requires_native_withdrawal(tmp_path, monkeypatc
 
 @pytest.mark.parametrize("first_boot", [False, True])
 @pytest.mark.parametrize("renamed", [False, True])
-def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, monkeypatch, first_boot, renamed):
+@pytest.mark.parametrize("warmup_carrier_loss", [False, True])
+def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, monkeypatch, first_boot, renamed, warmup_carrier_loss):
     """Publish real signed leaves across APIPA, DHCP and carrier loss with isolated host seams.
 
     Args:
@@ -326,6 +327,7 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
         monkeypatch: Replace host operations while retaining real certificate issuance and database behavior.
         first_boot: Freeze published first-boot identity before an explicit Settings Apply exists.
         renamed: Preserve the original Settings name while reconciling the applied NIC through its MAC-bound alias.
+        warmup_carrier_loss: Withdraw carrier while slow publication helpers initialize outside the writer transaction.
     """
     import json
     import subprocess
@@ -426,7 +428,28 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
 
     helper["_configure_atlaso_management_https"] = publish_config
     helper["_install_nginx_site"] = lambda path, text: (path.write_text(text), 0)[1]
-    bootstrap = {"recovery_root_matches_baseline": lambda _db: True,
+    ui_prepared = []
+
+    def prepare_ui():
+        """Require an independent SQLite writer to remain available during cold imports."""
+        if not ui_prepared:
+            with SessionLocal() as audit_db:
+                publisher.acquire_network_objects_write_lock(audit_db)
+                audit_db.commit()
+            ui_prepared.append(True)
+            if warmup_carrier_loss:
+                observation["links"][0]["carrier"] = False
+
+    def root_matches(_db):
+        """Mirror the bootstrap's lazy import before its protected root comparison.
+
+        Args:
+            _db: Existing publication writer, which must not own the first import.
+        """
+        prepare_ui()
+        return True
+
+    bootstrap = {"_ui_functions": prepare_ui, "recovery_root_matches_baseline": root_matches,
                  "MARKER_PATH": tmp_path / "first-boot-complete", "COMPLETION_MARKER_TEXT": "complete",
                  "read_regular_text": lambda *_args, **_kwargs: "complete",
                  "write_secret_text_atomic": lambda path, text: path.write_text(text),
@@ -437,6 +460,11 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
     monkeypatch.setattr(publisher.ssl, "get_server_certificate", lambda *_args, **_kwargs: x509.load_pem_x509_certificate(
         cert_path.read_bytes()).public_bytes(serialization.Encoding.PEM).decode())
     publisher.reconcile(helper, bootstrap)
+    assert ui_prepared == [True]
+    if warmup_carrier_loss:
+        assert publications == []
+        assert receipts[-1]["phase"] == "withdrawn"
+        return
     assert receipts[-1]["apipa_addresses"] == ["169.254.20.10"]
     assert publications[-1][0]["fqdn"] == "applied.atlaso.internal"
     assert publications[-1][0]["management_interface"] == current_name

@@ -140,18 +140,22 @@ def bootstrap_row(db: Session, observation: dict[str, Any]) -> dict[str, str]:
             "ipv6_cidr": static_ipv6[0] if static_ipv6 else ""}
 
 
-def reconcile(helper: dict[str, Any], bootstrap: dict[str, Any]) -> None:
-    """Refresh only native dynamic management state and its existing TLS leaf.
+def _reconcile_once(helper: dict[str, Any], bootstrap: dict[str, Any], *, bootstrap_ready: bool) -> bool:
+    """Reconcile fresh inputs, requesting cold UI preparation outside the writer lock.
 
     Args:
         helper: Canonical installed privileged helper functions.
         bootstrap: Canonical installed HTTPS bootstrap/recovery helpers.
+        bootstrap_ready: Whether potentially expensive publication helpers are already imported.
+
+    Returns:
+        Whether the caller must prepare the bootstrap helpers and retry with fresh inputs.
     """
     with helper["_network_transaction_lock"]():
         if helper["_network_transaction_state"]() or helper["MANAGEMENT_HANDOFF_STATE_PATH"].exists():
-            return
+            return False
         if not helper["_console_bootstrap_is_idle"]():
-            return
+            return False
         # An interrupted front-door publication must recover before any newer one.
         if helper["_recover_management_front_door"](quiet=True):
             raise ValueError("previous management publication requires recovery")
@@ -159,14 +163,14 @@ def reconcile(helper: dict[str, Any], bootstrap: dict[str, Any]) -> None:
         with SessionLocal() as db:
             acquire_network_objects_write_lock(db)
             if db.scalar(select(Job.id).where(Job.type == "appliance-apply", Job.status.in_(["pending", "running"]))):
-                return
+                return False
             baselines = applied_snapshots(db)
             network = baselines.get("network")
             rows = _network_rows(network["config_preview"]) if network else [bootstrap_row(db, observation)]
             candidates = [row for row in rows if row.get("role") == "management" and row.get("ipv4_method") == "dhcp"]
             if len(candidates) != 1:
                 write_publication({"phase": "withdrawn"})
-                return
+                return False
             row = candidates[0]
             if network:
                 row = {**row, "name": network.get("physical_interface_aliases", {}).get(row["name"], row["name"])}
@@ -174,7 +178,7 @@ def reconcile(helper: dict[str, Any], bootstrap: dict[str, Any]) -> None:
             if native["ipv4_state"] == "unknown":
                 # Observation failure cannot authorize listener retirement. The
                 # public receipt ages out while the last working runtime stays.
-                return
+                return False
             identity = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == row["name"]))
             if identity is None or identity.mac_address.lower() != row.get("mac", "").lower():
                 raise ValueError("applied management inventory identity changed")
@@ -189,7 +193,7 @@ def reconcile(helper: dict[str, Any], bootstrap: dict[str, Any]) -> None:
                 published_leaves = [item for item in ca_baseline.get("certificates", []) if item.get("managed_owner") == "appliance:https"]
                 if (appliance is None or len(published_leaves) != 1
                         or bootstrap["read_regular_text"](bootstrap["MARKER_PATH"], maximum_size=256) != bootstrap["COMPLETION_MARKER_TEXT"]):
-                    return
+                    return False
                 published_leaf = published_leaves[0]
                 settings = {"fqdn": published_leaf["common_name"], "management_https_enabled": True,
                             "management_https_cert_path": published_leaf["cert_path"], "management_https_key_path": published_leaf["key_path"],
@@ -199,7 +203,7 @@ def reconcile(helper: dict[str, Any], bootstrap: dict[str, Any]) -> None:
             if network:
                 settings_interface = network.get("physical_interface_aliases", {}).get(settings_interface, settings_interface)
             if settings_interface not in (None, "", row["name"]):
-                return
+                return False
             settings = {**settings, "management_interface": row["name"]}
             published = {"interface": row["name"], "mac": row["mac"], **native,
                          "network_digest": snapshot_digest(network), "settings_digest": snapshot_digest(settings_baseline),
@@ -239,7 +243,7 @@ def reconcile(helper: dict[str, Any], bootstrap: dict[str, Any]) -> None:
                 # fresh, while pending desired CA/settings edits stay pending.
                 previous["observed_at"] = datetime.now(timezone.utc).isoformat()
                 write_publication(previous)
-                return
+                return False
             if not native["addresses"]:
                 write_publication({**published, "phase": "withdrawn"})
                 # Remove only the owned dynamic listener. Other management paths
@@ -257,7 +261,9 @@ def reconcile(helper: dict[str, Any], bootstrap: dict[str, Any]) -> None:
                 if previous:
                     record_audit(db, actor="system:networkd", action="withdraw_dynamic_management", resource_type="network",
                                  resource_id=row["name"], detail=f"{row['name']}: {native['ipv4_state']}; dynamic setup listener withdrawn.")
-                return
+                return False
+            if settings.get("management_https_enabled") and not bootstrap_ready:
+                return True
             settings["management_ip"] = native["addresses"][0]
             leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
             ca = db.scalar(select(CaSettings))
@@ -335,6 +341,21 @@ def reconcile(helper: dict[str, Any], bootstrap: dict[str, Any]) -> None:
                              urls=[f"{scheme}://{'[' + address + ']' if ':' in address else address}:{port}/ui/management/"
                                    for address in native["addresses"]])
             write_publication(published)
+    return False
+
+
+def reconcile(helper: dict[str, Any], bootstrap: dict[str, Any]) -> None:
+    """Prepare cold publication helpers without holding SQLite writer or native Apply locks.
+
+    Args:
+        helper: Canonical installed privileged helper functions.
+        bootstrap: Canonical installed HTTPS bootstrap/recovery helpers.
+    """
+    if _reconcile_once(helper, bootstrap, bootstrap_ready=False):
+        # Cold UI/schema imports can outlast SQLite's busy timeout. Release the
+        # first probe transaction, then re-observe and re-admit every input.
+        bootstrap["_ui_functions"]()
+        _reconcile_once(helper, bootstrap, bootstrap_ready=True)
 
 
 def main() -> int:
