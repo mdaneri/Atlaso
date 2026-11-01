@@ -218,20 +218,47 @@
     });
   }
 
-  function describeTargetPackages(packages, plan) {
-    if (!plan || typeof plan.package_change !== "boolean") return "Package plan unavailable. Check status before installation.";
-    if (plan.package_change === false) return "No package transaction planned.";
-    if (!Array.isArray(packages) || packages.length === 0) {
-      const version = plan.target_version ? ` Target agent version: ${plan.target_version}.` : "";
-      return `The verified target package list is unavailable; check status again before review.${version}`;
-    }
-    return packages.map((item) => {
-      if (typeof item === "string") return item;
-      const name = item?.name || "Unknown package";
-      const version = item?.version || "version unavailable";
-      const architecture = item?.architecture || "architecture unavailable";
-      return `${name} ${version} (${architecture})`;
-    }).join("; ");
+  function formatGuestToolVersion(value) {
+    if (typeof value !== "string" || !value.trim()) return "Unknown";
+    const rawVersion = value.trim();
+    const hasEpoch = /^\d+:/.test(rawVersion);
+    const withoutEpoch = rawVersion.replace(/^\d+:/, "");
+    const releaseSeparator = withoutEpoch.lastIndexOf("-");
+    const release = releaseSeparator > 0 ? withoutEpoch.slice(releaseSeparator + 1) : "";
+    return releaseSeparator > 0 && (hasEpoch || /^\d/.test(release)) ? withoutEpoch.slice(0, releaseSeparator) : withoutEpoch;
+  }
+
+  function guestToolPackageName(provider) {
+    const packageNames = {
+      vmware: "open-vm-tools",
+      hyperv: "hyper-v",
+      qemu: "atlaso-qemu-guest-agent",
+      kvm: "atlaso-qemu-guest-agent",
+    };
+    return packageNames[provider] || null;
+  }
+
+  function verifiedGuestToolPackage(provider, packages) {
+    const packageName = guestToolPackageName(provider);
+    if (!packageName || !Array.isArray(packages)) return null;
+    return packages.find((item) => item && typeof item === "object" && item.name === packageName) || null;
+  }
+
+  function offlinePayloadAvailable(provider, packages, payload) {
+    if (typeof payload?.available === "boolean") return payload.available;
+    return Boolean(verifiedGuestToolPackage(provider, packages));
+  }
+
+  function availableGuestToolVersion(provider, plan, packages, payload) {
+    if (!guestToolPackageName(provider)) return "Unknown";
+    const targetPackage = verifiedGuestToolPackage(provider, packages);
+    const payloadAvailable = offlinePayloadAvailable(provider, packages, payload);
+    if (!payloadAvailable) return payload?.available === false ? "Unavailable offline" : "Unknown";
+    const targetVersion = typeof plan?.target_version === "string" && plan.target_version.trim()
+      ? plan.target_version.trim()
+      : null;
+    if (targetVersion) return formatGuestToolVersion(targetVersion);
+    return targetPackage?.version ? formatGuestToolVersion(targetPackage.version) : "Unknown";
   }
 
   function describeServiceChanges(provider, plan) {
@@ -285,17 +312,20 @@
       stateElement.className = `status-pill ${state === "healthy" ? "good" : ["missing", "stopped"].includes(state) ? "warn" : "muted"}`;
     }
     safeText(root, "[data-guest-tools-provider]", providerLabel);
-    safeText(root, "[data-guest-tools-version]", tools.version, state === "missing" ? "Not installed" : "Unavailable");
+    const installedVersion = state === "missing" ? "Not installed" : formatGuestToolVersion(tools.version);
+    safeText(root, "[data-guest-tools-version]", installedVersion, state === "missing" ? "Not installed" : "Unavailable");
     const plan = tools.plan && typeof tools.plan === "object" ? tools.plan : null;
     const packageChange = plan?.package_change === true;
     const targetPackageList = tools.target_packages || plan?.target_packages;
     const targetPackageListKnown = Array.isArray(targetPackageList) && targetPackageList.length > 0;
+    const payload = tools.payload && typeof tools.payload === "object" ? tools.payload : null;
+    const payloadAvailable = offlinePayloadAvailable(provider, targetPackageList, payload);
+    const availableVersion = availableGuestToolVersion(provider, plan, targetPackageList, payload);
+    safeText(root, "[data-guest-tools-available-version]", availableVersion);
     const packageSource = packageChange
-      ? tools.available === true ? "Verified offline package closure" : "Verified package closure unavailable"
+      ? payloadAvailable ? "Verified offline package closure" : "Verified package closure unavailable"
       : plan?.package_change === false ? "No package transaction required" : "Package plan unavailable";
     safeText(root, "[data-guest-tools-source]", packageSource);
-    const targetPackages = describeTargetPackages(targetPackageList, plan);
-    safeText(root, "[data-guest-tools-packages]", targetPackages);
     const serviceChanges = describeServiceChanges(provider, plan);
     safeText(root, "[data-guest-tools-services]", serviceChanges);
     const rebootImpact = tools.reboot_impact || (tools.reboot_required === true ? "A system reboot is required." : tools.reboot_required === false ? "No system reboot is expected." : "System reboot impact is unknown.");
@@ -324,7 +354,8 @@
     if (installForm) {
       installForm.dataset.confirmMessage = [
         `Detected provider: ${providerLabel}.`,
-        `Package transaction: ${targetPackages}`,
+        `Installed version: ${installedVersion}.`,
+        `Available version: ${availableVersion}.`,
         `Service changes: ${serviceChanges}`,
         `Restart and reboot impact: ${actionsRequireServiceWork(plan) ? "The listed service actions may start or stop services. " : ""}${rebootImpact}`,
         `Clock authority and guard: ${clockSafety}`,

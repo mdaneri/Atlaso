@@ -146,8 +146,8 @@ function inventoryHarness() {
 function guestToolsHarness() {
   const nodes = new Map();
   [
-    "[data-guest-tools-state]", "[data-guest-tools-provider]", "[data-guest-tools-version]",
-    "[data-guest-tools-source]", "[data-guest-tools-packages]", "[data-guest-tools-services]", "[data-guest-tools-effective-services]",
+    "[data-guest-tools-state]", "[data-guest-tools-provider]", "[data-guest-tools-version]", "[data-guest-tools-available-version]",
+    "[data-guest-tools-source]", "[data-guest-tools-services]", "[data-guest-tools-effective-services]",
     "[data-guest-tools-reboot]", "[data-guest-tools-clock]", "[data-guest-tools-summary]",
     "[data-guest-tools-action-message]", "[data-guest-tools-review-digest]",
     "[data-guest-tools-check-button]", "[data-guest-tools-install-button]",
@@ -160,7 +160,7 @@ function guestToolsHarness() {
   };
   const context = vm.createContext({});
   vm.runInContext(
-    ["safeText", "describeTargetPackages", "describeServiceChanges", "describeClockSafety", "actionsRequireServiceWork", "updateGuestTools"]
+    ["safeText", "formatGuestToolVersion", "guestToolPackageName", "verifiedGuestToolPackage", "offlinePayloadAvailable", "availableGuestToolVersion", "describeServiceChanges", "describeClockSafety", "actionsRequireServiceWork", "updateGuestTools"]
       .map(functionSource).join("\n") + "\nglobalThis.updateGuestTools = updateGuestTools;",
     context,
   );
@@ -244,20 +244,107 @@ test("inventory unknown, success, whole-request failure, and retry keep grid sta
   assert.equal(disksFallback.classList.contains("hidden"), true);
 });
 
-test("guest-tools review shows only the exact target transaction and selected provider actions", () => {
+test("guest-tools review shows concise tool versions without listing the offline dependency closure", () => {
   const harness = guestToolsHarness();
-  harness.context.updateGuestTools(harness.root, reviewPayload());
+  const dependencies = Array.from({length: 84}, (_, index) => ({
+    name: `dependency-${index}`,
+    version: `5.${index}-7`,
+    architecture: "noarch",
+    path: `/private/payload/dependency-${index}.rpm`,
+  }));
+  harness.context.updateGuestTools(harness.root, reviewPayload({
+    target_packages: [
+      { name: "atlaso-qemu-guest-agent", version: "1:2.3-4", architecture: "x86_64", path: "/private/payload/agent.rpm" },
+      ...dependencies,
+    ],
+  }));
 
-  assert.equal(harness.nodes.get("[data-guest-tools-packages]").textContent,
-    "atlaso-qemu-guest-agent 1:2.3-4 (x86_64); dependency 5.6-7 (noarch)");
+  assert.equal(harness.nodes.get("[data-guest-tools-provider]").textContent, "KVM / QEMU guest agent");
+  assert.equal(harness.nodes.get("[data-guest-tools-version]").textContent, "Not installed");
+  assert.equal(harness.nodes.get("[data-guest-tools-available-version]").textContent, "2.3");
   assert.equal(harness.nodes.get("[data-guest-tools-services]").textContent, "Enable and start qemu-guest-agent.service.");
   assert.match(harness.nodes.get("[data-guest-tools-clock]").textContent, /Authority: NTP client\. Guard: pending; not yet protected\./);
   assert.match(harness.nodes.get("[data-guest-tools-clock]").textContent, /block QEMU guest time-setting RPCs/);
-  assert.match(harness.installForm.dataset.confirmMessage, /atlaso-qemu-guest-agent 1:2\.3-4/);
+  assert.match(harness.installForm.dataset.confirmMessage, /Installed version: Not installed\./);
+  assert.match(harness.installForm.dataset.confirmMessage, /Available version: 2\.3\./);
   assert.match(harness.installForm.dataset.confirmMessage, /qemu-guest-agent\.service/);
   assert.match(harness.installForm.dataset.confirmMessage, /No reboot is expected/);
-  assert.doesNotMatch(harness.installForm.dataset.confirmMessage, /open-vm-tools|foreign-agent|private\/payload/);
+  assert.doesNotMatch(harness.installForm.dataset.confirmMessage, /dependency-|agent\.rpm|private\/payload/);
   assert.doesNotMatch(harness.installForm.dataset.confirmMessage, /\[object Object\]/);
+});
+
+test("installed VMware version and fallback target-package matching use only the provider agent", () => {
+  const harness = guestToolsHarness();
+  harness.context.updateGuestTools(harness.root, reviewPayload({
+    provider: "vmware",
+    state: "healthy",
+    version: "0:13.1.0-2.ph5",
+    target_packages: [
+      { name: "unrelated-package", version: "99.0-1", architecture: "noarch" },
+      { name: "open-vm-tools", version: "0:13.2.0-1.ph5", architecture: "x86_64" },
+    ],
+    plan: { package_change: true, actions: ["install-or-repair-agent"] },
+  }));
+
+  assert.equal(harness.nodes.get("[data-guest-tools-version]").textContent, "13.1.0");
+  assert.equal(harness.nodes.get("[data-guest-tools-available-version]").textContent, "13.2.0");
+  assert.doesNotMatch(harness.installForm.dataset.confirmMessage, /unrelated-package|99\.0/);
+});
+
+test("missing offline payload and unknown provider do not imply an available tool version", () => {
+  const harness = guestToolsHarness();
+  harness.context.updateGuestTools(harness.root, reviewPayload({
+    available: true,
+    payload: { available: false },
+    plan: { package_change: true, target_version: "1:2.3-4", actions: [] },
+  }));
+  assert.equal(harness.nodes.get("[data-guest-tools-available-version]").textContent, "Unavailable offline");
+  assert.equal(harness.nodes.get("[data-guest-tools-source]").textContent, "Verified package closure unavailable");
+
+  harness.context.updateGuestTools(harness.root, reviewPayload({
+    provider: "unknown",
+    available: true,
+    plan: { package_change: true, target_version: "1:2.3-4", actions: [] },
+  }));
+  assert.equal(harness.nodes.get("[data-guest-tools-available-version]").textContent, "Unknown");
+});
+
+test("offline payload version remains visible when clock safety blocks maintenance", () => {
+  const harness = guestToolsHarness();
+  harness.context.updateGuestTools(harness.root, reviewPayload({
+    available: false,
+    payload: { available: true },
+    plan: { package_change: true, target_version: "1:2.3-4", actions: ["install-or-repair-agent"] },
+  }));
+
+  assert.equal(harness.nodes.get("[data-guest-tools-available-version]").textContent, "2.3");
+  assert.equal(harness.nodes.get("[data-guest-tools-source]").textContent, "Verified offline package closure");
+  assert.equal(harness.nodes.get("[data-guest-tools-install-button]").disabled, true);
+});
+
+test("maintenance permission does not imply an offline payload is available", () => {
+  const harness = guestToolsHarness();
+  harness.context.updateGuestTools(harness.root, reviewPayload({
+    available: true,
+    payload: { available: false },
+    plan: { package_change: true, target_version: "1:2.3-4", actions: ["install-or-repair-agent"] },
+  }));
+
+  assert.equal(harness.nodes.get("[data-guest-tools-available-version]").textContent, "Unavailable offline");
+  assert.equal(harness.nodes.get("[data-guest-tools-install-button]").disabled, false);
+});
+
+test("upstream prerelease versions without RPM release metadata remain intact", () => {
+  const harness = guestToolsHarness();
+  harness.context.updateGuestTools(harness.root, reviewPayload({
+    state: "healthy",
+    version: "2.3-rc1",
+    target_packages: [{ name: "atlaso-qemu-guest-agent", version: "2.4-beta2", architecture: "x86_64" }],
+    plan: { package_change: true, target_version: "2.4-beta2", actions: [] },
+  }));
+
+  assert.equal(harness.nodes.get("[data-guest-tools-version]").textContent, "2.3-rc1");
+  assert.equal(harness.nodes.get("[data-guest-tools-available-version]").textContent, "2.4-beta2");
 });
 
 test("effective services and active maintenance remain distinct from package updates", () => {
@@ -279,11 +366,13 @@ test("no package transaction is distinct from selected-provider service repair",
   harness.context.updateGuestTools(harness.root, reviewPayload({
     provider: "hyperv",
     target_packages: [],
-    plan: { package_change: false, actions: ["enable-required-services"] },
+    payload: { available: true },
+    plan: { package_change: false, target_version: "1:2.3-4", actions: ["enable-required-services"] },
     clock_safety: { status: "verified", authority: "ntp_server", protected: true, reason: "" },
   }));
 
-  assert.equal(harness.nodes.get("[data-guest-tools-packages]").textContent, "No package transaction planned.");
+  assert.equal(harness.nodes.get("[data-guest-tools-available-version]").textContent, "2.3");
+  assert.equal(harness.nodes.get("[data-guest-tools-source]").textContent, "No package transaction required");
   assert.equal(harness.nodes.get("[data-guest-tools-services]").textContent,
     "Disable and stop hv_fcopy_daemon.service; enable and start hv_kvp_daemon.service and hv_vss_daemon.service.");
   assert.match(harness.nodes.get("[data-guest-tools-reboot]").textContent, /may start or stop services/);
@@ -294,16 +383,16 @@ test("guest-tools summary transitions from unknown to known and back to a failed
   const harness = guestToolsHarness();
   harness.context.updateGuestTools(harness.root, { provider: "unknown", state: "unknown", reason: "Detect failed." });
   assert.equal(harness.nodes.get("[data-guest-tools-install-button]").disabled, true);
-  assert.equal(harness.nodes.get("[data-guest-tools-packages]").textContent,
-    "Package plan unavailable. Check status before installation.");
+  assert.equal(harness.nodes.get("[data-guest-tools-available-version]").textContent, "Unknown");
 
   harness.context.updateGuestTools(harness.root, reviewPayload());
   assert.equal(harness.nodes.get("[data-guest-tools-install-button]").disabled, false);
-  assert.match(harness.nodes.get("[data-guest-tools-packages]").textContent, /dependency 5\.6-7/);
+  assert.equal(harness.nodes.get("[data-guest-tools-available-version]").textContent, "2.3");
 
   harness.context.updateGuestTools(harness.root, { provider: "unknown", state: "unknown", reason: "Status request failed." });
   assert.equal(harness.nodes.get("[data-guest-tools-install-button]").disabled, true);
   assert.equal(harness.nodes.get("[data-guest-tools-state]").textContent, "Status unknown");
+  assert.equal(harness.nodes.get("[data-guest-tools-available-version]").textContent, "Unknown");
   assert.match(harness.nodes.get("[data-guest-tools-summary]").textContent, /Status request failed/);
   assert.doesNotMatch(harness.nodes.get("[data-guest-tools-clock]").textContent, /\[object Object\]/);
 });

@@ -90,6 +90,10 @@ provider check is observational and does not install or start software. The page
 installed but stopped service, a healthy service, an unsupported environment, and an unknown result when observation
 failed. Bare-metal appliances do not require a guest agent.
 
+Compare **Installed version** and **Available version** to see the guest tool version without a dependency-package
+listing. The available version describes the verified offline payload, even when a clock-safety prerequisite currently
+prevents maintenance.
+
 When the compatible verified offline package closure is available, an administrator can review its package and
 service plan and explicitly queue installation or repair. Package maintenance runs as a serialized, audited background
 task; follow its progress and final result in Tasks. Repeat the check after an interrupted or partial failure. A
