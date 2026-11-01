@@ -391,6 +391,35 @@ installation fails before any lifecycle VM is created.
 Appliance VMX files set `disk.EnableUUID = "TRUE"` so Photon exposes stable `/dev/disk/by-id` identities. ESX Storage
 blank-disk claims depend on those identities and reject transient `/dev/sdX` names.
 
+## Receipt-bound console credentials without an ordinary management address
+
+For a normal test VM whose original creation receipt is already retained, the console credential consumer can submit
+one account value to an observed empty concealed field. This supports console diagnosis when ordinary management-IP
+readiness is unavailable. It does not establish network readiness or certificate address control, waive the
+[certificate admission requirements](certificate-address-control.md), or turn an incomplete VM creation into a pass.
+
+Keep the optional `vncdotool==1.4.2` client in a task-owned isolated Python environment. Retain its deterministic
+site-packages SHA-256 and file count independently before credential use. The VM's VNC listener must bind exclusively
+to `127.0.0.1`; the consumer proves that its provider process owns the exact receipt-bound VMX. Observe the empty
+concealed field, save only that public frame beneath the owning checkout, and retain its SHA-256. Supply the single
+input-row rectangle as `x,y,width,height`. The consumer compares the complete frame outside that rectangle before
+reading private input and again before typing; a changed dialog fails closed.
+
+```powershell
+.\scripts\windows\vmware\invoke-test-vm-console-credential.ps1 `
+  -VmxPath $ownedVmx -PullRequestNumber $pr `
+  -OwnershipReceiptPath $originalReceipt -OwnershipReceiptSha256 $originalReceiptSha256 `
+  -Account root -Port $loopbackVncPort `
+  -ScreenPath $emptyFieldFrame -ScreenSha256 $emptyFieldFrameSha256 `
+  -FieldRectangle $inputRowRectangle -PythonPath $isolatedPython `
+  -RuntimeSha256 $clientInventorySha256 -RuntimeFileCount $clientInventoryCount
+```
+
+The supported bounded 1Password child retrieves the existing account value; no password is passed on the command line
+or written to the frame. Both the runtime and frame must be Git-ignored resources in the VM's clean owning checkout.
+No Windows trust store or network configuration changes are performed. Keep the original receipt and source bindings
+for subsequent console operations and release the VM through its normal owning procedure.
+
 ## Same-interface gateway acceptance
 
 The focused Python lifecycle mode `--same-interface-gateway-only` verifies two Atlaso appliances on the same existing
