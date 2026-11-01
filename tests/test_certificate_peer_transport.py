@@ -145,7 +145,14 @@ def test_peer_uses_only_matching_agent_key(monkeypatch: pytest.MonkeyPatch) -> N
 def test_tcp_probe_counts_only_authenticated_live_connect_failure_as_closed(
     failure_code: int, active_after: bool, authenticated_after: bool, expected: bool | str,
 ) -> None:
-    """Do not treat administrative denial or loss of the authenticated peer as a closed port."""
+    """Do not treat administrative denial or loss of the authenticated peer as a closed port.
+
+    Args:
+        failure_code: SSH channel refusal simulated by the authenticated peer.
+        active_after: Whether the peer transport remains active after refusal.
+        authenticated_after: Whether the peer remains authenticated after refusal.
+        expected: Closed-port observation or an explicit refusal expectation.
+    """
     peer = PinnedPeerTransport(
         "192.168.167.20", "alpine", "ssh-ed25519 " + "A" * 44,
         "SHA256:" + "A" * 43, "192.168.77.0/24",
@@ -162,6 +169,12 @@ def test_tcp_probe_counts_only_authenticated_live_connect_failure_as_closed(
             return self.authenticated
 
         def open_channel(self, *_args, **_kwargs):
+            """Simulate the specified failure after updating transport state.
+
+            Args:
+                *_args: Ignored requested channel endpoint arguments.
+                **_kwargs: Ignored channel timeout options.
+            """
             self.active = active_after
             self.authenticated = authenticated_after
             raise paramiko.ChannelException(failure_code, "test refusal")
@@ -198,6 +211,12 @@ def test_tcp_probe_reports_open_and_requires_active_authenticated_ssh() -> None:
             return self.authenticated
 
         def open_channel(self, *_args, **_kwargs):
+            """Return the simulated accepted TCP channel.
+
+            Args:
+                *_args: Ignored requested channel endpoint arguments.
+                **_kwargs: Ignored channel timeout options.
+            """
             return self.channel
 
     transport = ActiveTransport()

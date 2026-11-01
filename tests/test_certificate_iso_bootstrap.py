@@ -18,6 +18,12 @@ import certificate_iso_bootstrap as bootstrap  # noqa: E402 - Reviewed interop e
     ({"units": [{"id": "ldap", "changed": True}]}, "unrelated_pending"),
 ])
 def test_bootstrap_refuses_active_apply_or_unrelated_pending_changes(review, reason):
+    """Reject an active Apply or pending changes outside the bootstrap plan.
+
+    Args:
+        review: Synthetic management review payload to admit or reject.
+        reason: Expected refusal marker for that payload.
+    """
     client = SimpleNamespace(json=lambda _path: (200, review))
     with pytest.raises(bootstrap.Refusal, match=reason):
         bootstrap.initial_review(client)
@@ -30,21 +36,46 @@ def test_sudo_read_confines_password_to_stdin_and_discards_errors():
 
     class Channel:
         def settimeout(self, _value):
+            """Accept the requested timeout for the fake SSH channel.
+
+            Args:
+                _value: Timeout value requested by the bootstrap reader.
+            """
             pass
 
         def exec_command(self, value):
+            """Capture the guest command issued to the channel.
+
+            Args:
+                value: Command string to execute through sudo.
+            """
             calls["command"] = value
 
         def sendall(self, value):
+            """Capture bytes sent to the channel's standard input.
+
+            Args:
+                value: Standard-input bytes sent by the caller.
+            """
             calls["stdin"] = value
 
         def shutdown_write(self):
             pass
 
         def makefile(self, _mode):
+            """Return fixed public probe output.
+
+            Args:
+                _mode: Stream mode requested by the SSH client.
+            """
             return io.BytesIO(b'{"state":"proven-absent"}')
 
         def makefile_stderr(self, _mode):
+            """Return synthetic stderr to verify it is discarded.
+
+            Args:
+                _mode: Stream mode requested for stderr.
+            """
             return io.BytesIO(b"sensitive diagnostic")
 
         def recv_exit_status(self):
@@ -64,6 +95,12 @@ def test_sudo_read_confines_password_to_stdin_and_discards_errors():
 
 
 def test_unknown_bootstrap_apply_retains_original_and_forbids_automatic_retry(tmp_path, monkeypatch):
+    """Keep the original state and refuse retry after an Apply outcome is unknown.
+
+    Args:
+        tmp_path: Isolated directory for generated evidence records.
+        monkeypatch: Replacements for guest, transport, and management operations.
+    """
     ca = b"-----BEGIN CERTIFICATE-----\npublic\n-----END CERTIFICATE-----\n"
     plan = {
         "trust_model": "trusted-host", "interface": "eth0", "current_address": "192.0.2.10",
@@ -83,19 +120,39 @@ def test_unknown_bootstrap_apply_retains_original_and_forbids_automatic_retry(tm
 
     @contextmanager
     def monitor(*args):
+        """Provide a no-drift topology monitor for the simulated bootstrap.
+
+        Args:
+            *args: Plan and baseline snapshot passed by the bootstrap flow.
+        """
         yield SimpleNamespace(check=lambda: None)
 
     class Session:
         def __init__(self, *args):
+            """Create a fake pinned SSH session.
+
+            Args:
+                *args: Connection arguments supplied by the bootstrap flow.
+            """
             pass
 
         def __enter__(self):
             return self
 
         def __exit__(self, *args):
+            """Close the fake context-managed session.
+
+            Args:
+                *args: Context-manager exception details, if any.
+            """
             pass
 
         def command(self, _command):
+            """Return the public CA bytes for the fake guest readback.
+
+            Args:
+                _command: Pinned read-only command issued to the appliance.
+            """
             return ca
 
     fields = {name: "" for name in bootstrap.saved_fields.__globals__["FIELDS"]}
@@ -103,15 +160,36 @@ def test_unknown_bootstrap_apply_retains_original_and_forbids_automatic_retry(tm
 
     class Client:
         def __init__(self, *args, **kwargs):
+            """Create a fake management client.
+
+            Args:
+                *args: Positional connection arguments supplied by bootstrap.
+                **kwargs: Keyword connection options supplied by bootstrap.
+            """
             pass
 
         def login(self, *args):
+            """Accept the bootstrap login attempt.
+
+            Args:
+                *args: Login arguments supplied by the bootstrap flow.
+            """
             pass
 
         def json(self, _path):
+            """Return a clean management review payload.
+
+            Args:
+                _path: Management API path requested by the client.
+            """
             return 200, {"units": []}
 
         def interface(self, _name):
+            """Return the synthetic interface settings and CSRF value.
+
+            Args:
+                _name: Interface name requested for readback.
+            """
             return dict(fields, mac_address=plan["mac"]), "public-csrf-placeholder"
 
         def tls_identity(self):
@@ -130,6 +208,11 @@ def test_unknown_bootstrap_apply_retains_original_and_forbids_automatic_retry(tm
     monkeypatch.setattr(bootstrap, "edit", lambda *args: calls.append("edit"))
 
     def submit(_client):
+        """Simulate a connection loss after a possible Apply submission.
+
+        Args:
+            _client: Management client whose Apply request was submitted.
+        """
         calls.append("submit")
         raise OSError("connection lost after possible submission")
 

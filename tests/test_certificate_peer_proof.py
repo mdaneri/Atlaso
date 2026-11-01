@@ -285,7 +285,12 @@ def test_arbitrary_pr_is_opt_in_to_trusted_host_mode() -> None:
 def test_trusted_host_native_readback_is_explicitly_not_independent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Trusted-host observations retain their weaker, accurately labeled boundary."""
+    """Trusted-host observations retain their weaker, accurately labeled boundary.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory.
+        monkeypatch: Pytest fixture for isolated test overrides.
+    """
     ca = tmp_path / "ca.pem"
     ca.write_bytes(b"-----BEGIN CERTIFICATE-----\npublic\n-----END CERTIFICATE-----\n")
     plan = {
@@ -303,9 +308,21 @@ def test_trusted_host_native_readback_is_explicitly_not_independent(
 
     class FakeHTTPS:
         def __init__(self, host: str, **kwargs: object):
+            """Initialize the fake HTTPS connection.
+
+            Args:
+                host: Expected appliance management address.
+                **kwargs: Connection options supplied by the proof client.
+            """
             assert host == "192.168.77.30"
 
         def request(self, method: str, path: str) -> None:
+            """Validate the native API request for this fixture.
+
+            Args:
+                method: HTTP method selected by the proof client.
+                path: API path selected by the proof client.
+            """
             assert (method, path) == ("GET", "/openapi.json")
 
         def getresponse(self):
@@ -318,6 +335,11 @@ def test_trusted_host_native_readback_is_explicitly_not_independent(
         minimum_version = None
 
         def load_verify_locations(self, *, cafile: str) -> None:
+            """Validate the CA path passed to the fake TLS context.
+
+            Args:
+                cafile: CA certificate path selected by the proof client.
+            """
             assert cafile == str(ca)
 
     monkeypatch.setattr(proof.ssl, "SSLContext", lambda _protocol: FakeContext())
@@ -348,11 +370,18 @@ def test_trusted_host_native_readback_is_explicitly_not_independent(
 def test_original_iso_receipts_are_bound_to_task_source_hash_and_directory(
     changed: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """ISO install intent, boot receipt, source and original directory identity stay bound."""
+    """ISO install intent, boot receipt, source and original directory identity stay bound.
+
+    Args:
+        changed: Receipt binding to alter for this refusal case.
+        tmp_path: Pytest-owned temporary directory.
+        monkeypatch: Pytest fixture for isolated platform and process stubs.
+    """
     from contextlib import contextmanager
 
     from scripts.completed_task_files import WindowsFiles
 
+    monkeypatch.setattr(WindowsFiles, "__init__", lambda self: None)
     monkeypatch.setattr(proof.subprocess, "run", lambda args, **_kwargs:
                         SimpleNamespace(returncode=int("9" * 40 in args)))
 
@@ -408,6 +437,13 @@ def test_original_iso_receipts_are_bound_to_task_source_hash_and_directory(
 
     @contextmanager
     def opened(_self, _path, directory=False):
+        """Return a stable synthetic directory identity.
+
+        Args:
+            _self: Patched WindowsFiles instance, unused by this fixture.
+            _path: Synthetic appliance directory selected by the proof.
+            directory: Whether the proof requested directory identity.
+        """
         assert directory is True
         yield None, (1, 2, 3), None
 
@@ -440,11 +476,17 @@ def test_original_iso_receipts_are_bound_to_task_source_hash_and_directory(
 def test_original_iso_receipt_accepts_distinct_plan_and_installed_source_commits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The reviewed source and the installed ISO source are separate, validated identities."""
+    """The reviewed source and the installed ISO source are separate, validated identities.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory.
+        monkeypatch: Pytest fixture for isolated platform and process stubs.
+    """
     from contextlib import contextmanager
 
     from scripts.completed_task_files import WindowsFiles
 
+    monkeypatch.setattr(WindowsFiles, "__init__", lambda self: None)
     monkeypatch.setattr(proof.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0))
 
     vmx, root = str(tmp_path / "appliance.vmx"), str(tmp_path)
@@ -481,6 +523,13 @@ def test_original_iso_receipt_accepts_distinct_plan_and_installed_source_commits
 
     @contextmanager
     def opened(_self, _path, directory=False):
+        """Return a stable synthetic directory identity.
+
+        Args:
+            _self: Patched WindowsFiles instance, unused by this fixture.
+            _path: Synthetic appliance directory selected by the proof.
+            directory: Whether the proof requested directory identity.
+        """
         yield None, (1, 2, 3), None
 
     values = {id(boot_ref): boot, id(transition_ref): transition, id(pending_ref): pending}
@@ -500,6 +549,12 @@ def test_original_iso_receipt_accepts_distinct_plan_and_installed_source_commits
     calls = []
 
     def unrelated_source(arguments, **kwargs):
+        """Reject ancestry for a resource not reviewed by the plan.
+
+        Args:
+            arguments: Git arguments issued by the source-admission check.
+            **kwargs: Process options supplied by the source-admission check.
+        """
         calls.append(arguments)
         return SimpleNamespace(returncode=1)
 

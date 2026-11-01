@@ -16,6 +16,11 @@ _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 
 
 def _identity(plan: Any) -> dict[str, Any]:
+    """Validate and return the public task identity used in a retirement result.
+
+    Args:
+        plan: Plan mapping carrying the task, repository, PR, and source commit.
+    """
     if (not isinstance(plan, dict) or plan.get("schema") != 1
             or not isinstance(plan.get("task_id"), str) or not plan["task_id"]
             or plan.get("repository") != "mdaneri/Atlaso"
@@ -32,6 +37,12 @@ def _identity(plan: Any) -> dict[str, Any]:
 
 
 def _ipv4(value: Any, reason: str) -> str:
+    """Normalize a usable IPv4 address or raise its caller-selected refusal.
+
+    Args:
+        value: Address value read from a plan or native observation.
+        reason: Fixed refusal identifier to use when the value is invalid.
+    """
     if not isinstance(value, str):
         raise Refusal(reason)
     try:
@@ -44,6 +55,13 @@ def _ipv4(value: Any, reason: str) -> str:
 
 
 def _json_output(session: Any, command: str, refusal: str) -> Any:
+    """Read and parse one bounded JSON response from a pinned guest session.
+
+    Args:
+        session: Pinned session that executes the read-only command.
+        command: Fixed command returning a JSON document.
+        refusal: Fixed refusal identifier for command transport failure.
+    """
     invalid = refusal.removesuffix("_failed") + "_invalid"
     try:
         output = session.command(command)
@@ -59,6 +77,12 @@ def _json_output(session: Any, command: str, refusal: str) -> Any:
 
 
 def _address_facts(value: Any, retired: str) -> bool:
+    """Report whether any native interface owns the retired IPv4 address.
+
+    Args:
+        value: Parsed output from the guest's IPv4 address inventory.
+        retired: Canonical retired IPv4 address.
+    """
     if not isinstance(value, list):
         raise Refusal("retirement_address_readback_invalid")
     for interface in value:
@@ -74,6 +98,12 @@ def _address_facts(value: Any, retired: str) -> bool:
 
 
 def _listener_count(output: bytes, retired: str) -> int:
+    """Count listeners bound to a retired IPv4 address.
+
+    Args:
+        output: Bounded text output from the native listener inventory.
+        retired: Canonical retired IPv4 address.
+    """
     try:
         text = output.decode("utf-8", errors="strict")
     except UnicodeDecodeError:
@@ -104,6 +134,12 @@ def _listener_count(output: bytes, retired: str) -> int:
 
 
 def _read_listeners(session: Any, retired: str) -> int:
+    """Read and count listener bindings through the pinned appliance session.
+
+    Args:
+        session: Pinned appliance session exposing bounded guest commands.
+        retired: Canonical retired IPv4 address.
+    """
     try:
         output = session.command("ss -H -lnt")
     except Exception:  # noqa: BLE001 - Session implementations use transport-specific failures.
@@ -114,6 +150,12 @@ def _read_listeners(session: Any, retired: str) -> int:
 
 
 def _route_facts(value: Any, retired: str) -> int:
+    """Count exact route references to or from a retired IPv4 address.
+
+    Args:
+        value: Parsed output from the guest's full IPv4 route table.
+        retired: Canonical retired IPv4 address.
+    """
     if not isinstance(value, list):
         raise Refusal("retirement_route_readback_invalid")
     count = 0
@@ -137,6 +179,13 @@ def _route_facts(value: Any, retired: str) -> int:
 
 
 def _rule_selector_is_retired(rule: dict[str, Any], key: str, retired: str) -> bool:
+    """Check whether one native policy-rule selector names the retired address.
+
+    Args:
+        rule: Parsed policy rule from the guest's complete IPv4 rule inventory.
+        key: Selector field to inspect, either source or destination.
+        retired: Canonical retired IPv4 address.
+    """
     length_key = f"{key}len"
     if key not in rule:
         if key == "dst" and length_key not in rule:
@@ -169,6 +218,12 @@ def _rule_selector_is_retired(rule: dict[str, Any], key: str, retired: str) -> b
 
 
 def _rule_facts(value: Any, retired: str) -> int:
+    """Count policy rules that select the retired IPv4 address.
+
+    Args:
+        value: Parsed output from the guest's complete IPv4 rule inventory.
+        retired: Canonical retired IPv4 address.
+    """
     if not isinstance(value, list):
         raise Refusal("retirement_rule_readback_invalid")
     count = 0

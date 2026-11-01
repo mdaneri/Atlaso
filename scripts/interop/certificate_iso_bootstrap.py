@@ -48,7 +48,12 @@ class Refusal(Exception):
 
 @contextmanager
 def watched_topology(plan: dict, original: dict):
-    """Keep sticky topology observation active throughout the bootstrap."""
+    """Keep sticky topology observation active throughout the bootstrap.
+
+    Args:
+        plan: Task-bound trusted-host plan used for repeat topology reads.
+        original: Admitted topology snapshot that later observations must match.
+    """
     monitor = TrustedHostMonitor(plan, original)
     try:
         monitor.start()
@@ -58,7 +63,11 @@ def watched_topology(plan: dict, original: dict):
 
 
 def initial_review(client) -> None:
-    """Refuse another Apply or unrelated pending work before desired editing."""
+    """Refuse another Apply or unrelated pending work before desired editing.
+
+    Args:
+        client: Authenticated, CA-validated appliance UI client.
+    """
     _, review = client.json("/ui/management/appliance-apply/review")
     protected = {"network", "ca", "firewall", "appliance_settings", "public_services"}
     if review.get("active_task"):
@@ -68,7 +77,16 @@ def initial_review(client) -> None:
 
 
 def sudo_read(session, command: str, password: str) -> bytes:
-    """Read a bounded public result with the admin password confined to stdin."""
+    """Read a bounded public result with the admin password confined to stdin.
+
+    Args:
+        session: Authenticated pinned appliance SSH session.
+        command: Fixed public inspection command to run with sudo.
+        password: Appliance administrator password sent only through channel stdin.
+
+    Returns:
+        Bounded stdout bytes from the read-only guest command.
+    """
     channel = session.transport.open_session(timeout=8)
     try:
         channel.settimeout(40)
@@ -85,7 +103,16 @@ def sudo_read(session, command: str, password: str) -> bytes:
 
 
 def guest_identity(session, plan: dict, password: str) -> dict:
-    """Measure routing absence and the actual admitted ISO payload without changing it."""
+    """Measure routing absence and the actual admitted ISO payload without changing it.
+
+    Args:
+        session: Authenticated pinned appliance SSH session.
+        plan: Task-bound plan containing deployed source and installed inspection refs.
+        password: Appliance administrator password used only by the bounded sudo read.
+
+    Returns:
+        Public routing, service, helper, and wheel facts measured from the guest.
+    """
     probe = Path(__file__).with_name("certificate_source_probe.py").read_bytes()
     routing = json.loads(sudo_read(session, "python3 -c " + shlex.quote(probe.decode()), password))
     if routing.get("state") != "proven-absent":
@@ -127,6 +154,14 @@ def tls_name(peer, address: str, ca: str) -> str:
 
     Subsequent HTTP uses Client's full CA and hostname verification. The CA is
     separately matched through the pinned appliance SSH session before this call.
+
+    Args:
+        peer: Authenticated pinned peer transport to the private appliance.
+        address: Exact appliance IPv4 address used for the bootstrap handshake.
+        ca: Public CA certificate file used to validate the handshake.
+
+    Returns:
+        CA-validated DNS subject name, or the address when it appears in the IP SAN.
     """
     context = ssl.create_default_context(cafile=ca)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -143,7 +178,17 @@ def tls_name(peer, address: str, ca: str) -> str:
 
 
 def setup(plan: dict, output: Path, password: str, *, execute: bool) -> dict:
-    """Admit the original ISO fixture and establish its clean static baseline once."""
+    """Admit the original ISO fixture and establish its clean static baseline once.
+
+    Args:
+        plan: Trusted-host plan containing original ISO, peer, LAN, and inspection refs.
+        output: Existing task-owned evidence directory for immutable bootstrap records.
+        password: Appliance administrator password held in memory from the bounded bridge.
+        execute: Whether to set and apply the initial static management baseline.
+
+    Returns:
+        Public bootstrap status and observations suitable for task evidence.
+    """
     if plan.get("trust_model") != "trusted-host" or plan.get("interface") != "eth0":
         raise Refusal("bootstrap_requires_trusted_iso_fixture")
     admit_output(plan, output / "source.json", output / "bootstrap-runtime.json")

@@ -46,10 +46,22 @@ _MAX_PROCESS_OUTPUT = 1024 * 1024
 
 
 def _sha256(data: bytes) -> str:
+    """Return the lowercase SHA-256 digest of one byte string.
+
+    Args:
+        data: Exact bytes to hash.
+    """
     return hashlib.sha256(data).hexdigest()
 
 
 def _ordinary_file(value: Any, reason: str, *, limit: int = _MAX_FILE) -> tuple[Path, bytes]:
+    """Read a bounded ordinary file while checking that it stayed unchanged.
+
+    Args:
+        value: Absolute file path supplied by the trusted-host plan.
+        reason: Fixed refusal identifier for an unsafe, missing, or changed file.
+        limit: Maximum file size in bytes.
+    """
     if not isinstance(value, str) or not value or not Path(value).is_absolute():
         raise Refusal(reason)
     path = Path(value)
@@ -73,6 +85,11 @@ def _ordinary_file(value: Any, reason: str, *, limit: int = _MAX_FILE) -> tuple[
 
 
 def _ordinary_vm_path(value: Any) -> Path:
+    """Resolve one existing ordinary VMX path without following reparse points.
+
+    Args:
+        value: Absolute VMX path from the trusted-host plan or inventory.
+    """
     if not isinstance(value, str) or not value or Path(value).suffix.lower() != ".vmx":
         raise Refusal("trusted_host_plan_invalid")
     try:
@@ -87,6 +104,12 @@ def _ordinary_vm_path(value: Any) -> Path:
 
 
 def _reject_reparse_components(path: Path, reason: str) -> None:
+    """Refuse a path when it or any parent is a symlink or junction.
+
+    Args:
+        path: File or directory path whose complete ancestry is checked.
+        reason: Fixed refusal identifier for a redirected path.
+    """
     current = path
     for ancestor in (current, *current.parents):
         if ancestor.is_symlink() or (hasattr(ancestor, "is_junction") and ancestor.is_junction()):
@@ -94,10 +117,21 @@ def _reject_reparse_components(path: Path, reason: str) -> None:
 
 
 def _normalized_path(path: str | Path) -> str:
+    """Return a case-insensitive normalized path key for host comparisons.
+
+    Args:
+        path: Filesystem path being compared with another host observation.
+    """
     return os.path.normcase(os.path.normpath(str(path))).casefold()
 
 
 def _decode_config(payload: bytes, reason: str) -> list[str]:
+    """Decode a VMware configuration using its supported bounded encodings.
+
+    Args:
+        payload: Original bytes from an admitted Workstation configuration.
+        reason: Fixed refusal identifier when neither encoding is valid.
+    """
     try:
         text = payload.decode("utf-8-sig", errors="strict")
     except UnicodeDecodeError:
@@ -109,6 +143,11 @@ def _decode_config(payload: bytes, reason: str) -> list[str]:
 
 
 def _parse_inventory(payload: bytes) -> tuple[list[Path], int]:
+    """Parse registered VMX paths and count missing stale registrations.
+
+    Args:
+        payload: Bounded bytes from the Workstation VM inventory file.
+    """
     lines = _decode_config(payload, "trusted_host_inventory_invalid")
     entries: dict[int, Path] = {}
     for line in lines:
@@ -151,6 +190,11 @@ def _parse_inventory(payload: bytes) -> tuple[list[Path], int]:
 
 
 def _parse_vmrun_output(payload: bytes) -> list[Path]:
+    """Parse the complete bounded list of running Workstation VMs.
+
+    Args:
+        payload: Captured stdout from the pinned vmrun list command.
+    """
     lines = _decode_config(payload, "trusted_host_running_inventory_invalid")
     if not lines or not (match := re.fullmatch(r"Total running VMs:\s*(0|[1-9]\d*)\s*", lines[0])):
         raise Refusal("trusted_host_running_inventory_invalid")
@@ -173,6 +217,11 @@ def _parse_vmrun_output(payload: bytes) -> list[Path]:
 
 
 def _read_vmx(path: Path) -> list[dict[str, str]]:
+    """Read allowlisted active NIC fields from one stable VMX file.
+
+    Args:
+        path: Existing VMX path admitted from the host inventory.
+    """
     try:
         info = path.stat()
         if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_FILE:
@@ -210,6 +259,11 @@ def _read_vmx(path: Path) -> list[dict[str, str]]:
 
 
 def _parse_segments(payload: bytes) -> dict[str, str]:
+    """Parse registered named private VMware LAN segment identifiers.
+
+    Args:
+        payload: Bounded bytes from the Workstation preferences file.
+    """
     names: dict[int, str] = {}
     ids: dict[int, str] = {}
     declared_count: int | None = None
@@ -241,6 +295,11 @@ def _parse_segments(payload: bytes) -> dict[str, str]:
 
 
 def _run_vmrun(executable: Path) -> tuple[list[Path], str]:
+    """Run vmrun with a scrubbed environment and parse its running inventory.
+
+    Args:
+        executable: Exact admitted vmrun executable path.
+    """
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -265,6 +324,11 @@ def _run_vmrun(executable: Path) -> tuple[list[Path], str]:
 
 
 def _validate_plan(plan: Any) -> dict[str, Any]:
+    """Validate task identity and explicit host-administrator trust in a plan.
+
+    Args:
+        plan: Candidate trusted-host plan to validate.
+    """
     if not isinstance(plan, dict) or plan.get("schema") != 1:
         raise Refusal("trusted_host_plan_invalid")
     if (not isinstance(plan.get("task_id"), str) or not plan["task_id"]
@@ -442,6 +506,12 @@ class TrustedHostMonitor:
     """
 
     def __init__(self, plan: dict[str, Any], original: dict[str, Any]):
+        """Create a sticky monitor around the original admitted topology.
+
+        Args:
+            plan: Trusted-host plan used for subsequent topology inspection.
+            original: Original trusted-host snapshot all checks must match.
+        """
         self.plan = plan
         self.original = original
         self.stop_event = threading.Event()
@@ -488,6 +558,11 @@ class TrustedHostMonitor:
 
 
 def _public_adapter(adapter: dict[str, Any]) -> dict[str, Any]:
+    """Project an active VMX adapter onto nonsecret topology fields.
+
+    Args:
+        adapter: Parsed adapter fields from one admitted VMX.
+    """
     return {
         "index": adapter["index"],
         "connection_type": adapter.get("connectiontype", ""),
@@ -499,6 +574,14 @@ def _public_adapter(adapter: dict[str, Any]) -> dict[str, Any]:
 
 
 def _check_expected_adapter(vm: dict[str, Any], expected: Any, segment_id: str, *, require_only: bool) -> None:
+    """Require an expected VM adapter to match its private segment and MAC.
+
+    Args:
+        vm: Public topology facts for the VM under admission.
+        expected: Planned adapter index and MAC for this role.
+        segment_id: Exact admitted private VMware LAN segment identifier.
+        require_only: Whether this VM must have no other active adapters.
+    """
     if not isinstance(expected, dict) or not isinstance(expected.get("index"), int) or isinstance(expected.get("index"), bool):
         raise Refusal("trusted_host_adapter_plan_invalid")
     mac = expected.get("mac")
@@ -518,6 +601,12 @@ def _check_expected_adapter(vm: dict[str, Any], expected: Any, segment_id: str, 
 
 
 def _check_peer_control(vm: dict[str, Any], expected: Any) -> None:
+    """Require the peer's secondary adapter to match its admitted control link.
+
+    Args:
+        vm: Public topology facts for the peer VM.
+        expected: Planned index, connection type, VMnet, and MAC of the control adapter.
+    """
     if not isinstance(expected, dict) or not isinstance(expected.get("index"), int) or isinstance(expected.get("index"), bool):
         raise Refusal("trusted_host_adapter_plan_invalid")
     matches = [adapter for adapter in vm["adapters"] if adapter["index"] == expected["index"]]

@@ -18,10 +18,20 @@ ACTIVE = "192.0.2.41"
 
 class Session:
     def __init__(self, outputs: dict[str, bytes] | None = None) -> None:
+        """Create a fake guest session with command-specific output.
+
+        Args:
+            outputs: Mapping of supported guest commands to their public output.
+        """
         self.outputs = outputs or {}
         self.commands: list[str] = []
 
     def command(self, command: str) -> bytes:
+        """Return configured output for a read-only guest command.
+
+        Args:
+            command: Exact command requested by the retirement verifier.
+        """
         self.commands.append(command)
         if command not in self.outputs:
             raise RuntimeError("remote details must not leak")
@@ -30,16 +40,33 @@ class Session:
 
 class Peer(Session):
     def __init__(self, retired: bool = False, active: bool = True) -> None:
+        """Create a peer whose probes model retired and active addresses.
+
+        Args:
+            retired: Whether the retired address should accept TCP connections.
+            active: Whether the active address should accept TCP connections.
+        """
         super().__init__()
         self.results = {RETIRED: retired, ACTIVE: active}
         self.probes: list[tuple[str, int]] = []
 
     def tcp_reachable(self, address: str, port: int) -> bool:
+        """Record a probe and return its configured reachability result.
+
+        Args:
+            address: IPv4 address being probed.
+            port: TCP port being probed.
+        """
         self.probes.append((address, port))
         return self.results[address]
 
 
 def _json(value: Any) -> bytes:
+    """Encode a value as UTF-8 JSON bytes for guest readback fixtures.
+
+    Args:
+        value: JSON-compatible value to encode.
+    """
     return json.dumps(value).encode("utf-8")
 
 
@@ -54,6 +81,11 @@ def _plan() -> dict[str, Any]:
 
 
 def _appliance(**changes: bytes) -> Session:
+    """Build a guest session with normal address, listener, route, and rule output.
+
+    Args:
+        **changes: Command outputs that replace the normal fixture values.
+    """
     outputs = {
         "ip -j -4 addr show": _json([
             {"ifname": "lo", "addr_info": [{"family": "inet", "local": "127.0.0.1"}]},
@@ -145,6 +177,13 @@ def test_retirement_accepts_connected_subnet_and_requires_active_same_path() -> 
 def test_retirement_refuses_leftover_address_listener_route_or_rule(
     command: str, value: Any, reason: str,
 ) -> None:
+    """Reject a retired address found in any guest-owned network state.
+
+    Args:
+        command: Guest command whose output contains the leftover reference.
+        value: Synthetic output value for that command.
+        reason: Expected refusal marker from the verifier.
+    """
     outputs = {}
     if command == "ss -H -lnt":
         outputs[command] = value
@@ -184,6 +223,11 @@ def test_retirement_accepts_native_iprule_wildcards_and_subnet_selectors() -> No
     ],
 )
 def test_retirement_refuses_malformed_native_iprule_selectors(rule: dict[str, Any]) -> None:
+    """Reject malformed source or destination selectors in native ip-rule data.
+
+    Args:
+        rule: Synthetic native ip-rule record with an invalid selector.
+    """
     with pytest.raises(retirement.Refusal, match="retirement_rule_readback_invalid"):
         retirement._rule_facts([rule], RETIRED)
 
@@ -191,6 +235,12 @@ def test_retirement_refuses_malformed_native_iprule_selectors(rule: dict[str, An
 def test_retirement_refuses_transport_failure_instead_of_treating_it_as_closed() -> None:
     class BrokenPeer(Peer):
         def tcp_reachable(self, address: str, port: int) -> bool:
+            """Raise a transport failure instead of reporting reachability.
+
+            Args:
+                address: IPv4 address requested by the retirement verifier.
+                port: TCP port requested by the retirement verifier.
+            """
             raise RuntimeError("transport failure detail")
 
     with pytest.raises(retirement.Refusal, match="retirement_tcp_probe_failed") as error:
@@ -228,6 +278,13 @@ def test_retirement_rejects_invalid_plan_and_same_addresses() -> None:
 def _isolated_peer(
     *, ipv4: bytes = b"0\n", ipv6: bytes = b"0\n", links: Any | None = None,
 ) -> Session:
+    """Build peer output for forwarding and bridge-isolation checks.
+
+    Args:
+        ipv4: Value returned for the IPv4 forwarding sysctl.
+        ipv6: Value returned for the IPv6 forwarding sysctl.
+        links: Optional replacement JSON link inventory.
+    """
     return Session({
         "cat /proc/sys/net/ipv4/ip_forward": ipv4,
         "cat /proc/sys/net/ipv6/conf/all/forwarding": ipv6,
@@ -259,5 +316,11 @@ def test_peer_isolation_accepts_forwarding_disabled_unbridged_links() -> None:
     ],
 )
 def test_peer_isolation_refuses_forwarding_or_bridging(peer: Session, reason: str) -> None:
+    """Reject peer forwarding or bridge membership in the isolated test LAN.
+
+    Args:
+        peer: Synthetic peer session with the isolation defect.
+        reason: Expected refusal marker for that defect.
+    """
     with pytest.raises(retirement.Refusal, match=reason):
         retirement.verify_peer_isolation(peer)

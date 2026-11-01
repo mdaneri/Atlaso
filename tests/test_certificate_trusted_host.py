@@ -17,12 +17,24 @@ SOURCE = "a" * 40
 
 
 def _write(path: Path, text: str) -> Path:
+    """Write a UTF-8 fixture file, creating its parent directory as needed.
+
+    Args:
+        path: Destination path for the fixture.
+        text: Text content to write.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
 
 
 def _vmx(path: Path, adapters: list[tuple[int, str]]) -> Path:
+    """Write a VMX fixture with the requested virtual network adapters.
+
+    Args:
+        path: Destination path for the VMX file.
+        adapters: Adapter index and connection-type pairs to include.
+    """
     lines = [".encoding = \"UTF-8\""]
     for index, kind in adapters:
         lines.extend(
@@ -41,6 +53,13 @@ def _vmx(path: Path, adapters: list[tuple[int, str]]) -> Path:
 
 
 def _identity(task_id: str, kind: str, **fields: object) -> dict[str, object]:
+    """Build a task-bound receipt body with additional public fields.
+
+    Args:
+        task_id: Task identifier bound into the receipt.
+        kind: Receipt kind marker.
+        **fields: Additional receipt values to include.
+    """
     return {"schema": 1, "task_id": task_id, "repository": "mdaneri/Atlaso", "pr": 1074,
             "source_commit": SOURCE, "kind": kind, **fields}
 
@@ -54,6 +73,16 @@ def _lab(
     appliance_unregistered: bool = False,
     peer_running: bool = True,
 ) -> dict[str, object]:
+    """Create a controlled-lab plan and mock the host VM inventory.
+
+    Args:
+        tmp_path: Isolated fixture root for VMX and VMware configuration files.
+        monkeypatch: Replacements for host subprocess inspection.
+        third_member: Whether to register a third VM on the private segment.
+        third_running_only: Optional connection type for an unregistered running VM.
+        appliance_unregistered: Whether to omit the appliance from the registered inventory.
+        peer_running: Whether the designated peer appears in the running inventory.
+    """
     task_id = "trusted-host-unit"
     appliance = _vmx(tmp_path / "appliance" / "appliance.vmx", [(0, "pvn")])
     peer = _vmx(tmp_path / "peer" / "peer.vmx", [(0, "custom"), (1, "pvn")])
@@ -125,6 +154,12 @@ def _lab(
 def test_trusted_host_snapshot_names_exact_lab_members_without_claiming_address_exclusivity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Name the two lab VMs while leaving address exclusivity unclaimed.
+
+    Args:
+        tmp_path: Isolated root for VMX, inventory, and receipt fixtures.
+        monkeypatch: Replacements for the host VM inventory command.
+    """
     plan = _lab(tmp_path, monkeypatch)
 
     evidence = trusted.inspect_trusted_host(plan)
@@ -143,6 +178,12 @@ def test_trusted_host_snapshot_names_exact_lab_members_without_claiming_address_
 def test_trusted_host_model_requires_explicit_host_administrator_trust(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Require the plan to record host-administrator trust explicitly.
+
+    Args:
+        tmp_path: Isolated root for VMX, inventory, and receipt fixtures.
+        monkeypatch: Replacements for the host VM inventory command.
+    """
     plan = _lab(tmp_path, monkeypatch)
     plan["trusted_host"]["host_administrator_trusted"] = False
 
@@ -153,6 +194,12 @@ def test_trusted_host_model_requires_explicit_host_administrator_trust(
 def test_trusted_host_refuses_third_registered_vm_on_segment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Refuse a third registered VM attached to the private segment.
+
+    Args:
+        tmp_path: Isolated root for VMX and VMware inventory fixtures.
+        monkeypatch: Replacements for the host VM inventory command.
+    """
     plan = _lab(tmp_path, monkeypatch, third_member=True)
 
     with pytest.raises(trusted.Refusal, match="trusted_host_private_membership_changed"):
@@ -162,6 +209,12 @@ def test_trusted_host_refuses_third_registered_vm_on_segment(
 def test_trusted_host_allows_unregistered_running_appliance_and_unrelated_peer_vm(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Permit the two expected lab members among unrelated running VMs.
+
+    Args:
+        tmp_path: Isolated root for VMX and VMware inventory fixtures.
+        monkeypatch: Replacements for the host VM inventory command.
+    """
     plan = _lab(
         tmp_path,
         monkeypatch,
@@ -180,6 +233,12 @@ def test_trusted_host_allows_unregistered_running_appliance_and_unrelated_peer_v
 def test_trusted_host_refuses_unregistered_running_third_segment_member(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Refuse an unregistered running VM attached to the private segment.
+
+    Args:
+        tmp_path: Isolated root for VMX and VMware inventory fixtures.
+        monkeypatch: Replacements for the host VM inventory command.
+    """
     plan = _lab(tmp_path, monkeypatch, third_running_only="pvn")
 
     with pytest.raises(trusted.Refusal, match="trusted_host_private_membership_changed"):
@@ -189,6 +248,12 @@ def test_trusted_host_refuses_unregistered_running_third_segment_member(
 def test_trusted_host_requires_both_lab_vms_running(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Require both designated lab VMs to appear in the running inventory.
+
+    Args:
+        tmp_path: Isolated root for VMX and VMware inventory fixtures.
+        monkeypatch: Replacements for the host VM inventory command.
+    """
     plan = _lab(tmp_path, monkeypatch, peer_running=False)
 
     with pytest.raises(trusted.Refusal, match="trusted_host_vm_not_running"):
@@ -198,6 +263,12 @@ def test_trusted_host_requires_both_lab_vms_running(
 def test_trusted_host_refuses_missing_vmx_reported_by_vmrun(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Refuse a running VM path reported by vmrun when its VMX is missing.
+
+    Args:
+        tmp_path: Isolated root for VMX and VMware inventory fixtures.
+        monkeypatch: Replacements for the host VM inventory command.
+    """
     plan = _lab(tmp_path, monkeypatch)
     missing = tmp_path / "removed" / "still-reported.vmx"
     output = b"Total running VMs: 3\n"
@@ -215,6 +286,12 @@ def test_trusted_host_refuses_missing_vmx_reported_by_vmrun(
 def test_trusted_host_ignores_only_missing_stale_registration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Ignore a missing VMX only when it is a stale registered entry.
+
+    Args:
+        tmp_path: Isolated root for VMX and VMware inventory fixtures.
+        monkeypatch: Replacements for the host VM inventory command.
+    """
     plan = _lab(tmp_path, monkeypatch)
     inventory = Path(plan["trusted_host"]["inventory_path"])
     with inventory.open("a", encoding="utf-8") as stream:
@@ -229,6 +306,12 @@ def test_trusted_host_ignores_only_missing_stale_registration(
 def test_trusted_host_scrubs_vmrun_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Run vmrun with a scrubbed environment and bounded timeout.
+
+    Args:
+        tmp_path: Isolated root for VMX and VMware inventory fixtures.
+        monkeypatch: Replacements for the host command and environment.
+    """
     plan = _lab(tmp_path, monkeypatch)
     observed: dict[str, object] = {}
     output = b"Total running VMs: 2\n"
@@ -236,6 +319,12 @@ def test_trusted_host_scrubs_vmrun_environment(
     output += (str(Path(plan["trusted_host"]["peer_vmx"])) + "\n").encode()
 
     def fake_run(*args: object, **kwargs: object) -> object:
+        """Capture subprocess options and return the expected running VMs.
+
+        Args:
+            *args: Positional vmrun command arguments.
+            **kwargs: Subprocess options to inspect in the test.
+        """
         observed.update(kwargs)
         return type("Completed", (), {"returncode": 0, "stdout": output, "stderr": b""})()
 
@@ -262,6 +351,15 @@ def test_trusted_host_scrubs_vmrun_environment(
 def test_trusted_host_refuses_private_adapter_drift(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, adapter_field: str, adapter_value: str, reason: str,
 ) -> None:
+    """Refuse changes to the appliance private adapter's type, segment, or MAC.
+
+    Args:
+        tmp_path: Isolated root for VMX and VMware inventory fixtures.
+        monkeypatch: Replacements for the host VM inventory command.
+        adapter_field: VMX property to alter in the appliance fixture.
+        adapter_value: Replacement value for that VMX property.
+        reason: Expected refusal marker for the changed property.
+    """
     plan = _lab(tmp_path, monkeypatch)
     vmx_path = Path(plan["trusted_host"]["appliance_vmx"])
     original = vmx_path.read_text(encoding="utf-8")
@@ -278,6 +376,12 @@ def test_trusted_host_refuses_private_adapter_drift(
 def test_trusted_host_refuses_ambiguous_duplicate_adapter_fields(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Refuse a VMX with duplicated values for a private adapter property.
+
+    Args:
+        tmp_path: Isolated root for VMX and VMware inventory fixtures.
+        monkeypatch: Replacements for the host VM inventory command.
+    """
     plan = _lab(tmp_path, monkeypatch)
     appliance = Path(plan["trusted_host"]["appliance_vmx"])
     appliance.write_text(appliance.read_text(encoding="utf-8") +
@@ -290,6 +394,12 @@ def test_trusted_host_refuses_ambiguous_duplicate_adapter_fields(
 def test_trusted_host_refuses_invalid_inventory_without_echoing_its_contents(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Refuse malformed inventory without exposing its contents in the error.
+
+    Args:
+        tmp_path: Isolated root for VMX and VMware inventory fixtures.
+        monkeypatch: Replacements for the host VM inventory command.
+    """
     plan = _lab(tmp_path, monkeypatch)
     inventory = Path(plan["trusted_host"]["inventory_path"])
     inventory.write_text("private-system-name", encoding="utf-8")
@@ -303,6 +413,12 @@ def test_trusted_host_refuses_invalid_inventory_without_echoing_its_contents(
 def test_trusted_host_refuses_nat_peer_control_adapter(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Refuse a peer control adapter changed from custom networking to NAT.
+
+    Args:
+        tmp_path: Isolated root for VMX and VMware inventory fixtures.
+        monkeypatch: Replacements for the host VM inventory command.
+    """
     plan = _lab(tmp_path, monkeypatch)
     peer = Path(plan["trusted_host"]["peer_vmx"])
     contents = peer.read_text(encoding="utf-8").replace('ethernet0.connectionType = "custom"',
@@ -316,6 +432,12 @@ def test_trusted_host_refuses_nat_peer_control_adapter(
 def test_trusted_host_compares_pre_and_post_topology_snapshots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Detect a changed running inventory between topology snapshots.
+
+    Args:
+        tmp_path: Isolated root for VMX and VMware inventory fixtures.
+        monkeypatch: Replacements for the host VM inventory command.
+    """
     plan = _lab(tmp_path, monkeypatch)
     before = trusted.inspect_trusted_host(plan)
     after = dict(before)
@@ -339,6 +461,12 @@ def test_trusted_host_refuses_snapshot_tampering() -> None:
 def test_trusted_host_refuses_segment_receipt_from_another_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Refuse a private-segment receipt bound to another source revision.
+
+    Args:
+        tmp_path: Isolated root for VMX and VMware inventory fixtures.
+        monkeypatch: Replacements for the host VM inventory command.
+    """
     plan = _lab(tmp_path, monkeypatch)
     reference = plan["trusted_host"]["segment_receipt"]
     path = Path(reference["path"])
@@ -352,6 +480,11 @@ def test_trusted_host_refuses_segment_receipt_from_another_source(
 
 
 def _resign_snapshot(snapshot: dict[str, object]) -> dict[str, object]:
+    """Recompute the topology digest after changing a snapshot fixture.
+
+    Args:
+        snapshot: Topology mapping to copy and sign.
+    """
     signed = dict(snapshot)
     unsigned = {key: value for key, value in signed.items() if key not in {"topology_sha256", "receipt_path"}}
     signed["topology_sha256"] = hashlib.sha256(
@@ -363,6 +496,12 @@ def _resign_snapshot(snapshot: dict[str, object]) -> dict[str, object]:
 def test_trusted_host_monitor_keeps_drift_failed_after_topology_is_restored(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Keep the monitor failed after detecting drift even if topology is restored.
+
+    Args:
+        tmp_path: Isolated root for VMX and VMware inventory fixtures.
+        monkeypatch: Replacement for host topology inspection.
+    """
     plan = _lab(tmp_path, monkeypatch)
     original = trusted.inspect_trusted_host(plan)
     drifted = dict(original)
@@ -372,6 +511,11 @@ def test_trusted_host_monitor_keeps_drift_failed_after_topology_is_restored(
     calls = 0
 
     def inspect(_plan: dict[str, object]) -> dict[str, object]:
+        """Return the next configured topology observation.
+
+        Args:
+            _plan: Trusted-host plan passed to the inspector.
+        """
         nonlocal calls
         calls += 1
         return next(observations)
@@ -391,6 +535,12 @@ def test_trusted_host_monitor_keeps_drift_failed_after_topology_is_restored(
 def test_trusted_host_monitor_refuses_malformed_observation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Fail the monitor closed when its topology observation is malformed.
+
+    Args:
+        tmp_path: Isolated root for VMX and VMware inventory fixtures.
+        monkeypatch: Replacement for host topology inspection.
+    """
     plan = _lab(tmp_path, monkeypatch)
     original = trusted.inspect_trusted_host(plan)
     malformed = {
@@ -411,10 +561,21 @@ def test_trusted_host_monitor_refuses_malformed_observation(
 def test_trusted_host_monitor_refuses_before_starting_when_initial_check_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Keep the monitor thread stopped when its initial host check fails.
+
+    Args:
+        tmp_path: Isolated root for VMX and VMware inventory fixtures.
+        monkeypatch: Replacement for host topology inspection.
+    """
     plan = _lab(tmp_path, monkeypatch)
     original = trusted.inspect_trusted_host(plan)
 
     def unavailable(_plan: dict[str, object]) -> dict[str, object]:
+        """Simulate unavailable initial topology readback.
+
+        Args:
+            _plan: Trusted-host plan passed to the inspector.
+        """
         raise trusted.Refusal("host_readback_unavailable")
 
     monkeypatch.setattr(trusted, "inspect_trusted_host", unavailable)
@@ -430,6 +591,12 @@ def test_trusted_host_monitor_refuses_before_starting_when_initial_check_fails(
 def test_trusted_host_monitor_caps_observation_count_and_sticks_failed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Cap successful topology observations and make the monitor failure sticky.
+
+    Args:
+        tmp_path: Isolated root for VMX and VMware inventory fixtures.
+        monkeypatch: Replacements for topology inspection and snapshot comparison.
+    """
     plan = _lab(tmp_path, monkeypatch)
     original = trusted.inspect_trusted_host(plan)
     monkeypatch.setattr(trusted, "inspect_trusted_host", lambda _plan: original)

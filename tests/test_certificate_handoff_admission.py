@@ -178,7 +178,11 @@ def test_predeployment_snapshot_must_belong_to_exact_runtime(changed: str) -> No
 def test_trusted_host_source_and_deployed_commits_are_distinct_bindings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A trusted-host plan checks the reviewed source head separately from deployed code."""
+    """A trusted-host plan checks the reviewed source head separately from deployed code.
+
+    Args:
+        monkeypatch: Isolated subprocess and receipt-reader replacements.
+    """
     source_commit = "a" * 40
     deployed_commit = "b" * 40
     assert source_commit != deployed_commit
@@ -192,6 +196,11 @@ def test_trusted_host_source_and_deployed_commits_are_distinct_bindings(
     )
 
     def stop_at_original_receipt(_reference):
+        """Stop after proving commit admission reached the first receipt read.
+
+        Args:
+            _reference: Receipt reference passed by admission; not inspected here.
+        """
         raise StopAfterHeadCheck()
 
     monkeypatch.setattr(handoff, "bound_json", stop_at_original_receipt)
@@ -206,12 +215,22 @@ def test_trusted_host_source_and_deployed_commits_are_distinct_bindings(
 def test_unrelated_resource_source_commit_fails_before_receipt_read_or_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A resource source outside the harness ancestry is rejected before receipt admission."""
+    """A resource source outside the harness ancestry is rejected before receipt admission.
+
+    Args:
+        monkeypatch: Isolated Git and receipt-reader replacements.
+    """
     current_head = "a" * 40
     resource_source = "b" * 40
     calls: list[list[str]] = []
 
     def git_run(command, **_kwargs):
+        """Return a current head and a failed ancestry result.
+
+        Args:
+            command: Git argument vector being exercised.
+            **_kwargs: Subprocess settings unused by this fake.
+        """
         calls.append(command)
         if command[-2:] == ["rev-parse", "HEAD"]:
             return type("Result", (), {"stdout": current_head + "\n", "returncode": 0})()
@@ -232,7 +251,11 @@ def test_unrelated_resource_source_commit_fails_before_receipt_read_or_credentia
 def test_reviewed_resource_source_ancestor_allows_initial_receipt_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A valid original resource ancestor passes the gate before the first receipt is read."""
+    """A valid original resource ancestor passes the gate before the first receipt is read.
+
+    Args:
+        monkeypatch: Isolated Git and receipt-reader replacements.
+    """
     current_head = "a" * 40
     resource_source = "b" * 40
 
@@ -242,6 +265,12 @@ def test_reviewed_resource_source_ancestor_allows_initial_receipt_read(
     calls: list[list[str]] = []
 
     def git_run(command, **_kwargs):
+        """Return a current head and successful ancestry result.
+
+        Args:
+            command: Git argument vector being exercised.
+            **_kwargs: Subprocess settings unused by this fake.
+        """
         calls.append(command)
         if command[-2:] == ["rev-parse", "HEAD"]:
             return type("Result", (), {"stdout": current_head + "\n", "returncode": 0})()
@@ -250,6 +279,11 @@ def test_reviewed_resource_source_ancestor_allows_initial_receipt_read(
     monkeypatch.setattr(handoff.subprocess, "run", git_run)
 
     def stop_at_receipt(_reference):
+        """Raise a sentinel when admission starts reading original receipts.
+
+        Args:
+            _reference: First receipt reference passed by admission.
+        """
         raise StopAtReceiptRead()
 
     monkeypatch.setattr(handoff, "bound_json", stop_at_receipt)
@@ -279,6 +313,12 @@ def test_topology_drift_blocks_desired_http_edit_before_request() -> None:
 
     class Opener:
         def open(self, *_args, **_kwargs):
+            """Refuse any HTTP request that gets past the topology guard.
+
+            Args:
+                *_args: Positional request arguments supplied to the opener.
+                **_kwargs: Keyword request options supplied to the opener.
+            """
             pytest.fail("HTTP desired-state edit reached the network after topology drift")
 
     client = handoff.Client.__new__(handoff.Client)
