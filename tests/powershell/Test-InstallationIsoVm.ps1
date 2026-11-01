@@ -265,6 +265,7 @@ function Get-InstallationVmFunctionText {
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationPrivateLanTransition')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationConsoleDiskIdentities')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmRunning')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmStopped')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationSerialPipePath')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'Get-InstallationProvisioningStages')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $driverAst -Name 'ConvertFrom-InstallationConsoleFrame')))
@@ -1038,6 +1039,166 @@ Assert-InstallationVmCondition ($runningVmxAdmission.Contains("@('-T', 'ws', 'li
 Assert-InstallationVmCondition (-not $consoleDiskAdmission.Contains('Assert-InstallationDiskUnchanged') -and
     -not $consoleDiskAdmission.Contains('Invoke-AtlasoBoundedProcess')) `
     'Console disk admission may pin receipt-bound file identities but must never compare or inspect disk contents.'
+
+$stoppedVmxAdmission = Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmStopped'
+Assert-InstallationVmCondition ($stoppedVmxAdmission.Contains("@('-T', 'ws', 'list')") -and
+    $stoppedVmxAdmission.Contains('ConvertFrom-AtlasoVmrunListOutput') -and
+    $stoppedVmxAdmission.Contains('Get-AtlasoPathIdentity') -and
+    -not $stoppedVmxAdmission.Contains("'stop'") -and
+    -not $stoppedVmxAdmission.Contains('Publish-AtlasoTestVmOwnershipRecord') -and
+    -not $stoppedVmxAdmission.Contains('[IO.File]::Open')) `
+    'Private LAN stopped-VM admission must use checked read-only inventory and identity checks without stopping, writing, or publishing.'
+$rewireStopDispatch = @($ast.FindAll({
+    param($node)
+    $node -is [Management.Automation.Language.IfStatementAst] -and
+    $node.Extent.Text.StartsWith("if (`$Mode -eq 'RewirePrivateLan')", [StringComparison]::Ordinal) -and
+    $node.Extent.Text.Contains('Assert-InstallationVmStopped') -and
+    $node.Extent.Text.Contains('Confirm-AtlasoWorkstationVmInactive')
+}, $true))
+Assert-InstallationVmCondition ($rewireStopDispatch.Count -eq 1) 'The shared verifier must dispatch rewire mode to the read-only stopped check and other modes to existing stop behavior.'
+$script:InstallationStopDispatchEvents = [Collections.Generic.List[string]]::new()
+foreach ($dispatchCase in @(
+        @{ Mode = 'RewirePrivateLan'; Expected = 'stopped-check' },
+        @{ Mode = 'Verify'; Expected = 'checked-stop' }
+    )) {
+    & {
+        param([string]$BranchText, [string]$Mode)
+        <#
+        .SYNOPSIS
+        Record selection of the read-only stopped-state admission branch.
+        #>
+        function Assert-InstallationVmStopped { $script:InstallationStopDispatchEvents.Add('stopped-check') }
+        <#
+        .SYNOPSIS
+        Record selection of the existing checked-stop verification branch.
+        #>
+        function Confirm-AtlasoWorkstationVmInactive { $script:InstallationStopDispatchEvents.Add('checked-stop') }
+        $vmrun = 'synthetic-vmrun.exe'
+        $context = [pscustomobject]@{ VmxPath = 'C:\synthetic\appliance.vmx' }
+        $vmxIdentity = 'ABCD1234:0000000000000001'
+        . ([scriptblock]::Create($BranchText))
+    } $rewireStopDispatch[0].Extent.Text $dispatchCase.Mode
+    Assert-InstallationVmCondition ($script:InstallationStopDispatchEvents.Count -eq 1 -and
+        $script:InstallationStopDispatchEvents[0] -ceq $dispatchCase.Expected) `
+        "The shared verifier selected the wrong VM power action for $($dispatchCase.Mode)."
+    $script:InstallationStopDispatchEvents.Clear()
+}
+$privateLanWriterBranch = @($ast.FindAll({
+    param($node)
+    $node -is [Management.Automation.Language.IfStatementAst] -and
+    $node.Extent.Text.StartsWith("if (`$Mode -eq 'RewirePrivateLan')", [StringComparison]::Ordinal) -and
+    $node.Extent.Text.Contains('$writer = $null')
+}, $true))
+Assert-InstallationVmCondition ($privateLanWriterBranch.Count -eq 1 -and
+    $privateLanWriterBranch[0].Extent.Text.Contains('Assert-InstallationVmStopped') -and
+    -not $privateLanWriterBranch[0].Extent.Text.Contains('Confirm-AtlasoWorkstationVmInactive') -and
+    $privateLanWriterBranch[0].Extent.Text.IndexOf('Assert-InstallationVmStopped', [StringComparison]::Ordinal) -lt
+    $privateLanWriterBranch[0].Extent.Text.IndexOf('[IO.File]::Open', [StringComparison]::Ordinal)) `
+    'The second rewire race check must refuse active VMs before opening the VMX writer.'
+
+& {
+    $testVmDirectory = Join-Path $repositoryRoot 'test-results'
+    if (-not (Test-Path -LiteralPath $testVmDirectory -PathType Container)) {
+        throw 'The receipted test-results root is required for stopped-VM inventory fixtures.'
+    }
+    $fixtureSuffix = [guid]::NewGuid().ToString('N')
+    $TargetPath = Join-Path $testVmDirectory ('stopped-admission-target-' + $fixtureSuffix + '.vmx')
+    $OtherPath = Join-Path $testVmDirectory ('stopped-admission-other-' + $fixtureSuffix + '.vmx')
+    [IO.File]::WriteAllText($TargetPath, 'synthetic target VMX')
+    [IO.File]::WriteAllText($OtherPath, 'synthetic other VMX')
+    try {
+    $script:InstallationStoppedInventory = @('Total running VMs: 1', $OtherPath) -join "`n"
+    $script:InstallationStoppedInventoryCalls = [Collections.Generic.List[string]]::new()
+    $script:InstallationStoppedIdentityCalls = 0
+    $script:InstallationStoppedIdentityMode = 'stable'
+    <#
+    .SYNOPSIS
+    Return a synthetic bounded running-VM inventory without starting a process.
+    .PARAMETER FilePath
+    Synthetic vmrun executable selector.
+    .PARAMETER ArgumentList
+    Exact read-only running-inventory arguments.
+    .PARAMETER TimeoutSeconds
+    Required bounded inventory deadline.
+    .PARAMETER Action
+    Public read-only operation description.
+    #>
+    function Invoke-AtlasoBoundedProcess {
+        param([string]$FilePath, [string[]]$ArgumentList, [int]$TimeoutSeconds, [string]$Action)
+        if (($ArgumentList -join ' ') -cne '-T ws list' -or $TimeoutSeconds -ne 30 -or -not $FilePath -or -not $Action) {
+            throw 'Stopped admission lost its bounded read-only provider contract.'
+        }
+        $script:InstallationStoppedInventoryCalls.Add($ArgumentList -join ' ')
+        return $script:InstallationStoppedInventory
+    }
+    <#
+    .SYNOPSIS
+    Return synthetic filesystem identities for target and running VMX paths.
+    .PARAMETER Path
+    VMX path whose synthetic filesystem identity is requested.
+    .PARAMETER Description
+    Bounded public purpose supplied by the harness.
+    #>
+    function Get-AtlasoPathIdentity {
+        param([string]$Path, [string]$Description)
+        $script:InstallationStoppedIdentityCalls++
+        $fullPath = [IO.Path]::GetFullPath($Path)
+        if ($script:InstallationStoppedIdentityMode -ceq 'changed' -and
+            $fullPath.Equals($TargetPath, [StringComparison]::OrdinalIgnoreCase) -and
+            $script:InstallationStoppedIdentityCalls -gt 1) { return 'ABCD1234:0000000000000002' }
+        if ($script:InstallationStoppedIdentityMode -ceq 'alias' -and
+            $fullPath.Equals($OtherPath, [StringComparison]::OrdinalIgnoreCase)) { return $script:InstallationStoppedExpectedIdentity }
+        if ($fullPath.Equals($TargetPath, [StringComparison]::OrdinalIgnoreCase)) { return $script:InstallationStoppedExpectedIdentity }
+        return 'ABCD1234:0000000000000003'
+    }
+    $script:InstallationStoppedExpectedIdentity = 'ABCD1234:0000000000000001'
+    $beforeHash = (Get-FileHash -LiteralPath $TargetPath -Algorithm SHA256).Hash
+
+    $script:InstallationStoppedInventoryCalls.Clear()
+    $relativePathRefused = $false
+    try {
+        Assert-InstallationVmStopped -VmrunPath 'synthetic-vmrun.exe' -VmxPath 'relative\appliance.vmx' `
+            -ExpectedIdentity $script:InstallationStoppedExpectedIdentity
+    }
+    catch { $relativePathRefused = $true }
+    Assert-InstallationVmCondition ($relativePathRefused -and $script:InstallationStoppedInventoryCalls.Count -eq 0) `
+        'Stopped admission must reject a non-absolute target before provider inventory.'
+
+    $script:InstallationStoppedInventory = @('Total running VMs: 1', $OtherPath) -join "`n"
+    Assert-InstallationVmStopped -VmrunPath 'synthetic-vmrun.exe' -VmxPath $TargetPath `
+        -ExpectedIdentity $script:InstallationStoppedExpectedIdentity
+    Assert-InstallationVmCondition ($script:InstallationStoppedInventoryCalls.Count -eq 1 -and
+        $script:InstallationStoppedInventoryCalls[0] -ceq '-T ws list') `
+        'Stopped admission must query only the bounded running-VM list.'
+
+    foreach ($inventoryCase in @(
+            @{ Name = 'canonical target path'; Text = @('Total running VMs: 1', $TargetPath) -join "`n"; IdentityMode = 'stable' },
+            @{ Name = 'identity alias'; Text = @('Total running VMs: 1', $OtherPath) -join "`n"; IdentityMode = 'alias' },
+            @{ Name = 'invalid inventory'; Text = 'invalid provider output'; IdentityMode = 'stable' },
+            @{ Name = 'changed target identity'; Text = 'Total running VMs: 0'; IdentityMode = 'changed' }
+        )) {
+        $script:InstallationStoppedInventory = $inventoryCase.Text
+        $script:InstallationStoppedIdentityMode = $inventoryCase.IdentityMode
+        $script:InstallationStoppedIdentityCalls = 0
+        $script:InstallationStoppedInventoryCalls.Clear()
+        $refused = $false
+        try {
+            Assert-InstallationVmStopped -VmrunPath 'synthetic-vmrun.exe' -VmxPath $TargetPath `
+                -ExpectedIdentity $script:InstallationStoppedExpectedIdentity
+        }
+        catch { $refused = $true }
+        Assert-InstallationVmCondition $refused "Stopped admission must refuse $($inventoryCase.Name)."
+        Assert-InstallationVmCondition ($script:InstallationStoppedInventoryCalls.Count -eq 1 -and
+            $script:InstallationStoppedInventoryCalls[0] -ceq '-T ws list') `
+            "The $($inventoryCase.Name) refusal must not issue a stop or another provider operation."
+        Assert-InstallationVmCondition ((Get-FileHash -LiteralPath $TargetPath -Algorithm SHA256).Hash -ceq $beforeHash) `
+            "The $($inventoryCase.Name) refusal must not write to the VMX."
+    }
+    }
+    finally {
+        Remove-Item -LiteralPath $TargetPath, $OtherPath -Force -ErrorAction SilentlyContinue
+    }
+}
 
 <#
 .SYNOPSIS

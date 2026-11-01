@@ -897,6 +897,44 @@ function Assert-InstallationVmRunning {
 
 <#
 .SYNOPSIS
+Require the exact receipt-bound VM to be stopped without stopping it.
+.PARAMETER VmrunPath
+Resolved VMware vmrun executable used only for a bounded running-inventory query.
+.PARAMETER VmxPath
+Canonical target VMX path bound to the original installation receipt.
+.PARAMETER ExpectedIdentity
+Original filesystem identity that must still identify the target VMX before and after inventory.
+#>
+function Assert-InstallationVmStopped {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][string]$ExpectedIdentity
+    )
+    $canonicalVmxPath = [IO.Path]::GetFullPath($VmxPath)
+    if (-not [IO.Path]::IsPathFullyQualified($VmxPath) -or
+        $ExpectedIdentity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$' -or
+        (Get-AtlasoPathIdentity -Path $canonicalVmxPath -Description 'receipt-bound installation VMX') -cne $ExpectedIdentity) {
+        throw 'Receipt-bound installation VMX identity changed before the stopped-VM check.'
+    }
+    $output = [string](Invoke-AtlasoBoundedProcess -FilePath $VmrunPath -ArgumentList @('-T', 'ws', 'list') `
+        -TimeoutSeconds 30 -Action 'Read running VMware Workstation VM inventory before private LAN rewire')
+    $runningPaths = @(ConvertFrom-AtlasoVmrunListOutput -Output @($output -split "`r?`n"))
+    $matchingVms = @($runningPaths | Where-Object {
+        $runningPath = [IO.Path]::GetFullPath($_)
+        $runningPath.Equals($canonicalVmxPath, [StringComparison]::OrdinalIgnoreCase) -or
+            (Get-AtlasoPathIdentity -Path $runningPath -Description 'running VMware VMX') -ceq $ExpectedIdentity
+    })
+    if ($matchingVms.Count -gt 0) {
+        throw 'Private LAN rewire refuses an active receipt-bound installation VM.'
+    }
+    if ((Get-AtlasoPathIdentity -Path $canonicalVmxPath -Description 'receipt-bound installation VMX') -cne $ExpectedIdentity) {
+        throw 'Receipt-bound installation VMX identity changed during the stopped-VM check.'
+    }
+}
+
+<#
+.SYNOPSIS
 Disconnect only the known installation CD drive without changing disks, networking, or the serial endpoint.
 .PARAMETER Text
 Stopped, receipt-bound VMX text read through its exclusive writer.
@@ -1575,7 +1613,12 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'RewirePrivateLan', 'Verify', 'B
         $vmxPin.Dispose()
         $vmxPin = $null
         $vmrun = Resolve-InstallationVmTool -Path $VmrunPath -FileName 'vmrun.exe'
-        Confirm-AtlasoWorkstationVmInactive -VmrunPath $vmrun -VmxPath $context.VmxPath -ExpectedIdentity $vmxIdentity
+        if ($Mode -eq 'RewirePrivateLan') {
+            Assert-InstallationVmStopped -VmrunPath $vmrun -VmxPath $context.VmxPath -ExpectedIdentity $vmxIdentity
+        }
+        else {
+            Confirm-AtlasoWorkstationVmInactive -VmrunPath $vmrun -VmxPath $context.VmxPath -ExpectedIdentity $vmxIdentity
+        }
         $vmxPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($context.VmxPath, $true)
         if ([Atlaso.WorkstationFileIdentity]::Get($context.OutputDirectory) -cne [string]$original.original_identities.directory) {
             throw 'Installation VM artifact directory changed while the VM was stopped.'
@@ -1607,7 +1650,7 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'RewirePrivateLan', 'Verify', 'B
                 $vmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($context.VmxPath)
                 $vmxPin.Dispose()
                 $vmxPin = $null
-                Confirm-AtlasoWorkstationVmInactive -VmrunPath $vmrun -VmxPath $context.VmxPath -ExpectedIdentity $vmxIdentity
+                Assert-InstallationVmStopped -VmrunPath $vmrun -VmxPath $context.VmxPath -ExpectedIdentity $vmxIdentity
                 $writer = [IO.File]::Open($context.VmxPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
                 if ($writer.Length -gt 1048576 -or [Atlaso.WorkstationFileIdentity]::Get($context.VmxPath) -cne $vmxIdentity) {
                     throw 'Stopped installation VMX changed before its private LAN transition.'
