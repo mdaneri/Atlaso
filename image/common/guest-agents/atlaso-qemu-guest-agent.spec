@@ -1,3 +1,8 @@
+# Keep the media-verified payload limited to the executable and reviewed unit.
+%global _build_id_links none
+%global debug_package %{nil}
+%global _binary_filedigest_algorithm 8
+
 Summary:        Atlaso QEMU guest agent for Photon OS
 Name:           atlaso-qemu-guest-agent
 Version:        10.2.2

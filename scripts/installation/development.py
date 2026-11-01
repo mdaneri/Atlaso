@@ -177,7 +177,12 @@ def prepare_payload(
     for path in scratch_paths.values():
         path.mkdir()
 
-    build.verify_rpms(rpms, repository, scratch_paths["input_rpm"])
+    if (rpms / "guest-tools").exists():
+        build.verify_rpms(rpms, repository, scratch_paths["input_rpm"], allow_guest_tools=True)
+    else:
+        build.verify_rpms(rpms, repository, scratch_paths["input_rpm"])
+    if (rpms / "guest-tools").exists() or build.source_requires_payload(repository):
+        build.verify_guest_tools(rpms / "guest-tools", repository, scratch_paths["input_rpm"])
     subprocess.run(
         [
             "pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File",
@@ -194,12 +199,13 @@ def prepare_payload(
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
     build.verify_source(source_root, source_files)
-    for name, root in (("software", software), ("rpms", rpms), ("powercli", powercli)):
-        shutil.copytree(root, output / name)
+    build.copy_installation_inputs(software, rpms, powercli, output, source_root)
     copied_software = verify_directory(output / "software", trust_key, software_version, software_commit)
     if copied_software != software_identity:
         raise ValueError("copied software release differs from its admitted identity")
     rpm_records = build.verify_rpms(output / "rpms", source_root, scratch_paths["copied_rpm"])
+    if (output / "guest-tools").exists() or build.source_requires_payload(source_root):
+        build.verify_guest_tools(output / "guest-tools", source_root, scratch_paths["copied_rpm"])
     subprocess.run(
         [
             "pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File",

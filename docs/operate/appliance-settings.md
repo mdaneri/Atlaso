@@ -96,16 +96,19 @@ task; follow its progress and final result in Tasks. Repeat the check after an i
 successful package command alone does not prove the service is healthy. The task preserves the appliance's selected
 clock authority; it does not introduce another time-source setting. See [Appliance time source](../services/ntp.md#appliance-clock-source).
 
-Online appliance image builds retain verified VMware, Hyper-V, and QEMU guest-tools closures under
+Appliance image builds and new offline ISO installations retain verified VMware, Hyper-V, and QEMU guest-tools
+closures under
 `/var/lib/atlaso-privileged/guest-tools` for this workflow. Existing installations may not have those closures,
 especially after a
 portable first-boot selection has securely removed its separate temporary package staging. In that case Settings shows
 the supported compatible-payload prerequisite and does not download from arbitrary repositories or fall back to
 unreviewed network installation. Continue with the documented supported source or a compatible appliance image that
 carries the verified closure; checking and opening Hardware remain safe without it.
-Current offline ISO media does not carry the Atlaso-built QEMU RPM or retained maintenance closures. Its installer
-keeps guest agents uninstalled and never invokes the network-dependent guest-agent builder. Hardware inventory and
-provider checks still work, but maintenance requires a compatible image-built payload.
+New ISO media includes the prebuilt agents and dependency closures in its authenticated file inventory. Disconnected
+installation retains those bytes without building, downloading, or enabling an agent. After installing the appliance,
+open **Settings → Hardware**, check the detected provider, review the proposed install or repair, and submit the task.
+Keep the required host guest-agent channel enabled; installation and repair use the retained local RPMs even when
+the appliance has no package-repository access.
 
 Hyper-V reports only the supported Linux integration components. KVP and VSS are supported; the legacy file-copy
 daemon uses a transport absent from Atlaso's supported Linux 6.12 kernel. QEMU guest-agent host communication requires

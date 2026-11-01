@@ -26,6 +26,9 @@ from scripts.installation.build import (  # noqa: E402 - direct-script repositor
     unpack_inputs,
     validate_candidate,
 )
+from scripts.installation.guest_tools import (  # noqa: E402 - direct-script repository bootstrap.
+    copy_payload,
+)
 from scripts.installation.iso import (  # noqa: E402 - direct-script repository bootstrap.
     build_iso,
 )
@@ -62,6 +65,7 @@ def main() -> int:
     packages.add_argument("--source", type=Path, default=ROOT)
     capture = commands.add_parser("capture-rpms", help="Resolve dependencies on the canonical authorized Photon builder.")
     capture.add_argument("--output", type=Path, required=True)
+    capture.add_argument("--guest-tools", type=Path, help="Retained prebuilt closure from this admitted native image build.")
     pack = commands.add_parser("pack-inputs", help="Archive a prepared unsigned candidate.")
     pack.add_argument("--payload", type=Path, required=True)
     pack.add_argument("--output", type=Path, required=True)
@@ -91,6 +95,8 @@ def main() -> int:
         return 0
     if args.operation == "capture-rpms":
         capture_packages(ROOT, args.output)
+        if args.guest_tools is not None:
+            copy_payload(args.guest_tools, args.output / "guest-tools")
         return 0
     if args.operation == "pack-inputs":
         pack_inputs(args.payload, args.output)

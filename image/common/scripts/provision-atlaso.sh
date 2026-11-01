@@ -159,6 +159,10 @@ validate_installation_media() {
       exit 2
     }
   ATLASO_POWERCLI_MODULE_SOURCE="$ATLASO_INSTALLATION_MEDIA/powercli"
+  # The enclosing media inventory is authenticated before disk consent. Check
+  # its exact guest-tools closure again before any target package transaction.
+  python3 "$ATLASO_SRC/scripts/installation/guest_tools.py" verify \
+    --source "$ATLASO_INSTALLATION_MEDIA/guest-tools"
   [ -r "$ATLASO_SRC/scripts/version.py" ] &&
     [ -r "$ATLASO_SRC/image/common/scripts/verify-template-software.py" ] || {
       echo "Staged Atlaso source is missing signed software verification assets." >&2
@@ -321,10 +325,13 @@ ensure_ntpsec_runtime_packages() {
 
 stage_guest_agent_packages() {
   # Maintenance payloads survive the one-shot selector's secure staging cleanup.
-  # Current installation media does not carry the locally built QEMU RPM. Keep
-  # its existing agent-free installation path instead of downloading/building in
-  # the disconnected target. Missing maintenance payloads remain unavailable.
+  # Offline installs retain the media-authenticated prebuilt closures without
+  # executing an RPM, resolving packages, or enabling a guest service.
   if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then
+    install -d -o root -g root -m 0700 "$ATLASO_PRIVILEGED_STATE"
+    python3 "$ATLASO_SRC/scripts/installation/guest_tools.py" stage \
+      --source "$ATLASO_INSTALLATION_MEDIA/guest-tools" \
+      --destination "$ATLASO_PRIVILEGED_STATE/guest-tools"
     log_step "staging empty guest-agent inventory for physical installation"
     install -d -o root -g root -m 0700 "$GUEST_AGENT_STAGING"
     : >"$GUEST_AGENT_STAGING/SHA256SUMS"

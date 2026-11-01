@@ -14,6 +14,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from image.common.scripts.configure_photon_repositories import DEFAULT_GPG_KEY_PATH
 from scripts.installation.assets import _safe_name
+from scripts.installation.guest_tools import payload_inventory, source_requires_payload
 from scripts.installation.manifest import (
     KEY_ID,
     MANIFEST,
@@ -86,13 +87,14 @@ def verify_source(source: Path, expected: dict[str, bytes]) -> None:
             raise ValueError("installation deployment source differs from Git")
 
 
-def verify_rpms(root: Path, source: Path, scratch: Path) -> list[dict]:
+def verify_rpms(root: Path, source: Path, scratch: Path, *, allow_guest_tools: bool = False) -> list[dict]:
     """Reuse the release RPM verification tool boundary and admitted Photon keys.
 
     Args:
         root: Root directory containing the files being checked.
         source: Input source file or directory.
-        scratch: Existing private directory for temporary validation data."""
+        scratch: Existing private directory for temporary validation data.
+        allow_guest_tools: Admit the companion directory only while validating original capture inputs."""
     from scripts.verify_virtualization_guest_wheel import (
         _photon_repository_inventory,
         _require_admitted_runtime_package,
@@ -100,7 +102,8 @@ def verify_rpms(root: Path, source: Path, scratch: Path) -> list[dict]:
     )
 
     packages = sorted(root.glob("*.rpm"))
-    if not packages or any(path.name != "repodata" and path.suffix != ".rpm" for path in root.iterdir()):
+    allowed_directories = {"repodata", "guest-tools"} if allow_guest_tools else {"repodata"}
+    if not packages or any(path.name not in allowed_directories and path.suffix != ".rpm" for path in root.iterdir()):
         raise ValueError("installation RPM repository is empty or contains unexpected entries")
     if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+._-]*\.rpm", path.name) for path in packages):
         raise ValueError("installation RPM filename is unsafe for an offline transaction")
@@ -160,6 +163,103 @@ def verify_rpms(root: Path, source: Path, scratch: Path) -> list[dict]:
         "-U", str(transaction),
     ], cwd=root.resolve(strict=True))
     return records
+
+
+def verify_guest_tools(root: Path, source: Path, scratch: Path) -> None:
+    """Authenticate Photon closures and constrain the media-authenticated Atlaso QEMU RPM.
+
+    Args:
+        root: Captured guest-tools tree, separate from the installable Photon repository.
+        source: Exact-commit source used by the native image builder.
+        scratch: Existing private directory for independent RPM verification state.
+    """
+    from scripts.installation.guest_tools import PROFILES
+    from scripts.verify_virtualization_guest_wheel import (
+        _photon_repository_inventory,
+        _require_admitted_runtime_package,
+        _run_runtime_tool,
+    )
+
+    payload_inventory(root)
+    database = scratch / "guest-tools-rpmdb"
+    database.mkdir()
+    _run_runtime_tool(["rpm", "--dbpath", str(database), "--initdb"])
+    imported = 0
+    for key in sorted((source / "image/common/photon-rpm-gpg").glob("VMWARE-RPM-GPG-KEY*")):
+        try:
+            _run_runtime_tool(["rpm", "--dbpath", str(database), "--import", str(key)])
+        except SystemExit:
+            continue  # Keep the native host's certificate policy; every Photon RPM must still authenticate.
+        imported += 1
+    if not imported:
+        raise ValueError("guest-tools verification requires an admitted Photon key")
+    admitted = _photon_repository_inventory()
+    spec = (source / "image/common/guest-agents/atlaso-qemu-guest-agent.spec").read_text()
+    versions = re.findall(r"^Version:\s+([0-9.]+)\s*$", spec, re.MULTILINE)
+    if len(versions) != 1:
+        raise ValueError("guest-tools QEMU source version is ambiguous")
+    for profile, agent in PROFILES.items():
+        names = set()
+        packages = sorted((root / profile).glob("*.rpm"))
+        for package in packages:
+            query = _run_runtime_tool(["rpm", "-qp", "--qf", "ATLASO\t%{NAME}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\t%{ARCH}\n", str(package)])
+            rows = [line.split("\t")[1:] for line in query.splitlines() if line.startswith("ATLASO\t")]
+            if len(rows) != 1 or len(rows[0]) != 3 or rows[0][2] not in {"x86_64", "noarch"}:
+                raise ValueError("guest-tools RPM identity or architecture is invalid")
+            name, version, architecture = rows[0]
+            if name in names or (name in PROFILES.values() and name != agent):
+                raise ValueError("guest-tools closure has duplicate or foreign agents")
+            names.add(name)
+            if name == "atlaso-qemu-guest-agent":
+                integrity = _run_runtime_tool(["rpmkeys", "--dbpath", str(database), "--checksig", str(package)])
+                if "digests OK" not in integrity and "digests signatures OK" not in integrity:
+                    raise ValueError("guest-tools QEMU RPM integrity verification failed")
+                if profile != "qemu" or version not in {"0:" + versions[0] + "-1.ph5", "0:" + versions[0] + "-1"} or architecture != "x86_64":
+                    raise ValueError("guest-tools QEMU RPM differs from the pinned source identity")
+                if any(_run_runtime_tool(["rpm", "-qp", flag, str(package)]).strip() for flag in ("--scripts", "--triggers", "--filetriggers")):
+                    raise ValueError("guest-tools QEMU RPM must not execute package scripts")
+                file_query = _run_runtime_tool(["rpm", "-qp", "--qf", "ATLASOALGO\t%{FILEDIGESTALGO}\n[ATLASOFILE\t%{FILENAMES}\t%{FILEMODES}\t%{FILEDIGESTS}\t%{FILEUSERNAME}\t%{FILEGROUPNAME}\n]", str(package)])
+                algorithms = [line for line in file_query.splitlines() if line.startswith("ATLASOALGO\t")]
+                entries = [line.split("\t")[1:] for line in file_query.splitlines() if line.startswith("ATLASOFILE\t")]
+                unit = source / "image/common/guest-agents/qemu-guest-agent.service"
+                if (algorithms != ["ATLASOALGO\t8"] or len(entries) != 2
+                        or {tuple(entry[:2]) for entry in entries} != {
+                            ("/usr/bin/qemu-ga", str(stat.S_IFREG | 0o755)),
+                            ("/usr/lib/systemd/system/qemu-guest-agent.service", str(stat.S_IFREG | 0o644))}
+                        or any(len(entry) != 5 or not re.fullmatch(r"[0-9a-f]{64}", entry[2]) or entry[3:] != ["root", "root"] for entry in entries)
+                        or next(entry[2] for entry in entries if entry[0].endswith(".service")) != digest(unit)):
+                    raise ValueError("guest-tools QEMU RPM file contract differs from the pinned source")
+            else:
+                signature = _run_runtime_tool(["rpmkeys", "--dbpath", str(database), "--checksig", str(package)])
+                if "signatures OK" not in signature or not version.endswith(".ph5"):
+                    raise ValueError("guest-tools Photon RPM is not authenticated")
+                _require_admitted_runtime_package(package, "rpm", admitted)
+        if agent not in names:
+            raise ValueError("guest-tools provider agent is missing")
+        transaction = scratch / ("guest-tools-" + profile + ".manifest")
+        transaction.write_text("\n".join(path.name for path in packages) + "\n", encoding="ascii", newline="\n")
+        _run_runtime_tool(["rpm", "--dbpath", str(database), "--test", "--noscripts", "--notriggers", "--noplugins", "-U", str(transaction)],
+                          cwd=(root / profile).resolve(strict=True))
+    payload_inventory(root)
+
+
+def copy_installation_inputs(software: Path, rpms: Path, powercli: Path, output: Path, source: Path) -> None:
+    """Separate retained guest-tools from the signed Photon installation repository.
+
+    Args:
+        software: Existing authenticated software release inputs.
+        rpms: Captured Photon RPMs with their optional guest-tools companion tree.
+        powercli: Captured validated PowerCLI modules.
+        output: Existing candidate output directory.
+        source: Exact staged source whose capabilities determine required inputs.
+    """
+    guest_tools = rpms / "guest-tools"
+    if guest_tools.exists() or source_requires_payload(source):
+        payload_inventory(guest_tools)
+        shutil.copytree(guest_tools, output / "guest-tools")
+    shutil.copytree(software, output / "software")
+    shutil.copytree(powercli, output / "powercli")
+    shutil.copytree(rpms, output / "rpms", ignore=shutil.ignore_patterns("guest-tools"))
 
 
 def capture_packages(repository: Path, output: Path) -> None:
@@ -259,7 +359,7 @@ def validate_candidate(root: Path, *, repository: Path, commit: str, version: st
 
     source = root / "source"
     inventory(root)
-    permitted = {"source", "software", "rpms", "powercli", "rpm-repos", MANIFEST, MANIFEST + ".sig", "tdnf.conf"}
+    permitted = {"source", "software", "rpms", "powercli", "guest-tools", "rpm-repos", MANIFEST, MANIFEST + ".sig", "tdnf.conf"}
     if {path.name for path in root.iterdir()} - permitted:
         raise ValueError("candidate contains unexpected top-level content")
     verify_source(source, source_archive(repository, commit))
@@ -271,6 +371,8 @@ def validate_candidate(root: Path, *, repository: Path, commit: str, version: st
         raise ValueError("candidate contains an unexpected RPM repository definition")
     software = verify_directory(root / "software", trust_key, version, commit)
     records = verify_rpms(root / "rpms", source, scratch)
+    if (root / "guest-tools").exists() or source_requires_payload(source):
+        verify_guest_tools(root / "guest-tools", source, scratch)
     subprocess.run(
         ["pwsh", "-NoLogo", "-NoProfile", "-NonInteractive", "-File", str(repository / "image/common/powershell/provision-powercli.ps1"), "-Mode", "Validate", "-ModuleRoot", str(root / "powercli")],
         check=True,
@@ -340,8 +442,7 @@ def prepare_payload(*, repository: Path, commit: str, version: str, software: Pa
         target = output / "source" / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
-    for name, source in (("software", software), ("rpms", rpms), ("powercli", powercli)):
-        shutil.copytree(source, output / name)
+    copy_installation_inputs(software, rpms, powercli, output, output / "source")
     subprocess.run([
         "createrepo_c", "--checksum", "sha256", "--general-compress-type", "gz", str(output / "rpms")
     ], check=True)

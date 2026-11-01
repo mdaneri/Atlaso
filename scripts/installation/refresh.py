@@ -199,7 +199,10 @@ def source_input_sha256(repository: Path = ROOT) -> str:
     from scripts.installation.build import package_selection
     from scripts.installation.manifest import SOURCE_ISO_SHA512
 
-    paths = ["image/common/powershell/powercli-lock.json", "image/common/scripts/configure_photon_repositories.py"]
+    paths = ["image/common/powershell/powercli-lock.json", "image/common/scripts/configure_photon_repositories.py",
+             "image/common/scripts/provision-atlaso.sh", "image/common/scripts/build-qemu-guest-agent-rpm.sh",
+             "image/common/guest-agents/atlaso-qemu-guest-agent.spec", "image/common/guest-agents/qemu-guest-agent.service",
+             "scripts/installation/guest_tools.py", "image/vmware-workstation/atlaso-photon.pkr.hcl"]
     paths += sorted(p.relative_to(repository).as_posix() for p in (repository / "image/common/photon-rpm-gpg").iterdir())
     value = {"files": {p: digest(repository / p) for p in paths},
              "packages": package_selection(repository), "photon_iso_sha512": SOURCE_ISO_SHA512}

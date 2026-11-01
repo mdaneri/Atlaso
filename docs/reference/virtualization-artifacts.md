@@ -515,7 +515,8 @@ safety, and reboot plan and explicitly submit installation or repair. The operat
 Update maintenance task and records progress and its final verified service state in Tasks. Concurrent package
 maintenance is rejected with retry guidance.
 
-Online appliance image builds retain the complete verified offline RPM closures for VMware `open-vm-tools`, Photon Hyper-V
+Appliance image builds and new ISO installations retain complete verified offline RPM closures for VMware `open-vm-tools`,
+Photon Hyper-V
 integration, and the Atlaso-built QEMU guest agent plus its verified dependencies under the root-only protected
 `/var/lib/atlaso-privileged/guest-tools` directory. Its `compatibility.json` binds the closure to Photon 5.0 and x86-64;
 Atlaso checks the exact `SHA256SUMS` inventory and Photon RPM signatures before use. The provider is selected
@@ -523,9 +524,10 @@ from live virtualization and DMI evidence, including ISO-installed virtual machi
 one-shot first-boot selector: that service publishes machine identity and temporary access, removes foreign providers,
 and securely erases its own temporary package cache.
 
-Current offline ISO media does not include the Atlaso-built QEMU RPM or retained maintenance closures. Disconnected
-installation skips guest-agent compilation and staging; it never fetches QEMU source or enables guest agents. Hardware
-can detect the installed VM's provider, but guest-tools maintenance remains unavailable without a compatible payload.
+New ISO preparation captures the prebuilt closures from the admitted online image build and includes every byte in
+the authenticated media inventory. Offline installation copies them into protected appliance storage, independently
+of the first-boot inventory, without compiling QEMU, resolving dependencies, installing RPMs, or enabling agents.
+The retained payload remains available for later administrator-approved installation and repair in Hardware.
 An older appliance may also have no compatible verified payload. The check reports this prerequisite and a
 supported-source recovery path; it does not
 silently use configured repositories, arbitrary package uploads, or an unverified download. The ordinary signed

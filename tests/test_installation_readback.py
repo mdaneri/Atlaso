@@ -85,7 +85,7 @@ def _add_directory(image: pycdlib.PyCdlib, relative: str) -> None:
 
 
 def _build_iso(path: Path, *, tamper: bool = False, extra: bool = False,
-               bad_signature: bool = False, software_tamper: bool = False) -> str:
+               bad_signature: bool = False, software_tamper: bool = False, guest_payload: bool = False) -> str:
     """Create a tiny complete and signed development media fixture.
 
     Args:
@@ -94,6 +94,7 @@ def _build_iso(path: Path, *, tamper: bool = False, extra: bool = False,
         extra: Whether to add an unlisted payload file.
         bad_signature: Whether to sign the manifest with an untrusted key.
         software_tamper: Whether to change a release-signed software member.
+        guest_payload: Whether to include a captured guest-tools companion file.
     """
     wheel = b"public wheel bytes"
     dependency = b"public dependency wheel bytes"
@@ -153,6 +154,9 @@ def _build_iso(path: Path, *, tamper: bool = False, extra: bool = False,
         # The public development key can re-sign the outer inventory but cannot
         # authorize bytes different from the independent production signature.
         files["software/wheelhouse/cp314/fixture-1-py3-none-any.whl"] = b"substituted dependency"
+    if guest_payload:
+        files["guest-tools/qemu/atlaso-qemu-guest-agent.rpm"] = b"captured agent fixture"
+        files["guest-tools/SHA256SUMS"] = b"captured checksum fixture"
     rpm_digest = hashlib.sha256(files["rpms/linux-fixture.rpm"]).hexdigest()
     records = [
         {"path": name, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
@@ -332,3 +336,27 @@ def test_full_readback_rejects_wrong_media_digest_and_software_identity(tmp_path
             software_commit="c" * 40,
             software_version=_VERSION,
         )
+
+
+@pytest.mark.parametrize("substitute", [False, True])
+def test_full_readback_binds_relocated_guest_tools_to_original_capture(tmp_path, substitute):
+    """Moving retained payloads outside the RPM repo must preserve original capture hashes.
+
+    Args:
+        tmp_path: Isolated ISO fixture root.
+        substitute: Whether the supplied original capture describes different agent bytes.
+    """
+    image = tmp_path / "development.iso"
+    checksum = _build_iso(image, guest_payload=True)
+    capture = {"rpms": [
+        {"path": "linux-fixture.rpm", "sha256": hashlib.sha256(b"authenticated RPM bytes").hexdigest()},
+        {"path": "guest-tools/qemu/atlaso-qemu-guest-agent.rpm", "sha256": hashlib.sha256(b"changed" if substitute else b"captured agent fixture").hexdigest()},
+        {"path": "guest-tools/SHA256SUMS", "sha256": hashlib.sha256(b"captured checksum fixture").hexdigest()},
+    ], "powercli": [{"path": "fixture.psm1", "sha256": hashlib.sha256(b"module bytes").hexdigest()}]}
+    arguments = dict(installer_commit=_INSTALLER, software_commit=_SOFTWARE, software_version=_VERSION,
+                     trust_key=tmp_path / "trusted-release.pem", capture_inventory=capture)
+    if substitute:
+        with pytest.raises(ValueError, match="complete captured input identities"):
+            readback.full_readback(image, checksum, **arguments)
+    else:
+        assert readback.full_readback(image, checksum, **arguments)["captured_input_inventory_verified"] is True

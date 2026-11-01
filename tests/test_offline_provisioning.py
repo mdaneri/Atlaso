@@ -92,7 +92,8 @@ def test_offline_installation_skips_virtual_agent_build_and_staging() -> None:
     source = _provisioner()
 
     assert 'if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then\n  log_step "skipping virtual guest-agent build' in source
-    assert 'if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then\n    log_step "staging empty guest-agent inventory' in source
+    assert 'log_step "staging empty guest-agent inventory for physical installation"' in source
+    assert '--source "$ATLASO_INSTALLATION_MEDIA/guest-tools"' in source
     assert 'install -d -o root -g root -m 0700 "$GUEST_AGENT_STAGING"' in source
     assert ': >"$GUEST_AGENT_STAGING/SHA256SUMS"' in source
     assert 'ATLASO_POWERCLI_MODULE_SOURCE="$ATLASO_INSTALLATION_MEDIA/powercli"' in source
@@ -120,6 +121,7 @@ def test_offline_guest_agent_paths_never_invoke_builder_or_package_resolution(tm
     )[0] + "\n"
     prelude = '''set -eu
 ATLASO_INSTALLATION_MEDIA=/authenticated-local-media
+ATLASO_SRC=/authenticated-source
 ATLASO_GUEST_PLATFORM=none
 ATLASO_PRIVILEGED_STATE=privileged
 GUEST_AGENT_STAGING=first-boot-packages
@@ -133,11 +135,16 @@ rm() { echo 'Unexpected guest staging removal' >&2; exit 92; }
 install() { :; }
 chown() { :; }
 chmod() { :; }
+python3() {
+  [ "$1" = /authenticated-source/scripts/installation/guest_tools.py ] && [ "$2" = stage ] || exit 93
+  printf '%s\n' staged >>stage-calls
+}
 '''
     subprocess.run([shell], input=prelude + function + builder + "stage_guest_agent_packages\nstage_guest_agent_packages\n",
                    text=True, check=True, cwd=tmp_path)
     assert (tmp_path / "first-boot-packages/SHA256SUMS").read_bytes() == b""
     assert not (tmp_path / "privileged").exists()
+    assert (tmp_path / "stage-calls").read_text().splitlines() == ["staged", "staged"]
 
 
 def test_offline_install_requires_signed_software_without_pip_fallback() -> None:
