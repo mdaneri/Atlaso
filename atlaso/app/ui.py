@@ -10989,7 +10989,7 @@ def refresh_management_handoff_dynamic_observations(
                         and set(setup.get("apipa_addresses", [])) & confirmed_addresses):
                     # IPv4LL remains separate from DHCP/service inventory. The
                     # helper already re-attested it before the handoff succeeded.
-                    pass
+                    interface.host_ip_cidr = None
                 else:
                     required.append(("IPv4", None, "host_ip_cidr"))
             else:
@@ -11076,7 +11076,7 @@ def baseline_management_handoff_dhcp_settings(
     network_preview: str,
     handoff_evidence: dict[str, Any],
 ) -> None:
-    """Bind the captured Settings baseline to the helper-confirmed DHCP lease.
+    """Bind captured Settings to the confirmed DHCP lease or admitted APIPA setup address.
 
     Args:
         db: Apply transaction with refreshed native interface observations.
@@ -11100,7 +11100,17 @@ def baseline_management_handoff_dhcp_settings(
     cidr = str(interface.host_ip_cidr or "") if interface is not None else ""
     address = address_from_cidr(cidr)
     if not address or address not in handoff_evidence.get("candidate_addresses", []):
-        raise RuntimeError("Protected handoff did not confirm the resolved DHCP management address.")
+        from atlaso.app.services.dynamic_management import read_publication
+
+        setup = read_publication(db, max_age_seconds=120) if interface is not None else {}
+        fallback = set(setup.get("apipa_addresses", [])) & set(handoff_evidence.get("candidate_addresses", []))
+        fallback_enabled = any(row.get("name") == name and row.get("ipv4_link_local_fallback_enabled", "true") == "true"
+                               for row in network_interface_entries(network_preview))
+        if (interface is None or setup.get("interface") != name
+                or setup.get("mac") != interface.mac_address.lower() or len(fallback) != 1 or not fallback_enabled):
+            raise RuntimeError("Protected handoff did not confirm the resolved DHCP management address.")
+        address = fallback.pop()
+        cidr = address + "/16"
     captured["management_ip"] = address
     captured["management_ip_cidr"] = cidr
     if captured.get("web_terminal_enabled"):

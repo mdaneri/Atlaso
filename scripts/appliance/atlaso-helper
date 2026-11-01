@@ -10969,15 +10969,18 @@ def _handle_public_services(
     return 2
 
 
-def _management_proxy_location(upstream_host: str, upstream_port: int, forwarded_proto: str) -> list[str]:
+def _management_proxy_location(upstream_host: str, upstream_port: int, forwarded_proto: str,
+                               *, location: str = "/", include_server: bool = True) -> list[str]:
     """Perform management proxy location.
 
     Args:
         upstream_host: Upstream host consumed by management proxy location.
         upstream_port: Upstream port consumed by management proxy location.
         forwarded_proto: Forwarded proto consumed by management proxy location.
+        location: Exact internal management location to proxy.
+        include_server: Emit shared server limits, maintenance and upload handling once.
     """
-    return [
+    server = [
         "  client_max_body_size 1g;",
         _release_maintenance_condition(),
         "  location = /ui/management/vcf-helper/sddc-manager/ovas/upload {",
@@ -10993,7 +10996,10 @@ def _management_proxy_location(upstream_host: str, upstream_port: int, forwarded
         "    proxy_set_header X-Atlaso-Listener-Address $server_addr;",
         '    proxy_set_header X-Atlaso-Depot-Basic-User "";',
         "  }",
-        "  location / {",
+    ]
+    return [
+        *(server if include_server else []),
+        f"  location {location} {{",
         f"    proxy_pass http://{upstream_host}:{upstream_port};",
         "    proxy_http_version 1.1;",
         "    proxy_set_header Host $host;",
@@ -11174,10 +11180,10 @@ def _ipv4ll_setup_nginx_server(payload: dict, address: str, cert_path: Path | No
         lines.extend([f"  ssl_certificate {cert_path};", f"  ssl_certificate_key {key_path};"])
     upstream = str(payload.get("management_upstream_host") or "127.0.0.1")
     port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
-    for location in ("^~ /ui/management/", "^~ /api/v1/", "^~ /static/", "= /openapi.json", "^~ /api/docs", "^~ /ca/downloads/",
-                     "= /manifest.webmanifest", "= /service-worker.js", "= /favicon.ico"):
-        block = _management_proxy_location(upstream, port, "https" if https else "http")
-        lines.extend(line.replace("location / {", f"location {location} {{") for line in block)
+    for index, location in enumerate(("^~ /ui/management/", "^~ /api/v1/", "^~ /static/", "= /openapi.json", "^~ /api/docs", "^~ /ca/downloads/",
+                                      "= /manifest.webmanifest", "= /service-worker.js", "= /favicon.ico")):
+        lines.extend(_management_proxy_location(upstream, port, "https" if https else "http",
+                                                location=location, include_server=index == 0))
     lines.extend(["  location = / { return 302 /ui/management/; }",
                   "  location = /ui/management { return 302 /ui/management/; }",
                   "  location / { return 404; }", "}"])

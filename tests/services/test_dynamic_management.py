@@ -114,6 +114,9 @@ def test_setup_nginx_excludes_public_protocols_and_nonlocal_clients():
     for dependency in ("/manifest.webmanifest", "/service-worker.js", "/favicon.ico"):
         assert f"location = {dependency}" in text
     assert "location / { return 404; }" in text
+    assert text.count("  client_max_body_size 1g;") == 1
+    assert text.count("location = /ui/management/vcf-helper/sddc-manager/ovas/upload {") == 1
+    assert text.count("  client_max_body_size 16g;") == 1
     for protocol in ("/identity", "/PROD/", "/pxe/", "/registry"):
         assert protocol not in text
     excluded = helper._management_nginx_config({"fqdn": "core.atlaso.internal", "management_https_enabled": True},
@@ -146,6 +149,71 @@ def test_publication_timer_is_bounded_and_reuses_existing_runtime(tmp_path, monk
     assert "KillMode=control-group" in service
     assert "OnUnitInactiveSec=5" in (tmp_path / "atlaso-dynamic-management.timer").read_text()
     assert not any("restart" in command for command in calls)
+
+
+@pytest.mark.parametrize("invalid", ["none", "expired", "mac", "interface", "candidate", "ambiguous", "disabled"])
+def test_apipa_handoff_refresh_and_settings_acknowledgement(monkeypatch, invalid):
+    """Acknowledge the proven setup address without treating it as a DHCP lease.
+
+    Args:
+        monkeypatch: Supply admitted readback and isolated in-memory Apply state.
+        invalid: Receipt or captured-policy prerequisite to invalidate.
+    """
+    import json
+    from types import SimpleNamespace
+
+    from atlaso.app import ui
+    from atlaso.app.services import dynamic_management as admission
+
+    mac = "02:00:00:00:10:77"
+    interface = SimpleNamespace(mac_address=mac, host_ip_cidr="192.0.2.10/24", host_ip_cidrs=["192.0.2.10/24"])
+    observed = SimpleNamespace(name="eth0", host_dhcp_ip_cidr=None, host_ip_cidr=None, host_ip_cidrs=[])
+    db = SimpleNamespace(scalar=lambda _statement: interface, flush=lambda: None)
+    receipt = {"interface": "eth0", "mac": mac, "apipa_addresses": ["169.254.20.10"]}
+    evidence = {"candidate_addresses": ["169.254.20.10"]}
+    if invalid == "expired":
+        receipt = {}
+    elif invalid == "mac":
+        receipt["mac"] = "02:00:00:00:10:78"
+    elif invalid == "interface":
+        receipt["interface"] = "eth1"
+    elif invalid == "candidate":
+        evidence["candidate_addresses"] = ["169.254.20.11"]
+    elif invalid == "ambiguous":
+        receipt["apipa_addresses"].append("169.254.20.11")
+        evidence["candidate_addresses"].append("169.254.20.11")
+    monkeypatch.setattr(admission, "read_publication", lambda *_args, **_kwargs: receipt)
+    monkeypatch.setattr(ui, "acquire_network_objects_write_lock", lambda _db: None)
+    monkeypatch.setattr(ui, "discover_host_physical_interfaces", lambda **_kwargs: [observed])
+    preview = ("[physical_interfaces]\ninterface=eth0\nrole=management\nmode=access\nadmin_state=up\n"
+               "ipv4_method=dhcp\nip_cidr=\nipv6_enabled=false\n"
+               f"ipv4_link_local_fallback_enabled={'false' if invalid == 'disabled' else 'true'}\n")
+    captured = {"management_interface": "eth0", "management_ip": "", "management_ip_cidr": "",
+                "web_terminal_enabled": True, "web_terminal_addresses": ["198.51.100.10"], "root_ssh_enabled": False}
+    unit = ui.make_appliance_apply_unit(unit_id="appliance_settings", label="Appliance Settings", page_url="/settings",
+        context={}, summary=[], validation_errors=[], config_path="/var/lib/atlaso/apply/settings.json",
+        config_preview=json.dumps(captured), baseline=None)
+    original = unit["snapshot_hash"]
+
+    def acknowledge():
+        """Follow the successful protected-handoff caller's exact acknowledgement sequence."""
+        ui.refresh_management_handoff_dynamic_observations(db, preview, evidence)
+        ui.baseline_management_handoff_dhcp_settings(db, unit, preview, evidence)
+
+    if invalid != "none":
+        with pytest.raises(RuntimeError, match="confirm"):
+            acknowledge()
+        assert unit["snapshot_hash"] == original
+        return
+    acknowledge()
+    resolved = json.loads(unit["raw_config_preview"])
+    assert resolved["management_ip"] == "169.254.20.10"
+    assert resolved["management_ip_cidr"] == "169.254.20.10/16"
+    assert resolved["web_terminal_addresses"] == ["169.254.20.10", "198.51.100.10"]
+    assert resolved["root_ssh_enabled"] is False
+    assert unit["snapshot_hash"] != original
+    assert interface.host_ip_cidr is None
+    assert interface.host_ip_cidrs == []
 
 
 def test_disabling_only_fallback_requires_native_withdrawal(tmp_path, monkeypatch):
