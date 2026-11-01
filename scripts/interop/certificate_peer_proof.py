@@ -9,12 +9,14 @@ desired state is changed here.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import ipaddress
 import json
 import os
 import re
 import ssl
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -152,8 +154,19 @@ def original_iso_vm(plan: dict, intent: dict, ownership: dict, reference: dict, 
                 or record.get("repository") != "mdaneri/Atlaso"
                 or record.get("pull_request_number") != plan_pr(plan)
                 or record.get("vmx_path") != vmx or record.get("output_directory") != str(root)
-                or record.get("source_commit") != ownership.get("source_commit")):
+                or (record is not boot and record.get("source_commit") != ownership.get("source_commit"))):
             raise Refusal("original_iso_vm_binding_mismatch")
+    boot_source = boot.get("source_commit", "")
+    if not isinstance(boot_source, str) or not re.fullmatch(r"[0-9a-f]{40}", boot_source):
+        raise Refusal("original_iso_boot_source_invalid")
+    if boot_source not in {ownership.get("source_commit"), plan.get("source_commit")}:
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("ATLASO_NATIVE_")}
+        ancestry = subprocess.run(
+            ["git", "-C", str(Path(__file__).resolve().parents[2]), "merge-base", "--is-ancestor", boot_source, plan["source_commit"]],
+            capture_output=True, env=environment, timeout=15,
+        )
+        if ancestry.returncode:
+            raise Refusal("original_iso_boot_source_invalid")
     if (intent.get("phase") != "installation-pending"
             or ownership.get("intent_sha256") != plan["appliance_intent"]["sha256"]
             or boot.get("phase") != "installation-boot-without-media"
@@ -209,8 +222,8 @@ def vmx_adapter(path: str, index: int) -> dict[str, str]:
     return values
 
 
-def admit_receipts(plan: dict) -> tuple[dict, dict]:
-    """Pin original VM/LAN creation, bootstrap deployment and rewire chain.
+def admit_fixture(plan: dict) -> dict:
+    """Pin original VM/LAN creation and the independently observed peer identity.
 
     Args:
         plan: Validated task plan bound to the owned test resources."""
@@ -267,9 +280,6 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
         for adapter in (appliance_adapter, peer_adapter)
     ) or appliance_adapter.get("address", appliance_adapter.get("generatedaddress", "")).lower() != fixture["appliance_mac"].lower():
         raise Refusal("private_vmx_topology_mismatch")
-    bootstrap = bound_json(plan["bootstrap_runtime"])
-    rewire_intent = bound_json(plan["rewire_intent"])
-    rewire = bound_json(plan["rewired_runtime"])
     identity_reference = plan["peer_identity"]
     if Path(identity_reference["path"]) != Path(plan["peer_fixture"]["path"]).parent / "peer-identity.json":
         raise Refusal("peer_identity_location_invalid")
@@ -288,7 +298,6 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
         or identity.get("client_vmdk_copy_identity") != fixture.get("client_vmdk_copy_identity")
         or identity.get("ssh_public_key") != fixture.get("ssh_public_key")
         or transport.get("ssh_public_key") != fixture.get("ssh_public_key")
-        or identity.get("observation") != "owned-vmware-tools-and-agent-ssh-after-management-restart"
         or identity.get("management_network") != fixture.get("management_network")
         or peer_bootstrap_adapter.get("connectiontype", "").lower() != "custom"
         or peer_bootstrap_adapter.get("vnet") != fixture.get("management_network")
@@ -303,6 +312,46 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
             raise Refusal("peer_original_address_not_private")
     except ipaddress.AddressValueError:
         raise Refusal("peer_original_address_invalid") from None
+    if identity.get("observation") == "owned-vmware-console-public-key":
+        observation = bound_json(plan["peer_console_observation"])
+        public_key = observation.get("public_host_key", "")
+        try:
+            parts = public_key.split()
+            if len(parts) != 2 or parts[0] != "ssh-ed25519":
+                raise ValueError()
+            fingerprint = "SHA256:" + base64.b64encode(hashlib.sha256(base64.b64decode(parts[1], validate=True)).digest()).decode().rstrip("=")
+        except (ValueError, IndexError):
+            raise Refusal("peer_console_identity_invalid") from None
+        vmx_text = Path(fixture["peer_vmx"]).read_text(encoding="utf-8-sig")
+        paths = re.findall(r'^serial0\.fileName\s*=\s*"([^"\r\n]+)"\s*$', vmx_text, re.MULTILINE)
+        if (plan.get("trust_model") != "trusted-host"
+                or observation.get("schema") != 1
+                or observation.get("kind") != "certificate-peer-console-public-key"
+                or observation.get("task_id") != plan["task_id"]
+                or observation.get("repository") != "mdaneri/Atlaso"
+                or observation.get("pr") != plan_pr(plan)
+                or observation.get("peer_vmx") != fixture["peer_vmx"]
+                or observation.get("peer_ownership_sha256") != fixture["peer_ownership_sha256"]
+                or paths != [observation.get("serial_path")]
+                or fingerprint != identity["ssh_host_key"]
+                or identity.get("console_observation_sha256") != plan["peer_console_observation"]["sha256"]):
+            raise Refusal("peer_console_identity_invalid")
+    elif identity.get("observation") != "owned-vmware-tools-and-agent-ssh-after-management-restart":
+        raise Refusal("peer_original_identity_mismatch")
+    return fixture
+
+
+def admit_receipts(plan: dict) -> tuple[dict, dict]:
+    """Pin the observed fixture, bootstrap runtime and management transition.
+
+    Args:
+        plan: Validated task plan bound to the owned test resources.
+    """
+    fixture = admit_fixture(plan)
+    bootstrap = bound_json(plan["bootstrap_runtime"])
+    rewire_intent = bound_json(plan["rewire_intent"])
+    rewire = bound_json(plan["rewired_runtime"])
+    identity_reference = plan["peer_identity"]
     if (
         bootstrap.get("schema") != 1
         or bootstrap.get("vmx_path") != fixture["appliance_vmx"]
@@ -320,7 +369,7 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
         or rewire.get("vmx_path") != fixture["appliance_vmx"]
         or rewire.get("interface") != "eth0"
         or rewire.get("mac", "").lower() != fixture["appliance_mac"].replace(":", "-").lower()
-        or rewire.get("observed_address") != fixture["lease_address"]
+        or rewire.get("observed_address") != (plan["baseline_address"] if plan.get("trust_model") == "trusted-host" else fixture["lease_address"])
         or rewire.get("address_ownership_state") != "unproven"
         or bootstrap.get("deployed_commit") != plan["deployed_commit"]
         or rewire.get("deployed_commit") != plan["deployed_commit"]
@@ -330,7 +379,7 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
         host = plan.get("trusted_host", {})
         if (host.get("appliance_vmx") != fixture["appliance_vmx"]
                 or host.get("peer_vmx") != fixture["peer_vmx"]
-                or host.get("segment_id") != segment["pvn_id"]
+                or host.get("segment_id") != fixture["lan_segment_id"]
                 or host.get("segment_receipt") != {"path": fixture["lan_segment_receipt"], "sha256": fixture["lan_segment_receipt_sha256"]}):
             raise Refusal("trusted_host_fixture_binding_mismatch")
         try:

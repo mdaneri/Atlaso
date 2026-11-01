@@ -65,7 +65,7 @@ def _appliance(**changes: bytes) -> Session:
             {"dst": "default", "gateway": "192.0.2.1"},
         ]),
         "ip -j -4 rule show": _json([
-            {"priority": 0, "from": "all", "to": "all", "table": "local"},
+            {"priority": 0, "src": "all", "table": "local"},
         ]),
     }
     outputs.update(changes)
@@ -122,12 +122,22 @@ def test_retirement_accepts_connected_subnet_and_requires_active_same_path() -> 
         ),
         (
             "ip -j -4 rule show",
-            [{"priority": 99, "from": f"{RETIRED}/32", "to": "all"}],
+            [{"priority": 99, "src": RETIRED}],
             "retired_address_still_owned",
         ),
         (
             "ip -j -4 rule show",
-            [{"priority": 99, "from": "all", "to": f"{RETIRED}/32"}],
+            [{"priority": 99, "src": "all", "dst": RETIRED}],
+            "retired_address_still_owned",
+        ),
+        (
+            "ip -j -4 rule show",
+            [{"priority": 99, "src": RETIRED, "srclen": 32}],
+            "retired_address_still_owned",
+        ),
+        (
+            "ip -j -4 rule show",
+            [{"priority": 99, "src": "all", "dst": RETIRED, "dstlen": 32}],
             "retired_address_still_owned",
         ),
     ],
@@ -144,6 +154,38 @@ def test_retirement_refuses_leftover_address_listener_route_or_rule(
 
     with pytest.raises(retirement.Refusal, match=reason):
         retirement.verify_retired_address(_plan(), Peer(), appliance, RETIRED, ACTIVE)
+
+
+def test_retirement_accepts_native_iprule_wildcards_and_subnet_selectors() -> None:
+    rules = [
+        {"priority": 0, "src": "all", "table": "local"},
+        {"priority": 100, "src": "192.0.2.0", "srclen": 24, "table": 100},
+        {"priority": 101, "src": "0", "srclen": 0, "table": "main"},
+        {"priority": 102, "src": "all", "dst": "0.0.0.0", "dstlen": 0},
+    ]
+
+    assert retirement._rule_facts(rules, RETIRED) == 0
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        {"priority": 99},
+        {"priority": 99, "src": "all", "srclen": "0"},
+        {"priority": 99, "src": "all", "srclen": True},
+        {"priority": 99, "src": "192.0.2.0", "srclen": 33},
+        {"priority": 99, "src": "192.0.2.0", "srclen": -1},
+        {"priority": 99, "src": "192.0.2.0", "srclen": 24.0},
+        {"priority": 99, "dstlen": 24},
+        {"priority": 99, "dstlen": "0"},
+        {"priority": 99, "src": "all", "srclen": 1},
+        {"priority": 99, "src": RETIRED, "from": RETIRED},
+        {"priority": 99, "src": "2001:db8::1"},
+    ],
+)
+def test_retirement_refuses_malformed_native_iprule_selectors(rule: dict[str, Any]) -> None:
+    with pytest.raises(retirement.Refusal, match="retirement_rule_readback_invalid"):
+        retirement._rule_facts([rule], RETIRED)
 
 
 def test_retirement_refuses_transport_failure_instead_of_treating_it_as_closed() -> None:

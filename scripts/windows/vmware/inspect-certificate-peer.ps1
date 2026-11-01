@@ -15,6 +15,10 @@ New immutable controlled-runtime destination within that same tree.
 Explicit pinned 1Password Environment selector.
 .PARAMETER PythonPath
 Task-owned isolated Python virtual environment with locked native dependencies.
+.PARAMETER Bootstrap
+Inspect the original ISO fixture before its first static certificate-test baseline.
+.PARAMETER ExecuteBootstrap
+Permit the bootstrap's reviewed Physical Interfaces and Appliance Apply transition.
 #>
 [CmdletBinding()]
 param(
@@ -24,10 +28,13 @@ param(
     [Parameter(Mandatory)][string]$AddressEvidence,
     [Parameter(Mandatory)][string]$RuntimeEvidence,
     [Parameter(Mandatory)][string]$EnvironmentId,
-    [Parameter(Mandatory)][string]$PythonPath
+    [Parameter(Mandatory)][string]$PythonPath,
+    [switch]$Bootstrap,
+    [switch]$ExecuteBootstrap
 )
 
 $ErrorActionPreference = 'Stop'
+if ($ExecuteBootstrap -and -not $Bootstrap) { throw 'ExecuteBootstrap requires Bootstrap.' }
 if ($PSScriptRoot) {
     throw 'Invoke the certificate inspector from reviewed Git-blob bytes, not a checkout script path.'
 }
@@ -125,14 +132,17 @@ try {
     foreach ($pin in (Protect-AtlasoCertificateProofInputs -Plan $Plan -EvidenceRoot $evidenceRoot)) {
         $snapshot.Pins.Add($pin)
     }
-    $scriptPath = Join-Path $snapshot.Root 'scripts/interop/certificate_peer_proof.py'
+    $scriptPath = Join-Path $snapshot.Root $(if ($Bootstrap) { 'scripts/interop/certificate_iso_bootstrap.py' } else { 'scripts/interop/certificate_peer_proof.py' })
+    $scriptArguments = if ($Bootstrap) {
+        @('--plan', $Plan, '--output-directory', [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($AddressEvidence)))
+    } else { @('--plan', $Plan, '--address-output', $AddressEvidence, '--runtime-output', $RuntimeEvidence) }
     $arguments = New-AtlasoCertificatePythonArguments -Runtime $runtime -ScriptPath $scriptPath `
-        -ScriptArguments @('--plan', $Plan, '--address-output', $AddressEvidence,
-            '--runtime-output', $RuntimeEvidence)
+        -ScriptArguments $scriptArguments
     Invoke-AtlasoBoundedProcess -FilePath $PythonPath -ArgumentList ($arguments + '--preflight-only') `
         -TimeoutSeconds 30 -Action 'Certificate original peer admission' -DiscardOutput | Out-Null
     $null = Assert-AtlasoSourceSnapshot -Root $snapshot.Root -ExpectedSha256 $snapshot.Sha256 `
         -ExpectedFileCount $snapshot.FileCount
+    if ($ExecuteBootstrap) { $arguments += '--execute' }
     $pair = $null
     $plain = $null
     try {
@@ -142,7 +152,7 @@ try {
         $plain = [Net.NetworkCredential]::new('', $pair.AdminPassword).Password
         Invoke-AtlasoBoundedProcess -FilePath $PythonPath -ArgumentList $arguments `
             -EnvironmentVariables @{ ATLASO_NATIVE_ADMIN = $plain; TEMP = $evidenceRoot; TMP = $evidenceRoot } `
-            -TimeoutSeconds 300 -Action 'Certificate private address observations' -DiscardOutput | Out-Null
+            -TimeoutSeconds 900 -Action 'Certificate private address observations' -DiscardOutput | Out-Null
     } finally {
         $plain = $null
         if ($pair) { $pair.AdminPassword.Dispose(); $pair.RootPassword.Dispose() }

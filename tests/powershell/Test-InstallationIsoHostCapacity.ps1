@@ -91,7 +91,27 @@ if ($capacityCalls.Count -ne 3) { throw 'Create and both installed-boot paths mu
 
 $createCapacityIndex = $capacityCalls[2].Extent.StartOffset
 $whatIfIndex = $source.IndexOf("ShouldProcess(`$resolvedOutput, 'Create isolated receipt-bound installation ISO test VM')", [StringComparison]::Ordinal)
-$intentIndex = $source.IndexOf("Publish-AtlasoTestVmOwnershipRecord -Context `$context -Record `$intent", [StringComparison]::Ordinal)
+$creationIntentCommands = @()
+foreach ($command in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] -and
+            $node.GetCommandName() -ceq 'Publish-AtlasoTestVmOwnershipRecord' }, $true)) {
+    $elements = @($command.CommandElements)
+    $recordIndex = -1; $kindIndex = -1
+    for ($elementIndex = 0; $elementIndex -lt $elements.Count; $elementIndex++) {
+        $element = $elements[$elementIndex]
+        if ($element -is [System.Management.Automation.Language.CommandParameterAst]) {
+            if ($element.ParameterName -ceq 'Record') { $recordIndex = $elementIndex }
+            elseif ($element.ParameterName -ceq 'Kind') { $kindIndex = $elementIndex }
+        }
+    }
+    if ($recordIndex -ge 0 -and $kindIndex -ge 0 -and $recordIndex + 1 -lt $elements.Count -and
+        $kindIndex + 1 -lt $elements.Count -and
+        $elements[$recordIndex + 1] -is [System.Management.Automation.Language.VariableExpressionAst] -and
+        $elements[$recordIndex + 1].VariablePath.UserPath -ceq 'intent' -and
+        $elements[$kindIndex + 1] -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+        $elements[$kindIndex + 1].Value -ceq 'intent') { $creationIntentCommands += $command }
+}
+if ($creationIntentCommands.Count -ne 1) { throw 'The Create ownership intent must be identified by its AST record and kind selectors.' }
+$intentIndex = $creationIntentCommands[0].Extent.StartOffset
 if ($whatIfIndex -lt 0 -or $intentIndex -lt 0 -or $createCapacityIndex -le $whatIfIndex -or $createCapacityIndex -ge $intentIndex) {
     throw 'Create must exit through ShouldProcess before querying capacity and check capacity before publishing ownership intent.'
 }

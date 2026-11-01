@@ -35,16 +35,7 @@ This procedure covers the current native scenario only: one IPv4 dedicated-manag
 disabled. It does not establish acceptance for another interface, role, address family, or access-management
 configuration.
 
-Before any appliance configuration change, establish all of the following:
-
-- The applied baseline is complete and clean: the initial Apply has completed, there are no pending desired-state
-  units, and no Appliance Apply task is pending, running, or otherwise active. The original source probe proves
-  routing intent absent with the required route, rule, NAT, port-forward, WAN-policy, and route-role interface counts
-  at zero and routing/WAN settings disabled. Bind that original source receipt by digest to the exact task, appliance
-  VM, and source commit.
-- The deployed runtime is bound to that same source and VM. Bind the exact helper and wheel SHA-256 values from the
-  runtime receipt to the plan and deployed source commit. Independently verify the helper digest against the reviewed
-  source; retain the verified built-wheel digest from the admitted runtime record.
+Before the first appliance configuration change, establish all of the following:
 
 - The lab is authorized, isolated, and tied to the exact repository, issue, pull request, reviewed source commit, and
   original task identity. Bind the exact ISO appliance VMX and root identity to immutable original creation-intent
@@ -78,6 +69,12 @@ private key, password, token, authenticated URL, or other secret in evidence.
 - The appliance's original HTTPS certificate identity, trusted public CA digest, interface fields, route, and DNS
   baseline are captured through the normal authenticated Atlaso interface. Keep only public certificate material and
   sanitized observations.
+- Capture the source and installed-runtime facts described in the
+  [ISO bootstrap procedure](#bootstrap-the-iso-static-baseline) before changing desired state. The original route
+  probe must prove routing intent absent, with the required route,
+  rule, NAT, port-forward, WAN-policy, and route-role interface counts at zero and routing/WAN settings disabled.
+  The installed helper, wheel, appliance SSH host key, ISO VM ownership, and source commits must match their pinned
+  inspection receipts. The initial static Apply must complete successfully before running either address scenario.
 
 This procedure records the host administrator's bounded inventory and topology checks under an explicit trusted-host
 assumption. It does not infer an adversarial guarantee from VMware Tools or DHCP. Keep the test segment free of
@@ -106,9 +103,18 @@ source to remain an ancestor of that harness. Never change a receipt's source to
 
 ## Prepare the ISO appliance adapter
 
-Create and install the appliance through `invoke-installation-iso-test.ps1` with `-Scenario AutoReboot` and
-`-InspectInstalled`. Preserve its original creation, disk-baseline, installed-boot, and public identity evidence.
-The ordinary lifecycle `-CertificateOnly` clone does not establish ISO installation.
+For a new fixture, create and install the appliance through `invoke-installation-iso-test.ps1` with
+`-Scenario AutoReboot` and `-InspectInstalled`. For the existing manually installed ISO appliance, verify its
+installation with `-Scenario BootInstalled -InspectInstalled` and the original creation and disk-baseline selectors.
+Preserve the original creation, disk-baseline, installed-boot, and public identity evidence. The installed inspection
+binds the image's software/source identity and the appliance SSH host-key pin to that original VM. Do not substitute
+the ordinary lifecycle `-CertificateOnly` clone.
+
+The installed inspection must be complete before the native plan is prepared. It identifies the ISO's original
+resource source, the installed software source and wheel, and the appliance SSH host-key fingerprint. Preserve these
+values separately from the current reviewed harness commit. The original resource source commit remains the immutable
+source recorded when the VM was created; the current harness source identifies the later reviewed code and must
+descend from that resource source. Never rewrite original ISO receipts to make their source match a newer harness.
 
 After creating the task-owned peer and LAN through their admitted owning paths, stop the ISO appliance gracefully.
 Use its exact preserved selectors to attach its existing adapter to that segment; the command refuses an active VM,
@@ -130,6 +136,64 @@ Retain the returned `PrivateLanRewireReceiptPath` and `PrivateLanRewireReceiptSh
 together with the original boot and segment selectors. This transition changes only the original adapter's attachment
 and connected state, preserving its generated MAC and all original ownership records.
 
+## Bootstrap the ISO static baseline
+
+Prepare the one task-owned Linux peer on the dedicated management VMnet and test LAN. Its test-LAN adapter runs DHCP
+only for the admitted appliance MAC; its control adapter remains on the separate management VMnet. When generating
+the peer's NoCloud seed with `scripts/interop/create_certificate_peer_seed_iso.py`, enable
+`--publish-host-key-to-serial` and supply a task-unique `--instance-id`. This option enables VMware Tools on the peer
+and publishes a fixed public Ed25519 host-key marker to its VMX-bound serial file. Read and record that exact marker
+from the admitted peer VMX/serial endpoint, bind the instance ID and observation to the original peer receipt, and
+pin the host key before any SSH connection. Do not establish peer SSH trust from a network scan, DNS, or an
+unverified first connection. The seed's `--public-key` remains the existing agent-backed public key; never stage its
+private half in the seed or receipts.
+
+After the original ISO adapter is rewired and the trusted-host topology is admitted, use the reviewed Git-blob
+`scripts/windows/vmware/inspect-certificate-peer.ps1` entrypoint described in the
+[VMware lifecycle certificate workflow](vmware-workstation-lifecycle-testing.md#single-command-run). Do not invoke
+the mutable checkout copy directly. The plan uses the original ISO intent, ownership, boot, and private-LAN
+transition references, the installed inspection, and the original peer/LAN receipts. Keep its public CA certificate
+file separately pinned to the public CA read through the appliance's pinned SSH session. The bootstrap rejects a
+private key or CA digest mismatch. It first obtains a CA-validated TLS handshake through the peer and then uses the
+observed certificate name with the normal full CA and hostname validation for UI requests.
+
+Run the wrapper with `-Bootstrap` first to inspect the source route snapshot, active `atlaso.service`, installed
+helper and wheel, original desired fields, served TLS identity, DNS, and topology without editing the UI. Review
+`inspection-result.json` in the existing task-owned evidence directory. Confirm the current-address value is the peer's
+admitted lease, and the selected interface, original MAC, public CA, resource source ancestry, installed inspection,
+and two-member topology all match the original receipts.
+
+With the same reviewed entrypoint and plan, invoke it with `-Bootstrap -ExecuteBootstrap` to establish the first
+static baseline.
+This explicit option edits Physical Interfaces through the existing authenticated UI, preserving unrelated
+desired fields while setting eth0 to static 192.168.77.30/24, no gateway, and IPv6 disabled with blank IPv6
+fields. It submits only the validated protected Apply bundle selected by the server review, then waits for the
+terminal task and verifies the desired fields, TLS identity, `/openapi.json`, clean Apply state, route snapshot,
+installed wheel/helper identity, and trusted-host topology. Use the addresses from the admitted plan when the lab
+uses a different approved baseline subnet; do not copy the example address into another lab.
+
+Using the verified in-memory `$entrypoint` and receipt-bound paths from the linked workflow:
+
+```powershell
+& $entrypoint -RepositoryRoot $repoRoot -ReviewedSourceCommit $reviewedCommit `
+    -Plan $plan -AddressEvidence $addressEvidence -RuntimeEvidence $runtimeEvidence `
+    -EnvironmentId $environmentId -PythonPath $pythonPath -Bootstrap
+# Review inspection-result.json before this explicit configuration transition.
+& $entrypoint -RepositoryRoot $repoRoot -ReviewedSourceCommit $reviewedCommit `
+    -Plan $plan -AddressEvidence $addressEvidence -RuntimeEvidence $runtimeEvidence `
+    -EnvironmentId $environmentId -PythonPath $pythonPath -Bootstrap -ExecuteBootstrap
+```
+
+The wrapper uses the existing bounded 1Password credential bridge; it does not put plaintext passwords on the
+command line or in evidence. Execute mode re-admits the original inputs and writes source, bootstrap-runtime,
+original-state, management-rewire-intent, mutation-started, apply-submitted, rewired-runtime, proof-plan, and
+bootstrap-result records in the task-owned evidence directory. It does not overwrite inspection-result.json. The
+source phase is `before-certificate-validation`; do not label it as `before-lifecycle-deployment` or synthesize missing
+route evidence. Do not retry an execution in a directory with execution records. If an Apply result is unknown,
+preserve the journal and lab and do not resubmit. Reconcile through the supported UI recovery workflow, then plan a
+separately named attempt with new evidence paths. A failed or incomplete bootstrap cannot authorize either address
+scenario.
+
 The native plan explicitly selects `trust_model: "trusted-host"` and `trusted_host.host_administrator_trusted: true`.
 Its `trusted_host` block records the exact `vmrun_path`, `inventory_path`, `preferences_path`, `segment_name`,
 `segment_id`, original `segment_receipt` path/hash, appliance and peer VMX paths, private adapter indices/MACs, and
@@ -148,7 +212,8 @@ hoc API caller, or a script that bypasses that workflow. Keep the appliance on i
 baseline while establishing the peer control path. Before changing it, record the host inventory, exact appliance
 and peer LAN membership, adapter bindings, addresses, peer reservation, CA, and trust pins.
 
-After admission is rechecked, open **Physical Interfaces** and set the selected management interface to the approved
+After the ISO bootstrap completed successfully and admission is rechecked, open **Physical Interfaces** and set the
+selected management interface to the approved
 candidate static IPv4 address, prefix, and gateway. Review pending changes and submit the protected **Network** Apply
 bundle with **Submit appliance changes**. Include every dependency selected by the review; do not submit Network alone
 when the review requires a protected bundle. Record the Apply
@@ -288,8 +353,8 @@ a supported cleanup capability, or another release gate remains uncertain, recor
 reason, and retry condition and preserve it; uncertainty is neither cleanup authorization nor indefinite unrecorded
 retention. A terminal failed run does not waive any branch/worktree completion gate.
 
-The trusted-host producer and both credentialed wrappers must admit this receipt kind for the current task and PR,
-then repeat inventory, reservation, identity, and trust checks before obtaining guest credentials. Receipts from the
-older PR #871 independent-control path remain bound to that task and cannot be relabeled. See the
-[VMware lifecycle certificate section](vmware-workstation-lifecycle-testing.md#single-command-run) for the producer
-and wrapper workflow.
+The trusted-host bootstrap and proof wrappers admit the original ISO and peer receipt kinds for the current task and
+PR, then repeat inventory, reservation, identity, and trust checks before obtaining guest credentials. Receipts from
+the older PR #871 independent-control path remain bound to that task and cannot be relabeled. Use the
+[VMware lifecycle certificate section](vmware-workstation-lifecycle-testing.md#single-command-run) for the reviewed
+Git-blob entrypoint and bounded credential wrapper workflow.

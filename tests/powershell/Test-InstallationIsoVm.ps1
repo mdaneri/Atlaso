@@ -261,6 +261,7 @@ function Get-InstallationVmFunctionText {
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationConsoleBindings')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationNetworkBindings')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'ConvertTo-InstallationPrivateLanConfiguration')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationPrivateLanVmConfiguration')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationPrivateLanTransition')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationConsoleDiskIdentities')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmRunning')))
@@ -532,13 +533,14 @@ Assert-InstallationVmCondition ($privateLanLines -contains 'ethernet0.connection
     'Private LAN rewire must preserve eth0 MAC, bind its exact pvn ID, and retain one adapter.'
 $privateLanSegment = [pscustomobject]@{ name = 'Atlaso-PR-1074-iso-private'; pvn_id = $privateLanId }
 $privateContext = [pscustomobject]@{ TaskId = 'task-1074'; Repository = 'mdaneri/Atlaso'; Branch = 'enhancement/1074-trusted-host-certificate'
-    SourceCommit = ('a' * 40); Worktree = 'C:\work\Atlaso'; PullRequestNumber = 1074; LocalBuilder = $false
-    OutputDirectory = 'C:\work\Atlaso\test-results\Atlaso-PR-1074-installation-iso';
-    VmxPath = 'C:\work\Atlaso\test-results\Atlaso-PR-1074-installation-iso\Atlaso-PR-1074-installation-iso.vmx' }
+    Name = 'Atlaso-Test-installation-iso'; FixtureProfile = 'SingleDisk'; SourceCommit = ('a' * 40); Worktree = 'C:\work\Atlaso'; PullRequestNumber = 1074; LocalBuilder = $false
+    OutputDirectory = 'C:\vm';
+    VmxPath = 'C:\vm\Atlaso-Test-installation-iso.vmx' }
 $privateOriginal = [pscustomobject]@{ task_id = $privateContext.TaskId; repository = $privateContext.Repository
     source_branch = $privateContext.Branch; source_commit = $privateContext.SourceCommit
     original_identities = @{ directory = 'ABCD1234:0000000000000001'; vmx = 'ABCD1234:0000000000000002' }
-    persistent_vm_identity_sha256 = Get-AtlasoTestVmOwnershipCleanupIdentityHash -Value '0123456789abcdef0123456789abcdef' }
+    persistent_vm_identity_sha256 = Get-AtlasoTestVmOwnershipCleanupIdentityHash -Value '0123456789abcdef0123456789abcdef'
+    installation_iso = @{ path = 'C:\offline media\atlaso.iso' } }
 $privateSelectors = @{ OriginalReceiptPath = 'C:\task-evidence\original.json'; OriginalReceiptSha256 = ('c' * 64)
     BootReceiptPath = 'C:\task-evidence\boot.json'; BootReceiptSha256 = ('d' * 64)
     PrivateLanSegmentReceiptPath = 'C:\work\Atlaso\test-results\lan-segments\segment.json'; PrivateLanSegmentReceiptSha256 = ('e' * 64) }
@@ -557,13 +559,13 @@ $privateRewire = [pscustomobject]@{ phase = 'installation-private-lan-rewire'; t
     intent_path = 'C:\task-evidence\intent.json'; intent_sha256 = ('f' * 64)
     before_sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($privateBootBytes)).ToLowerInvariant()
     after_sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false).GetBytes($privateLanText))).ToLowerInvariant()
-    mac = $privateMac }
+    original_boot_configuration_sha256 = ('b' * 64); serial_pipe_path = $pipe; mac = $privateMac }
 $privateIntent = $privateRewire | ConvertTo-Json | ConvertFrom-Json
 $privateIntent.phase = 'installation-private-lan-rewire-pending'
 $privateBoot = [pscustomobject]@{ task_id = $privateContext.TaskId; repository = $privateContext.Repository
     source_branch = $privateContext.Branch; source_commit = $privateContext.SourceCommit
     baseline_receipt_path = $privateRewire.baseline_receipt_path; baseline_receipt_sha256 = $privateRewire.baseline_receipt_sha256
-    after_sha256 = $privateRewire.before_sha256
+    after_sha256 = ('b' * 64)
     original_receipt_path = $privateSelectors.OriginalReceiptPath; original_receipt_sha256 = $privateSelectors.OriginalReceiptSha256
     original_directory_identity = $privateOriginal.original_identities.directory
     persistent_vm_identity_sha256 = $privateOriginal.persistent_vm_identity_sha256 }
@@ -573,7 +575,35 @@ try { Assert-InstallationPrivateLanTransition -Context $privateContext -Original
         -Selectors $privateSelectors -VmxBytes ([Text.UTF8Encoding]::new($false).GetBytes($privateLanText)) `
         -CurrentVmxIdentity $privateOriginal.original_identities.vmx -Segment $privateLanSegment }
 catch { $privateLanAccepted = $false }
-Assert-InstallationVmCondition $privateLanAccepted 'A transition receipt must bind the unchanged original boot config, LAN segment, and current VMX.'
+Assert-InstallationVmCondition $privateLanAccepted 'A transition receipt must bind the original installed boot digest, LAN segment and current VMX even when the stopped VMX has legitimate changes.'
+$runtimeVmxText = $privateLanText + "`nvmx.runtimeConfig = `"volatile`""
+$runtimeBytes = [Text.UTF8Encoding]::new($false).GetBytes($runtimeVmxText)
+$runtimeAccepted = $true
+try { Assert-InstallationPrivateLanTransition -Context $privateContext -Original $privateOriginal -Boot $privateBoot `
+        -Rewire $privateRewire -Intent $privateIntent -IntentPath $privateRewire.intent_path -IntentSha256 $privateRewire.intent_sha256 `
+        -Selectors $privateSelectors -VmxBytes $runtimeBytes -CurrentVmxIdentity 'ABCD1234:0000000000000003' -Segment $privateLanSegment -AllowRuntimeChanges }
+catch { $runtimeAccepted = $false }
+Assert-InstallationVmCondition $runtimeAccepted 'Postboot admission must tolerate VMware VMX replacement and harmless volatile settings while preserving semantic bindings.'
+$badPrivateRuntimeCases = @(
+    [pscustomobject]@{ Name = 'cleanup identity'; Text = $runtimeVmxText.Replace('guestinfo.atlaso.test_vm_cleanup_identity = "0123456789abcdef0123456789abcdef"', 'guestinfo.atlaso.test_vm_cleanup_identity = "1123456789abcdef0123456789abcdef"') },
+    [pscustomobject]@{ Name = 'private LAN segment'; Text = $runtimeVmxText.Replace(('ethernet0.pvnID = "' + $privateLanId + '"'), 'ethernet0.pvnID = "52 00 00 00 00 00 00 03-00 00 00 00 00 00 00 04"') },
+    [pscustomobject]@{ Name = 'generated MAC'; Text = $runtimeVmxText.Replace('ethernet0.generatedAddress = "' + $privateMac + '"', 'ethernet0.generatedAddress = "00:0c:29:12:34:57"') },
+    [pscustomobject]@{ Name = 'enabled extra adapter'; Text = ($runtimeVmxText + "`nethernet1.present = `"TRUE`"") },
+    [pscustomobject]@{ Name = 'disabled extra adapter'; Text = ($runtimeVmxText + "`nethernet1.present = `"FALSE`"") },
+    [pscustomobject]@{ Name = 'connected CD media'; Text = $runtimeVmxText.Replace('sata0:0.startConnected = "FALSE"', 'sata0:0.startConnected = "TRUE"') },
+    [pscustomobject]@{ Name = 'disk path'; Text = $runtimeVmxText.Replace('scsi0:0.fileName = "', 'scsi0:0.fileName = "changed-') },
+    [pscustomobject]@{ Name = 'disk presence'; Text = $runtimeVmxText.Replace('scsi0:0.present = "TRUE"', 'scsi0:0.present = "FALSE"') },
+    [pscustomobject]@{ Name = 'serial endpoint'; Text = $runtimeVmxText.Replace('serial0.fileName = "' + $pipe + '"', 'serial0.fileName = "\\.\pipe\Atlaso-Installation-1123456789abcdef0123456789abcdef"') }
+)
+foreach ($badRuntimeCase in $badPrivateRuntimeCases) {
+    $refused = $false
+    try { Assert-InstallationPrivateLanTransition -Context $privateContext -Original $privateOriginal -Boot $privateBoot `
+            -Rewire $privateRewire -Intent $privateIntent -IntentPath $privateRewire.intent_path -IntentSha256 $privateRewire.intent_sha256 `
+            -Selectors $privateSelectors -VmxBytes ([Text.UTF8Encoding]::new($false).GetBytes($badRuntimeCase.Text)) `
+            -CurrentVmxIdentity 'ABCD1234:0000000000000003' -Segment $privateLanSegment -AllowRuntimeChanges }
+    catch { $refused = $true }
+    Assert-InstallationVmCondition $refused ('Postboot semantic admission must reject the changed ' + $badRuntimeCase.Name + ' binding.')
+}
 foreach ($mutation in @('before', 'after', 'id', 'mac', 'intent')) {
     $badTransition = $privateRewire | ConvertTo-Json | ConvertFrom-Json
     switch ($mutation) {
@@ -815,6 +845,31 @@ $freshProcessScript = "Import-Module '$($cleanupPath.Replace("'", "''"))' -Force
 $freshProcessOutput = @(& (Get-Process -Id $PID).Path -NoProfile -Command $freshProcessScript 2>&1)
 Assert-InstallationVmCondition ($LASTEXITCODE -eq 0) 'A fresh PowerShell process must initialize the file-identity type from the cleanup module.'
 Assert-InstallationVmCondition ($freshProcessOutput.Count -eq 0) 'Fresh-process identity initialization must not emit unexpected output.'
+$refreshImport = "Import-Module (Join-Path `$PSScriptRoot 'Atlaso.InstallationRefreshReceipt.psm1') -Force"
+$virtualizationImport = "Import-Module (Join-Path `$PSScriptRoot '..\virtualization\Atlaso.VirtualizationArtifacts.psm1') -Force"
+$finalCleanupImportIndex = $source.LastIndexOf($cleanupImport, [StringComparison]::Ordinal)
+$refreshImportIndex = $source.IndexOf($refreshImport, [StringComparison]::Ordinal)
+$virtualizationImportIndex = $source.IndexOf($virtualizationImport, [StringComparison]::Ordinal)
+Assert-InstallationVmCondition ($finalCleanupImportIndex -gt $refreshImportIndex -and $finalCleanupImportIndex -gt $virtualizationImportIndex) `
+    'The harness must restore cleanup exports after nested forced module imports.'
+$cleanupModulePath = Join-Path $repositoryRoot 'scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1'
+$fixtureModulePath = Join-Path $repositoryRoot 'scripts/windows/vmware/Atlaso.InstallationFixture.psm1'
+$oldLabelModulePath = Join-Path $repositoryRoot 'scripts/windows/vmware/Atlaso.InstallationOldLabel.psm1'
+$refreshModulePath = Join-Path $repositoryRoot 'scripts/windows/vmware/Atlaso.InstallationRefreshReceipt.psm1'
+$virtualizationModulePath = Join-Path $repositoryRoot 'scripts/windows/virtualization/Atlaso.VirtualizationArtifacts.psm1'
+$cleanupImportSequence = @(
+    "Import-Module '$($cleanupModulePath.Replace("'", "''"))' -Force",
+    "Import-Module '$($fixtureModulePath.Replace("'", "''"))' -Force",
+    "Import-Module '$($oldLabelModulePath.Replace("'", "''"))' -Force",
+    "Import-Module '$($refreshModulePath.Replace("'", "''"))' -Force",
+    "Import-Module '$($virtualizationModulePath.Replace("'", "''"))' -Force",
+    "Import-Module '$($cleanupModulePath.Replace("'", "''"))' -Force",
+    "if (-not (Get-Command Confirm-AtlasoWorkstationVmInactive -CommandType Function -ErrorAction SilentlyContinue)) { exit 29 }",
+    "if ((Get-Command Confirm-AtlasoWorkstationVmInactive).Source -cne 'Atlaso.WorkstationCleanup') { exit 30 }"
+) -join '; '
+$importSequenceOutput = @(& (Get-Process -Id $PID).Path -NoProfile -Command $cleanupImportSequence 2>&1)
+Assert-InstallationVmCondition ($LASTEXITCODE -eq 0) 'The real harness module sequence must leave Confirm-AtlasoWorkstationVmInactive callable.'
+Assert-InstallationVmCondition ($importSequenceOutput.Count -eq 0) 'The real harness module sequence must not emit unexpected output.'
 $whatIfGate = $source.IndexOf('$PSCmdlet.ShouldProcess($resolvedOutput', [StringComparison]::Ordinal)
 $intentWrite = $source.IndexOf('Publish-AtlasoTestVmOwnershipRecord -Context $context -Record $intent -Kind intent', [StringComparison]::Ordinal)
 $originalReceipt = $source.IndexOf('Publish-InstallationVmOriginalReceipt -Context $context', [StringComparison]::Ordinal)

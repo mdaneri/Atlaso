@@ -136,24 +136,47 @@ def _route_facts(value: Any, retired: str) -> int:
     return count
 
 
+def _rule_selector_is_retired(rule: dict[str, Any], key: str, retired: str) -> bool:
+    length_key = f"{key}len"
+    if key not in rule:
+        if key == "dst" and length_key not in rule:
+            return False
+        if key == "dst" and type(rule[length_key]) is int and rule[length_key] == 0:
+            return False
+        raise Refusal("retirement_rule_readback_invalid")
+
+    selector = rule[key]
+    if not isinstance(selector, str) or not selector:
+        raise Refusal("retirement_rule_readback_invalid")
+    if selector == "all":
+        if length_key in rule:
+            length = rule[length_key]
+            if type(length) is not int or length != 0:
+                raise Refusal("retirement_rule_readback_invalid")
+        return False
+
+    if length_key in rule:
+        prefix_length = rule[length_key]
+        if type(prefix_length) is not int or not 0 <= prefix_length <= 32:
+            raise Refusal("retirement_rule_readback_invalid")
+    else:
+        prefix_length = 32
+    try:
+        address = ipaddress.IPv4Address("0.0.0.0" if selector == "0" else selector)
+    except ValueError:
+        raise Refusal("retirement_rule_readback_invalid") from None
+    return prefix_length == 32 and str(address) == retired
+
+
 def _rule_facts(value: Any, retired: str) -> int:
     if not isinstance(value, list):
         raise Refusal("retirement_rule_readback_invalid")
     count = 0
     for rule in value:
-        if not isinstance(rule, dict):
+        if not isinstance(rule, dict) or "from" in rule or "to" in rule:
             raise Refusal("retirement_rule_readback_invalid")
-        for key in ("from", "to"):
-            selector = rule.get(key)
-            if selector in (None, "all"):
-                continue
-            try:
-                network = ipaddress.ip_network(selector, strict=False)
-            except (ValueError, TypeError):
-                raise Refusal("retirement_rule_readback_invalid") from None
-            if (isinstance(network, ipaddress.IPv4Network) and network.prefixlen == 32
-                    and str(network.network_address) == retired):
-                count += 1
+        count += int(_rule_selector_is_retired(rule, "src", retired))
+        count += int(_rule_selector_is_retired(rule, "dst", retired))
     return count
 
 

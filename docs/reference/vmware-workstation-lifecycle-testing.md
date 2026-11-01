@@ -900,8 +900,11 @@ from the trusted Workstation host inventory and recorded VMX state; the receipt 
 If inventory is incomplete, a VM has another path into the test LAN, membership changes, or source or trust pins
 drift, the producer refuses acceptance and the run must be re-admitted from original receipts. The peer's pinned SSH
 transport reads its DHCP configuration and lease, while the host-backed native checks read the appliance address,
-route, and CA-validated HTTPS. The producer requires an explicit static appliance baseline; it does not configure
-that baseline. The handoff wrapper rechecks the trusted-host receipts and live LAN state before changing the address
+route, and CA-validated HTTPS. The proof producer requires an explicit static appliance baseline. For the original
+ISO appliance, the peer wrapper's `-Bootstrap -ExecuteBootstrap` mode establishes that baseline through the normal
+Physical Interfaces and protected Apply workflow, preserving original receipts and observed source/runtime identities.
+See the [ISO bootstrap procedure](certificate-address-control.md#bootstrap-the-iso-static-baseline).
+The handoff wrapper rechecks the trusted-host receipts and live LAN state before changing the address
 and restoring the original interface and certificate state. Each invocation keeps its preflight evidence in the
 task result root so a failed stage cannot consume the next attempt's admission destination.
 Load either credentialed wrapper from the reviewed full PR-head Git blob into an in-memory PowerShell script block;

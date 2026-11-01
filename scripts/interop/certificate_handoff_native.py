@@ -596,7 +596,8 @@ def admit_execution(plan):
         "routes_wan.routing_enabled", "routes_wan.wan_simulation_enabled",
         "routes_wan.nat_enabled", "traffic_publishing.nat_enabled",
     }
-    if (source.get("phase") != "before-lifecycle-deployment" or source.get("schema") != 1
+    source_phase = "before-certificate-validation" if trusted else "before-lifecycle-deployment"
+    if (source.get("phase") != source_phase or source.get("schema") != 1
             or source.get("routing_intent_state") != "proven-absent"
             or source.get("routing_intent") is not None
             or source.get("app_service", {}).get("LoadState") != "loaded"

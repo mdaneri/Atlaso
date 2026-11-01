@@ -217,6 +217,37 @@ def test_original_peer_identity_rejects_changed_endpoint_before_network(
         altered = {**plan, "peer_transport": {**plan["peer_transport"], field: changed}}
         with pytest.raises(proof.Refusal, match="peer_original_identity_mismatch"):
             proof.admit_receipts(altered)
+    # A serial observation is admissible only in explicit trusted-host mode and
+    # remains bound to the original peer, console endpoint and exact SSH pin.
+    import base64
+
+    peer_vmx = root / "peer.vmx"
+    peer_vmx.write_text('serial0.fileName = "C:\\\\owned\\\\peer-public.log"\n')
+    fixture["peer_vmx"] = str(peer_vmx)
+    fixture["client_vmdk_copy"] = str(peer_vmx.with_suffix(".vmdk"))
+    monkeypatch.setattr(proof, "vmx_adapter", lambda path, index: (
+        {"connectiontype": "custom", "vnet": "VMnet8"} if index == 0 and path == str(peer_vmx)
+        else {"connectiontype": "pvn", "pvnid": "owned-id", "address": "00:50:56:aa:bb:cc"}))
+    public = "ssh-ed25519 " + base64.b64encode(b"synthetic public host key").decode()
+    pin = "SHA256:" + base64.b64encode(hashlib.sha256(b"synthetic public host key").digest()).decode().rstrip("=")
+    observation_ref = {"path": str(root / "console.json"), "sha256": "f" * 64}
+    values[observation_ref["path"]] = {
+        "schema": 1, "kind": "certificate-peer-console-public-key", "task_id": "task",
+        "repository": "mdaneri/Atlaso", "pr": 871, "peer_vmx": str(peer_vmx),
+        "peer_ownership_sha256": fixture["peer_ownership_sha256"], "public_host_key": public,
+        "serial_path": "C:\\\\owned\\\\peer-public.log",
+    }
+    identity.update(observation="owned-vmware-console-public-key", ssh_host_key=pin,
+                    peer_vmx=str(peer_vmx), console_observation_sha256=observation_ref["sha256"])
+    plan["peer_transport"]["ssh_host_key"] = pin
+    plan["peer_console_observation"] = observation_ref
+    with pytest.raises(proof.Refusal, match="peer_console_identity_invalid"):
+        proof.admit_fixture(plan)
+    trusted_plan = dict(plan, trust_model="trusted-host")
+    assert proof.admit_fixture(trusted_plan) is fixture
+    values[observation_ref["path"]]["public_host_key"] = "ssh-ed25519 " + base64.b64encode(b"changed public host key").decode()
+    with pytest.raises(proof.Refusal, match="peer_console_identity_invalid"):
+        proof.admit_fixture(trusted_plan)
 
 
 def test_preflight_refuses_exclusive_claim_before_credentials(
@@ -450,3 +481,10 @@ def test_original_iso_receipt_accepts_distinct_plan_and_installed_source_commits
     monkeypatch.setattr(proof, "bound_json", lambda ref: values[id(ref)])
     monkeypatch.setattr(WindowsFiles, "opened", opened)
     assert proof.original_iso_vm(plan, intent, ownership, reference, Path(root), vmx) is ownership
+    # Installation can finish after the harness advances; preserve both original
+    # resource and later boot receipt source identities without relabelling either.
+    boot["source_commit"] = plan["source_commit"]
+    assert proof.original_iso_vm(plan, intent, ownership, reference, Path(root), vmx) is ownership
+    boot["source_commit"] = "unreviewed"
+    with pytest.raises(proof.Refusal, match="original_iso_boot_source_invalid"):
+        proof.original_iso_vm(plan, intent, ownership, reference, Path(root), vmx)
