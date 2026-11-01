@@ -28,6 +28,10 @@ The ISO embeds the same signed Atlaso software payload used for software release
 Photon installer, required firmware, and package repository embedded. Installation does not depend on a network
 package repository.
 
+For a computer without a CD/DVD drive, follow
+[Create an Atlaso installation USB](usb-installation.md) for Windows, macOS, or Linux writing and verification steps,
+then continue with disk selection below. Use only an installation release with recorded USB acceptance.
+
 ## Choose disks and layout
 
 The installer requires you to select installation disks, even when it finds only one eligible disk. Review the disk

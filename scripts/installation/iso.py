@@ -8,6 +8,7 @@ import io
 import os
 import shutil
 import stat
+import struct
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -43,7 +44,7 @@ _GRUB_CONFIG = """set default=0
 set timeout=-1
 
 menuentry 'Install Atlaso offline' {
-    linux /isolinux/vmlinuz root=/dev/ram0 loglevel=3 photon.media=cdrom
+    linux /isolinux/vmlinuz root=/dev/ram0 loglevel=3
     initrd /isolinux/initrd.img
 }
 """
@@ -56,12 +57,12 @@ if serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1; then
 fi
 
 menuentry 'DEVELOPMENT ONLY - Install Atlaso offline - VM window (tty0)' --id=atlaso-graphical {
-    linux /isolinux/vmlinuz root=/dev/ram0 loglevel=3 photon.media=cdrom console=tty0
+    linux /isolinux/vmlinuz root=/dev/ram0 loglevel=3 console=tty0
     initrd /isolinux/initrd.img
 }
 
 menuentry 'DEVELOPMENT ONLY - Install Atlaso offline - Serial (ttyS0, 115200)' --id=atlaso-serial {
-    linux /isolinux/vmlinuz root=/dev/ram0 loglevel=3 photon.media=cdrom console=ttyS0,115200n8
+    linux /isolinux/vmlinuz root=/dev/ram0 loglevel=3 console=ttyS0,115200n8
     initrd /isolinux/initrd.img
 }
 """
@@ -101,8 +102,8 @@ media=/mnt/atlaso-install
 if ! mkdir -p "$media"; then
     rescue 'Could not prepare the read-only installation media mount.'
 fi
-if ! mount -o ro,nosuid,nodev,noexec /dev/disk/by-label/ATLASO_INSTALLER "$media"; then
-    rescue 'Could not mount the Atlaso installation media read-only.'
+if ! /usr/bin/python3 /etc/atlaso-installer/media.py --target "$media"; then
+    rescue 'Could not discover exactly one safe read-only Atlaso installation medium.'
 fi
 
 if /usr/bin/unshare --net -- /usr/bin/python3 /etc/atlaso-installer/bootstrap.py --media "$media/atlaso"; then
@@ -537,6 +538,7 @@ def _rewrite_newc(archive: bytes, launcher: bytes, trust: bytes, *, bootstrap: b
     if bootstrap and manifest_code:
         replacements["etc/atlaso-installer/bootstrap.py"] = (stat.S_IFREG | 0o644, bootstrap)
         replacements["etc/atlaso-installer/manifest.py"] = (stat.S_IFREG | 0o644, manifest_code)
+        replacements["etc/atlaso-installer/media.py"] = (stat.S_IFREG | 0o644, Path(__file__).with_name("media.py").read_bytes())
     elif bootstrap or manifest_code:
         raise ValueError("both initrd bootstrap and manifest verifier are required")
     next_ino = max((entry.ino for entry in entries if not entry.is_trailer), default=0) + 1
@@ -823,8 +825,32 @@ def build_iso(
 
         output_stream, output_identity = _create_exclusive_output(output_path)
         iso.write_fp(output_stream)
+        catalog = iso.eltorito_boot_catalog
+        efi = ([catalog.initial_entry] if catalog.validation_entry.platform_id == 0xEF else [])
+        efi += [entry for section in catalog.sections if section.platform_id == 0xEF
+               for entry in section.section_entries]
+        if len(efi) != 1:
+            raise ValueError("pinned Photon ISO requires exactly one EFI boot image")
+        # UEFI supports an MBR EFI-system partition. Map the same immutable FAT
+        # image used by optical El Torito; the ISO9660 payload stays in place.
+        # Partition 1 also exposes the whole ISO for GRUB/kernel discovery;
+        # partition 2 intentionally aliases only its embedded FAT extent.
+        # No BIOS code, secondary image format, extracted FAT32 payload or GPT
+        # relocation is needed. The system area is outside the ISO descriptors.
+        mbr = bytearray(512)
+        struct.pack_into("<I", mbr, 440, 0x41544C53)
+        struct.pack_into("<BBBBBBBBII", mbr, 446, 0, 0xFE, 0xFF, 0xFF, 0x17, 0xFE, 0xFF, 0xFF,
+                         0, output_stream.seek(0, os.SEEK_END) // 512)
+        struct.pack_into("<BBBBBBBBII", mbr, 462, 0, 0xFE, 0xFF, 0xFF, 0xEF, 0xFE, 0xFF, 0xFF,
+                         efi[0].load_rba * 4, efi[0].sector_count)
+        mbr[510:] = b"\x55\xaa"
+        output_stream.seek(0)
+        output_stream.write(mbr)
         output_stream.flush()
         os.fsync(output_stream.fileno())
+        from scripts.verify_installation_usb import inspect_layout
+
+        inspect_layout(output_path)
         for item in pinned:
             _verify_pinned(item)
     except Exception:
