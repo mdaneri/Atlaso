@@ -222,6 +222,8 @@
       
         
       
+        
+      
     
     
     
@@ -638,6 +640,8 @@
       
         
       
+        
+      
     
     
     
@@ -713,6 +717,40 @@
     
   
   Physical installation
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--roadmap"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/usb-installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Create an installation USB
 
     
   </span>
@@ -2562,6 +2600,28 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#usb-image-layout-and-readback" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        USB image layout and readback
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#installer-image-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Installer image contract
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#prepare-inputs" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4219,6 +4279,28 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#usb-image-layout-and-readback" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        USB image layout and readback
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#installer-image-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Installer image contract
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#prepare-inputs" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4444,6 +4526,51 @@ support or complete issue acceptance.</p>
 <p>For recurring admitted package refreshes, use the
 <a href="../installation-iso-refresh/">Offline installation ISO refresh workflow</a> to review Photon drift, bind capture
 inputs, assemble development media, and follow the receipt-bound VMware validation phases.</p>
+<p>For writing the completed image on Windows, macOS, or Linux, use
+<a href="../../getting-started/usb-installation/">Create an Atlaso installation USB</a>.</p>
+<h2 id="usb-image-layout-and-readback">USB image layout and readback<a class="headerlink" href="#usb-image-layout-and-readback" title="Permanent link">&para;</a></h2>
+<p>USB-capable assembly retains the existing ISO9660 level-3 payload and optical El Torito boot catalog. Its MBR maps
+partition 1 (type <code>0x17</code>, start sector zero) over the complete ISO and partition 2 (type <code>0xef</code>) over the existing
+EFI FAT boot image. The overlap is intentional: it exposes the same bytes to disk firmware and optical firmware.
+There is no GPT, separate USB image, extracted FAT32 payload, or supported legacy-BIOS bootstrap. Remastering derives
+the EFI partition's sector address from the final boot catalog, rather than copying offsets from the upstream ISO.
+Assembly reads back that address, length, image boundary and FAT header before accepting the output.</p>
+<p>After authenticating and reconstructing an installation release, use the trusted checkout's locked Python environment:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python scripts/verify_installation_usb.py --image &lt;verified-complete.iso&gt;
+</span></code></pre></div>
+<p>The checker reports the exact image length/minimum device bytes and EFI partition sectors. It refuses an optical-only
+image, a mismatched disk/catalog offset, or a truncated EFI image. It does not authenticate a release signature,
+verify every installed payload file, or establish firmware compatibility; retain the existing release verifier first.</p>
+<p>After writing, optionally add the operator-selected whole USB device to compare <strong>all ISO bytes</strong> read-only:</p>
+<table>
+<thead>
+<tr>
+<th>Host</th>
+<th>Device argument</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Windows, elevated PowerShell</td>
+<td><code>--device '\\.\PhysicalDriveN'</code> using the exact independently inspected USB disk number</td>
+</tr>
+<tr>
+<td>macOS, Terminal with disk-read permission</td>
+<td><code>--device /dev/rdiskN</code> after <code>diskutil unmountDisk /dev/diskN</code> for that inspected external disk</td>
+</tr>
+<tr>
+<td>Linux, with disk-read permission</td>
+<td><code>--device /dev/disk/by-id/&lt;exact-selected-whole-usb-identity&gt;</code></td>
+</tr>
+</tbody>
+</table>
+<p>These device names are selectors for an independently identified device, not stable identity proof. Never substitute
+a partition such as <code>diskNs1</code> or a Linux <code>-part1</code> link. The checker opens both inputs read-only, bounds comparison to the
+ISO length, rejects short/different reads, and reports the verified prefix's SHA-256. Extra USB capacity is outside that
+comparison. Reconnect/reselect deliberately if the operating system has changed enumeration. Writer validation and
+this byte comparison do not replace actual disconnected USB boot/install, source/unselected-disk preservation, USB-free
+reboot, payload, first-boot and host OpenAPI acceptance. Record physical USB 2/3 and SATA/NVMe hardware results separately.</p>
+<h2 id="installer-image-contract">Installer image contract<a class="headerlink" href="#installer-image-contract" title="Permanent link">&para;</a></h2>
 <p>The installation image reuses the pinned Photon 5.0 ISO and Photon installer 2.2. Remastering preserves the source EFI
 boot image and native installer flow. The Atlaso deployment source comes from an immutable Git archive at the
 selected full commit. The signed software release, its exact application wheel, locked CPython wheelhouse, shared
@@ -4491,18 +4618,18 @@ hosted workflow.</p>
 <p>Use the full source commit and exact software version being prepared. Select an absent destination for each newly
 created output. Begin from authorized builder preparation state and capture the resolved, signed Photon RPM closure
 and required firmware:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python scripts/build_installation_iso.py capture-rpms --output &lt;absent-absolute-directory&gt;
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>python scripts/build_installation_iso.py capture-rpms --output &lt;absent-absolute-directory&gt;
 </span></code></pre></div>
 <p>Prepare the candidate from that closure, the exact signed software payload, and the PowerCLI modules accepted by the
 existing <code>Validate</code> mode of <code>image/common/powershell/provision-powercli.ps1</code>:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>python scripts/build_installation_iso.py prepare --commit &lt;FULL-SOURCE-SHA&gt; --version &lt;X.Y.Z&gt; --payload &lt;absent-directory&gt; --software &lt;verified-software-directory&gt; --rpms &lt;captured-rpm-directory&gt; --powercli &lt;validated-powercli-directory&gt;
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>python scripts/build_installation_iso.py prepare --commit &lt;FULL-SOURCE-SHA&gt; --version &lt;X.Y.Z&gt; --payload &lt;absent-directory&gt; --software &lt;verified-software-directory&gt; --rpms &lt;captured-rpm-directory&gt; --powercli &lt;validated-powercli-directory&gt;
 </span></code></pre></div>
 <p>The preparation stage binds the source files to the selected commit and records the software, RPM, firmware, and
 PowerCLI inventories. Keep its unsigned candidate in the private task workspace; it is not a release artifact. For
 controlled transfer, package the candidate and split oversized input archives into an existing empty destination
 directory:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>python scripts/build_installation_iso.py pack-inputs --payload &lt;candidate-directory&gt; --output &lt;absent-archive.tar.gz&gt;
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>python scripts/build_installation_iso.py split-inputs --archive &lt;input-archive.tar.gz&gt; --output &lt;existing-empty-directory&gt;
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>python scripts/build_installation_iso.py pack-inputs --payload &lt;candidate-directory&gt; --output &lt;absent-archive.tar.gz&gt;
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>python scripts/build_installation_iso.py split-inputs --archive &lt;input-archive.tar.gz&gt; --output &lt;existing-empty-directory&gt;
 </span></code></pre></div>
 <p>Input packaging does not grant signing authority. The protected <code>installation-prerelease.yml</code> workflow independently
 validates the candidate before loading signing material. Besides authenticating every RPM, validation tests the entire
@@ -4528,25 +4655,25 @@ inputs before assembly; capturing files alone does not establish a successful ap
 Atlaso software bundle and its locked CPython wheelhouse. Packages absent from current official Photon metadata require
 a fresh capture; do not suppress package admission or replace individual packages without verifying the complete set.</p>
 <p>PowerCLI input can also be prepared with the existing locked module installer in a receipted task directory:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">pwsh</span> <span class="n">-NoProfile</span> <span class="o">-File</span> <span class="n">image</span><span class="p">/</span><span class="n">common</span><span class="p">/</span><span class="n">powershell</span><span class="p">/</span><span class="n">provision-powercli</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  <span class="n">-Mode</span> <span class="n">Install</span> <span class="n">-ModuleRoot</span> <span class="p">&lt;</span><span class="n">TASK-OWNED-POWERCLI-DIRECTORY</span><span class="p">&gt;</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">pwsh</span> <span class="n">-NoProfile</span> <span class="o">-File</span> <span class="n">image</span><span class="p">/</span><span class="n">common</span><span class="p">/</span><span class="n">powershell</span><span class="p">/</span><span class="n">provision-powercli</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  <span class="n">-Mode</span> <span class="n">Install</span> <span class="n">-ModuleRoot</span> <span class="p">&lt;</span><span class="n">TASK-OWNED-POWERCLI-DIRECTORY</span><span class="p">&gt;</span>
 </span></code></pre></div>
 <p>For installer work on a pull-request commit, use the explicit development builder. It requires a clean checkout at the
 exact PR <code>HEAD</code>; the separately supplied software directory must be a signed main release, with its version and
 main-reachable source commit passed independently. Reuse the already captured Photon RPM directory, validated
 PowerCLI modules, pinned Photon 5.0 source ISO, and verified software release. Put all paths under the configured,
 receipted task roots, and select absent payload and ISO destinations plus an existing empty private scratch directory:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">build_development_installation_iso</span><span class="p">.</span><span class="n">py</span> <span class="p">`</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  <span class="p">-</span><span class="n">-commit</span> <span class="p">&lt;</span><span class="n">PR-HEAD-SHA</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  <span class="p">-</span><span class="n">-software-version</span> <span class="p">&lt;</span><span class="n">MAIN-RELEASE-VERSION</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  <span class="p">-</span><span class="n">-software-commit</span> <span class="p">&lt;</span><span class="n">MAIN-RELEASE-SHA</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  <span class="p">-</span><span class="n">-software</span> <span class="p">&lt;</span><span class="n">VERIFIED-MAIN-RELEASE-DIRECTORY</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>  <span class="p">-</span><span class="n">-rpms</span> <span class="p">&lt;</span><span class="n">CAPTURED-PHOTON-RPM-DIRECTORY</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>  <span class="p">-</span><span class="n">-powercli</span> <span class="p">&lt;</span><span class="n">VALIDATED-POWERCLI-DIRECTORY</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>  <span class="p">-</span><span class="n">-payload</span> <span class="p">&lt;</span><span class="n">ABSENT-DEVELOPMENT-PAYLOAD-DIRECTORY</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>  <span class="p">-</span><span class="n">-scratch</span> <span class="p">&lt;</span><span class="n">EXISTING-EMPTY-PRIVATE-DIRECTORY</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>  <span class="p">-</span><span class="n">-source-iso</span> <span class="p">&lt;</span><span class="n">PINNED-PHOTON</span><span class="p">-</span><span class="n">5</span><span class="p">.</span><span class="n">0-ISO</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>  <span class="p">-</span><span class="n">-output</span> <span class="p">&lt;</span><span class="n">ABSENT-DEVELOPMENT-ISO-PATH</span><span class="p">&gt;</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">build_development_installation_iso</span><span class="p">.</span><span class="n">py</span> <span class="p">`</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  <span class="p">-</span><span class="n">-commit</span> <span class="p">&lt;</span><span class="n">PR-HEAD-SHA</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>  <span class="p">-</span><span class="n">-software-version</span> <span class="p">&lt;</span><span class="n">MAIN-RELEASE-VERSION</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>  <span class="p">-</span><span class="n">-software-commit</span> <span class="p">&lt;</span><span class="n">MAIN-RELEASE-SHA</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>  <span class="p">-</span><span class="n">-software</span> <span class="p">&lt;</span><span class="n">VERIFIED-MAIN-RELEASE-DIRECTORY</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>  <span class="p">-</span><span class="n">-rpms</span> <span class="p">&lt;</span><span class="n">CAPTURED-PHOTON-RPM-DIRECTORY</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>  <span class="p">-</span><span class="n">-powercli</span> <span class="p">&lt;</span><span class="n">VALIDATED-POWERCLI-DIRECTORY</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>  <span class="p">-</span><span class="n">-payload</span> <span class="p">&lt;</span><span class="n">ABSENT-DEVELOPMENT-PAYLOAD-DIRECTORY</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>  <span class="p">-</span><span class="n">-scratch</span> <span class="p">&lt;</span><span class="n">EXISTING-EMPTY-PRIVATE-DIRECTORY</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>  <span class="p">-</span><span class="n">-source-iso</span> <span class="p">&lt;</span><span class="n">PINNED-PHOTON</span><span class="p">-</span><span class="n">5</span><span class="p">.</span><span class="n">0-ISO</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>  <span class="p">-</span><span class="n">-output</span> <span class="p">&lt;</span><span class="n">ABSENT-DEVELOPMENT-ISO-PATH</span><span class="p">&gt;</span>
 </span></code></pre></div>
 <p>This builder uses the distinct <code>atlaso-installation-development-public-test</code> key identity. Its deterministic Ed25519
 fixture seed is public test data (<code>bytes(range(32))</code>, bytes <code>00</code> through <code>1f</code>); it is not a credential or release
@@ -4613,13 +4740,13 @@ Only canonical installation-ISO VMs may use this development path. Ordinary VM o
 resume, verification and cleanup operation. The bounded consumer forwards them to each lifecycle phase; VM records
 also bind the original root receipt. Missing, changed, mismatched or reconstructed provenance refuses the operation.
 Delete each VM with its existing receipt-bound cleanup operation before releasing the empty validation root.</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nv">$isoSha256</span> <span class="p">=</span> <span class="p">(</span><span class="nb">Get-FileHash</span> <span class="n">-LiteralPath</span> <span class="p">&lt;</span><span class="n">DEVELOPMENT-ISO-PATH</span><span class="p">&gt;</span> <span class="n">-Algorithm</span> <span class="n">SHA256</span><span class="p">).</span><span class="n">Hash</span><span class="p">.</span><span class="n">ToLowerInvariant</span><span class="p">()</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="nb">invoke-installation</span><span class="n">-iso-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>  <span class="n">-IsoPath</span> <span class="p">&lt;</span><span class="n">DEVELOPMENT-ISO-PATH</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>  <span class="n">-IsoSha256</span> <span class="nv">$isoSha256</span> <span class="p">`</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>  <span class="n">-OutputDirectory</span> <span class="p">&lt;</span><span class="n">ABSENT-VM-OUTPUT-DIRECTORY</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">OWNING-PR-NUMBER</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>  <span class="n">-Scenario</span> <span class="n">Probe</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nv">$isoSha256</span> <span class="p">=</span> <span class="p">(</span><span class="nb">Get-FileHash</span> <span class="n">-LiteralPath</span> <span class="p">&lt;</span><span class="n">DEVELOPMENT-ISO-PATH</span><span class="p">&gt;</span> <span class="n">-Algorithm</span> <span class="n">SHA256</span><span class="p">).</span><span class="n">Hash</span><span class="p">.</span><span class="n">ToLowerInvariant</span><span class="p">()</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="nb">invoke-installation</span><span class="n">-iso-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  <span class="n">-IsoPath</span> <span class="p">&lt;</span><span class="n">DEVELOPMENT-ISO-PATH</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  <span class="n">-IsoSha256</span> <span class="nv">$isoSha256</span> <span class="p">`</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>  <span class="n">-OutputDirectory</span> <span class="p">&lt;</span><span class="n">ABSENT-VM-OUTPUT-DIRECTORY</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">OWNING-PR-NUMBER</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>  <span class="n">-Scenario</span> <span class="n">Probe</span>
 </span></code></pre></div>
 <p>Run <code>-Scenario Cancel</code> and <code>-Scenario Auto</code> in separate receipt-bound VM roots, following the VMware lifecycle
 procedure for each. <code>Auto</code> obtains administrator and root credentials through the existing supported Atlaso
@@ -4670,10 +4797,10 @@ extra disk or partition, changed path or size, truncated review, or additional d
 Creation records a separate disk-baseline receipt before first boot. Retain both original receipt paths and their
 creation-time hashes from the console driver's ownership output. The console runner automatically verifies disks
 within its process deadline. To repeat verification afterward:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="nb">test-installation</span><span class="n">-iso</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Mode</span> <span class="n">Verify</span> <span class="p">`</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>  <span class="n">-OutputDirectory</span> <span class="p">&lt;</span><span class="n">EXACT-VM-OUTPUT-DIRECTORY</span><span class="p">&gt;</span> <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">OWNING-PR-NUMBER</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  <span class="n">-OriginalReceiptPath</span> <span class="p">&lt;</span><span class="n">ORIGINAL-RECEIPT</span><span class="p">&gt;</span> <span class="n">-OriginalReceiptSha256</span> <span class="p">&lt;</span><span class="n">ORIGINAL-RECEIPT-SHA256</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  <span class="n">-BaselineReceiptPath</span> <span class="p">&lt;</span><span class="n">BASELINE-RECEIPT</span><span class="p">&gt;</span> <span class="n">-BaselineReceiptSha256</span> <span class="p">&lt;</span><span class="n">BASELINE-RECEIPT-SHA256</span><span class="p">&gt;</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="nb">test-installation</span><span class="n">-iso</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Mode</span> <span class="n">Verify</span> <span class="p">`</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>  <span class="n">-OutputDirectory</span> <span class="p">&lt;</span><span class="n">EXACT-VM-OUTPUT-DIRECTORY</span><span class="p">&gt;</span> <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">OWNING-PR-NUMBER</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>  <span class="n">-OriginalReceiptPath</span> <span class="p">&lt;</span><span class="n">ORIGINAL-RECEIPT</span><span class="p">&gt;</span> <span class="n">-OriginalReceiptSha256</span> <span class="p">&lt;</span><span class="n">ORIGINAL-RECEIPT-SHA256</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>  <span class="n">-BaselineReceiptPath</span> <span class="p">&lt;</span><span class="n">BASELINE-RECEIPT</span><span class="p">&gt;</span> <span class="n">-BaselineReceiptSha256</span> <span class="p">&lt;</span><span class="n">BASELINE-RECEIPT-SHA256</span><span class="p">&gt;</span>
 </span></code></pre></div>
 <h3 id="background-vnc-console-checks">Background VNC console checks<a class="headerlink" href="#background-vnc-console-checks" title="Permanent link">&para;</a></h3>
 <p>The built-in Workstation VNC server can be controlled with a command-line client without using the host keyboard or
@@ -4703,17 +4830,17 @@ submission; do not replace the recorded digest merely to make a refusal pass.
 Each screen check uses a fresh read-only VNC connection because the pinned client waits on empty updates from an
 unchanged VMware screen. All key events stay on the original admitted connection, with the client's native Shift
 option enabled for uppercase and shifted ASCII symbols.</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="nb">invoke-installation</span><span class="n">-iso-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>  <span class="n">-Scenario</span> <span class="n">VncCredential</span> <span class="n">-TimeoutSeconds</span> <span class="n">600</span> <span class="p">`</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>  <span class="n">-IsoPath</span> <span class="p">&lt;</span><span class="n">ORIGINAL-ISO-PATH</span><span class="p">&gt;</span> <span class="n">-IsoSha256</span> <span class="p">&lt;</span><span class="n">ORIGINAL-ISO-SHA256</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>  <span class="n">-OutputDirectory</span> <span class="p">&lt;</span><span class="n">EXACT-VM-OUTPUT-DIRECTORY</span><span class="p">&gt;</span> <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">OWNING-PR-NUMBER</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>  <span class="n">-CollisionSuffix</span> <span class="p">&lt;</span><span class="n">ORIGINAL-SUFFIX</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>  <span class="n">-OriginalReceiptPath</span> <span class="p">&lt;</span><span class="n">ORIGINAL-RECEIPT</span><span class="p">&gt;</span> <span class="n">-OriginalReceiptSha256</span> <span class="p">&lt;</span><span class="n">ORIGINAL-RECEIPT-SHA256</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>  <span class="n">-BaselineReceiptPath</span> <span class="p">&lt;</span><span class="n">BASELINE-RECEIPT</span><span class="p">&gt;</span> <span class="n">-BaselineReceiptSha256</span> <span class="p">&lt;</span><span class="n">BASELINE-RECEIPT-SHA256</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>  <span class="n">-VncAccount</span> <span class="n">admin</span> <span class="n">-VncPort</span> <span class="p">&lt;</span><span class="n">LOOPBACK-PORT</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>  <span class="n">-VncScreenPath</span> <span class="p">&lt;</span><span class="n">REVIEWED-EMPTY-FIELD-PNG</span><span class="p">&gt;</span> <span class="n">-VncScreenSha256</span> <span class="p">&lt;</span><span class="n">RECORDED-PNG-SHA256</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>  <span class="n">-VncFieldRectangle</span> <span class="p">&lt;</span><span class="n">X0</span><span class="p">,</span><span class="n">Y0</span><span class="p">,</span><span class="n">X1</span><span class="p">,</span><span class="n">Y1</span><span class="p">&gt;</span> <span class="n">-VncPythonPath</span> <span class="p">&lt;</span><span class="n">ISOLATED-VENV-PYTHON</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>  <span class="n">-VncRuntimeSha256</span> <span class="p">&lt;</span><span class="n">ORIGINAL-SITE-INVENTORY-SHA256</span><span class="p">&gt;</span> <span class="n">-VncRuntimeFileCount</span> <span class="p">&lt;</span><span class="n">ORIGINAL</span><span class="o">-FILE</span><span class="n">-COUNT</span><span class="p">&gt;</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="nb">invoke-installation</span><span class="n">-iso-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>  <span class="n">-Scenario</span> <span class="n">VncCredential</span> <span class="n">-TimeoutSeconds</span> <span class="n">600</span> <span class="p">`</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>  <span class="n">-IsoPath</span> <span class="p">&lt;</span><span class="n">ORIGINAL-ISO-PATH</span><span class="p">&gt;</span> <span class="n">-IsoSha256</span> <span class="p">&lt;</span><span class="n">ORIGINAL-ISO-SHA256</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>  <span class="n">-OutputDirectory</span> <span class="p">&lt;</span><span class="n">EXACT-VM-OUTPUT-DIRECTORY</span><span class="p">&gt;</span> <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">OWNING-PR-NUMBER</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>  <span class="n">-CollisionSuffix</span> <span class="p">&lt;</span><span class="n">ORIGINAL-SUFFIX</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>  <span class="n">-OriginalReceiptPath</span> <span class="p">&lt;</span><span class="n">ORIGINAL-RECEIPT</span><span class="p">&gt;</span> <span class="n">-OriginalReceiptSha256</span> <span class="p">&lt;</span><span class="n">ORIGINAL-RECEIPT-SHA256</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>  <span class="n">-BaselineReceiptPath</span> <span class="p">&lt;</span><span class="n">BASELINE-RECEIPT</span><span class="p">&gt;</span> <span class="n">-BaselineReceiptSha256</span> <span class="p">&lt;</span><span class="n">BASELINE-RECEIPT-SHA256</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>  <span class="n">-VncAccount</span> <span class="n">admin</span> <span class="n">-VncPort</span> <span class="p">&lt;</span><span class="n">LOOPBACK-PORT</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>  <span class="n">-VncScreenPath</span> <span class="p">&lt;</span><span class="n">REVIEWED-EMPTY-FIELD-PNG</span><span class="p">&gt;</span> <span class="n">-VncScreenSha256</span> <span class="p">&lt;</span><span class="n">RECORDED-PNG-SHA256</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>  <span class="n">-VncFieldRectangle</span> <span class="p">&lt;</span><span class="n">X0</span><span class="p">,</span><span class="n">Y0</span><span class="p">,</span><span class="n">X1</span><span class="p">,</span><span class="n">Y1</span><span class="p">&gt;</span> <span class="n">-VncPythonPath</span> <span class="p">&lt;</span><span class="n">ISOLATED-VENV-PYTHON</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>  <span class="n">-VncRuntimeSha256</span> <span class="p">&lt;</span><span class="n">ORIGINAL-SITE-INVENTORY-SHA256</span><span class="p">&gt;</span> <span class="n">-VncRuntimeFileCount</span> <span class="p">&lt;</span><span class="n">ORIGINAL</span><span class="o">-FILE</span><span class="n">-COUNT</span><span class="p">&gt;</span>
 </span></code></pre></div>
 <p><code>AdmitConsole</code> in <code>test-installation-iso.ps1</code> provides the existing running VM's read-only admission for this operation.
 It requires the initial connected ISO, original receipts, persistent identity, exact disk bindings, isolated EFI
@@ -4799,7 +4926,7 @@ remains in effect by default, so this option alone does not establish host-facin
 The development installer's source commit may have a newer lock; that checkout lock does not replace the selected
 software release's dependency set. Missing or changed signed lock inputs fail instead of using another repository.</p>
 <p>For a subsequent resume, append these options to the receipt-bound <code>LoginInstalled</code> invocation above:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>  <span class="n">-InspectInstalled</span> <span class="n">-InspectContent</span> <span class="n">-InspectionPythonPath</span> <span class="p">&lt;</span><span class="n">ABSOLUTE-PREPARED-PYTHON-EXECUTABLE</span><span class="p">&gt;</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>  <span class="n">-InspectInstalled</span> <span class="n">-InspectContent</span> <span class="n">-InspectionPythonPath</span> <span class="p">&lt;</span><span class="n">ABSOLUTE-PREPARED-PYTHON-EXECUTABLE</span><span class="p">&gt;</span>
 </span></code></pre></div>
 <p>The adapter authenticates every helper against the admitted media before credential retrieval. Each check returns
 only a bounded public measurement; failure stops the inspection. Temporary Python archives and generated notices
@@ -4998,8 +5125,8 @@ loop mounts or host-network changes. The raw seed and sentinel are retained ther
 cleanup. Creation reserves <strong>78 GiB</strong>, including the additional 4-GiB raw image; ordinary two-disk and MultiDisk gates
 remain 74 and 82 GiB. Existing-VM recovery retains its separate 6-GiB allowance.</p>
 <p>Use the ordinary ISO/root inputs shown above with one absent VM directory and:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>  <span class="n">-Scenario</span> <span class="n">OldLabelReboot</span> <span class="n">-TimeoutSeconds</span> <span class="n">3600</span> <span class="p">`</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>  <span class="n">-InspectInstalled</span> <span class="n">-InspectContent</span> <span class="n">-InspectionPythonPath</span> <span class="p">&lt;</span><span class="n">ABSOLUTE-PREPARED-PYTHON-EXECUTABLE</span><span class="p">&gt;</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>  <span class="n">-Scenario</span> <span class="n">OldLabelReboot</span> <span class="n">-TimeoutSeconds</span> <span class="n">3600</span> <span class="p">`</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>  <span class="n">-InspectInstalled</span> <span class="n">-InspectContent</span> <span class="n">-InspectionPythonPath</span> <span class="p">&lt;</span><span class="n">ABSOLUTE-PREPARED-PYTHON-EXECUTABLE</span><span class="p">&gt;</span>
 </span></code></pre></div>
 <p>For a controlled recovery test, create a separate fresh fixture with <code>-Scenario OldLabelInterrupted</code>. The canonical
 console driver selects the target, confirms replacement and supplies the ordinary concealed account fields. It stops
@@ -5012,11 +5139,11 @@ Previously sealed receipts retain their original <code>installing Photon applian
 explicit supported checkpoint without rewriting old receipts or extending their original consumers.</p>
 <p>Retain the original VM, baseline and interruption receipt paths and their emitted digests outside the VM root. Use the
 same output directory and collision suffix for a distinct recovery invocation:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>  <span class="n">-Scenario</span> <span class="n">RecoverOldLabelReboot</span> <span class="n">-TimeoutSeconds</span> <span class="n">3600</span> <span class="p">`</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>  <span class="n">-OriginalReceiptPath</span> <span class="p">&lt;</span><span class="n">ORIGINAL-VM-RECEIPT</span><span class="p">&gt;</span> <span class="n">-OriginalReceiptSha256</span> <span class="p">&lt;</span><span class="n">ORIGINAL-DIGEST</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>  <span class="n">-BaselineReceiptPath</span> <span class="p">&lt;</span><span class="n">ORIGINAL-BASELINE</span><span class="p">&gt;</span> <span class="n">-BaselineReceiptSha256</span> <span class="p">&lt;</span><span class="n">ORIGINAL-BASELINE-DIGEST</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>  <span class="n">-InterruptionReceiptPath</span> <span class="p">&lt;</span><span class="n">ORIGINAL-INTERRUPTION-RECEIPT</span><span class="p">&gt;</span> <span class="n">-InterruptionReceiptSha256</span> <span class="p">&lt;</span><span class="n">EMITTED-DIGEST</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>  <span class="n">-InspectInstalled</span> <span class="n">-InspectContent</span> <span class="n">-InspectionPythonPath</span> <span class="p">&lt;</span><span class="n">ABSOLUTE-PREPARED-PYTHON-EXECUTABLE</span><span class="p">&gt;</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>  <span class="n">-Scenario</span> <span class="n">RecoverOldLabelReboot</span> <span class="n">-TimeoutSeconds</span> <span class="n">3600</span> <span class="p">`</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>  <span class="n">-OriginalReceiptPath</span> <span class="p">&lt;</span><span class="n">ORIGINAL-VM-RECEIPT</span><span class="p">&gt;</span> <span class="n">-OriginalReceiptSha256</span> <span class="p">&lt;</span><span class="n">ORIGINAL-DIGEST</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>  <span class="n">-BaselineReceiptPath</span> <span class="p">&lt;</span><span class="n">ORIGINAL-BASELINE</span><span class="p">&gt;</span> <span class="n">-BaselineReceiptSha256</span> <span class="p">&lt;</span><span class="n">ORIGINAL-BASELINE-DIGEST</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>  <span class="n">-InterruptionReceiptPath</span> <span class="p">&lt;</span><span class="n">ORIGINAL-INTERRUPTION-RECEIPT</span><span class="p">&gt;</span> <span class="n">-InterruptionReceiptSha256</span> <span class="p">&lt;</span><span class="n">EMITTED-DIGEST</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>  <span class="n">-InspectInstalled</span> <span class="n">-InspectContent</span> <span class="n">-InspectionPythonPath</span> <span class="p">&lt;</span><span class="n">ABSOLUTE-PREPARED-PYTHON-EXECUTABLE</span><span class="p">&gt;</span>
 </span></code></pre></div>
 <p>Recovery admits the original interruption, filesystem seed and stopped unselected comparison before obtaining
 credentials. It starts the original connected ISO and requires a fresh target selection and erase confirmation before
@@ -5031,7 +5158,7 @@ owned VM's adapter, record the exact VMX identity, current source, selected exis
 configuration transition in durable task evidence. Use the supported Workstation configuration tool on the stopped,
 receipt-bound VM. This phase does not create or change host networks, configure a CA, or issue certificates.</p>
 <p>For a subsequent receipt-bound <code>LoginInstalled</code> invocation, use:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>  <span class="n">-InspectInstalled</span> <span class="n">-InspectNetwork</span> <span class="n">-InspectionVmnet</span> <span class="p">&lt;</span><span class="n">EXISTING-HOST-ONLY-VMNET</span><span class="p">&gt;</span> <span class="n">-InspectionPythonPath</span> <span class="p">&lt;</span><span class="n">ABSOLUTE-PREPARED-PYTHON-EXECUTABLE</span><span class="p">&gt;</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>  <span class="n">-InspectInstalled</span> <span class="n">-InspectNetwork</span> <span class="n">-InspectionVmnet</span> <span class="p">&lt;</span><span class="n">EXISTING-HOST-ONLY-VMNET</span><span class="p">&gt;</span> <span class="n">-InspectionPythonPath</span> <span class="p">&lt;</span><span class="n">ABSOLUTE-PREPARED-PYTHON-EXECUTABLE</span><span class="p">&gt;</span>
 </span></code></pre></div>
 <p>Before submitting a console password, the driver uses the separate read-only <code>AdmitNetwork</code> mode. It requires the
 original installed-boot selectors, unchanged disk and private-pipe identities, disconnected ISO, exactly one
@@ -5045,7 +5172,7 @@ absent. The host validator
 requires the observed MAC, subnet and prefix to match native admission before printing a bounded public record.
 Missing addressing or HTTPS readiness fails at a fixed public stage; console text and private key material stay private.</p>
 <p>Use the observed address and leaf digest with the signed installed software version to read host-facing OpenAPI:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>python -B -m scripts.installation.inspection probe-openapi --address &lt;OBSERVED-PRIVATE-IPV4&gt; --certificate-sha256 &lt;CONSOLE-OBSERVED-LEAF-SHA256&gt; --version &lt;INSTALLED-SOFTWARE-VERSION&gt;
+<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>python -B -m scripts.installation.inspection probe-openapi --address &lt;OBSERVED-PRIVATE-IPV4&gt; --certificate-sha256 &lt;CONSOLE-OBSERVED-LEAF-SHA256&gt; --version &lt;INSTALLED-SOFTWARE-VERSION&gt;
 </span></code></pre></div>
 <p>The driver first admits API readiness in a separate 60-second bounded child with a fixed 45-second readiness window.
 TLS alone can be available while nginx still returns a boot-time HTTP 502. Readiness retries only HTTP 502, 503, and
@@ -5065,11 +5192,11 @@ verifier first checks the signed installation artifact index against the selecte
 then checks each asset’s size and SHA-256 checksum. When the ISO is split, it verifies every ordered part and the
 reconstructed ISO.</p>
 <p>From a source checkout, run:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>python scripts/verify_installation_iso.py --assets &lt;release-assets-directory&gt; --trust-key image/common/update-trust/atlaso-release-2026-01.pem --version &lt;X.Y.Z&gt; --commit &lt;FULL-SOURCE-SHA&gt; --scratch &lt;existing-private-directory&gt; [--output &lt;absent-iso-path&gt;]
+<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>python scripts/verify_installation_iso.py --assets &lt;release-assets-directory&gt; --trust-key image/common/update-trust/atlaso-release-2026-01.pem --version &lt;X.Y.Z&gt; --commit &lt;FULL-SOURCE-SHA&gt; --scratch &lt;existing-private-directory&gt; [--output &lt;absent-iso-path&gt;]
 </span></code></pre></div>
 <p>The release also contains <code>verify-installation.pyz</code>, which accepts the same options and requires Python 3.11 or newer
 and OpenSSL. For example:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>python verify-installation.pyz --assets &lt;release-assets-directory&gt; --trust-key &lt;independently-trusted-public-key.pem&gt; --version &lt;X.Y.Z&gt; --commit &lt;FULL-SOURCE-SHA&gt; --scratch &lt;existing-private-directory&gt; [--output &lt;absent-iso-path&gt;]
+<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>python verify-installation.pyz --assets &lt;release-assets-directory&gt; --trust-key &lt;independently-trusted-public-key.pem&gt; --version &lt;X.Y.Z&gt; --commit &lt;FULL-SOURCE-SHA&gt; --scratch &lt;existing-private-directory&gt; [--output &lt;absent-iso-path&gt;]
 </span></code></pre></div>
 <p><code>--scratch</code> must name an existing private directory. Omit <code>--output</code> to verify assets without reconstruction; when
 requested, the ISO destination must be absent. Compare the reported version and source commit with the release you
