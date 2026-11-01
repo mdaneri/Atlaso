@@ -80,6 +80,8 @@ The **Hardware** tab reports the detected virtualization platform, manufacturer 
 them, CPU architecture and model, processor count, memory, and read-only disk and network-adapter inventories. An
 inventory error is shown separately from a successful check that found no devices. Hardware inventory never claims or
 changes a disk, NIC, mount, or interface configuration.
+Each disk row includes filesystem types and mount locations observed on its partitions and nested volumes, with
+repeated values shown once. Unpartitioned disks and optical media report their own filesystem and mounts.
 
 The guest-tools section recommends only the integration compatible with the detected VMware, Hyper-V, or KVM/QEMU
 platform; Proxmox uses the QEMU guest agent. Each check reports the detected provider, package version and state,

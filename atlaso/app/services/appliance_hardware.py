@@ -39,6 +39,39 @@ def observed_interfaces() -> list[HostPhysicalInterface]:
     return parse_linux_ip_interfaces(result.stdout)
 
 
+def _disk_usage(row: dict[str, Any]) -> tuple[str, str]:
+    """Associate filesystem and mount observations from descendants with their disk.
+
+    Args:
+        row: One observed disk or optical device and its lsblk child tree.
+    """
+    pending = [row]
+    filesystems: dict[str, None] = {}
+    mounts: dict[str, None] = {}
+    visited = 0
+    while pending:
+        node = pending.pop()
+        visited += 1
+        if visited > 512:
+            raise ValueError("Disk child observation exceeded its bound")
+        filesystem = node.get("fstype")
+        if filesystem:
+            if not isinstance(filesystem, str):
+                raise ValueError("Invalid filesystem observation")
+            filesystems[filesystem] = None
+        mountpoints = node.get("mountpoints") or []
+        children = node.get("children") or []
+        if not isinstance(mountpoints, list) or any(value is not None and not isinstance(value, str) for value in mountpoints):
+            raise ValueError("Invalid mount observation")
+        if not isinstance(children, list) or any(not isinstance(child, dict) for child in children):
+            raise ValueError("Invalid disk child observation")
+        for mount in mountpoints:
+            if mount:
+                mounts[mount] = None
+        pending.extend(reversed(children))
+    return ", ".join(filesystems), ", ".join(mounts)
+
+
 def hardware_inventory() -> dict[str, Any]:
     """Return independent summary, disk and NIC observations with failure states."""
     result: dict[str, Any] = {
@@ -75,14 +108,18 @@ def hardware_inventory() -> dict[str, Any]:
         disks = payload["blockdevices"]
         if not isinstance(disks, list) or len(disks) > 512:
             raise ValueError("Invalid disk observation")
-        result["disks"] = [
-            {"device_path": row.get("path") or row.get("name") or "",
-             "model": row.get("model") or "", "serial": row.get("serial") or "",
-             "size_bytes": row.get("size"), "transport": row.get("tran") or "",
-             "filesystem_type": row.get("fstype") or "",
-             "mount_path": ", ".join(str(value) for value in row.get("mountpoints") or [] if value)}
-            for row in disks if isinstance(row, dict) and row.get("type") in {"disk", "rom"}
-        ]
+        disk_rows = []
+        for row in disks:
+            if not isinstance(row, dict) or row.get("type") not in {"disk", "rom"}:
+                continue
+            filesystem, mounts = _disk_usage(row)
+            disk_rows.append({
+                "device_path": row.get("path") or row.get("name") or "",
+                "model": row.get("model") or "", "serial": row.get("serial") or "",
+                "size_bytes": row.get("size"), "transport": row.get("tran") or "",
+                "filesystem_type": filesystem, "mount_path": mounts,
+            })
+        result["disks"] = disk_rows
         result["disks_state"] = "available"
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         result["disks_reason"] = "Disk inventory could not be read. Check lsblk availability and retry."
