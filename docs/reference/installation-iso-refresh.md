@@ -159,7 +159,9 @@ validation budgets from another task.
 5. **Read back the ISO.** Run `readback` to authenticate the embedded development manifest and compare the
    full file inventory and bytes against the admitted inputs. Confirm the nested signed software manifest
    and wheel identity as well as the outer ISO digest. Partial or pending readback cannot admit
-   installation.
+   installation. Readback follows exact Rock Ridge relocation targets, preserving distinct deep
+   PowerCLI directories that share the same name. Duplicate names, aliased directories, and
+   unexpected files remain admission failures.
 6. **Install and reboot.** Run `install` for the canonical `AutoReboot` VMware scenario with installed
    application and full content inspection enabled. The native harness obtains account credentials only
    through its supported bounded credential bridge. Never place passwords in the plan, command line,

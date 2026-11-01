@@ -6,6 +6,7 @@ import base64
 import hashlib
 import io
 from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
 
 import pycdlib
 import pytest
@@ -26,6 +27,72 @@ _SOFTWARE = "b" * 40
 _VERSION = "1.2.3"
 _PUBLIC_TEST_KEY = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
 _RELEASE_KEY = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
+
+
+def test_readback_preserves_repeated_relocated_directory_names(tmp_path: Path) -> None:
+    """Read distinct deep PowerCLI-style paths and their original file bytes.
+
+    Args:
+        tmp_path: Isolated destination for the real Rock Ridge fixture.
+    """
+    image = pycdlib.PyCdlib()
+    image.new(interchange_level=3, rock_ridge="1.09")
+    image.add_directory(iso_path="/ATLASO", rr_name="atlaso")
+    expected = {}
+    for branch in ("first", "second"):
+        directory = f"software/{branch}/version/package/services/metadata/core-properties"
+        _add_directory(image, directory)
+        path = directory + "/identity.txt"
+        parts = PurePosixPath(path).parts
+        components = [hashlib.sha256(PurePosixPath(*parts[:n]).as_posix().encode()).hexdigest()[:16].upper()
+                      for n in range(1, len(parts) + 1)]
+        raw = branch.encode()
+        image.add_fp(io.BytesIO(raw), len(raw), iso_path="/ATLASO/" + "/".join(components) + ";1",
+                     rr_name="identity.txt")
+        expected[path] = raw
+    output = tmp_path / "relocated.iso"
+    image.write(str(output))
+    image.close()
+    image = pycdlib.PyCdlib()
+    image.open(str(output))
+    try:
+        files, directories = readback._all_payload_paths(image)
+        assert files == set(expected)
+        assert all(path.rsplit("/", 1)[0] in directories for path in expected)
+        software = readback._IsoSoftwarePath(image)
+        actual = {str(member.relative_to(software)): member.read_bytes()
+                  for member in software.rglob("*") if member.is_file()}
+        assert actual == {path.removeprefix("software/"): raw for path, raw in expected.items()}
+    finally:
+        image.close()
+
+
+def test_readback_still_rejects_duplicate_rock_ridge_names() -> None:
+    """Reject actual duplicate child names rather than silently deduplicating."""
+    child = SimpleNamespace(is_dot=lambda: False, is_dotdot=lambda: False,
+                            rock_ridge=SimpleNamespace(name=lambda: b"duplicate"))
+    root = SimpleNamespace(extent_location=lambda: 1, children=[child, child])
+    file = SimpleNamespace(is_symlink=lambda: False, is_dir=lambda: False)
+    image = SimpleNamespace(get_record=lambda **kw: root if kw["rr_path"] == "/atlaso" else file)
+    with pytest.raises(ValueError, match="duplicate paths"):
+        readback._all_payload_paths(image)
+
+
+@pytest.mark.parametrize("symlink", [False, True])
+def test_readback_rejects_directory_aliases_and_symlinks(symlink: bool) -> None:
+    """Keep relocation traversal bounded and reject links outside the logical tree.
+
+    Args:
+        symlink: Whether the child is a symlink rather than a directory alias.
+    """
+    child = SimpleNamespace(is_dot=lambda: False, is_dotdot=lambda: False,
+                            rock_ridge=SimpleNamespace(name=lambda: b"alias"))
+    root = SimpleNamespace(extent_location=lambda: 1, children=[child])
+    alias = SimpleNamespace(is_symlink=lambda: symlink, is_dir=lambda: True,
+                            extent_location=lambda: 1)
+    image = SimpleNamespace(get_record=lambda **kw: root if kw["rr_path"] == "/atlaso" else alias)
+    with pytest.raises(ValueError, match="symbolic link" if symlink else "aliased directories"):
+        readback._all_payload_paths(image)
 
 
 @pytest.fixture(autouse=True)
