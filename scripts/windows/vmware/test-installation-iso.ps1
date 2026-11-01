@@ -7,15 +7,31 @@ one disconnected Ethernet adapter, and a serial named-pipe endpoint supplied by 
 first start it records logical-content baselines for every disk. MultiDisk adds an 8 GiB selected data disk. Verify stops the
 receipt-bound VM if needed and compares selected disk contents against those baselines.
 .PARAMETER Mode
-Select Create, AdmitConsole, AdmitNetwork, Verify, BootInstalled, ResumeInstalled, or Cleanup. AdmitConsole admits an already-running,
+Select Create, AdmitConsole, AdmitNetwork, RewirePrivateLan, Verify, BootInstalled, ResumeInstalled, or Cleanup. AdmitConsole admits an already-running,
 receipt-bound VM for a local console observer and returns its public VMX, ISO identity, original receipt selectors, and
-local serial endpoint. It does not stop the VM or inspect disk contents. BootInstalled verifies disks, records the stopped-VM transition,
+local serial endpoint. With private LAN selectors, it also validates the original private LAN transition. It does not stop the VM
+or inspect disk contents. BootInstalled verifies disks, records the stopped-VM transition,
 disconnects the pinned ISO, and starts the installed system with its existing private serial endpoint.
-ResumeInstalled reuses the original boot receipt and verified disconnected configuration without editing the VMX.
+ResumeInstalled reuses the original boot receipt and verified disconnected configuration without editing the VMX; when private
+LAN selectors are supplied, it also validates the separately receipted private LAN transition before starting.
 AdmitNetwork is a separate read-only installed-VM admission requiring the original boot receipt and exactly one
-adapter on an existing DHCP-enabled host-only vmnet. It never attaches an adapter or changes host networks.
+adapter on an existing DHCP-enabled host-only vmnet. RewirePrivateLan requires the original boot receipt and
+an independently receipted private LAN segment, stops no guest, and changes only the existing adapter's network
+binding after verifying the VM is already stopped. It preserves the original creation and boot receipts.
 .PARAMETER NetworkVmnet
 Exact existing host-only vmnet name required only for AdmitNetwork.
+.PARAMETER PrivateLanSegmentId
+Exact original VMware private LAN segment ID required for RewirePrivateLan and its later admissions.
+.PARAMETER PrivateLanSegmentName
+Exact original VMware private LAN segment name required for RewirePrivateLan and its later admissions.
+.PARAMETER PrivateLanSegmentReceiptPath
+Original immutable LAN segment creation receipt path required for RewirePrivateLan and its later admissions.
+.PARAMETER PrivateLanSegmentReceiptSha256
+Independently retained creation-time digest of PrivateLanSegmentReceiptPath.
+.PARAMETER RewireReceiptPath
+Original private LAN rewire transition receipt path required after RewirePrivateLan.
+.PARAMETER RewireReceiptSha256
+Independently retained creation-time digest of RewireReceiptPath.
 .PARAMETER Worktree
 Exact clean Atlaso worktree used to bind ownership.
 .PARAMETER OutputDirectory
@@ -76,8 +92,14 @@ Optional existing durable workflow directory receiving original selectors before
 #>
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
-    [ValidateSet('Create', 'AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'ResumeInstalled', 'ResumeInstaller', 'Cleanup')][string]$Mode = 'Create',
+    [ValidateSet('Create', 'AdmitConsole', 'AdmitNetwork', 'RewirePrivateLan', 'Verify', 'BootInstalled', 'ResumeInstalled', 'ResumeInstaller', 'Cleanup')][string]$Mode = 'Create',
     [string]$NetworkVmnet = '',
+    [string]$PrivateLanSegmentId = '',
+    [string]$PrivateLanSegmentName = '',
+    [string]$PrivateLanSegmentReceiptPath = '',
+    [string]$PrivateLanSegmentReceiptSha256 = '',
+    [string]$RewireReceiptPath = '',
+    [string]$RewireReceiptSha256 = '',
     [string]$Worktree = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path,
     [string]$OutputDirectory = '',
     [string]$ValidationRootReceiptPath = '',
@@ -918,6 +940,221 @@ function ConvertTo-InstallationDiskBootConfiguration {
 
 <#
 .SYNOPSIS
+Bind the installed appliance's existing adapter to one receipt-bound VMware private LAN segment.
+.PARAMETER Text
+Stopped VMX text whose exact configuration is already admitted by the original boot receipt.
+.PARAMETER SegmentId
+Original VMware private LAN segment identifier from its creation receipt.
+#>
+function ConvertTo-InstallationPrivateLanConfiguration {
+    param([Parameter(Mandatory = $true)][string]$Text, [Parameter(Mandatory = $true)][string]$SegmentId)
+    if ($SegmentId -cnotmatch '^[0-9a-fA-F]{2}( [0-9a-fA-F]{2}){7}-[0-9a-fA-F]{2}( [0-9a-fA-F]{2}){7}$') {
+        throw 'Private LAN segment identifier is malformed.'
+    }
+    $lines = @($Text -split "`r?`n")
+    $keys = @('ethernet0.present', 'ethernet0.startConnected', 'ethernet0.connectionType',
+        'ethernet0.virtualDev', 'ethernet0.addressType')
+    $values = @{}
+    foreach ($key in $keys) {
+        $matchesForKey = @($lines | Where-Object { $_ -match ('^\s*' + [regex]::Escape($key) + '\s*=') })
+        if ($matchesForKey.Count -ne 1 -or $matchesForKey[0] -notmatch ('^\s*' + [regex]::Escape($key) + '\s*=\s*"(?<value>[^"]+)"\s*$')) {
+            throw 'Installed private LAN rewire requires one unambiguous existing Ethernet adapter.'
+        }
+        $values[$key] = $Matches.value
+    }
+    if ($values['ethernet0.present'] -cne 'TRUE' -or $values['ethernet0.startConnected'] -cne 'FALSE' -or
+        $values['ethernet0.connectionType'] -cne 'hostonly' -or $values['ethernet0.virtualDev'] -cne 'e1000' -or
+        $values['ethernet0.addressType'] -cne 'generated' -or
+        @($lines | Where-Object { $_ -match '^[ \t]*ethernet[1-9][0-9]*\.present[ \t]*=[ \t]*"TRUE"[ \t]*$' }).Count -gt 0 -or
+        [regex]::IsMatch($Text, '(?im)^\s*ethernet0\.(?:vnet|pvnID|address)\s*=')) {
+        throw 'Private LAN rewire requires the original single disconnected generated-MAC adapter and refuses extra adapters.'
+    }
+    $macLines = @($lines | Where-Object { $_ -match '^\s*ethernet0\.generatedAddress\s*=' })
+    if ($macLines.Count -ne 1 -or
+        $macLines[0] -notmatch '^\s*ethernet0\.generatedAddress\s*=\s*"(?<mac>(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})"\s*$') {
+        throw 'Private LAN rewire refuses an ambiguous or malformed generated MAC address.'
+    }
+    $newline = if ($Text.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $result = $Text
+    foreach ($pair in @(
+        @('ethernet0.present', 'TRUE'), @('ethernet0.startConnected', 'TRUE'),
+        @('ethernet0.connectionType', 'pvn'), @('ethernet0.pvnID', $SegmentId)
+    )) {
+        $key = [string]$pair[0]; $value = ConvertTo-InstallationVmxString -Value ([string]$pair[1])
+        $pattern = '(?m)^' + [regex]::Escape($key) + '\s*=.*(?:\r?\n|$)'
+        if ([regex]::IsMatch($result, $pattern)) {
+            $result = [regex]::Replace($result, $pattern, $key + ' = ' + $value + $newline)
+        } else {
+            if ($result -and -not $result.EndsWith("`n")) { $result += $newline }
+            $result += $key + ' = ' + $value + $newline
+        }
+    }
+    return $result
+}
+
+<#
+.SYNOPSIS
+Validate an original private LAN rewire transition against the immutable boot receipt and current VMX.
+.PARAMETER Context
+Current task-bound installation VM identity.
+.PARAMETER Original
+Original installation receipt record.
+.PARAMETER Boot
+Original installed-boot transition record.
+.PARAMETER Rewire
+Original private LAN rewire transition record.
+.PARAMETER Intent
+Original private LAN transition intent published before VMX mutation.
+.PARAMETER IntentPath
+Original immutable path of the transition intent receipt.
+.PARAMETER IntentSha256
+Original independently retained transition intent digest.
+.PARAMETER Selectors
+Original receipt and transition path and digest selectors.
+.PARAMETER VmxBytes
+Current admitted VMX bytes.
+.PARAMETER CurrentVmxIdentity
+Current ordinary VMX filesystem identity retained by the caller.
+.PARAMETER Segment
+Original private LAN segment record.
+#>
+function Assert-InstallationPrivateLanTransition {
+    param([psobject]$Context, [psobject]$Original, [psobject]$Boot, [psobject]$Rewire, [psobject]$Intent,
+        [string]$IntentPath, [string]$IntentSha256, [hashtable]$Selectors, [byte[]]$VmxBytes,
+        [string]$CurrentVmxIdentity, [psobject]$Segment)
+    $currentSha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($VmxBytes)).ToLowerInvariant()
+    if ($Rewire.phase -cne 'installation-private-lan-rewire' -or $Intent.phase -cne 'installation-private-lan-rewire-pending' -or
+        $Rewire.intent_path -notmatch '^.+$' -or $Rewire.intent_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        $Rewire.intent_path -cne $IntentPath -or $Rewire.intent_sha256 -cne $IntentSha256 -or
+        $Rewire.task_id -cne $Context.TaskId -or $Intent.task_id -cne $Context.TaskId -or
+        $Rewire.repository -cne $Context.Repository -or $Rewire.source_branch -cne $Context.Branch -or
+        [string]$Rewire.source_commit -cnotmatch '^[0-9a-f]{40}$' -or $Rewire.worktree -cne $Context.Worktree -or
+        $Intent.repository -cne $Rewire.repository -or $Intent.source_branch -cne $Rewire.source_branch -or
+        $Intent.source_commit -cne $Rewire.source_commit -or $Intent.worktree -cne $Rewire.worktree -or
+        $Original.task_id -cne $Context.TaskId -or $Original.repository -cne $Context.Repository -or
+        $Original.source_branch -cne $Context.Branch -or [string]$Original.source_commit -cnotmatch '^[0-9a-f]{40}$' -or
+        $Boot.task_id -cne $Context.TaskId -or $Boot.repository -cne $Context.Repository -or
+        $Boot.source_branch -cne $Context.Branch -or [string]$Boot.source_commit -cnotmatch '^[0-9a-f]{40}$' -or
+        [int]$Rewire.pull_request_number -ne [int]$Context.PullRequestNumber -or
+        [bool]$Rewire.local_builder -ne [bool]$Context.LocalBuilder -or
+        $Rewire.output_directory -cne $Context.OutputDirectory -or $Rewire.vmx_path -cne $Context.VmxPath -or
+        $Rewire.original_receipt_path -cne $Selectors.OriginalReceiptPath -or
+        $Rewire.original_receipt_sha256 -cne $Selectors.OriginalReceiptSha256 -or
+        $Rewire.boot_receipt_path -cne $Selectors.BootReceiptPath -or
+        $Rewire.boot_receipt_sha256 -cne $Selectors.BootReceiptSha256 -or
+        $Rewire.baseline_receipt_path -cne $Boot.baseline_receipt_path -or
+        $Rewire.baseline_receipt_sha256 -cne $Boot.baseline_receipt_sha256 -or
+        $Intent.original_receipt_path -cne $Rewire.original_receipt_path -or
+        $Intent.original_receipt_sha256 -cne $Rewire.original_receipt_sha256 -or
+        $Intent.boot_receipt_path -cne $Rewire.boot_receipt_path -or
+        $Intent.boot_receipt_sha256 -cne $Rewire.boot_receipt_sha256 -or
+        $Intent.baseline_receipt_path -cne $Rewire.baseline_receipt_path -or
+        $Intent.baseline_receipt_sha256 -cne $Rewire.baseline_receipt_sha256 -or
+        $Rewire.segment_receipt_path -cne $Selectors.PrivateLanSegmentReceiptPath -or
+        $Rewire.segment_receipt_sha256 -cne $Selectors.PrivateLanSegmentReceiptSha256 -or
+        $Rewire.segment_name -cne $Segment.name -or $Rewire.segment_id -cne $Segment.pvn_id -or
+        $Intent.segment_receipt_path -cne $Rewire.segment_receipt_path -or
+        $Intent.segment_receipt_sha256 -cne $Rewire.segment_receipt_sha256 -or
+        $Intent.segment_name -cne $Rewire.segment_name -or $Intent.segment_id -cne $Rewire.segment_id -or
+        $Rewire.original_directory_identity -cne $Original.original_identities.directory -or
+        $Intent.original_directory_identity -cne $Rewire.original_directory_identity -or
+        $Intent.persistent_vm_identity_sha256 -cne $Rewire.persistent_vm_identity_sha256 -or
+        $Rewire.vmx_filesystem_identity -cne $CurrentVmxIdentity -or
+        [string]$Rewire.vmx_filesystem_identity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$' -or
+        $Rewire.persistent_vm_identity_sha256 -cne $Original.persistent_vm_identity_sha256 -or
+        $Rewire.before_sha256 -cne $Boot.after_sha256 -or $Rewire.after_sha256 -cne $currentSha -or
+        $Intent.before_sha256 -cne $Rewire.before_sha256 -or $Intent.after_sha256 -cne $Rewire.after_sha256 -or
+        $Intent.mac -cne $Rewire.mac -or $Intent.vmx_filesystem_identity -cne $Rewire.vmx_filesystem_identity -or
+        [string]$Rewire.before_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        [string]$Rewire.after_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+        $Boot.original_receipt_path -cne $Selectors.OriginalReceiptPath -or
+        $Boot.original_receipt_sha256 -cne $Selectors.OriginalReceiptSha256 -or
+        $Boot.original_directory_identity -cne $Original.original_identities.directory -or
+        $Boot.persistent_vm_identity_sha256 -cne $Original.persistent_vm_identity_sha256 -or
+        [string]$Rewire.mac -cnotmatch '^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$') {
+        throw 'Private LAN rewire receipt is not bound to the original installed VM, boot state, and segment.'
+    }
+    $text = (Get-InstallationVmxEncoding -Bytes $VmxBytes).GetString($VmxBytes)
+    $lines = @($text -split "`r?`n")
+    $cleanupLines = @($lines | Where-Object { $_ -match '^\s*guestinfo\.atlaso\.test_vm_cleanup_identity\s*=' })
+    $cleanupMatch = if ($cleanupLines.Count -eq 1) {
+        [regex]::Match($cleanupLines[0], '^\s*guestinfo\.atlaso\.test_vm_cleanup_identity\s*=\s*"(?<identity>[0-9a-f]{32})"\s*$')
+    }
+    if ($cleanupLines.Count -ne 1 -or -not $cleanupMatch.Success -or
+        (Get-AtlasoTestVmOwnershipCleanupIdentityHash -Value $cleanupMatch.Groups['identity'].Value) -cne
+        [string]$Original.persistent_vm_identity_sha256) {
+        throw 'Private LAN transition no longer matches the original persistent VM identity.'
+    }
+    $expected = @('ethernet0.present = "TRUE"', 'ethernet0.startConnected = "TRUE"',
+        'ethernet0.connectionType = "pvn"', ('ethernet0.pvnID = "' + [string]$Segment.pvn_id + '"'),
+        'ethernet0.virtualDev = "e1000"', 'ethernet0.addressType = "generated"')
+    foreach ($assignment in $expected) {
+        if (@($lines | Where-Object { $_ -ceq $assignment }).Count -ne 1) {
+            throw 'Current installed private LAN adapter differs from its original transition receipt.'
+        }
+    }
+    $macLines = @($lines | Where-Object { $_ -match '^\s*ethernet0\.generatedAddress\s*=' })
+    $macMatch = if ($macLines.Count -eq 1) {
+        [regex]::Match($macLines[0], '^\s*ethernet0\.generatedAddress\s*=\s*"(?<mac>(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})"\s*$')
+    }
+    if ($macLines.Count -ne 1 -or -not $macMatch.Success -or
+        $macMatch.Groups['mac'].Value.ToLowerInvariant() -cne [string]$Rewire.mac) {
+        throw 'Current installed private LAN adapter changed its original generated MAC.'
+    }
+    if (@($lines | Where-Object { $_ -match '^[ \t]*ethernet[1-9][0-9]*\.present[ \t]*=[ \t]*"TRUE"[ \t]*$' }).Count -gt 0 -or
+        @($lines | Where-Object { $_ -match '^[ \t]*ethernet0\.(?:vnet|address)[ \t]*=' }).Count -gt 0) {
+        throw 'Current installed private LAN VMX contains an additional adapter or competing network binding.'
+    }
+}
+
+<#
+.SYNOPSIS
+Read an exact original LAN segment receipt and bind it to the current installation task.
+.PARAMETER Context
+Current task-owned installation VM context.
+.PARAMETER Path
+Original immutable LAN segment creation receipt path.
+.PARAMETER Sha256
+Independently preserved creation-time receipt digest.
+.PARAMETER Name
+Exact LAN segment name selected for this lab.
+.PARAMETER Id
+Exact LAN segment identifier selected for this lab.
+#>
+function Read-InstallationPrivateLanSegment {
+    param([psobject]$Context, [string]$Path, [string]$Sha256, [string]$Name, [string]$Id)
+    if (-not $Context.Enabled -or -not [IO.Path]::IsPathFullyQualified($Path) -or
+        $Sha256 -cnotmatch '^[0-9a-f]{64}$' -or $Name -cnotmatch '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$' -or
+        $Id -cnotmatch '^[0-9a-fA-F]{2}( [0-9a-fA-F]{2}){7}-[0-9a-fA-F]{2}( [0-9a-fA-F]{2}){7}$') {
+        throw 'Private LAN selection requires a task-owned original receipt, exact name, ID, and digest.'
+    }
+    $resolved = [IO.Path]::GetFullPath($Path)
+    $pin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($resolved, $true)
+    try {
+        $file = Get-Item -LiteralPath $resolved -Force -ErrorAction Stop
+        if ($file.Length -gt 16384 -or (Get-FileHash -LiteralPath $resolved -Algorithm SHA256).Hash.ToLowerInvariant() -cne $Sha256) {
+            throw 'Original private LAN segment receipt differs from its independently preserved digest.'
+        }
+        $record = Get-Content -LiteralPath $resolved -Raw | ConvertFrom-Json -ErrorAction Stop
+        $labRoot = [IO.Path]::GetFullPath([string]$record.lab_root).TrimEnd('\', '/')
+        if ($record.schema -ne 1 -or $record.task_id -cne $Context.TaskId -or
+            $record.repository -cne $Context.Repository -or [string]$record.source_commit -cnotmatch '^[0-9a-f]{40}$' -or
+            [int]$record.pr -ne [int]$Context.PullRequestNumber -or $record.name -cne $Name -or
+            $record.pvn_id -cne $Id -or
+            -not (Test-AtlasoTestVmStrictDescendantPath -ParentPath $labRoot -ChildPath $Context.OutputDirectory) -or
+            -not $resolved.StartsWith((Join-Path $labRoot 'lan-segments') + [IO.Path]::DirectorySeparatorChar,
+                [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Original private LAN segment receipt is not bound to this task, VM output, name, and ID.'
+        }
+        & git -C $Context.Worktree merge-base --is-ancestor $record.source_commit $Context.SourceCommit 2>$null
+        if ($LASTEXITCODE -ne 0) { throw 'Private LAN source is not an ancestor of the admitted checkout.' }
+        return [pscustomobject]@{ Path = $resolved; Sha256 = $Sha256; Record = $record }
+    }
+    finally { $pin.Dispose() }
+}
+
+<#
+.SYNOPSIS
 Prefer the original connected optical media for an explicitly admitted interrupted reinstall.
 .PARAMETER Text
 Stopped original EFI fixture VMX text, preserving every unrelated assignment.
@@ -964,14 +1201,33 @@ try {
 if ($MarkInterrupted -and $Mode -ne 'Verify') { throw 'MarkInterrupted is valid only with owning Verify.' }
 if (($InterruptionReceiptPath -or $InterruptionReceiptSha256) -and $Mode -notin @('Verify', 'ResumeInstaller')) { throw 'Interruption selectors require Verify or ResumeInstaller.' }
 if ($NetworkVmnet -and $Mode -ne 'AdmitNetwork') { throw 'NetworkVmnet is valid only for read-only AdmitNetwork.' }
-if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'ResumeInstalled', 'ResumeInstaller')) {
+$hasSegmentSelection = @(@($PrivateLanSegmentId, $PrivateLanSegmentName, $PrivateLanSegmentReceiptPath, $PrivateLanSegmentReceiptSha256) |
+    Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0
+$hasRewireReceipt = [bool]$RewireReceiptPath -or [bool]$RewireReceiptSha256
+if (($hasSegmentSelection -and (-not $PrivateLanSegmentId -or -not $PrivateLanSegmentName -or
+            -not $PrivateLanSegmentReceiptPath -or $PrivateLanSegmentReceiptSha256 -cnotmatch '^[0-9a-f]{64}$')) -or
+    ([bool]$RewireReceiptPath -xor [bool]$RewireReceiptSha256) -or
+    ($hasRewireReceipt -and -not $hasSegmentSelection)) {
+    throw 'Private LAN transition selectors must include the exact segment and independently retained receipt digests.'
+}
+if ($Mode -eq 'RewirePrivateLan' -and (-not $hasSegmentSelection -or $hasRewireReceipt -or
+        -not $BootReceiptPath -or $BootReceiptSha256 -cnotmatch '^[0-9a-f]{64}$')) {
+    throw 'RewirePrivateLan requires original creation, baseline, installed-boot, and private LAN segment selectors.'
+}
+if ($hasRewireReceipt -and $Mode -notin @('AdmitConsole', 'ResumeInstalled', 'Cleanup')) {
+    throw 'Private LAN rewire selectors are valid only for later installed-VM admission or cleanup.'
+}
+if (($Mode -in @('AdmitConsole', 'ResumeInstalled', 'Cleanup')) -and $hasSegmentSelection -ne $hasRewireReceipt) {
+    throw 'Later installed-VM admission and cleanup require both the original segment and rewire receipt selectors.'
+}
+if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'RewirePrivateLan', 'Verify', 'BootInstalled', 'ResumeInstalled', 'ResumeInstaller')) {
     $vmxPin = $null
     $rootPin = $null
     $isoPin = $null
     $storagePins = [Collections.Generic.List[object]]::new()
     try {
-        if ($Mode -eq 'ResumeInstalled' -and (-not $BootReceiptPath -or $BootReceiptSha256 -cnotmatch '^[0-9a-f]{64}$')) {
-            throw 'ResumeInstalled requires the independently preserved installed-boot receipt and SHA-256.'
+        if ($Mode -in @('ResumeInstalled', 'RewirePrivateLan') -and (-not $BootReceiptPath -or $BootReceiptSha256 -cnotmatch '^[0-9a-f]{64}$')) {
+            throw "$Mode requires the independently preserved installed-boot receipt and SHA-256."
         }
         if ($Mode -eq 'AdmitNetwork' -and (-not $BootReceiptPath -or $BootReceiptSha256 -cnotmatch '^[0-9a-f]{64}$' -or
                 $NetworkVmnet -notmatch '^vmnet[0-9]{1,3}$')) {
@@ -1034,7 +1290,7 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
             if ([Atlaso.WorkstationFileIdentity]::Get($context.VmxPath) -cne $admittedVmxIdentity) {
                 throw 'Installation VMX identity changed while its console pin was acquired.'
             }
-            if ($BootReceiptPath -or $BootReceiptSha256) {
+            if (($BootReceiptPath -or $BootReceiptSha256) -and -not $hasRewireReceipt) {
                 throw 'AdmitConsole requires the initial connected installation ISO.'
             }
         }
@@ -1067,6 +1323,24 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
                 -ExpectedIdentity $admittedVmxIdentity
             $vmxLines = @($vmxText -split "`r?`n")
             $networkBinding = $null
+            $privateLanSegment = $null
+            if ($hasRewireReceipt -and $Mode -eq 'AdmitConsole') {
+                $boot = Read-AtlasoTestVmSealedRecord -Context $context -Path $BootReceiptPath -Sha256 $BootReceiptSha256 `
+                    -Phase 'installation-boot-without-media'
+                $privateLanSegment = Read-InstallationPrivateLanSegment -Context $context -Path $PrivateLanSegmentReceiptPath `
+                    -Sha256 $PrivateLanSegmentReceiptSha256 -Name $PrivateLanSegmentName -Id $PrivateLanSegmentId
+                $rewire = Read-AtlasoTestVmSealedRecord -Context $context -Path $RewireReceiptPath -Sha256 $RewireReceiptSha256 `
+                    -Phase 'installation-private-lan-rewire'
+                $rewireIntent = Read-AtlasoTestVmSealedRecord -Context $context -Path $rewire.intent_path -Sha256 $rewire.intent_sha256 `
+                    -Phase 'installation-private-lan-rewire-pending'
+                $currentBytes = [IO.File]::ReadAllBytes($context.VmxPath)
+                Assert-InstallationPrivateLanTransition -Context $context -Original $original -Boot $boot -Rewire $rewire `
+                    -Intent $rewireIntent -IntentPath $rewire.intent_path -IntentSha256 $rewire.intent_sha256 `
+                    -Selectors @{ OriginalReceiptPath = [IO.Path]::GetFullPath($OriginalReceiptPath); OriginalReceiptSha256 = $OriginalReceiptSha256
+                        BootReceiptPath = [IO.Path]::GetFullPath($BootReceiptPath); BootReceiptSha256 = $BootReceiptSha256
+                        PrivateLanSegmentReceiptPath = $privateLanSegment.Path; PrivateLanSegmentReceiptSha256 = $privateLanSegment.Sha256 } `
+                    -VmxBytes $currentBytes -CurrentVmxIdentity $admittedVmxIdentity -Segment $privateLanSegment.Record
+            }
             if ($Mode -eq 'AdmitNetwork') {
                 $boot = Read-AtlasoTestVmSealedRecord -Context $context -Path $BootReceiptPath -Sha256 $BootReceiptSha256 `
                     -Phase 'installation-boot-without-media'
@@ -1082,6 +1356,12 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
                 $networkBinding = Assert-InstallationNetworkBindings -VmxLines $vmxLines -Context $context -IsoPath $isoPath `
                     -Vmnet $NetworkVmnet -NetworkInventory $networkInventory
                 $serialPath = $networkBinding.SerialPipePath
+            }
+            elseif ($hasRewireReceipt -and $Mode -eq 'AdmitConsole') {
+                $serialLines = @($vmxLines | Where-Object { $_ -cmatch '^serial0\.fileName\s*=\s*"(?<pipe>[^"\r\n]+)"$' })
+                if ($serialLines.Count -ne 1) { throw 'Private LAN console admission requires its exact existing serial endpoint.' }
+                $serialPath = [regex]::Match($serialLines[0], '^serial0\.fileName\s*=\s*"(?<pipe>[^"\r\n]+)"$').Groups['pipe'].Value
+                Assert-InstallationSerialPipePath -Path $serialPath
             }
             else {
                 $serialPath = Assert-InstallationConsoleBindings -VmxLines $vmxLines -Context $context -IsoPath $isoPath
@@ -1121,6 +1401,10 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
                 BaselineReceiptSha256 = $BaselineReceiptSha256
                 BootReceiptPath = $BootReceiptPath
                 BootReceiptSha256 = $BootReceiptSha256
+                PrivateLanRewireReceiptPath = $RewireReceiptPath
+                PrivateLanRewireReceiptSha256 = $RewireReceiptSha256
+                PrivateLanSegmentReceiptPath = if ($privateLanSegment) { $privateLanSegment.Path } else { $PrivateLanSegmentReceiptPath }
+                PrivateLanSegmentReceiptSha256 = if ($privateLanSegment) { $privateLanSegment.Sha256 } else { $PrivateLanSegmentReceiptSha256 }
             }
             if ($Mode -eq 'AdmitNetwork') { $admissionResult['Network'] = $networkBinding }
             [pscustomobject]$admissionResult
@@ -1128,6 +1412,7 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
         }
         $vmxLines = @((Read-InstallationVmxText -Path $context.VmxPath) -split "`r?`n")
         Assert-InstallationVmDiskBindings -VmxLines $vmxLines -Context $context -IsoPath ([string]$original.installation_iso.path)
+        $boot = $null
         if ($BootReceiptPath -or @($vmxLines | Where-Object { $_ -ceq 'sata0:0.present = "FALSE"' }).Count -gt 0) {
             $boot = Read-AtlasoTestVmSealedRecord -Context $context -Path $BootReceiptPath -Sha256 $BootReceiptSha256 `
                 -Phase 'installation-boot-without-media'
@@ -1140,7 +1425,29 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
                 throw 'Installed boot recovery is not bound to this original VM and its disconnected media.'
             }
         }
-        if (-not $PSCmdlet.ShouldProcess($context.VmxPath, 'Stop the receipt-bound installation VM and compare disk contents')) {
+        $privateLanSegment = $null
+        if ($Mode -eq 'RewirePrivateLan' -or $hasRewireReceipt) {
+            $privateLanSegment = Read-InstallationPrivateLanSegment -Context $context -Path $PrivateLanSegmentReceiptPath `
+                -Sha256 $PrivateLanSegmentReceiptSha256 -Name $PrivateLanSegmentName -Id $PrivateLanSegmentId
+            if (-not $boot -or [string]$boot.after_sha256 -cnotmatch '^[0-9a-f]{64}$') {
+                throw 'Private LAN transition requires the exact original installed-boot configuration digest.'
+            }
+        }
+        if ($hasRewireReceipt -and $Mode -eq 'ResumeInstalled') {
+            $rewire = Read-AtlasoTestVmSealedRecord -Context $context -Path $RewireReceiptPath -Sha256 $RewireReceiptSha256 `
+                -Phase 'installation-private-lan-rewire'
+            $rewireIntent = Read-AtlasoTestVmSealedRecord -Context $context -Path $rewire.intent_path -Sha256 $rewire.intent_sha256 `
+                -Phase 'installation-private-lan-rewire-pending'
+            $currentBytes = [IO.File]::ReadAllBytes($context.VmxPath)
+            Assert-InstallationPrivateLanTransition -Context $context -Original $original -Boot $boot -Rewire $rewire `
+                -Intent $rewireIntent -IntentPath $rewire.intent_path -IntentSha256 $rewire.intent_sha256 `
+                -Selectors @{ OriginalReceiptPath = [IO.Path]::GetFullPath($OriginalReceiptPath); OriginalReceiptSha256 = $OriginalReceiptSha256
+                    BootReceiptPath = [IO.Path]::GetFullPath($BootReceiptPath); BootReceiptSha256 = $BootReceiptSha256
+                    PrivateLanSegmentReceiptPath = $privateLanSegment.Path; PrivateLanSegmentReceiptSha256 = $privateLanSegment.Sha256 } `
+                    -VmxBytes $currentBytes -CurrentVmxIdentity $admittedVmxIdentity -Segment $privateLanSegment.Record
+        }
+        $action = if ($Mode -eq 'RewirePrivateLan') { 'Rewire the stopped receipt-bound installation VM to its private LAN segment' } else { 'Stop the receipt-bound installation VM and compare disk contents' }
+        if (-not $PSCmdlet.ShouldProcess($context.VmxPath, $action)) {
             return
         }
         Assert-AtlasoTestVmCheckoutSource -Context $context
@@ -1172,6 +1479,78 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
             $disk = @($baseline.disks | Where-Object { $_.role -ceq $role })
             if ($disk.Count -ne 1) { throw "Disk-baseline receipt must contain exactly one $role disk." }
             Assert-InstallationDiskUnchanged -Disk $disk[0] -Role $role -OutputDirectory $context.OutputDirectory -QemuImg $qemuImg
+        }
+        $privateLanRewirePublished = $null
+        if ($Mode -eq 'RewirePrivateLan') {
+            $writer = $null
+            try {
+                $vmxIdentity = [Atlaso.WorkstationFileIdentity]::Get($context.VmxPath)
+                $vmxPin.Dispose()
+                $vmxPin = $null
+                Confirm-AtlasoWorkstationVmInactive -VmrunPath $vmrun -VmxPath $context.VmxPath -ExpectedIdentity $vmxIdentity
+                $writer = [IO.File]::Open($context.VmxPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
+                if ($writer.Length -gt 1048576 -or [Atlaso.WorkstationFileIdentity]::Get($context.VmxPath) -cne $vmxIdentity) {
+                    throw 'Stopped installation VMX changed before its private LAN transition.'
+                }
+                $before = [byte[]]::new([int]$writer.Length)
+                $writer.ReadExactly($before)
+                $beforeSha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($before)).ToLowerInvariant()
+                if ($beforeSha -cne [string]$boot.after_sha256) {
+                    throw 'Private LAN transition can only start from the exact original installed-boot VMX configuration.'
+                }
+                $beforeText = (Get-InstallationVmxEncoding -Bytes $before).GetString($before)
+                Assert-InstallationVmDiskBindings -VmxLines ($beforeText -split "`r?`n") -Context $context `
+                    -IsoPath ([string]$original.installation_iso.path)
+                $macMatches = @([regex]::Matches($beforeText, '(?m)^ethernet0\.generatedAddress\s*=\s*"(?<mac>(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})"\s*$'))
+                if ($macMatches.Count -ne 1) { throw 'Private LAN transition requires the installed boot VMX generated MAC to be present exactly once.' }
+                $afterText = ConvertTo-InstallationPrivateLanConfiguration -Text $beforeText -SegmentId $PrivateLanSegmentId
+                $encoding = Get-InstallationVmxEncoding -Bytes $before
+                $after = $encoding.GetBytes($afterText)
+                if ($after.Length -gt 1048576) { throw 'Private LAN transition VMX exceeds its bounded size.' }
+                $afterSha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($after)).ToLowerInvariant()
+                Assert-AtlasoTestVmCheckoutSource -Context $context
+                $context | Add-Member -NotePropertyName InvocationId -NotePropertyValue ([guid]::NewGuid().ToString('N')) -Force
+                $intent = [ordered]@{
+                    schema = 1; phase = 'installation-private-lan-rewire-pending'; task_id = $context.TaskId
+                    repository = $context.Repository; source_branch = $context.Branch; source_commit = $context.SourceCommit
+                    worktree = $context.Worktree; pull_request_number = $context.PullRequestNumber; local_builder = $context.LocalBuilder
+                    canonical_name = $context.Name; output_directory = $context.OutputDirectory; vmx_path = $context.VmxPath
+                    original_receipt_path = [IO.Path]::GetFullPath($OriginalReceiptPath); original_receipt_sha256 = $OriginalReceiptSha256
+                    baseline_receipt_path = [IO.Path]::GetFullPath($BaselineReceiptPath); baseline_receipt_sha256 = $BaselineReceiptSha256
+                    boot_receipt_path = [IO.Path]::GetFullPath($BootReceiptPath); boot_receipt_sha256 = $BootReceiptSha256
+                    segment_receipt_path = $privateLanSegment.Path; segment_receipt_sha256 = $privateLanSegment.Sha256
+                    segment_name = $PrivateLanSegmentName; segment_id = $PrivateLanSegmentId
+                    original_directory_identity = $original.original_identities.directory
+                    vmx_filesystem_identity = $vmxIdentity
+                    persistent_vm_identity_sha256 = $original.persistent_vm_identity_sha256
+                    vmx_identity = $vmxIdentity; before_sha256 = $beforeSha; after_sha256 = $afterSha
+                    mac = $macMatches[0].Groups['mac'].Value.ToLowerInvariant()
+                    cleanup_tool = 'scripts/windows/vmware/test-installation-iso.ps1 -Mode Cleanup -Worktree <task-worktree> -OutputDirectory <original-output> -PullRequestNumber <owning-pr> -OriginalReceiptPath <original-path> -OriginalReceiptSha256 <original-digest> -BaselineReceiptPath <baseline-path> -BaselineReceiptSha256 <baseline-digest> -BootReceiptPath <boot-path> -BootReceiptSha256 <boot-digest> -PrivateLanSegmentId <segment-id> -PrivateLanSegmentName <segment-name> -PrivateLanSegmentReceiptPath <segment-path> -PrivateLanSegmentReceiptSha256 <segment-digest> -RewireReceiptPath <rewire-path> -RewireReceiptSha256 <rewire-digest>'
+                    created_utc = [DateTimeOffset]::UtcNow.ToString('o')
+                }
+                $intentPublished = Publish-AtlasoTestVmOwnershipRecord -Context $context -Record $intent -Kind installation-private-lan-intent
+                $transition = [ordered]@{}
+                foreach ($entry in $intent.GetEnumerator()) { $transition[$entry.Key] = $entry.Value }
+                $transition.phase = 'installation-private-lan-rewire'
+                $transition.intent_path = $intentPublished.Path
+                $transition.intent_sha256 = $intentPublished.Sha256
+                $transition.created_utc = [DateTimeOffset]::UtcNow.ToString('o')
+                $writer.Position = 0; $writer.Write($after, 0, $after.Length); $writer.SetLength($after.Length); $writer.Flush($true)
+                $writer.Position = 0
+                $readback = [byte[]]::new($after.Length); $writer.ReadExactly($readback)
+                if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($readback)).ToLowerInvariant() -cne $afterSha) {
+                    throw 'Private LAN VMX readback failed; preserve the transition intent and stopped VM.'
+                }
+                $privateLanRewirePublished = Publish-AtlasoTestVmOwnershipRecord -Context $context -Record $transition -Kind installation-private-lan-rewire
+                $transitionRecord = [pscustomobject]$transition
+                Assert-InstallationPrivateLanTransition -Context $context -Original $original -Boot $boot -Rewire $transitionRecord `
+                    -Intent $intent -IntentPath $intentPublished.Path -IntentSha256 $intentPublished.Sha256 `
+                    -Selectors @{ OriginalReceiptPath = [IO.Path]::GetFullPath($OriginalReceiptPath); OriginalReceiptSha256 = $OriginalReceiptSha256
+                        BootReceiptPath = [IO.Path]::GetFullPath($BootReceiptPath); BootReceiptSha256 = $BootReceiptSha256
+                        PrivateLanSegmentReceiptPath = $privateLanSegment.Path; PrivateLanSegmentReceiptSha256 = $privateLanSegment.Sha256 } `
+                    -VmxBytes $readback -CurrentVmxIdentity ([Atlaso.WorkstationFileIdentity]::Get($context.VmxPath)) -Segment $privateLanSegment.Record
+            }
+            finally { if ($writer) { $writer.Dispose() } }
         }
         if ($MarkInterrupted) {
             Assert-AtlasoTestVmCheckoutSource -Context $context
@@ -1295,6 +1674,10 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'Resu
             LogicalContentsUnchanged = $true
             BootReceiptPath = if ($Mode -eq 'BootInstalled') { $published.Path } else { $BootReceiptPath }
             BootReceiptSha256 = if ($Mode -eq 'BootInstalled') { $published.Sha256 } else { $BootReceiptSha256 }
+            PrivateLanRewireReceiptPath = if ($privateLanRewirePublished) { $privateLanRewirePublished.Path } else { $RewireReceiptPath }
+            PrivateLanRewireReceiptSha256 = if ($privateLanRewirePublished) { $privateLanRewirePublished.Sha256 } else { $RewireReceiptSha256 }
+            PrivateLanSegmentReceiptPath = if ($privateLanSegment) { $privateLanSegment.Path } else { $PrivateLanSegmentReceiptPath }
+            PrivateLanSegmentReceiptSha256 = if ($privateLanSegment) { $privateLanSegment.Sha256 } else { $PrivateLanSegmentReceiptSha256 }
         }
     }
     finally {
@@ -1354,6 +1737,35 @@ if ($Mode -eq 'Cleanup') {
         & git -C $context.Worktree merge-base --is-ancestor ([string]$record.source_commit) ([string]$context.SourceCommit) 2>$null
         if ($LASTEXITCODE -ne 0) { throw 'Original installation receipt source is not an ancestor of the admitted checkout.' }
         Assert-AtlasoTestVmCheckoutSource -Context $context
+        if ($hasRewireReceipt) {
+            if (-not $BootReceiptPath -or $BootReceiptSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+                -not $BaselineReceiptPath -or $BaselineReceiptSha256 -cnotmatch '^[0-9a-f]{64}$') {
+                throw 'Private LAN cleanup admission requires the original disk-baseline and installed-boot receipts.'
+            }
+            $cleanupBaseline = Read-AtlasoTestVmSealedRecord -Context $context -Path $BaselineReceiptPath -Sha256 $BaselineReceiptSha256 `
+                -Phase 'installation-disk-baseline'
+            $cleanupBoot = Read-AtlasoTestVmSealedRecord -Context $context -Path $BootReceiptPath -Sha256 $BootReceiptSha256 `
+                -Phase 'installation-boot-without-media'
+            $cleanupSegment = Read-InstallationPrivateLanSegment -Context $context -Path $PrivateLanSegmentReceiptPath `
+                -Sha256 $PrivateLanSegmentReceiptSha256 -Name $PrivateLanSegmentName -Id $PrivateLanSegmentId
+            $cleanupRewire = Read-AtlasoTestVmSealedRecord -Context $context -Path $RewireReceiptPath -Sha256 $RewireReceiptSha256 `
+                -Phase 'installation-private-lan-rewire'
+            $cleanupIntent = Read-AtlasoTestVmSealedRecord -Context $context -Path $cleanupRewire.intent_path -Sha256 $cleanupRewire.intent_sha256 `
+                -Phase 'installation-private-lan-rewire-pending'
+            if ($cleanupBaseline.original_receipt_path -cne $OriginalReceiptPath -or
+                $cleanupBaseline.original_receipt_sha256 -cne $OriginalReceiptSha256 -or
+                $cleanupBoot.baseline_receipt_path -cne $BaselineReceiptPath -or
+                $cleanupBoot.baseline_receipt_sha256 -cne $BaselineReceiptSha256) {
+                throw 'Private LAN cleanup receipts are not bound to the selected original and disk baseline.'
+            }
+            $cleanupVmxBytes = [IO.File]::ReadAllBytes($context.VmxPath)
+            Assert-InstallationPrivateLanTransition -Context $context -Original $record -Boot $cleanupBoot -Rewire $cleanupRewire `
+                -Intent $cleanupIntent -IntentPath $cleanupRewire.intent_path -IntentSha256 $cleanupRewire.intent_sha256 `
+                -Selectors @{ OriginalReceiptPath = [IO.Path]::GetFullPath($OriginalReceiptPath); OriginalReceiptSha256 = $OriginalReceiptSha256
+                    BootReceiptPath = [IO.Path]::GetFullPath($BootReceiptPath); BootReceiptSha256 = $BootReceiptSha256
+                    PrivateLanSegmentReceiptPath = $cleanupSegment.Path; PrivateLanSegmentReceiptSha256 = $cleanupSegment.Sha256 } `
+                -VmxBytes $cleanupVmxBytes -CurrentVmxIdentity ([Atlaso.WorkstationFileIdentity]::Get($context.VmxPath)) -Segment $cleanupSegment.Record
+        }
         if ($PSCmdlet.ShouldProcess($context.OutputDirectory, 'Remove receipt-bound installation test VM')) {
             $remover = Join-Path $PSScriptRoot 'remove-atlaso-vm.ps1'
             & $remover -VmxPath $context.VmxPath -VmrunPath $VmrunPath -ExpectedName $context.Name `

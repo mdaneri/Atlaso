@@ -92,6 +92,8 @@ operations.
 
 For native same-address static-to-DHCP management acceptance, use the
 [same-address lifecycle mode](docs/reference/vmware-workstation-lifecycle-testing.md#same-address-acceptance).
+For ISO appliance address changes, use the explicit
+[trusted-host certificate lab procedure](docs/reference/certificate-address-control.md).
 
 - [Documentation](https://mdaneri.github.io/Atlaso/docs/) — browse the published Atlaso documentation.
 - [Getting started](docs/getting-started/index.md) — choose an appliance path and complete initial configuration.

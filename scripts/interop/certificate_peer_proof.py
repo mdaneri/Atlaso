@@ -27,10 +27,36 @@ from certificate_peer_transport import (  # noqa: E402 - The pinned sibling modu
     PinnedApplianceSession,
     PinnedPeerTransport,
 )
+from certificate_retirement import (
+    Refusal as RetirementRefusal,  # noqa: E402 - Pinned sibling module.
+)
+from certificate_retirement import (
+    verify_peer_isolation,  # noqa: E402 - Pinned sibling module.
+)
+from certificate_trusted_host import (
+    Refusal as HostRefusal,  # noqa: E402 - Pinned sibling module.
+)
+from certificate_trusted_host import (  # noqa: E402 - Pinned sibling module.
+    assert_same_topology,
+    inspect_trusted_host,
+)
 
 
 class Refusal(Exception):
     """Fixed non-secret reason that prevents any controlled-address claim."""
+
+
+def plan_pr(plan: dict) -> int:
+    """Select a positive task PR only for explicit trusted-host admission.
+
+    Args:
+        plan: Original task-bound certificate plan.
+    """
+    number = plan.get("pr", 871)
+    if (not isinstance(number, int) or isinstance(number, bool) or number <= 0
+            or (plan.get("trust_model") != "trusted-host" and number != 871)):
+        raise Refusal("proof_plan_invalid")
+    return number
 
 
 def digest(payload: bytes) -> str:
@@ -85,6 +111,8 @@ def original_vm(plan: dict, role: str, vmx_path: str) -> dict:
     intent = bound_json(intent_reference)
     ownership = bound_json(ownership_reference)
     root = Path(vmx_path).parent
+    if plan.get("trust_model") == "trusted-host" and role == "appliance" and ownership.get("phase") == "original-installation-vm-created":
+        return original_iso_vm(plan, intent, ownership, ownership_reference, root, vmx_path)
     if (
         intent.get("schema") != 1
         or intent.get("kind") != "vm-creation-intent"
@@ -92,7 +120,7 @@ def original_vm(plan: dict, role: str, vmx_path: str) -> dict:
         or ownership.get("kind") != "vm"
         or ownership.get("intent_sha256") != intent_reference["sha256"]
         or any(item.get("task_id") != plan["task_id"] for item in (intent, ownership))
-        or any(item.get("repository") != "mdaneri/Atlaso" or item.get("pr") != 871 for item in (intent, ownership))
+        or any(item.get("repository") != "mdaneri/Atlaso" or item.get("pr") != plan_pr(plan) for item in (intent, ownership))
         or any(item.get("path") != vmx_path or item.get("root_path") != str(root) for item in (intent, ownership))
         or intent.get("source_commit") != ownership.get("source_commit")
     ):
@@ -102,6 +130,64 @@ def original_vm(plan: dict, role: str, vmx_path: str) -> dict:
     with WindowsFiles().opened(root, directory=True) as (_, identity, _):
         if list(identity) != ownership.get("root_identity"):
             raise Refusal("original_vm_directory_changed")
+    return ownership
+
+
+def original_iso_vm(plan: dict, intent: dict, ownership: dict, reference: dict, root: Path, vmx: str) -> dict:
+    """Admit original installer receipts without relabelling their identity.
+
+    Args:
+        plan: Task-bound plan containing the original installed-boot reference.
+        intent: Original pre-creation installation intent.
+        ownership: Original installation VM receipt.
+        reference: Independently preserved original ownership path and digest.
+        root: Exact recorded VM directory.
+        vmx: Exact recorded VMX path.
+    """
+    boot = bound_json(plan["appliance_installed_boot"])
+    transition = bound_json(plan["iso_private_lan_rewire"])
+    transition_intent = bound_json(plan["iso_private_lan_intent"])
+    for record in (intent, ownership, boot):
+        if (record.get("schema") != 1 or record.get("task_id") != plan["task_id"]
+                or record.get("repository") != "mdaneri/Atlaso"
+                or record.get("pull_request_number") != plan_pr(plan)
+                or record.get("vmx_path") != vmx or record.get("output_directory") != str(root)
+                or record.get("source_commit") != ownership.get("source_commit")):
+            raise Refusal("original_iso_vm_binding_mismatch")
+    if (intent.get("phase") != "installation-pending"
+            or ownership.get("intent_sha256") != plan["appliance_intent"]["sha256"]
+            or boot.get("phase") != "installation-boot-without-media"
+            or boot.get("original_receipt_sha256") != reference["sha256"]
+            or boot.get("original_receipt_path") != reference.get("original_path", reference["path"])
+            or not ownership.get("installation_iso", {}).get("sha256")):
+        raise Refusal("original_iso_boot_binding_mismatch")
+    boot_reference = plan["appliance_installed_boot"]
+    intent_reference = plan["iso_private_lan_intent"]
+    for record in (transition, transition_intent):
+        if (record.get("schema") != 1 or record.get("task_id") != plan["task_id"]
+                or record.get("repository") != "mdaneri/Atlaso"
+                or record.get("pull_request_number") != plan_pr(plan)
+                or record.get("vmx_path") != vmx or record.get("output_directory") != str(root)
+                or record.get("original_receipt_sha256") != reference["sha256"]
+                or record.get("original_receipt_path") != reference.get("original_path", reference["path"])
+                or record.get("boot_receipt_sha256") != boot_reference["sha256"]
+                or record.get("boot_receipt_path") != boot_reference.get("original_path", boot_reference["path"])
+                or record.get("original_directory_identity") != ownership.get("original_identities", {}).get("directory")
+                or record.get("mac") != plan["trusted_host"]["appliance_private_adapter"]["mac"]
+                or record.get("segment_id") != plan["trusted_host"]["segment_id"]):
+            raise Refusal("original_iso_private_lan_binding_mismatch")
+    if (transition.get("phase") != "installation-private-lan-rewire"
+            or transition_intent.get("phase") != "installation-private-lan-rewire-pending"
+            or transition.get("intent_sha256") != intent_reference["sha256"]
+            or transition.get("intent_path") != intent_reference.get("original_path", intent_reference["path"])
+            or transition.get("source_commit") != transition_intent.get("source_commit")
+            or not re.fullmatch(r"[0-9a-f]{40}", str(transition.get("source_commit", "")))):
+        raise Refusal("original_iso_private_lan_intent_mismatch")
+    from scripts.completed_task_files import WindowsFiles
+    with WindowsFiles().opened(root, directory=True) as (_, identity, _):
+        formatted = f"{identity[0]:08X}:{identity[1]:08X}{identity[2]:08X}"
+        if formatted != ownership.get("original_identities", {}).get("directory"):
+            raise Refusal("original_iso_vm_directory_changed")
     return ownership
 
 
@@ -134,7 +220,7 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
         or fixture.get("kind") != "certificate-dhcp-peer-fixture"
         or fixture.get("task_id") != plan["task_id"]
         or fixture.get("repository") != "mdaneri/Atlaso"
-        or fixture.get("pr") != 871
+        or fixture.get("pr") != plan_pr(plan)
         or fixture.get("address_ownership_state") != "awaiting-live-readback"
         or not fixture.get("private_network", "").startswith("lan:")
     ):
@@ -168,7 +254,7 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
         segment.get("schema") != 1
         or segment.get("task_id") != plan["task_id"]
         or segment.get("repository") != "mdaneri/Atlaso"
-        or segment.get("pr") != 871
+        or segment.get("pr") != plan_pr(plan)
         or segment.get("source_commit") != fixture["source_commit"]
         or segment.get("name") != fixture["private_network"][4:]
         or segment.get("pvn_id") != fixture["lan_segment_id"]
@@ -179,7 +265,7 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
     if any(
         adapter.get("connectiontype") != "pvn" or adapter.get("pvnid") != segment["pvn_id"]
         for adapter in (appliance_adapter, peer_adapter)
-    ) or appliance_adapter.get("address", "").lower() != fixture["appliance_mac"].lower():
+    ) or appliance_adapter.get("address", appliance_adapter.get("generatedaddress", "")).lower() != fixture["appliance_mac"].lower():
         raise Refusal("private_vmx_topology_mismatch")
     bootstrap = bound_json(plan["bootstrap_runtime"])
     rewire_intent = bound_json(plan["rewire_intent"])
@@ -195,7 +281,7 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
         or identity.get("kind") != "certificate-peer-original-identity"
         or identity.get("task_id") != plan["task_id"]
         or identity.get("repository") != "mdaneri/Atlaso"
-        or identity.get("pr") != 871
+        or identity.get("pr") != plan_pr(plan)
         or identity.get("peer_vmx") != fixture["peer_vmx"]
         or identity.get("peer_ownership_sha256") != fixture["peer_ownership_sha256"]
         or identity.get("peer_fixture_sha256") != plan["peer_fixture"]["sha256"]
@@ -240,6 +326,18 @@ def admit_receipts(plan: dict) -> tuple[dict, dict]:
         or rewire.get("deployed_commit") != plan["deployed_commit"]
     ):
         raise Refusal("runtime_rewire_chain_invalid")
+    if plan.get("trust_model") == "trusted-host":
+        host = plan.get("trusted_host", {})
+        if (host.get("appliance_vmx") != fixture["appliance_vmx"]
+                or host.get("peer_vmx") != fixture["peer_vmx"]
+                or host.get("segment_id") != segment["pvn_id"]
+                or host.get("segment_receipt") != {"path": fixture["lan_segment_receipt"], "sha256": fixture["lan_segment_receipt_sha256"]}):
+            raise Refusal("trusted_host_fixture_binding_mismatch")
+        try:
+            inspect_trusted_host(plan)
+        except HostRefusal:
+            raise Refusal("trusted_host_topology_unproven") from None
+        return fixture, rewire
     # The available VMX/lease evidence cannot enumerate every current PVN
     # attachment or detect a static-address/MAC impostor on that segment.
     # Refuse both the no-credential preflight and any handoff admission until
@@ -255,6 +353,9 @@ def read_native(plan: dict, fixture: dict, peer: PinnedPeerTransport, appliance:
         fixture: Verified native fixture for this run.
         peer: Pinned private-LAN peer transport.
         appliance: Pinned appliance transport."""
+    trusted = plan.get("trust_model") == "trusted-host"
+    topology = inspect_trusted_host(plan) if trusted else None
+    isolation = verify_peer_isolation(peer) if trusted else None
     network = ipaddress.IPv4Interface(fixture["peer_cidr"])
     baseline = str(ipaddress.IPv4Address(plan["baseline_address"]))
     candidate = str(ipaddress.IPv4Address(plan["static_candidate_address"]))
@@ -314,9 +415,9 @@ def read_native(plan: dict, fixture: dict, peer: PinnedPeerTransport, appliance:
             raise Refusal("peer_routed_baseline_https_failed")
     finally:
         connection.close()
-    return {
+    result = {
         "schema": 1, "kind": "certificate-private-address-proof", "phase": "static-baseline-preflight",
-        "task_id": plan["task_id"], "repository": "mdaneri/Atlaso", "pr": 871,
+        "task_id": plan["task_id"], "repository": "mdaneri/Atlaso", "pr": plan_pr(plan),
         "vmx_path": fixture["appliance_vmx"], "addresses": [candidate, dhcp],
         "address_ownership_state": "unproven",
         "baseline_address": baseline, "baseline_interface": "eth0", "appliance_mac": mac,
@@ -330,6 +431,12 @@ def read_native(plan: dict, fixture: dict, peer: PinnedPeerTransport, appliance:
         "ca_sha256": plan["ca_sha256"].lower(),
         "peer_routed_baseline_https": "explicit-ca-and-ip-hostname-verified",
     }
+    if trusted:
+        assert_same_topology(topology, inspect_trusted_host(plan))
+        result.update(trust_model="trusted-host", address_ownership_state="trusted-host-controlled",
+                      trusted_host_topology=topology, peer_isolation=isolation,
+                      candidate_observation_limit="Controlled lab on a trusted host; adversarial address exclusion is not established.")
+    return result
 
 
 def admit_output(plan: dict, address_path: Path, runtime_path: Path) -> None:
@@ -383,7 +490,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
-        if plan.get("schema") != 1 or plan.get("pr") != 871 or not plan.get("task_id"):
+        if plan.get("schema") != 1 or not plan.get("task_id") or plan_pr(plan) != plan.get("pr"):
             raise Refusal("proof_plan_invalid")
         address_path = Path(args.address_output).resolve(strict=False)
         runtime_path = Path(args.runtime_output).resolve(strict=False)
@@ -405,7 +512,11 @@ def main() -> int:
                 admin_password, plan["appliance_ssh_host_key"],
             ) as appliance:
                 proof = read_native(plan, fixture, peer, appliance)
-        if (proof.get("address_ownership_state") != "proven-controlled"
+        trusted = plan.get("trust_model") == "trusted-host"
+        if trusted:
+            if proof.get("trust_model") != "trusted-host" or proof.get("address_ownership_state") != "trusted-host-controlled":
+                raise Refusal("trusted_host_address_observations_unproven")
+        elif (proof.get("address_ownership_state") != "proven-controlled"
                 or proof.get("exclusive_attachment_state") != "verified-current"
                 or proof.get("candidate_conflict_state") != "clear-current"):
             raise Refusal("exclusive_private_lan_and_candidate_ownership_unproven")
@@ -413,15 +524,15 @@ def main() -> int:
         controlled = dict(rewire)
         controlled.update(
             kind="certificate-controlled-runtime", url=f"https://{plan['baseline_address']}",
-            observed_address=plan["baseline_address"], address_ownership_state="proven-controlled",
+            observed_address=plan["baseline_address"], address_ownership_state=proof["address_ownership_state"],
             address_proof_sha256=proof_sha, rewired_runtime_sha256=plan["rewired_runtime"]["sha256"],
         )
         runtime_sha = publish(runtime_path, controlled)
         print(json.dumps({"address_evidence": {"path": str(address_path), "sha256": proof_sha},
                           "runtime_evidence": {"path": str(runtime_path), "sha256": runtime_sha}}))
         return 0
-    except (Refusal, PeerTransportRefusal, OSError, KeyError, ValueError, TypeError, json.JSONDecodeError) as exc:
-        reason = str(exc) if isinstance(exc, (Refusal, PeerTransportRefusal)) else "proof_input_or_readback_invalid"
+    except (Refusal, HostRefusal, RetirementRefusal, PeerTransportRefusal, OSError, KeyError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        reason = str(exc) if isinstance(exc, (Refusal, HostRefusal, RetirementRefusal, PeerTransportRefusal)) else "proof_input_or_readback_invalid"
         print(json.dumps({"success": False, "reason": reason}))
         return 2
 

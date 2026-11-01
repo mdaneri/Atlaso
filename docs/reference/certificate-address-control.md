@@ -1,6 +1,6 @@
 ---
 title: Certificate handoff address-control procedure
-description: Human-maintainer acceptance procedure for certificate handoff when native address proof is unavailable.
+description: Trusted-host VMware procedure for certificate address handoff acceptance.
 audience:
   - maintainer
 status: current
@@ -8,26 +8,28 @@ status: current
 
 # Certificate handoff address-control procedure
 
-This procedure defines a human-maintainer acceptance path for a certificate handoff lab while the current Atlaso
-VMware Workstation producer cannot produce machine-admissible proof that a candidate management address is exclusively
-controlled. It permits a
-maintainer to collect reviewable lab evidence through Atlaso's supported interface and Appliance Apply workflow. It
-does not make that evidence admissible to `certificate_handoff_native.py` or unlock either credentialed wrapper.
+This procedure defines a trusted-host acceptance path for certificate address handoff on an ISO-installed appliance.
+It uses one task-owned Workstation appliance and one task-owned Linux peer attached to the same dedicated private LAN
+segment. The maintainer trusts the Windows Workstation host administrator to account for that host's VMs and to avoid
+changing the test topology during acceptance. The evidence supports a controlled lab result; it is not proof against
+the trusted host administrator or another administrator able to reconfigure Workstation.
+
+The appliance's test interface has no adapter outside this segment, and the segment has no bridge, NAT, host adapter,
+or routed connection to another network. The peer's other adapter, when used to reach the appliance through pinned SSH,
+stays on a separate management network; do not bridge or route it into the test segment. Only the appliance and peer
+may have adapters on the test segment. A different LAN member, VMX binding, source, certificate pin, receipt, or
+reservation invalidates the run.
 
 The acceptance cases below cover the existing fixture: one dedicated IPv4 management interface, `eth0`, with IPv6
 disabled and an explicitly configured static baseline. They do not establish Access-management acceptance for #852 or
 support for other interface roles or address families.
 
-## Authority and admission
+## Trusted host and admission
 
-The maintainer directing the lab must independently establish and enforce exclusive admission to the private LAN for
-the full interval from the first ownership observation through the final rollback verification. The maintainer must
-have authority over both the candidate address and the LAN admission boundary. A second qualified operator or an
-authoritative system outside the test VM and its peer must attest the observations and enforcement. Select a control
-that actually fences membership and prevents conflicting use of the candidate address, then record its configured
-rule and independent readback for the exact VM, peer, LAN, and address. An operator statement, signed or otherwise,
-without observable enforcement and readback is not proof. A receipt written by the test runner, an agent, or the VM
-owner alone is not independent proof.
+The trusted-host boundary is the human maintainer with authority over the Workstation host, its VM inventory, VMX
+files, LAN segment registration, and test task. That maintainer can authorize the test, observe the host state, and
+keep other host operators from changing the topology during the run. Acceptance assumes this administrator follows
+the recorded procedure. It does not claim an independent hypervisor control plane or protection from that administrator.
 
 This procedure covers the current native scenario only: one IPv4 dedicated-management interface named eth0, with IPv6
 disabled. It does not establish acceptance for another interface, role, address family, or access-management
@@ -45,9 +47,9 @@ Before any appliance configuration change, establish all of the following:
   source; retain the verified built-wheel digest from the admitted runtime record.
 
 - The lab is authorized, isolated, and tied to the exact repository, issue, pull request, reviewed source commit, and
-  original task identity. Bind the exact appliance VMX and VM root identity to its immutable original creation-intent
-  and ownership receipts. Record the original receipt paths and SHA-256 digests in durable evidence outside any
-  disposable VM directory.
+  original task identity. Bind the exact ISO appliance VMX and root identity to immutable original creation-intent
+  and ownership receipts. Preserve original appliance receipts, paths, and SHA-256 digests in durable evidence
+  outside every disposable VM directory.
 - Before any appliance SSH readback or mutation, capture its public SSH host-key fingerprint through the authorized
   console of the exact admitted VM, independently matched to its original VMX, root identity, and ownership receipt.
   Record that fingerprint, its observation source/time, and receipt binding in the durable evidence. Require strict
@@ -58,56 +60,83 @@ Before any appliance configuration change, establish all of the following:
 - The appliance adapter and candidate interface are the intended ones. Record the VMX adapter-to-LAN mapping, the
   observed appliance MAC and interface, the candidate IPv4 address and prefix, gateway, and the prior static
   management configuration.
-- The peer is independently admitted as a task-owned resource. Bind its original creation and source-disk identity,
+- The Linux peer is a task-owned resource. Bind its original creation and source-disk identity,
   private-LAN adapter, address, and pinned SSH host-key fingerprint. Record the original peer creation-receipt path
 and digest, selected source-disk path and digest, and public SSH key fingerprint used for admission. Never put a
 private key, password, token, authenticated URL, or other secret in evidence.
-- The private LAN identity is bound to its original creation or authoritative inventory record and original digest.
-  Record its provider identity and the enforcing attachment boundary. Prove that every attached endpoint is accounted
-  for and that no other endpoint can join or claim the candidate address during the operation.
-- An authoritative reservation or equivalent enforcement prevents other claimants from using the candidate address.
-  The source must be independent of the guest's address report and peer configuration. Retain the source record,
-  operator identity, observation time, and a digest or verifiable reference.
+- The test LAN is a newly created, task-owned Workstation LAN segment. Bind its ID and name to its original creation
+  receipt and SHA-256. Read back both appliance and peer VMX adapter assignments, including the segment ID and MAC.
+  Inventory Workstation VMs and task VM roots known to the host; verify that exactly these two VM identities reference
+  the segment. Check the appliance and peer adapters are connected, and verify the appliance has no other connected
+  adapter. Record the inventory and adapter readbacks with observation time. The host administrator attests that this
+  inventory covers the host's VM locations and prevents untracked host operators from adding a member during the run.
+- Select and record an unused private candidate address and a distinct peer address. Reserve the candidate for the
+  admitted appliance MAC in the peer's bounded DHCP configuration, or record the equivalent fixed-address plan. The
+  peer's DHCP service binds only to its test-segment adapter and leases only the admitted appliance MAC. Verify the
+  running configuration and current lease from the pinned peer. Do not treat an unresponsive address, VMware Tools
+  address, or a lease alone as proof that a machine is attached to the segment.
 - The appliance's original HTTPS certificate identity, trusted public CA digest, interface fields, route, and DNS
   baseline are captured through the normal authenticated Atlaso interface. Keep only public certificate material and
   sanitized observations.
 
-An address that does not answer ARP or ICMP is not thereby unused. A quiet DHCP lease table, MAC-derived address,
-VMware Tools address, guest route, or vmrun inventory does not prove exclusive current LAN membership or exclude
-another claimant. Do not proceed if the independent source cannot account for all attachments, enforce admission,
-reserve the address, or observe those facts continuously. The [VMware Workstation
-API](https://developer.broadcom.com/xapis/vmware-workstation-pro-api/latest/)
-documents per-VM adapters and IP information, networks, DHCP MAC settings, and VM identities and paths; those
-observations alone do not establish an enforced exclusive attachment or exclude a static-address claimant. Any
-platform mechanism used must be demonstrated on the actual lab. A switch port fence, controlled virtual-switch
-membership, or authoritative reservation service are examples of required capabilities, not claims that a
-particular installation provides them.
-
-Keep the independent admission control active from the initial observation through both the test and restoration.
-Recheck the attachment inventory, reservation, and claimant state before each Apply and after each address transition.
-Stop before another change if any check is unavailable or differs. Any membership, reservation, appliance or peer
-trust, VM,
-source,
-route, or candidate-address drift invalidates the evidence. If the control boundary is interrupted, the VM reboots,
-the relevant task/source binding changes, or a verification interval is missed, treat the proof as stale and do not
-resume from the old receipt. Re-admit from original evidence before any new mutation.
+This procedure records the host administrator's bounded inventory and topology checks under an explicit trusted-host
+assumption. It does not infer an adversarial guarantee from VMware Tools or DHCP. Keep the test segment free of
+bridges, NAT, host adapters, and routes to other networks. Recheck the VM inventory, each adapter's LAN assignment,
+the address reservation, and current lease before and after every Apply transition. Watch for host and guest power,
+VMX, adapter, segment, route, or source changes throughout the run. If any check fails, changes, or cannot be repeated,
+stop before another Apply, preserve state, and invalidate the run; re-admit from the original receipts before retry.
 
 ## Maintainer evidence record
 
 Keep one append-only lab record in the maintainer-approved durable evidence location, outside the removable lab root.
 Record the task, issue, PR, repository, source commit, appliance and peer identities, LAN identity, address plan,
 original receipt digests, public CA digest, appliance and peer SSH host-key fingerprints or the verified appliance
-console binding, independent authority and source, and each
-observation and action in order. Preserve the original bytes of creation receipts; calculate and independently record
-their SHA-256 digests before use. Do not edit, relabel, or recreate them to match a later task or pull request.
+console binding, trusted-host inventory source, and each observation and action in order. Preserve the original
+bytes of creation receipts; calculate and record their SHA-256 digests before use. Do not edit, relabel, or recreate
+receipts from another task.
 
-The record is manually collected maintainer acceptance evidence. It is not a controlled native receipt, regardless of
-whether it is structured as JSON or signed. Current native admission binds VM ownership to PR #871 and requires an
-original address-proof receipt with exact task, VM, peer, LAN, CA, and runtime bindings. A manually authored record,
-an old PR #871 receipt, or a receipt with its PR/task fields rewritten cannot satisfy those checks. A future native
-producer must obtain each new task and PR identity from its owning admission path, bind the original receipts and
-independent address authority itself, and enforce the required live checks through rollback. Do not use the current
-credentialed wrappers for a new task until that producer is implemented and admitted by the native path.
+The trusted-host address-proof producer binds each run to its current task and PR, ISO appliance, peer, LAN creation
+receipt, source/runtime digests, public CA, SSH pins, address plan, and time-stamped topology observations. Receipts
+from the earlier PR #871 independent-control path remain bound to that task. The trusted-host mode is explicit and
+must not weaken legacy independent-control admission.
+
+When the reviewed harness advances after lab creation, retain the original receipt bytes and creation source in
+`resource_source_commit`; `source_commit` identifies the currently reviewed harness. Admission requires the creation
+source to remain an ancestor of that harness. Never change a receipt's source to match a later head.
+
+## Prepare the ISO appliance adapter
+
+Create and install the appliance through `invoke-installation-iso-test.ps1` with `-Scenario AutoReboot` and
+`-InspectInstalled`. Preserve its original creation, disk-baseline, installed-boot, and public identity evidence.
+The ordinary lifecycle `-CertificateOnly` clone does not establish ISO installation.
+
+After creating the task-owned peer and LAN through their admitted owning paths, stop the ISO appliance gracefully.
+Use its exact preserved selectors to attach its existing adapter to that segment; the command refuses an active VM,
+extra adapters, an unknown MAC, or mismatched original evidence:
+
+```powershell
+& ./scripts/windows/vmware/test-installation-iso.ps1 -Mode RewirePrivateLan `
+  -Worktree $worktree -OutputDirectory $applianceRoot -PullRequestNumber $pr `
+  -OriginalReceiptPath $originalPath -OriginalReceiptSha256 $originalSha256 `
+  -BaselineReceiptPath $baselinePath -BaselineReceiptSha256 $baselineSha256 `
+  -BootReceiptPath $bootPath -BootReceiptSha256 $bootSha256 `
+  -PrivateLanSegmentName $segmentName -PrivateLanSegmentId $segmentId `
+  -PrivateLanSegmentReceiptPath $segmentReceiptPath `
+  -PrivateLanSegmentReceiptSha256 $segmentReceiptSha256 -Confirm:$false
+```
+
+Retain the returned `PrivateLanRewireReceiptPath` and `PrivateLanRewireReceiptSha256`. Subsequent `AdmitConsole`,
+`ResumeInstalled`, and `Cleanup` operations take those values as `-RewireReceiptPath` and `-RewireReceiptSha256`,
+together with the original boot and segment selectors. This transition changes only the original adapter's attachment
+and connected state, preserving its generated MAC and all original ownership records.
+
+The native plan explicitly selects `trust_model: "trusted-host"` and `trusted_host.host_administrator_trusted: true`.
+Its `trusted_host` block records the exact `vmrun_path`, `inventory_path`, `preferences_path`, `segment_name`,
+`segment_id`, original `segment_receipt` path/hash, appliance and peer VMX paths, private adapter indices/MACs, and
+the peer control adapter's index, connection type, VMnet, and MAC. The producer inspects the union of registered and
+running VMs; a running VM omitted from the saved inventory still enters membership checks. Both admitted lab VMs must
+be running. The scenario samples host topology in the background and rechecks it around authenticated HTTP operations.
+Any observed drift remains a failure even if the original topology is later restored.
 
 ## Run and accept the static-address case
 
@@ -115,8 +144,9 @@ Use the standard Atlaso [Network configuration](../operate/networking.md) pages 
 Apply](../operate/appliance-apply.md) workflow for the admitted source. Match the reviewed native submission boundary:
 submit only units selected and validated by Apply review from the protected Network, CA, Firewall, Appliance Settings,
 and Public Services set. Do not include unrelated pending units. Do not use a local helper, direct database edit, ad
-hoc API caller, or a script that bypasses that workflow. Keep the appliance on its
-recorded static management baseline while establishing the peer control path and independent address fence.
+hoc API caller, or a script that bypasses that workflow. Keep the appliance on its recorded static management
+baseline while establishing the peer control path. Before changing it, record the host inventory, exact appliance
+and peer LAN membership, adapter bindings, addresses, peer reservation, CA, and trust pins.
 
 After admission is rechecked, open **Physical Interfaces** and set the selected management interface to the approved
 candidate static IPv4 address, prefix, and gateway. Review pending changes and submit the protected **Network** Apply
@@ -134,8 +164,8 @@ task identity, status, and sanitized failure details if any. Acceptance requires
 - The served public TLS identity is captured before and after the handoff. Report the actual certificate fingerprint
   and address coverage; do not claim observation of transient nginx certificate generations that were not directly
   observed.
-- The independent authority rechecks exclusive LAN membership, claimant absence, and reservation enforcement at the
-  candidate address after the transition.
+- The trusted-host administrator rechecks the two-member segment inventory, appliance adapter, peer reservation, and
+  active lease after the transition. Record the observation time; changed membership invalidates the run.
 
 Then restore the exact original static desired fields using the same editor and Apply review. Require the previous
 task to be terminal. If review returns units, submit its valid protected bundle, record the restoration task, and
@@ -144,8 +174,8 @@ ID. In either case, verify a clean applied baseline, the original address and ro
 HTTPS /openapi.json at the original address. The restoration may reissue the management certificate:
 validate its chain against the admitted public CA and confirm its IP subject alternative name covers the original
 address. Record the actual restored fingerprint and whether it differs from the original; exact fingerprint equality
-is not a static-restoration requirement. Recheck both SSH trust pins (or the admitted appliance console binding) and
-the independent LAN fence. Acceptance is
+is not a static-restoration requirement. Recheck both SSH trust pins (or the admitted appliance console binding),
+the two-member LAN inventory, peer reservation, and active lease. Acceptance is
 incomplete until both candidate and restored state are observed and the candidate address is retired using the
 native checks below.
 
@@ -153,13 +183,13 @@ native checks below.
 
 Run this case only from a proven static management baseline and only when the authoritative DHCP plan identifies a
 candidate lease that is not covered by the selected management certificate. Before mutation, record the exact
-expected DHCP IPv4 address and bind it to the original appliance MAC, peer reservation, independent address-control
-evidence, and task/VM/LAN identities. Recheck that same reservation before Apply; do not infer the expected address
+expected DHCP IPv4 address and bind it to the original appliance MAC, peer reservation, trusted-host address evidence,
+and task/VM/LAN identities. Recheck that same reservation before Apply; do not infer the expected address
 from a later acquired lease. Verify certificate selection and its fingerprint against the live appliance:https
 certificate before the test. After saving the DHCP desired state but
 before submitting Apply, verify again that the enabled appliance:https inventory row has the same ID and fingerprint
 captured at admission. Validate its public chain with the admitted CA and confirm that it does not cover the expected
-acquired address. The independent reservation and LAN admission controls remain active throughout.
+acquired address. The trusted host keeps the LAN inventory stable and rechecks the peer reservation throughout.
 
 On **Physical Interfaces**, request DHCP for the selected management interface. Review pending changes and submit the
 protected **Network** Apply bundle with **Submit appliance changes**, including every dependency selected by review.
@@ -176,8 +206,8 @@ the management handoff rolled back. A failed task by itself is not acceptance. R
 - Readback confirms that no partial candidate management state remains applied. The original interface, route, DNS,
   and certificate baselines remain intact, and the certificate inventory still identifies the same selected public
   leaf. Verify that the acquired DHCP candidate is retired using the native checks below.
-- The independent authority confirms the address reservation and exclusive LAN membership remained enforced through
-  acquisition and rollback.
+- The trusted-host administrator records that the admitted appliance and peer remained the only LAN members and that
+  the expected-address reservation stayed unchanged through acquisition and rollback.
 
 Finally, restore the saved original static desired fields through **Physical Interfaces**, then open Apply review
 with the failed handoff task terminal. If review returns units, submit its valid protected bundle, record this
@@ -192,8 +222,9 @@ The expected certificate rejection and the successful restoration are distinct a
 
 ## Verify retired addresses natively
 
-For each retirement check, retain time-stamped guest and private-peer observations under the same independent LAN
-fence. Before each SSH readback, recheck the appliance host-key fingerprint against its pre-mutation, VM-bound pin;
+For each retirement check, retain time-stamped guest and private-peer observations under the same task-owned segment
+and trusted-host inventory. Before each SSH readback, recheck the appliance host-key fingerprint against its
+pre-mutation, VM-bound pin;
 refuse a missing or changed pin without collecting acceptance observations or accepting replacement trust. For the
 console alternative, recheck the console's binding to the original VMX and VM root identity. Use only the admitted
 transport for read-only `ip -j -4 addr show` and route/listener inspection. Verify the retired address is absent from
@@ -206,7 +237,7 @@ management HTTPS port with a bounded timeout, while verifying that the active ad
 same path. Do not use DNS, proxy fallback, or a hostname that could select another address. Any accepted connection
 at the retired address fails retirement, even when TLS certificate validation or authentication subsequently fails.
 A TLS mismatch, HTTP denial, or failed ping alone is not evidence that the listener is gone. Peer connection failure
-must agree with native address/listener absence; if peer routing, transport, or the independent fence is uncertain,
+must agree with native address/listener absence; if peer routing, transport, or the host inventory check is uncertain,
 preserve the lab and report acceptance incomplete rather than treating a timeout as proof.
 
 ## Hand off lab resources for cleanup
@@ -214,7 +245,7 @@ preserve the lab and report acceptance incomplete rather than treating a timeout
 After successful acceptance or a recorded terminal failure disposition, preserve the acceptance or failure record,
 original ownership receipts and their independently
 recorded digests outside every removable VM, lab, and result root. Hand off a bounded inventory of the appliance VM,
-peer VM, private LAN segment, DHCP/address reservations, independent admission controls, lifecycle result and other
+peer VM, private LAN segment, DHCP/address reservations, lifecycle result and other
 artifact roots, helper processes, and recovery state. Bind each exact path or provider identity to its original
 ownership manifest, task, repository, source, and PR; record the verified restoration result or explicitly record
 that restoration was not verified and the disposable lab was abandoned. Never report an abandoned run as acceptance.
@@ -229,7 +260,8 @@ Use the exact owned lifecycle VM cleanup path; release each owned LAN segment th
 [LAN-segment procedure](vmware-workstation-lifecycle-testing.md#release-task-owned-lan-segments). VM removal alone
 neither releases reservations and controls nor removes the result root. Release each associated resource through its
 supported owning tool, then release the exact quiescent artifact root only after preserving evidence and verifying
-its ownership and containment. Record independent absence/readback evidence for every released resource.
+its ownership and containment. Record host readback that the two VMs no longer reference the LAN segment and that the
+owned reservation, segment registration, and other task resources are absent.
 
 Retained, shared, differently owned, unsupported, or ambiguously owned resources must be preserved and reported with
 the blocking condition. Do not substitute broad provider cleanup or recursive deletion, and do not mark the lab
@@ -243,8 +275,8 @@ receipts, and evidence for maintainer review. If an Apply result or rollback is 
 operation or clean up the lab while diagnosis,
 recovery, or retry still needs its state. Preserve the state, task output, original rollback inputs, and sanitized
 observations; reconcile
-using the supported Atlaso workflow under the same independent address fence. If the original state cannot be
-verified, stop and escalate to the maintainer who controls the lab.
+using the supported Atlaso workflow under the same trusted-host inventory and address plan. If the original state
+cannot be verified, stop and escalate to the maintainer who controls the lab.
 
 Failed or interrupted admission and acceptance may retain resources only while diagnosis, recovery, or retry needs
 them. Once maintainer review ends, record the disposition: a controlled retry, explicit resource retention, or
@@ -256,9 +288,8 @@ a supported cleanup capability, or another release gate remains uncertain, recor
 reason, and retry condition and preserve it; uncertainty is neither cleanup authorization nor indefinite unrecorded
 retention. A terminal failed run does not waive any branch/worktree completion gate.
 
-Manual acceptance is useful for a maintainer-directed lab decision only. It does not authorize automated certificate
-handoff, replace machine-admissible address proof, or permit broader infrastructure mutation. Existing
-inspect-certificate-peer.ps1 and inspect-certificate-handoff.ps1 wrappers remain usable only after a supported
-producer supplies receipts that pass the native admission checks for the exact task and PR. See the
-[VMware lifecycle certificate section](vmware-workstation-lifecycle-testing.md#single-command-run)
-for the current producer and wrapper limitations.
+The trusted-host producer and both credentialed wrappers must admit this receipt kind for the current task and PR,
+then repeat inventory, reservation, identity, and trust checks before obtaining guest credentials. Receipts from the
+older PR #871 independent-control path remain bound to that task and cannot be relabeled. See the
+[VMware lifecycle certificate section](vmware-workstation-lifecycle-testing.md#single-command-run) for the producer
+and wrapper workflow.

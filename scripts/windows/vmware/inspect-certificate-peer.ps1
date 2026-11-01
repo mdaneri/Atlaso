@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Publish receipt-bound, read-only native address proof for PR871.
+Publish receipt-bound, read-only certificate address observations for the admitted task.
 .PARAMETER Plan
 Existing nonsecret proof plan within the original task-owned test-results tree.
 .PARAMETER RepositoryRoot
@@ -130,7 +130,7 @@ try {
         -ScriptArguments @('--plan', $Plan, '--address-output', $AddressEvidence,
             '--runtime-output', $RuntimeEvidence)
     Invoke-AtlasoBoundedProcess -FilePath $PythonPath -ArgumentList ($arguments + '--preflight-only') `
-        -TimeoutSeconds 30 -Action 'PR871 original peer proof admission' -DiscardOutput | Out-Null
+        -TimeoutSeconds 30 -Action 'Certificate original peer admission' -DiscardOutput | Out-Null
     $null = Assert-AtlasoSourceSnapshot -Root $snapshot.Root -ExpectedSha256 $snapshot.Sha256 `
         -ExpectedFileCount $snapshot.FileCount
     $pair = $null
@@ -138,11 +138,11 @@ try {
     try {
         $pair = Get-AtlasoOnePasswordCredentialPair -RepositoryRoot $repoRoot -EnvironmentId $EnvironmentId `
             -OnePasswordServiceAccountTokenFile (Join-Path $repoRoot '.atlaso-local/onepassword-service-account-token.dpapi') `
-            -OnePasswordPython $PythonPath -TimeoutSeconds 300 -ConsumerDescription 'PR871 private address proof'
+            -OnePasswordPython $PythonPath -TimeoutSeconds 300 -ConsumerDescription 'Certificate private address observations'
         $plain = [Net.NetworkCredential]::new('', $pair.AdminPassword).Password
         Invoke-AtlasoBoundedProcess -FilePath $PythonPath -ArgumentList $arguments `
             -EnvironmentVariables @{ ATLASO_NATIVE_ADMIN = $plain; TEMP = $evidenceRoot; TMP = $evidenceRoot } `
-            -TimeoutSeconds 300 -Action 'PR871 private address proof' -DiscardOutput | Out-Null
+            -TimeoutSeconds 300 -Action 'Certificate private address observations' -DiscardOutput | Out-Null
     } finally {
         $plain = $null
         if ($pair) { $pair.AdminPassword.Dispose(); $pair.RootPassword.Dispose() }

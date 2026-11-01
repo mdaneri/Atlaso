@@ -346,6 +346,7 @@ $inspectorFiles = @(
     'scripts/__init__.py', 'scripts/completed_task_files.py',
     'scripts/interop/certificate_handoff_native.py', 'scripts/interop/certificate_peer_proof.py',
     'scripts/interop/certificate_peer_transport.py', 'scripts/installation/__init__.py',
+    'scripts/interop/certificate_trusted_host.py', 'scripts/interop/certificate_retirement.py',
     'scripts/installation/vnc_console.py', 'scripts/installation/vnc_frame.py'
 )
 foreach ($relative in $inspectorFiles) {

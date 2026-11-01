@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Inspect or execute the receipt-bound PR871 native certificate handoff.
+Inspect or execute the receipt-bound native certificate handoff for the admitted task.
 .PARAMETER Plan
 Existing nonsecret plan within the original task-owned test-results tree.
 .PARAMETER RepositoryRoot
@@ -131,7 +131,7 @@ try {
     Invoke-AtlasoBoundedProcess -FilePath $PythonPath `
         -ArgumentList (New-AtlasoCertificatePythonArguments -Runtime $runtime -ScriptPath $scriptPath `
             -ScriptArguments @('--plan', $Plan, '--evidence', $admissionEvidence, '--preflight-only')) `
-        -TimeoutSeconds 30 -Action 'PR871 canonical identity admission' -DiscardOutput | Out-Null
+        -TimeoutSeconds 30 -Action 'Certificate canonical identity admission' -DiscardOutput | Out-Null
     $null = Assert-AtlasoSourceSnapshot -Root $snapshot.Root -ExpectedSha256 $snapshot.Sha256 `
         -ExpectedFileCount $snapshot.FileCount
     if ($Execute) { $arguments += '--execute' }
@@ -140,11 +140,11 @@ try {
     try {
         $pair = Get-AtlasoOnePasswordCredentialPair -RepositoryRoot $repoRoot -EnvironmentId $EnvironmentId `
             -OnePasswordServiceAccountTokenFile (Join-Path $repoRoot '.atlaso-local/onepassword-service-account-token.dpapi') `
-            -OnePasswordPython $PythonPath -TimeoutSeconds 300 -ConsumerDescription 'PR871 certificate inspection'
+            -OnePasswordPython $PythonPath -TimeoutSeconds 300 -ConsumerDescription 'Certificate inspection'
         $plain = [Net.NetworkCredential]::new('', $pair.AdminPassword).Password
         Invoke-AtlasoBoundedProcess -FilePath $PythonPath -ArgumentList $arguments `
             -EnvironmentVariables @{ ATLASO_NATIVE_ADMIN = $plain; TEMP = $evidenceRoot; TMP = $evidenceRoot } `
-            -TimeoutSeconds 1500 -Action 'PR871 certificate inspection' -DiscardOutput | Out-Null
+            -TimeoutSeconds 1500 -Action 'Certificate inspection' -DiscardOutput | Out-Null
     } finally {
         $plain = $null
         if ($pair) { $pair.AdminPassword.Dispose(); $pair.RootPassword.Dispose() }

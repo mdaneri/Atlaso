@@ -239,3 +239,214 @@ def test_preflight_refuses_exclusive_claim_before_credentials(
     monkeypatch.setattr(proof, "PinnedPeerTransport", lambda *args: pytest.fail("network before exclusive proof"))
     assert proof.main() == 2
     assert not (tmp_path / "address.json").exists()
+
+
+def test_arbitrary_pr_is_opt_in_to_trusted_host_mode() -> None:
+    """New trusted-host plans bind any positive PR; legacy evidence stays PR871-only."""
+    assert proof.plan_pr({"pr": 1074, "trust_model": "trusted-host"}) == 1074
+    with pytest.raises(proof.Refusal, match="proof_plan_invalid"):
+        proof.plan_pr({"pr": 0, "trust_model": "trusted-host"})
+    with pytest.raises(proof.Refusal, match="proof_plan_invalid"):
+        proof.plan_pr({"pr": 1074})
+
+
+def test_trusted_host_native_readback_is_explicitly_not_independent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Trusted-host observations retain their weaker, accurately labeled boundary."""
+    ca = tmp_path / "ca.pem"
+    ca.write_bytes(b"-----BEGIN CERTIFICATE-----\npublic\n-----END CERTIFICATE-----\n")
+    plan = {
+        "task_id": "task", "pr": 1074, "trust_model": "trusted-host",
+        "baseline_address": "192.168.77.30", "static_candidate_address": "192.168.77.40",
+        "ca_path": str(ca), "ca_sha256": hashlib.sha256(ca.read_bytes()).hexdigest(),
+        "peer_fixture": {"sha256": "a" * 64}, "rewired_runtime": {"sha256": "b" * 64},
+    }
+    fixture = {
+        "peer_cidr": "192.168.77.1/24", "lease_address": "192.168.77.10",
+        "appliance_mac": "00:50:56:aa:bb:cc", "appliance_vmx": "owned.vmx",
+        "lan_segment_receipt_sha256": "c" * 64,
+    }
+    topology = {"trust_model": "trusted-host", "kind": "certificate-trusted-host-topology"}
+
+    class FakeHTTPS:
+        def __init__(self, host: str, **kwargs: object):
+            assert host == "192.168.77.30"
+
+        def request(self, method: str, path: str) -> None:
+            assert (method, path) == ("GET", "/openapi.json")
+
+        def getresponse(self):
+            return type("Response", (), {"status": 200, "read": lambda self, size: b"{}"})()
+
+        def close(self) -> None:
+            pass
+
+    class FakeContext:
+        minimum_version = None
+
+        def load_verify_locations(self, *, cafile: str) -> None:
+            assert cafile == str(ca)
+
+    monkeypatch.setattr(proof.ssl, "SSLContext", lambda _protocol: FakeContext())
+    monkeypatch.setattr(proof, "PeerHTTPSConnection", FakeHTTPS)
+    monkeypatch.setattr(proof, "inspect_trusted_host", lambda _plan: topology)
+    monkeypatch.setattr(proof, "assert_same_topology", lambda _before, _after: None)
+    monkeypatch.setattr(proof, "verify_peer_isolation", lambda _peer: {"authenticated": True})
+    result = proof.read_native(plan, fixture, FakePeer(), FakeAppliance())
+    assert result["pr"] == 1074
+    assert result["trust_model"] == "trusted-host"
+    assert result["address_ownership_state"] == "trusted-host-controlled"
+    assert result["trusted_host_topology"] is topology
+    assert result["candidate_observation_limit"] == (
+        "Controlled lab on a trusted host; adversarial address exclusion is not established."
+    )
+    assert "exclusive_attachment_state" not in result
+    assert "candidate_conflict_state" not in result
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        "task_id", "intent_task_id", "source_commit", "intent_hash",
+        "original_receipt_sha256", "directory_identity", "boot", "pending_intent",
+        "mac", "segment",
+    ],
+)
+def test_original_iso_receipts_are_bound_to_task_source_hash_and_directory(
+    changed: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ISO install intent, boot receipt, source and original directory identity stay bound."""
+    from contextlib import contextmanager
+
+    from scripts.completed_task_files import WindowsFiles
+
+    vmx = str(tmp_path / "appliance.vmx")
+    root = str(tmp_path)
+    intent = {
+        "schema": 1, "phase": "installation-pending", "task_id": "task", "repository": "mdaneri/Atlaso",
+        "pull_request_number": 1074, "vmx_path": vmx, "output_directory": root, "source_commit": "a" * 40,
+    }
+    ownership = {
+        "schema": 1, "phase": "original-installation-vm-created", "task_id": "task",
+        "repository": "mdaneri/Atlaso", "pull_request_number": 1074, "vmx_path": vmx,
+        "output_directory": root, "source_commit": "a" * 40, "intent_sha256": "b" * 64,
+        "installation_iso": {"sha256": "c" * 64}, "original_identities": {"directory": "00000001:0000000200000003"},
+    }
+    boot = {
+        "schema": 1, "phase": "installation-boot-without-media", "task_id": "task",
+        "repository": "mdaneri/Atlaso", "pull_request_number": 1074, "vmx_path": vmx,
+        "output_directory": root, "source_commit": "a" * 40,
+        "original_receipt_sha256": "d" * 64, "original_receipt_path": "original-ownership.json",
+    }
+    boot_ref = {"path": "staged/boot.json", "original_path": "original/boot.json", "sha256": "f" * 64}
+    plan = {
+        "task_id": "task", "pr": 1074, "trust_model": "trusted-host", "source_commit": "e" * 40,
+        "appliance_intent": {"sha256": "b" * 64},
+        "appliance_installed_boot": boot_ref,
+        "iso_private_lan_rewire": {"path": "staged/transition.json", "original_path": "original/transition.json", "sha256": "g" * 64},
+        "iso_private_lan_intent": {"path": "staged/pending.json", "original_path": "original/pending.json", "sha256": "h" * 64},
+        "mac": "00:50:56:aa:bb:cc",
+        "trusted_host": {
+            "segment_id": "segment-1",
+            "appliance_private_adapter": {"mac": "00:50:56:aa:bb:cc"},
+        },
+    }
+    reference = {"sha256": "d" * 64, "path": "staged/ownership.json", "original_path": "original/ownership.json"}
+    transition = {
+        "schema": 1, "phase": "installation-private-lan-rewire", "task_id": "task",
+        "repository": "mdaneri/Atlaso", "pull_request_number": 1074, "vmx_path": vmx,
+        "output_directory": root, "original_receipt_sha256": "d" * 64,
+        "original_receipt_path": "original/ownership.json", "boot_receipt_sha256": "f" * 64,
+        "boot_receipt_path": "original/boot.json", "original_directory_identity": ownership["original_identities"]["directory"],
+        "mac": "00:50:56:aa:bb:cc", "segment_id": "segment-1",
+        "intent_sha256": "h" * 64, "intent_path": "original/pending.json", "source_commit": "a" * 40,
+    }
+    pending = {
+        **{key: value for key, value in transition.items() if key not in {"phase", "intent_sha256", "intent_path"}},
+        "phase": "installation-private-lan-rewire-pending", "source_commit": "a" * 40,
+    }
+    values = {
+        id(boot_ref): boot, id(plan["iso_private_lan_rewire"]): transition,
+        id(plan["iso_private_lan_intent"]): pending,
+    }
+
+    @contextmanager
+    def opened(_self, _path, directory=False):
+        assert directory is True
+        yield None, (1, 2, 3), None
+
+    monkeypatch.setattr(proof, "bound_json", lambda ref: values[id(ref)] if id(ref) in values else intent)
+    monkeypatch.setattr(WindowsFiles, "opened", opened)
+    if changed == "task_id":
+        boot["task_id"] = "other-task"
+    elif changed == "intent_task_id":
+        intent["task_id"] = "other-task"
+    elif changed == "source_commit":
+        boot["source_commit"] = "9" * 40
+    elif changed == "intent_hash":
+        ownership["intent_sha256"] = "9" * 64
+    elif changed == "original_receipt_sha256":
+        boot["original_receipt_sha256"] = "9" * 64
+    elif changed == "directory_identity":
+        ownership["original_identities"]["directory"] = "00000001:0000000200000004"
+    elif changed == "boot":
+        transition["boot_receipt_sha256"] = "9" * 64
+    elif changed == "pending_intent":
+        transition["intent_sha256"] = "9" * 64
+    elif changed == "mac":
+        transition["mac"] = "00:50:56:aa:bb:cd"
+    else:
+        pending["segment_id"] = "other-segment"
+    with pytest.raises(proof.Refusal):
+        proof.original_iso_vm(plan, intent, ownership, reference, Path(root), vmx)
+
+
+def test_original_iso_receipt_accepts_distinct_plan_and_installed_source_commits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reviewed source and the installed ISO source are separate, validated identities."""
+    from contextlib import contextmanager
+
+    from scripts.completed_task_files import WindowsFiles
+
+    vmx, root = str(tmp_path / "appliance.vmx"), str(tmp_path)
+    intent = {"schema": 1, "phase": "installation-pending", "task_id": "task", "repository": "mdaneri/Atlaso",
+              "pull_request_number": 1074, "vmx_path": vmx, "output_directory": root, "source_commit": "a" * 40}
+    ownership = {"schema": 1, "phase": "original-installation-vm-created", "task_id": "task",
+                 "repository": "mdaneri/Atlaso", "pull_request_number": 1074, "vmx_path": vmx,
+                 "output_directory": root, "source_commit": "a" * 40, "intent_sha256": "b" * 64,
+                 "installation_iso": {"sha256": "c" * 64}, "original_identities": {"directory": "00000001:0000000200000003"}}
+    boot = {"schema": 1, "phase": "installation-boot-without-media", "task_id": "task",
+            "repository": "mdaneri/Atlaso", "pull_request_number": 1074, "vmx_path": vmx,
+            "output_directory": root, "source_commit": "a" * 40, "original_receipt_sha256": "d" * 64,
+            "original_receipt_path": "original/ownership.json"}
+    boot_ref = {"path": "staged/boot.json", "original_path": "original/boot.json", "sha256": "f" * 64}
+    transition_ref = {"path": "staged/transition.json", "original_path": "original/transition.json", "sha256": "g" * 64}
+    pending_ref = {"path": "staged/pending.json", "original_path": "original/pending.json", "sha256": "h" * 64}
+    plan = {"task_id": "task", "pr": 1074, "trust_model": "trusted-host", "source_commit": "e" * 40,
+            "appliance_intent": {"sha256": "b" * 64}, "appliance_installed_boot": boot_ref,
+            "iso_private_lan_rewire": transition_ref, "iso_private_lan_intent": pending_ref,
+            "mac": "00:50:56:aa:bb:cc",
+            "trusted_host": {"segment_id": "segment-1", "appliance_private_adapter": {"mac": "00:50:56:aa:bb:cc"}}}
+    reference = {"sha256": "d" * 64, "path": "staged/ownership.json", "original_path": "original/ownership.json"}
+    common = {
+        "schema": 1, "task_id": "task", "repository": "mdaneri/Atlaso", "pull_request_number": 1074,
+        "vmx_path": vmx, "output_directory": root,
+        "original_receipt_sha256": "d" * 64, "original_receipt_path": "original/ownership.json",
+        "boot_receipt_sha256": "f" * 64, "boot_receipt_path": "original/boot.json",
+        "original_directory_identity": ownership["original_identities"]["directory"],
+        "mac": "00:50:56:aa:bb:cc", "segment_id": "segment-1", "source_commit": "a" * 40,
+    }
+    transition = {**common, "phase": "installation-private-lan-rewire",
+                  "intent_sha256": "h" * 64, "intent_path": "original/pending.json"}
+    pending = {**common, "phase": "installation-private-lan-rewire-pending"}
+
+    @contextmanager
+    def opened(_self, _path, directory=False):
+        yield None, (1, 2, 3), None
+
+    values = {id(boot_ref): boot, id(transition_ref): transition, id(pending_ref): pending}
+    monkeypatch.setattr(proof, "bound_json", lambda ref: values[id(ref)])
+    monkeypatch.setattr(WindowsFiles, "opened", opened)
+    assert proof.original_iso_vm(plan, intent, ownership, reference, Path(root), vmx) is ownership

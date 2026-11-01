@@ -260,6 +260,8 @@ function Get-InstallationVmFunctionText {
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Read-InstallationRunningVmxText')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationConsoleBindings')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationNetworkBindings')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'ConvertTo-InstallationPrivateLanConfiguration')))
+. ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationPrivateLanTransition')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationConsoleDiskIdentities')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationVmRunning')))
 . ([scriptblock]::Create((Get-InstallationVmFunctionText -SourceAst $ast -Name 'Assert-InstallationSerialPipePath')))
@@ -462,11 +464,13 @@ $unsafeConsoleFixtures.Add([string[]]@($lines | ForEach-Object {
 $unsafeConsoleFixtures.Add([string[]]@($lines | ForEach-Object {
         if ($_ -ceq 'serial0.pipe.endPoint = "client"') { 'serial0.pipe.endPoint = "server"' } else { $_ }
     }))
+$unsafeConsoleIndex = 0
 foreach ($unsafeConsoleLines in $unsafeConsoleFixtures) {
     $unsafeConsoleRejected = $false
     try { $null = Assert-InstallationConsoleBindings -VmxLines $unsafeConsoleLines -Context $bindingContext -IsoPath 'C:\offline media\atlaso.iso' }
     catch { $unsafeConsoleRejected = $true }
-    Assert-InstallationVmCondition $unsafeConsoleRejected 'Console admission must reject changed isolation, storage, media, and serial bindings.'
+    Assert-InstallationVmCondition $unsafeConsoleRejected "Console admission must reject unsafe fixture $unsafeConsoleIndex."
+    $unsafeConsoleIndex++
 }
 
 $networkLines = @((ConvertTo-InstallationDiskBootConfiguration -Text $configuration).Split("`n") | Where-Object {
@@ -501,6 +505,104 @@ foreach ($fixture in @(
     try { $null = Assert-InstallationNetworkBindings -VmxLines ($fixture.Text -split "`n") -Context $bindingContext -IsoPath 'C:\offline media\atlaso.iso' -Vmnet vmnet2 -NetworkInventory $fixture.Inventory }
     catch { $refused = $true }
     Assert-InstallationVmCondition $refused 'Network admission must refuse ambiguous devices, media, MACs, vmnets and isolation.'
+}
+
+$privateLanId = '52 00 00 00 00 00 00 01-00 00 00 00 00 00 00 02'
+$privateMac = '00:0c:29:12:34:56'
+$privateBootText = ConvertTo-InstallationDiskBootConfiguration -Text ($configuration.Replace(
+    'ethernet0.addressType = "generated"', 'ethernet0.addressType = "generated"' + "`nethernet0.generatedAddress = `"$privateMac`""))
+$privateBootBytes = [Text.UTF8Encoding]::new($false).GetBytes($privateBootText)
+$privateLanText = ConvertTo-InstallationPrivateLanConfiguration -Text $privateBootText -SegmentId $privateLanId
+$privateLanLines = @($privateLanText -split "`r?`n")
+<#
+.SYNOPSIS
+Hash a synthetic non-secret persistent VM identity for receipt validation tests.
+.PARAMETER Value
+Synthetic identity string used only by this in-process test.
+#>
+function Get-AtlasoTestVmOwnershipCleanupIdentityHash {
+    param([string]$Value)
+    [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false).GetBytes($Value))).ToLowerInvariant()
+}
+Assert-InstallationVmCondition ($privateLanLines -contains 'ethernet0.connectionType = "pvn"' -and
+    $privateLanLines -contains ('ethernet0.pvnID = "' + $privateLanId + '"') -and
+    $privateLanLines -contains ('ethernet0.generatedAddress = "' + $privateMac + '"') -and
+    -not ($privateLanLines -match '^ethernet0\.vnet\s*=') -and
+    -not ($privateLanLines -match '^ethernet1\.present\s*=')) `
+    'Private LAN rewire must preserve eth0 MAC, bind its exact pvn ID, and retain one adapter.'
+$privateLanSegment = [pscustomobject]@{ name = 'Atlaso-PR-1074-iso-private'; pvn_id = $privateLanId }
+$privateContext = [pscustomobject]@{ TaskId = 'task-1074'; Repository = 'mdaneri/Atlaso'; Branch = 'enhancement/1074-trusted-host-certificate'
+    SourceCommit = ('a' * 40); Worktree = 'C:\work\Atlaso'; PullRequestNumber = 1074; LocalBuilder = $false
+    OutputDirectory = 'C:\work\Atlaso\test-results\Atlaso-PR-1074-installation-iso';
+    VmxPath = 'C:\work\Atlaso\test-results\Atlaso-PR-1074-installation-iso\Atlaso-PR-1074-installation-iso.vmx' }
+$privateOriginal = [pscustomobject]@{ task_id = $privateContext.TaskId; repository = $privateContext.Repository
+    source_branch = $privateContext.Branch; source_commit = $privateContext.SourceCommit
+    original_identities = @{ directory = 'ABCD1234:0000000000000001'; vmx = 'ABCD1234:0000000000000002' }
+    persistent_vm_identity_sha256 = Get-AtlasoTestVmOwnershipCleanupIdentityHash -Value '0123456789abcdef0123456789abcdef' }
+$privateSelectors = @{ OriginalReceiptPath = 'C:\task-evidence\original.json'; OriginalReceiptSha256 = ('c' * 64)
+    BootReceiptPath = 'C:\task-evidence\boot.json'; BootReceiptSha256 = ('d' * 64)
+    PrivateLanSegmentReceiptPath = 'C:\work\Atlaso\test-results\lan-segments\segment.json'; PrivateLanSegmentReceiptSha256 = ('e' * 64) }
+$privateRewire = [pscustomobject]@{ phase = 'installation-private-lan-rewire'; task_id = $privateContext.TaskId
+    repository = $privateContext.Repository; source_branch = $privateContext.Branch; source_commit = $privateContext.SourceCommit
+    worktree = $privateContext.Worktree; pull_request_number = 1074; local_builder = $false
+    output_directory = $privateContext.OutputDirectory; vmx_path = $privateContext.VmxPath
+    original_receipt_path = $privateSelectors.OriginalReceiptPath; original_receipt_sha256 = $privateSelectors.OriginalReceiptSha256
+    boot_receipt_path = $privateSelectors.BootReceiptPath; boot_receipt_sha256 = $privateSelectors.BootReceiptSha256
+    baseline_receipt_path = 'C:\task-evidence\baseline.json'; baseline_receipt_sha256 = ('9' * 64)
+    segment_receipt_path = $privateSelectors.PrivateLanSegmentReceiptPath; segment_receipt_sha256 = $privateSelectors.PrivateLanSegmentReceiptSha256
+    segment_name = $privateLanSegment.name; segment_id = $privateLanSegment.pvn_id
+    original_directory_identity = $privateOriginal.original_identities.directory
+    vmx_filesystem_identity = $privateOriginal.original_identities.vmx
+    persistent_vm_identity_sha256 = $privateOriginal.persistent_vm_identity_sha256
+    intent_path = 'C:\task-evidence\intent.json'; intent_sha256 = ('f' * 64)
+    before_sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($privateBootBytes)).ToLowerInvariant()
+    after_sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false).GetBytes($privateLanText))).ToLowerInvariant()
+    mac = $privateMac }
+$privateIntent = $privateRewire | ConvertTo-Json | ConvertFrom-Json
+$privateIntent.phase = 'installation-private-lan-rewire-pending'
+$privateBoot = [pscustomobject]@{ task_id = $privateContext.TaskId; repository = $privateContext.Repository
+    source_branch = $privateContext.Branch; source_commit = $privateContext.SourceCommit
+    baseline_receipt_path = $privateRewire.baseline_receipt_path; baseline_receipt_sha256 = $privateRewire.baseline_receipt_sha256
+    after_sha256 = $privateRewire.before_sha256
+    original_receipt_path = $privateSelectors.OriginalReceiptPath; original_receipt_sha256 = $privateSelectors.OriginalReceiptSha256
+    original_directory_identity = $privateOriginal.original_identities.directory
+    persistent_vm_identity_sha256 = $privateOriginal.persistent_vm_identity_sha256 }
+$privateLanAccepted = $true
+try { Assert-InstallationPrivateLanTransition -Context $privateContext -Original $privateOriginal -Boot $privateBoot `
+        -Rewire $privateRewire -Intent $privateIntent -IntentPath $privateRewire.intent_path -IntentSha256 $privateRewire.intent_sha256 `
+        -Selectors $privateSelectors -VmxBytes ([Text.UTF8Encoding]::new($false).GetBytes($privateLanText)) `
+        -CurrentVmxIdentity $privateOriginal.original_identities.vmx -Segment $privateLanSegment }
+catch { $privateLanAccepted = $false }
+Assert-InstallationVmCondition $privateLanAccepted 'A transition receipt must bind the unchanged original boot config, LAN segment, and current VMX.'
+foreach ($mutation in @('before', 'after', 'id', 'mac', 'intent')) {
+    $badTransition = $privateRewire | ConvertTo-Json | ConvertFrom-Json
+    switch ($mutation) {
+        'before' { $badTransition.before_sha256 = ('f' * 64) }
+        'after' { $badTransition.after_sha256 = ('f' * 64) }
+        'id' { $badTransition.segment_id = '52 00 00 00 00 00 00 03-00 00 00 00 00 00 00 04' }
+        'mac' { $badTransition.mac = '00:0c:29:12:34:57' }
+        'intent' { $badTransition.intent_sha256 = ('a' * 64) }
+    }
+    $refused = $false
+    try { Assert-InstallationPrivateLanTransition -Context $privateContext -Original $privateOriginal -Boot $privateBoot `
+            -Rewire $badTransition -Intent $privateIntent -IntentPath $privateRewire.intent_path -IntentSha256 $privateRewire.intent_sha256 `
+            -Selectors $privateSelectors -VmxBytes ([Text.UTF8Encoding]::new($false).GetBytes($privateLanText)) `
+            -CurrentVmxIdentity $privateOriginal.original_identities.vmx -Segment $privateLanSegment }
+    catch { $refused = $true }
+    Assert-InstallationVmCondition $refused 'Private LAN transition admission must reject mismatched old config, new config, segment ID, or preserved MAC.'
+}
+$badPrivateIndex = 0
+$privateExtraAdapter = $privateBootText + "`nethernet1.present = `"TRUE`""
+foreach ($badPrivateText in @(
+        $privateBootText.Replace('ethernet0.generatedAddress = "' + $privateMac + '"', ''),
+        $privateExtraAdapter,
+        $privateBootText.Replace('ethernet0.startConnected = "FALSE"', 'ethernet0.startConnected = "TRUE"'),
+        $privateBootText.Replace('ethernet0.connectionType = "hostonly"', 'ethernet0.connectionType = "nat"')
+    )) {
+    $refused = $false
+    try { $null = ConvertTo-InstallationPrivateLanConfiguration -Text $badPrivateText -SegmentId $privateLanId } catch { $refused = $true }
+    Assert-InstallationVmCondition $refused "Private LAN rewire must refuse invalid origin fixture $badPrivateIndex."
+    $badPrivateIndex++
 }
 
 $unicodeSegment = [string][char]0x00E9 + 'preuve-' + [string][char]0x65E5 + [string][char]0x672C
@@ -714,7 +816,7 @@ $freshProcessOutput = @(& (Get-Process -Id $PID).Path -NoProfile -Command $fresh
 Assert-InstallationVmCondition ($LASTEXITCODE -eq 0) 'A fresh PowerShell process must initialize the file-identity type from the cleanup module.'
 Assert-InstallationVmCondition ($freshProcessOutput.Count -eq 0) 'Fresh-process identity initialization must not emit unexpected output.'
 $whatIfGate = $source.IndexOf('$PSCmdlet.ShouldProcess($resolvedOutput', [StringComparison]::Ordinal)
-$intentWrite = $source.IndexOf('Publish-AtlasoTestVmOwnershipRecord -Context $context -Record $intent', [StringComparison]::Ordinal)
+$intentWrite = $source.IndexOf('Publish-AtlasoTestVmOwnershipRecord -Context $context -Record $intent -Kind intent', [StringComparison]::Ordinal)
 $originalReceipt = $source.IndexOf('Publish-InstallationVmOriginalReceipt -Context $context', [StringComparison]::Ordinal)
 $originalReceiptReport = $source.IndexOf('Original installation VM receipt: path={0} sha256={1}', [StringComparison]::Ordinal)
 $diskMutation = $source.IndexOf("-FileName 'vmware-vdiskmanager.exe'", [StringComparison]::Ordinal)
@@ -763,9 +865,9 @@ Assert-InstallationVmCondition ($startHelper.Contains('[Environment]::CurrentDir
 Assert-InstallationVmCondition ($source.Contains("'compare', '-f', 'vmdk', '-F', 'vmdk'")) 'Disk comparison must use qemu-img logical VMDK comparison.'
 Assert-InstallationVmCondition (-not $source.Contains("'compare', '-s'")) 'Logical comparison must not require sparse allocation layout to match.'
 Assert-InstallationVmCondition ($source.Contains('-Kind installation-baseline')) 'The baseline record must use its dedicated ownership-receipt kind.'
-Assert-InstallationVmCondition ($ownershipSource.Contains("'installation-baseline', 'installation-boot', 'installation-resume', 'installation-interruption', 'installation-recovery-boot')")) 'The immutable ownership publisher must admit the baseline and recovery record kinds.'
+Assert-InstallationVmCondition ($ownershipSource.Contains("'installation-baseline', 'installation-boot', 'installation-resume', 'installation-interruption', 'installation-recovery-boot', 'installation-private-lan-intent', 'installation-private-lan-rewire')")) 'The immutable ownership publisher must admit baseline, recovery, and private LAN transition record kinds.'
 Assert-InstallationVmCondition ($cleanupSource.Contains("'Confirm-AtlasoWorkstationVmInactive'")) 'The guarded VM stop helper must be available to the verification mode.'
-$verifyMode = $source.IndexOf('if ($Mode -in @(''AdmitConsole'', ''AdmitNetwork'', ''Verify'', ''BootInstalled'', ''ResumeInstalled'', ''ResumeInstaller''))', [StringComparison]::Ordinal)
+$verifyMode = $source.IndexOf('if ($Mode -in @(''AdmitConsole'', ''AdmitNetwork'', ''RewirePrivateLan'', ''Verify'', ''BootInstalled'', ''ResumeInstalled'', ''ResumeInstaller''))', [StringComparison]::Ordinal)
 Assert-InstallationVmCondition ($verifyMode -ge 0) 'The harness must expose receipt-bound disk verification.'
 $verifyOriginalRead = $source.IndexOf('Read-AtlasoTestVmSealedRecord -Context $context -Path $OriginalReceiptPath', $verifyMode, [StringComparison]::Ordinal)
 $verifyBaselineRead = $source.IndexOf('Read-AtlasoTestVmSealedRecord -Context $context -Path $BaselineReceiptPath', $verifyMode, [StringComparison]::Ordinal)
@@ -783,7 +885,7 @@ foreach ($fixtureName in @('SingleDisk', 'MultiDisk', 'OldSystemLabel')) {
         'Both profiles must always compare the unselected disk; cancellation must also compare every selected disk.'
 }
 Assert-InstallationVmCondition ($source.Contains("Invoke-AtlasoBoundedProcess -FilePath `$QemuImg -ArgumentList @('info', '--output=json', `$Path)")) 'qemu-img metadata inspection must use the existing bounded process helper.'
-Assert-InstallationVmCondition ($source.Contains("[ValidateSet('Create', 'AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'ResumeInstalled', 'ResumeInstaller', 'Cleanup')]") -and
+Assert-InstallationVmCondition ($source.Contains("[ValidateSet('Create', 'AdmitConsole', 'AdmitNetwork', 'RewirePrivateLan', 'Verify', 'BootInstalled', 'ResumeInstalled', 'ResumeInstaller', 'Cleanup')]") -and
     $source.Contains('Console admission requires an enabled task-owned VM receipt context.')) `
     'AdmitConsole must be an explicit task-owned mode.'
 $admitConsoleBranches = @($ast.FindAll({
@@ -1587,7 +1689,7 @@ $resumeStart = $source.IndexOf('Start-InstallationIsoVm -VmrunPath', $resumePubl
 Assert-InstallationVmCondition ($resumePublish -gt $verifyCompare -and $resumeStart -gt $resumePublish) 'Installed resume must compare disks and publish its immutable operation receipt before starting the VM.'
 $resumeBranches = @($ast.FindAll({
     param($node)
-    $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith("if (`$Mode -in @('AdmitConsole', 'AdmitNetwork', 'Verify', 'BootInstalled', 'ResumeInstalled', 'ResumeInstaller'))", [StringComparison]::Ordinal)
+    $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text.StartsWith("if (`$Mode -in @('AdmitConsole', 'AdmitNetwork', 'RewirePrivateLan', 'Verify', 'BootInstalled', 'ResumeInstalled', 'ResumeInstaller'))", [StringComparison]::Ordinal)
 }, $true))
 Assert-InstallationVmCondition ($resumeBranches.Count -eq 1) 'Expected exactly one shared installed-VM admission branch.'
 $missingResumeReceiptRefused = $false

@@ -157,6 +157,35 @@ class PinnedPeerTransport(AbstractContextManager["PinnedPeerTransport"]):
                 bridge.close()
                 local.close()
 
+    def tcp_reachable(self, target_ip: str, port: int = 443) -> bool:
+        """Check direct TCP acceptance independently of TLS and authentication.
+
+        Args:
+            target_ip: Exact private IPv4 address to probe.
+            port: Admitted management service port.
+        """
+        address = ipaddress.IPv4Address(target_ip)
+        if address not in self.subnet or port != 443:
+            raise PeerTransportRefusal("target_outside_owned_private_subnet")
+        if self.transport is None or not self.transport.is_active() or not self.transport.is_authenticated():
+            raise PeerTransportRefusal("peer_transport_inactive")
+        try:
+            channel = self.transport.open_channel(
+                "direct-tcpip", (str(address), port), ("127.0.0.1", 0), timeout=8,
+            )
+            if channel is None:
+                raise PeerTransportRefusal("peer_tcp_probe_unproven")
+            channel.close()
+            return True
+        except paramiko.ChannelException as exc:
+            # Only a live authenticated peer's explicit connect failure counts
+            # as non-acceptance. Administrative denial and lost SSH do not.
+            if exc.code == paramiko.OPEN_FAILED_CONNECT_FAILED and self.transport.is_active() and self.transport.is_authenticated():
+                return False
+            raise PeerTransportRefusal("peer_tcp_probe_unproven") from None
+        except (OSError, EOFError, paramiko.SSHException):
+            raise PeerTransportRefusal("peer_tcp_probe_unproven") from None
+
     def command(self, command: str, stdin: bytes = b"") -> bytes:
         """Read bounded peer output without persisting credentials or response text.
 

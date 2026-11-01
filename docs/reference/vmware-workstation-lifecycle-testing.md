@@ -481,11 +481,13 @@ discovers the runtime address through VMware Tools.
 
 ## Isolated routing-overlap fixture contracts
 
-Certificate handoff preparation requires independent proof that the candidate management address belongs exclusively
-to the appliance; the [certificate peer procedure](#single-command-run) describes the current producer
-limitation. A MAC-derived address and task-owned VM receipts alone do not provide this proof. The
-[certificate address-control procedure](certificate-address-control.md) defines a maintainer-collected acceptance path
-for a lab; its evidence does not satisfy native receipt admission or enable the credentialed wrappers.
+Certificate handoff uses the explicit trusted-host model in the
+[certificate address-control procedure](certificate-address-control.md). A trusted Workstation administrator records
+the known VM inventory, verifies the task-owned appliance and peer are the only VMs attached to the new LAN segment,
+checks that no appliance adapter or segment path connects that test LAN to another network, and monitors these facts
+through Apply, address retirement, and restoration. This model trusts the host administrator and reports that scope;
+it does not claim an external enforcement authority or protection from a host administrator who changes the topology.
+The new proof mode binds every observation to this task, PR, and the original VM, peer, and segment receipts.
 
 The opt-in `-RoutingOverlapOnly` mode first applies the MAC-derived management IPv6 address as static state,
 then requires native assignment and a CA-validated served certificate containing that address before switching
@@ -873,9 +875,9 @@ It also records a bounded `atlaso.service` readback and runs a read-only SQLite 
 The probe emits only aggregate counts and feature flags from one transaction, requiring absent routing service intent,
 disabled routing and WAN features, and no saved route, rule, NAT, port-forward, WAN-policy, or route-role interface rows.
 The runner admits and publishes that source receipt only when every required field proves absence. The actual helper
-and wheel digests are measured afterward. A discovered DHCP address does not prove exclusive address control.
-The certificate scenario must refuse mutation until a controlled network producer proves the candidate static address
-or DHCP reservation belongs to the clone.
+and wheel digests are measured afterward. In trusted-host mode, the runner binds the peer's DHCP reservation to the
+appliance's admitted MAC and records the two-member segment and connected-adapter inventory before accepting a DHCP
+address. The old independent-address-control mode remains separately identified and retains its stricter admission.
 For a dedicated DHCP peer, add `-CertificateDhcpPeer -SiteANetwork lan:<task-owned-name>` and explicitly provide a
 provenance-admitted, prepared `-ClientVmdkPath` and `-CertificatePeerPublicKeyPath` for an existing Ed25519 public key
 whose private half is already loaded in the local SSH agent. The runner verifies the exact agent key before creating
@@ -888,24 +890,20 @@ The peer's NoCloud seed contains only the public key for SSH access, disables pa
 to its private `eth1`, and reserves the appliance `eth0` MAC. The runner uses agent-backed SSH for boot and identity
 readback, pins the observed SSH host key across the seed-removal restart, and never sends a peer password into the
 guest. The copied disk remains writable while VMware runs; its preboot digest is not a lasting byte-integrity claim.
-Separate
-original-intent and original-directory-identity
-receipts precede peer VM creation, and `peer-fixture.json` records its source-disk digest, addresses, MAC, and
-network binding. A management-rewire intent receipt is written before the power-off edit, and a separate
-rewired-runtime receipt records the preserved MAC and the appliance's reserved DHCP address afterward. Both
-runtime receipts deliberately say `unproven`: VM creation and a guest address alone do not establish exclusive
-control. The peer fixture is preparatory: the current `certificate_peer_proof.py` producer deliberately refuses
-even `--preflight-only` before credentials because VMware tooling cannot prove exclusive current attachment to
-the private LAN or exclude another claimant for the candidate address. Native certificate acceptance remains
-blocked until a supported producer independently proves those properties. Once available, the tracked
-`inspect-certificate-peer.ps1` wrapper can admit original creation and LAN receipts, check VMX adapter bindings,
-and use pinned SSH connections to read the peer's dnsmasq configuration, active lease, appliance `eth0` address
-and route, and CA-pinned HTTPS through a private peer tunnel. The producer also requires an explicit, already
-configured static management baseline; it does not configure that baseline. The tracked
-`inspect-certificate-handoff.ps1` wrapper then rechecks controlled receipts and the live private baseline before
-the native scenario changes the management address and restores the original interface and certificate state.
-Each handoff invocation keeps its own preflight admission evidence under the task result root, so a failed later
-stage does not consume the next attempt's admission destination.
+Separate original-intent and original-directory-identity receipts precede peer VM creation. `peer-fixture.json`
+records its source-disk digest, addresses, MAC, and test-LAN binding. A management-rewire intent receipt is written
+before the power-off edit; a separate rewired-runtime receipt records the preserved MAC and address after the edit.
+Legacy receipts marked `unproven` do not admit trusted-host acceptance: create receipts for the current task and PR,
+then use the explicit trusted-host address-proof mode to bind the exact two-VM LAN inventory, adapter assignments,
+peer reservation and lease, candidate addresses, source/runtime, public CA, and SSH pins. Its topology readback comes
+from the trusted Workstation host inventory and recorded VMX state; the receipt labels that host as the authority.
+If inventory is incomplete, a VM has another path into the test LAN, membership changes, or source or trust pins
+drift, the producer refuses acceptance and the run must be re-admitted from original receipts. The peer's pinned SSH
+transport reads its DHCP configuration and lease, while the host-backed native checks read the appliance address,
+route, and CA-validated HTTPS. The producer requires an explicit static appliance baseline; it does not configure
+that baseline. The handoff wrapper rechecks the trusted-host receipts and live LAN state before changing the address
+and restoring the original interface and certificate state. Each invocation keeps its preflight evidence in the
+task result root so a failed stage cannot consume the next attempt's admission destination.
 Load either credentialed wrapper from the reviewed full PR-head Git blob into an in-memory PowerShell script block;
 direct execution of the mutable checkout file is refused. The caller must pin `$reviewedCommit` to the full head
 already verified on the PR and use one of the two literal paths below. For example, load the read-only peer

@@ -131,3 +131,79 @@ def test_peer_uses_only_matching_agent_key(monkeypatch: pytest.MonkeyPatch) -> N
     public_key = "ssh-ed25519 " + base64.b64encode(public_blob).decode("ascii")
     with PinnedPeerTransport("192.168.167.20", "alpine", public_key, host_pin, "192.168.77.0/24"):
         assert called == [("alpine", selected)]
+
+
+@pytest.mark.parametrize(
+    ("failure_code", "active_after", "authenticated_after", "expected"),
+    [
+        (paramiko.OPEN_FAILED_CONNECT_FAILED, True, True, False),
+        (paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED, True, True, "refuse"),
+        (paramiko.OPEN_FAILED_CONNECT_FAILED, False, True, "refuse"),
+        (paramiko.OPEN_FAILED_CONNECT_FAILED, True, False, "refuse"),
+    ],
+)
+def test_tcp_probe_counts_only_authenticated_live_connect_failure_as_closed(
+    failure_code: int, active_after: bool, authenticated_after: bool, expected: bool | str,
+) -> None:
+    """Do not treat administrative denial or loss of the authenticated peer as a closed port."""
+    peer = PinnedPeerTransport(
+        "192.168.167.20", "alpine", "ssh-ed25519 " + "A" * 44,
+        "SHA256:" + "A" * 43, "192.168.77.0/24",
+    )
+
+    class ProbeTransport:
+        active = True
+        authenticated = True
+
+        def is_active(self) -> bool:
+            return self.active
+
+        def is_authenticated(self) -> bool:
+            return self.authenticated
+
+        def open_channel(self, *_args, **_kwargs):
+            self.active = active_after
+            self.authenticated = authenticated_after
+            raise paramiko.ChannelException(failure_code, "test refusal")
+
+    peer.transport = ProbeTransport()  # type: ignore[assignment]  # Fake exercises the probe's transport checks.
+    if expected == "refuse":
+        with pytest.raises(PeerTransportRefusal, match="peer_tcp_probe_unproven"):
+            peer.tcp_reachable("192.168.77.40")
+    else:
+        assert peer.tcp_reachable("192.168.77.40") is expected
+
+
+def test_tcp_probe_reports_open_and_requires_active_authenticated_ssh() -> None:
+    peer = PinnedPeerTransport(
+        "192.168.167.20", "alpine", "ssh-ed25519 " + "A" * 44,
+        "SHA256:" + "A" * 43, "192.168.77.0/24",
+    )
+
+    class OpenChannel:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class ActiveTransport:
+        active = True
+        authenticated = True
+        channel = OpenChannel()
+
+        def is_active(self) -> bool:
+            return self.active
+
+        def is_authenticated(self) -> bool:
+            return self.authenticated
+
+        def open_channel(self, *_args, **_kwargs):
+            return self.channel
+
+    transport = ActiveTransport()
+    peer.transport = transport  # type: ignore[assignment]  # Fake exercises the probe only.
+    assert peer.tcp_reachable("192.168.77.40") is True
+    assert transport.channel.closed
+    transport.authenticated = False
+    with pytest.raises(PeerTransportRefusal, match="peer_transport_inactive"):
+        peer.tcp_reachable("192.168.77.40")

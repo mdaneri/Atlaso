@@ -173,3 +173,118 @@ def test_predeployment_snapshot_must_belong_to_exact_runtime(changed: str) -> No
         source[changed] = "other"
     with pytest.raises(handoff.Refusal, match="predeployment_runtime_binding_mismatch"):
         handoff.admit_predeployment_binding(plan, ownership, source, runtime)
+
+
+def test_trusted_host_source_and_deployed_commits_are_distinct_bindings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A trusted-host plan checks the reviewed source head separately from deployed code."""
+    source_commit = "a" * 40
+    deployed_commit = "b" * 40
+    assert source_commit != deployed_commit
+
+    class StopAfterHeadCheck(Exception):
+        pass
+
+    monkeypatch.setattr(
+        handoff.subprocess, "run",
+        lambda *_args, **_kwargs: type("Result", (), {"stdout": source_commit + "\n"})(),
+    )
+
+    def stop_at_original_receipt(_reference):
+        raise StopAfterHeadCheck()
+
+    monkeypatch.setattr(handoff, "bound_json", stop_at_original_receipt)
+    plan = {
+        "trust_model": "trusted-host", "source_commit": source_commit,
+        "deployed_commit": deployed_commit, "vm_creation_intent": {},
+    }
+    with pytest.raises(StopAfterHeadCheck):
+        handoff.admit_execution(plan)
+
+
+def test_unrelated_resource_source_commit_fails_before_receipt_read_or_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A resource source outside the harness ancestry is rejected before receipt admission."""
+    current_head = "a" * 40
+    resource_source = "b" * 40
+    calls: list[list[str]] = []
+
+    def git_run(command, **_kwargs):
+        calls.append(command)
+        if command[-2:] == ["rev-parse", "HEAD"]:
+            return type("Result", (), {"stdout": current_head + "\n", "returncode": 0})()
+        return type("Result", (), {"stdout": "", "returncode": 1})()
+
+    monkeypatch.setattr(handoff.subprocess, "run", git_run)
+    monkeypatch.setattr(handoff, "bound_json", lambda _ref: pytest.fail("receipt read before ancestry admission"))
+    plan = {
+        "trust_model": "trusted-host", "source_commit": current_head,
+        "resource_source_commit": resource_source, "deployed_commit": "c" * 40,
+    }
+    with pytest.raises(handoff.Refusal, match="resource_source_not_reviewed_ancestor"):
+        handoff.admit_execution(plan)
+    assert len(calls) == 2
+    assert calls[1][-3:] == ["--is-ancestor", resource_source, current_head]
+
+
+def test_reviewed_resource_source_ancestor_allows_initial_receipt_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid original resource ancestor passes the gate before the first receipt is read."""
+    current_head = "a" * 40
+    resource_source = "b" * 40
+
+    class StopAtReceiptRead(Exception):
+        pass
+
+    calls: list[list[str]] = []
+
+    def git_run(command, **_kwargs):
+        calls.append(command)
+        if command[-2:] == ["rev-parse", "HEAD"]:
+            return type("Result", (), {"stdout": current_head + "\n", "returncode": 0})()
+        return type("Result", (), {"stdout": "", "returncode": 0})()
+
+    monkeypatch.setattr(handoff.subprocess, "run", git_run)
+
+    def stop_at_receipt(_reference):
+        raise StopAtReceiptRead()
+
+    monkeypatch.setattr(handoff, "bound_json", stop_at_receipt)
+    plan = {
+        "trust_model": "trusted-host", "source_commit": current_head,
+        "resource_source_commit": resource_source, "deployed_commit": "c" * 40,
+        "vm_creation_intent": {},
+    }
+    with pytest.raises(StopAtReceiptRead):
+        handoff.admit_execution(plan)
+    assert len(calls) == 2
+    assert calls[1][-3:] == ["--is-ancestor", resource_source, current_head]
+
+
+def test_topology_drift_blocks_desired_http_edit_before_request() -> None:
+    """A changed host topology prevents the protected HTTP write from reaching the opener."""
+    checked: list[str] = []
+
+    def topology_guard() -> None:
+        checked.append("drift")
+        raise handoff.HostRefusal("trusted_host_topology_changed")
+
+    class Peer:
+        pass
+
+    Peer.topology_guard = staticmethod(topology_guard)
+
+    class Opener:
+        def open(self, *_args, **_kwargs):
+            pytest.fail("HTTP desired-state edit reached the network after topology drift")
+
+    client = handoff.Client.__new__(handoff.Client)
+    client.url = "https://192.168.77.30"
+    client.peer = Peer()
+    client.opener = Opener()
+    with pytest.raises(handoff.HostRefusal, match="trusted_host_topology_changed"):
+        client.request("/ui/management/settings", {"hostname": "changed"})
+    assert checked == ["drift"]

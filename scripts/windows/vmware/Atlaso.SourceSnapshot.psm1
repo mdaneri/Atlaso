@@ -594,6 +594,8 @@ function New-AtlasoCertificateInspectorSnapshot {
                 'scripts/interop/certificate_handoff_native.py',
                 'scripts/interop/certificate_peer_proof.py',
                 'scripts/interop/certificate_peer_transport.py',
+                'scripts/interop/certificate_trusted_host.py',
+                'scripts/interop/certificate_retirement.py',
                 'scripts/completed_task_files.py'
             ) } else { @(
                 'scripts/__init__.py', 'scripts/installation/__init__.py',

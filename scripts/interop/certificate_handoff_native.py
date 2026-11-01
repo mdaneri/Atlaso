@@ -24,12 +24,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from certificate_peer_proof import Refusal as PeerProofRefusal
 from certificate_peer_proof import admit_receipts as admit_private_receipts
+from certificate_peer_proof import original_vm, plan_pr
 from certificate_peer_proof import read_native as read_private_native
 from certificate_peer_transport import (
     PeerHTTPSHandler,
     PeerTransportRefusal,
     PinnedApplianceSession,
     PinnedPeerTransport,
+)
+from certificate_retirement import Refusal as RetirementRefusal
+from certificate_retirement import verify_retired_address
+from certificate_trusted_host import Refusal as HostRefusal
+from certificate_trusted_host import (
+    TrustedHostMonitor,
+    assert_same_topology,
+    inspect_trusted_host,
 )
 from time_source_guest import apply_review_fields, apply_review_path
 
@@ -165,6 +174,9 @@ class Client:
             path: Path to the resource being inspected.
             form: Form fields submitted to the appliance.
             accept: Accept used by this operation."""
+        guard = getattr(self.peer, "topology_guard", None)
+        if guard is not None:
+            guard()
         if not path.startswith("/") or path.startswith("//"):
             raise Refusal("invalid_request_path")
         data = None if form is None else urllib.parse.urlencode(form, doseq=True).encode()
@@ -174,6 +186,8 @@ class Client:
                 body = response.read(2_000_001)
                 if len(body) > 2_000_000:
                     raise Refusal("response_too_large")
+                if guard is not None:
+                    guard()
                 return response.status, body.decode("utf-8")
         except urllib.error.HTTPError as exc:
             # Do not expose error bodies, request URLs, or headers.
@@ -529,11 +543,29 @@ def admit_execution(plan):
         ["git", "-C", str(Path(__file__).resolve().parents[2]), "rev-parse", "HEAD"],
         capture_output=True, text=True, check=True, env=git_environment,
     ).stdout.strip()
-    if not re.fullmatch(r"[0-9a-f]{40}", deployed_commit) or deployed_commit != current_head:
+    trusted = plan.get("trust_model") == "trusted-host"
+    expected_head = plan.get("source_commit") if trusted else deployed_commit
+    if not re.fullmatch(r"[0-9a-f]{40}", deployed_commit) or expected_head != current_head:
         raise Refusal("wrong_deployed_commit")
+    if trusted:
+        resource_source = plan.get("resource_source_commit", plan["source_commit"])
+        if not isinstance(resource_source, str) or not re.fullmatch(r"[0-9a-f]{40}", resource_source):
+            raise Refusal("resource_source_commit_invalid")
+        if resource_source != current_head:
+            ancestry = subprocess.run(
+                ["git", "-C", str(Path(__file__).resolve().parents[2]), "merge-base", "--is-ancestor", resource_source, current_head],
+                capture_output=True, env=git_environment, timeout=15,
+            )
+            if ancestry.returncode != 0:
+                raise Refusal("resource_source_not_reviewed_ancestor")
     intent = bound_json(plan["vm_creation_intent"])
     ownership = bound_json(plan["vm_ownership"])
-    if (ownership.get("schema") != 1 or ownership.get("kind") != "vm"
+    if trusted:
+        if (plan["vm_creation_intent"] != plan["appliance_intent"]
+                or plan["vm_ownership"] != plan["appliance_ownership"]):
+            raise Refusal("trusted_host_original_reference_mismatch")
+        ownership = original_vm(plan, "appliance", plan["vmx_path"])
+    elif (ownership.get("schema") != 1 or ownership.get("kind") != "vm"
             or ownership.get("repository") != "mdaneri/Atlaso" or ownership.get("pr") != 871
             or ownership.get("task_id") != plan["task_id"]
             or ownership.get("path") != plan["vmx_path"]
@@ -541,7 +573,7 @@ def admit_execution(plan):
             or ownership.get("intent_sha256") != plan["vm_creation_intent"]["sha256"]
             or not re.fullmatch(r"[0-9a-f]{40}", ownership.get("source_commit", ""))):
         raise Refusal("vm_original_ownership_mismatch")
-    if (intent.get("kind") != "vm-creation-intent" or intent.get("task_id") != plan["task_id"]
+    if not trusted and (intent.get("kind") != "vm-creation-intent" or intent.get("task_id") != plan["task_id"]
             or intent.get("path") != plan["vmx_path"]
             or intent.get("root_path") != plan["vm_root_path"]
             or intent.get("source_commit") != ownership["source_commit"]):
@@ -550,9 +582,10 @@ def admit_execution(plan):
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from scripts.completed_task_files import WindowsFiles
-    with WindowsFiles().opened(Path(plan["vm_root_path"]), directory=True) as (_, identity, _):
-        if list(identity) != ownership["root_identity"]:
-            raise Refusal("vm_original_identity_changed")
+    if not trusted:
+        with WindowsFiles().opened(Path(plan["vm_root_path"]), directory=True) as (_, identity, _):
+            if list(identity) != ownership["root_identity"]:
+                raise Refusal("vm_original_identity_changed")
     source = bound_json(plan["predeployment_evidence"])
     route_snapshot = source.get("route_snapshot", {})
     expected_counts = {
@@ -589,7 +622,8 @@ def admit_execution(plan):
     for name in ("wheel_sha256", "helper_sha256"):
         if not re.fullmatch(r"[0-9a-f]{64}", runtime.get(name, "")) or runtime[name] != plan[name]:
             raise Refusal("installed_runtime_digest_mismatch")
-    if runtime.get("address_ownership_state") != "proven-controlled":
+    ownership_state = "trusted-host-controlled" if trusted else "proven-controlled"
+    if runtime.get("address_ownership_state") != ownership_state:
         raise Refusal("task_address_ownership_unproven")
     if (runtime.get("kind") != "certificate-controlled-runtime"
             or runtime.get("rewired_runtime_sha256") != plan["rewired_runtime"]["sha256"]
@@ -599,14 +633,26 @@ def admit_execution(plan):
         fixture, _ = admit_private_receipts(plan)
     except (PeerProofRefusal, OSError, KeyError, ValueError, TypeError, RuntimeError):
         raise Refusal("private_original_receipts_unproven") from None
-    actual_helper = hashlib.sha256((Path(__file__).resolve().parents[2] / "scripts/appliance/atlaso-helper").read_bytes()).hexdigest()
+    if trusted:
+        helper_bytes = subprocess.run(
+            ["git", "-C", str(Path(__file__).resolve().parents[2]), "show", f"{deployed_commit}:scripts/appliance/atlaso-helper"],
+            capture_output=True, check=True, env=git_environment, timeout=15,
+        ).stdout
+    else:
+        helper_bytes = (Path(__file__).resolve().parents[2] / "scripts/appliance/atlaso-helper").read_bytes()
+    actual_helper = hashlib.sha256(helper_bytes).hexdigest()
     if actual_helper != runtime["helper_sha256"]:
         raise Refusal("reviewed_helper_digest_mismatch")
     address = str(ipaddress.ip_interface(plan["candidate_cidr"]).ip) if plan["scenario"] == "static-success" else str(ipaddress.IPv4Address(plan["expected_dhcp_address"]))
     reservation = bound_json(plan["address_evidence"])
+    if trusted:
+        if (reservation.get("trust_model") != "trusted-host"
+                or reservation.get("address_ownership_state") != ownership_state):
+            raise Refusal("trusted_host_address_observations_unproven")
+        assert_same_topology(reservation["trusted_host_topology"], inspect_trusted_host(plan))
     if (reservation.get("schema") != 1 or reservation.get("kind") != "certificate-private-address-proof"
-            or reservation.get("exclusive_attachment_state") != "verified-current"
-            or reservation.get("candidate_conflict_state") != "clear-current"
+            or (not trusted and reservation.get("exclusive_attachment_state") != "verified-current")
+            or (not trusted and reservation.get("candidate_conflict_state") != "clear-current")
             or reservation.get("phase") != "static-baseline-preflight"
             or reservation.get("task_id") != plan["task_id"]
             or reservation.get("vmx_path") != plan["vmx_path"]
@@ -641,12 +687,15 @@ def main():
     evidence = {"schema": 1, "pr": 871, "mode": "execute" if args.execute else "inspect", "stage": "preflight", "success": False}
     password = None
     peer_transport = None
+    topology_monitor = None
     mutation_started = False
     task_terminal = False
     try:
         plan = json.loads(Path(args.plan).read_text())
-        if plan.get("pr") != 871 or not plan.get("source_commit") or plan.get("scenario") not in ("static-success", "dhcp-reject"):
+        if plan_pr(plan) != plan.get("pr") or not plan.get("source_commit") or plan.get("scenario") not in ("static-success", "dhcp-reject"):
             raise Refusal("plan_contract")
+        evidence["pr"] = plan["pr"]
+        evidence["trust_model"] = plan.get("trust_model", "independent")
         if Path(args.evidence).exists() or Path(args.evidence + ".original.json").exists():
             raise Refusal("evidence_destination_exists")
         evidence["admission"] = admit_execution(plan)
@@ -662,6 +711,13 @@ def main():
             peer_plan["ssh_host_key"], peer_plan["private_subnet"],
         )
         peer_transport.__enter__()
+        if plan.get("trust_model") == "trusted-host":
+            expected_topology = bound_json(plan["address_evidence"])["trusted_host_topology"]
+            topology_monitor = TrustedHostMonitor(plan, expected_topology)
+            topology_monitor.start()
+            guard_topology = topology_monitor.check
+            peer_transport.topology_guard = guard_topology
+            guard_topology()
         try:
             fixture, _ = admit_private_receipts(plan)
             with PinnedApplianceSession(
@@ -697,7 +753,7 @@ def main():
         # Commit rollback inputs before the first production mutation, not only
         # in the terminal evidence writer (the process may be interrupted).
         with Path(args.evidence + ".original.json").open("x", encoding="utf-8") as stream:
-            json.dump({"schema": 1, "pr": 871, "source_commit": plan["source_commit"],
+            json.dump({"schema": 1, "pr": plan["pr"], "source_commit": plan["source_commit"],
                        "url": plan["url"], "interface": plan["interface"], "mac": plan["mac"],
                        "original_fields": fields, "original_tls": before, "original_dns": original_dns}, stream, indent=2)
             stream.flush()
@@ -756,8 +812,17 @@ def main():
             if dns_baseline(candidate_client) != original_dns:
                 raise Refusal("candidate_dns_drift")
             evidence["candidate_tls"] = candidate_client.tls_identity()
+            if plan.get("trust_model") == "trusted-host":
+                with PinnedApplianceSession(peer_transport, str(candidate.ip), plan["appliance_user"], password, plan["appliance_ssh_host_key"]) as appliance:
+                    evidence["original_address_retirement"] = verify_retired_address(
+                        plan, peer_transport, appliance, peer_plan["baseline_address"], str(candidate.ip))
             task_terminal = False
             evidence.update(restore_original(clients, plan, fields, before, plan.get("username", "admin"), password, original_dns))
+            if plan.get("trust_model") == "trusted-host":
+                with PinnedApplianceSession(peer_transport, peer_plan["baseline_address"], plan["appliance_user"], password, plan["appliance_ssh_host_key"]) as appliance:
+                    evidence["candidate_address_retirement"] = verify_retired_address(
+                        plan, peer_transport, appliance, str(candidate.ip), peer_plan["baseline_address"])
+                guard_topology()
             mutation_started = False
             evidence.update(stage="static_success_and_original_restored", success=True)
         else:
@@ -775,23 +840,39 @@ def main():
             if not any(isinstance(error, str) and expected_error in error for error in errors):
                 raise Refusal("expected_acquired_address_not_proven")
             evidence["rejected_acquired_address"] = address
+            if plan.get("trust_model") == "trusted-host":
+                with PinnedApplianceSession(peer_transport, peer_plan["baseline_address"], plan["appliance_user"], password, plan["appliance_ssh_host_key"]) as appliance:
+                    evidence["rejected_address_retirement"] = verify_retired_address(
+                        plan, peer_transport, appliance, address, peer_plan["baseline_address"])
             evidence["stage"] = "restore_desired_static"
             task_terminal = False
             evidence.update(restore_original(clients, plan, fields, before, plan.get("username", "admin"), password, original_dns))
+            if plan.get("trust_model") == "trusted-host":
+                with PinnedApplianceSession(peer_transport, peer_plan["baseline_address"], plan["appliance_user"], password, plan["appliance_ssh_host_key"]) as appliance:
+                    evidence["restored_address_retirement"] = verify_retired_address(
+                        plan, peer_transport, appliance, address, peer_plan["baseline_address"])
+                guard_topology()
             mutation_started = False
             evidence.update(stage="negative_case_and_desired_restore_complete", success=True)
-    except (Refusal, PeerTransportRefusal, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
-        evidence["failure"] = str(exc) if isinstance(exc, Refusal) else type(exc).__name__
-        if mutation_started:
+    except (Refusal, PeerProofRefusal, HostRefusal, RetirementRefusal, PeerTransportRefusal, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+        evidence["failure"] = str(exc) if isinstance(exc, (Refusal, PeerProofRefusal, HostRefusal, RetirementRefusal, PeerTransportRefusal)) else type(exc).__name__
+        if mutation_started and isinstance(exc, HostRefusal):
+            evidence["recovery"] = "topology_changed_preserve_lab_and_original_rollback_inputs"
+        elif mutation_started:
             if not task_terminal:
                 evidence["recovery"] = "task_outcome_unproven_do_not_resubmit_use_original_snapshot"
             else:
                 try:
                     evidence.update(restore_original(clients, plan, fields, before, plan.get("username", "admin"), password, original_dns))
                     evidence["recovery"] = "original_restored"
-                except (Refusal, OSError, ValueError, KeyError, TypeError):
+                except (Refusal, HostRefusal, PeerProofRefusal, RetirementRefusal, PeerTransportRefusal, OSError, ValueError, KeyError, TypeError):
                     evidence["recovery"] = "requires_reconciliation_use_original_snapshot"
     finally:
+        if topology_monitor is not None:
+            topology_monitor.stop()
+            evidence["trusted_host_observations"] = topology_monitor.observations
+            if topology_monitor.failed.is_set():
+                evidence.update(success=False, failure="trusted_host_topology_changed")
         if peer_transport is not None:
             peer_transport.__exit__(None, None, None)
         password = None
