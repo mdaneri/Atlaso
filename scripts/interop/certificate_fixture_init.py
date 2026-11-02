@@ -78,7 +78,11 @@ class FixtureForm(FormParser):
         """
         values = dict(attrs)
         if tag == "form":
-            matched = values.get("action") == self.expected_action
+            # The source wizard shares the NTP POST action. Select only its
+            # existing settings form, whose external fallback controls use this ID.
+            matched = (values.get("action") == self.expected_action
+                       and (not self.expected_action.endswith("/ntp/settings")
+                            or values.get("id") == "ntp-settings-form"))
             if matched:
                 if values.get("method", "get").lower() != "post":
                     raise Refusal("fixture_form_method_invalid")
@@ -353,7 +357,7 @@ def initialize(plan: dict, output: Path, password: str, *, execute: bool) -> dic
                     form = FixtureForm(body, "/ui/management/settings")
                     prepared[page] = (form.form_action, replace_fields(form.fields, {"external_dns_servers": peer_address}))
                 path, fields = prepared[page]
-                _, saved = client.json(path, fields)
+                _, saved = client.json(path, fields, autosave=True)
                 if saved.get("valid") is False:
                     raise Refusal("fixture_saved_settings_invalid")
             terminal = False

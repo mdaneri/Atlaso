@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import io
 import json
 import sys
 import time
@@ -37,7 +38,7 @@ def page(name: str) -> str:
         ]), quote=True) + '">',
     }[name]
     return ('<form action="/unrelated" method="post"><input name="other" value="ignored"></form>'
-            f'<form action="/ui/management/{action}" method="post"><input name="csrf" value="{TOKEN}">{content}</form>')
+            f'<form id="ntp-settings-form" action="/ui/management/{action}" method="post"><input name="csrf" value="{TOKEN}">{content}</form>')
 
 
 class FormsClient:
@@ -230,14 +231,16 @@ def test_initialization_transitions_are_journaled_and_never_resubmitted(tmp_path
             """
             pass
 
-        def json(self, path, form=None):
+        def json(self, path, form=None, *, autosave=False):
             """Return scoped review or record a normal desired-form edit.
 
             Args:
                 path: Fixed management endpoint.
                 form: Browser form fields, when editing desired state.
+                autosave: Require the real handler's explicit JSON response header.
             """
             if form is not None:
+                assert autosave is True
                 calls.append(path)
                 return 200, {"valid": True}
             return 200, {"units": [{"id": "ntpd", "changed": True}]}
@@ -312,3 +315,63 @@ def test_initialization_transitions_are_journaled_and_never_resubmitted(tmp_path
     for path in tmp_path.glob("*.json"):
         text = path.read_text()
         assert all(value not in text for value in (TOKEN, secret, "synthetic-private-response", "opaque-private-selector"))
+
+
+@pytest.mark.parametrize("page_name", ["dns", "settings", "ntp"])
+def test_fixture_forms_use_real_router_autosave_contract(client, monkeypatch, page_name):
+    """Exercise native client's request bytes against actual settings handlers.
+
+    Args:
+        client: Isolated Atlaso application with its real UI routers.
+        monkeypatch: Replace only native NTP capability discovery.
+        page_name: Existing form whose autosave response must remain JSON.
+    """
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.ui import get_appliance_settings_row
+    from tests.routers.ui.helpers import login
+
+    monkeypatch.setattr("atlaso.app.ui.SystemAdapter.read_ntpd_capabilities", lambda _self: AdapterResult(
+        command=["atlaso-helper", "ntpd", "capabilities"], dry_run=False,
+        stdout=json.dumps({"nts": True, "vmware_tools": False}),
+    ))
+    login(client)
+    # Match the ISO inspection prerequisite; the generic web-test database
+    # deliberately starts without a deployed HTTPS management front door.
+    with SessionLocal() as db:
+        get_appliance_settings_row(db).management_https_enabled = True
+        db.commit()
+    native = init.Client.__new__(init.Client)
+    native.url = "http://testserver"
+    native.peer = SimpleNamespace(topology_guard=None)
+    sent = []
+
+    class Response(io.BytesIO):
+        def __init__(self, response):
+            """Adapt the in-process HTTP response to urllib's bounded stream.
+
+            Args:
+                response: Real test-server response.
+            """
+            super().__init__(response.content)
+            self.status = response.status_code
+
+    class Opener:
+        def open(self, request, *, timeout):
+            """Carry actual urllib request headers and fields to real routers.
+
+            Args:
+                request: Native verifier's request, without live credentials.
+                timeout: Required bounded transport timeout.
+            """
+            assert timeout == 12
+            sent.append(request)
+            return Response(client.request(request.get_method(), request.full_url,
+                                           content=request.data, headers=dict(request.header_items())))
+
+    native.opener = Opener()
+    forms, _ = init.prepare_forms(native, PEER)
+    path, fields = forms[page_name]
+    status, payload = native.json(path, fields, autosave=True)
+    assert status == 200 and payload["status"] == "saved", payload
+    assert dict(sent[-1].header_items())["X-atlaso-autosave"] == "1"

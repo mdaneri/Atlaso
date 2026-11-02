@@ -167,20 +167,28 @@ class Client:
             PeerHTTPSHandler(peer=peer, target_ip=self.connect_ip, context=self.context),
         )
 
-    def request(self, path, form=None, accept="text/html"):
+    def request(self, path, form=None, accept="text/html", *, autosave=False):
         """Handle request for certificate handoff verification.
 
         Args:
             path: Path to the resource being inspected.
             form: Form fields submitted to the appliance.
-            accept: Accept used by this operation."""
+            accept: Accept used by this operation.
+            autosave: Select the existing settings handler's JSON response."""
         guard = getattr(self.peer, "topology_guard", None)
         if guard is not None:
             guard()
         if not path.startswith("/") or path.startswith("//"):
             raise Refusal("invalid_request_path")
         data = None if form is None else urllib.parse.urlencode(form, doseq=True).encode()
-        request = urllib.request.Request(self.url + path, data=data, headers={"Accept": accept})
+        headers = {"Accept": accept}
+        if data is not None:
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        if autosave:
+            if form is None:
+                raise Refusal("autosave_requires_form")
+            headers["X-Atlaso-Autosave"] = "1"
+        request = urllib.request.Request(self.url + path, data=data, headers=headers)
         try:
             with self.opener.open(request, timeout=12) as response:
                 body = response.read(2_000_001)
@@ -193,13 +201,15 @@ class Client:
             # Do not expose error bodies, request URLs, or headers.
             raise Refusal(f"http_{exc.code}") from None
 
-    def json(self, path, form=None):
+    def json(self, path, form=None, *, autosave=False):
         """Handle json for certificate handoff verification.
 
         Args:
             path: Path to the resource being inspected.
-            form: Form fields submitted to the appliance."""
-        status, body = self.request(path, form, "application/json")
+            form: Form fields submitted to the appliance.
+            autosave: Request the existing settings handler's JSON autosave contract."""
+        status, body = (self.request(path, form, "application/json", autosave=True) if autosave
+                        else self.request(path, form, "application/json"))
         return status, json.loads(body)
 
     def login(self, username, password):
