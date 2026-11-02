@@ -5,6 +5,7 @@ import json
 import stat
 import subprocess
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -123,8 +124,10 @@ def test_changed_review_refuses_mutation_and_healthy_repeat_is_noop(helper, monk
     None, "foreign_repo", "remove", "downgrade", "invalid_json", "unknown", "unverified", "duplicate", "foreign_path",
     "duplicate_identity", "missing_target", "missing_tdnf", "nonzero_epoch",
 ])
-def test_guest_tools_check_uses_only_verified_local_solver_packages(helper, monkeypatch, tmp_path, defect):
-    """The offline solver may select only exact verified RPMs from the active profile.
+def test_guest_tools_check_uses_only_verified_local_solver_packages_without_default_repo_dir(
+    helper, monkeypatch, tmp_path, defect
+):
+    """Resolve from the validated profile even when a fresh ISO lacks repo config.
 
     Args:
         helper: Isolated privileged helper.
@@ -135,6 +138,8 @@ def test_guest_tools_check_uses_only_verified_local_solver_packages(helper, monk
     root = tmp_path / "payload"
     profile = root / "vmware"
     profile.mkdir(parents=True)
+    default_repos = tmp_path / "etc/yum.repos.d"
+    assert not default_repos.exists()
     target_path = profile / "open-vm-tools.rpm"
     dependency_path = profile / "libvmtools.rpm"
     conflict_path = profile / "hostname.rpm"
@@ -191,6 +196,15 @@ def test_guest_tools_check_uses_only_verified_local_solver_packages(helper, monk
         """
         commands.append(command)
         if command[0] == "tdnf":
+            reposdir = next(
+                (argument.removeprefix("--setopt=reposdir=") for argument in command if argument.startswith("--setopt=reposdir=")),
+                None,
+            )
+            if (not default_repos.is_dir()
+                    and (reposdir is None or Path(reposdir) != profile or not profile.is_dir()
+                         or profile.resolve(strict=True) != profile)):
+                return {"command": command, "success": False, "returncode": 1005,
+                        "stdout": "", "stderr": "Error1005: repository directory does not exist"}
             return {"command": command, "success": True, "returncode": 0,
                     "stdout": "not-json" if defect == "invalid_json" else json.dumps(response), "stderr": ""}
         return {"command": command, "success": True, "returncode": 0, "stdout": "", "stderr": ""}
@@ -217,7 +231,8 @@ def test_guest_tools_check_uses_only_verified_local_solver_packages(helper, monk
     assert result["_transaction_packages"] == [str(target_path), str(dependency_path)]
     assert str(conflict_path) not in result["_transaction_packages"]
     assert commands[0] == [
-        "tdnf", "--disablerepo=*", f"--repofromdir=atlaso-guest-tools,{profile}",
+        "tdnf", "--disablerepo=*", f"--setopt=reposdir={profile}",
+        f"--repofromdir=atlaso-guest-tools,{profile}",
         "--repoid=atlaso-guest-tools", "--assumeno", "--json", "install",
         "open-vm-tools-2:13.1.0-2.ph5.x86_64" if defect == "nonzero_epoch"
         else "open-vm-tools-13.1.0-2.ph5.x86_64",

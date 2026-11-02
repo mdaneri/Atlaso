@@ -22948,7 +22948,8 @@ def _guest_tools_transaction_plan(provider: str, payload_info: dict[str, object]
         return {"success": False, "reason": "The verified offline guest-tools package plan is invalid."}
 
     repo_id = GUEST_TOOLS_LOCAL_REPO_ID
-    command = [tdnf, "--disablerepo=*", f"--repofromdir={repo_id},{profile}",
+    command = [tdnf, "--disablerepo=*", f"--setopt=reposdir={profile}",
+               f"--repofromdir={repo_id},{profile}",
                f"--repoid={repo_id}", "--assumeno", "--json", "install", spec]
     try:
         result = _command_payload(command, stdout_limit=128 * 1024, timeout=30.0)
