@@ -1636,7 +1636,14 @@ def test_installation_network_databases_require_admitted_files_and_standard_look
     expected_paths = tuple(tmp_path / path.relative_to("/") for path in verifier.INSTALLATION_NETWORK_DATABASES)
 
     def read(path, mode, maximum_bytes, policy_name):
-        """Exercise the helper's fixed paths and strict safe-reader contract."""
+        """Exercise the helper's fixed paths and strict safe-reader contract.
+
+        Args:
+            path: Network database path selected by the verifier.
+            mode: Required file permission bits.
+            maximum_bytes: Maximum admitted network database size.
+            policy_name: Safe-reader policy selected for these files.
+        """
         observations.append(("read", path))
         assert path in expected_paths
         assert (mode, maximum_bytes, policy_name) == (
@@ -1647,7 +1654,12 @@ def test_installation_network_databases_require_admitted_files_and_standard_look
         return b"public Photon network database fixture\n"
 
     def rpm(command, **options):
-        """Return only fixed package ownership and verification results."""
+        """Return only fixed package ownership and verification results.
+
+        Args:
+            command: RPM ownership or package verification argument vector.
+            **options: Bounded subprocess options required by the verifier.
+        """
         observations.append(("rpm", command))
         assert options == {"check": False, "capture_output": True, "text": True, "timeout": 10}
         if "-qf" in command:
@@ -1660,7 +1672,12 @@ def test_installation_network_databases_require_admitted_files_and_standard_look
     monkeypatch.setattr(verifier, "_read_installation_tmpfiles", read)
 
     def getservbyname(_name, _protocol):
-        """Return the public ntp port, or one bounded lookup failure."""
+        """Return the public ntp port, or one bounded lookup failure.
+
+        Args:
+            _name: Service name passed to the simulated lookup.
+            _protocol: Transport protocol passed to the simulated lookup.
+        """
         if defect == "service-error":
             raise OSError("service name unavailable")
         return 124 if defect == "service-port" else 123
