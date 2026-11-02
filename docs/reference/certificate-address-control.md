@@ -61,6 +61,8 @@ private key, password, token, authenticated URL, or other secret in evidence.
   the segment. Check the appliance and peer adapters are connected, and verify the appliance has no other connected
   adapter. Record the inventory and adapter readbacks with observation time. The host administrator attests that this
   inventory covers the host's VM locations and prevents untracked host operators from adding a member during the run.
+  Vacant inventory slots and stale missing VMX paths are counted separately; every existing registration and running
+  VM is still checked. A vacant slot must contain an exactly empty path, and duplicate slot indexes are refused.
 - Select and record an unused private candidate address and a distinct peer address. Reserve the candidate for the
   admitted appliance MAC in the peer's bounded DHCP configuration, or record the equivalent fixed-address plan. The
   peer's DHCP service binds only to its test-segment adapter and leases only the admitted appliance MAC. Verify the

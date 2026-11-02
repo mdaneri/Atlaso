@@ -26,8 +26,8 @@ class Refusal(Exception):
 _SEGMENT_ID = re.compile(r"(?:[0-9a-fA-F]{2} ){7}[0-9a-fA-F]{2}-(?:[0-9a-fA-F]{2} ){7}[0-9a-fA-F]{2}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 _MAC = re.compile(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\Z")
-_VMX_FIELD = re.compile(r'^\s*(ethernet\d+)\.([A-Za-z][A-Za-z0-9]*)\s*=\s*"([^"\r\n]*)"\s*(?:#.*)?\Z')
-_INVENTORY_PATH = re.compile(r'^\s*vmlist(\d+)\.config\s*=\s*"([^"\r\n]+)"\s*\Z', re.IGNORECASE)
+_VMX_FIELD = re.compile(r'^\s*(ethernet\d+)\.([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*)\s*=\s*"([^"\r\n]*)"\s*(?:#.*)?\Z')
+_INVENTORY_PATH = re.compile(r'^\s*vmlist(\d+)\.config\s*=\s*"([^"\r\n]*)"\s*\Z', re.IGNORECASE)
 _INVENTORY_KEY = re.compile(r'^\s*vmlist[^.\s]*\.config\s*=', re.IGNORECASE)
 _SEGMENT_NAME = re.compile(r'^\s*pref\.namedPVNs(\d+)\.name\s*=\s*"([^"\r\n]+)"\s*\Z')
 _SEGMENT_ID_FIELD = re.compile(r'^\s*pref\.namedPVNs(\d+)\.pvnID\s*=\s*"([^"\r\n]+)"\s*\Z')
@@ -142,22 +142,30 @@ def _decode_config(payload: bytes, reason: str) -> list[str]:
     return text.splitlines()
 
 
-def _parse_inventory(payload: bytes) -> tuple[list[Path], int]:
-    """Parse registered VMX paths and count missing stale registrations.
+def _parse_inventory(payload: bytes) -> tuple[list[Path], int, int]:
+    """Parse registered VMX paths and count missing paths and vacant slots separately.
 
     Args:
         payload: Bounded bytes from the Workstation VM inventory file.
     """
     lines = _decode_config(payload, "trusted_host_inventory_invalid")
     entries: dict[int, Path] = {}
+    indices: set[int] = set()
+    vacant_count = 0
     for line in lines:
         path_match = _INVENTORY_PATH.fullmatch(line)
         if _INVENTORY_KEY.match(line):
             if path_match is None:
                 raise Refusal("trusted_host_inventory_invalid")
             index = int(path_match.group(1))
+            if index in indices:
+                raise Refusal("trusted_host_inventory_invalid")
+            indices.add(index)
+            if path_match.group(2) == "":
+                vacant_count += 1
+                continue
             candidate = Path(path_match.group(2))
-            if index in entries or not candidate.is_absolute() or candidate.suffix.lower() != ".vmx":
+            if not candidate.is_absolute() or candidate.suffix.lower() != ".vmx":
                 raise Refusal("trusted_host_inventory_invalid")
             entries[index] = candidate
     if not entries:
@@ -186,7 +194,7 @@ def _parse_inventory(payload: bytes) -> tuple[list[Path], int]:
         paths[normalized] = actual
     if not paths:
         raise Refusal("trusted_host_inventory_invalid")
-    return [paths[key] for key in sorted(paths)], stale_count
+    return [paths[key] for key in sorted(paths)], stale_count, vacant_count
 
 
 def _parse_vmrun_output(payload: bytes) -> list[Path]:
@@ -303,7 +311,12 @@ def _run_vmrun(executable: Path) -> tuple[list[Path], str]:
     environment = {
         key: value
         for key, value in os.environ.items()
-        if key.upper() in {"PATH", "SYSTEMROOT", "WINDIR", "PROCESSOR_ARCHITECTURE"}
+        if key.upper() in {
+            "PATH", "SYSTEMROOT", "WINDIR", "PROCESSOR_ARCHITECTURE", "TEMP", "TMP",
+            "APPDATA", "LOCALAPPDATA", "USERPROFILE", "ALLUSERSPROFILE", "PROGRAMDATA",
+            "SYSTEMDRIVE", "COMSPEC", "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432",
+            "COMMONPROGRAMFILES", "COMMONPROGRAMFILES(X86)", "COMMONPROGRAMW6432",
+        }
     }
     try:
         result = subprocess.run(
@@ -395,7 +408,7 @@ def inspect_trusted_host(plan: dict[str, Any]) -> dict[str, Any]:
     if registered_id != segment_id:
         raise Refusal("trusted_host_segment_registration_changed")
 
-    registered, stale_registration_count = _parse_inventory(inventory)
+    registered, stale_registration_count, vacant_registration_count = _parse_inventory(inventory)
     running, running_digest = _run_vmrun(vmrun_path)
     registered_by_path = {_normalized_path(path): path for path in registered}
     running_by_path = {_normalized_path(path): path for path in running}
@@ -448,6 +461,7 @@ def inspect_trusted_host(plan: dict[str, Any]) -> dict[str, Any]:
         "running_inventory_sha256": running_digest,
         "registered_vm_count": len(registered_by_path),
         "stale_registration_count": stale_registration_count,
+        "vacant_registration_count": vacant_registration_count,
         "running_vm_count": len(running_by_path),
         "observed_vm_count": len(observed_by_path),
         "private_members": sorted(private_members),

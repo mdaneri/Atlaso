@@ -303,6 +303,70 @@ def test_trusted_host_ignores_only_missing_stale_registration(
     assert evidence["registered_vm_count"] == 2
 
 
+def test_vacant_inventory_slots_are_not_vm_members(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Accept native cleared slots without excluding any real registration.
+
+    Args:
+        tmp_path: Isolated lab and inventory files.
+        monkeypatch: Replaces only host process readback.
+    """
+    plan = _lab(tmp_path, monkeypatch)
+    inventory = Path(plan["trusted_host"]["inventory_path"])
+    with inventory.open("a", encoding="utf-8") as stream:
+        stream.write('vmlist53.config = ""\nvmlist54.config = ""\n')
+    evidence = trusted.inspect_trusted_host(plan)
+    assert evidence["vacant_registration_count"] == 2
+    assert evidence["stale_registration_count"] == 0
+    assert evidence["registered_vm_count"] == 2
+    assert len(evidence["private_members"]) == 2
+
+
+@pytest.mark.parametrize("third_member", [False, True])
+def test_native_nested_nic_metadata_preserves_membership_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, third_member: bool,
+) -> None:
+    """Parse ordinary VMware metadata without hiding a real private LAN member.
+
+    Args:
+        tmp_path: Isolated lab and VMX files.
+        monkeypatch: Replaces only host process readback.
+        third_member: Whether another VM really references the private LAN.
+    """
+    plan = _lab(tmp_path, monkeypatch, third_member=third_member)
+    appliance = Path(plan["trusted_host"]["appliance_vmx"])
+    with appliance.open("a", encoding="utf-8") as stream:
+        stream.write('ethernet0.linkstatepropagation.enable = "TRUE"\n')
+    if third_member:
+        with pytest.raises(trusted.Refusal, match="trusted_host_private_membership_changed"):
+            trusted.inspect_trusted_host(plan)
+    else:
+        assert len(trusted.inspect_trusted_host(plan)["private_members"]) == 2
+
+
+@pytest.mark.parametrize("extra", [
+    'vmlist0.config = ""\n',
+    'vmlist53.config = ""\nvmlist53.config = ""\n',
+    'vmlist53.config = " "\n',
+    'vmlist53.config = "\n',
+])
+def test_vacant_slot_handling_keeps_malformed_and_duplicate_refusals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extra: str,
+) -> None:
+    """Reject ambiguous duplicate slots and nonempty invalid values.
+
+    Args:
+        tmp_path: Isolated lab and inventory files.
+        monkeypatch: Replaces only host process readback.
+        extra: Native-shaped invalid or duplicate slot added to the inventory.
+    """
+    plan = _lab(tmp_path, monkeypatch)
+    inventory = Path(plan["trusted_host"]["inventory_path"])
+    with inventory.open("a", encoding="utf-8") as stream:
+        stream.write(extra)
+    with pytest.raises(trusted.Refusal, match="trusted_host_inventory_invalid"):
+        trusted.inspect_trusted_host(plan)
+
+
 def test_trusted_host_scrubs_vmrun_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -330,6 +394,11 @@ def test_trusted_host_scrubs_vmrun_environment(
 
     monkeypatch.setattr(trusted.subprocess, "run", fake_run)
     monkeypatch.setenv("ATLASO_NATIVE_TEST_SECRET", "not-forwarded")
+    for name in ("ATLASO_NATIVE_ADMIN", "ATLASO_NATIVE_PEER_KEY", "OP_SERVICE_ACCOUNT_TOKEN", "VMWARE_REST_PASSWORD"):
+        monkeypatch.setenv(name, "synthetic-not-forwarded")
+    monkeypatch.setenv("APPDATA", str(tmp_path / "roaming"))
+    monkeypatch.setenv("PROGRAMDATA", str(tmp_path / "program-data"))
+    monkeypatch.setenv("TEMP", str(tmp_path / "owned-temp"))
 
     trusted.inspect_trusted_host(plan)
 
@@ -337,6 +406,12 @@ def test_trusted_host_scrubs_vmrun_environment(
     assert isinstance(environment, dict)
     assert "ATLASO_NATIVE_TEST_SECRET" not in environment
     assert "VMWARE_REST_PASSWORD" not in environment
+    assert "ATLASO_NATIVE_ADMIN" not in environment
+    assert "ATLASO_NATIVE_PEER_KEY" not in environment
+    assert "OP_SERVICE_ACCOUNT_TOKEN" not in environment
+    assert environment["APPDATA"] == str(tmp_path / "roaming")
+    assert environment["PROGRAMDATA"] == str(tmp_path / "program-data")
+    assert environment["TEMP"] == str(tmp_path / "owned-temp")
     assert observed["timeout"] == 15
 
 
