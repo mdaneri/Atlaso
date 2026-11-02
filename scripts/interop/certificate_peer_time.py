@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
-import time
+import math
 from datetime import datetime, timezone
 from typing import Any
 
@@ -88,11 +88,16 @@ def verify_peer_time(peer: Any, address: str, clients: list[str]) -> dict[str, A
     try:
         reference = datetime.strptime(fields["Ref time (UTC)"], "%a %b %d %H:%M:%S %Y").replace(tzinfo=timezone.utc).timestamp()
         interval = float(fields["Update interval"].split()[0])
+        system_offset = float(fields["System time"].split()[0])
         peer_seconds = int(peer.command("date -u +%s").strip())
     except (KeyError, ValueError, OverflowError):
         raise Refusal("peer_time_freshness_unproven") from None
-    now = time.time()
-    if interval < 0 or not 0 <= now - reference <= max(120, interval * 2 + 60) or abs(now - peer_seconds) > 2:
+    # Chrony disciplines this peer from its real selected upstream. The Windows
+    # controller is an observer, not an NTP authority: compare source freshness
+    # with the peer's clock and require Chrony's measured system offset instead
+    # of making an unrelated host-clock skew a fixture prerequisite.
+    if (not math.isfinite(interval) or interval < 0 or not math.isfinite(system_offset)
+            or abs(system_offset) > 0.1 or not 0 <= peer_seconds - reference <= max(120, interval * 2 + 60)):
         raise Refusal("peer_time_freshness_unproven")
     parsed = peer.command("sudo -n chronyd -p").decode("ascii").splitlines()
     if any(line.split() and line.split()[0] in {"local", "refclock"} for line in parsed):
@@ -131,4 +136,5 @@ print(json.dumps({{'stratum':reply[1],'real_udp_reply':True}}))
         raise Refusal("peer_time_reply_invalid")
     return {"kind": "certificate-peer-time", "address": address, "stratum": stratum,
             "upstream": str(upstream), "synchronized": True, "real_udp_reply": True,
+            "system_offset_seconds": system_offset,
             "configuration_sha256": hashlib.sha256(expected).hexdigest()}

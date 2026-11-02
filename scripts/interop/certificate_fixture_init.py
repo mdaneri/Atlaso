@@ -307,6 +307,7 @@ def initialize(plan: dict, output: Path, password: str, *, execute: bool) -> dic
             verify_peer_isolation(peer)
             addresses = [plan["current_address"], plan["baseline_address"], plan["static_candidate_address"]]
             verify_peer_tunnel_scope(peer, addresses)
+            result["stage"] = "peer_time_verification"
             result["peer_time"] = verify_peer_time(peer, peer_address, addresses)
             leases = [line.split() for line in peer.command("cat /var/lib/misc/dnsmasq.leases").decode("ascii").splitlines()]
             matching = [row for row in leases if len(row) >= 3 and row[1].lower() == fixture["appliance_mac"].lower()]

@@ -41,7 +41,8 @@ class Peer:
             return (config + ("allow all\n" if self.change == "file" else "")).encode()
         if command == "sudo -n chronyc -n tracking":
             reference = datetime.fromtimestamp(time.time() - (10000 if self.change == "stale" else 5), timezone.utc)
-            return ("Stratum : 3\nLeap status : " + ("Not synchronised" if self.change == "unsynced" else "Normal")
+            return ("Stratum : 3\nSystem time : " + ("0.5" if self.change == "offset" else "0.000002")
+                    + " seconds slow of NTP time\nLeap status : " + ("Not synchronised" if self.change == "unsynced" else "Normal")
                     + "\nRef time (UTC) : " + reference.strftime("%a %b %d %H:%M:%S %Y") + "\nUpdate interval : 60 seconds\n").encode()
         if command == "date -u +%s":
             return str(int(time.time()) + (30 if self.change == "clock" else 0)).encode()
@@ -85,7 +86,7 @@ def test_real_status_and_udp_query_are_both_required():
     ("competing", "competing_controller"), ("file", "configuration_changed"),
     ("unsynced", "not_synchronized"), ("self", "not_synchronized"),
     ("scope", "effective_scope_changed"), ("local", "synthetic_source_refused"), ("reply", "reply_invalid"),
-    ("stale", "freshness_unproven"), ("clock", "freshness_unproven"),
+    ("stale", "freshness_unproven"), ("offset", "freshness_unproven"),
 ])
 def test_time_admission_refuses_unproven_or_expanded_serving(change, reason):
     """Reject unsafe time fixtures instead of treating service activity as health.
@@ -96,3 +97,9 @@ def test_time_admission_refuses_unproven_or_expanded_serving(change, reason):
     """
     with pytest.raises(clock.Refusal, match=reason):
         clock.verify_peer_time(Peer(change=change), PEER, CLIENTS)
+
+
+def test_ntp_peer_does_not_adopt_the_windows_observers_clock_as_authority():
+    """A healthy real NTP source remains authoritative if the observer is skewed."""
+    result = clock.verify_peer_time(Peer(change="clock"), PEER, CLIENTS)
+    assert result["synchronized"] is True and result["system_offset_seconds"] == 0.000002
