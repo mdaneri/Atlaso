@@ -195,6 +195,7 @@ CONSOLE_RECOVERY_RUNTIME_SECONDS = 108
 CONSOLE_RECOVERY_STOP_SECONDS = 2
 _CONSOLE_RECOVERY_DEADLINE: ContextVar[float | None] = ContextVar("console_recovery_deadline", default=None)
 _IPV4LL_DISABLE_ONLY_LINKS: ContextVar[frozenset[str]] = ContextVar("ipv4ll_disable_only_links", default=frozenset())
+_IPV4LL_REENABLE_ONLY_LINKS: ContextVar[frozenset[str]] = ContextVar("ipv4ll_reenable_only_links", default=frozenset())
 UPDATE_RELEASE_NOTES_URL_MAX_LENGTH = 2048
 NO_PATH_ACTIONS = {
     ("public-services", "reverse-proxy-status"),
@@ -15720,6 +15721,7 @@ def _network_apply_transaction(path: Path):
     _preflight_route_domain_capacity(path)
     files, _links, _down = _systemd_networkd_files(path)
     disable_only = _ipv4ll_disable_only_links(path, files)
+    reenable_only = _ipv4ll_policy_only_links(path, files, enabled=True)
     physical, vlans, link_states = _management_handoff_candidate_links(
         {"network_config_path": str(path)}, include_removed=True,
     )
@@ -15767,9 +15769,11 @@ def _network_apply_transaction(path: Path):
                 published = False
         try:
             policy_token = _IPV4LL_DISABLE_ONLY_LINKS.set(frozenset(disable_only))
+            reenable_token = _IPV4LL_REENABLE_ONLY_LINKS.set(frozenset(reenable_only))
             try:
                 yield
             finally:
+                _IPV4LL_REENABLE_ONLY_LINKS.reset(reenable_token)
                 _IPV4LL_DISABLE_ONLY_LINKS.reset(policy_token)
             for target in paths:
                 if target.is_file():
@@ -15806,6 +15810,17 @@ def _ipv4ll_disable_only_links(path: Path, files: dict[str, str]) -> set[str]:
         path: Reviewed Network intent.
         files: Candidate native configurations before any file replacement.
     """
+    return _ipv4ll_policy_only_links(path, files, enabled=False)
+
+
+def _ipv4ll_policy_only_links(path: Path, files: dict[str, str], *, enabled: bool) -> set[str]:
+    """Identify exact fallback-only edits before native file replacement.
+
+    Args:
+        path: Reviewed Network intent, including pinned physical MAC identity.
+        files: Candidate native configurations before any file replacement.
+        enabled: Requested fallback state; re-enable admission is Management-only.
+    """
     physical, _vlans, _removed = _parse_network_config(path)
     allowed = set()
     def remaining(text: str) -> list[str]:
@@ -15817,13 +15832,19 @@ def _ipv4ll_disable_only_links(path: Path, files: dict[str, str]) -> set[str]:
         return [line for line in text.splitlines() if line.strip() and not line.startswith("#")
                 and not line.startswith(("LinkLocalAddressing=", "ConfigureWithoutCarrier=", "IPv4LLRoute="))]
     for row in physical:
-        if row.get("ipv4_method") != "dhcp" or row.get("ipv4_link_local_fallback_enabled") != "false":
+        if (row.get("ipv4_method") != "dhcp"
+                or row.get("ipv4_link_local_fallback_enabled") != str(enabled).lower()):
+            continue
+        if enabled and (row.get("role") != "management" or row.get("admin_state", "up") != "up"
+                        or not _valid_network_mac(row.get("mac", ""))
+                        or NETWORK_IDENTITY_PIN_MARKER not in path.read_text(encoding="utf-8").splitlines()):
             continue
         filename = "00-atlaso-mgmt.network" if row.get("role") == "management" else _networkd_managed_filename(row["name"], "network")
         old_path = NETWORKD_CONFIG_DIR / filename
         if old_path.is_file() and not old_path.is_symlink():
             old = old_path.read_text(encoding="utf-8")
-            if ("# Atlaso IPv4LL fallback enabled=true" in old and filename in files
+            if (f"# Atlaso IPv4LL fallback enabled={str(not enabled).lower()}" in old and filename in files
+                    and (not enabled or f"# Atlaso IPv4LL fallback enabled={str(enabled).lower()}" in files[filename])
                     and remaining(old) == remaining(files[filename])):
                 allowed.add(row["name"])
     return allowed
@@ -32165,7 +32186,12 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
             if parsed.ip.is_unspecified or parsed.ip.is_multicast or parsed.ip.is_loopback or parsed.ip.is_link_local:
                 continue
             cidrs.append(str(parsed))
-        if not cidrs and not ipv4ll_cidrs:
+        # An exact opt-in after an opt-out/reboot can legitimately have no old
+        # source to preserve. Require an explicit, completely empty inventory;
+        # missing, tentative or otherwise unusable old addresses remain refusals.
+        unaddressed_reenable = (name in _IPV4LL_REENABLE_ONLY_LINKS.get()
+                               and "addr_info" in rows[0] and addresses == [])
+        if not cidrs and not ipv4ll_cidrs and not unaddressed_reenable:
             raise ValueError("previous routing-domain assigned addresses are missing")
         routes = {}
         route_tables = {}
@@ -32177,6 +32203,8 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
             entries = json.loads(result.stdout)
             if not isinstance(entries, list) or len(entries) > 4096:
                 raise ValueError("previous routing-domain routes are malformed")
+            if unaddressed_reenable and entries:
+                raise ValueError("unaddressed fallback re-enable has existing routing-domain routes")
             observed_route_counts[family] = {
                 "all": len(entries),
                 "interface": sum(isinstance(route, dict) and route.get("dev") == name for route in entries),

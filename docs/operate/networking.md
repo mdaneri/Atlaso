@@ -89,6 +89,10 @@ and wait for autosave. Review and apply **Network**, including any required depe
 fallback addresses; without a DHCP lease that can remove your current setup connection. Keep the console available.
 An opt-out by itself also works immediately after first boot: it verifies native fallback withdrawal without requiring
 a replacement DHCP lease. Other pending address, resolver or routing changes retain their normal readiness checks.
+To re-enable fallback, turn the same setting on, wait for autosave, then review and apply **Network**. An otherwise
+unchanged DHCP management interface may start from a completely unaddressed baseline after an opt-out and reboot;
+Apply still requires native DHCP or conflict-checked IPv4LL acquisition before it succeeds. Keep the console available
+until the management address and verified setup URL return.
 An explicit disabled choice survives reboot, upgrade and supported settings archive/restore. Restoring an older archive
 without this field retains the target appliance's current choice. Before initial image provisioning, the equivalent
 configuration is `ATLASO_IPV4_LINK_LOCAL_FALLBACK_ENABLED=false`; first-boot customization preserves that explicit choice.
