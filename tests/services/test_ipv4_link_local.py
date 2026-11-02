@@ -193,6 +193,86 @@ def test_native_apply_accepts_only_owned_ready_ipv4ll(tmp_path, monkeypatch):
         helper._wait_network_addresses(path, attempts=1)
 
 
+@pytest.mark.parametrize("ipv6_mode", ["disabled", "auto", "static"])
+@pytest.mark.parametrize("dns", [[], ["192.0.2.53"]])
+def test_first_boot_opt_out_keeps_network_apply_address_requirements(tmp_path, monkeypatch, ipv6_mode, dns):
+    """Recognize an opt-out from the real first-boot file without admitting other edits.
+
+    Args:
+        tmp_path: Task-owned first-boot and staged Network files.
+        monkeypatch: Isolate preserved resolver state and networkd paths.
+        ipv6_mode: First-boot IPv6 intent that the opt-out must preserve.
+        dns: Configured resolver intent, or automatic resolver acquisition.
+    """
+    from tests.test_vmware_ovf_customization import load_customizer
+
+    customizer = load_customizer()
+    helper = load_helper_module()
+    destination = tmp_path / "00-atlaso-mgmt.network"
+    monkeypatch.setattr(customizer, "NETWORKD_PATH", destination)
+    monkeypatch.setattr(customizer, "ENV_PATH", tmp_path / "atlaso.env")
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(helper, "_read_existing_management_network_values",
+                        lambda *_args: {"DNS": dns, "Domains": [], "Gateway": []})
+    ipv6_cidr = "2001:db8:1::10/64" if ipv6_mode == "static" else None
+    ipv6_gateway = "fe80::1" if ipv6_mode == "static" else None
+    customizer.write_networkd_config({
+        "management_mode": "dhcp", "ipv6_mode": ipv6_mode,
+        "ipv6_cidr": ipv6_cidr, "ipv6_gateway": ipv6_gateway,
+        "dns_servers": dns, "ipv4_link_local_fallback_enabled": True,
+    })
+    interface = PhysicalInterface(name="eth0", mac_address="02:00:00:00:10:77", role="management",
+                                  mode="access", admin_state="up", oper_state="up", mtu=1500,
+                                  ipv4_method="dhcp", ipv6_enabled=ipv6_mode != "disabled",
+                                  ipv6_cidr=ipv6_cidr, ipv6_gateway=ipv6_gateway,
+                                  check_duplicate_ip_addresses=True)
+    path = tmp_path / "candidate.conf"
+    path.write_text(render_network_config(interfaces=[interface], vlans=[],
+                                         ipv4_link_local_fallback_enabled=False))
+    files, _, _ = helper._systemd_networkd_files(path)
+    assert helper._ipv4ll_disable_only_links(path, files) == {"eth0"}
+    changed = {name: text.replace("DHCP=ipv4", "DHCP=no") for name, text in files.items()}
+    assert helper._ipv4ll_disable_only_links(path, changed) == set()
+    destination.write_text(destination.read_text().replace("DHCP=ipv4", "DHCP=no"))
+    assert helper._ipv4ll_disable_only_links(path, files) == set()
+
+
+def test_portable_image_opt_out_matches_network_apply(tmp_path, monkeypatch):
+    """Run the portable image emitter without provisioning or touching a host network.
+
+    Args:
+        tmp_path: Task-owned emitted and candidate networkd files.
+        monkeypatch: Isolate networkd and preserved resolver observations.
+    """
+    import os
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    shell = shutil.which("sh") or "C:/Program Files/Git/usr/bin/sh.exe"
+    if not Path(shell).is_file():
+        pytest.skip("POSIX shell is unavailable")
+    source = (Path(__file__).resolve().parents[2] / "image/common/scripts/provision-atlaso.sh").read_text()
+    body = source.split('log_step "configuring final appliance management network"\n', 1)[1]
+    body = body.split("} >/etc/systemd/network/00-atlaso-mgmt.network", 1)[0] + "}\n"
+    result = subprocess.run([shell], input="set -eu\n" + body, capture_output=True, text=True, check=True,
+                            env={**os.environ, "ATLASO_MGMT_USES_DHCP": "true", "ATLASO_MGMT_INTERFACE": "eth0",
+                                 "ATLASO_IPV4_LINK_LOCAL_FALLBACK_ENABLED": "true"}, timeout=10)
+    (tmp_path / "00-atlaso-mgmt.network").write_text(result.stdout)
+    interface = PhysicalInterface(name="eth0", mac_address="02:00:00:00:10:77", role="management",
+                                  mode="access", admin_state="up", oper_state="up", mtu=1500,
+                                  ipv4_method="dhcp", ipv6_enabled=True, check_duplicate_ip_addresses=True)
+    path = tmp_path / "candidate.conf"
+    path.write_text(render_network_config(interfaces=[interface], vlans=[],
+                                         ipv4_link_local_fallback_enabled=False))
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(helper, "_read_existing_management_network_values",
+                        lambda *_args: {"DNS": [], "Domains": [], "Gateway": []})
+    files, _, _ = helper._systemd_networkd_files(path)
+    assert helper._ipv4ll_disable_only_links(path, files) == {"eth0"}
+
+
 @pytest.mark.parametrize("enabled", [True, False])
 def test_link_local_cannot_be_forwarded_even_with_firewall_disabled(enabled):
     """Enforce the link-local boundary before established-flow and routing allows.

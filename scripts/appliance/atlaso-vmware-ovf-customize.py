@@ -1508,18 +1508,37 @@ def write_networkd_config(config: dict[str, object]) -> None:
         lines.extend(["IPv6AcceptRA=yes", "LinkLocalAddressing=" + ("yes" if ipv4ll else "ipv6")])
     else:
         lines.extend(["IPv6AcceptRA=no", "LinkLocalAddressing=" + ("yes" if ipv4ll else "ipv6")])
-        if config["ipv6_gateway"]:
+        if config["ipv6_gateway"] and config["management_mode"] != "dhcp":
             lines.append(f"Gateway={config['ipv6_gateway']}")
-    lines.extend(f"DNS={server}" for server in config["dns_servers"])
     if ipv4ll:
         lines.extend(["ConfigureWithoutCarrier=no", "IPv4LLRoute=no"])
+    lines.extend(f"DNS={server}" for server in config["dns_servers"])
     if config["management_mode"] == "dhcp":
-        # Match the portable image and Network Apply lease-retention policy.
-        lines.extend(["", "[DHCPv4]", "SendRelease=no", "SendDecline=yes", "MaxAttempts=infinity"])
+        # Match Network Apply from the first boot. Otherwise its unchanged DHCP
+        # route ownership looks like another edit when only fallback is disabled.
+        if config["ipv6_mode"] == "static" and config["ipv6_gateway"]:
+            lines.extend(["", "[Route]", f"Gateway={config['ipv6_gateway']}", "GatewayOnLink=yes",
+                          "", "[Route]", f"Gateway={config['ipv6_gateway']}", "GatewayOnLink=yes", "Table=100"])
+        lines.extend(["", "[DHCPv4]"])
+        if config["dns_servers"]:
+            lines.append("UseDNS=no")
+        lines.extend(["SendRelease=no", "SendDecline=yes", "MaxAttempts=infinity",
+                      "RouteTable=100", "", "[Route]", "Destination=0.0.0.0/0", "Gateway=_dhcp4",
+                      "GatewayOnLink=yes", "Table=main"])
+        if config["ipv6_mode"] == "auto":
+            lines.extend(["", "[IPv6AcceptRA]"])
+            if config["dns_servers"]:
+                lines.append("UseDNS=no")
+            lines.extend(["RouteTable=100", "", "[Route]", "Destination=::/0",
+                          "Gateway=_ipv6ra", "Table=main"])
     if config["management_mode"] != "dhcp":
         lines.extend(["", "[Address]", f"Address={config['cidr']}", "DuplicateAddressDetection=ipv4"])
     if config["ipv6_mode"] == "static":
         lines.extend(["", "[Address]", f"Address={config['ipv6_cidr']}", "DuplicateAddressDetection=ipv6"])
+        if config["management_mode"] == "dhcp":
+            address = ip_interface(str(config["ipv6_cidr"]))
+            lines.extend(["", "[Route]", f"Destination={address.network}", "Scope=link",
+                          f"PreferredSource={address.ip}", "Table=100"])
     content = "\n".join(lines).strip() + "\n"
     NETWORKD_PATH.parent.mkdir(parents=True, exist_ok=True)
     NETWORKD_PATH.write_text(content, encoding="utf-8")

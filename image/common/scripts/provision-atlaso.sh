@@ -1136,14 +1136,17 @@ log_step "configuring final appliance management network"
   printf 'Name=%s\n\n' "$ATLASO_MGMT_INTERFACE"
   printf '[Network]\n'
   if [ "$ATLASO_MGMT_USES_DHCP" = "true" ]; then
-    printf 'DHCP=ipv4\n'
+    printf 'DHCP=ipv4\nIPv6AcceptRA=yes\n'
     if [ "$ATLASO_IPV4_LINK_LOCAL_FALLBACK_ENABLED" = "true" ]; then
       printf 'LinkLocalAddressing=yes\nConfigureWithoutCarrier=no\nIPv4LLRoute=no\n'
     else
       printf 'LinkLocalAddressing=ipv6\n'
     fi
-    # Keep the server's lease through reboot, matching Photon's DHCP default.
-    printf '\n[DHCPv4]\nSendRelease=no\nSendDecline=yes\nMaxAttempts=infinity\n'
+    # Match Network Apply's lease retention and management route ownership.
+    printf '\n[DHCPv4]\nSendRelease=no\nSendDecline=yes\nMaxAttempts=infinity\nRouteTable=100\n'
+    printf '\n[Route]\nDestination=0.0.0.0/0\nGateway=_dhcp4\nGatewayOnLink=yes\nTable=main\n'
+    printf '\n[IPv6AcceptRA]\nRouteTable=100\n'
+    printf '\n[Route]\nDestination=::/0\nGateway=_ipv6ra\nTable=main\n'
   else
     if [ -n "$ATLASO_MGMT_GATEWAY" ]; then
       printf 'Gateway=%s\n' "$ATLASO_MGMT_GATEWAY"
