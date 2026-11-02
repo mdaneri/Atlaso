@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Inspect or execute the receipt-bound PR871 native certificate handoff.
+Inspect or execute the receipt-bound native certificate handoff for the admitted task.
 .PARAMETER Plan
 Existing nonsecret plan within the original task-owned test-results tree.
 .PARAMETER RepositoryRoot
@@ -107,7 +107,7 @@ try {
         }
     }
     Import-Module (Join-Path $helperRoot 'Atlaso.WorkstationCleanup.psm1') -Force
-    $helperPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($helperRoot))
+    $helperPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($helperRoot, $false, $true))
     Import-Module (Join-Path $helperRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
     . (Join-Path $helperRoot 'Atlaso.WorkstationFirstBoot.ps1')
     Import-Module (Join-Path $helperRoot 'Atlaso.SourceSnapshot.psm1') -Force
@@ -117,7 +117,10 @@ try {
 $runtime = Protect-AtlasoCertificatePythonRuntime -PythonPath $PythonPath -EvidenceRoot $evidenceRoot
 try {
     $PythonPath = $runtime.Executable
-    Assert-AtlasoCertificatePythonImportPaths -Runtime $runtime
+    $importPaths = Invoke-AtlasoBoundedProcess -FilePath $PythonPath `
+        -ArgumentList @('-I', '-S', '-B', '-c', 'import json,sys;print(json.dumps(sys.path))') `
+        -TimeoutSeconds 15 -Action 'Certificate Python import-path verification'
+    Assert-AtlasoCertificatePythonImportPaths -Runtime $runtime -ImportPathJson $importPaths
     $snapshot = New-AtlasoCertificateInspectorSnapshot -RepositoryRoot $repoRoot -EvidenceRoot $evidenceRoot `
         -SourceCommit ([string]$planIdentity.source_commit) -TaskId ([string]$planIdentity.task_id)
     try {
@@ -131,22 +134,39 @@ try {
     Invoke-AtlasoBoundedProcess -FilePath $PythonPath `
         -ArgumentList (New-AtlasoCertificatePythonArguments -Runtime $runtime -ScriptPath $scriptPath `
             -ScriptArguments @('--plan', $Plan, '--evidence', $admissionEvidence, '--preflight-only')) `
-        -TimeoutSeconds 30 -Action 'PR871 canonical identity admission' -DiscardOutput | Out-Null
+        -TimeoutSeconds 30 -Action 'Certificate canonical identity admission' -DiscardOutput | Out-Null
     $null = Assert-AtlasoSourceSnapshot -Root $snapshot.Root -ExpectedSha256 $snapshot.Sha256 `
         -ExpectedFileCount $snapshot.FileCount
     if ($Execute) { $arguments += '--execute' }
     $pair = $null
     $plain = $null
+    $protectedPeerKey = $null
+    $peerPlain = $null
     try {
+        if ([string]$planIdentity.peer_transport.authentication_mode -ceq 'dpapi-task-key') {
+            $keyPath = [string]$planIdentity.peer_key.path
+            $null = Assert-AtlasoOnePasswordServiceAccountTokenFile -Path $keyPath
+            $keyCreation = Get-Content -LiteralPath $planIdentity.peer_key_creation.path -Raw | ConvertFrom-Json
+            if ([Atlaso.WorkstationFileIdentity]::Get($keyPath) -cne [string]$keyCreation.key_filesystem_identity) {
+                throw 'Original protected peer key file was replaced.'
+            }
+            if ((Get-FileHash -LiteralPath $keyPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$planIdentity.peer_key.sha256) {
+                throw 'Protected peer key changed after admission.'
+            }
+            $protectedPeerKey = ConvertTo-SecureString -String ([IO.File]::ReadAllText($keyPath))
+            $peerPlain = [Net.NetworkCredential]::new('', $protectedPeerKey).Password
+        }
         $pair = Get-AtlasoOnePasswordCredentialPair -RepositoryRoot $repoRoot -EnvironmentId $EnvironmentId `
             -OnePasswordServiceAccountTokenFile (Join-Path $repoRoot '.atlaso-local/onepassword-service-account-token.dpapi') `
-            -OnePasswordPython $PythonPath -TimeoutSeconds 300 -ConsumerDescription 'PR871 certificate inspection'
+            -OnePasswordPython $PythonPath -TimeoutSeconds 300 -ConsumerDescription 'Certificate inspection'
         $plain = [Net.NetworkCredential]::new('', $pair.AdminPassword).Password
         Invoke-AtlasoBoundedProcess -FilePath $PythonPath -ArgumentList $arguments `
-            -EnvironmentVariables @{ ATLASO_NATIVE_ADMIN = $plain; TEMP = $evidenceRoot; TMP = $evidenceRoot } `
-            -TimeoutSeconds 1500 -Action 'PR871 certificate inspection' -DiscardOutput | Out-Null
+            -EnvironmentVariables @{ ATLASO_NATIVE_ADMIN = $plain; ATLASO_NATIVE_PEER_KEY = $peerPlain; TEMP = $evidenceRoot; TMP = $evidenceRoot } `
+            -TimeoutSeconds 1500 -Action 'Certificate inspection' -DiscardOutput | Out-Null
     } finally {
         $plain = $null
+        $peerPlain = $null
+        if ($protectedPeerKey) { $protectedPeerKey.Dispose() }
         if ($pair) { $pair.AdminPassword.Dispose(); $pair.RootPassword.Dispose() }
     }
 } finally {

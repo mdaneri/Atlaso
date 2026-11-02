@@ -10,7 +10,40 @@ import re
 import sys
 from pathlib import Path
 
+from certificate_peer_time import peer_time_files
 from create_nocloud_seed_iso import add_file
+
+
+def _host_key_serial_script() -> str:
+    """Return the bounded public-key-only serial publisher used by bootstrap mode."""
+    return """#!/bin/sh
+set -eu
+key_file=/etc/ssh/ssh_host_ed25519_key.pub
+attempt=0
+while [ "$attempt" -lt 30 ]; do
+  [ -s "$key_file" ] && break
+  sleep 1
+  attempt=$((attempt + 1))
+done
+[ -s "$key_file" ] || exit 1
+size=$(wc -c < "$key_file")
+case "$size" in ''|*[!0-9]*) exit 1;; esac
+[ "$size" -le 512 ] || exit 1
+ssh-keygen -lf "$key_file" >/dev/null 2>&1 || exit 1
+public_line=$(awk '
+  NR == 1 && NF >= 2 && NF <= 3 && $1 == "ssh-ed25519" && $2 ~ /^[A-Za-z0-9+\\/]+={0,2}$/ {
+    line = "ATLASO_CERTIFICATE_PEER_ED25519_HOST_KEY_V1 " $1 " " $2
+    valid = 1
+    next
+  }
+  { valid = 0 }
+  END {
+    if (NR != 1 || !valid) exit 1
+    print line
+  }
+' "$key_file") || exit 1
+printf '%s\\n' "$public_line" > /dev/ttyS0
+"""
 
 
 def peer_files(args: argparse.Namespace) -> dict[str, str]:
@@ -36,6 +69,33 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
         raise ValueError("The peer SSH user is invalid.")
     if not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/]+={0,2}(?: [^\r\n]{1,128})?", args.public_key):
         raise ValueError("An exact Ed25519 peer SSH public key is required.")
+    publish_host_key = getattr(args, "publish_host_key_to_serial", False)
+    preserve_host_keys = getattr(args, "preserve_host_keys", False)
+    if not isinstance(preserve_host_keys, bool):
+        raise ValueError("The host-key preservation option must be boolean.")
+    if not isinstance(publish_host_key, bool):
+        raise ValueError("The serial host-key publication option must be boolean.")
+    instance_id = getattr(args, "instance_id", None)
+    if instance_id is None:
+        metadata_instance_id = args.hostname
+    elif not isinstance(instance_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", instance_id):
+        raise ValueError("The NoCloud instance ID is invalid.")
+    else:
+        metadata_instance_id = json.dumps(instance_id, ensure_ascii=True)
+
+    management_addresses = getattr(args, "management_addresses", [])
+    if not isinstance(management_addresses, list) or len(management_addresses) > 3:
+        raise ValueError("At most three exact private management tunnel addresses are supported.")
+    tunnel_addresses = [ipaddress.IPv4Address(value) for value in management_addresses]
+    if (len(set(tunnel_addresses)) != len(tunnel_addresses)
+            or any(value not in network.network or value in (
+                network.ip, network.network.network_address, network.network.broadcast_address,
+            ) for value in tunnel_addresses)
+            or (tunnel_addresses and lease not in tunnel_addresses)):
+        raise ValueError("Management tunnel addresses must be distinct appliance addresses including the DHCP lease.")
+    serve_ntp = getattr(args, "serve_ntp", False)
+    if not isinstance(serve_ntp, bool) or (serve_ntp and len(tunnel_addresses) != 3):
+        raise ValueError("Private NTP serving requires the three exact management addresses.")
 
     # dnsmasq's static range has no dynamic pool: only this exact MAC receives
     # the reservation. eth0 stays on the management network for SSH control.
@@ -46,8 +106,55 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
         "dhcp-leasefile=/var/lib/misc/dnsmasq.leases\n"
         "dhcp-authoritative\n"
     )
+    extra_packages = ""
+    extra_write_files = ""
+    extra_commands = ""
+    ssh_policy_command = ""
+    ntp_command = ""
+    if publish_host_key:
+        extra_packages = "  - open-vm-tools\n  - open-vm-tools-openrc\n  - open-vm-tools-guestinfo\n  - iproute2\n  - sudo\n"
+        publisher = _host_key_serial_script()
+        extra_write_files = (
+            "  - path: /usr/local/sbin/atlaso-certificate-peer-publish-host-key\n"
+            "    permissions: '0755'\n"
+            "    content: |\n"
+            + "".join(f"      {line}\n" for line in publisher.splitlines())
+        )
+        extra_commands = (
+            "  - rc-update add open-vm-tools default\n"
+            "  - rc-service open-vm-tools start\n"
+            "  - /usr/local/sbin/atlaso-certificate-peer-publish-host-key\n"
+        )
+    if tunnel_addresses:
+        permitted = " ".join(f"{address}:{port}" for address in sorted(tunnel_addresses) for port in (22, 443))
+        policy = ("DisableForwarding no\nAllowTcpForwarding local\nGatewayPorts no\n"
+                  "AllowAgentForwarding no\nX11Forwarding no\n" + f"PermitOpen {permitted}\n")
+        installer = """#!/bin/sh
+set -eu
+config=/etc/ssh/sshd_config
+grep -q '^Include /etc/ssh/sshd_config.d/\\*.conf' "$config" || sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' "$config"
+sshd -t
+sshd -T | grep -Fx 'disableforwarding no'
+sshd -T | grep -Fx 'allowtcpforwarding local'
+sshd -T | grep -Fx 'gatewayports no'
+""" + f"sshd -T | grep -Fx 'permitopen {permitted}'\n"
+        for path, permissions, content in (
+            ("/etc/ssh/sshd_config.d/00-atlaso-certificate-peer.conf", "0644", policy),
+            ("/usr/local/sbin/atlaso-certificate-peer-sshd", "0755", installer),
+        ):
+            extra_write_files += (f"  - path: {path}\n    permissions: '{permissions}'\n    content: |\n"
+                                  + "".join(f"      {line}\n" for line in content.splitlines()))
+        ssh_policy_command = "  - /usr/local/sbin/atlaso-certificate-peer-sshd\n"
+    if serve_ntp:
+        extra_packages += "  - chrony\n"
+        for path, content in peer_time_files(str(network.ip), [str(value) for value in tunnel_addresses]).items():
+            permissions = "0755" if path.startswith("/usr/local/sbin/") else "0644"
+            extra_write_files += (f"  - path: {path}\n    permissions: '{permissions}'\n    content: |\n"
+                                  + "".join(f"      {line}\n" for line in content.splitlines()))
+        ntp_command = "  - /usr/local/sbin/atlaso-certificate-peer-chrony\n"
+    host_key_policy = "ssh_deletekeys: false\n" if preserve_host_keys else ""
     user_data = f"""#cloud-config
-hostname: {args.hostname}
+{host_key_policy}hostname: {args.hostname}
 manage_etc_hosts: true
 disable_root: true
 ssh_pwauth: false
@@ -66,11 +173,11 @@ packages:
   - dnsmasq
   - openssl
   - openssh-client
-write_files:
+{extra_packages}write_files:
   - path: /usr/local/etc/atlaso-certificate-peer.conf
     permissions: '0644'
     content: |
-""" + "".join(f"      {line}\n" for line in dnsmasq.splitlines()) + """  - path: /usr/local/sbin/atlaso-certificate-https-probe
+""" + "".join(f"      {line}\n" for line in dnsmasq.splitlines()) + f"""  - path: /usr/local/sbin/atlaso-certificate-https-probe
     permissions: '0755'
     content: |
       #!/bin/sh
@@ -79,15 +186,15 @@ write_files:
       case "$2" in ''|*[!0-9.]*) exit 2;; esac
       curl --fail --silent --show-error --max-time 20 --noproxy '*' \\
         --proto '=https' --cacert "$1" "https://$2/openapi.json" >/dev/null
-runcmd:
-  - rc-update add sshd default
+{extra_write_files}runcmd:
+{ssh_policy_command}  - rc-update add sshd default
   - rc-service sshd restart
   - mkdir -p /var/lib/misc
   - cp /usr/local/etc/atlaso-certificate-peer.conf /etc/dnsmasq.conf
   - dnsmasq --test --conf-file=/etc/dnsmasq.conf
   - rc-update add dnsmasq default
   - rc-service dnsmasq restart
-"""
+{extra_commands}{ntp_command}"""
     network_config = f"""version: 2
 ethernets:
   eth0:
@@ -99,7 +206,7 @@ ethernets:
 """
     return {
         "user-data": user_data,
-        "meta-data": f"instance-id: {args.hostname}\nlocal-hostname: {args.hostname}\n",
+        "meta-data": f"instance-id: {metadata_instance_id}\nlocal-hostname: {args.hostname}\n",
         "network-config": network_config,
     }
 
@@ -114,6 +221,11 @@ def main() -> int:
     parser.add_argument("--server-cidr", required=True)
     parser.add_argument("--lease-address", required=True)
     parser.add_argument("--client-mac", required=True)
+    parser.add_argument("--publish-host-key-to-serial", action="store_true")
+    parser.add_argument("--preserve-host-keys", action="store_true")
+    parser.add_argument("--management-address", dest="management_addresses", action="append", default=[])
+    parser.add_argument("--serve-ntp", action="store_true")
+    parser.add_argument("--instance-id")
     args = parser.parse_args()
     files = peer_files(args)
     try:

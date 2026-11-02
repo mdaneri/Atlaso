@@ -583,17 +583,24 @@ function New-AtlasoCertificateInspectorSnapshot {
     $pins = [Collections.Generic.List[IDisposable]]::new()
     try {
         $scriptsRoot = Join-Path $snapshot.Root 'scripts'
-        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($scriptsRoot))
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($scriptsRoot, $false, $true))
         # The credentialed child imports these modules by name. Pin their
         # directory too so a concurrent ACL change cannot add a .pyd shadow.
         $namespace = if ($Purpose -eq 'certificate') { 'interop' } else { 'installation' }
         $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
-            (Join-Path $scriptsRoot $namespace)))
+            (Join-Path $scriptsRoot $namespace), $false, $true))
         $inspectorFiles = if ($Purpose -eq 'certificate') { @(
                 'scripts/__init__.py',
                 'scripts/interop/certificate_handoff_native.py',
                 'scripts/interop/certificate_peer_proof.py',
                 'scripts/interop/certificate_peer_transport.py',
+                'scripts/interop/certificate_trusted_host.py',
+                'scripts/interop/certificate_retirement.py',
+                'scripts/interop/certificate_iso_bootstrap.py',
+                'scripts/interop/certificate_fixture_init.py',
+                'scripts/interop/certificate_peer_time.py',
+                'scripts/interop/certificate_source_probe.py',
+                'scripts/interop/time_source_guest.py',
                 'scripts/completed_task_files.py'
             ) } else { @(
                 'scripts/__init__.py', 'scripts/installation/__init__.py',
@@ -645,7 +652,7 @@ function Protect-AtlasoCertificatePythonRuntime {
     $configPath = Join-Path $venvRoot 'pyvenv.cfg'
     $pins = [Collections.Generic.List[IDisposable]]::new()
     try {
-        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($venvRoot))
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($venvRoot, $false, $true))
         $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($configPath, $true))
         $config = Get-Content -LiteralPath $configPath -Raw
         if ($config -notmatch '(?im)^include-system-site-packages\s*=\s*false\s*$') {
@@ -658,7 +665,7 @@ function Protect-AtlasoCertificatePythonRuntime {
             -not (Test-Path -LiteralPath (Join-Path $baseRoot 'Lib') -PathType Container)) {
             throw 'Certificate Python base runtime is invalid.'
         }
-        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($baseRoot))
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($baseRoot, $false, $true))
         $excluded = [IO.Path]::GetFullPath((Join-Path $baseRoot 'Lib/site-packages')).TrimEnd('\')
         $codeExtensions = @('.py', '.pyc', '.pyd', '.dll', '.pth', '.zip', '.exe', '.pyw')
         $count = 0
@@ -669,7 +676,7 @@ function Protect-AtlasoCertificatePythonRuntime {
                     ($path -eq $excluded -or $path.StartsWith($excluded + '\', [StringComparison]::OrdinalIgnoreCase))) {
                     continue
                 }
-                $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($path))
+                $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($path, $false, $true))
             }
             foreach ($file in @(Get-ChildItem -LiteralPath $root -File -Recurse -Force -ErrorAction Stop)) {
                 $path = [IO.Path]::GetFullPath($file.FullName)
@@ -713,14 +720,19 @@ function Assert-AtlasoCertificatePythonImportPaths {
 
     .PARAMETER Runtime
     Pinned Python runtime returned by Protect-AtlasoCertificatePythonRuntime.
+
+    .PARAMETER ImportPathJson
+    Public sys.path JSON read by the caller's bounded isolated Python process.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)]$Runtime)
+    param(
+        [Parameter(Mandatory)]$Runtime,
+        [Parameter(Mandatory)][string]$ImportPathJson
+    )
 
-    $raw = Invoke-AtlasoBoundedProcess -FilePath $Runtime.Executable `
-        -ArgumentList @('-I', '-S', '-B', '-c', 'import json,sys;print(json.dumps(sys.path))') `
-        -TimeoutSeconds 15 -Action 'Certificate Python import-path verification'
-    $paths = ConvertFrom-Json -InputObject $raw
+    # The Git-blob wrapper owns the bounded runner in its local scope. Keep
+    # this module a validator rather than depending on caller-local commands.
+    $paths = ConvertFrom-Json -InputObject $ImportPathJson
     if ($paths -isnot [array] -or $paths.Count -lt 2) {
         throw 'Certificate Python import paths are incomplete.'
     }

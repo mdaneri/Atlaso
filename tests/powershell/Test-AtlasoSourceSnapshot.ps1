@@ -346,7 +346,11 @@ $inspectorFiles = @(
     'scripts/__init__.py', 'scripts/completed_task_files.py',
     'scripts/interop/certificate_handoff_native.py', 'scripts/interop/certificate_peer_proof.py',
     'scripts/interop/certificate_peer_transport.py', 'scripts/installation/__init__.py',
-    'scripts/installation/vnc_console.py', 'scripts/installation/vnc_frame.py'
+    'scripts/interop/certificate_trusted_host.py', 'scripts/interop/certificate_retirement.py',
+    'scripts/interop/certificate_iso_bootstrap.py', 'scripts/interop/certificate_source_probe.py',
+    'scripts/installation/vnc_console.py', 'scripts/installation/vnc_frame.py',
+    'scripts/interop/certificate_fixture_init.py', 'scripts/interop/certificate_peer_time.py',
+    'scripts/interop/time_source_guest.py'
 )
 foreach ($relative in $inspectorFiles) {
     $path = Join-Path $inspectorRepository $relative
@@ -366,13 +370,10 @@ try {
             -TaskId $env:CODEX_THREAD_ID -Purpose $purpose
         try {
             $publicationPath = Join-Path $OutputDirectory ($purpose + '-public-marker.json')
-            $publicationRefused = $false
-            try { Write-AtlasoDurableJsonFile -Path $publicationPath -Payload @{ public_fixture = $true } }
-            catch [ComponentModel.Win32Exception] {
-                if ($_.Exception.NativeErrorCode -ne 32) { throw }
-                $publicationRefused = $true
+            Write-AtlasoDurableJsonFile -Path $publicationPath -Payload @{ public_fixture = $true }
+            if (-not (Test-Path -LiteralPath $publicationPath -PathType Leaf)) {
+                throw 'Code namespace pins blocked sibling credential-recovery marker publication.'
             }
-            if (-not $publicationRefused) { throw 'Read-only ancestor pins did not exclude atomic marker publication.' }
             $relative = if ($purpose -eq 'certificate') {
                 'scripts/interop/certificate_peer_proof.py'
             } else { 'scripts/installation/vnc_console.py' }
@@ -392,12 +393,31 @@ try {
             try { Unprotect-AtlasoSourceSnapshot -Root $inspector.Root }
             finally { foreach ($pin in $inspector.Pins) { $pin.Dispose() } }
         }
-        Write-AtlasoDurableJsonFile -Path $publicationPath -Payload @{ public_fixture = $true }
-        if (-not (Test-Path -LiteralPath $publicationPath -PathType Leaf)) {
-            throw 'Atomic marker publication did not resume after inspector pin disposal.'
-        }
     }
 } finally { $env:CODEX_THREAD_ID = $savedTaskId }
+
+$namespaceParent = Join-Path $OutputDirectory 'selective-namespace-pins'
+$namespaceCode = Join-Path $namespaceParent 'code'
+New-Item -ItemType Directory -Path $namespaceCode -Force | Out-Null
+$namespacePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($namespaceCode, $false, $true)
+try {
+    Sync-AtlasoDirectoryMetadata -DirectoryPath $namespaceParent
+    $codeWriteBlocked = $false
+    try { Sync-AtlasoDirectoryMetadata -DirectoryPath $namespaceCode }
+    catch [ComponentModel.Win32Exception] {
+        if ($_.Exception.NativeErrorCode -ne 32) { throw }
+        $codeWriteBlocked = $true
+    }
+    if (-not $codeWriteBlocked) { throw 'Pinned code namespace admitted a writable directory handle.' }
+    $ancestorRenameBlocked = $false
+    $renamedParent = Join-Path $OutputDirectory 'unexpected-renamed-namespace'
+    try { [IO.Directory]::Move($namespaceParent, $renamedParent) }
+    catch [IO.IOException] { $ancestorRenameBlocked = $true }
+    if (-not $ancestorRenameBlocked) {
+        [IO.Directory]::Move($renamedParent, $namespaceParent)
+        throw 'A selectively pinned ancestor was replaceable.'
+    }
+} finally { $namespacePin.Dispose() }
 
 $runtimeFixture = Join-Path $OutputDirectory 'certificate-python-pin-fixture'
 $venv = Join-Path $runtimeFixture 'venv'
@@ -417,6 +437,25 @@ foreach ($number in 1..100) {
 }
 $runtime = Protect-AtlasoCertificatePythonRuntime -PythonPath $python -EvidenceRoot $OutputDirectory
 try {
+    # A reviewed Git-blob entrypoint runs in a local scope; its bounded runner
+    # is not a module-global command. Pass only its public result to validation.
+    & {
+        $importPathJson = @($runtime.VenvRoot, (Join-Path $runtime.BaseRoot 'Lib')) | ConvertTo-Json -Compress
+        Assert-AtlasoCertificatePythonImportPaths -Runtime $runtime -ImportPathJson $importPathJson
+        foreach ($invalidPaths in @(
+                @($runtime.VenvRoot),
+                @($runtime.VenvRoot, $runtime.ExcludedBaseSitePackages),
+                @($runtime.VenvRoot, $OutputDirectory),
+                @($runtime.VenvRoot, '')
+            )) {
+            $rejected = $false
+            try {
+                Assert-AtlasoCertificatePythonImportPaths -Runtime $runtime `
+                    -ImportPathJson ($invalidPaths | ConvertTo-Json -Compress)
+            } catch { $rejected = $true }
+            if (-not $rejected) { throw 'Invalid certificate Python import paths were admitted.' }
+        }
+    }
     $proofArguments = New-AtlasoCertificatePythonArguments -Runtime $runtime -ScriptPath $dependency `
         -ScriptArguments @('--help')
     if ((@($proofArguments[0..2]) -join ' ') -cne '-I -S -B' -or

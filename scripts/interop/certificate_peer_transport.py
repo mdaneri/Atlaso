@@ -10,7 +10,9 @@ import base64
 import binascii
 import hashlib
 import http.client
+import io
 import ipaddress
+import os
 import socket
 import ssl
 import threading
@@ -61,15 +63,21 @@ def _run_bridge(bridge: socket.socket, channel: paramiko.Channel) -> None:
 class PinnedPeerTransport(AbstractContextManager["PinnedPeerTransport"]):
     """Open only private-subnet TCP channels through one pinned peer SSH key."""
 
-    def __init__(self, peer_ip: str, username: str, public_key: str, host_key: str, subnet: str):
+    def __init__(self, peer_ip: str, username: str, public_key: str, host_key: str, subnet: str,
+                 *, authentication_mode: str = "agent"):
         """Initialize the validated client or test double.
 
         Args:
             peer_ip: Private-LAN peer address.
             username: Account name for this request.
-            public_key: Exact public key selected from the local SSH agent.
+            public_key: Exact public key admitted for the selected peer credential.
             host_key: Expected SSH host key for the peer.
-            subnet: Expected private-LAN subnet."""
+            subnet: Expected private-LAN subnet.
+            authentication_mode: Explicit agent or separately approved DPAPI task-key selection.
+        """
+        if authentication_mode not in ("agent", "dpapi-task-key"):
+            raise PeerTransportRefusal("peer_authentication_mode_invalid")
+        self.authentication_mode = authentication_mode
         self.peer_ip = str(ipaddress.IPv4Address(peer_ip))
         self.username = username
         self.public_key = public_key
@@ -92,17 +100,35 @@ class PinnedPeerTransport(AbstractContextManager["PinnedPeerTransport"]):
         try:
             sock = socket.create_connection((self.peer_ip, 22), timeout=8)
             transport = paramiko.Transport(sock)
+            transport.banner_timeout = 8
+            transport.auth_timeout = 8
             transport.start_client(timeout=8)
             observed = "SHA256:" + base64.b64encode(
                 hashlib.sha256(transport.get_remote_server_key().asbytes()).digest()
             ).decode("ascii").rstrip("=")
             if observed != self.host_key:
                 raise PeerTransportRefusal("peer_host_key_changed")
-            matching_keys = [key for key in paramiko.Agent().get_keys()
-                             if key.get_name() == "ssh-ed25519" and key.asbytes() == self.public_blob]
-            if len(matching_keys) != 1:
-                raise PeerTransportRefusal("peer_agent_identity_unavailable")
-            transport.auth_publickey(self.username, matching_keys[0])
+            private_text = os.environ.pop("ATLASO_NATIVE_PEER_KEY", None)
+            if self.authentication_mode == "dpapi-task-key":
+                try:
+                    if not private_text or len(private_text) > 8192:
+                        raise PeerTransportRefusal("peer_protected_key_required")
+                    selected = paramiko.Ed25519Key.from_private_key(io.StringIO(private_text))
+                except (ValueError, paramiko.SSHException):
+                    raise PeerTransportRefusal("peer_protected_key_invalid") from None
+                finally:
+                    private_text = None
+                if selected.asbytes() != self.public_blob:
+                    raise PeerTransportRefusal("peer_protected_key_mismatch")
+            else:
+                if private_text:
+                    raise PeerTransportRefusal("peer_unexpected_protected_key")
+                matching_keys = [key for key in paramiko.Agent().get_keys()
+                                 if key.get_name() == "ssh-ed25519" and key.asbytes() == self.public_blob]
+                if len(matching_keys) != 1:
+                    raise PeerTransportRefusal("peer_agent_identity_unavailable")
+                selected = matching_keys[0]
+            transport.auth_publickey(self.username, selected)
             if not transport.is_authenticated():
                 raise PeerTransportRefusal("peer_authentication_failed")
             self.transport = transport
@@ -156,6 +182,35 @@ class PinnedPeerTransport(AbstractContextManager["PinnedPeerTransport"]):
             if channel is None:
                 bridge.close()
                 local.close()
+
+    def tcp_reachable(self, target_ip: str, port: int = 443) -> bool:
+        """Check direct TCP acceptance independently of TLS and authentication.
+
+        Args:
+            target_ip: Exact private IPv4 address to probe.
+            port: Admitted management service port.
+        """
+        address = ipaddress.IPv4Address(target_ip)
+        if address not in self.subnet or port != 443:
+            raise PeerTransportRefusal("target_outside_owned_private_subnet")
+        if self.transport is None or not self.transport.is_active() or not self.transport.is_authenticated():
+            raise PeerTransportRefusal("peer_transport_inactive")
+        try:
+            channel = self.transport.open_channel(
+                "direct-tcpip", (str(address), port), ("127.0.0.1", 0), timeout=8,
+            )
+            if channel is None:
+                raise PeerTransportRefusal("peer_tcp_probe_unproven")
+            channel.close()
+            return True
+        except paramiko.ChannelException as exc:
+            # Only a live authenticated peer's explicit connect failure counts
+            # as non-acceptance. Administrative denial and lost SSH do not.
+            if exc.code == paramiko.OPEN_FAILED_CONNECT_FAILED and self.transport.is_active() and self.transport.is_authenticated():
+                return False
+            raise PeerTransportRefusal("peer_tcp_probe_unproven") from None
+        except (OSError, EOFError, paramiko.SSHException):
+            raise PeerTransportRefusal("peer_tcp_probe_unproven") from None
 
     def command(self, command: str, stdin: bytes = b"") -> bytes:
         """Read bounded peer output without persisting credentials or response text.

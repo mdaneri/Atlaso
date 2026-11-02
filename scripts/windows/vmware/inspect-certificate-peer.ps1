@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Publish receipt-bound, read-only native address proof for PR871.
+Publish receipt-bound, read-only certificate address observations for the admitted task.
 .PARAMETER Plan
 Existing nonsecret proof plan within the original task-owned test-results tree.
 .PARAMETER RepositoryRoot
@@ -15,6 +15,14 @@ New immutable controlled-runtime destination within that same tree.
 Explicit pinned 1Password Environment selector.
 .PARAMETER PythonPath
 Task-owned isolated Python virtual environment with locked native dependencies.
+.PARAMETER Bootstrap
+Inspect the original ISO fixture before its first static certificate-test baseline.
+.PARAMETER ExecuteBootstrap
+Permit the bootstrap's reviewed Physical Interfaces and Appliance Apply transition.
+.PARAMETER InitializeFixture
+Inspect first-run DNS and clock prerequisites on the original ISO fixture.
+.PARAMETER ExecuteInitialization
+Permit the inspected fixture's fixed DNS and real-peer NTP client initialization through normal Apply.
 #>
 [CmdletBinding()]
 param(
@@ -24,10 +32,17 @@ param(
     [Parameter(Mandatory)][string]$AddressEvidence,
     [Parameter(Mandatory)][string]$RuntimeEvidence,
     [Parameter(Mandatory)][string]$EnvironmentId,
-    [Parameter(Mandatory)][string]$PythonPath
+    [Parameter(Mandatory)][string]$PythonPath,
+    [switch]$Bootstrap,
+    [switch]$ExecuteBootstrap,
+    [switch]$InitializeFixture,
+    [switch]$ExecuteInitialization
 )
 
 $ErrorActionPreference = 'Stop'
+if ($ExecuteBootstrap -and -not $Bootstrap) { throw 'ExecuteBootstrap requires Bootstrap.' }
+if ($ExecuteInitialization -and -not $InitializeFixture) { throw 'ExecuteInitialization requires InitializeFixture.' }
+if ($InitializeFixture -and $Bootstrap) { throw 'Fixture initialization and static bootstrap are separate operations.' }
 if ($PSScriptRoot) {
     throw 'Invoke the certificate inspector from reviewed Git-blob bytes, not a checkout script path.'
 }
@@ -108,7 +123,7 @@ try {
         }
     }
     Import-Module (Join-Path $helperRoot 'Atlaso.WorkstationCleanup.psm1') -Force
-    $helperPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($helperRoot))
+    $helperPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($helperRoot, $false, $true))
     Import-Module (Join-Path $helperRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
     . (Join-Path $helperRoot 'Atlaso.WorkstationFirstBoot.ps1')
     Import-Module (Join-Path $helperRoot 'Atlaso.SourceSnapshot.psm1') -Force
@@ -118,33 +133,57 @@ try {
 $runtime = Protect-AtlasoCertificatePythonRuntime -PythonPath $PythonPath -EvidenceRoot $evidenceRoot
 try {
     $PythonPath = $runtime.Executable
-    Assert-AtlasoCertificatePythonImportPaths -Runtime $runtime
+    $importPaths = Invoke-AtlasoBoundedProcess -FilePath $PythonPath `
+        -ArgumentList @('-I', '-S', '-B', '-c', 'import json,sys;print(json.dumps(sys.path))') `
+        -TimeoutSeconds 15 -Action 'Certificate Python import-path verification'
+    Assert-AtlasoCertificatePythonImportPaths -Runtime $runtime -ImportPathJson $importPaths
     $snapshot = New-AtlasoCertificateInspectorSnapshot -RepositoryRoot $repoRoot -EvidenceRoot $evidenceRoot `
         -SourceCommit ([string]$planIdentity.source_commit) -TaskId ([string]$planIdentity.task_id)
     try {
     foreach ($pin in (Protect-AtlasoCertificateProofInputs -Plan $Plan -EvidenceRoot $evidenceRoot)) {
         $snapshot.Pins.Add($pin)
     }
-    $scriptPath = Join-Path $snapshot.Root 'scripts/interop/certificate_peer_proof.py'
+    $scriptPath = Join-Path $snapshot.Root $(if ($InitializeFixture) { 'scripts/interop/certificate_fixture_init.py' }
+        elseif ($Bootstrap) { 'scripts/interop/certificate_iso_bootstrap.py' } else { 'scripts/interop/certificate_peer_proof.py' })
+    $scriptArguments = if ($Bootstrap -or $InitializeFixture) {
+        @('--plan', $Plan, '--output-directory', [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($AddressEvidence)))
+    } else { @('--plan', $Plan, '--address-output', $AddressEvidence, '--runtime-output', $RuntimeEvidence) }
     $arguments = New-AtlasoCertificatePythonArguments -Runtime $runtime -ScriptPath $scriptPath `
-        -ScriptArguments @('--plan', $Plan, '--address-output', $AddressEvidence,
-            '--runtime-output', $RuntimeEvidence)
+        -ScriptArguments $scriptArguments
     Invoke-AtlasoBoundedProcess -FilePath $PythonPath -ArgumentList ($arguments + '--preflight-only') `
-        -TimeoutSeconds 30 -Action 'PR871 original peer proof admission' -DiscardOutput | Out-Null
+        -TimeoutSeconds 30 -Action 'Certificate original peer admission' -DiscardOutput | Out-Null
     $null = Assert-AtlasoSourceSnapshot -Root $snapshot.Root -ExpectedSha256 $snapshot.Sha256 `
         -ExpectedFileCount $snapshot.FileCount
+    if ($ExecuteBootstrap -or $ExecuteInitialization) { $arguments += '--execute' }
     $pair = $null
     $plain = $null
+    $protectedPeerKey = $null
+    $peerPlain = $null
     try {
+        if ([string]$planIdentity.peer_transport.authentication_mode -ceq 'dpapi-task-key') {
+            $keyPath = [string]$planIdentity.peer_key.path
+            $null = Assert-AtlasoOnePasswordServiceAccountTokenFile -Path $keyPath
+            $keyCreation = Get-Content -LiteralPath $planIdentity.peer_key_creation.path -Raw | ConvertFrom-Json
+            if ([Atlaso.WorkstationFileIdentity]::Get($keyPath) -cne [string]$keyCreation.key_filesystem_identity) {
+                throw 'Original protected peer key file was replaced.'
+            }
+            if ((Get-FileHash -LiteralPath $keyPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne [string]$planIdentity.peer_key.sha256) {
+                throw 'Protected peer key changed after admission.'
+            }
+            $protectedPeerKey = ConvertTo-SecureString -String ([IO.File]::ReadAllText($keyPath))
+            $peerPlain = [Net.NetworkCredential]::new('', $protectedPeerKey).Password
+        }
         $pair = Get-AtlasoOnePasswordCredentialPair -RepositoryRoot $repoRoot -EnvironmentId $EnvironmentId `
             -OnePasswordServiceAccountTokenFile (Join-Path $repoRoot '.atlaso-local/onepassword-service-account-token.dpapi') `
-            -OnePasswordPython $PythonPath -TimeoutSeconds 300 -ConsumerDescription 'PR871 private address proof'
+            -OnePasswordPython $PythonPath -TimeoutSeconds 300 -ConsumerDescription 'Certificate private address observations'
         $plain = [Net.NetworkCredential]::new('', $pair.AdminPassword).Password
         Invoke-AtlasoBoundedProcess -FilePath $PythonPath -ArgumentList $arguments `
-            -EnvironmentVariables @{ ATLASO_NATIVE_ADMIN = $plain; TEMP = $evidenceRoot; TMP = $evidenceRoot } `
-            -TimeoutSeconds 300 -Action 'PR871 private address proof' -DiscardOutput | Out-Null
+            -EnvironmentVariables @{ ATLASO_NATIVE_ADMIN = $plain; ATLASO_NATIVE_PEER_KEY = $peerPlain; TEMP = $evidenceRoot; TMP = $evidenceRoot } `
+            -TimeoutSeconds 900 -Action 'Certificate private address observations' -DiscardOutput | Out-Null
     } finally {
         $plain = $null
+        $peerPlain = $null
+        if ($protectedPeerKey) { $protectedPeerKey.Dispose() }
         if ($pair) { $pair.AdminPassword.Dispose(); $pair.RootPassword.Dispose() }
     }
 } finally {
