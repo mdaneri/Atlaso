@@ -1039,7 +1039,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}411`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}412`;' in service_worker.text
     assert "/static/vcf-certificate-renewal.js?v=issue-1052-4" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
@@ -11374,7 +11374,7 @@ def test_vcf_backups_page_uses_local_user_for_sftp(client):
     assert 'id="vcf-backup-status-modal"' in page.text
     assert 'data-endpoint="/ui/management/vcf-helper/backups"' in page.text
     assert 'data-vcf-backup-form' not in page.text
-    assert '/static/vcf-backup.js?v=issue-1066-20' in page.text
+    assert '/static/vcf-backup.js?v=issue-1066-21' in page.text
     assert 'data-vcf-backup-load-operation' not in page.text
     assert 'name="recovery_operation_id"' not in page.text
     helper = client.get("/vcf-helper")
@@ -14360,6 +14360,7 @@ def test_vcf_backups_settings_autosave_and_status_api(client):
             "allow_password_auth": "on",
             "allow_public_key_auth": "on",
             "max_sessions": "4",
+            "trusted_backup_sources": "192.0.2.41",
             "config_path": "/etc/atlaso/ssh/sshd_config.d/atlaso-vcf-backups.conf",
             "csrf": csrf,
         },
@@ -14377,6 +14378,7 @@ def test_vcf_backups_settings_autosave_and_status_api(client):
     assert "# Service listener targets: 192.168.50.1:22" in response.json()["config_preview"]
     assert "Match User vcf-backup" in response.json()["config_preview"]
     assert "ForceCommand internal-sftp -d /backups" in response.json()["config_preview"]
+    assert "# Trusted backup probe sources: 192.0.2.41/32" in response.json()["config_preview"]
     assert response.json()["appliance_apply_status"]["id"] == "vcf_backups"
     assert response.json()["appliance_apply_status"]["changed"] is True
     assert "enabled" in client.get("/vcf-backups").text
@@ -14389,6 +14391,33 @@ def test_vcf_backups_settings_autosave_and_status_api(client):
     assert status.json()["sftp_username"] == "vcf-backup"
     assert status.json()["storage_path"] == "/mnt/atlaso-vcf-backups"
     assert status.json()["remote_directory"] == "/backups"
+
+
+def test_vcf_backup_ssh_penalty_exemptions_require_an_administrator(client):
+    """A service administrator cannot expand global SSH source exemptions.
+
+    Args:
+        client: HTTP client with an isolated desired-state database.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Role, User, VcfBackupSettings
+    from atlaso.app.security import roles_to_json
+
+    with SessionLocal() as db:
+        admin = db.scalar(select(User).where(User.username == "admin"))
+        admin.role = Role.SERVICE_ADMIN.value
+        admin.roles_json = roles_to_json([Role.SERVICE_ADMIN.value])
+        db.commit()
+    login(client)
+    page = client.get("/vcf-backups")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    assert 'data-tag-name="trusted_backup_sources"' not in page.text
+    result = client.post("/vcf-backups/settings", data={"csrf": csrf, "trusted_backup_sources": "192.0.2.41/32"})
+    assert result.status_code == 403
+    with SessionLocal() as db:
+        assert db.scalar(select(VcfBackupSettings)).trusted_backup_sources == ""
 
 
 def test_vcf_backups_settings_accept_multiple_listen_targets(client):

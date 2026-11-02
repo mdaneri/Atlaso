@@ -24,6 +24,10 @@ from atlaso.app.services.vcf_certificate_remote import (
     Target,
     _parse_vim25_xml,
 )
+from atlaso.app.services.vcf_operations_inventory import (
+    InventoryError,
+    discover_inventory,
+)
 
 _VERSION_RE = re.compile(r"^9\.1(?:\.\d+){0,3}$")
 _MAX_PAGES = 100
@@ -198,6 +202,30 @@ class NativeBackup:
             raise RemoteError("VCF Operations returned an invalid authentication token")
         self._ops_token = token
         return token
+
+    def operations_inventory(self) -> dict[str, Any]:
+        """Read connected managers and vCenters using only the Operations account."""
+        if self.kind != "fleet":
+            raise RemoteError("Connected inventory requires a VCF Operations source")
+        token = self._ops_token or self._ops_login()
+
+        def request(method: str, path: str, body: Any) -> Any:
+            """Send a bounded inventory read to the confirmed Operations endpoint.
+
+            Args:
+                method: Read-only resource query HTTP method.
+                path: Fixed Operations resource API path.
+                body: Resource query filter, when required.
+            """
+            return self._request(
+                self.transport, method, path, body=body,
+                header=("Authorization", f"OpsToken {token}"), expected={200},
+            )
+
+        try:
+            return discover_inventory(request)
+        except InventoryError as exc:
+            raise RemoteError(str(exc)) from None
 
     def _fleet_login(self) -> str:
         # Refresh the service registry and TLS identity on every login. A
@@ -541,7 +569,7 @@ class NativeBackup:
             return {
                 **normalized,
                 "fleet_schedule": self._safe_fleet_schedule(config),
-                "configured": True,
+                "configured": all(normalized.get(key) for key in ("host", "user", "directory")),
             }
         if config is not None:
             raise RemoteError("Fleet LCM returned an unreadable backup configuration")
@@ -809,6 +837,7 @@ class NativeBackup:
         days = sorted(item for item in raw_days if isinstance(item, str)) if isinstance(raw_days, list) else []
         # Never serialize native models wholesale; these are the complete public fields.
         return {
+            **({"configured": raw["isConfigured"]} if isinstance(raw.get("isConfigured"), bool) else {}),
             "host": NativeBackup._pick(destination, "host", "server", "hostname"),
             "port": _normalized_port(NativeBackup._pick(destination, "port")),
             "user": NativeBackup._pick(destination, "username", "user"),
@@ -836,6 +865,24 @@ class NativeBackup:
             "sddc_hourly_days": retention.get("numberOfDaysOfHourlyBackups"),
             "sddc_daily_days": retention.get("numberOfDaysOfDailyBackups"),
         }
+
+    def _select_sddc_manager(self, rows: list[dict[str, Any]], management_ips: set[str], system_id: Any) -> dict[str, Any]:
+        """Select this directly connected manager using its management identity.
+
+        Args:
+            rows: Paginated native manager inventory.
+            management_ips: Addresses advertised by the authenticated appliance.
+            system_id: Native appliance system UUID used by historical direct adapters.
+        """
+        matches = [row for row in rows if row.get("ipAddress") in management_ips
+                   and isinstance(row.get("domain"), dict) and row["domain"].get("type") == "MANAGEMENT"]
+        if len(matches) == 1 and isinstance(matches[0].get("id"), str):
+            return matches[0]
+        if isinstance(system_id, str) and system_id:
+            appliance_name = self._pick(self._sddc_appliance_info or {}, "fqdn", "hostName", "hostname")
+            return {"id": system_id, "fqdn": appliance_name if isinstance(appliance_name, str) else None,
+                    "ipAddress": next(iter(management_ips), None)}
+        raise RemoteError("SDDC Manager native resource identity is absent or ambiguous")
 
     def discover(self) -> dict[str, Any]:
         """Return allowlisted native component and backup-group inventory."""
@@ -892,28 +939,12 @@ class NativeBackup:
             manager_rows = self._pages("/v1/sddc-managers")
             appliance = self._sddc_appliance_info
             addresses = appliance.get("ipAddresses") if isinstance(appliance, dict) else None
-            management_ips = {
-                row.get("ipAddress") for row in addresses
+            management_ips: set[str] = {
+                row["ipAddress"] for row in addresses
                 if isinstance(row, dict) and row.get("type") == "MANAGEMENT" and isinstance(row.get("ipAddress"), str)
             } if isinstance(addresses, list) else set()
-            matches = [
-                row for row in manager_rows
-                if row.get("ipAddress") in management_ips
-                and isinstance(row.get("domain"), dict)
-                and row["domain"].get("type") == "MANAGEMENT"
-            ]
             system_id = self._sddc_system.get("id") if isinstance(self._sddc_system, dict) else None
-            if len(matches) == 1 and isinstance(matches[0].get("id"), str):
-                manager = matches[0]
-            elif isinstance(system_id, str) and system_id:
-                appliance_name = self._pick(appliance or {}, "fqdn", "hostName", "hostname")
-                manager = {
-                    "id": system_id,
-                    "fqdn": appliance_name if isinstance(appliance_name, str) else None,
-                    "ipAddress": next(iter(management_ips), None),
-                }
-            else:
-                raise RemoteError("SDDC Manager native resource identity is absent or ambiguous")
+            manager = self._select_sddc_manager(manager_rows, management_ips, system_id)
             self._sddc_manager = manager
             current = self._call("GET", "/v1/system/backup-configuration")
             normalized = self._safe_settings(current)
@@ -976,8 +1007,10 @@ class NativeBackup:
                         "version": str(entry.get("version") or "")[:80],
                         "supported": False,
                         "current": {},
-                        "warnings": ["This discovered resource requires a direct native appliance connection."],
-                        "coverage_gap": "Not configured by the SDDC Manager backup API.",
+                        "warnings": (["SDDC Manager configures this co-managed NSX backup destination and cadence."]
+                                     if product == "nsx" else ["This resource is not backed up by the SDDC Manager task."]),
+                        "coverage_gap": ("NSX backup completion and retention must be verified separately; no direct NSX configuration is needed."
+                                         if product == "nsx" else "Not backed up by the SDDC Manager task."),
                         "native_identity": {
                             "fqdn": entry.get("fqdn"), "ip_address": entry.get("ipAddress"),
                             **({"sddc_nsxt_cluster_id": cid} if product == "nsx" else {}),
@@ -1705,12 +1738,12 @@ class NativeBackup:
         reference.update(baseline_ref)
         return {"reference": reference}
 
-    def backup_status(self, group: str, reference: dict[str, Any]) -> dict[str, Any]:
-        """Perform the native backup operation described by this method name.
+    def _backup_reference(self, group: str, reference: dict[str, Any]) -> dict[str, Any]:
+        """Validate recorded backup ownership before reading native task state.
 
             Args:
-                group: Selected native group being reconciled.
-                reference: Persisted task and artifact baseline for read-only status checks.
+                group: Rediscovered native scheduler group.
+                reference: Recorded task and original component coverage.
         """
         if not isinstance(reference, dict) or reference.get("kind") not in (None, self.kind) or reference.get("group_id") not in (None, group):
             raise ValueError("Native backup reference does not match this group")
@@ -1729,6 +1762,33 @@ class NativeBackup:
         raw_ref = reference.get("native_task_id")
         if self.kind != "nsx" and not isinstance(raw_ref, str):
             raise ValueError("Native backup reference is missing its task ID")
+        return item
+
+    def backup_task_status(self, group: str, reference: dict[str, Any]) -> dict[str, Any]:
+        """Read task termination without requiring Fleet restore-point history.
+
+        Removal uses original verified receiver metadata for file ownership. It
+        needs the recorded task's terminal state, not another artifact adoption.
+
+        Args:
+            group: Reviewed scheduler whose immutable identity was rechecked.
+            reference: Recorded backup reference with exact component membership.
+        """
+        self._backup_reference(group, reference)
+        if self.kind == "fleet":
+            return self.configuration_status(group, reference)
+        return self.backup_status(group, reference)
+
+    def backup_status(self, group: str, reference: dict[str, Any]) -> dict[str, Any]:
+        """Read native backup completion and matching restore-point metadata.
+
+        Args:
+            group: Selected native group being reconciled.
+            reference: Persisted task and artifact baseline for read-only status checks.
+        """
+        item = self._backup_reference(group, reference)
+        component_ids = reference["component_ids"]
+        raw_ref = reference.get("native_task_id")
         ref = self._public_id(raw_ref) if isinstance(raw_ref, str) else ""
         if self.kind == "fleet":
             baseline_items = reference.get("fleet_artifacts")
@@ -2109,7 +2169,7 @@ def _state(value: Any) -> str:
             value: Native state mapped to the bounded workflow-state vocabulary.
     """
     normalized = str(value or "RUNNING").upper()
-    if normalized in {"SUCCEEDED", "SUCCESS", "COMPLETED", "COMPLETED_WITH_WARNINGS", "FINISHED"}:
+    if normalized in {"SUCCEEDED", "SUCCESS", "SUCCESSFUL", "COMPLETED", "COMPLETED_WITH_WARNINGS", "FINISHED"}:
         return "succeeded"
     if normalized in {"FAILED", "ERROR", "CANCELLED", "CANCELED"}:
         return "failed"

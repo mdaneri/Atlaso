@@ -28,7 +28,7 @@ test('Backup configuration stays in VCF Helper while operations link to the VCF 
   assert.match(js, /const receiverReady = configurationForm\?\.dataset\.setupReady === "true"/);
   assert.match(js, /function openBackupConfiguration\(launcher\) \{\s+if \(!receiverReady\) return;/);
   assert.match(backupsPage, /\{% if identity\.has_role\('admin'\) %\}[\s\S]*?partials\/vcf_backup_operations\.html[\s\S]*?\{% endif %\}/);
-  assert.match(backupsPage, /\{% if identity\.has_role\('admin'\) %\}[\s\S]*?partials\/vcf_backup_status_modal\.html[\s\S]*?vcf-backup\.js\?v=issue-1066-20[\s\S]*?\{% endif %\}/);
+  assert.match(backupsPage, /\{% if identity\.has_role\('admin'\) %\}[\s\S]*?partials\/vcf_backup_status_modal\.html[\s\S]*?vcf-backup\.js\?v=issue-1066-22[\s\S]*?\{% endif %\}/);
   assert.match(operationsPartial, /data-vcf-backup-operations-section/);
   assert.match(operationsPartial, /data-vcf-backup-operations-grid/);
   assert.match(operationsPartial, /data-vcf-backup-operations-refresh/);
@@ -41,10 +41,10 @@ test('A selected operation opens the standalone status popup without an ID looku
   assert.match(statusModal, /<h2 id="vcf-backup-status-title"[^>]*tabindex="-1"/);
   assert.doesNotMatch(statusModal, /recovery_operation_id|data-vcf-backup-recovery-id|data-vcf-backup-load-operation/);
   assert.match(statusModal, /data-vcf-backup-operation/);
-  assert.doesNotMatch(modal, /data-vcf-backup-operation/);
+  assert.doesNotMatch(modal, /data-vcf-backup-operation-id|data-vcf-backup-operation-state/);
   assert.doesNotMatch(statusModal, /data-atlaso-wizard-step|data-atlaso-wizard/);
   assert.match(js, /const rowAction = \(item\) => openOperationStatus\(item\.operation_id\)/);
-  assert.match(js, /function openOperationStatus\(requestedId\) \{\s+if \(!requestedId\) return;/);
+  assert.match(js, /function openOperationStatus\(requestedId, intent = "status"\) \{\s+if \(!requestedId\) return;/);
   assert.match(js, /function showStatusDialog\(\)[\s\S]*?statusDialog\.showModal\(\)[\s\S]*?node\("#vcf-backup-status-title"\)\?\.focus/);
   assert.doesNotMatch(js, /function loadOperation\(|data-vcf-backup-load-operation|data-vcf-backup-resume/);
   assert.match(js, /document\.querySelector\("\[data-vcf-backup-open\]"\)[\s\S]*?openBackupConfiguration\(event.currentTarget\)/);
@@ -53,7 +53,15 @@ test('A selected operation opens the standalone status popup without an ID looku
 test('Wizard selects products first, then follows credentials, TLS, discovery, settings, and review', () => {
   assert.match(modal, /\[\('components','Components','Choose one or more'\),\('credential','Credential','Vault or manual'\),\('server','Server','Product and endpoint'\),\('fingerprint','TLS fingerprint','Confirm each server'\),\('login','Login','Manual credentials only'\),\('discovery','Discovery','Select components'\),\('settings','Destination and schedule','Review policy'\),\('review','Review and configure','Start initial backup'\)\]/);
   assert.match(js, /const stepIds = \["components", "credential", "server", "fingerprint", "login", "discovery", "settings", "review"\]/);
-  assert.match(modal, /data-atlaso-wizard-step="components"[\s\S]*?data-vcf-backup-plan-kind/);
+  assert.match(modal, /data-vcf-backup-operations-parent/);
+  assert.match(modal, /data-vcf-backup-operation-scopes[\s\S]*?data-vcf-backup-plan-kind data-vcf-backup-operations-scope/);
+  assert.match(modal, /\('fleet','Lifecycle and management services'/);
+  assert.match(modal, /\('sddc','SDDC Manager backup settings'/);
+  assert.match(modal, /name="plan_vcenter"[^>]*data-vcf-backup-plan-kind/);
+  assert.doesNotMatch(modal, /name="plan_nsx"|<strong>NSX<\/strong>/);
+  assert.match(modal, /SDDC Manager backup settings[\s\S]*?co-managed NSX/);
+  assert.match(modal, /data-vcf-backup-managed-vcenters[\s\S]*?data-vcf-backup-managed-vcenter-options/);
+  assert.doesNotMatch(modal, /data-vcf-backup-add-sddc-source|Add another SDDC Manager/);
   assert.match(modal, /name="source_kind" data-vcf-backup-source-kind disabled/);
   assert.match(modal, /data-atlaso-wizard/);
   assert.match(js, /AtlasoUiPatterns\.createWizard/);
@@ -61,38 +69,204 @@ test('Wizard selects products first, then follows credentials, TLS, discovery, s
   assert.doesNotMatch(js, /new Tabulator\s*\(/);
 });
 
-test('Plan selection waits for an eligible selected target from every chosen product', () => {
-  let chosenKinds = ['fleet', 'nsx', 'vcenter'];
-  let selectedIds = ['fleet-target'];
+test('Plan selection uses one Operations source for both scopes and requires targets for each managed vCenter', () => {
+  const selectedIds = ['lifecycle-target', 'sddc-target', 'vc-one-target', 'vc-two-target'];
   const context = vm.createContext({
-    form: {querySelectorAll: () => chosenKinds.map((value) => ({value}))},
-    planKinds: ['fleet', 'nsx', 'vcenter'], selectedComponentIds: () => selectedIds,
-    inspectedSources: [{request: {source_kind: 'fleet', source_id: 'fleet-source'}}],
-    components: [
-      {id: 'fleet-target', source_id: 'fleet-source', supported: true},
-      {id: 'nsx-target', source_id: 'nsx-source', supported: true},
-      {id: 'vcenter-target', source_id: 'vcenter-source', supported: true},
-      {id: 'unsupported-target', source_id: 'vcenter-source', supported: false},
+    planKinds: ['fleet', 'sddc', 'vcenter'], selectedManagedVcenterIds: ['vc-one', 'vc-two'],
+    selectedComponentIds: () => selectedIds,
+    inspectedSources: [
+      {request: {source_kind: 'fleet', source_id: 'operations-source'}},
+      {request: {source_kind: 'vcenter', source_id: 'vc-one-source', managed_vcenter_id: 'vc-one'}},
+      {request: {source_kind: 'vcenter', source_id: 'vc-two-source', managed_vcenter_id: 'vc-two'}},
     ],
+    components: [
+      {id: 'lifecycle-target', source_id: 'operations-source', backup_scope: 'lifecycle', supported: true},
+      {id: 'sddc-target', source_id: 'operations-source', backup_scope: 'sddc', supported: true},
+      {id: 'vc-one-target', source_id: 'vc-one-source', supported: true},
+      {id: 'vc-two-target', source_id: 'vc-two-source', supported: true},
+    ],
+    selectedPlanKinds: () => ['fleet', 'sddc', 'vcenter'],
   });
+  context.form = {querySelectorAll: () => ['fleet', 'sddc', 'vcenter'].map((value) => ({value}))};
   vm.runInContext(['selectedPlanKinds', 'pendingPlanKinds', 'planSelectionComplete'].map(functionDeclaration).join('\n'), context);
-  assert.deepEqual(Array.from(context.selectedPlanKinds()), ['fleet', 'nsx', 'vcenter']);
-  assert.deepEqual(Array.from(context.pendingPlanKinds()), ['nsx', 'vcenter']);
-  assert.equal(context.planSelectionComplete(), false, 'connected Fleet alone cannot complete a three-product plan');
-
-  context.inspectedSources.push({request: {source_kind: 'nsx', source_id: 'nsx-source'}});
-  selectedIds = ['fleet-target', 'nsx-target'];
-  assert.deepEqual(Array.from(context.pendingPlanKinds()), ['vcenter']);
-  assert.equal(context.planSelectionComplete(), false, 'every chosen product still needs an eligible selected target');
-  context.inspectedSources.push({request: {source_kind: 'vcenter', source_id: 'vcenter-source'}});
-  selectedIds = ['fleet-target', 'nsx-target', 'vcenter-target'];
   assert.equal(context.planSelectionComplete(), true);
+  selectedIds.pop();
+  assert.equal(context.planSelectionComplete(), false, 'every selected managed vCenter needs a supported target');
+  selectedIds.push('vc-two-target');
+  context.components.find((item) => item.id === 'sddc-target').backup_scope = undefined;
+  assert.equal(context.planSelectionComplete(), false, 'the SDDC scope is never inferred from an untagged Operations component');
+  context.components.find((item) => item.id === 'sddc-target').backup_scope = 'sddc';
+  context.inspectedSources.pop();
+  assert.equal(context.planSelectionComplete(), false, 'every selected managed vCenter needs its own inspected source');
+});
 
-  chosenKinds = ['fleet', 'nsx'];
-  assert.equal(context.planSelectionComplete(), false, 'changing the checked product set invalidates the collected plan');
-  chosenKinds = ['fleet', 'nsx', 'vcenter'];
-  selectedIds = ['fleet-target', 'nsx-target', 'unsupported-target'];
-  assert.equal(context.planSelectionComplete(), false, 'unsupported discovered rows cannot complete the plan');
+test('Operations scope selection emits one lifecycle and/or SDDC scope on the Operations inspect request', () => {
+  const context = vm.createContext({planKinds: ['fleet', 'sddc']});
+  vm.runInContext(functionDeclaration('operationsScopesPayload'), context);
+  assert.deepEqual(Array.from(context.operationsScopesPayload()), ['lifecycle', 'sddc']);
+  context.planKinds = ['sddc'];
+  assert.deepEqual(Array.from(context.operationsScopesPayload()), ['sddc']);
+  context.planKinds = ['fleet'];
+  assert.deepEqual(Array.from(context.operationsScopesPayload()), ['lifecycle']);
+});
+
+test('Pending queue has one Operations connection, then one separate flow per selected managed vCenter', () => {
+  const context = vm.createContext({
+    planKinds: ['fleet', 'sddc', 'vcenter'], selectedManagedVcenterIds: ['vc-one', 'vc-two'],
+    inspectedSources: [], selectedComponentIds: () => [],
+  });
+  context.form = {querySelectorAll: () => ['fleet', 'sddc', 'vcenter'].map((value) => ({value}))};
+  vm.runInContext(functionDeclaration('pendingPlanKinds'), context);
+  assert.deepEqual(Array.from(context.pendingPlanKinds()), ['fleet'], 'both Operations scopes share one credential and TLS flow');
+  context.inspectedSources.push({request: {source_kind: 'fleet', source_id: 'operations-source'}});
+  assert.deepEqual(Array.from(context.pendingPlanKinds()), ['managed-vcenter', 'managed-vcenter']);
+  context.inspectedSources.push({request: {source_kind: 'vcenter', source_id: 'vc-one-source', managed_vcenter_id: 'vc-one'}});
+  assert.deepEqual(Array.from(context.pendingPlanKinds()), ['managed-vcenter']);
+  context.planKinds = ['vcenter'];
+  context.inspectedSources = [];
+  context.selectedManagedVcenterIds = [];
+  assert.deepEqual(Array.from(context.pendingPlanKinds()), ['vcenter'], 'vCenter-only plans use one direct endpoint flow');
+});
+
+test('Operations parent enables both default scopes and clears them when unchecked', () => {
+  class Input {}
+  const parent = Object.assign(new Input(), {checked: false});
+  const choices = [{checked: true, disabled: false}, {checked: true, disabled: false}];
+  const classes = new Set();
+  const scopes = {disabled: false, classList: {toggle(name, hidden) { if (hidden) classes.add(name); else classes.delete(name); }}};
+  const context = vm.createContext({
+    HTMLInputElement: Input,
+    form: {querySelectorAll: () => choices},
+    node: (selector) => selector === '[data-vcf-backup-operations-parent]' ? parent : scopes,
+  });
+  vm.runInContext(functionDeclaration('syncOperationsScopes'), context);
+  context.syncOperationsScopes();
+  assert.deepEqual(choices.map((choice) => [choice.checked, choice.disabled]), [[false, true], [false, true]]);
+  assert.equal(scopes.disabled, true);
+  parent.checked = true;
+  context.syncOperationsScopes(true);
+  assert.deepEqual(choices.map((choice) => [choice.checked, choice.disabled]), [[true, false], [true, false]]);
+  choices[0].checked = false;
+  context.syncOperationsScopes();
+  assert.deepEqual(choices.map((choice) => choice.checked), [false, true], 'scope changes do not reselect the other scope');
+  parent.checked = false;
+  context.syncOperationsScopes();
+  assert.deepEqual(choices.map((choice) => [choice.checked, choice.disabled]), [[false, true], [false, true]]);
+  parent.checked = true;
+  context.syncOperationsScopes(true);
+  assert.deepEqual(choices.map((choice) => choice.checked), [true, true], 're-enabling Operations defaults both scopes');
+});
+
+test('Managed vCenter credentials use their discovered endpoint and reject a Vault URI mismatch', () => {
+  const address = {value: '', readOnly: false};
+  const port = {value: '', disabled: false};
+  let credentialMode = 'vault';
+  let savedUri = 'https://vc01.example.test/';
+  const context = vm.createContext({
+    activeManagedVcenter: {id: 'vc-1', address: 'vc01.example.test', port: 443},
+    mode: {get value() { return credentialMode; }},
+    selectedVaultEntry: () => ({uri: savedUri}),
+    field(name) { return name === 'address' ? address : port; },
+    URL,
+  });
+  vm.runInContext(functionDeclaration('managedVcenterVaultMatches'), context);
+  assert.equal(context.managedVcenterVaultMatches(), true);
+  savedUri = 'https://other.example.test/';
+  assert.equal(context.managedVcenterVaultMatches(), false);
+  credentialMode = 'manual';
+  assert.equal(context.managedVcenterVaultMatches(), true);
+});
+
+test('Starting a managed vCenter flow preserves its target after resetting the prior Operations connection', () => {
+  const address = {value: 'ops.example.test', readOnly: false};
+  const port = {value: '443', disabled: false};
+  const sourceKind = {value: 'fleet', disabled: true};
+  const context = vm.createContext({
+    sourceKind,
+    activeManagedVcenter: null,
+    field: (name) => name === 'address' ? address : port,
+    safeText: (value, fallback) => value || fallback,
+    resetCurrentSource() { context.activeManagedVcenter = null; address.value = ''; port.value = '443'; address.readOnly = false; port.disabled = false; sourceKind.value = 'fleet'; sourceKind.disabled = false; },
+    updateSourceFields() {},
+    updateCredentialMode() {},
+    sourceKindLabel: () => 'vCenter',
+    setStatus() {},
+  });
+  vm.runInContext(functionDeclaration('beginPlanSource') + '\n' + functionDeclaration('beginManagedVcenter'), context);
+  assert.equal(context.beginManagedVcenter({id: 'vc-1', name: 'VC One', address: 'vc01.example.test', port: 8443}), true);
+  assert.equal(context.activeManagedVcenter.id, 'vc-1');
+  assert.equal(address.value, 'vc01.example.test');
+  assert.equal(port.value, '8443');
+  assert.equal(address.readOnly, true);
+  assert.equal(port.disabled, true);
+  assert.equal(sourceKind.value, 'vcenter');
+  assert.equal(sourceKind.disabled, true);
+});
+
+test('Managed vCenters at a shared endpoint remain distinct inspection sources', () => {
+  const sourceSignature = vm.runInNewContext(`(${functionDeclaration('sourceSignature')})`);
+  const base = {source_kind: 'vcenter', address: 'vc.example.test', port: 443};
+  assert.notEqual(sourceSignature({...base, managed_vcenter_id: 'vc-one'}), sourceSignature({...base, managed_vcenter_id: 'vc-two'}));
+  assert.equal(sourceSignature(base), sourceSignature({...base, managed_vcenter_id: ''}));
+});
+
+test('Operations inspection carries selected scopes and managed vCenter inspections bind to that Operations source', async () => {
+  const requests = [];
+  const responses = [
+    {
+      operation_id: 'op-1', revision: 'rev-1', source_id: 'operations-source',
+      managed_inventory: {managers: [{resource_id: 'manager-1'}], vcenters: [{id: 'vc-1'}]},
+      components: [{id: 'life-1', source_id: 'operations-source', backup_scope: 'lifecycle', supported: true}],
+      sources: [{source_id: 'operations-source', managed_inventory: {vcenters: [{id: 'vc-1'}]}}],
+      receiver: {host: 'backup.example.test', port: 22, username: 'backup', directory: '/backups/vcf'},
+    },
+    {
+      operation_id: 'op-1', revision: 'rev-2', source_id: 'vcenter-source',
+      components: [{id: 'vc-target', source_id: 'vcenter-source', supported: true}],
+      sources: [{source_id: 'vcenter-source'}],
+      receiver: {host: 'backup.example.test', port: 22, username: 'backup', directory: '/backups/vcf'},
+    },
+  ];
+  const fields = Object.fromEntries(['username', 'password'].map((name) => [name, {value: 'temporary'}]));
+  const nodes = {
+    '[data-vcf-backup-receiver]': {textContent: ''},
+    '[data-vcf-backup-host-key]': {textContent: ''},
+    '[data-vcf-backup-discovery-blockers]': {textContent: '', classList: {toggle() {}}},
+  };
+  const context = vm.createContext({
+    sourceKind: {value: 'fleet'},
+    field: (name) => fields[name],
+    commonPayload: () => ({source_kind: context.sourceKind.value, address: context.sourceKind.value === 'fleet' ? 'ops.example.test' : 'vc-1.example.test', port: 443, confirmed: true}),
+    validProbes: () => true,
+    call: async (path, payload) => { requests.push({path, payload: JSON.parse(JSON.stringify(payload))}); return responses.shift(); },
+    operationId: '', inspectionRevision: '', receiver: null,
+    activeManagedVcenter: null,
+    planKinds: ['fleet', 'sddc', 'vcenter'],
+    inspectedSources: [], components: [],
+    managedInventory: null,
+    sourceSignature: (source) => JSON.stringify([source.source_kind, source.address.toLowerCase(), source.port]),
+    operationsScopesPayload: () => ['lifecycle', 'sddc'],
+    node: (selector) => nodes[selector] || null,
+    safeText: (value, fallback) => value === undefined || value === null || value === '' ? fallback : String(value),
+    coverageText: (value) => value,
+    updateSourceFields() {}, renderComponents() {}, renderSourceSummaries() {}, invalidateReview() {}, setStatus() {},
+    renderManagedVcenters(inventory) { context.renderedInventory = inventory; },
+    fetchComponents: () => [],
+    sourceKindLabel: (kind) => kind,
+  });
+  vm.runInContext('async ' + functionDeclaration('inspectCurrentSource'), context);
+  await context.inspectCurrentSource();
+  assert.deepEqual(requests[0].payload.operations_scopes, ['lifecycle', 'sddc']);
+  assert.deepEqual(context.managedInventory.vcenters.map((item) => item.id), ['vc-1']);
+  assert.equal(context.renderedInventory, context.managedInventory);
+
+  context.sourceKind.value = 'vcenter';
+  context.activeManagedVcenter = {id: 'vc-1', address: 'vc-1.example.test', port: 443};
+  await context.inspectCurrentSource();
+  assert.equal(requests[1].payload.source_kind, 'vcenter');
+  assert.equal(requests[1].payload.operations_source_id, 'operations-source');
+  assert.equal(requests[1].payload.managed_vcenter_id, 'vc-1');
+  assert.deepEqual(context.inspectedSources.map((item) => item.request.source_kind), ['fleet', 'vcenter']);
 });
 
 test('beginPlanSource resets prior connection state and binds the next selected product', () => {
@@ -117,54 +291,63 @@ test('beginPlanSource resets prior connection state and binds the next selected 
 test('Captured createWizard callbacks queue every selected connection before settings without executing', async () => {
   const match = js.match(/wizard = window\.AtlasoUiPatterns\.createWizard\(\{([\s\S]*?)\n  \}\);/);
   assert.ok(match, 'capture the actual shared createWizard callback object');
-  const selectedKinds = ['fleet', 'nsx', 'vcenter'];
+  const selectedKinds = ['fleet', 'sddc', 'vcenter'];
   const selectedIds = [];
+  const selectedManagedVcenterIds = ['vc-one', 'vc-two'];
   const sourceKind = {value: 'fleet', disabled: true};
   const requested = [];
   const context = vm.createContext({
-    form: {}, dialog: {}, stepIds: ['components', 'credential', 'server', 'fingerprint', 'login', 'discovery', 'settings', 'review'],
+    form: {querySelectorAll: () => selectedKinds.map((value) => ({value}))}, dialog: {}, stepIds: ['components', 'credential', 'server', 'fingerprint', 'login', 'discovery', 'settings', 'review'],
     stepCopy: Object.fromEntries(['components', 'credential', 'server', 'fingerprint', 'login', 'discovery', 'settings', 'review'].map((id) => [id, [id, id]])),
     selectedPlanKinds: () => selectedKinds,
     pendingPlanKinds: null,
     planSelectionComplete: null,
-    beginPlanSource(kind) { sourceKind.value = kind; sourceKind.disabled = true; requested.push(kind); },
+    selectedManagedVcenterIds,
+    selectedManagedVcenters: () => [{id: 'vc-one'}, {id: 'vc-two'}],
+    beginNextPlanSource() {
+      const pending = context.pendingPlanKinds();
+      if (pending[0] === 'fleet') { sourceKind.value = 'fleet'; requested.push('fleet'); return true; }
+      const connected = new Set(context.inspectedSources.map((item) => String(item.request.managed_vcenter_id || '')));
+      const next = context.selectedManagedVcenters().find((item) => !connected.has(item.id));
+      sourceKind.value = 'vcenter';
+      requested.push('vcenter:' + next.id);
+      return true;
+    },
     sourceKind, operationId: '', inspectionRevision: '', inspectedSources: [], components: [], receiver: null,
     planKinds: [], grid: null, reviewToken: '', mode: {value: 'manual'}, setError() {}, setStatus() {},
     invalidateReview() { this.reviewToken = ''; }, clearManualPasswords() {}, updateCredentialMode() {}, updateSourceFields() {}, syncOperationView() {},
-    node() { return null; }, renderComponents() {}, call: async (path) => { requested.push(path); return {}; },
+    node() { return null; }, renderComponents() {}, renderManagedVcenters() {}, call: async (path) => { requested.push(path); return {}; },
     field: () => ({value: '', checked: true}), selectedComponentIds: () => selectedIds,
     validProbes: () => true, selectedVaultEntry: () => null,
   });
-  context.pendingPlanKinds = () => {
-    const connected = new Set(context.inspectedSources.map((item) => item.request.source_kind));
-    return context.planKinds.filter((kind) => !connected.has(kind));
-  };
-  context.planSelectionComplete = () => {
-    const selected = new Set(selectedIds);
-    return context.planKinds.length > 0 && JSON.stringify(context.planKinds) === JSON.stringify(selectedKinds)
-      && context.planKinds.every((kind) => context.inspectedSources.some(({request}) => request.source_kind === kind
-        && context.components.some((component) => String(component.source_id) === String(request.source_id)
-            && component.supported === true && selected.has(String(component.id)))));
-  };
+  vm.runInContext(functionDeclaration('pendingPlanKinds') + '\n' + functionDeclaration('planSelectionComplete'), context);
   const config = vm.runInContext(`({${match[1]}})`, context);
   assert.deepEqual(config.steps.map((step) => step.id), ['components', 'credential', 'server', 'fingerprint', 'login', 'discovery', 'settings', 'review']);
   assert.equal(config.validateStep({step: {id: 'components'}}), true);
 
   assert.equal(await config.onNext({step: {id: 'components'}}), 'credential');
   assert.deepEqual(requested, ['fleet']);
-  for (const [index, kind] of ['fleet', 'nsx', 'vcenter'].entries()) {
-    const sourceId = `${kind}-source`;
-    const componentId = `${kind}-target`;
-    context.inspectedSources.push({request: {source_kind: kind, source_id: sourceId}});
-    context.components.push({id: componentId, source_id: sourceId, supported: true});
-    selectedIds.push(componentId);
-    const next = await config.onNext({step: {id: 'discovery'}});
-    if (index < 2) {
-      assert.equal(next, 'credential', `connect ${['nsx', 'vcenter'][index]} before entering settings`);
-      assert.equal(sourceKind.value, ['nsx', 'vcenter'][index]);
-    } else assert.equal(next, 'settings');
-  }
-  assert.deepEqual(requested, ['fleet', 'nsx', 'vcenter']);
+  context.inspectedSources.push({request: {source_kind: 'fleet', source_id: 'operations-source'}});
+  context.components.push(
+    {id: 'lifecycle-target', source_id: 'operations-source', backup_scope: 'lifecycle', supported: true},
+    {id: 'sddc-target', source_id: 'operations-source', backup_scope: 'sddc', supported: true},
+  );
+  selectedIds.push('lifecycle-target', 'sddc-target');
+  context.managedInventory = {vcenters: [{id: 'vc-one'}, {id: 'vc-two'}]};
+  context.selectedManagedVcenterIds = ['vc-one', 'vc-two'];
+  assert.deepEqual(Array.from(context.planKinds), ['fleet', 'sddc', 'vcenter']);
+  assert.deepEqual(Array.from(context.pendingPlanKinds()), ['managed-vcenter', 'managed-vcenter']);
+  assert.equal(await config.onNext({step: {id: 'discovery'}}), 'credential');
+  assert.equal(sourceKind.value, 'vcenter');
+  context.inspectedSources.push({request: {source_kind: 'vcenter', source_id: 'vc-one-source', managed_vcenter_id: 'vc-one'}});
+  context.components.push({id: 'vc-one-target', source_id: 'vc-one-source', supported: true});
+  selectedIds.push('vc-one-target');
+  assert.equal(await config.onNext({step: {id: 'discovery'}}), 'credential');
+  context.inspectedSources.push({request: {source_kind: 'vcenter', source_id: 'vc-two-source', managed_vcenter_id: 'vc-two'}});
+  context.components.push({id: 'vc-two-target', source_id: 'vc-two-source', supported: true});
+  selectedIds.push('vc-two-target');
+  assert.equal(await config.onNext({step: {id: 'discovery'}}), 'settings');
+  assert.deepEqual(requested, ['fleet', 'vcenter:vc-one', 'vcenter:vc-two'], 'both Operations scopes use one login; each selected managed vCenter gets its own login');
   assert.equal(config.validateStep({step: {id: 'review'}}), false, 'review remains locked without a review token and approvals');
   assert.equal(requested.includes('/execute'), false, 'source selection and discovery never dispatch execution');
 });
@@ -174,7 +357,7 @@ test('Saved Vault credentials skip Login; manual passwords are sent only after t
   assert.match(modal, /name="password" type="password"/);
   assert.match(js, /wizard\?\.setSkippedSteps\(isVault \? \["login"\] : \[\]\)/);
   assert.match(js, /if \(!validProbes\(\)\) throw new Error\("Probe and explicitly confirm every required TLS fingerprint/);
-  assert.match(js, /const request = commonPayload\(\);\s+const result = await call\("\/inspect", request\)/);
+  assert.match(js, /const request = commonPayload\(\);\s+if \(request\.source_kind === "fleet"\) request\.operations_scopes = operationsScopesPayload\(\);[\s\S]*?call\("\/inspect", request\)/);
   assert.match(js, /credentials: "same-origin",\s+cache: "no-store"/);
   assert.doesNotMatch(js, /localStorage|sessionStorage|console\.(log|warn|error)/);
 });
@@ -197,7 +380,7 @@ test('Discovered Fleet service metadata is shown read-only in discovery and exac
   for (const field of ['address', 'port', 'base_path', 'key', 'fingerprint', 'version']) {
     assert.match(js, new RegExp(`service\\.${field}`));
   }
-  assert.match(js, /const sourceKindLabel = \(kind\) => \(\{fleet: "VCF Operations", nsx: "NSX", vcenter: "vCenter", sddc: "SDDC Manager"\}/);
+  assert.match(js, /const sourceKindLabel = \(kind\) => \(\{fleet: "VCF Operations", nsx: "NSX", vcenter: "vCenter", sddc: "SDDC Manager backup settings"\}/);
 });
 
 test('Discovered Fleet service base path is separated from its host and port', () => {
@@ -308,8 +491,8 @@ test('Review presents exact current and proposed native settings with operator l
   assert.match(js, /appendReviewSection\(container, "Current backup state"/);
 });
 
-test('Fleet review and readback show generic SSH pins, including historical records', () => {
-  const declarations = ['publicValue', 'formatReviewValue', 'settingComparison', 'fleetSshFingerprint', 'retentionValue', 'retentionMode', 'groupSettingRows', 'groupCurrentSettings'].map(functionDeclaration).join('\n');
+test('Fleet and Operations-managed SDDC review use the verified SSH fingerprint fields', () => {
+  const declarations = ['publicValue', 'formatReviewValue', 'settingComparison', 'fleetSshFingerprint', 'sddcSshFingerprint', 'retentionValue', 'retentionMode', 'groupSettingRows', 'groupCurrentSettings'].map(functionDeclaration).join('\n');
   const context = vm.createContext({});
   vm.runInContext(declarations, context);
   const preservedStartTime = '2026-03-19T02:30:45-07:00';
@@ -334,7 +517,37 @@ test('Fleet review and readback show generic SSH pins, including historical reco
   assert.equal(context.groupCurrentSettings('fleet', current).find(([label]) => label === 'SSH host-key fingerprint')[1], 'SHA256:verified-rsa');
   assert.equal(context.fleetSshFingerprint({ecdsa_fingerprint: 'SHA256:historical'}), 'SHA256:historical');
   assert.equal(context.fleetSshFingerprint({ssh_fingerprint: null, ecdsa_fingerprint: 'SHA256:historical'}), 'Not set');
-  assert.ok(context.groupSettingRows({kind: 'sddc', current: {}, proposed: {}}).some(([label]) => label === 'ECDSA host-key fingerprint'));
+  const sddcCurrent = {ecdsa_fingerprint: 'SHA256:manager-current'};
+  const sddcProposed = {host_key: 'SHA256:receiver-rsa'};
+  const sddcRows = context.groupSettingRows({kind: 'sddc', current: sddcCurrent, proposed: sddcProposed});
+  assert.equal(sddcRows.find(([label]) => label === 'SSH host-key fingerprint')[1], 'Current: SHA256:manager-current → Proposed: SHA256:receiver-rsa');
+  assert.equal(context.groupCurrentSettings('sddc', sddcCurrent).find(([label]) => label === 'SSH host-key fingerprint')[1], 'SHA256:manager-current');
+  assert.equal(context.sddcSshFingerprint({ssh_fingerprint: 'SHA256:shared-alias', host_key: 'SHA256:receiver-rsa'}), 'SHA256:shared-alias');
+  assert.equal(context.sddcSshFingerprint({}), 'Not returned');
+  assert.ok(context.groupSettingRows({kind: 'nsx', current: {}, proposed: {}}).some(([label]) => label === 'ECDSA host-key fingerprint'), 'historical direct NSX retains its ECDSA label');
+});
+
+test('Operation status uses each Operations backup group kind when rendering native read-back', () => {
+  const declarations = ['publicValue', 'formatReviewValue', 'retentionValue', 'retentionMode', 'sddcSshFingerprint', 'groupCurrentSettings', 'groupConfigurationState', 'checkpointLabel', 'nativeStateLabel', 'renderOperationGroups'].map(functionDeclaration).join('\n');
+  const sections = [];
+  const container = {replaceChildren() {}, append() {}};
+  const context = vm.createContext({
+    node: () => container,
+    components: [{id: 'manager-component', source_id: 'operations-source', name: 'SDDC Manager vc1'}],
+    inspectedSources: [{request: {source_id: 'operations-source', source_kind: 'fleet'}}],
+    document: {createElement: () => ({append() {}})},
+    appendReviewSection: (_container, title, rows) => sections.push([title, rows]),
+  });
+  vm.runInContext(declarations, context);
+  context.renderOperationGroups(
+    [{id: 'manager-group', kind: 'sddc', component_ids: ['manager-component']}],
+    'verified',
+    [{group_id: 'manager-group', current: {ecdsa_fingerprint: 'SHA256:manager-current', host: 'sftp.example'}}],
+  );
+  const settings = sections.find(([title]) => title === 'Latest native settings');
+  assert.ok(settings);
+  assert.equal(settings[1].find(([label]) => label === 'SSH host-key fingerprint')[1], 'SHA256:manager-current');
+  assert.equal(settings[1].some(([label]) => label === 'ECDSA host-key fingerprint'), false);
 });
 
 test('Disabled Operations recurrence intent remains in the human review', () => {
@@ -381,7 +594,7 @@ test('Current review matrix uses compact configured labels and operation state/c
 
 test('Operation status renders reconciliation settings, native progress, verification, and all warnings safely', () => {
   const declarations = [
-    'groupConfigurationState', 'formatReviewValue', 'publicValue', 'retentionMode', 'retentionValue',
+    'groupConfigurationState', 'formatReviewValue', 'publicValue', 'fleetSshFingerprint', 'retentionMode', 'retentionValue', 'sddcSshFingerprint',
     'appendReviewSection', 'sourceKindLabel', 'checkpointLabel', 'nativeStateLabel', 'nativeOperationRunning', 'groupCurrentSettings', 'renderOperationGroups',
   ].map(functionDeclaration).join('\n');
   const makeElement = (tagName) => ({tagName, children: [], textContent: '', className: '',
@@ -393,13 +606,13 @@ test('Operation status renders reconciliation settings, native progress, verific
     document: {createElement: makeElement},
     node: (selector) => selector === '[data-vcf-backup-operation-detail]' ? container : null,
     safeText: (value, fallback = 'Not recorded') => value === undefined || value === null || value === '' ? fallback : String(value),
-    components: [{id: 'component-1', source_id: 'source-1', name: 'SDDC Manager'}],
-    inspectedSources: [{request: {source_id: 'source-1', source_kind: 'sddc'}}],
+    components: [{id: 'component-1', source_id: 'operations-source', name: 'SDDC Manager'}],
+    inspectedSources: [{request: {source_id: 'operations-source', source_kind: 'fleet'}}],
   });
   vm.runInContext(declarations, context);
   const nativeReadback = {
     group_id: 'opaque-group-hash', checkpoint: 'backup_submitted',
-    current: {configured: true, host: 'backup.example', port: 22, user: 'atlaso', directory: '/backups/vcf', schedule_enabled: true, full_time: '02:00', days: ['MONDAY'], state_change: true, sddc_most_recent: 10, sddc_hourly_days: 2, sddc_daily_days: 15, secret_configured: true, sftp_secret_configured: true},
+    current: {configured: true, host: 'backup.example', port: 22, user: 'atlaso', directory: '/backups/vcf', ecdsa_fingerprint: 'SHA256:manager-current', schedule_enabled: true, full_time: '02:00', days: ['MONDAY'], state_change: true, sddc_most_recent: 10, sddc_hourly_days: 2, sddc_daily_days: 15, secret_configured: true, sftp_secret_configured: true},
     native_configuration: {state: 'running', warning: 'Native configuration poll returned HTTP 503.'},
     native_backup: {state: 'running', native_task_state: 'succeeded', native_task_terminal: true, warning: 'Native backup history poll returned HTTP 503.', artifacts: [{path: '/private/artifact.zip'}]},
     artifacts_verified: true,
@@ -408,7 +621,7 @@ test('Operation status renders reconciliation settings, native progress, verific
     warning: 'Initial artifacts exist, but the native policy no longer matches the reviewed configuration.',
   };
   context.renderOperationGroups(
-    [{id: 'opaque-group-hash', component_ids: ['component-1'], checkpoint: 'verified'}],
+    [{id: 'opaque-group-hash', kind: 'sddc', component_ids: ['component-1'], checkpoint: 'verified'}],
     'backup_submitted', [nativeReadback],
   );
   const visible = (node) => [node.textContent || '', ...(node.children || []).map(visible)].join(' ');
@@ -429,6 +642,8 @@ test('Operation status renders reconciliation settings, native progress, verific
   assert.match(visible(sections[0]), /Latest checkpoint Native backup completion verified/);
   assert.match(text, /Current backup configuration Configured/);
   assert.match(text, /Destination host backup\.example/);
+  assert.match(text, /SSH host-key fingerprint SHA256:manager-current/);
+  assert.doesNotMatch(text, /ECDSA host-key fingerprint/);
   assert.match(text, /Native configuration poll returned HTTP 503/);
   assert.match(text, /Native backup history poll returned HTTP 503/);
   assert.match(text, /native policy no longer matches/);
@@ -575,8 +790,8 @@ test('Schedule controls appear only for selected native products that use them',
   assert.match(js, /Scheduling intent/);
   assert.match(js, /Initial backup[\s\S]*?Runs once in every mode/);
   assert.match(js, /const nsx = kinds\.has\("nsx"\)/);
-  assert.match(js, /const stateChange = nsx \|\| kinds\.has\("sddc"\)/);
-  assert.match(js, /const generalRetention = kinds\.has\("fleet"\) \|\| kinds\.has\("vcenter"\)/);
+  assert.match(js, /const stateChange = nsx \|\| selectedKinds\.has\("sddc"\)/);
+  assert.match(js, /const generalRetention = selectedKinds\.has\("fleet"\) \|\| selectedKinds\.has\("vcenter"\)/);
   assert.match(js, /data-vcf-backup-nsx-interval/);
   assert.match(modal, /Direct NSX backup interval in minutes/);
   assert.doesNotMatch(modal, /hourly NSX/);
@@ -586,14 +801,13 @@ test('Operations recurrence controls follow selected components and preserve per
   const declarations = ['selectedSourceKinds', 'fleetScheduleMode', 'updateSourceFields', 'settingsAreValid'].map(functionDeclaration).join('\n');
   const components = [
     {id: 'ops-1', source_id: 'ops-source'},
-    {id: 'sddc-1', source_id: 'sddc-source'},
+    {id: 'sddc-1', source_id: 'ops-source', backup_scope: 'sddc'},
     {id: 'nsx-1', source_id: 'nsx-source'},
     {id: 'vcenter-1', source_id: 'vcenter-source'},
   ];
   let selectedIds = ['ops-1'];
   const sources = [
     {request: {source_id: 'ops-source', source_kind: 'fleet'}, summary: {source_id: 'ops-source'}},
-    {request: {source_id: 'sddc-source', source_kind: 'sddc'}, summary: {source_id: 'sddc-source'}},
     {request: {source_id: 'nsx-source', source_kind: 'nsx'}, summary: {source_id: 'nsx-source'}},
     {request: {source_id: 'vcenter-source', source_kind: 'vcenter'}, summary: {source_id: 'vcenter-source'}},
   ];
@@ -606,6 +820,10 @@ test('Operations recurrence controls follow selected components and preserve per
     ['sddc_hourly_days', {value: '2'}], ['sddc_daily_days', {value: '15'}],
     ['sftp_secret_ref', {value: 'vault:destination'}], ['encryption_secret_ref', {value: 'vault:passphrase'}],
     ['address', {readOnly: false}],
+    ['port', {value: '443', disabled: false}], ['username', {value: ''}],
+    ['fleet_incremental_mode', {value: 'preserve', disabled: false}],
+    ['fleet_incremental_interval_minutes', {value: '240', disabled: false}],
+    ['fleet_incremental_fallback_to_full', {checked: true, disabled: false}],
   ]);
   const nodes = new Map();
   const node = (selector) => {
@@ -613,7 +831,7 @@ test('Operations recurrence controls follow selected components and preserve per
     return nodes.get(selector);
   };
   const context = vm.createContext({
-    components, inspectedSources: sources, selectedComponentIds: () => selectedIds,
+    components, inspectedSources: sources, activeManagedVcenter: null, selectedComponentIds: () => selectedIds,
     field: (name) => fields.get(name), node, entrySelect: null, mode: null,
     secrets: [{}],
   });
@@ -715,9 +933,9 @@ test('Coverage gaps are labeled as outside the plan and explain Fleet ineligibil
 
 test('The updated backup script URL and service worker cache version stay aligned', () => {
   const worker = fs.readFileSync(path.join(__dirname, '../../atlaso/app/static/service-worker.js'), 'utf8');
-  assert.match(helper, /vcf-backup\.js\?v=issue-1066-20/);
-  assert.match(worker, /ATLASO_CACHE_PREFIX\}411/);
-  assert.match(worker, /vcf-backup\.js\?v=issue-1066-20/);
+  assert.match(helper, /vcf-backup\.js\?v=issue-1066-22/);
+  assert.match(worker, /ATLASO_CACHE_PREFIX\}413/);
+  assert.match(worker, /vcf-backup\.js\?v=issue-1066-22/);
 });
 
 test('Review binds the selected component IDs, source credentials, policy, and saved secret references', () => {
@@ -962,13 +1180,14 @@ test('Backup Operations list uses the shared read-only grid and opens selected o
   const declarations = ['operationCreatedTimestamp', 'operationCreatedAtSort', 'operationElapsedSort', 'operationStateLabel', 'operationSourceSummary', 'operationCell', 'initializeOperationsGrid'].map(functionDeclaration).join('\n');
   let gridConfig;
   let openedOperation = '';
+  let openedIntent = '';
   const table = {on() {}};
   const gridElement = {};
   const context = vm.createContext({
     document: {querySelector: (selector) => selector === '[data-vcf-backup-operations-grid]' ? gridElement : {}},
     window: {addEventListener() {}, AtlasoUiPatterns: {createGrid(config) { gridConfig = config; return {table, setError() {}}; }}},
     operationsInitialized: false, operationsGrid: null, scheduleOperationsResize() {},
-    openOperationStatus(id) { openedOperation = id; },
+    openOperationStatus(id, intent) { openedOperation = id; openedIntent = intent; },
     sourceKindLabel: (kind) => kind,
     safeText: (value, fallback = 'Not recorded') => value === undefined || value === null || value === '' ? fallback : String(value),
     operationStateLabel: (value) => value,
@@ -981,6 +1200,13 @@ test('Backup Operations list uses the shared read-only grid and opens selected o
   assert.deepEqual(Array.from(gridConfig.options.columns, (column) => column.field), ['created_date', 'created_time', 'elapsed_duration', 'operation_id', 'state', 'component_count', 'sources']);
   gridConfig.onOpenRow({operation_id: 'operation-123'});
   assert.equal(openedOperation, 'operation-123');
+  const terminalActions = gridConfig.rowActions(null, {getData: () => ({operation_id: 'operation-123', state: 'succeeded'})});
+  assert.deepEqual(Array.from(terminalActions, (action) => action.label), ['View status', 'Remove backup…']);
+  terminalActions[1].action();
+  assert.equal(openedOperation, 'operation-123');
+  assert.equal(openedIntent, 'remove');
+  const activeActions = gridConfig.rowActions(null, {getData: () => ({operation_id: 'running-operation', state: 'running'})});
+  assert.deepEqual(Array.from(activeActions, (action) => action.label), ['View status']);
   const columns = Object.fromEntries(gridConfig.options.columns.map((column) => [column.field, column]));
   assert.equal(columns.operation_id.headerFilter, 'input');
   assert.equal(columns.created_date.title, 'Date');
@@ -1140,8 +1366,8 @@ test('Configure always opens a fresh wizard without reopening or cancelling an e
       inspectionRevision: 'old', canCloseWithoutCredentials: true, pollTimer: 1,
       invalidateStatusView() {}, window: {clearTimeout() {}},
       clearManualPasswords() { cleared = true; }, grid: null,
-      invalidateReview() {}, resetCurrentSource() {}, renderComponents() {}, renderSourceSummaries() {},
-      node() { return element; }, setStatus() {},
+      invalidateReview() {}, resetCurrentSource() {}, renderComponents() {}, renderSourceSummaries() {}, syncOperationsScopes() {},
+      node() { return element; }, setStatus() {}, renderManagedVcenters() {},
       wizard: {open(options) { opened = options; }}, launcher,
       openOperationStatus() { assert.fail('Configure must not open status'); },
       call() { assert.fail('Opening a new wizard must not dispatch native work'); },
@@ -1343,4 +1569,117 @@ test('Status-only VCF Backups page loads its grid and reconciles recorded manual
   assert.equal(payload.sources.find((source) => source.source_id === 'vcenter-source').credential_entry_id, 'entry-1');
   assert.equal(reconcile.options.headers['X-CSRF-Token'], 'csrf-token');
   assert.equal(requests.some(({url}) => url.endsWith('/execute')), false);
+});
+
+function removalHarness({confirmation = true, results, manualPassword = 'request-local-password'} = {}) {
+  const calls = [];
+  const status = {textContent: ''};
+  const panelError = {textContent: '', classList: {remove() {}, add() {}}};
+  const source = {request: {source_id: 'source-1', password: manualPassword}, credentialMode: 'manual'};
+  const dialog = {open: true, close() { this.open = false; }};
+  const context = vm.createContext({
+    statusDialog: dialog, operationId: 'op-1', operationState: 'succeeded', statusViewEpoch: 4,
+    operationStarted: true, busy: false, removalBusy: false, removalToken: '',
+    inspectedSources: [source], removalStatus: status, panelError, clearedPasswords: 0, credentialPrompts: 0, refreshed: 0,
+    window: {requestConfirmation: async (options) => { context.confirmationOptions = options; return typeof confirmation === 'function' ? confirmation(options, context) : confirmation; }},
+    node(selector) {
+      if (selector === '[data-vcf-backup-removal-status]') return status;
+      if (selector === '[data-vcf-backup-operation-error]') return panelError;
+      return null;
+    },
+    call: async (path, payload) => {
+      calls.push({path, payload: payload === undefined ? undefined : JSON.parse(JSON.stringify(payload))});
+      const result = results.shift();
+      if (result instanceof Error) throw result;
+      return result;
+    },
+    isCurrentStatusView: (epoch, id) => dialog.open && context.statusViewEpoch === epoch && context.operationId === id,
+    clearManualPasswords() { context.clearedPasswords += 1; source.request.password = ''; },
+    renderRecoveryCredentials() { context.credentialPrompts += 1; },
+    renderRemovalPreview(result) { context.preview = result; context.removalToken = result.removal_token; },
+    clearRemovalReview(message = '') { context.removalToken = ''; status.textContent = message; },
+    syncRemovalControls() {},
+    formatRemovalBytes: (value) => value + ' bytes',
+    setStatus(message) { context.statusMessage = message; },
+    loadOperations() { context.refreshed += 1; },
+  });
+  vm.runInContext('async ' + functionDeclaration('reviewRemoval'), context);
+  return {context, calls, source};
+}
+
+const removalReview = (operationId = 'op-1') => ({
+  operation_id: operationId, removal_token: 'signed-review-token', file_count: 2, total_bytes: 3072,
+  paths: ['/backups/vcf/op-1/nsx/full.tar', '/backups/vcf/op-1/vcenter/full.tar'],
+});
+
+test('Removal preview requires shared confirmation, then deletes only the reviewed operation files', async () => {
+  const {context, calls, source} = removalHarness({
+    results: [removalReview(), {operation_id: 'op-1', state: 'removed', removed_files: 2}],
+  });
+  await context.reviewRemoval();
+  assert.deepEqual(calls.map(({path}) => path), ['/removal-review', '/remove']);
+  assert.equal(calls[0].payload.operation_id, 'op-1');
+  assert.equal(calls[0].payload.sources[0].password, 'request-local-password');
+  assert.equal(calls[1].payload.operation_id, 'op-1');
+  assert.equal(calls[1].payload.removal_token, 'signed-review-token');
+  assert.equal(calls[1].payload.confirmed, true);
+  assert.match(context.confirmationOptions.message, /2 stored file\(s\) \(3072 bytes\).*op-1.*cannot be undone/);
+  assert.match(context.confirmationOptions.detail, /nsx\/full\.tar/);
+  assert.equal(source.request.password, '');
+  assert.equal(context.statusDialog.open, false);
+  assert.equal(context.refreshed, 1);
+});
+
+test('Cancelling removal keeps files and clears manual credentials for a fresh review', async () => {
+  const {context, calls, source} = removalHarness({
+    confirmation: false, results: [removalReview()],
+  });
+  await context.reviewRemoval();
+  assert.deepEqual(calls.map(({path}) => path), ['/removal-review']);
+  assert.equal(source.request.password, '');
+  assert.equal(context.credentialPrompts, 1);
+  assert.equal(context.removalToken, '');
+  assert.match(context.removalStatus.textContent, /cancelled.*fresh confirmation/i);
+});
+
+test('Wrong and stale removal responses never delete another operation', async () => {
+  const wrong = removalHarness({results: [removalReview('op-other')]});
+  await wrong.context.reviewRemoval();
+  assert.deepEqual(wrong.calls.map(({path}) => path), ['/removal-review']);
+  assert.equal(wrong.context.confirmationOptions, undefined);
+  assert.match(wrong.context.removalStatus.textContent, /new removal review/i);
+
+  let releaseConfirmation;
+  const stale = removalHarness({
+    confirmation: () => new Promise((resolve) => { releaseConfirmation = resolve; }),
+    results: [removalReview(), {operation_id: 'op-1', state: 'removed', removed_files: 2}],
+  });
+  const pending = stale.context.reviewRemoval();
+  while (!releaseConfirmation) await new Promise((resolve) => setImmediate(resolve));
+  stale.context.operationId = 'op-2';
+  stale.context.statusViewEpoch += 1;
+  releaseConfirmation(true);
+  await pending;
+  assert.deepEqual(stale.calls.map(({path}) => path), ['/removal-review']);
+});
+
+test('Removal reports failed deletion and demands a fresh preview, with credentials cleared', async () => {
+  const {context, calls, source} = removalHarness({
+    results: [removalReview(), new Error('Receiver refused removal.')],
+  });
+  await context.reviewRemoval();
+  assert.deepEqual(calls.map(({path}) => path), ['/removal-review', '/remove']);
+  assert.equal(source.request.password, '');
+  assert.equal(context.removalToken, '');
+  assert.equal(context.credentialPrompts, 1);
+  assert.match(context.removalStatus.textContent, /new removal review/i);
+  assert.equal(context.statusMessage, 'Receiver refused removal.');
+});
+
+test('Manual credentials are requested again when the terminal operation has no request-local password', async () => {
+  const {context, calls} = removalHarness({manualPassword: '', results: [removalReview()]});
+  await context.reviewRemoval();
+  assert.deepEqual(calls, []);
+  assert.equal(context.credentialPrompts, 1);
+  assert.match(context.removalStatus.textContent, /enter the source password/i);
 });

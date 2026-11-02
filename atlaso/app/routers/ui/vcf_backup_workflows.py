@@ -15,7 +15,7 @@ from atlaso.app.database import get_db
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services import vcf_backup_workflow as workflow
 
-_ACTIONS = frozenset({"probe", "inspect", "review", "execute", "reconcile"})
+_ACTIONS = frozenset({"probe", "inspect", "review", "execute", "reconcile", "removal-review", "remove"})
 _MAX_BODY = 65536
 
 

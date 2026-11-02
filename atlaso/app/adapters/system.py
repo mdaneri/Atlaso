@@ -1014,6 +1014,13 @@ class SystemAdapter:
             dry_run_message="dry-run: VCF backup generated-config preflight recorded",
         )
 
+    def read_vcf_backup_probe_status(self) -> AdapterResult:
+        """Read only the effective SSH backup-source exemption through the helper."""
+        return self._helper_result(
+            "vcf-backups", "status", timeout_seconds=10,
+            dry_run_message="dry-run: VCF backup SSH policy observation recorded",
+        )
+
     def validate_vcf_private_registry_config(self, config_path: str) -> AdapterResult:
         """Validate vcf private registry config.
 

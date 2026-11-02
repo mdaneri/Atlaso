@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import socket
 import stat
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -16,6 +18,7 @@ import paramiko  # type: ignore[import-untyped]  # Paramiko has no bundled typin
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.models import User, VcfBackupSettings
 from atlaso.app.services.applied_service_dns import load_appliance_apply_baselines
 from atlaso.app.services.dnsmasq import split_addresses, split_interfaces
@@ -24,7 +27,10 @@ from atlaso.app.services.log_sanitization import redact_operational_text
 from atlaso.app.services.vcf_backups import (
     VCF_BACKUP_DEFAULT_VOLUME_MOUNT,
     VCF_BACKUP_EFFECTIVE_CONFIG_PATH,
+    VCF_BACKUP_PROBE_CONFIG_PATH,
+    normalize_trusted_backup_sources,
     render_vcf_backup_config,
+    render_vcf_backup_probe_config,
     validate_vcf_backup_state,
 )
 
@@ -84,18 +90,34 @@ def _transport(receiver: dict[str, Any]) -> paramiko.Transport:
         raise ReceiverError("The applied SFTP listener is not ready or its identity changed.") from None
 
 
-def _runtime(receiver: dict[str, Any], expected_config: str) -> None:
+def _runtime(receiver: dict[str, Any], expected_config: str, expected_probe_config: str = "") -> None:
     """Prove mount, effective configuration, daemon, and live listener identity.
 
     Args:
         receiver: Applied receiver identity without a password.
         expected_config: Exact public configuration admitted by Appliance Apply.
+        expected_probe_config: Optional reviewed global SSH exemption configuration.
     """
     if os.name != "posix" or not os.path.ismount(VCF_BACKUP_DEFAULT_VOLUME_MOUNT):
         raise ReceiverError("The dedicated VCF backup volume must be mounted.")
     path = Path(VCF_BACKUP_EFFECTIVE_CONFIG_PATH)
     if path.is_symlink() or path.read_text(encoding="utf-8") != expected_config:
         raise ReceiverError("Apply the current VCF Backup SFTP configuration first.")
+    probe_path = Path(VCF_BACKUP_PROBE_CONFIG_PATH)
+    if probe_path.is_symlink() or (probe_path.exists() and probe_path.read_text(encoding="utf-8") != expected_probe_config) or (expected_probe_config and not probe_path.is_file()):
+        raise ReceiverError("Apply the reviewed trusted backup sources first.")
+    if expected_probe_config:
+        effective = SystemAdapter().read_vcf_backup_probe_status()
+        expected = expected_probe_config.split("PerSourcePenaltyExemptList ", 1)[1].strip()
+        try:
+            observation = json.loads(effective.stdout) if len(effective.stdout) <= 2048 else None
+            sources = observation.get("trusted_backup_sources") if isinstance(observation, dict) else None
+            matches = (not effective.dry_run and effective.returncode == 0 and isinstance(observation, dict)
+                       and isinstance(sources, str) and normalize_trusted_backup_sources(sources) == expected)
+        except (ValueError, TypeError):
+            matches = False
+        if not matches:
+            raise ReceiverError("Effective SSH penalty exemptions differ from the reviewed backup sources.")
     result = subprocess.run(
         ["/usr/bin/systemctl", "is-active", "sshd.service"],
         capture_output=True, timeout=5, check=False,
@@ -144,7 +166,7 @@ def receiver_state(db: Session) -> dict[str, Any]:
             "ecdsa_fingerprint": fingerprint, "interfaces": split_interfaces(settings.listen_interface),
             "volume": settings.storage_path, "rsa_host_key": _rsa_public_key(),
         }
-        _runtime(receiver, preview)
+        _runtime(receiver, preview, render_vcf_backup_probe_config(settings))
         result.update(receiver, ready=True, reason="VCF Backup SFTP is applied and its listener is ready.")
     except ReceiverError as exc:
         result["reason"] = str(exc)
@@ -292,3 +314,57 @@ class ReceiverSession:
             return {}
         except (OSError, paramiko.SSHException):
             raise ReceiverError("SFTP artifact metadata could not be verified.") from None
+
+    def remove_artifacts(self, directory: str, expected: dict[str, list[int]], removed: Callable[[str], None]) -> None:
+        """Unlink only reviewed regular files through the ordinary chroot account.
+
+        No directory is removed. A partial failure retains the durable file plan
+        for an explicit fresh review; absent files are safe to leave absent.
+
+        Args:
+            directory: Exact reviewed scheduler directory beneath /backups/vcf.
+            expected: Recorded file paths with approved size and modification time.
+            removed: Persist each completed unlink before proceeding to another file.
+        """
+        client = self._client()
+        root = self._path(directory)
+        if not root.startswith("/backups/vcf/"):
+            raise ReceiverError("Removal requires an Atlaso scheduler backup directory.")
+        for path, detail in expected.items():
+            if self._path(path) != path or PurePosixPath(root) not in PurePosixPath(path).parents:
+                raise ReceiverError("A removal artifact is outside its reviewed directory.")
+            if not isinstance(detail, list) or len(detail) != 2 or any(type(value) is not int or value < 0 for value in detail):
+                raise ReceiverError("Removal requires recorded regular-file metadata.")
+        current = self.manifest(root)
+        if any(path not in expected or list(detail) != expected[path] for path, detail in current.items()):
+            raise ReceiverError("Backup files changed since removal review; review again before removing anything.")
+        deadline = time.monotonic() + 45
+        try:
+            for path, detail in sorted(expected.items()):
+                if time.monotonic() > deadline:
+                    raise ReceiverError("Backup removal reached its time limit; review remaining files before continuing.")
+                # Check every ancestor, including the chroot backup root. Never
+                # recursively remove a computed path or follow a listed link.
+                cursor = ""
+                absent = False
+                for part in PurePosixPath(path).parts[1:-1]:
+                    cursor += "/" + part
+                    try:
+                        attributes = client.lstat(cursor)
+                    except FileNotFoundError:
+                        absent = True
+                        break
+                    if not stat.S_ISDIR(attributes.st_mode or 0):
+                        raise ReceiverError("Backup removal refuses symlinks and non-directory ancestors.")
+                if absent:
+                    continue
+                try:
+                    attributes = client.lstat(path)
+                except FileNotFoundError:
+                    continue
+                if not stat.S_ISREG(attributes.st_mode or 0) or [attributes.st_size, attributes.st_mtime] != detail:
+                    raise ReceiverError("An artifact changed during removal; review remaining files before continuing.")
+                client.remove(path)
+                removed(path)
+        except (OSError, paramiko.SSHException):
+            raise ReceiverError("Backup removal stopped; review remaining files before continuing.") from None

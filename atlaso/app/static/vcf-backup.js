@@ -33,6 +33,9 @@
   let operationId = "";
   let inspectionRevision = "";
   let inspectedSources = [];
+  let managedInventory = null;
+  let selectedManagedVcenterIds = [];
+  let activeManagedVcenter = null;
   let planKinds = [];
   let components = [];
   let receiver = null;
@@ -50,6 +53,8 @@
   let operationsGridNeedsResize = true;
   let selectAllSupportedCheckbox = null;
   let busy = false;
+  let removalBusy = false;
+  let removalToken = "";
   let pollTimer = null;
   let statusViewEpoch = 0;
 
@@ -67,26 +72,97 @@
     }
   };
   const safeText = (value, fallback = "Not recorded") => value === undefined || value === null || value === "" ? fallback : String(value);
-  const sourceKindLabel = (kind) => ({fleet: "VCF Operations", nsx: "NSX", vcenter: "vCenter", sddc: "SDDC Manager"}[kind] || safeText(kind, "Source"));
+  const sourceKindLabel = (kind) => ({fleet: "VCF Operations", nsx: "NSX", vcenter: "vCenter", sddc: "SDDC Manager backup settings"}[kind] || safeText(kind, "Source"));
   function selectedPlanKinds() {
-    return [...form.querySelectorAll("[data-vcf-backup-plan-kind]:checked")].map((input) => input.value);
+    const selected = new Set([...form.querySelectorAll("[data-vcf-backup-plan-kind]:checked")].map((input) => input.value));
+    return ["fleet", "sddc", "vcenter"].filter((kind) => selected.has(kind));
+  }
+  function syncOperationsScopes(defaultSelection = false) {
+    const parent = node("[data-vcf-backup-operations-parent]");
+    const scopes = node("[data-vcf-backup-operation-scopes]");
+    const choices = Array.from(form.querySelectorAll("[data-vcf-backup-operations-scope]"));
+    if (!(parent instanceof HTMLInputElement) || !scopes) return;
+    if (!parent.checked) choices.forEach((input) => { input.checked = false; });
+    else if (defaultSelection && !choices.some((input) => input.checked)) choices.forEach((input) => { input.checked = true; });
+    choices.forEach((input) => { input.disabled = !parent.checked; });
+    scopes.disabled = !parent.checked;
+    scopes.classList.toggle("hidden", !parent.checked);
   }
   function pendingPlanKinds() {
-    const connected = new Set(inspectedSources.map((item) => item.request.source_kind));
-    return planKinds.filter((kind) => !connected.has(kind));
+    const pending = [];
+    const operationsSelected = planKinds.some((kind) => kind === "fleet" || kind === "sddc");
+    const operationsSource = inspectedSources.find((item) => item.request.source_kind === "fleet");
+    if (operationsSelected && !operationsSource) {
+      pending.push("fleet");
+      return pending;
+    }
+    if (planKinds.includes("vcenter")) {
+      if (operationsSelected) {
+        const connected = new Set(inspectedSources
+          .map((item) => String(item.request.managed_vcenter_id || ""))
+          .filter(Boolean));
+        selectedManagedVcenterIds.forEach((id) => {
+          if (!connected.has(String(id))) pending.push("managed-vcenter");
+        });
+      } else if (!inspectedSources.some((item) => item.request.source_kind === "vcenter")) pending.push("vcenter");
+    }
+    return pending;
   }
   function planSelectionComplete() {
     const selected = new Set(selectedComponentIds());
-    return planKinds.length > 0 && JSON.stringify(planKinds) === JSON.stringify(selectedPlanKinds()) && planKinds.every((kind) => inspectedSources.some(({request}) =>
-      request.source_kind === kind && components.some((component) =>
-        String(component.source_id) === String(request.source_id) && component.supported === true && selected.has(String(component.id)))));
+    if (!planKinds.length || JSON.stringify(planKinds) !== JSON.stringify(selectedPlanKinds())) return false;
+    const operationsKinds = planKinds.filter((kind) => kind === "fleet" || kind === "sddc");
+    if (operationsKinds.length) {
+      const operationsSource = inspectedSources.find(({request}) => request.source_kind === "fleet");
+      if (!operationsSource) return false;
+      for (const scope of operationsKinds) {
+        const backupScope = scope === "fleet" ? "lifecycle" : "sddc";
+        const eligible = components.some((component) => {
+          if (String(component.source_id) !== String(operationsSource.request.source_id)
+            || component.supported !== true || !selected.has(String(component.id))) return false;
+          return component.backup_scope === backupScope
+            || (backupScope === "lifecycle" && component.backup_scope === undefined);
+        });
+        if (!eligible) return false;
+      }
+    }
+    if (planKinds.includes("vcenter")) {
+      const vcenterSources = inspectedSources.filter(({request}) => request.source_kind === "vcenter");
+      const operationsSelected = operationsKinds.length > 0;
+      if (operationsSelected && !selectedManagedVcenterIds.length) return false;
+      const expectedIds = operationsSelected
+        ? selectedManagedVcenterIds.map(String)
+        : vcenterSources.map(({request}) => String(request.source_id));
+      if (!expectedIds.length) return false;
+      for (const id of expectedIds) {
+        const source = operationsSelected
+          ? vcenterSources.find(({request}) => String(request.managed_vcenter_id || "") === id)
+          : vcenterSources.find(({request}) => String(request.source_id) === id);
+        if (!source || !components.some((component) => String(component.source_id) === String(source.request.source_id)
+          && component.supported === true && selected.has(String(component.id)))) return false;
+      }
+    }
+    return true;
   }
   function beginPlanSource(kind) {
     resetCurrentSource();
     sourceKind.value = kind;
     sourceKind.disabled = true;
     updateSourceFields();
-    setStatus(`Connect to ${sourceKindLabel(kind)}. Each selected product has its own credentials and TLS confirmation.`);
+    setStatus(`Connect to ${sourceKindLabel(kind)}. Each source requires its own credentials and TLS confirmation.`);
+  }
+  function beginNextPlanSource() {
+    const pending = pendingPlanKinds();
+    const next = pending[0];
+    if (!next) return false;
+    if (next === "managed-vcenter") {
+      const connected = new Set(inspectedSources.map((item) => String(item.request.managed_vcenter_id || "")));
+      const target = selectedManagedVcenters().find((item) => !connected.has(String(item.id)));
+      return beginManagedVcenter(target);
+    }
+    activeManagedVcenter = null;
+    beginPlanSource(next);
+    return true;
   }
   function serviceBasePath(value) {
     const path = typeof value === "string" ? value.replace(/^\/+|\/+$/g, "") : "";
@@ -118,6 +194,7 @@
   function invalidateStatusView() {
     statusViewEpoch += 1;
     busy = false;
+    removalBusy = false;
     return statusViewEpoch;
   }
   function isCurrentStatusView(epoch, id) {
@@ -150,7 +227,13 @@
     field("username").disabled = isVault;
     field("password").disabled = isVault;
     if (isVault) field("password").value = "";
-    else field("address").readOnly = false;
+    if (activeManagedVcenter) {
+      field("address").value = activeManagedVcenter.address;
+      field("port").value = String(activeManagedVcenter.port);
+      field("address").readOnly = true;
+      field("port").disabled = true;
+    } else if (isVault) field("address").readOnly = true;
+    else { field("address").readOnly = false; field("port").disabled = false; }
     wizard?.setSkippedSteps(isVault ? ["login"] : []);
     updateSourceFields();
   }
@@ -164,8 +247,8 @@
     const incrementalEnabled = operationsDaily && incrementalMode === "enabled";
     const daily = directDailySelected || operationsDaily;
     const nsx = kinds.has("nsx");
-    const stateChange = nsx || kinds.has("sddc");
-    const generalRetention = kinds.has("fleet") || kinds.has("vcenter");
+    const stateChange = nsx || selectedKinds.has("sddc");
+    const generalRetention = selectedKinds.has("fleet") || selectedKinds.has("vcenter");
     node("[data-vcf-backup-fleet-schedule-mode]")?.classList.toggle("hidden", !operationsSelected);
     node("[data-vcf-backup-fleet-schedule-help]")?.classList.toggle("hidden", !operationsSelected);
     node("[data-vcf-backup-fleet-incremental]")?.classList.toggle("hidden", !operationsDaily);
@@ -184,8 +267,13 @@
     node("[data-vcf-backup-nsx-interval]")?.classList.toggle("hidden", !nsx);
     node("[data-vcf-backup-state-change]")?.classList.toggle("hidden", !stateChange);
     node("[data-vcf-backup-general-retention]")?.classList.toggle("hidden", !generalRetention);
-    node("[data-vcf-backup-sddc-retention]")?.classList.toggle("hidden", !kinds.has("sddc"));
-    if (entrySelect?.value && mode?.value === "vault") {
+    node("[data-vcf-backup-sddc-retention]")?.classList.toggle("hidden", !selectedKinds.has("sddc"));
+    if (activeManagedVcenter) {
+      field("address").value = activeManagedVcenter.address;
+      field("port").value = String(activeManagedVcenter.port);
+      field("address").readOnly = true;
+      field("port").disabled = true;
+    } else if (entrySelect?.value && mode?.value === "vault") {
       const saved = selectedVaultEntry();
       if (saved) {
         try {
@@ -193,10 +281,29 @@
           field("address").value = url.hostname;
           field("port").value = url.port || "443";
           field("address").readOnly = true;
+          field("port").disabled = false;
           field("username").value = vaultById.get(saved.vault_id)?.entries?.find((item) => String(item.id) === saved.entry_id)?.username || "";
         } catch { /* Server validation remains authoritative for URI parsing. */ }
       }
-    } else if (field("address")) field("address").readOnly = false;
+    } else if (field("address")) { field("address").readOnly = false; field("port").disabled = false; }
+  }
+  function managedVcenterVaultMatches() {
+    if (!activeManagedVcenter || mode?.value !== "vault") return true;
+    const saved = selectedVaultEntry();
+    if (!saved?.uri) return false;
+    try {
+      const url = new URL(saved.uri);
+      const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
+      return ["https:", "http:"].includes(url.protocol)
+        && url.hostname.toLowerCase() === String(activeManagedVcenter.address).toLowerCase()
+        && port === Number(activeManagedVcenter.port);
+    } catch { return false; }
+  }
+  function operationsScopesPayload() {
+    return [
+      planKinds.includes("fleet") ? "lifecycle" : "",
+      planKinds.includes("sddc") ? "sddc" : "",
+    ].filter(Boolean);
   }
   function captureSource() {
     const vault = mode?.value === "vault" ? selectedVaultEntry() : null;
@@ -221,7 +328,7 @@
     return payload;
   }
   function sourceSignature(source) {
-    return JSON.stringify([source.source_kind, source.address.toLowerCase(), source.port]);
+    return JSON.stringify([source.source_kind, source.address.toLowerCase(), source.port, source.managed_vcenter_id || ""]);
   }
   function coverageText(item) {
     if (typeof item === "string") return item;
@@ -247,6 +354,9 @@
       credential_uri: reference.uri || "",
       username: reference.username || "",
       password: "",
+      ...(Array.isArray(source.operations_scopes) ? {operations_scopes: source.operations_scopes.slice()} : {}),
+      ...(source.operations_source_id ? {operations_source_id: source.operations_source_id} : {}),
+      ...(source.managed_vcenter_id ? {managed_vcenter_id: source.managed_vcenter_id} : {}),
     };
     return {
       request,
@@ -303,10 +413,13 @@
   }
   function selectedSourceKinds() {
     const selectedIds = new Set(selectedComponentIds());
-    return new Set(components
-      .filter((component) => selectedIds.has(String(component.id)))
-      .map((component) => inspectedSources.find((item) => String(item.summary?.source_id || item.request.source_id || "") === String(component.source_id || ""))?.request.source_kind)
-      .filter(Boolean));
+    const kinds = new Set();
+    components.filter((component) => selectedIds.has(String(component.id))).forEach((component) => {
+      const sourceKind = inspectedSources.find((item) => String(item.summary?.source_id || item.request.source_id || "") === String(component.source_id || ""))?.request.source_kind;
+      if (sourceKind === "fleet" && component.backup_scope === "sddc") kinds.add("sddc");
+      else if (sourceKind) kinds.add(sourceKind);
+    });
+    return kinds;
   }
   function fleetScheduleMode() {
     return field("fleet_schedule_mode")?.value || "preserve";
@@ -562,6 +675,13 @@
     const key = settings && Object.prototype.hasOwnProperty.call(settings, "ssh_fingerprint") ? "ssh_fingerprint" : "ecdsa_fingerprint";
     return publicValue(settings, key);
   }
+  function sddcSshFingerprint(settings) {
+    const keys = ["ssh_fingerprint", "host_key", "ecdsa_fingerprint"];
+    const key = keys.find((candidate) => Object.prototype.hasOwnProperty.call(settings || {}, candidate)
+      && settings[candidate] !== null && settings[candidate] !== undefined && settings[candidate] !== "")
+      || keys.find((candidate) => Object.prototype.hasOwnProperty.call(settings || {}, candidate));
+    return key ? publicValue(settings, key) : "Not returned";
+  }
   function retentionValue(settings) {
     if (!settings || !Object.prototype.hasOwnProperty.call(settings, "retention_value")) return "Not returned";
     const value = settings.retention_value;
@@ -588,6 +708,8 @@
       rows.push(["ECDSA host-key pin", "Current: Not supported by native vCenter API → Proposed: Not supported by native vCenter API"]);
     } else if (group.kind === "fleet") {
       rows.push(["SSH host-key fingerprint", `Current: ${fleetSshFingerprint(current)} → Proposed: ${fleetSshFingerprint(proposed)}`]);
+    } else if (group.kind === "sddc") {
+      rows.push(["SSH host-key fingerprint", `Current: ${sddcSshFingerprint(current)} → Proposed: ${sddcSshFingerprint(proposed)}`]);
     } else {
       rows.push(settingComparison("ECDSA host-key fingerprint", "ecdsa_fingerprint", current, proposed));
     }
@@ -676,7 +798,8 @@
       ["Destination account", "user"], ["Destination directory", "directory"],
     ].map(([label, key]) => [label, publicValue(settings, key)]);
     if (groupKind === "fleet") rows.push(["SSH host-key fingerprint", fleetSshFingerprint(settings)]);
-    else if (groupKind !== "vcenter") rows.push(["ECDSA host-key fingerprint", publicValue(settings, "ecdsa_fingerprint")]);
+    else if (groupKind === "sddc") rows.push(["SSH host-key fingerprint", sddcSshFingerprint(settings)]);
+    else if (groupKind === "nsx") rows.push(["ECDSA host-key fingerprint", publicValue(settings, "ecdsa_fingerprint")]);
     if (groupKind !== "nsx") {
       rows.push(["Daily backup time", publicValue(settings, "full_time")]);
       rows.push(["Backup days", publicValue(settings, "days")]);
@@ -756,7 +879,7 @@
       const members = components.filter((component) => memberIds.has(String(component.id)));
       const names = members.map((component) => component.name).filter(Boolean);
       const source = inspectedSources.find((item) => members.some((component) => String(component.source_id) === String(item.request.source_id)));
-      const kind = source?.request.source_kind || "";
+      const kind = group.kind || source?.request.source_kind || "";
       const report = reports.get(String(group.id || ""));
       let currentSettings = null;
       const rows = [["Latest checkpoint", checkpointLabel(group.checkpoint || report?.checkpoint)]];
@@ -831,6 +954,12 @@
     const reconcileButton = node("[data-vcf-backup-reconcile]");
     reconcileButton?.classList.toggle("hidden", ["succeeded", "reconciled"].includes(operationState));
     if (reconcileButton) reconcileButton.disabled = reconciliationActive;
+    const removalPanel = node("[data-vcf-backup-removal-panel]");
+    removalPanel?.classList.toggle("hidden", !["succeeded", "reconciled"].includes(operationState));
+    const removalOperation = node("[data-vcf-backup-removal-operation]");
+    if (removalOperation) removalOperation.textContent = operationId;
+    const removalReviewButton = node("[data-vcf-backup-removal-review]");
+    if (removalReviewButton) removalReviewButton.disabled = typeof removalBusy !== "undefined" && removalBusy;
     if (["queued", "pending", "running"].includes(String(result.state || "").toLowerCase()) || reconciliationActive) schedulePoll(1800);
     else window.clearTimeout(pollTimer);
   }
@@ -863,6 +992,194 @@
       container.append(row);
     });
   }
+  function renderManagedVcenters(inventory) {
+    const fieldset = node("[data-vcf-backup-managed-vcenters]");
+    const container = node("[data-vcf-backup-managed-vcenter-options]");
+    const empty = node("[data-vcf-backup-managed-vcenter-empty]");
+    if (!fieldset || !container || !empty) return;
+    const vcenters = Array.isArray(inventory?.vcenters) ? inventory.vcenters : [];
+    const visible = planKinds.includes("vcenter") && planKinds.some((kind) => kind === "fleet" || kind === "sddc");
+    fieldset.classList?.toggle?.("hidden", !visible);
+    fieldset.disabled = !visible;
+    container.replaceChildren();
+    vcenters.forEach((vcenter) => {
+      if (!vcenter || typeof vcenter.id !== "string" || typeof vcenter.address !== "string") return;
+      const label = document.createElement("label");
+      label.className = "switch-field";
+      const copy = document.createElement("span");
+      copy.textContent = safeText(vcenter.name, "vCenter") + " · " + vcenter.address + ":" + safeText(vcenter.port, "443");
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.value = vcenter.id;
+      checkbox.dataset.vcfBackupManagedVcenter = "true";
+      checkbox.checked = selectedManagedVcenterIds.includes(vcenter.id);
+      checkbox.addEventListener("change", () => {
+        const nextIds = Array.from(container.querySelectorAll("[data-vcf-backup-managed-vcenter]:checked"), (input) => input.value);
+        const removed = new Set(selectedManagedVcenterIds.filter((id) => !nextIds.includes(id)).map(String));
+        const removedSources = inspectedSources.filter((item) => removed.has(String(item.request.managed_vcenter_id || "")));
+        const removedSourceIds = new Set(removedSources.map((item) => String(item.summary?.source_id || item.request.source_id || "")));
+        removedSources.forEach((item) => { if (item.credentialMode === "manual") item.request.password = ""; });
+        inspectedSources = inspectedSources.filter((item) => !removedSources.includes(item));
+        components = components.filter((component) => !removedSourceIds.has(String(component.source_id || "")));
+        selectedManagedVcenterIds = nextIds;
+        renderComponents();
+        renderSourceSummaries();
+        invalidateReview();
+      });
+      label.append(copy, checkbox);
+      container.append(label);
+    });
+    empty.hidden = vcenters.length > 0;
+  }
+  function selectedManagedVcenters() {
+    if (!Array.isArray(managedInventory?.vcenters)) return [];
+    return managedInventory.vcenters.filter((item) => selectedManagedVcenterIds.includes(String(item.id)));
+  }
+  function beginManagedVcenter(vcenter) {
+    if (!vcenter || typeof vcenter.id !== "string" || typeof vcenter.address !== "string") return false;
+    const target = {
+      id: vcenter.id,
+      name: safeText(vcenter.name, "vCenter"),
+      address: vcenter.address,
+      port: Number(vcenter.port || 443),
+    };
+    beginPlanSource("vcenter");
+    activeManagedVcenter = target;
+    field("address").value = activeManagedVcenter.address;
+    field("port").value = String(activeManagedVcenter.port);
+    field("address").readOnly = true;
+    field("port").disabled = true;
+    updateCredentialMode();
+    return true;
+  }
+  function formatRemovalBytes(value) {
+    const bytes = Number(value);
+    if (!Number.isFinite(bytes) || bytes < 0) return "Size unavailable";
+    if (bytes < 1024) return bytes + " bytes";
+    const units = ["KB", "MB", "GB", "TB"];
+    let amount = bytes / 1024;
+    let unit = units[0];
+    for (let index = 1; amount >= 1024 && index < units.length; index += 1) {
+      amount /= 1024;
+      unit = units[index];
+    }
+    return amount.toFixed(1) + " " + unit;
+  }
+  function syncRemovalControls() {
+    const review = node("[data-vcf-backup-removal-review]");
+    if (review) review.disabled = removalBusy;
+  }
+  function clearRemovalReview(message = "") {
+    removalToken = "";
+    const preview = node("[data-vcf-backup-removal-preview]");
+    if (preview) { preview.replaceChildren(); preview.hidden = true; }
+    const status = node("[data-vcf-backup-removal-status]");
+    if (status) status.textContent = message;
+    syncRemovalControls();
+  }
+  function renderRemovalPreview(result) {
+    removalToken = result.removal_token;
+    const preview = node("[data-vcf-backup-removal-preview]");
+    if (preview) {
+      preview.replaceChildren();
+      preview.hidden = false;
+      const rows = [
+        ["Operation", result.operation_id],
+        ["Files to remove", String(result.file_count)],
+        ["Total size", formatRemovalBytes(result.total_bytes)],
+      ];
+      rows.forEach(([labelText, valueText]) => {
+        const row = document.createElement("div");
+        const label = document.createElement("span");
+        const value = document.createElement("strong");
+        label.textContent = labelText;
+        value.textContent = valueText;
+        row.append(label, value);
+        preview.append(row);
+      });
+      const paths = document.createElement("div");
+      const pathLabel = document.createElement("span");
+      const pathList = document.createElement("strong");
+      pathLabel.textContent = "Stored paths";
+      pathList.textContent = (Array.isArray(result.paths) ? result.paths : []).join("\n") || "No paths returned";
+      pathList.classList.add("mono-text");
+      paths.append(pathLabel, pathList);
+      preview.append(paths);
+    }
+    const status = node("[data-vcf-backup-removal-status]");
+    if (status) status.textContent = "Review the exact files below. Remove native backup destinations first; Atlaso will not edit native settings.";
+    syncRemovalControls();
+  }
+  async function reviewRemoval() {
+    if (!statusDialog.open || removalBusy || !["succeeded", "reconciled"].includes(operationState) || !operationId) return;
+    const requestedId = operationId;
+    const viewEpoch = statusViewEpoch;
+    if (inspectedSources.some(({request, credentialMode}) => credentialMode === "manual" && !request.password)) {
+      clearRemovalReview("Enter the source password(s) required to verify stored backup files, then choose Review removal again.");
+      renderRecoveryCredentials();
+      return;
+    }
+    removalBusy = true;
+    node("[data-vcf-backup-operation-error]")?.classList.add("hidden");
+    clearRemovalReview("Checking which stored backup files are eligible for removal…");
+    syncRemovalControls();
+    try {
+      const result = await call("/removal-review", {operation_id: requestedId, sources: inspectedSources.map(({request}) => request)});
+      if (!isCurrentStatusView(viewEpoch, requestedId)) return;
+      if (result.operation_id !== requestedId || typeof result.removal_token !== "string" || !result.removal_token
+        || !Number.isInteger(result.file_count) || result.file_count < 0 || !Number.isFinite(Number(result.total_bytes))
+        || Number(result.total_bytes) < 0 || !Array.isArray(result.paths) || result.paths.length !== result.file_count) {
+        throw new Error("The removal review did not match the selected operation or returned incomplete details.");
+      }
+      renderRemovalPreview(result);
+      const paths = result.paths.join("\n") || "No stored paths returned";
+      const confirmation = await window.requestConfirmation({
+        title: "Remove stored VCF backup files?",
+        message: "Remove " + result.file_count + " stored file(s) (" + formatRemovalBytes(result.total_bytes)
+          + ") for operation " + requestedId + "? This is immediate and cannot be undone. Remove native backup destinations first; Atlaso will not change native settings.",
+        detail: paths,
+        detailLabel: "Files to remove",
+        label: "Remove backup files",
+      });
+      if (!isCurrentStatusView(viewEpoch, requestedId)) return;
+      if (!confirmation) {
+        clearManualPasswords();
+        renderRecoveryCredentials();
+        clearRemovalReview("Removal cancelled. Review again to get a fresh confirmation.");
+        return;
+      }
+      if (!removalToken || removalToken !== result.removal_token) return;
+      const removed = await call("/remove", {
+        operation_id: requestedId, sources: inspectedSources.map(({request}) => request),
+        removal_token: result.removal_token, confirmed: true,
+      });
+      if (!isCurrentStatusView(viewEpoch, requestedId)) return;
+      if (removed.operation_id !== requestedId || removed.state !== "removed" || !Number.isInteger(removed.removed_files)) {
+        throw new Error("The removal response did not match the selected operation.");
+      }
+      clearManualPasswords();
+      clearRemovalReview();
+      statusDialog.close();
+      operationsCursor = "";
+      loadOperations(false);
+    } catch (error) {
+      if (!isCurrentStatusView(viewEpoch, requestedId)) return;
+      clearManualPasswords();
+      renderRecoveryCredentials();
+      clearRemovalReview("Removal failed. Enter any manual source passwords and review again before retrying.");
+      const message = error?.message || "Stored backup files could not be removed.";
+      const status = node("[data-vcf-backup-removal-status]");
+      if (status) status.textContent = message + " A new removal review is required before retrying.";
+      setStatus(message, true);
+      const panelError = node("[data-vcf-backup-operation-error]");
+      if (panelError) { panelError.textContent = message; panelError.classList.remove("hidden"); }
+    } finally {
+      if (statusViewEpoch === viewEpoch && operationId === requestedId) {
+        removalBusy = false;
+        syncRemovalControls();
+      }
+    }
+  }
   function hydrateOperation(result) {
     invalidateReview();
     operationId = result.operation_id || operationId;
@@ -874,11 +1191,16 @@
     renderOperation(result);
     setStatus("Status loaded. Recovery can inspect or reconcile this operation; it cannot repeat native writes.");
   }
-  async function openOperationStatus(requestedId) {
+  async function openOperationStatus(requestedId, intent = "status") {
     if (!requestedId) return;
     const viewEpoch = invalidateStatusView();
     window.clearTimeout(pollTimer);
     pollTimer = null;
+    removalToken = "";
+    const removalPreview = node("[data-vcf-backup-removal-preview]");
+    if (removalPreview) { removalPreview.replaceChildren(); removalPreview.hidden = true; }
+    const removalStatus = node("[data-vcf-backup-removal-status]");
+    if (removalStatus) removalStatus.textContent = "";
     showStatusDialog();
     if (requestedId !== operationId) {
       clearManualPasswords();
@@ -903,6 +1225,10 @@
       const result = await call(`/operations/${encodeURIComponent(requestedId)}`);
       if (!isCurrentStatusView(viewEpoch, requestedId)) return;
       hydrateOperation(result);
+      if (intent === "remove" && ["succeeded", "reconciled"].includes(operationState)) {
+        node("[data-vcf-backup-removal-panel]")?.scrollIntoView?.({block: "nearest"});
+        node("[data-vcf-backup-removal-review]")?.focus({preventScroll: true});
+      }
     } catch (error) {
       if (!isCurrentStatusView(viewEpoch, requestedId)) return;
       const message = error?.message || "The operation status could not be loaded.";
@@ -1051,7 +1377,14 @@
       errorMessage: "The backup operation list could not be displayed. Refresh to retry.",
       onReady: () => { operationsGridReady = true; window.requestAnimationFrame(() => { resizeOperationsGrid(); loadOperations(false); }); },
       onOpenRow: (item) => rowAction(item),
-      rowActions: [{label: "View status", action: (_event, row) => rowAction(row.getData())}],
+      rowActions: (_event, row) => {
+        const item = row.getData();
+        const actions = [{label: "View status", action: () => rowAction(item)}];
+        if (["succeeded", "reconciled"].includes(String(item.state || "").toLowerCase())) {
+          actions.push({label: "Remove backup…", action: () => openOperationStatus(item.operation_id, "remove")});
+        }
+        return actions;
+      },
       options: {
         data: [], index: "operation_id", layout: "fitColumns", responsiveLayout: "collapse",
         pagination: true, paginationSize: 25, selectableRows: 1,
@@ -1102,6 +1435,9 @@
     inspectionRevision = "";
     inspectedSources = [];
     planKinds = [];
+    managedInventory = null;
+    selectedManagedVcenterIds = [];
+    activeManagedVcenter = null;
     components = [];
     receiver = null;
     operationStarted = false;
@@ -1111,11 +1447,13 @@
     resetCurrentSource();
     renderComponents();
     renderSourceSummaries();
+    syncOperationsScopes();
+    renderManagedVcenters(null);
     node("[data-vcf-backup-recovery-credentials]").replaceChildren();
     node("[data-atlaso-wizard-submit]").disabled = false;
     node("[data-vcf-backup-task-link]").classList.add("hidden");
     wizard.open({launcher, step: "components", highestStep: "components"});
-    setStatus("Choose the components for a new backup configuration.");
+    setStatus("Choose the backup areas for a new configuration.");
   }
   function schedulePoll(delay) {
     window.clearTimeout(pollTimer);
@@ -1167,6 +1505,11 @@
   async function inspectCurrentSource() {
     if (!validProbes()) throw new Error("Probe and explicitly confirm every required TLS fingerprint before inspecting this source.");
     const request = commonPayload();
+    if (request.source_kind === "fleet") request.operations_scopes = operationsScopesPayload();
+    if (activeManagedVcenter) {
+      request.operations_source_id = inspectedSources.find((item) => item.request.source_kind === "fleet")?.request.source_id || "";
+      request.managed_vcenter_id = activeManagedVcenter.id;
+    }
     const result = await call("/inspect", request);
     operationId = result.operation_id || operationId;
     inspectionRevision = result.revision || inspectionRevision;
@@ -1179,6 +1522,10 @@
     const sourceRequest = {...request, source_id: result.source_id || ""};
     const sourceMetadata = (result.sources || []).find((item) => String(item.source_id) === String(result.source_id));
     inspectedSources.push({request: sourceRequest, credentialMode: request.credential_vault_id ? "vault" : "manual", summary: {source_kind: request.source_kind, address: request.address, port: request.port, source_id: result.source_id, service: sourceMetadata?.service || null}});
+    if (request.source_kind === "fleet") {
+      managedInventory = result.managed_inventory || sourceMetadata?.managed_inventory || null;
+      renderManagedVcenters(managedInventory);
+    }
     const replacedSourceIds = new Set(previousSources.map((item) => String(item.summary?.source_id || "")));
     components = [...components.filter((item) => !replacedSourceIds.has(String(item.source_id || "")) && !newItems.some((incoming) => String(incoming.id) === String(item.id))), ...newItems];
     updateSourceFields();
@@ -1194,8 +1541,10 @@
     return result;
   }
   function resetCurrentSource() {
+    activeManagedVcenter = null;
     mode.value = "manual"; mode.dispatchEvent(new Event("change", {bubbles: true}));
     sourceKind.value = "fleet"; field("address").value = ""; field("port").value = "443";
+    field("address").readOnly = false; field("port").disabled = false;
     field("username").value = ""; field("password").value = "";
     vaultSelect.value = ""; fillVaultEntries(); updateCredentialMode(); updateSourceFields();
     tlsFingerprints.server = "";
@@ -1216,7 +1565,7 @@
   }
   const stepIds = ["components", "credential", "server", "fingerprint", "login", "discovery", "settings", "review"];
   const stepCopy = {
-    components: ["Choose components", "Select VCF Operations, NSX, vCenter, or a direct SDDC Manager connection. You can choose several."],
+    components: ["Choose backup areas", "Select Operations backup scopes, vCenter, or both."],
     credential: ["Choose credentials", "Select a saved Vault key or use a one-time manual login."],
       server: ["Enter the server", "Enter the endpoint for this selected component. VCF Operations discovers Fleet LCM automatically."],
       fingerprint: ["Confirm TLS identity", "Probe the server and compare its fingerprint with a trusted source."],
@@ -1238,6 +1587,10 @@
           if (panelError) { panelError.textContent = error.message; panelError.classList.remove("hidden"); }
         });
       }
+      if (event.target.closest("[data-vcf-backup-removal-review]")) {
+        event.preventDefault();
+        reviewRemoval().catch(() => {});
+      }
       if (event.target.closest("[data-vcf-backup-status-close]")) {
         event.preventDefault(); statusDialog.close();
       }
@@ -1246,6 +1599,7 @@
       if (!statusDialog.open) invalidateStatusView();
       window.clearTimeout(pollTimer); pollTimer = null;
       clearManualPasswords();
+      clearRemovalReview();
     });
   }
   if (!configurationForm) {
@@ -1256,7 +1610,7 @@
     form, dialog, steps: stepIds.map((id) => ({id, title: stepCopy[id][0], description: stepCopy[id][1]})),
     validateStep: ({step}) => {
       if (step.id === "components") return selectedPlanKinds().length > 0;
-      if (step.id === "credential") return mode.value === "vault" ? Boolean(selectedVaultEntry()) : true;
+      if (step.id === "credential") return mode.value === "vault" ? Boolean(selectedVaultEntry()) && managedVcenterVaultMatches() : true;
       if (step.id === "server") return Boolean(field("address").value.trim() && Number(field("port").value) > 0);
       if (step.id === "fingerprint") return validProbes();
       if (step.id === "login") return Boolean(field("username").value.trim() && field("password").value);
@@ -1281,9 +1635,12 @@
       }
       const progress = node("[data-vcf-backup-plan-progress]");
       const pending = pendingPlanKinds().filter((kind) => kind !== sourceKind.value);
-      if (progress) progress.textContent = pending.length
-        ? `Select eligible targets for ${sourceKindLabel(sourceKind.value)}. Next: connect ${pending.map(sourceKindLabel).join(", ")}.`
-        : "All selected products are connected. Select the eligible targets for the combined backup plan.";
+      const nextKinds = [...new Set(pending.filter((kind) => kind !== "managed-vcenter"))];
+      const managedCount = pending.filter((kind) => kind === "managed-vcenter").length;
+      const next = [...nextKinds.map(sourceKindLabel), ...(managedCount ? [managedCount + " selected managed vCenter(s)"] : [])];
+      if (progress) progress.textContent = next.length
+        ? `Select eligible targets for ${sourceKindLabel(sourceKind.value)}. Next: connect ${next.join(", ")}.`
+        : "All selected endpoints are connected. Select eligible targets for every selected backup scope.";
       syncOperationView();
       if (!operationStarted) setStatus("");
     },
@@ -1293,14 +1650,20 @@
         if (JSON.stringify(chosen) !== JSON.stringify(planKinds)) {
           clearManualPasswords();
           operationId = ""; inspectionRevision = ""; inspectedSources = []; components = []; receiver = null;
+          managedInventory = null; selectedManagedVcenterIds = []; activeManagedVcenter = null;
           grid?.table?.deselectRow?.();
           invalidateReview();
           planKinds = chosen;
+          renderManagedVcenters(null);
         }
         const pending = pendingPlanKinds();
         if (!pending.length) return "discovery";
-        beginPlanSource(pending[0]);
+        beginNextPlanSource();
         return "credential";
+      }
+      if (step.id === "credential" && activeManagedVcenter && !managedVcenterVaultMatches()) {
+        setError("Choose a Vault credential whose URI matches the discovered vCenter endpoint.");
+        return false;
       }
       if (step.id === "server") {
         tlsFingerprints.server = "";
@@ -1314,9 +1677,14 @@
         try { await inspectCurrentSource(); return "discovery"; } catch (error) { setError(error.message); return false; }
       }
       if (step.id === "discovery" && inspectedSources.length) {
+        const operationsSelected = planKinds.some((kind) => kind === "fleet" || kind === "sddc");
+        if (operationsSelected && planKinds.includes("vcenter") && !selectedManagedVcenterIds.length) {
+          setError("Select at least one managed vCenter from the Operations inventory.");
+          return false;
+        }
         const pending = pendingPlanKinds();
-        if (pending.length) { beginPlanSource(pending[0]); return "credential"; }
-        if (!planSelectionComplete()) { setError("Select at least one eligible target for every chosen product."); return false; }
+        if (pending.length) { beginNextPlanSource(); return "credential"; }
+        if (!planSelectionComplete()) { setError("Select at least one eligible target for every selected scope and each selected vCenter."); return false; }
         return "settings";
       }
       if (step.id === "settings") {
@@ -1383,6 +1751,10 @@
     } else if (event.target.matches("[name='username'],[name='password']")) invalidateReview();
     else if (event.target.closest("[data-atlaso-wizard-step='settings']")) invalidateReview();
   });
+  node("[data-vcf-backup-operations-parent]")?.addEventListener("change", () => {
+    syncOperationsScopes(true);
+    invalidateReview();
+  });
   form.addEventListener("change", (event) => {
     if (event.target.matches("[data-vcf-backup-confirm]")) invalidateReview();
     if (event.target.matches("[name='source_kind']")) {
@@ -1409,7 +1781,7 @@
     if (event.target.closest("[data-vcf-backup-add-source]")) {
       event.preventDefault();
       wizard.showStep("components", {unlock: true});
-      setStatus("Choose the products to include. Changing the selection starts discovery again.");
+      setStatus("Choose the backup areas to include. Changing the selection starts discovery again.");
       return;
     }
   });
@@ -1424,5 +1796,5 @@
     invalidateReview();
     if (!operationId) { inspectedSources = []; components = []; receiver = null; }
   });
-  fillVaultEntries(); updateCredentialMode(); updateSourceFields();
+  syncOperationsScopes(); fillVaultEntries(); updateCredentialMode(); updateSourceFields();
 })();

@@ -22,6 +22,14 @@ from atlaso.app.services.vcf_backup_native import (
 from atlaso.app.services.vcf_certificate_remote import Credentials, RemoteError
 
 
+def test_unconfigured_native_defaults_do_not_report_a_configured_destination():
+    """Retain the native flag even when an internal default server is present."""
+    current = NativeBackup._safe_settings({"isConfigured": False, "backupLocations": [
+        {"server": "manager.example.test", "port": 22, "username": "backup", "directoryPath": "/internal"}]})
+    assert current["configured"] is False
+    assert current["host"] == "manager.example.test"
+
+
 class FakeTransport:
     def __init__(self, target: Any, responses: list[tuple[int, Any]]) -> None:
         """Initialize a fake native connection with its target and response queue.
@@ -820,6 +828,9 @@ def test_fleet_current_exposes_exact_allowlisted_schedule_for_review() -> None:
     assert current["fleet_schedule"] == schedule
     assert current["full_time"] == "02:30"
     assert current["schedule_timezone"] == "UTC-07:00"
+    # Fleet retains recurrence after its destination has been removed.
+    assert current["configured"] is False
+    assert current["host"] is None
 
 
 def test_fleet_schedule_modes_preserve_disable_or_replace_only_full_schedule() -> None:
@@ -1512,6 +1523,9 @@ def test_sddc_discovery_uses_native_version_and_one_authoritative_manager_group(
         "backup destination", "backup schedule/cadence"
     ]
     nsx_record = next(component for component in inventory["components"] if component["product"] == "nsx")
+    assert "configures this co-managed NSX" in nsx_record["warnings"][0]
+    assert "no direct NSX configuration is needed" in nsx_record["coverage_gap"]
+    assert nsx_record["supported"] is False  # Its completion is not the SDDC Manager task's artifact proof.
     assert nsx_record["native_identity"] == {
         "fqdn": None, "ip_address": None,
         "sddc_nsxt_cluster_id": "sddc-nsxt-record",
@@ -1758,6 +1772,26 @@ def test_fleet_task_warnings_complete_only_with_successful_artifact_per_componen
     assert status["native_task_terminal"] is True
     assert status["native_task_status"] == "COMPLETED_WITH_WARNINGS"
     assert [artifact["component_id"] for artifact in status["artifacts"]] == ["a", "b"]
+
+
+
+
+
+
+def test_fleet_removal_reads_task_termination_without_restore_point_history() -> None:
+    """Keep removal independent of unavailable historical component listings."""
+    root_transport = FakeTransport(None, [])
+    fleet_transport = FakeTransport(None, [(200, {"status": "SUCCEEDED"})])
+    adapter = NativeBackup(source(), credentials(), transport_factory=lambda _target: root_transport)
+    attach_fleet_transport(adapter, fleet_transport)
+    adapter._inventory = {"groups": [{"id": "lcm-1", "product": "fleet", "component_ids": ["b", "a"]}]}
+    result = adapter.backup_task_status("lcm-1", {
+        "kind": "fleet", "group_id": "lcm-1", "native_task_id": "task-1",
+        "component_ids": ["a", "b"], "started_at": "2026-10-28T10:00:00+00:00",
+    })
+    assert result == {"state": "succeeded"}
+    assert len(fleet_transport.requests) == 1
+    assert fleet_transport.requests[0][1] == "/fleet-lcm/v1/tasks/task-1"
 
 
 def test_fleet_task_success_without_a_documented_restore_point_stays_running() -> None:

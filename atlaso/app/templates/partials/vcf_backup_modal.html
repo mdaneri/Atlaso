@@ -11,18 +11,24 @@
     </aside>
     <div class="vcf-sddc-wizard-main">
       <div class="confirm-modal-body vcf-sddc-wizard-body">
-        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 8</p><h3 data-atlaso-wizard-title>Choose components</h3><p id="vcf-backup-description" class="muted" data-atlaso-wizard-description>Choose one or more products to configure together.</p></div>
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 8</p><h3 data-atlaso-wizard-title>Choose backup areas</h3><p id="vcf-backup-description" class="muted" data-atlaso-wizard-description>Select Operations backup scopes, vCenter, or both.</p></div>
         <div class="alert error hidden" data-atlaso-wizard-error></div>
         <p class="muted" data-vcf-backup-status role="status" aria-live="polite">Credentials and TLS confirmations stay in this open wizard only.</p>
         <section class="vcf-sddc-step-page" data-atlaso-wizard-step="components">
-          <fieldset class="scope-choice-fieldset"><legend>Which components do you want to back up?</legend>
+          <fieldset class="scope-choice-fieldset"><legend>Which VCF 9.1 backup areas do you want to configure?</legend>
             <div class="scope-choice-grid">
-              {% for kind, label, description in [('fleet','VCF Operations','Discover eligible management services through Operations.'),('nsx','NSX','Configure the NSX Manager cluster backup.'),('vcenter','vCenter','Configure a vCenter appliance backup.'),('sddc','SDDC Manager','Configure a direct SDDC Manager backup when needed.')] %}
-                <label class="scope-choice"><input type="checkbox" name="plan_{{ kind }}" value="{{ kind }}" data-vcf-backup-plan-kind><span class="scope-choice-copy"><strong>{{ label }}</strong><small>{{ description }}</small></span></label>
-              {% endfor %}
+              <label class="scope-choice"><input type="checkbox" name="plan_operations" value="operations" data-vcf-backup-operations-parent><span class="scope-choice-copy"><strong>VCF Operations</strong><small>Select VCF management-service backups or SDDC Manager backup settings. SDDC Manager settings also configure its co-managed NSX backup destination and schedule.</small></span></label>
+              <label class="scope-choice"><input type="checkbox" name="plan_vcenter" value="vcenter" data-vcf-backup-plan-kind><span class="scope-choice-copy"><strong>vCenter</strong><small>Configure a vCenter appliance backup.</small></span></label>
+              <fieldset class="scope-choice-fieldset hidden" data-vcf-backup-operation-scopes disabled><legend>Operations backup scopes</legend>
+                <div class="scope-choice-grid">
+                  {% for kind, label, description in [('fleet','Lifecycle and management services','Back up eligible VCF Automation and management services through VCF Operations.'),('sddc','SDDC Manager backup settings','Configure native SDDC Manager backup settings, including the co-managed NSX backup destination and schedule, through VCF Operations.')] %}
+                    <label class="scope-choice"><input type="checkbox" name="plan_{{ kind }}" value="{{ kind }}" data-vcf-backup-plan-kind data-vcf-backup-operations-scope disabled><span class="scope-choice-copy"><strong>{{ label }}</strong><small>{{ description }}</small></span></label>
+                  {% endfor %}
+                </div>
+              </fieldset>
             </div>
           </fieldset>
-          <p class="muted">Select any combination. Next, connect to each selected product and choose its eligible backup targets. Changing this selection starts discovery again.</p>
+          <p class="muted">Select either or both Operations scopes and/or vCenter. SDDC Manager backup settings use the Operations connection and also configure co-managed NSX. When vCenter is selected with Operations, choose managed vCenters and confirm a separate credential and TLS fingerprint for each. Changing this selection starts discovery again.</p>
         </section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="credential">
           <div class="form-grid">
@@ -35,16 +41,16 @@
 
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="server">
           <div class="form-grid">
-            <label><span>Selected component</span><select name="source_kind" data-vcf-backup-source-kind disabled><option value="fleet" selected>VCF Operations</option><option value="sddc">SDDC Manager</option><option value="vcenter">vCenter</option><option value="nsx">NSX</option></select></label>
+            <label><span>Selected component</span><select name="source_kind" data-vcf-backup-source-kind disabled><option value="fleet" selected>VCF Operations</option><option value="sddc" disabled>SDDC Manager backup settings (via Operations)</option><option value="vcenter">vCenter</option><option value="nsx" disabled>NSX (legacy operation only)</option></select></label>
             <label><span>Server address</span><input name="address" autocomplete="off" required></label>
             <label><span>Port</span><input name="port" type="number" value="443" min="1" max="65535" required></label>
           </div>
-          <p class="muted">VCF Operations authenticates the control-plane session and discovers its Fleet LCM service automatically. Confirm the Operations server fingerprint before login.</p>
+          <p class="muted">Confirm this selected VCF server's TLS fingerprint before sending credentials. VCF Operations discovers its Fleet LCM service automatically.</p>
         </section>
 
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="fingerprint">
           <div class="panel" data-vcf-backup-fingerprint-server>
-            <h4>VCF Operations / component server</h4><button class="button secondary" type="button" data-vcf-backup-probe="server">Read TLS fingerprint</button>
+            <h4>Selected VCF server</h4><button class="button secondary" type="button" data-vcf-backup-probe="server">Read TLS fingerprint</button>
             <p class="mono-text" data-vcf-backup-fingerprint-value="server">Not checked</p>
             <label class="vcf-sddc-tls-check"><input type="checkbox" data-vcf-backup-confirm="server" disabled><span>Confirm this exact server fingerprint after checking it out of band.</span></label>
           </div>
@@ -58,6 +64,12 @@
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="discovery">
           <div class="toolbar"><button class="button ghost" type="button" data-vcf-backup-add-source>Change components</button></div>
           <p class="muted" data-vcf-backup-plan-progress></p>
+          <fieldset class="form-stack hidden" data-vcf-backup-managed-vcenters disabled>
+            <legend>vCenters managed by VCF Operations</legend>
+            <p class="muted">Select one or more discovered vCenters. Each vCenter uses its own credentials and TLS fingerprint confirmation.</p>
+            <div class="form-stack" data-vcf-backup-managed-vcenter-options></div>
+            <p class="muted" data-vcf-backup-managed-vcenter-empty hidden>No managed vCenters were discovered for this Operations account.</p>
+          </fieldset>
           <p class="muted" data-vcf-backup-grid-status role="status" aria-live="polite">Inspect a source to discover supported backup components.</p>
           <div class="hidden" data-vcf-backup-grid aria-label="Discovered VCF backup components"></div>
           <div data-vcf-backup-grid-fallback><p class="muted">Discovered components will appear here after inspection.</p><div class="table-scroll"><table class="data-table fallback-table"><thead><tr><th>Select</th><th>Component</th><th>Product / version</th><th>Current state</th><th>Coverage</th></tr></thead><tbody data-vcf-backup-grid-fallback-rows><tr><td colspan="5">No components discovered.</td></tr></tbody></table></div></div>

@@ -15,6 +15,14 @@
       <progress max="100" value="0" aria-label="Backup verification progress" data-vcf-backup-progress></progress>
       <div class="settings-list compact-settings-list validation-settings-list" data-vcf-backup-operation-sources></div>
       <div class="form-stack" data-vcf-backup-recovery-credentials></div>
+      <section class="form-stack hidden" data-vcf-backup-removal-panel aria-labelledby="vcf-backup-removal-title">
+        <h3 id="vcf-backup-removal-title">Remove stored backup files</h3>
+        <p>Selected operation: <strong class="mono-text" data-vcf-backup-removal-operation></strong></p>
+        <p class="alert warning">This removes the stored backup files for this operation. Remove the native backup destination from its VCF product first. Atlaso will not change native backup settings or delete native configuration.</p>
+        <p class="muted" data-vcf-backup-removal-status role="status" aria-live="polite"></p>
+        <div class="settings-list compact-settings-list validation-settings-list" data-vcf-backup-removal-preview hidden></div>
+        <button class="button danger" type="button" data-vcf-backup-removal-review>Review removal</button>
+      </section>
       <p><a class="button ghost hidden" data-vcf-backup-task-link href="{{ management_ui_root }}/tasks">Open task</a></p>
       <p class="muted" data-vcf-backup-recovery-guidance>Reconcile checks current native settings and backup status without repeating native writes.</p>
       <p class="muted" data-vcf-backup-reconciliation-status role="status" aria-live="polite" hidden></p>

@@ -12,6 +12,7 @@ from itsdangerous import SignatureExpired
 from atlaso.app.database import SessionLocal
 from atlaso.app.models import Job, JobStep, Setting, User, Vault, VaultEntry
 from atlaso.app.secrets import encrypt_secret
+from atlaso.app.services import vcf_backup_removal as removal
 from atlaso.app.services import vcf_backup_workflow as workflow
 
 RECEIVER = {
@@ -28,6 +29,13 @@ RECEIVER = {
 SFTP_SECRET = "sftp-secret-never-persist"
 PASSPHRASE = "SecureBackupAB12!"
 API_PASSWORD = "api-password-never-persist"
+
+
+def test_explicit_native_unconfigured_flag_never_matches_a_proposed_destination():
+    """Do not equate native internal defaults with an applied backup destination."""
+    proposed = {"host": "backup.example.test", "directory": "/backups/test"}
+    assert workflow._matches(proposed, proposed)
+    assert not workflow._matches({**proposed, "configured": False}, proposed)
 
 
 @pytest.mark.parametrize("changes", [
@@ -169,6 +177,15 @@ class FakeBackend:
 
 class FakeNative:
     backend: FakeBackend
+
+    def backup_task_status(self, group: str, reference: dict[str, Any]) -> dict[str, Any]:
+        """Return controlled native task termination for removal admission.
+
+        Args:
+            group: Reviewed scheduler identity.
+            reference: Durable backup task reference.
+        """
+        return self.backup_status(group, reference)
 
     def __init__(self, source: dict[str, Any], credentials: Any) -> None:
         """Support init.
@@ -497,6 +514,137 @@ def source_values(kind: str = "sddc") -> dict[str, Any]:
         "password": API_PASSWORD,
     }
     return values
+
+
+@pytest.mark.parametrize("scopes", [[], ["sddc", "sddc"], [["sddc"]], ["unknown"], "sddc"])
+def test_operations_scope_intent_is_validated_before_credentials(scopes):
+    """Reject malformed scope intent without touching credentials.
+
+    Args:
+        scopes: Invalid browser-supplied Operations scope selection.
+    """
+    with pytest.raises(workflow.BackupOperationError, match="backup areas"):
+        workflow._source({**source_values("fleet"), "operations_scopes": scopes}, confirmed=True)
+
+
+@pytest.mark.parametrize("deselect", [False, True])
+def test_combined_operations_plan_binds_each_vcenter_credential_and_native_kind(harness, deselect):
+    """Keep discovered endpoint ownership and distinct credentials throughout review.
+
+    Args:
+        harness: Isolated database and native integration replacements.
+        deselect: Whether one authenticated managed vCenter is removed before final review.
+    """
+    managed = [{"id": "vcenter-" + digit * 64, "address": f"vc{digit}.example.test", "port": 443}
+               for digit in ("1", "2")]
+    logins = []
+    backends = {"ops.example.test": FakeBackend(), **{item["address"]: FakeBackend(kind="vcenter") for item in managed}}
+    for address, backend in backends.items():
+        backend.appliance_identities[address] = address
+
+    class MixedNative(FakeNative):
+        def __init__(self, source, credentials):
+            """Bind one fake appliance independently of other selected endpoints.
+
+            Args:
+                source: Confirmed operation-local endpoint.
+                credentials: Credential resolved for that endpoint only.
+            """
+            super().__init__(source, credentials)
+            self.backend = backends[source["address"]]
+
+        def login(self):
+            super().login()
+            logins.append((self.source["address"], self.credentials.username, self.credentials.password))
+
+        def discover(self):
+            value = super().discover()
+            if self.source["kind"] == "fleet":
+                value["managed_inventory"] = {"managers": [], "vcenters": managed}
+                value["coverage_gaps"] = [{"product": "vcenter", "reason": "A direct vCenter connection is required."}]
+                value["groups"][0]["backup_kind"] = "sddc"
+                value["components"][0]["backup_scope"] = "sddc"
+            return value
+
+    harness["monkeypatch"].setattr(workflow, "_native", MixedNative)
+    operations = {**source_values("fleet"), "operations_scopes": ["sddc", "lifecycle"], "username": "ops-admin"}
+    with SessionLocal() as db:
+        result = workflow.dispatch(db, "admin", "inspect", operations, CapturedDispatcher())
+        operations["source_id"] = result["source_id"]
+        sources = [operations]
+        for index, item in enumerate(managed):
+            values = {**source_values("vcenter"), "address": item["address"], "username": f"vc-admin-{index}",
+                      "password": f"vc-private-password-{index}", "operation_id": result["operation_id"],
+                      "operations_source_id": operations["source_id"], "managed_vcenter_id": item["id"]}
+            result = workflow.dispatch(db, "admin", "inspect", values, CapturedDispatcher())
+            sources.append({**values, "source_id": result["source_id"]})
+        review = review_source_set(db, result, sources)
+        assert [group["kind"] for group in review["review"]["components"]] == ["sddc", "vcenter", "vcenter"]
+        assert len({group["receiver_directory"] for group in review["review"]["components"]}) == 3
+        assert not any(gap.get("product") == "vcenter" for gap in review["review"]["coverage_gaps"])
+        _, state = workflow._state(db, "admin", result["operation_id"])
+        assert state["sources"][0]["operations_scopes"] == ["lifecycle", "sddc"]
+        public = json.dumps(workflow.operation_status(db, "admin", result["operation_id"]))
+        for index, item in enumerate(managed):
+            assert logins.count((item["address"], f"vc-admin-{index}", f"vc-private-password-{index}")) == 2
+            assert f"vc-private-password-{index}" not in public
+            assert f"vc-private-password-{index}" not in json.dumps(state)
+        changed = [{key: value for key, value in source.items() if key != "operations_scopes"} for source in sources]
+        with pytest.raises(workflow.BackupOperationError, match="changed"):
+            workflow._source_inputs(db, state, {"sources": changed})
+        if deselect:
+            omitted = sources[-1]["source_id"]
+            sources = sources[:-1]
+            result.update(revision=review["revision"], components=[item for item in result["components"] if item["source_id"] != omitted])
+            review = review_source_set(db, result, sources)
+            assert [group["kind"] for group in review["review"]["components"]] == ["sddc", "vcenter"]
+            assert any(gap.get("product") == "vcenter" for gap in review["review"]["coverage_gaps"])
+            assert all(item["source_id"] != omitted for item in workflow.operation_status(db, "admin", result["operation_id"])["sources"])
+        # Recovery must retain scopes and each managed endpoint binding when
+        # handing credentials from the request to its background invocation.
+        row, state = workflow._state(db, "admin", result["operation_id"])
+        state["state"] = "needs_recovery"
+        workflow._save(db, row, state)
+        background = CapturedDispatcher()
+        workflow.dispatch(db, "admin", "reconcile", {
+            "operation_id": result["operation_id"], "sources": sources,
+        }, background)
+        assert background.call is not None
+        transferred = background.call[1][-1]
+        assert len(workflow._recovery_source_inputs(db, state, transferred)) == len(sources)
+        assert transferred["sources"][0]["operations_scopes"] == operations["operations_scopes"]
+        assert [item["managed_vcenter_id"] for item in transferred["sources"][1:]] == [item["managed_vcenter_id"] for item in sources[1:]]
+
+
+@pytest.mark.parametrize("change", [{"address": "unlisted.example.test"}, {"operations_source_id": "b" * 32},
+                                   {"managed_vcenter_id": "vcenter-" + "c" * 64}])
+def test_managed_vcenter_rejects_changed_binding_before_credential_resolution(harness, change):
+    """Never send a vCenter credential to an endpoint outside Operations discovery.
+
+    Args:
+        harness: Isolated database and native integrations.
+        change: Tampered endpoint or inventory ownership binding.
+    """
+    parent = {"source_id": "a" * 32, "kind": "fleet", "operations_scopes": ["sddc"],
+              "inventory": {"managed_inventory": {"vcenters": [
+                  {"id": "vcenter-" + "d" * 64, "address": "vc.example.test", "port": 443}]}}}
+    with SessionLocal() as db:
+        result, _ = inspect_operation(db)
+        row, state = workflow._state(db, "admin", result["operation_id"])
+        state["sources"] = [parent]
+        workflow._save(db, row, state)
+        def unexpected_reference(*_args):
+            """Fail if credential resolution runs before the endpoint ownership check.
+
+            Args:
+                *_args: Unexpected credential-reference arguments.
+            """
+            pytest.fail("Credentials were resolved for an unlisted vCenter")
+        harness["monkeypatch"].setattr(workflow, "_reference", unexpected_reference)
+        values = {**source_values("vcenter"), "address": "vc.example.test", "operation_id": result["operation_id"],
+                  "operations_source_id": parent["source_id"], "managed_vcenter_id": "vcenter-" + "d" * 64, **change}
+        with pytest.raises(workflow.BackupOperationError, match="vCenter"):
+            workflow.dispatch(db, "admin", "inspect", values, CapturedDispatcher())
 
 
 def secret_refs(*, sftp_revision: str = "revision-1", pass_revision: str = "revision-1") -> tuple[dict[str, Any], dict[str, Any]]:
@@ -2320,6 +2468,150 @@ def test_stop_or_actor_revocation_after_preflight_prevents_next_native_write(har
     assert expected in state["error"]
 
 
+def _removable_backup(harness):
+    """Create a completed backup with its native destination subsequently removed.
+
+    Args:
+        harness: Fake native and receiver integrations.
+    """
+    monkeypatch, backend = harness["monkeypatch"], harness["backend"]
+    with SessionLocal() as db:
+        inspected, source = inspect_operation(db)
+        reviewed = review_operation(db, inspected, source)
+        _, dispatcher = execute_operation(db, inspected, source, reviewed)
+        dispatcher.run()
+        assert read_operation(db, inspected["operation_id"])["state"] == "succeeded"
+    backend.current_by_group[backend.group_id] = {**backend.initial, "host": None, "directory": None}
+    monkeypatch.setattr(FakeReceiverSession, "__enter__", lambda self: self)
+    monkeypatch.setattr(removal, "require_receiver", workflow.require_receiver)
+    monkeypatch.setattr(removal, "receiver_revision", workflow.receiver_revision)
+    monkeypatch.setattr(removal, "NativeBackup", FakeNative)
+    monkeypatch.setattr(removal, "ReceiverSession", FakeReceiverSession)
+    monkeypatch.setattr(removal, "acquire_network_objects_write_lock", lambda _db: None)
+
+    def unlink(self, directory, expected, completed):
+        """Remove only fixture artifacts, reporting each completed unlink.
+
+        Args:
+            directory: Reviewed directory, unused by the single-directory fake.
+            expected: Exact reviewed file metadata.
+            completed: Durable removal checkpoint callback.
+        """
+        for path in expected:
+            self.backend.files.pop(path, None)
+            completed(path)
+
+    monkeypatch.setattr(FakeReceiverSession, "remove_artifacts", unlink, raising=False)
+    return {"operation_id": inspected["operation_id"], "sources": [source]}
+
+
+def test_backup_removal_requires_review_and_preserves_historical_task(harness):
+    """Delete only recorded artifacts, hide the row, and retain task/audit evidence.
+
+    Args:
+        harness: Isolated completed backup integrations.
+    """
+    values = _removable_backup(harness)
+    backend = harness["backend"]
+    with SessionLocal() as db:
+        prior = read_operation(db, values["operation_id"])
+        with pytest.raises(workflow.BackupOperationError, match="review expired|review.*invalid"):
+            workflow.dispatch(db, "admin", "remove", {**values, "confirmed": True}, CapturedDispatcher())
+        preview = workflow.dispatch(db, "admin", "removal-review", values, CapturedDispatcher())
+        assert preview["file_count"] == 1 and preview["total_bytes"] == 128
+        assert backend.files
+        result = workflow.dispatch(db, "admin", "remove", {
+            **values, "confirmed": True, "removal_token": preview["removal_token"],
+        }, CapturedDispatcher())
+        assert result["state"] == "removed" and result["removed_files"] == 1
+        assert backend.files == {}
+        assert workflow.list_operations(db, "admin")["items"] == []
+        assert db.get(Job, prior["job_id"]).status == "succeeded"
+        assert read_operation(db, values["operation_id"])["plan"] == prior["plan"]
+        removed_status = workflow.operation_status(db, "admin", values["operation_id"])
+        assert removed_status["state"] == "removed"
+        assert removed_status["groups"] == removed_status["reconciliation"] == []
+        assert "files were removed" in removed_status["recovery_warning"]
+        with pytest.raises(workflow.BackupOperationError):
+            workflow.dispatch(db, "admin", "remove", {**values, "confirmed": True, "removal_token": preview["removal_token"]}, CapturedDispatcher())
+        assert API_PASSWORD not in json.dumps(read_operation(db, values["operation_id"]))
+    assert len(backend.config_writes) == len(backend.backup_starts) == 1
+
+
+@pytest.mark.parametrize("change", ["additional", "modified", "native_destination", "native_running", "active", "receiver", "other_owner"])
+def test_backup_removal_refuses_changed_or_active_scope(harness, change):
+    """Fail before any unlink when file ownership, receiver, or native state changes.
+
+    Args:
+        harness: Isolated completed backup integrations.
+        change: Safety boundary revoked after the exact removal review.
+    """
+    values = _removable_backup(harness)
+    backend = harness["backend"]
+    with SessionLocal() as db:
+        preview = workflow.dispatch(db, "admin", "removal-review", values, CapturedDispatcher())
+        state = read_operation(db, values["operation_id"])
+        path = next(iter(backend.files))
+        if change == "additional":
+            backend.files[path + ".incremental"] = (42, 123)
+        elif change == "modified":
+            backend.files[path] = (256, 123)
+        elif change == "native_destination":
+            backend.current_by_group[backend.group_id] = state["plan"][0]["proposed"]
+        elif change == "native_running":
+            backend.native_state = "running"
+        elif change == "active":
+            db.add(Setting(key=workflow.LOCK_PREFIX + "global", value="another-operation"))
+            db.commit()
+        elif change == "receiver":
+            harness["monkeypatch"].setattr(removal, "receiver_revision", lambda _receiver: {})
+        elif change == "other_owner":
+            state.update(operation_id="b" * 32, actor="another-admin")
+            db.add(Setting(key=workflow.PREFIX + "b" * 32, value=json.dumps(state)))
+            db.commit()
+        before = dict(backend.files)
+        with pytest.raises(workflow.BackupOperationError):
+            workflow.dispatch(db, "admin", "remove", {**values, "confirmed": True, "removal_token": preview["removal_token"]}, CapturedDispatcher())
+        assert backend.files == before
+        assert read_operation(db, values["operation_id"]).get("removal_state") is None
+
+
+def test_backup_removal_partial_failure_requires_fresh_explicit_review(harness):
+    """Retain history and consumed authorization after a partial external mutation.
+
+    Args:
+        harness: Isolated completed backup integrations.
+    """
+    values = _removable_backup(harness)
+
+    def interrupted(self, directory, expected, completed):
+        """Simulate a lost connection immediately after one durable unlink.
+
+        Args:
+            directory: Reviewed root, unused by the stub.
+            expected: Exact removal file scope.
+            completed: Durable completed-unlink callback.
+        """
+        path = next(iter(expected))
+        self.backend.files.pop(path)
+        completed(path)
+        raise workflow.ReceiverError("connection interrupted")
+
+    harness["monkeypatch"].setattr(FakeReceiverSession, "remove_artifacts", interrupted)
+    with SessionLocal() as db:
+        preview = workflow.dispatch(db, "admin", "removal-review", values, CapturedDispatcher())
+        with pytest.raises(workflow.BackupOperationError, match="interrupted"):
+            workflow.dispatch(db, "admin", "remove", {**values, "confirmed": True, "removal_token": preview["removal_token"]}, CapturedDispatcher())
+        state = read_operation(db, values["operation_id"])
+        assert state["removal_state"] == "failed" and len(state["removal_completed"]) == 1
+        assert workflow.list_operations(db, "admin")["items"]
+        assert not db.query(Setting).filter(Setting.key.startswith(workflow.LOCK_PREFIX)).all()
+        with pytest.raises(workflow.BackupOperationError):
+            workflow.dispatch(db, "admin", "remove", {**values, "confirmed": True, "removal_token": preview["removal_token"]}, CapturedDispatcher())
+        fresh = workflow.dispatch(db, "admin", "removal-review", values, CapturedDispatcher())
+        assert fresh["file_count"] == 0
+
+
 def test_reconciliation_rejects_replaced_native_identity_before_task_lookup(harness):
     """Never interpret an old task ID through a replacement discovered appliance.
 
@@ -2338,3 +2630,25 @@ def test_reconciliation_rejects_replaced_native_identity_before_task_lookup(harn
         assert read_operation(db, inspected["operation_id"])["state"] == state["state"]
         assert db.query(Setting).filter(Setting.key.startswith(workflow.LOCK_PREFIX)).all()
     assert backend.status_references == []
+
+
+def test_interrupted_removal_releases_only_its_exact_lease_and_never_unlinks(harness):
+    """Restart makes an incomplete removal reviewable without replaying deletion.
+
+    Args:
+        harness: Completed operation and isolated receiver artifacts.
+    """
+    values = _removable_backup(harness)
+    before = dict(harness["backend"].files)
+    with SessionLocal() as db:
+        row, state = workflow._state(db, "admin", values["operation_id"])
+        lease = "remove:" + state["operation_id"] + ":test-run"
+        state.update(removal_state="removing", removal_lease=lease)
+        workflow._save(db, row, state)
+        db.add(Setting(key=workflow.LOCK_PREFIX + "global", value=lease))
+        db.commit()
+        assert workflow.recover_interrupted_jobs(db) == 1
+        assert read_operation(db, values["operation_id"])["removal_state"] == "failed"
+        assert not db.query(Setting).filter(Setting.key.startswith(workflow.LOCK_PREFIX)).all()
+        assert workflow.list_operations(db, "admin")["items"]
+    assert harness["backend"].files == before

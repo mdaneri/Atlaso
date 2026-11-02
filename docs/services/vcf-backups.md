@@ -41,16 +41,31 @@ algorithm as well as an ECDSA host-key algorithm. These are separate requirement
 prove that SSH negotiation can complete. See Broadcom [KB 438943](https://knowledge.broadcom.com/external/article/438943)
 for the VCF 9.x SFTP fingerprint and algorithm requirements.
 
+VCF manager fingerprint checks can use temporary nonexistent usernames. Modern OpenSSH may count these as failed
+authentication and temporarily refuse that manager's subsequent connections. When SSH logs confirm this behavior,
+an administrator can enter the manager's source IP in **Trusted backup source IPs**, then review and apply only
+**VCF Backups**. This optional setting exempts those individual hosts from connection penalties across appliance SSH;
+authentication, chroot restrictions, and host-key verification still apply. Use the source IP recorded in SSH logs.
+The field accepts at most sixteen individual IPv4 or IPv6 hosts, with optional `/32` or `/128`, and starts empty.
+Networks and wildcards are rejected. Clearing the field removes Atlaso's exemption during Apply. The helper validates
+the proposed SSH configuration before installation and restores the previous files if validation or restart fails.
+Wizard readiness reads the effective exemption through a bounded, read-only helper action; the web service never
+needs access to SSH private host keys.
+OpenSSH documents these controls under
+[PerSourcePenalties and PerSourcePenaltyExemptList](https://man.openbsd.org/sshd_config#PerSourcePenalties).
+
 Fleet LCM may report the receiver's RSA fingerprint. Atlaso matches the reported fingerprint to a locally verified
 RSA or ECDSA public key before reviewing or submitting it; it does not trust the remote thumbprint alone.
 
 ## Inspect and review VCF sources
 
-1. Open **VCF Helper → Backup → Configure VCF Backup**. This is an administrator-only workflow. In **Choose
-   components**, select **VCF Operations**, **NSX**, **vCenter**, or a direct **SDDC Manager** connection. Select any
-   combination. The wizard guides you through credentials, server, TLS confirmation and discovery for each chosen
-   product. For Fleet LCM, provide the VCF Operations endpoint and choose an existing **Vault** credential or enter
-   Operations credentials for this request.
+1. Open **VCF Helper → Backup → Configure VCF Backup**. This is an administrator-only workflow. In **Choose backup
+   areas**, select **VCF Operations**, **vCenter**, or both. Operations contains two separate scopes: **Lifecycle and
+   management services**, and **SDDC Manager backup settings**. The latter also configures co-managed NSX destinations
+   and cadence; a separate NSX connection is not required. If both Operations scopes are selected, they use one VCF
+   Operations endpoint, credential, and TLS confirmation. Use a local Operations administrator account. The wizard
+   will not sign out an existing Operations UI session; if Operations refuses an account that is active in the UI, use
+   another local administrator account. Choose existing **Vault** credentials or enter request-local credentials.
 2. Use **Read TLS fingerprint** for VCF Operations. Compare the SHA-256 certificate fingerprint with a trusted
    out-of-band source and confirm that exact Operations server before submitting credentials. After login, Atlaso reads
    `GET /suite-api/api/integrations/services` and requires exactly one `VCF_FLEET_LCM` descriptor. Review its advertised
@@ -58,11 +73,15 @@ RSA or ECDSA public key before reviewing or submitting it; it does not trust the
    Fleet service through Operations with a service JWT and the pinned certificate. The descriptor is bound to the
    operation; identity or certificate drift requires a fresh inspection. You do not enter a separate Fleet LCM endpoint
    or confirm a second Fleet certificate. The SSH host key shown later belongs to the Atlaso SFTP receiver.
-3. In **Discovery**, select supported targets for the connected product, then select **Next** to connect the next
-   chosen product. Confirm each direct server's TLS fingerprint before submitting credentials. **Change components**
-   returns to the initial choices; changing those choices starts discovery again. Select supported targets and inspect
-   displayed **Coverage** and warning details. The workflow accepts native API versions in the VCF 9.1.x range; it
-   refuses unsupported or ambiguous source versions or identities before native writes.
+3. In **Discovery**, select supported lifecycle targets and connected SDDC Managers from the Operations inventory.
+   SDDC Manager backup settings use the existing Operations connection and configure the manager and its co-managed
+   NSX destination; no separate manager credential or TLS flow is used. Select **Next** to continue. If **vCenter** is
+   selected with Operations, choose one or more discovered managed vCenters; each selected vCenter then gets its own
+   credential and TLS confirmation flow. If only **vCenter** is selected, connect to one vCenter endpoint directly;
+   Operations inventory is not required. **Change components** returns to the initial choices; changing those choices
+   starts discovery again. Select supported targets and inspect displayed **Coverage** and warning details. The workflow
+   accepts native API versions in the VCF 9.1.x range; it refuses unsupported or ambiguous source versions or identities
+   before native writes.
 4. Set the destination password and backup-encryption passphrase using the offered saved **Vault** secret references.
    The wizard requires a vCenter-compatible passphrase of 12–20 visible ASCII characters, including uppercase and
    lowercase letters, at least two digits, and a symbol. This policy is stricter than vCenter's eight-character
@@ -80,13 +99,13 @@ RSA or ECDSA public key before reviewing or submitting it; it does not trust the
    240-minute interval and allows fallback to a full backup; VCF Operations requires at least 240 minutes and an
    enabled full schedule. See Broadcom's
    [IncrementalBackupConfigSpec](https://developer.broadcom.com/xapis/vcf-fleet-lcm-service-apis/latest/data-structures/IncrementalBackupConfigSpec/).
-   These recurrence choices currently apply to VCF Operations; direct appliance schedules retain their
-   existing daily/interval controls. SDDC Manager uses UTC; vCenter uses its configured appliance timezone. The
+   These recurrence choices currently apply to VCF Operations lifecycle services; SDDC Manager settings retain their
+   native daily/interval controls. SDDC Manager uses UTC; vCenter uses its configured appliance timezone. The
    state-change control applies only where that native API supports it. Retention settings are product-specific: NSX
    has no native retention policy, and SDDC Manager exposes separate most-recent, hourly-day, and daily-day values.
-   SDDC Manager backup settings also affect the NSX destination and cadence for co-managed NSX appliances. Configure
-   SDDC Manager first, then inspect and review a direct NSX connection in a fresh operation; the wizard blocks their
-   combined execution. Fleet LCM stores a shared schedule for the entire SDDC-LCM group, so the wizard requires every
+   SDDC Manager backup settings also affect the NSX destination and cadence for co-managed NSX appliances. The initial
+   SDDC Manager task does not independently verify NSX backup completion. Fleet LCM stores a shared schedule for the
+   entire SDDC-LCM group, so the wizard requires every
    eligible component in a selected group together.
 6. Select **Next** to open **Review and configure**, then inspect the exact current and proposed native settings,
    selected components, destination, coverage gaps, and side effects. Coverage gaps are labeled **Not covered by this
@@ -103,8 +122,12 @@ RSA or ECDSA public key before reviewing or submitting it; it does not trust the
 
 The component list and review keep native API coverage gaps visible. For example, Fleet LCM components are selectable
 only when Fleet reports `backupAllowed=true`; a Fleet schedule applies to its whole eligible SDDC-LCM group. An SDDC
-Manager connection can configure the SDDC Manager backup API, but vCenter and NSX resources it discovers are explicitly
-marked for their separate direct connections. The vCenter Recovery API does not expose an SFTP SSH fingerprint field,
+Manager scope configures the SDDC Manager backup API and its NSX side effects. NSX completion and retention remain
+separate verification requirements; vCenter uses its own selected backup scope. Lifecycle backups and per-manager
+settings are distinct VCF Operations configuration areas, as described in
+[Broadcom KB 448811](https://knowledge.broadcom.com/external/article/448811). The SDDC Manager
+[backup API](https://developer.broadcom.com/xapis/sddc-manager-api/latest/backup-restore/) supplies the combined manager
+and NSX configuration. The vCenter Recovery API does not expose an SFTP SSH fingerprint field,
 so the appliance's locally confirmed ECDSA key cannot be bound in the native vCenter schedule. NSX exposes no native
 retention-policy setting; an SDDC Manager side effect can update co-managed NSX destination and cadence without adding
 retention enforcement. Any image-only or otherwise unsupported components stay visible as coverage gaps and are not
@@ -118,6 +141,8 @@ Atlaso does not claim native NSX retention; plan and verify any external retenti
 
 After task authorization, Atlaso prepares the reviewed directories on the pinned SFTP receiver before native
 destination validation. All native preflight checks must succeed before any appliance backup settings are changed.
+Operations-managed SDDC validation accepts an explicit completed native result, or polls the returned validation ID
+when the manager runs the check asynchronously. An empty acceptance response does not count as success.
 
 Follow the operation under [Tasks](../operate/tasks.md). A task is successful only when the native backup operation
 reports success and Atlaso observes fresh, non-empty files on the applied SFTP receiver for every selected component.
@@ -160,6 +185,22 @@ attempting another configuration. Do not retry an uncertain native write from th
 
 Fleet restore-point locations may be SFTP URLs. Atlaso accepts them for file verification only when their server,
 port, account, and directory match the reviewed receiver. Fresh non-empty files are still required for every component.
+
+### Remove a stored initial backup
+
+In **VCF Backups → Backup Operations**, open a completed row's context menu and select **Remove backup…**. First
+remove that backup destination in the native VCF product. Atlaso checks the recorded appliance identity, terminal task
+status, applied SFTP receiver, and original file metadata before offering removal. Re-enter manual source passwords
+when requested; saved Vault credentials are resolved on the server. Select **Review removal**, inspect the operation,
+file count, size, and paths, then confirm **Remove backup files**. Removal takes effect immediately and cannot be undone.
+The operation leaves this list after all reviewed files are absent; its task, audit events, and original backup evidence
+remain available. Native configuration is not changed.
+
+Only files verified for that operation's initial backup are eligible. A changed file, an additional restore point or
+incremental chain in the same folder, another operation referencing the files, active work, or a changed receiver blocks
+removal. Atlaso uses the ordinary pinned SFTP account and does not recursively delete directories. Arrange native backup
+retention separately when a shared folder contains later backups. If removal is interrupted, the history entry remains;
+reload it and perform a fresh removal review for any remaining files. An old confirmation cannot be replayed.
 
 If the recorded checkpoints prove that no native write was attempted, you can explicitly finish recovery even when
 the reviewed receiver credentials no longer work. This releases the operation's reservations without contacting the

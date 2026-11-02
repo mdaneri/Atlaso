@@ -80,6 +80,7 @@ from atlaso.app.services.vcf_backups import (
     VCF_BACKUP_DEFAULT_USERNAME,
     VCF_BACKUP_DEFAULT_VOLUME_MOUNT,
     VCF_BACKUP_EFFECTIVE_CONFIG_PATH,
+    normalize_trusted_backup_sources,
     vcf_backup_remote_directory,
 )
 from atlaso.app.services.vcf_depot_downloads import (
@@ -4228,6 +4229,8 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         allow_password_auth: str | None = Form(None),
         allow_public_key_auth: str | None = Form(None),
         max_sessions: int = Form(4),
+        trusted_backup_sources: list[str] = Form(default_factory=list),
+        trusted_backup_sources_present: str | None = Form(None),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
@@ -4249,6 +4252,8 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             allow_password_auth: Allow password auth supplied by the caller.
             allow_public_key_auth: Allow public key auth supplied by the caller.
             max_sessions: Max sessions supplied by the caller.
+            trusted_backup_sources: Explicit single-host IP exemptions from SSH connection penalties.
+            trusted_backup_sources_present: Whether the caller supplied the complete trusted-host selection.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
@@ -4272,6 +4277,14 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         # Default-row readers may commit; reacquire before editing their result.
         acquire_network_objects_write_lock(db)
         db.refresh(settings)
+        if trusted_backup_sources or trusted_backup_sources_present == "1":
+            try:
+                normalized_sources = normalize_trusted_backup_sources(",".join(trusted_backup_sources))
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail=str(error)) from None
+            if normalized_sources != (settings.trusted_backup_sources or "") and not identity.has_role("admin"):
+                raise HTTPException(status_code=403, detail="An administrator must approve SSH penalty exemptions for trusted backup sources.")
+            settings.trusted_backup_sources = normalized_sources
         user_id = int(sftp_user_id) if str(sftp_user_id).strip() else None
         if user_id and not db.get(User, user_id):
             raise HTTPException(

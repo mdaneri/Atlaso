@@ -13,7 +13,7 @@ import secrets
 import time
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from unicodedata import category
 from urllib.parse import unquote, urlsplit
 from uuid import uuid4
@@ -149,7 +149,76 @@ def _source(values: dict[str, Any], *, confirmed: bool) -> dict[str, Any]:
     result: dict[str, Any] = {"kind": kind, "address": target.host, "port": target.port, "fingerprint": target.fingerprint}
     if kind == "fleet" and any(values.get(key) for key in ("fleet_address", "fleet_port", "fleet_confirmed_tls_fingerprint")):
         raise BackupOperationError("VCF Operations discovers its registered backup service. Remove the separate Fleet connection override.")
+    if "operations_scopes" in values:
+        scopes = values["operations_scopes"]
+        if (
+            kind != "fleet" or not isinstance(scopes, list) or not scopes
+            or any(not isinstance(scope, str) or scope not in {"lifecycle", "sddc"} for scope in scopes)
+            or len(scopes) != len(set(scopes))
+        ):
+            raise BackupOperationError("Choose valid Operations backup areas once each.")
+        result["operations_scopes"] = sorted(scopes)
+    if values.get("operations_source_id") or values.get("managed_vcenter_id"):
+        parent, managed = values.get("operations_source_id"), values.get("managed_vcenter_id")
+        if (
+            kind != "vcenter" or not isinstance(parent, str) or not re.fullmatch(r"[0-9a-f]{32}", parent)
+            or not isinstance(managed, str) or not re.fullmatch(r"vcenter-[0-9a-f]{64}", managed)
+        ):
+            raise BackupOperationError("Choose a vCenter discovered by the connected Operations source.")
+        result.update(operations_source_id=parent, managed_vcenter_id=managed)
     return result
+
+
+def _native(
+    source: dict[str, Any], credentials: Credentials,
+    factory: Callable[..., NativeBackup] | None = None,
+) -> NativeBackup:
+    """Keep historical adapters while using one account for new Operations areas.
+
+    Args:
+        source: Recorded confirmed endpoint and optional Operations scope intent.
+        credentials: Request-local account for that exact endpoint.
+        factory: Existing native adapter factory, injectable by focused tests.
+    """
+    native_factory = NativeBackup if factory is None else factory
+    if source["kind"] == "fleet" and source.get("operations_scopes"):
+        from atlaso.app.services.vcf_operations_backup import OperationsBackup
+
+        return OperationsBackup(source, credentials, native_factory=native_factory)
+    return native_factory(source, credentials)
+
+
+def _managed_vcenter_binding(state: dict[str, Any], source: dict[str, Any]) -> None:
+    """Require the selected managed endpoint before resolving its credential.
+
+    Args:
+        state: Current operation with the Operations discovery snapshot.
+        source: Newly inspected or retained vCenter source.
+    """
+    if source["kind"] != "vcenter":
+        return
+    parents = [item for item in state["sources"] if item["kind"] == "fleet" and item.get("operations_scopes")]
+    if not parents and not source.get("managed_vcenter_id"):
+        return
+    matches = [item for item in parents if item["source_id"] == source.get("operations_source_id")]
+    if len(matches) != 1:
+        raise BackupOperationError("Select the vCenter from the inspected Operations inventory.")
+    inventory = matches[0]["inventory"].get("managed_inventory", {})
+    rows = inventory.get("vcenters", []) if isinstance(inventory, dict) else []
+    candidates = [item for item in rows if isinstance(item, dict) and item.get("id") == source.get("managed_vcenter_id")]
+    if len(candidates) != 1 or any(candidates[0].get(key) != source.get(key) for key in ("address", "port")):
+        raise BackupOperationError("The selected vCenter endpoint no longer matches Operations discovery. Inspect again.")
+
+
+def _same_connection(normalized: dict[str, Any], source: dict[str, Any]) -> bool:
+    """Compare all recorded connection intent, including manager/parent bindings.
+
+    Args:
+        normalized: Revalidated request-local connection metadata.
+        source: Original source snapshot.
+    """
+    keys = ("kind", "address", "port", "fingerprint", "operations_scopes", "operations_source_id", "managed_vcenter_id")
+    return normalized == {key: source[key] for key in keys if key in source}
 
 
 def _reference(db: Session, values: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
@@ -381,7 +450,8 @@ def _inventory(value: dict[str, Any], source_id: str) -> dict[str, Any]:
         raise BackupOperationError("A verified VCF 9.1 source identity and version are required.")
     return {"identity": str(value["identity"]), "version": str(value["version"]),
             "components": rows, "groups": groups, "coverage_gaps": value.get("coverage_gaps", []),
-            "service": value.get("service")}
+            "service": value.get("service"),
+            **({"managed_inventory": value["managed_inventory"]} if "managed_inventory" in value else {})}
 
 
 def operation_status(db: Session, actor: str, operation_id: str) -> dict[str, Any]:
@@ -400,8 +470,12 @@ def operation_status(db: Session, actor: str, operation_id: str) -> dict[str, An
         "reconciliation_finished_at", "recovery_warning",
     ) if key in state})
     result["can_close_without_credentials"] = can_close_without_credentials(state)
+    if state.get("removal_state"):
+        result["removal_state"] = state["removal_state"]
+    if state.get("removal_state") == "removed":
+        result.update(state="removed", checkpoint="stored_files_removed")
     result.update(receiver=state["receiver"], revision=_revision(state),
-                  sources=[{key: source[key] for key in ("source_id", "kind", "address", "port", "fingerprint", "fleet_address", "fleet_port", "fleet_fingerprint") if key in source} for source in state["sources"]],
+                  sources=[{key: source[key] for key in ("source_id", "kind", "address", "port", "fingerprint", "fleet_address", "fleet_port", "fleet_fingerprint", "operations_scopes", "operations_source_id", "managed_vcenter_id") if key in source} for source in state["sources"]],
                   components=[component for source in state["sources"] for component in source["inventory"]["components"]])
     result["groups"] = [{key: group[key] for key in ("id", "component_ids", "checkpoint", "artifacts", "native_artifacts") if key in group}
                         for group in state.get("plan", [])]
@@ -410,8 +484,12 @@ def operation_status(db: Session, actor: str, operation_id: str) -> dict[str, An
         public["credential_reference"] = {key: reference[key] for key in ("mode", "username", "vault_id", "entry_id", "uri") if key in reference}
         if source["inventory"].get("service"):
             public["service"] = source["inventory"]["service"]
+        if "managed_inventory" in source["inventory"]:
+            public["managed_inventory"] = source["inventory"]["managed_inventory"]
     if "reconciliation" in state:
         result["reconciliation"] = state["reconciliation"]
+    if state.get("removal_state") == "removed":
+        result.update(groups=[], reconciliation=[], recovery_warning="Stored backup files were removed. Historical task and audit evidence is retained.")
     return result
 
 
@@ -497,6 +575,8 @@ def list_operations(db: Session, actor: str, *, limit: int = 25, cursor: str | N
             continue
         if not isinstance(state, dict) or state.get("actor") != actor or state.get("job_id") != job.id:
             continue
+        if state.get("removal_state") == "removed":
+            continue
         sources = [
             {"kind": source["kind"], "address": source["address"], "port": source["port"]}
             for source in state.get("sources", [])
@@ -551,7 +631,7 @@ def _source_inputs(db: Session, state: dict[str, Any], values: dict[str, Any]) -
             raise BackupOperationError("A source credential is missing or duplicated.")
         item = matches[0]
         normalized = _source(item, confirmed=True)
-        if any(normalized.get(key) != source.get(key) for key in normalized):
+        if not _same_connection(normalized, source):
             raise BackupOperationError("A source address or confirmed fingerprint changed.")
         mapped[source["source_id"]] = (source, _credentials(db, item, source))
     return mapped
@@ -575,7 +655,7 @@ def _recovery_source_inputs(db: Session, state: dict[str, Any], values: dict[str
             raise BackupOperationError("A source credential is missing or duplicated.")
         item = matches[0]
         normalized = _source(item, confirmed=True)
-        if any(normalized.get(key) != source.get(key) for key in normalized):
+        if not _same_connection(normalized, source):
             raise BackupOperationError("A source address or confirmed fingerprint changed.")
         approved = source["credential_reference"]
         current = _reference(db, item, source)
@@ -696,11 +776,24 @@ def _review(db: Session, actor: str, row: Setting, state: dict[str, Any], values
     known = {component["id"]: component for component in all_components}
     if any(not isinstance(key, str) or key not in known or known[key].get("supported") is not True for key in selected):
         raise BackupOperationError("Select only inspected components with native backup support.")
-    inputs = _source_inputs(db, state, values)
+    supplied = values.get("sources")
+    supplied_ids = {item.get("source_id") for item in supplied if isinstance(item, dict)} if isinstance(supplied, list) else set()
+    retained_sources = [source for source in state["sources"] if source["source_id"] in supplied_ids]
+    for source in state["sources"]:
+        if source not in retained_sources and (
+            source["kind"] != "vcenter" or not source.get("managed_vcenter_id")
+            or any(item["source_id"] == source["source_id"] and item["id"] in selected for item in all_components)
+        ):
+            raise BackupOperationError("Supply the exact inspected source connections.")
+    # A managed vCenter deselected after login is no longer part of this plan.
+    # Prune it only after validating that none of its components is selected.
+    inputs = _source_inputs(db, {**state, "sources": retained_sources}, values)
     selected_kinds = {
         source["kind"] for source in state["sources"]
         if any(item["source_id"] == source["source_id"] and item["id"] in selected for item in all_components)
     }
+    if any(item.get("backup_scope") == "sddc" and item["id"] in selected for item in all_components):
+        selected_kinds.add("sddc")
     if {"sddc", "nsx"} <= selected_kinds:
         raise BackupOperationError("SDDC Manager also changes its co-managed NSX backup policy. Configure SDDC Manager first, then inspect and review NSX in a fresh operation.")
     plan: list[dict[str, Any]] = []
@@ -708,8 +801,10 @@ def _review(db: Session, actor: str, row: Setting, state: dict[str, Any], values
     gaps: list[Any] = [gap for source in state["sources"] for gap in source["inventory"]["coverage_gaps"]]
     gaps.extend({"component": item["name"], "product": item.get("product"), "reason": item.get("coverage_gap") or "Not selected for native backup."}
                 for item in all_components if item["id"] not in selected)
-    for source, credentials in inputs.values():
-        with NativeBackup(source, credentials) as native:
+    ordered_inputs = sorted(inputs.values(), key=lambda item: 0 if item[0].get("operations_scopes") else 1)
+    for source, credentials in ordered_inputs:
+        _managed_vcenter_binding(state, source)
+        with _native(source, credentials) as native:
             native.login()
             _current_inventory(native, source)
             for group in source["inventory"]["groups"]:
@@ -727,7 +822,7 @@ def _review(db: Session, actor: str, row: Setting, state: dict[str, Any], values
                 group_receiver = {**receiver, "directory": "/backups/vcf/" + asset[:24]}
                 proposed = native.proposed(str(group["id"]), policy, group_receiver)
                 plan.append({"id": "g_" + asset[:32], "source_id": source["source_id"], "native_group_id": str(group["id"]),
-                             "kind": source["kind"], "component_ids": [item["id"] for item in members],
+                             "kind": group.get("backup_kind", source["kind"]), "component_ids": [item["id"] for item in members],
                              "native_component_ids": [item["native_id"] for item in members],
                              "current": native.current(str(group["id"])), "proposed": proposed,
                              "receiver_directory": group_receiver["directory"], "asset": asset,
@@ -736,12 +831,25 @@ def _review(db: Session, actor: str, row: Setting, state: dict[str, Any], values
                              "checkpoint": "reviewed"})
     if not plan:
         raise BackupOperationError("No supported native backup group is selected.")
+    discovered_vcenters = {
+        (item["address"], item["port"])
+        for source in retained_sources if source.get("operations_scopes")
+        for item in source["inventory"].get("managed_inventory", {}).get("vcenters", [])
+    }
+    selected_vcenters = {
+        (source["address"], source["port"]) for source in retained_sources if source["kind"] == "vcenter"
+        and any(group["source_id"] == source["source_id"] for group in plan)
+    }
+    if discovered_vcenters and discovered_vcenters <= selected_vcenters:
+        # The manager API's generic vCenter gap is covered by the separate,
+        # authenticated vCenter groups in this same reviewed plan.
+        gaps = [gap for gap in gaps if gap.get("product") != "vcenter"]
     acquire_network_objects_write_lock(db)
     db.refresh(row)
     current_state = json.loads(row.value)
     if _revision(current_state) != revision or current_state["state"] not in {"draft", "reviewed", "reconciled"}:
         raise BackupOperationError("This operation changed during review; review its current state.")
-    state.update(policy=policy, selected_ids=sorted(selected), plan=plan, coverage_gaps=gaps,
+    state.update(sources=retained_sources, policy=policy, selected_ids=sorted(selected), plan=plan, coverage_gaps=gaps,
                  sftp_secret=sftp_secret, encryption_secret=encryption_secret,
                  state="reviewed", checkpoint="reviewed", review_nonce=secrets.token_hex(24))
     token = _serializer().dumps({"actor": actor, "operation_id": state["operation_id"],
@@ -801,6 +909,10 @@ def _dispatch(db: Session, actor: str, action: str, values: dict[str, Any], back
         background: One-shot task dispatcher.
     """
     _actor(db, actor)
+    if action in {"removal-review", "remove"}:
+        from atlaso.app.services import vcf_backup_removal
+
+        return vcf_backup_removal.dispatch(db, actor, action, values)
     if action == "reconcile":
         row, state = _state(db, actor, str(values.get("operation_id", "")))
         return _admit_reconciliation(db, actor, row, state, values, background)
@@ -815,8 +927,6 @@ def _dispatch(db: Session, actor: str, action: str, values: dict[str, Any], back
         return {"targets": targets}
     if action == "inspect":
         source = _source(values, confirmed=True)
-        source["credential_reference"] = _reference(db, values, source)
-        credentials = _credentials(db, values, source)
         operation_id = str(values.get("operation_id") or "")
         if operation_id:
             row, state = _state(db, actor, operation_id)
@@ -829,13 +939,18 @@ def _dispatch(db: Session, actor: str, action: str, values: dict[str, Any], back
                      "checkpoint": "inspected", "progress_percent": 0, "coverage_gaps": []}
             row = Setting(key=PREFIX + operation_id, value="")
             prior_revision = ""
+        _managed_vcenter_binding(state, source)
+        source["credential_reference"] = _reference(db, values, source)
+        credentials = _credentials(db, values, source)
         matching = [item for item in state["sources"] if item["kind"] == source["kind"] and item["address"] == source["address"] and item["port"] == source["port"]]
         source_id = matching[0]["source_id"] if matching else uuid4().hex
-        with NativeBackup(source, credentials) as native:
+        with _native(source, credentials) as native:
             native.login()
             inventory = _inventory(native.discover(), source_id)
         source.update(source_id=source_id, inventory=inventory)
         candidates = [item for item in state["sources"] if item["source_id"] != source_id] + [source]
+        for candidate in candidates:
+            _managed_vcenter_binding({"sources": candidates}, candidate)
         if len(candidates) > MAX_SOURCES or sum(len(item["inventory"]["components"]) for item in candidates) > MAX_COMPONENTS:
             raise BackupOperationError("The selected fleet exceeds the supported source/component limit.")
         acquire_network_objects_write_lock(db)
@@ -851,7 +966,8 @@ def _dispatch(db: Session, actor: str, action: str, values: dict[str, Any], back
         db.add(row)
         _save(db, row, state)
         record_audit(db, actor=actor, action="inspect_vcf_backup", resource_type=JOB_TYPE, resource_id=operation_id)
-        return {**operation_status(db, actor, operation_id), "source_id": source_id}
+        return {**operation_status(db, actor, operation_id), "source_id": source_id,
+                **({"managed_inventory": inventory["managed_inventory"]} if "managed_inventory" in inventory else {})}
     row, state = _state(db, actor, str(values.get("operation_id", "")))
     if receiver != state["receiver"]:
         raise BackupOperationError("The applied backup receiver changed; reconcile and inspect again.")
@@ -960,6 +1076,8 @@ def _matches(current: dict[str, Any], proposed: dict[str, Any]) -> bool:
         current: Native's allowlisted current configuration.
         proposed: Reviewed public configuration, excluding write-only secrets.
     """
+    if current.get("configured") is False:
+        return False
     ignored = {"password_configured", "encryption_configured", "password_changed", "encryption_changed",
                "secret_configured", "sftp_secret_configured", "host_key", "fleet_schedule_mode"}
     return all(current.get(key) == value for key, value in proposed.items() if key not in ignored)
@@ -1131,7 +1249,7 @@ def run_job(job_id: str, manual: dict[str, Any] | None = None) -> None:
                     receiver_preflight.prepare(group["receiver_directory"])
             # Recheck the entire plan before the first native write.
             for source in state["sources"]:
-                with NativeBackup(source, credentials[source["source_id"]]) as native:
+                with _native(source, credentials[source["source_id"]]) as native:
                     native.login()
                     _current_inventory(native, source)
                     for group in state["plan"]:
@@ -1150,7 +1268,7 @@ def run_job(job_id: str, manual: dict[str, Any] | None = None) -> None:
                     steps = list(db.scalars(select(JobStep).where(JobStep.job_id == job_id, JobStep.component_key.in_(group["component_ids"]))))
                     for step in steps:
                         step.status, step.started_at = "running", utcnow()
-                    with NativeBackup(source, credentials[source["source_id"]]) as native:
+                    with _native(source, credentials[source["source_id"]]) as native:
                         native.login()
                         # A completed group legitimately changes the mutable
                         # inventory snapshot. Recheck immutable identities here,
@@ -1216,7 +1334,7 @@ def run_job(job_id: str, manual: dict[str, Any] | None = None) -> None:
             # earlier verified scheduler (including native cross-product effects).
             for group in state["plan"]:
                 source = next(item for item in state["sources"] if item["source_id"] == group["source_id"])
-                with NativeBackup(source, credentials[source["source_id"]]) as native:
+                with _native(source, credentials[source["source_id"]]) as native:
                     native.login()
                     _current_native_identity(native, source)
                     if not _matches(native.current(group["native_group_id"]), group["proposed"]):
@@ -1266,6 +1384,8 @@ def _admit_reconciliation(
         return operation_status(db, actor, state["operation_id"])
     if state["state"] not in {"needs_recovery", "succeeded", "reconciled"}:
         raise BackupOperationError("Only an admitted backup operation can be reconciled.")
+    if state.get("removal_state"):
+        raise BackupOperationError("Backup removal has begun; reconciliation is unavailable.")
     credential_free = values.get("close_reviewed") is True and can_close_without_credentials(state)
     if values.get("close_reviewed") is True and any(
         group.get("checkpoint") in {"configuration_dispatch_pending", "backup_dispatch_pending"}
@@ -1274,12 +1394,13 @@ def _admit_reconciliation(
         raise BackupOperationError("A native dispatch has no recorded outcome. Its reservation must remain held until the native product provides verifiable task reconciliation.")
     if not credential_free:
         _recovery_source_inputs(db, state, values)
-    # Copy only supported scalar inputs into this invocation's memory. Neither
+    # Copy only supported connection inputs into this invocation's memory. Neither
     # manual credentials nor resolved Vault values enter durable task metadata.
     supplied = [{key: source[key] for key in (
         "source_id", "source_kind", "kind", "address", "port", "confirmed",
         "confirmed_tls_fingerprint", "username", "password", "credential_vault_id",
-        "credential_entry_id", "credential_uri",
+        "credential_entry_id", "credential_uri", "operations_scopes",
+        "operations_source_id", "managed_vcenter_id",
     ) if key in source} for source in ([] if credential_free else values["sources"])]
     request_values = {"sources": supplied, "close_reviewed": values.get("close_reviewed") is True}
     original = row.value
@@ -1367,7 +1488,7 @@ def _reconcile(db: Session, actor: str, row: Setting, state: dict[str, Any], val
     reports: list[dict[str, Any]] = []
     for group in state.get("plan", []):
         source, credential = inputs[group["source_id"]]
-        with NativeBackup(source, credential) as native:
+        with _native(source, credential) as native:
             native.login()
             _current_native_identity(native, source)
             report = {"group_id": group["id"], "checkpoint": group["checkpoint"], "current": native.current(group["native_group_id"])}
@@ -1474,6 +1595,14 @@ def recover_interrupted_jobs(db: Session) -> int:
         count += 1
     for row in db.scalars(select(Setting).where(Setting.key.startswith(PREFIX))):
         state = json.loads(row.value)
+        if state.get("removal_state") == "removing":
+            lease = state.get("removal_lease", "")
+            lock = db.scalar(select(Setting).where(Setting.key == LOCK_PREFIX + "global"))
+            if isinstance(lease, str) and lease.startswith("remove:" + state["operation_id"] + ":") and lock is not None and lock.value == lease:
+                db.delete(lock)
+            state["removal_state"] = "failed"
+            row.value = _json(state)
+            count += 1
         if state.get("reconciliation_state") in {"queued", "running"}:
             state.update(reconciliation_state="failed",
                          reconciliation_error="Atlaso restarted during read-only reconciliation. Reload status and reconcile again.",

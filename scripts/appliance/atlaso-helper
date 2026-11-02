@@ -105,7 +105,7 @@ COMMANDS: dict[str, set[str]] = {
     "ldap": {"validate", "apply", "status", "export", "logs", "authenticate"},
     "ntpd": {"validate", "apply", "status", "logs", "capabilities", "reconcile", "guard"},
     "nginx": {"logs", "access-logs", "error-logs"},
-    "vcf-backups": {"validate", "preflight", "apply"},
+    "vcf-backups": {"validate", "preflight", "apply", "status"},
     "vcf-private-registry": {"validate", "apply", "relocate-bundles"},
     "vcf-offline-depot": {"validate", "stage-tool", "reset-tool", "generate-software-depot-id", "read-software-depot-id", "sync", "apply-https", "apply-properties", "apply-ceip"},
     "esxi-pxe": {"validate", "apply"},
@@ -196,6 +196,7 @@ CONSOLE_RECOVERY_STOP_SECONDS = 2
 _CONSOLE_RECOVERY_DEADLINE: ContextVar[float | None] = ContextVar("console_recovery_deadline", default=None)
 UPDATE_RELEASE_NOTES_URL_MAX_LENGTH = 2048
 NO_PATH_ACTIONS = {
+    ("vcf-backups", "status"),
     ("public-services", "reverse-proxy-status"),
     ("firewall", "replay"),
     ("network", "prepare-observation"),
@@ -19378,6 +19379,7 @@ def _vcf_backups_config_values(path: Path) -> dict[str, str | bool]:
         "storage_path": str(VCF_BACKUPS_DEFAULT_STORAGE_PATH),
         "remote_directory": VCF_BACKUPS_DEFAULT_REMOTE_DIRECTORY,
         "chroot_enabled": False,
+        "trusted_backup_sources": "",
     }
     in_match = False
     for raw_line in path.read_text(encoding="utf-8").splitlines():
@@ -19392,6 +19394,9 @@ def _vcf_backups_config_values(path: Path) -> dict[str, str | bool]:
             values["storage_path"] = stripped.split(":", 1)[1].strip()
         elif stripped.startswith("# VCF remote directory:"):
             values["remote_directory"] = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("# Trusted backup probe sources:"):
+            sources = stripped.split(":", 1)[1].strip()
+            values["trusted_backup_sources"] = "" if sources == "none" else sources
         elif stripped.startswith("Match User "):
             in_match = True
             values["username"] = stripped.split(None, 2)[2].strip()
@@ -19401,6 +19406,39 @@ def _vcf_backups_config_values(path: Path) -> dict[str, str | bool]:
         elif in_match and stripped.startswith("ForceCommand internal-sftp -d "):
             values["remote_directory"] = stripped.rsplit(" ", 1)[1].strip()
     return values
+
+
+def _vcf_backups_probe_config(values: dict[str, str | bool]) -> str | None:
+    """Render only individually trusted source hosts at the privilege boundary.
+
+    Args:
+        values: Parsed public VCF receiver configuration metadata.
+    """
+    value = str(values.get("trusted_backup_sources", ""))
+    if not value:
+        return None
+    if len(value) > 1024 or "%" in value:
+        raise ValueError("Trusted backup sources exceed the supported size.")
+    hosts = set()
+    for item in value.split(","):
+        network = ip_network(item, strict=True)
+        if network.prefixlen != network.max_prefixlen or network.network_address.is_unspecified or network.network_address.is_multicast:
+            raise ValueError("Trusted backup sources must be individual IPv4 or IPv6 hosts.")
+        hosts.add(network.with_prefixlen)
+    if len(hosts) > 16 or value != ",".join(sorted(hosts)):
+        raise ValueError("Trusted backup sources must be canonical unique host addresses.")
+    return "# Managed by Atlaso VCF Backups.\nPerSourcePenaltyExemptList " + value + "\n" if values["enabled"] else None
+
+
+def _vcf_backups_dropin_candidates(path: Path, values: dict[str, str | bool]) -> dict[Path, str | None]:
+    """Keep the optional global directive before every Match User include.
+
+    Args:
+        path: Admitted staged SFTP configuration.
+        values: Validated VCF receiver metadata.
+    """
+    return {VCF_BACKUPS_CONFIG_PATH: path.read_text(encoding="utf-8") if values["enabled"] else None,
+            VCF_BACKUPS_CONFIG_PATH.with_name("00-atlaso-vcf-backup-probes.conf"): _vcf_backups_probe_config(values)}
 
 
 def _vcf_backups_config_errors(path: Path) -> list[str]:
@@ -19415,6 +19453,14 @@ def _vcf_backups_config_errors(path: Path) -> list[str]:
     except OSError as exc:
         return [str(exc)]
     values = _vcf_backups_config_values(path)
+    if sum(line.startswith("# Trusted backup probe sources:") for line in text.splitlines()) > 1:
+        errors.append("Trusted backup probe source metadata must appear once.")
+    try:
+        _vcf_backups_probe_config(values)
+    except ValueError:
+        errors.append("Trusted backup sources must be canonical individual IPv4 or IPv6 hosts; subnets and wildcards are not allowed.")
+    if any(line.strip().lower().startswith(("persourcepenalties", "persourcepenaltyexemptlist")) for line in text.splitlines() if not line.lstrip().startswith("#")):
+        errors.append("SSH penalty directives must use the validated trusted backup source metadata.")
     username = str(values["username"])
     storage_path = str(values["storage_path"])
     remote_directory = str(values["remote_directory"])
@@ -19519,6 +19565,87 @@ def _validate_sshd_config() -> subprocess.CompletedProcess[str]:
     return _run([sshd, "-t"])
 
 
+def _write_vcf_backups_dropin(path: Path, content: str | None, mode: int = 0o644) -> None:
+    """Publish or remove one fixed helper-owned SSH drop-in atomically.
+
+    Args:
+        path: Fixed installed path selected by this helper.
+        content: Validated candidate text, or removal of the owned file.
+        mode: Installed or restored ordinary configuration mode.
+    """
+    if content is None:
+        path.unlink(missing_ok=True)
+        _fsync_directory(path.parent)
+        return
+    temporary = path.with_name(f".{path.name}.vcf-{uuid.uuid4().hex}")
+    try:
+        with temporary.open("xb") as stream:
+            stream.write(content.encode("utf-8"))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+        _fsync_directory(path.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _apply_vcf_backups_dropins(candidates: dict[Path, str | None]) -> int:
+    """Restore both previous SSH files if validation or restart fails.
+
+    Args:
+        candidates: The fixed SFTP and optional global penalty-exemption candidates.
+    """
+    previous: dict[Path, tuple[str | None, int]] = {}
+    mutating = False
+    try:
+        for path in candidates:
+            if path.is_symlink():
+                raise ValueError("VCF backup SSH configuration is not an ordinary owned file")
+            if path.exists():
+                metadata = path.stat()
+                content = path.read_text(encoding="utf-8")
+                if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or not content.startswith("# Managed by Atlaso"):
+                    raise ValueError("VCF backup SSH configuration ownership is ambiguous")
+                previous[path] = (content, stat.S_IMODE(metadata.st_mode))
+            else:
+                previous[path] = (None, 0o644)
+        mutating = True
+        for path, candidate in candidates.items():
+            _write_vcf_backups_dropin(path, candidate)
+        validation = _validate_sshd_config()
+        print(validation.stdout, end="")
+        print(validation.stderr, end="", file=sys.stderr)
+        result = validation.returncode
+        probe_config = candidates.get(VCF_BACKUPS_CONFIG_PATH.with_name("00-atlaso-vcf-backup-probes.conf"))
+        if not result and probe_config:
+            sshd = shutil.which("sshd") or "/usr/sbin/sshd"
+            effective = _run([sshd, "-T"])
+            sources = [line.split(None, 1)[1] for line in effective.stdout.splitlines() if line.startswith("persourcepenaltyexemptlist ")]
+            expected = probe_config.split("PerSourcePenaltyExemptList ", 1)[1].strip()
+            if effective.returncode or sources != [expected]:
+                print("Effective SSH penalty exemptions differ from the reviewed backup sources.", file=sys.stderr)
+                result = 2
+        if not result:
+            restart = _run(["systemctl", "restart", "sshd"])
+            print(restart.stdout, end="")
+            print(restart.stderr, end="", file=sys.stderr)
+            result = restart.returncode
+        if result:
+            for path, (content, mode) in previous.items():
+                _write_vcf_backups_dropin(path, content, mode)
+            restored = _validate_sshd_config()
+            if restored.returncode == 0:
+                _run(["systemctl", "restart", "sshd"])
+        return result
+    except (OSError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        if mutating:
+            for path, (content, mode) in previous.items():
+                _write_vcf_backups_dropin(path, content, mode)
+        return 2
+
+
 def _handle_vcf_backups(action: str, args: list[str]) -> int:
     """Handle VCF backups.
 
@@ -19526,6 +19653,17 @@ def _handle_vcf_backups(action: str, args: list[str]) -> int:
         action: Action consumed by handle VCF backups.
         args: Parsed command-line options consumed by the operation.
     """
+    if action == "status":
+        if args:
+            return 2
+        sshd = shutil.which("sshd") or "/usr/sbin/sshd"
+        result = _run([sshd, "-T"], timeout=5)
+        sources = [line.split(None, 1)[1] for line in result.stdout.splitlines() if line.startswith("persourcepenaltyexemptlist ")]
+        if result.returncode or len(sources) != 1 or len(sources[0]) > 1024:
+            print("Effective SSH backup-source policy is unavailable.", file=sys.stderr)
+            return 2
+        print(json.dumps({"trusted_backup_sources": sources[0]}))
+        return 0
     if len(args) != 1:
         print(f"vcf-backups {action} requires exactly one staged config path", file=sys.stderr)
         return 2
@@ -19549,32 +19687,26 @@ def _handle_vcf_backups(action: str, args: list[str]) -> int:
                     "username": values["username"],
                     "storage_path": values["storage_path"],
                     "remote_directory": values["remote_directory"],
-                    "scope": "OpenSSH SFTP Match User drop-in",
+                    "scope": "OpenSSH SFTP and explicit trusted-host penalty settings",
                 },
                 sort_keys=True,
             )
         )
         return 0
     if action == "preflight":
-        result = _validate_sshd_dropin_candidates(
-            {
-                VCF_BACKUPS_CONFIG_PATH: (
-                    config_path.read_text(encoding="utf-8") if values["enabled"] else None
-                )
-            }
-        )
+        result = _validate_sshd_dropin_candidates(_vcf_backups_dropin_candidates(config_path, values))
         print(result.stdout, end="")
         print(result.stderr, end="", file=sys.stderr)
         return result.returncode
 
+    candidates = _vcf_backups_dropin_candidates(config_path, values)
+    prospective = _validate_sshd_dropin_candidates(candidates)
+    if prospective.returncode:
+        print(prospective.stderr, end="", file=sys.stderr)
+        return prospective.returncode
     VCF_BACKUPS_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     if not values["enabled"]:
-        if VCF_BACKUPS_CONFIG_PATH.exists():
-            VCF_BACKUPS_CONFIG_PATH.unlink()
-        restart = _run(["systemctl", "restart", "sshd"])
-        print(restart.stdout, end="")
-        print(restart.stderr, end="", file=sys.stderr)
-        return restart.returncode
+        return _apply_vcf_backups_dropins(candidates)
 
     username = str(values["username"])
     storage_path = Path(str(values["storage_path"]))
@@ -19589,19 +19721,9 @@ def _handle_vcf_backups(action: str, args: list[str]) -> int:
     include_result = _install_vcf_backups_sshd_include()
     if include_result != 0:
         return include_result
-    shutil.copy2(config_path, VCF_BACKUPS_CONFIG_PATH)
-    os.chmod(VCF_BACKUPS_CONFIG_PATH, 0o644)
-    validation = _validate_sshd_config()
-    print(validation.stdout, end="")
-    print(validation.stderr, end="", file=sys.stderr)
-    if validation.returncode != 0:
-        VCF_BACKUPS_CONFIG_PATH.unlink(missing_ok=True)
-        return validation.returncode
-    restart = _run(["systemctl", "restart", "sshd"])
-    print(restart.stdout, end="")
-    print(restart.stderr, end="", file=sys.stderr)
-    if restart.returncode != 0:
-        return restart.returncode
+    installed = _apply_vcf_backups_dropins(candidates)
+    if installed:
+        return installed
     print(
         json.dumps(
             {
@@ -36299,6 +36421,8 @@ def main(argv: list[str]) -> int:
 
     if (group, action) == ("nat", "status"):
         return _handle_nat(action, normalized_args)
+    if real_apply and (group, action) == ("vcf-backups", "status"):
+        return _handle_vcf_backups(action, normalized_args)
     if real_apply and (group, action) == ("ntpd", "status"):
         return _handle_ntpd(action, normalized_args)
 

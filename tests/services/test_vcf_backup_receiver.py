@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from atlaso.app.database import Base
 from atlaso.app.models import Setting, User, VcfBackupSettings
+from atlaso.app.services import local_users
 from atlaso.app.services import vcf_backup_receiver as receiver
 from atlaso.app.services.applied_service_dns import APPLIANCE_APPLY_BASELINES_KEY
 from atlaso.app.services.log_sanitization import redact_operational_text
@@ -23,12 +24,16 @@ from atlaso.app.services.vcf_backups import render_vcf_backup_config
 
 
 @pytest.fixture
-def db():
+def db(monkeypatch):
     """Provide an isolated SQLite session with the application schema.
+
+    Args:
+        monkeypatch: Isolate process-local password staging from unrelated database fixtures.
 
     Yields:
         Database session closed after each receiver test.
     """
+    monkeypatch.setattr(local_users, "_PENDING_OS_PASSWORDS", {})
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -102,7 +107,7 @@ def _admit_ready_receiver(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, An
         "_rsa_public_key",
         lambda: calls.append(("rsa", None)) or "ssh-rsa public",
     )
-    monkeypatch.setattr(receiver, "_runtime", lambda data, preview: calls.append(("runtime", preview)))
+    monkeypatch.setattr(receiver, "_runtime", lambda data, preview, probes="": calls.append(("runtime", preview)))
     return calls
 
 
@@ -306,6 +311,38 @@ def test_runtime_requires_exact_applied_config_and_proves_both_live_host_key_alg
     assert len(process_calls) == 1
 
 
+@pytest.mark.parametrize("effective_sources", ["192.0.2.41/32", "192.0.2.99/32"])
+def test_runtime_checks_effective_ssh_exemptions_before_live_probes(tmp_path, monkeypatch, effective_sources):
+    """A syntactically valid but overridden global exemption does not admit a wizard.
+
+    Args:
+        tmp_path: Isolated installed configuration files.
+        monkeypatch: Fixture replacing native runtime commands and SSH connections.
+        effective_sources: Actually effective native SSH source exception.
+    """
+    main = tmp_path / "vcf.conf"
+    probes = tmp_path / "probes.conf"
+    main.write_text("applied receiver\n")
+    probe_text = "# Managed by Atlaso VCF Backups.\nPerSourcePenaltyExemptList 192.0.2.41/32\n"
+    probes.write_text(probe_text)
+    monkeypatch.setattr(receiver, "os", SimpleNamespace(name="posix", path=SimpleNamespace(ismount=lambda _path: True)))
+    monkeypatch.setattr(receiver, "VCF_BACKUP_EFFECTIVE_CONFIG_PATH", str(main))
+    monkeypatch.setattr(receiver, "VCF_BACKUP_PROBE_CONFIG_PATH", str(probes))
+    monkeypatch.setattr(receiver.SystemAdapter, "read_vcf_backup_probe_status", lambda _self: SimpleNamespace(
+        returncode=0, dry_run=False, stdout=json.dumps({"trusted_backup_sources": effective_sources})))
+    monkeypatch.setattr(receiver.subprocess, "run", lambda *_args, **_kwargs: SimpleNamespace(returncode=0))
+    transports = []
+    monkeypatch.setattr(receiver, "_transport", lambda state: transports.append(state) or SimpleNamespace(close=lambda: None))
+    state = {"host_key": "ecdsa-sha2-nistp256 public", "rsa_host_key": "ssh-rsa public"}
+    if effective_sources == "192.0.2.41/32":
+        receiver._runtime(state, "applied receiver\n", probe_text)
+        assert len(transports) == 2
+    else:
+        with pytest.raises(receiver.ReceiverError, match="Effective SSH"):
+            receiver._runtime(state, "applied receiver\n", probe_text)
+        assert transports == []
+
+
 class _RemoteKey:
     def __init__(self, value: bytes):
         """Represent a remote SSH key using the bytes consumed by Paramiko.
@@ -458,6 +495,18 @@ class _ManifestSftp:
         self.nodes = nodes
         self.children = children
         self.content_reads = 0
+        self.removed: list[str] = []
+
+    def remove(self, path: str) -> None:
+        """Unlink one fixture file while preserving its parent directory.
+
+        Args:
+            path: Exact artifact path authorized by the test.
+        """
+        self.removed.append(path)
+        self.nodes.pop(path)
+        parent, name = path.rsplit("/", 1)
+        self.children[parent] = [item for item in self.children.get(parent, []) if item.filename != name]
 
     def lstat(self, path: str) -> _Attributes:
         """Return metadata for one path or raise when it is absent.
@@ -598,4 +647,45 @@ def test_manifest_returns_sparse_artifact_metadata_without_opening_contents():
     manifest = session.manifest("/backups/group")
 
     assert manifest == {"/backups/group/large-backup.tar": (2**50, 1_800_000_000)}
+    assert client.content_reads == 0
+
+
+@pytest.mark.parametrize("change", [None, "symlink_parent", "symlink_file", "changed", "extra", "escape"])
+def test_removal_unlinks_only_reviewed_regular_files(change):
+    """Preserve other files and reject linked, changed, and escaping removal paths.
+
+    Args:
+        change: File or ancestor safety boundary revoked before removal.
+    """
+    root = "/backups/vcf/owned"
+    path = root + "/backup.zip"
+    artifact = _Attributes("backup.zip", stat.S_IFREG, 128, 100)
+    nodes = {parent: _Attributes(parent.rsplit("/", 1)[-1], stat.S_IFDIR)
+             for parent in ("/backups", "/backups/vcf", root)}
+    nodes[path] = artifact
+    children = {root: [artifact]}
+    expected = {path: [128, 100]}
+    if change == "symlink_parent":
+        nodes["/backups/vcf"] = _Attributes("vcf", stat.S_IFLNK)
+    elif change == "symlink_file":
+        artifact.st_mode = stat.S_IFLNK
+    elif change == "changed":
+        artifact.st_size = 256
+    elif change == "extra":
+        extra = _Attributes("incremental.zip", stat.S_IFREG, 10, 101)
+        nodes[root + "/incremental.zip"] = extra
+        children[root].append(extra)
+    elif change == "escape":
+        expected = {"/backups/elsewhere/backup.zip": [128, 100]}
+    client = _ManifestSftp(nodes, children)
+    session = _session_with_sftp(client)
+    completed: list[str] = []
+    if change is not None:
+        with pytest.raises(receiver.ReceiverError):
+            session.remove_artifacts(root, expected, completed.append)
+        assert client.removed == completed == []
+    else:
+        session.remove_artifacts(root, expected, completed.append)
+        assert client.removed == completed == [path]
+        assert root in nodes and path not in nodes
     assert client.content_reads == 0
