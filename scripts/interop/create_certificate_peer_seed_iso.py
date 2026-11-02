@@ -95,7 +95,7 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
     extra_write_files = ""
     extra_commands = ""
     if publish_host_key:
-        extra_packages = "  - open-vm-tools\n  - open-vm-tools-openrc\n  - iproute2\n  - sudo\n"
+        extra_packages = "  - open-vm-tools\n  - open-vm-tools-openrc\n  - open-vm-tools-guestinfo\n  - iproute2\n  - sudo\n"
         publisher = _host_key_serial_script()
         extra_write_files = (
             "  - path: /usr/local/sbin/atlaso-certificate-peer-publish-host-key\n"

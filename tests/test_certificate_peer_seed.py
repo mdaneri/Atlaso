@@ -66,6 +66,8 @@ def test_optional_bootstrap_installs_tools_and_publishes_only_public_host_key() 
     parsed = yaml.safe_load(files["user-data"])
     assert "open-vm-tools" in parsed["packages"]
     assert "open-vm-tools-openrc" in parsed["packages"]
+    assert "open-vm-tools-guestinfo" in parsed["packages"]
+    assert "open-vm-tools-timesync" not in parsed["packages"]
     commands = parsed["runcmd"]
     assert commands.index("rc-service sshd restart") < commands.index("rc-service dnsmasq restart")
     assert commands.index("rc-service dnsmasq restart") < commands.index("rc-service open-vm-tools start")
