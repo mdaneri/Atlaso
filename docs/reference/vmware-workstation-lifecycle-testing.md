@@ -1384,6 +1384,7 @@ not authentication against an operator who can modify the host or supply forged 
    durable root. Its schema-1 JSON contains `successor_task_id`, `originating_task_id`, `original_receipt_path`,
    `original_receipt_sha256`, the exact current `source_commit`, UTC `observed_at`, and at least two nonempty
    `evidence_refs` identifying the supported originating-chat observation and direct human authorization.
+   UTC `Z` and `+00:00` timestamps retain the same instant when PowerShell parses the JSON; timezone-free values are refused.
    Set `human_authorized`, `originating_chat_idle`, `original_native_consumers_terminal`, and `exclusive_successor` to
    literal JSON `true` only after independent verification. Preserve its digest immediately. Missing evidence blocks
    publication. Publication requires evidence from the previous five minutes; do not refresh its timestamp without

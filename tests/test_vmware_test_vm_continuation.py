@@ -208,3 +208,37 @@ def test_successor_cannot_create_or_redeploy_and_resume_keeps_both_identities(tm
     assert payload["executor"] == "successor-fixture"
     assert Path(payload["path"]).parent == tmp_path / ".task-ownership"
     assert len(payload["digest"]) == 64
+
+
+@pytest.mark.parametrize("timestamp", ["z", "offset", "stale-z", "future-z", "unspecified", "malformed"])
+def test_successor_freshness_preserves_json_timestamp_instants(tmp_path, timestamp):
+    """Interpret parsed UTC values without reinterpreting their wall time in the host zone.
+
+    Args:
+        tmp_path: Creation-owned root containing synthetic original and controller evidence.
+        timestamp: Equivalent fresh encodings, expired/future UTC, or ambiguous/invalid values.
+    """
+    command = continuation_script(tmp_path)
+    command += "function Assert-AtlasoTestVmCheckoutSource { param($Context) };$instant=[DateTimeOffset]::UtcNow;"
+    if timestamp == "stale-z":
+        command += "$instant=$instant.AddMinutes(-6);"
+    elif timestamp == "future-z":
+        command += "$instant=$instant.AddMinutes(6);"
+    if timestamp == "offset":
+        command += "$controller.observed_at=$instant.ToString('o');"
+    elif timestamp == "unspecified":
+        command += "$controller.observed_at=$instant.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ss.fff');"
+    elif timestamp == "malformed":
+        command += "$controller.observed_at='not-an-instant';"
+    else:
+        command += "$controller.observed_at=$instant.UtcDateTime.ToString(\"yyyy-MM-dd'T'HH:mm:ss.fff'Z'\");"
+    command += "$controllerHash=WriteFixture $controllerPath $controller;"
+    command += "$receipt=New-AtlasoTestVmContinuation -Context $ctx -ControllerEvidencePath $controllerPath -ControllerEvidenceSha256 $controllerHash;"
+    command += "Get-Content -LiteralPath $receipt.Path -Raw|ConvertFrom-Json|Select-Object successor_task_id|ConvertTo-Json -Compress;"
+    result = run_powershell(command, check=False)
+    if timestamp in {"z", "offset"}:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert json.loads(result.stdout.strip().splitlines()[-1])["successor_task_id"] == "successor-fixture"
+    else:
+        assert result.returncode != 0, result.stdout
+        assert "fresh controller evidence" in result.stderr

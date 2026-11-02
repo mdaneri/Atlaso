@@ -175,7 +175,23 @@ function New-AtlasoTestVmContinuation {
         Assert-AtlasoTestVmContinuationControllerEvidence -Context $Context -Evidence $evidence -OriginatingTaskId $original.task_id
         if ($evidence.source_commit -cne $Context.SourceCommit) { throw 'Controller evidence must bind the exact publication source.' }
         $observed = [DateTimeOffset]::MinValue
-        if (-not [DateTimeOffset]::TryParse([string]$evidence.observed_at, [ref]$observed) -or
+        $observedValue = $evidence.observed_at
+        $validObserved = $false
+        # ConvertFrom-Json can return a UTC DateTime for Z and a local DateTime for
+        # numeric offsets. Casting either to string drops its zone and can invent a future instant.
+        if ($observedValue -is [DateTime] -and $observedValue.Kind -ne [DateTimeKind]::Unspecified) {
+            $observed = [DateTimeOffset]::new($observedValue).ToUniversalTime()
+            $validObserved = $true
+        }
+        elseif ($observedValue -is [DateTimeOffset]) {
+            $observed = $observedValue.ToUniversalTime()
+            $validObserved = $true
+        }
+        elseif ($observedValue -is [string] -and $observedValue -cmatch 'T.*(?:Z|[+-][0-9]{2}:[0-9]{2})$') {
+            $validObserved = [DateTimeOffset]::TryParse($observedValue, [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::None, [ref]$observed)
+        }
+        if (-not $validObserved -or
             $observed -gt [DateTimeOffset]::UtcNow -or ([DateTimeOffset]::UtcNow - $observed).TotalSeconds -gt 300) {
             throw 'Continuation publication requires fresh controller evidence from the last five minutes.'
         }
