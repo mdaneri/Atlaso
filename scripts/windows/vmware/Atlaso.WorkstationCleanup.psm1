@@ -426,7 +426,7 @@ namespace Atlaso
             }
             catch { pins.Dispose(); throw; }
         }
-        public static IDisposable PinOrdinaryDirectoryPath(string path, bool allowWrites = false)
+        public static IDisposable PinOrdinaryDirectoryPath(string path, bool allowWrites = false, bool allowAncestorWrites = false)
         {
             var pins = new DirectoryPins();
             try
@@ -445,8 +445,12 @@ namespace Atlaso
                     // excluding directory deletion/replacement. Existing callers stay read-only.
                     // LIST_DIRECTORY makes sharing restrictions effective; an
                     // attributes-only handle does not exclude rename operations.
+                    // Code namespaces can remain read-only without blocking durable
+                    // publication in sibling task roots. Ancestors still deny delete
+                    // sharing, so allowing their writes cannot replace the pinned path.
+                    bool shareWrites = allowWrites || (allowAncestorWrites && i < components.Length - 1);
                     SafeFileHandle handle = CreateFileW(current, FileReadAttributes | 0x1,
-                        FileShareRead | (allowWrites ? FileShareWrite : 0), IntPtr.Zero, OpenExisting,
+                        FileShareRead | (shareWrites ? FileShareWrite : 0), IntPtr.Zero, OpenExisting,
                         BackupSemantics | 0x00200000, IntPtr.Zero);
                     pins.Handles.Add(handle);
                     if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());

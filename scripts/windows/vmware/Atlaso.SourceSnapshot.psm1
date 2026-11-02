@@ -583,12 +583,12 @@ function New-AtlasoCertificateInspectorSnapshot {
     $pins = [Collections.Generic.List[IDisposable]]::new()
     try {
         $scriptsRoot = Join-Path $snapshot.Root 'scripts'
-        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($scriptsRoot))
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($scriptsRoot, $false, $true))
         # The credentialed child imports these modules by name. Pin their
         # directory too so a concurrent ACL change cannot add a .pyd shadow.
         $namespace = if ($Purpose -eq 'certificate') { 'interop' } else { 'installation' }
         $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
-            (Join-Path $scriptsRoot $namespace)))
+            (Join-Path $scriptsRoot $namespace), $false, $true))
         $inspectorFiles = if ($Purpose -eq 'certificate') { @(
                 'scripts/__init__.py',
                 'scripts/interop/certificate_handoff_native.py',
@@ -649,7 +649,7 @@ function Protect-AtlasoCertificatePythonRuntime {
     $configPath = Join-Path $venvRoot 'pyvenv.cfg'
     $pins = [Collections.Generic.List[IDisposable]]::new()
     try {
-        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($venvRoot))
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($venvRoot, $false, $true))
         $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($configPath, $true))
         $config = Get-Content -LiteralPath $configPath -Raw
         if ($config -notmatch '(?im)^include-system-site-packages\s*=\s*false\s*$') {
@@ -662,7 +662,7 @@ function Protect-AtlasoCertificatePythonRuntime {
             -not (Test-Path -LiteralPath (Join-Path $baseRoot 'Lib') -PathType Container)) {
             throw 'Certificate Python base runtime is invalid.'
         }
-        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($baseRoot))
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($baseRoot, $false, $true))
         $excluded = [IO.Path]::GetFullPath((Join-Path $baseRoot 'Lib/site-packages')).TrimEnd('\')
         $codeExtensions = @('.py', '.pyc', '.pyd', '.dll', '.pth', '.zip', '.exe', '.pyw')
         $count = 0
@@ -673,7 +673,7 @@ function Protect-AtlasoCertificatePythonRuntime {
                     ($path -eq $excluded -or $path.StartsWith($excluded + '\', [StringComparison]::OrdinalIgnoreCase))) {
                     continue
                 }
-                $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($path))
+                $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($path, $false, $true))
             }
             foreach ($file in @(Get-ChildItem -LiteralPath $root -File -Recurse -Force -ErrorAction Stop)) {
                 $path = [IO.Path]::GetFullPath($file.FullName)

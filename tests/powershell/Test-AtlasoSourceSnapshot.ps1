@@ -368,13 +368,10 @@ try {
             -TaskId $env:CODEX_THREAD_ID -Purpose $purpose
         try {
             $publicationPath = Join-Path $OutputDirectory ($purpose + '-public-marker.json')
-            $publicationRefused = $false
-            try { Write-AtlasoDurableJsonFile -Path $publicationPath -Payload @{ public_fixture = $true } }
-            catch [ComponentModel.Win32Exception] {
-                if ($_.Exception.NativeErrorCode -ne 32) { throw }
-                $publicationRefused = $true
+            Write-AtlasoDurableJsonFile -Path $publicationPath -Payload @{ public_fixture = $true }
+            if (-not (Test-Path -LiteralPath $publicationPath -PathType Leaf)) {
+                throw 'Code namespace pins blocked sibling credential-recovery marker publication.'
             }
-            if (-not $publicationRefused) { throw 'Read-only ancestor pins did not exclude atomic marker publication.' }
             $relative = if ($purpose -eq 'certificate') {
                 'scripts/interop/certificate_peer_proof.py'
             } else { 'scripts/installation/vnc_console.py' }
@@ -394,12 +391,31 @@ try {
             try { Unprotect-AtlasoSourceSnapshot -Root $inspector.Root }
             finally { foreach ($pin in $inspector.Pins) { $pin.Dispose() } }
         }
-        Write-AtlasoDurableJsonFile -Path $publicationPath -Payload @{ public_fixture = $true }
-        if (-not (Test-Path -LiteralPath $publicationPath -PathType Leaf)) {
-            throw 'Atomic marker publication did not resume after inspector pin disposal.'
-        }
     }
 } finally { $env:CODEX_THREAD_ID = $savedTaskId }
+
+$namespaceParent = Join-Path $OutputDirectory 'selective-namespace-pins'
+$namespaceCode = Join-Path $namespaceParent 'code'
+New-Item -ItemType Directory -Path $namespaceCode -Force | Out-Null
+$namespacePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($namespaceCode, $false, $true)
+try {
+    Sync-AtlasoDirectoryMetadata -DirectoryPath $namespaceParent
+    $codeWriteBlocked = $false
+    try { Sync-AtlasoDirectoryMetadata -DirectoryPath $namespaceCode }
+    catch [ComponentModel.Win32Exception] {
+        if ($_.Exception.NativeErrorCode -ne 32) { throw }
+        $codeWriteBlocked = $true
+    }
+    if (-not $codeWriteBlocked) { throw 'Pinned code namespace admitted a writable directory handle.' }
+    $ancestorRenameBlocked = $false
+    $renamedParent = Join-Path $OutputDirectory 'unexpected-renamed-namespace'
+    try { [IO.Directory]::Move($namespaceParent, $renamedParent) }
+    catch [IO.IOException] { $ancestorRenameBlocked = $true }
+    if (-not $ancestorRenameBlocked) {
+        [IO.Directory]::Move($renamedParent, $namespaceParent)
+        throw 'A selectively pinned ancestor was replaceable.'
+    }
+} finally { $namespacePin.Dispose() }
 
 $runtimeFixture = Join-Path $OutputDirectory 'certificate-python-pin-fixture'
 $venv = Join-Path $runtimeFixture 'venv'

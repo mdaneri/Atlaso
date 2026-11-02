@@ -115,7 +115,7 @@ try {
         }
     }
     Import-Module (Join-Path $helperRoot 'Atlaso.WorkstationCleanup.psm1') -Force
-    $helperPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($helperRoot))
+    $helperPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($helperRoot, $false, $true))
     Import-Module (Join-Path $helperRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
     . (Join-Path $helperRoot 'Atlaso.WorkstationFirstBoot.ps1')
     Import-Module (Join-Path $helperRoot 'Atlaso.SourceSnapshot.psm1') -Force
