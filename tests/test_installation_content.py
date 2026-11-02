@@ -925,7 +925,7 @@ def test_guest_content_program_uses_bounded_ascii_console_command(kind, tmp_path
 
     assert command.isascii()
     assert len(command) <= 3500
-    assert "/opt/atlaso/.venv/bin/python -B -I -c 'exec(" in command
+    assert "/opt/atlaso/.venv/bin/python -B -I -c 'import base64,zlib;exec(zlib.decompress(base64." in command
     program = _decode_guest_program(command)
     argv = shlex.split(command)
     assert argv[:4] == ["/opt/atlaso/.venv/bin/python", "-B", "-I", "-c"]
@@ -952,6 +952,23 @@ def test_guest_content_program_uses_bounded_ascii_console_command(kind, tmp_path
         ]
         assert "%{NAME}\\t%{VERSION}-%{RELEASE}\\t%{ARCH}\\n" in constants
         assert "\t" in constants
+
+
+def test_rpm_console_transport_fits_for_high_entropy_hash_bindings():
+    """Keep the native RPM command within its limit for changing signed hashes."""
+    for seed in range(33):
+        expected = _expectation("rpm")
+        expected["iso_sha256"] = hashlib.sha256(f"iso-{seed}".encode()).hexdigest()
+        expected["package_state_sha256"] = hashlib.sha256(f"helper-{seed}".encode()).hexdigest()
+        command = content_inspection.guest_content_program(expected)
+
+        assert command.isascii()
+        assert len(command) <= 3500
+        assert shlex.split(command)[1:4] == ["-B", "-I", "-c"]
+        program = _decode_guest_program(command)
+        assert expected["iso_sha256"] in program
+        assert expected["package_state_sha256"] in program
+        compile(program, "<rpm-console-transport>", "exec")
 
 
 @pytest.mark.parametrize(

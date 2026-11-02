@@ -497,10 +497,6 @@ def read(p,n=16777216):
   z=os.fstat(f.fileno());b=f.read(n+1)
  if not stat.S_ISREG(z.st_mode) or z.st_nlink!=1 or len(b)>n: raise ValueError()
  return b
-def checked(rel,key):
- p=a/rel;b=read(p,1048576)
- if hashlib.sha256(b).hexdigest()!=e[key]: raise ValueError()
- return p,b
 class CommandError(Exception):
  def __init__(self,result):
   super().__init__();self.result=result
@@ -511,8 +507,21 @@ def run(args,timeout=60):
  if c.returncode: raise CommandError(c)
  return c.stdout
 '''
+    if kind != "rpm":
+        prelude += '''def checked(rel,key):
+ p=a/rel;b=read(p,1048576)
+ if hashlib.sha256(b).hexdigest()!=e[key]: raise ValueError()
+ return p,b
+'''
     if kind in {"assets", "python", "rpm"}:
-        prelude += '''def load(rel,key,n):
+        if kind == "rpm":
+            prelude += '''def load(rel,key,n):
+ p=a/rel;b=read(p,1048576)
+ if hashlib.sha256(b).hexdigest()!=e[key]: raise ValueError()
+ m=types.ModuleType(n);m.__file__=str(p);exec(compile(b,str(p),"exec"),m.__dict__);return m
+'''
+        else:
+            prelude += '''def load(rel,key,n):
  p,b=checked(rel,key);m=types.ModuleType(n);m.__file__=str(p);exec(compile(b,str(p),"exec"),m.__dict__);return m
 '''
     if kind == "assets":
@@ -534,7 +543,7 @@ def run(args,timeout=60):
     # existing single POSIX -c argument without increasing its console limit.
     if any(char in compressed for char in "'\"\\\r\n"):
         raise ValueError("content inspection transport is not quote-safe")
-    command = "/opt/atlaso/.venv/bin/python -B -I -c 'exec(__import__(\"zlib\").decompress(__import__(\"base64\")." + codec + "decode(\"" + compressed + "\")))'"
+    command = "/opt/atlaso/.venv/bin/python -B -I -c 'import base64,zlib;exec(zlib.decompress(base64." + codec + "decode(\"" + compressed + "\")))'"
     if len(command) > 3500 or not command.isascii():
         raise ValueError("content inspection command exceeds the console bound")
     return command
