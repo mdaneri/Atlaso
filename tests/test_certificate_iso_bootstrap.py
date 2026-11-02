@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import sysconfig
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,27 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/interop"))
 import certificate_iso_bootstrap as bootstrap  # noqa: E402 - Reviewed interop entrypoint.
+
+
+@pytest.mark.parametrize("late_stop_failure", [False, True])
+def test_bootstrap_monitor_propagates_sticky_failure_on_context_exit(monkeypatch, late_stop_failure):
+    """Reject sampled drift and failed watcher joins after the final synchronous check.
+
+    Args:
+        monkeypatch: Replace only the native background observer.
+        late_stop_failure: Whether failure appears during shutdown instead of sampling.
+    """
+    failed = threading.Event()
+    def stop():
+        """Model the sticky marker set by an unjoined watcher."""
+        if late_stop_failure:
+            failed.set()
+    monitor = SimpleNamespace(start=lambda: None, stop=stop, failed=failed)
+    monkeypatch.setattr(bootstrap, "TrustedHostMonitor", lambda *args: monitor)
+    with pytest.raises(bootstrap.Refusal, match="bootstrap_topology_observation_failed"):
+        with bootstrap.watched_topology({}, {}):
+            if not late_stop_failure:
+                failed.set()
 
 
 def test_bootstrap_imports_through_the_actual_isolated_wrapper_launcher(tmp_path: Path) -> None:
@@ -282,3 +304,38 @@ def test_unknown_bootstrap_apply_retains_original_and_forbids_automatic_retry(tm
     assert result["recovery"] == "preserve_unknown_apply_do_not_resubmit"
     assert not (tmp_path / "rewired-runtime.json").exists()
     assert all(secret not in path.read_text() for path in tmp_path.glob("*.json"))
+
+    @contextmanager
+    def failed_on_exit(*args):
+        """Simulate drift during the last TLS readback.
+
+        Args:
+            *args: Admitted plan and initial topology.
+        """
+        yield SimpleNamespace(check=lambda: None)
+        raise bootstrap.Refusal("bootstrap_topology_observation_failed")
+
+    def successful_edit(_client, _interface, changed, _mac):
+        """Model a completed desired-state update before the late observer failure.
+
+        Args:
+            _client: Authenticated management client.
+            _interface: Management interface name.
+            changed: New static baseline fields.
+            _mac: Original appliance MAC.
+        """
+        fields.update(changed)
+
+    monkeypatch.setattr(bootstrap, "watched_topology", failed_on_exit)
+    monkeypatch.setattr(bootstrap, "edit", successful_edit)
+    monkeypatch.setattr(bootstrap, "submit", lambda _client: ("job-test", "/status/test"))
+    monkeypatch.setattr(bootstrap, "wait_task", lambda *args: ({"status": "succeeded"}, None))
+    monkeypatch.setattr(bootstrap, "clean_baseline", lambda _client: None)
+    late = tmp_path / "late-topology-failure"
+    late.mkdir()
+    with pytest.raises(bootstrap.Refusal, match="bootstrap_topology_observation_failed"):
+        bootstrap.setup(plan, late, secret, execute=True)
+    terminal = json.loads((late / "bootstrap-result.json").read_text())
+    assert terminal["success"] is False
+    assert terminal["recovery"] == "preserve_original_state_and_reconcile"
+    assert not (late / "proof-plan.json").exists()

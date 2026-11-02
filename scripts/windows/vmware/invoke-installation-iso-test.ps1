@@ -1500,7 +1500,10 @@ function Invoke-InstallationVncCredential {
         # only the explicitly required optional client packages differ.
         $runtime = Protect-AtlasoCertificatePythonRuntime -PythonPath $Options.PythonPath `
             -EvidenceRoot ([IO.Path]::GetDirectoryName($venv)) -RequiredModules @('vncdotool', 'twisted', 'PIL')
-        Assert-AtlasoCertificatePythonImportPaths -Runtime $runtime
+        $importPaths = Invoke-AtlasoBoundedProcess -FilePath $runtime.Executable `
+            -ArgumentList @('-I', '-S', '-B', '-c', 'import json,sys;print(json.dumps(sys.path))') `
+            -TimeoutSeconds 15 -Action 'Certificate Python import-path verification'
+        Assert-AtlasoCertificatePythonImportPaths -Runtime $runtime -ImportPathJson $importPaths
         $null = Assert-AtlasoSourceSnapshot -Root (Join-Path $venv 'Lib/site-packages') `
             -ExpectedSha256 $Options.RuntimeSha256 -ExpectedFileCount $Options.RuntimeFileCount
         $frameDirectoryPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(

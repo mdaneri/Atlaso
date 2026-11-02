@@ -208,10 +208,14 @@ Using the verified in-memory `$entrypoint` and receipt-bound paths from the link
 ```
 
 The wrapper uses the existing bounded 1Password credential bridge; it does not put plaintext passwords on the
-command line or in evidence. Execute mode re-admits the original inputs and writes source, bootstrap-runtime,
-original-state, management-rewire-intent, mutation-started, apply-submitted, rewired-runtime, proof-plan, and
-bootstrap-result records in the task-owned evidence directory. It does not overwrite inspection-result.json. The
-source phase is `before-certificate-validation`; do not label it as `before-lifecycle-deployment` or synthesize missing
+command line or in evidence. Select a task-owned native-test Python environment with the locked credential and SSH
+dependencies. A larger development environment can exceed the protected code-inventory bound; use the smaller admitted
+environment rather than increasing or bypassing that bound. Execute mode re-admits the original inputs and writes
+source, bootstrap-runtime, original-state, management-rewire-intent, mutation-started, apply-submitted, rewired-runtime,
+proof-plan, and
+bootstrap-result records in the task-owned evidence directory. It does not overwrite inspection-result.json. A sticky
+topology failure, including failure to stop the watcher, prevents a successful terminal result or a usable proof plan.
+The source phase is `before-certificate-validation`; do not label it as `before-lifecycle-deployment` or synthesize missing
 route evidence. Do not retry an execution in a directory with execution records. If an Apply result is unknown,
 preserve the journal and lab and do not resubmit. Reconcile through the supported UI recovery workflow, then plan a
 separately named attempt with new evidence paths. A failed or incomplete bootstrap cannot authorize either address

@@ -717,14 +717,19 @@ function Assert-AtlasoCertificatePythonImportPaths {
 
     .PARAMETER Runtime
     Pinned Python runtime returned by Protect-AtlasoCertificatePythonRuntime.
+
+    .PARAMETER ImportPathJson
+    Public sys.path JSON read by the caller's bounded isolated Python process.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)]$Runtime)
+    param(
+        [Parameter(Mandatory)]$Runtime,
+        [Parameter(Mandatory)][string]$ImportPathJson
+    )
 
-    $raw = Invoke-AtlasoBoundedProcess -FilePath $Runtime.Executable `
-        -ArgumentList @('-I', '-S', '-B', '-c', 'import json,sys;print(json.dumps(sys.path))') `
-        -TimeoutSeconds 15 -Action 'Certificate Python import-path verification'
-    $paths = ConvertFrom-Json -InputObject $raw
+    # The Git-blob wrapper owns the bounded runner in its local scope. Keep
+    # this module a validator rather than depending on caller-local commands.
+    $paths = ConvertFrom-Json -InputObject $ImportPathJson
     if ($paths -isnot [array] -or $paths.Count -lt 2) {
         throw 'Certificate Python import paths are incomplete.'
     }

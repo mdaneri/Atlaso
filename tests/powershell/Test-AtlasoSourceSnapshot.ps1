@@ -419,6 +419,25 @@ foreach ($number in 1..100) {
 }
 $runtime = Protect-AtlasoCertificatePythonRuntime -PythonPath $python -EvidenceRoot $OutputDirectory
 try {
+    # A reviewed Git-blob entrypoint runs in a local scope; its bounded runner
+    # is not a module-global command. Pass only its public result to validation.
+    & {
+        $importPathJson = @($runtime.VenvRoot, (Join-Path $runtime.BaseRoot 'Lib')) | ConvertTo-Json -Compress
+        Assert-AtlasoCertificatePythonImportPaths -Runtime $runtime -ImportPathJson $importPathJson
+        foreach ($invalidPaths in @(
+                @($runtime.VenvRoot),
+                @($runtime.VenvRoot, $runtime.ExcludedBaseSitePackages),
+                @($runtime.VenvRoot, $OutputDirectory),
+                @($runtime.VenvRoot, '')
+            )) {
+            $rejected = $false
+            try {
+                Assert-AtlasoCertificatePythonImportPaths -Runtime $runtime `
+                    -ImportPathJson ($invalidPaths | ConvertTo-Json -Compress)
+            } catch { $rejected = $true }
+            if (-not $rejected) { throw 'Invalid certificate Python import paths were admitted.' }
+        }
+    }
     $proofArguments = New-AtlasoCertificatePythonArguments -Runtime $runtime -ScriptPath $dependency `
         -ScriptArguments @('--help')
     if ((@($proofArguments[0..2]) -join ' ') -cne '-I -S -B' -or

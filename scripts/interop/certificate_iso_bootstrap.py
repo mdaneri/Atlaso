@@ -64,6 +64,8 @@ def watched_topology(plan: dict, original: dict):
         yield monitor
     finally:
         monitor.stop()
+        if monitor.failed.is_set():
+            raise Refusal("bootstrap_topology_observation_failed")
 
 
 def initial_review(client) -> None:
@@ -302,12 +304,14 @@ def setup(plan: dict, output: Path, password: str, *, execute: bool) -> dict:
                 ("rewire_intent", "management-rewire-intent.json", intent_sha), ("rewired_runtime", "rewired-runtime.json", rewire_sha),
             ):
                 compiled[key] = {"path": str(output / filename), "sha256": checksum}
-            publish(output / "proof-plan.json", compiled)
             result.update(success=True, stage="static_baseline_complete", baseline_tls=target.tls_identity(), job_id=job)
-            mutation_started = False
-            return result
+        # A sticky failure or unjoined watcher invalidates even the final TLS
+        # readback. Publish the usable proof plan only after observation stops.
+        publish(output / "proof-plan.json", compiled)
+        mutation_started = False
+        return result
     except Exception:
-        result.update(stage=result["stage"], recovery=("preserve_unknown_apply_do_not_resubmit" if not task_terminal
+        result.update(success=False, stage=result["stage"], recovery=("preserve_unknown_apply_do_not_resubmit" if not task_terminal
                       else "preserve_original_state_and_reconcile") if mutation_started else "no_desired_mutation_started")
         raise
     finally:

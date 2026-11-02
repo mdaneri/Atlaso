@@ -125,7 +125,10 @@ try {
 $runtime = Protect-AtlasoCertificatePythonRuntime -PythonPath $PythonPath -EvidenceRoot $evidenceRoot
 try {
     $PythonPath = $runtime.Executable
-    Assert-AtlasoCertificatePythonImportPaths -Runtime $runtime
+    $importPaths = Invoke-AtlasoBoundedProcess -FilePath $PythonPath `
+        -ArgumentList @('-I', '-S', '-B', '-c', 'import json,sys;print(json.dumps(sys.path))') `
+        -TimeoutSeconds 15 -Action 'Certificate Python import-path verification'
+    Assert-AtlasoCertificatePythonImportPaths -Runtime $runtime -ImportPathJson $importPaths
     $snapshot = New-AtlasoCertificateInspectorSnapshot -RepositoryRoot $repoRoot -EvidenceRoot $evidenceRoot `
         -SourceCommit ([string]$planIdentity.source_commit) -TaskId ([string]$planIdentity.task_id)
     try {
