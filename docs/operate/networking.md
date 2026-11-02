@@ -519,7 +519,10 @@ Ordinary Apply writes a durable transaction marker before changing networkd file
 with its referenced backups if marker publication becomes visible but directory synchronization fails.
 The marker remains until the application commits the exact executed Network baseline. Startup restores interrupted
 uncommitted candidates or acknowledges an already committed baseline. Recovery refuses to race a
-live helper, and an unresolved marker blocks another Apply. Terminal backup cleanup warnings do
+live helper, and an unresolved marker blocks another Apply. Acknowledgement waits up to ten seconds
+for an observer to release that same lock; it still requires exclusive ownership before disposing
+the committed transaction. Apply and recovery continue to refuse an already held lock immediately.
+Terminal backup cleanup warnings do
 not cause committed configuration to be rolled back on a later restart.
 Acknowledgement remains pending until backup removal and durable marker cleanup succeed;
 cleanup failure preserves the committed baseline and blocks another Apply until recovery completes.

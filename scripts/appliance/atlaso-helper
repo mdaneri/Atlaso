@@ -15545,9 +15545,32 @@ def _wait_network_addresses(
     raise ValueError("Unable to verify candidate addresses: " + detail)
 
 
+def _acquire_network_transaction_lock(descriptor: int, *, wait_seconds: float = 0) -> None:
+    """Acquire the admitted lock, optionally waiting for a short-lived observer.
+
+    Args:
+        descriptor: Identity-checked root-owned lock-file descriptor.
+        wait_seconds: Bounded wait; expiry still refuses another live owner.
+    """
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError as exc:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError("network transaction is still owned by a live helper") from exc
+            time.sleep(min(0.05, remaining))
+
+
 @contextmanager
-def _network_transaction_lock():
-    """Exclude live Apply helpers while recovering the root-owned transaction."""
+def _network_transaction_lock(*, wait_seconds: float = 0):
+    """Exclude live Apply helpers while recovering the root-owned transaction.
+
+    Args:
+        wait_seconds: Optional bounded acquisition wait, without bypassing ownership.
+    """
     root = NETWORK_TRANSACTION_DIR
     if root.is_symlink():
         raise ValueError("network transaction directory is unsafe")
@@ -15566,10 +15589,7 @@ def _network_transaction_lock():
             metadata = os.fstat(handle.fileno())
             if metadata.st_uid != 0 or not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
                 raise ValueError("network transaction lock is unsafe")
-            try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as exc:
-                raise ValueError("network transaction is still owned by a live helper") from exc
+            _acquire_network_transaction_lock(handle.fileno(), wait_seconds=wait_seconds)
             try:
                 yield
             finally:
@@ -15935,7 +15955,9 @@ def _handle_network(
         handoff_held_addresses: Keep exact old sources selected until WAN is ready.
     """
     try:
-        with _network_transaction_lock() if action in {"apply", "recover", "acknowledge"} else nullcontext():
+        lock = (_network_transaction_lock(wait_seconds=10 if action == "acknowledge" else 0)
+                if action in {"apply", "recover", "acknowledge"} else nullcontext())
+        with lock:
             return _handle_network_locked(
                 action, args, preserve_transition_routes=preserve_transition_routes,
                 handoff_held_addresses=handoff_held_addresses,
