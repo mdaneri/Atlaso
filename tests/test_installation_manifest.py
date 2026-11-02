@@ -237,3 +237,28 @@ def test_signed_rpm_inventory_must_match_every_rpm(signed_media):
     write_signed(root / manifest.MANIFEST, value, key)
     with pytest.raises(ValueError, match="RPM inventory differs"):
         manifest.verify_media(root, trust, scratch=scratch)
+
+
+@pytest.mark.parametrize("defect", [None, "missing", "tamper"])
+def test_new_media_authenticates_guest_tools_before_disk_consent(signed_media, defect):
+    """New installer source requires complete authenticated guest-tools media bytes.
+
+    Args:
+        signed_media: Complete media with a test-only signing identity.
+        defect: Missing payload or post-signing package substitution.
+    """
+    from tests.test_installation_guest_tools import payload
+
+    root, trust, scratch, value, key = signed_media
+    (root / "source/scripts/installation/guest_tools.py").write_text("# guest-tools-capable source fixture")
+    if defect != "missing":
+        payload(root / "guest-tools")
+    value["files"] = manifest.inventory(root)
+    write_signed(root / manifest.MANIFEST, value, key)
+    if defect == "tamper":
+        (root / "guest-tools/qemu/atlaso-qemu-guest-agent.rpm").write_bytes(b"substituted")
+    if defect:
+        with pytest.raises(ValueError, match="incomplete|signed file inventory"):
+            manifest.verify_media(root, trust, scratch=scratch, boot_crypto=True)
+    else:
+        assert manifest.verify_media(root, trust, scratch=scratch, boot_crypto=True) == value

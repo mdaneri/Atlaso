@@ -213,6 +213,12 @@ def _parse_manifest(raw: bytes, signature_raw: bytes) -> dict[str, Any]:
         != {name for name in names if name.startswith("rpms/") and name.endswith(".rpm")}
     ):
         raise ValueError("installation RPM inventory is incomplete")
+    if "source/scripts/installation/guest_tools.py" in names:
+        if not {"guest-tools/compatibility.json", "guest-tools/SHA256SUMS"} <= names or any(
+            not any(name.startswith("guest-tools/" + profile + "/") and name.endswith(".rpm") for name in names)
+            for profile in ("vmware", "hyperv", "qemu")
+        ):
+            raise ValueError("installation guest-tools payload is incomplete")
     return value
 
 
@@ -259,6 +265,50 @@ def _member_bytes(iso: pycdlib.PyCdlib, rr_path: str, maximum: int) -> bytes:
     return value
 
 
+def _walk_payload(iso: pycdlib.PyCdlib, root: str):
+    """Follow logical Rock Ridge paths without basename-based relocation lookup.
+
+    Args:
+        iso: Open read-only ISO filesystem.
+        root: Absolute Rock Ridge directory to enumerate.
+    """
+    pending = [root]
+    seen_directories: set[int] = set()
+    count = 0
+    while pending:
+        directory = pending.pop()
+        record = iso.get_record(rr_path=directory)
+        extent = record.extent_location()
+        if extent in seen_directories:
+            raise ValueError("installation ISO payload contains aliased directories")
+        seen_directories.add(extent)
+        names: set[str] = set()
+        for child in record.children:
+            if child.is_dot() or child.is_dotdot():
+                continue
+            if child.rock_ridge is None:
+                raise ValueError("installation ISO payload lacks a Rock Ridge name")
+            name = child.rock_ridge.name().decode("utf-8")
+            if not name or name in {".", ".."} or "/" in name or "\x00" in name:
+                raise ValueError("installation ISO payload contains an invalid path")
+            if name in names:
+                raise ValueError("installation ISO payload contains duplicate paths")
+            names.add(name)
+            count += 1
+            if count > 2 * _MAX_FILES + 2:
+                raise ValueError("installation ISO payload contains too many entries")
+            path = directory + "/" + name
+            # get_record follows the exact CL extent. PyCdlib.walk instead
+            # selects relocated directories by basename, aliasing repeated names.
+            resolved = iso.get_record(rr_path=path)
+            if resolved.is_symlink():
+                raise ValueError("installation ISO payload contains a symbolic link")
+            is_directory = resolved.is_dir()
+            yield path, is_directory
+            if is_directory:
+                pending.append(path)
+
+
 def _all_payload_paths(iso: pycdlib.PyCdlib) -> tuple[set[str], set[str]]:
     """Enumerate every Rock Ridge payload file and directory, rejecting excess.
 
@@ -267,19 +317,9 @@ def _all_payload_paths(iso: pycdlib.PyCdlib) -> tuple[set[str], set[str]]:
     """
     files: list[str] = []
     directories: list[str] = [""]
-    count = 0
-    for directory, child_directories, child_files in iso.walk(rr_path="/atlaso"):
-        prefix = directory.removeprefix("/atlaso").strip("/")
-        for child in child_directories:
-            path = "/".join(part for part in (prefix, child) if part)
-            directories.append(path)
-            count += 1
-        for child in child_files:
-            path = "/".join(part for part in (prefix, child) if part)
-            files.append(path)
-            count += 1
-        if count > 2 * _MAX_FILES + 2:
-            raise ValueError("installation ISO payload contains too many entries")
+    for path, is_directory in _walk_payload(iso, "/atlaso"):
+        relative = path.removeprefix("/atlaso/")
+        (directories if is_directory else files).append(relative)
     if len(files) != len(set(files)) or len(directories) != len(set(directories)):
         raise ValueError("installation ISO payload contains duplicate paths")
     return set(files), set(directories)
@@ -348,9 +388,8 @@ class _IsoSoftwarePath:
         """
         if pattern != "*":
             raise ValueError("unsupported software readback traversal")
-        for directory, directories, files in self.image.walk(rr_path=self.path):
-            for name in [*directories, *files]:
-                yield _IsoSoftwarePath(self.image, directory + "/" + name)
+        for path, _ in _walk_payload(self.image, self.path):
+            yield _IsoSoftwarePath(self.image, path)
 
     def relative_to(self, root):
         """Express this ISO member relative to its software root.
@@ -483,11 +522,14 @@ def full_readback(
             expected_capture = {}
             for kind, items in capture_inventory.items():
                 for item in items:
+                    if kind == "rpms" and item["path"].startswith("guest-tools/"):
+                        expected_capture[item["path"]] = item["sha256"]
+                        continue
                     if kind == "rpms" and not item["path"].endswith(".rpm"):
                         continue  # Repository metadata is regenerated by canonical assembly.
                     expected_capture[kind + "/" + item["path"]] = item["sha256"]
             actual_capture = {name: checksum for name, checksum in source_inventory.items()
-                              if name.startswith("powercli/") or (name.startswith("rpms/") and name.endswith(".rpm"))}
+                              if name.startswith(("powercli/", "guest-tools/")) or (name.startswith("rpms/") and name.endswith(".rpm"))}
             if expected_capture != actual_capture:
                 raise ValueError("installation media differs from original complete captured input identities")
         trusted_sources = _trusted_sources(repository, installer_commit)

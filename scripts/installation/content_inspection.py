@@ -497,10 +497,6 @@ def read(p,n=16777216):
   z=os.fstat(f.fileno());b=f.read(n+1)
  if not stat.S_ISREG(z.st_mode) or z.st_nlink!=1 or len(b)>n: raise ValueError()
  return b
-def checked(rel,key):
- p=a/rel;b=read(p,1048576)
- if hashlib.sha256(b).hexdigest()!=e[key]: raise ValueError()
- return p,b
 class CommandError(Exception):
  def __init__(self,result):
   super().__init__();self.result=result
@@ -511,8 +507,21 @@ def run(args,timeout=60):
  if c.returncode: raise CommandError(c)
  return c.stdout
 '''
+    if kind != "rpm":
+        prelude += '''def checked(rel,key):
+ p=a/rel;b=read(p,1048576)
+ if hashlib.sha256(b).hexdigest()!=e[key]: raise ValueError()
+ return p,b
+'''
     if kind in {"assets", "python", "rpm"}:
-        prelude += '''def load(rel,key,n):
+        if kind == "rpm":
+            prelude += '''def load(rel,key,n):
+ p=a/rel;b=read(p,1048576)
+ if hashlib.sha256(b).hexdigest()!=e[key]: raise ValueError()
+ m=types.ModuleType(n);m.__file__=str(p);exec(compile(b,str(p),"exec"),m.__dict__);return m
+'''
+        else:
+            prelude += '''def load(rel,key,n):
  p,b=checked(rel,key);m=types.ModuleType(n);m.__file__=str(p);exec(compile(b,str(p),"exec"),m.__dict__);return m
 '''
     if kind == "assets":
@@ -534,7 +543,7 @@ def run(args,timeout=60):
     # existing single POSIX -c argument without increasing its console limit.
     if any(char in compressed for char in "'\"\\\r\n"):
         raise ValueError("content inspection transport is not quote-safe")
-    command = "/opt/atlaso/.venv/bin/python -B -I -c 'exec(__import__(\"zlib\").decompress(__import__(\"base64\")." + codec + "decode(\"" + compressed + "\")))'"
+    command = "/opt/atlaso/.venv/bin/python -B -I -c 'import base64,zlib;exec(zlib.decompress(base64." + codec + "decode(\"" + compressed + "\")))'"
     if len(command) > 3500 or not command.isascii():
         raise ValueError("content inspection command exceeds the console bound")
     return command
@@ -555,7 +564,7 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
         "assets": {"source_digest", "source_file_count", "deployed_files", "trust_digest", "trust_keys"},
         "python": {"python_payload_sha256", "python_files", "python_distributions", "python_external_files"},
         "powercli": {"powercli_lock_sha256", "module_count"},
-        "rpm": {"installed_inventory", "firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_media_directories_absent", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified", "runtime_audit_metadata_verified", "runtime_rpcbind_metadata_verified", "runtime_openssh_metadata_verified", "runtime_openldap_metadata_verified", "runtime_efi_metadata_verified", "runtime_module_indexes_verified"},
+        "rpm": {"installed_inventory", "firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_media_directories_absent", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified", "runtime_audit_metadata_verified", "runtime_rpcbind_metadata_verified", "runtime_openssh_metadata_verified", "runtime_openldap_metadata_verified", "runtime_efi_metadata_verified", "runtime_module_indexes_verified", "runtime_network_databases_verified"},
         "notices": {"notices_sha256", "notice_inputs_verified"},
     }[kind]
     if (not isinstance(value, dict) or set(value) != _COMMON_KEYS | keys or type(value.get("schema")) is not int or value["schema"] != 1
@@ -587,7 +596,7 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
             raise MissingRequiredRpms([i for i, name in enumerate(required) if name not in actual])
         if any(name not in allowed or identity != allowed[name] for name, identity in actual.items()):
             raise ValueError("installed RPM identity differs from media")
-        if any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified", "runtime_audit_metadata_verified", "runtime_rpcbind_metadata_verified", "runtime_openssh_metadata_verified", "runtime_openldap_metadata_verified", "runtime_efi_metadata_verified", "runtime_module_indexes_verified")):
+        if any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified", "runtime_audit_metadata_verified", "runtime_rpcbind_metadata_verified", "runtime_openssh_metadata_verified", "runtime_openldap_metadata_verified", "runtime_efi_metadata_verified", "runtime_module_indexes_verified", "runtime_network_databases_verified")):
             raise ValueError("installed RPM native verification is incomplete")
         if type(value["runtime_media_directories_absent"]) is not int or not 0 <= value["runtime_media_directories_absent"] <= 2:
             raise ValueError("installed RPM absent directory count is invalid")
@@ -724,6 +733,8 @@ run(["rpm","--noplugins","-V","--noscripts","--nodeps","linux-firmware"],60)
 stage="system-rpm-runtime"
 runtime=h.verify_installation_metadata()
 runtime.update(h.verify_installation_module_indexes())
+stage="system-rpm-network-databases"
+runtime.update(h.verify_installation_network_databases())
 r=dict(installed_inventory=base64.b64encode(zlib.compress(json.dumps(installed,sort_keys=True,separators=(",", ":")).encode(),9)).decode(),firmware_verified=True,rpm_files_verified=True,package_state_verified=True,runtime_media_directories_absent=len(absent),**runtime)
 ''',
     "assets": r'''

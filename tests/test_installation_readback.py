@@ -6,6 +6,7 @@ import base64
 import hashlib
 import io
 from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
 
 import pycdlib
 import pytest
@@ -26,6 +27,72 @@ _SOFTWARE = "b" * 40
 _VERSION = "1.2.3"
 _PUBLIC_TEST_KEY = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
 _RELEASE_KEY = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
+
+
+def test_readback_preserves_repeated_relocated_directory_names(tmp_path: Path) -> None:
+    """Read distinct deep PowerCLI-style paths and their original file bytes.
+
+    Args:
+        tmp_path: Isolated destination for the real Rock Ridge fixture.
+    """
+    image = pycdlib.PyCdlib()
+    image.new(interchange_level=3, rock_ridge="1.09")
+    image.add_directory(iso_path="/ATLASO", rr_name="atlaso")
+    expected = {}
+    for branch in ("first", "second"):
+        directory = f"software/{branch}/version/package/services/metadata/core-properties"
+        _add_directory(image, directory)
+        path = directory + "/identity.txt"
+        parts = PurePosixPath(path).parts
+        components = [hashlib.sha256(PurePosixPath(*parts[:n]).as_posix().encode()).hexdigest()[:16].upper()
+                      for n in range(1, len(parts) + 1)]
+        raw = branch.encode()
+        image.add_fp(io.BytesIO(raw), len(raw), iso_path="/ATLASO/" + "/".join(components) + ";1",
+                     rr_name="identity.txt")
+        expected[path] = raw
+    output = tmp_path / "relocated.iso"
+    image.write(str(output))
+    image.close()
+    image = pycdlib.PyCdlib()
+    image.open(str(output))
+    try:
+        files, directories = readback._all_payload_paths(image)
+        assert files == set(expected)
+        assert all(path.rsplit("/", 1)[0] in directories for path in expected)
+        software = readback._IsoSoftwarePath(image)
+        actual = {str(member.relative_to(software)): member.read_bytes()
+                  for member in software.rglob("*") if member.is_file()}
+        assert actual == {path.removeprefix("software/"): raw for path, raw in expected.items()}
+    finally:
+        image.close()
+
+
+def test_readback_still_rejects_duplicate_rock_ridge_names() -> None:
+    """Reject actual duplicate child names rather than silently deduplicating."""
+    child = SimpleNamespace(is_dot=lambda: False, is_dotdot=lambda: False,
+                            rock_ridge=SimpleNamespace(name=lambda: b"duplicate"))
+    root = SimpleNamespace(extent_location=lambda: 1, children=[child, child])
+    file = SimpleNamespace(is_symlink=lambda: False, is_dir=lambda: False)
+    image = SimpleNamespace(get_record=lambda **kw: root if kw["rr_path"] == "/atlaso" else file)
+    with pytest.raises(ValueError, match="duplicate paths"):
+        readback._all_payload_paths(image)
+
+
+@pytest.mark.parametrize("symlink", [False, True])
+def test_readback_rejects_directory_aliases_and_symlinks(symlink: bool) -> None:
+    """Keep relocation traversal bounded and reject links outside the logical tree.
+
+    Args:
+        symlink: Whether the child is a symlink rather than a directory alias.
+    """
+    child = SimpleNamespace(is_dot=lambda: False, is_dotdot=lambda: False,
+                            rock_ridge=SimpleNamespace(name=lambda: b"alias"))
+    root = SimpleNamespace(extent_location=lambda: 1, children=[child])
+    alias = SimpleNamespace(is_symlink=lambda: symlink, is_dir=lambda: True,
+                            extent_location=lambda: 1)
+    image = SimpleNamespace(get_record=lambda **kw: root if kw["rr_path"] == "/atlaso" else alias)
+    with pytest.raises(ValueError, match="symbolic link" if symlink else "aliased directories"):
+        readback._all_payload_paths(image)
 
 
 @pytest.fixture(autouse=True)
@@ -85,7 +152,7 @@ def _add_directory(image: pycdlib.PyCdlib, relative: str) -> None:
 
 
 def _build_iso(path: Path, *, tamper: bool = False, extra: bool = False,
-               bad_signature: bool = False, software_tamper: bool = False) -> str:
+               bad_signature: bool = False, software_tamper: bool = False, guest_payload: bool = False) -> str:
     """Create a tiny complete and signed development media fixture.
 
     Args:
@@ -94,6 +161,7 @@ def _build_iso(path: Path, *, tamper: bool = False, extra: bool = False,
         extra: Whether to add an unlisted payload file.
         bad_signature: Whether to sign the manifest with an untrusted key.
         software_tamper: Whether to change a release-signed software member.
+        guest_payload: Whether to include a captured guest-tools companion file.
     """
     wheel = b"public wheel bytes"
     dependency = b"public dependency wheel bytes"
@@ -153,6 +221,9 @@ def _build_iso(path: Path, *, tamper: bool = False, extra: bool = False,
         # The public development key can re-sign the outer inventory but cannot
         # authorize bytes different from the independent production signature.
         files["software/wheelhouse/cp314/fixture-1-py3-none-any.whl"] = b"substituted dependency"
+    if guest_payload:
+        files["guest-tools/qemu/atlaso-qemu-guest-agent.rpm"] = b"captured agent fixture"
+        files["guest-tools/SHA256SUMS"] = b"captured checksum fixture"
     rpm_digest = hashlib.sha256(files["rpms/linux-fixture.rpm"]).hexdigest()
     records = [
         {"path": name, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
@@ -332,3 +403,27 @@ def test_full_readback_rejects_wrong_media_digest_and_software_identity(tmp_path
             software_commit="c" * 40,
             software_version=_VERSION,
         )
+
+
+@pytest.mark.parametrize("substitute", [False, True])
+def test_full_readback_binds_relocated_guest_tools_to_original_capture(tmp_path, substitute):
+    """Moving retained payloads outside the RPM repo must preserve original capture hashes.
+
+    Args:
+        tmp_path: Isolated ISO fixture root.
+        substitute: Whether the supplied original capture describes different agent bytes.
+    """
+    image = tmp_path / "development.iso"
+    checksum = _build_iso(image, guest_payload=True)
+    capture = {"rpms": [
+        {"path": "linux-fixture.rpm", "sha256": hashlib.sha256(b"authenticated RPM bytes").hexdigest()},
+        {"path": "guest-tools/qemu/atlaso-qemu-guest-agent.rpm", "sha256": hashlib.sha256(b"changed" if substitute else b"captured agent fixture").hexdigest()},
+        {"path": "guest-tools/SHA256SUMS", "sha256": hashlib.sha256(b"captured checksum fixture").hexdigest()},
+    ], "powercli": [{"path": "fixture.psm1", "sha256": hashlib.sha256(b"module bytes").hexdigest()}]}
+    arguments = dict(installer_commit=_INSTALLER, software_commit=_SOFTWARE, software_version=_VERSION,
+                     trust_key=tmp_path / "trusted-release.pem", capture_inventory=capture)
+    if substitute:
+        with pytest.raises(ValueError, match="complete captured input identities"):
+            readback.full_readback(image, checksum, **arguments)
+    else:
+        assert readback.full_readback(image, checksum, **arguments)["captured_input_inventory_verified"] is True

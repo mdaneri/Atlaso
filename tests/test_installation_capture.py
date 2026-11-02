@@ -111,10 +111,11 @@ def _capture_archive_commands() -> list[tuple[str, str, str, str, str, str]]:
             for command in commands
         )
         if name.endswith("rpms"):
-            assert any(
-                'Path("/var/tmp/atlaso-installation-rpms")' in command
-                for command in commands
-            )
+            package_capture = template.index('Path(\\"/var/tmp/atlaso-installation-rpms\\")')
+            provision = template.index('script          = "${var.source_root}/image/common/scripts/provision-atlaso.sh"')
+            assert package_capture < provision < capture[0]
+            copy_command = "cp -R /var/lib/atlaso-privileged/guest-tools /var/tmp/atlaso-installation-rpms/guest-tools"
+            assert commands.index(copy_command) < commands.index(tar_command)
 
         download_start = template.find('direction   = "download"', capture[0])
         source_line = f'source      = "{guest_archive}"'

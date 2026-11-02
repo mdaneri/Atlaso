@@ -7293,11 +7293,35 @@
     "include_in_schema": false,
     "kind": "http",
     "methods": [
+      "GET"
+    ],
+    "name": "settings_hardware_status",
+    "operation_id": null,
+    "order": 607,
+    "path": "/ui/management/settings/hardware/status",
+    "plane": "ui_management"
+  },
+  {
+    "include_in_schema": false,
+    "kind": "http",
+    "methods": [
+      "POST"
+    ],
+    "name": "submit_settings_guest_tools",
+    "operation_id": null,
+    "order": 608,
+    "path": "/ui/management/settings/hardware/guest-tools/{operation}",
+    "plane": "ui_management"
+  },
+  {
+    "include_in_schema": false,
+    "kind": "http",
+    "methods": [
       "POST"
     ],
     "name": "update_settings_from_ui",
     "operation_id": null,
-    "order": 607,
+    "order": 609,
     "path": "/ui/management/settings",
     "plane": "ui_management"
   },
@@ -7309,7 +7333,7 @@
     ],
     "name": "update_authentication_lifetimes_from_ui",
     "operation_id": null,
-    "order": 608,
+    "order": 610,
     "path": "/ui/management/settings/authentication-lifetimes",
     "plane": "ui_management"
   },
@@ -7321,7 +7345,7 @@
     ],
     "name": "update_vmware_ceip_from_ui",
     "operation_id": null,
-    "order": 609,
+    "order": 611,
     "path": "/ui/management/settings/vmware-ceip",
     "plane": "ui_management"
   },
@@ -7333,7 +7357,7 @@
     ],
     "name": "update_logging_settings_from_ui",
     "operation_id": null,
-    "order": 610,
+    "order": 612,
     "path": "/ui/management/settings/logging",
     "plane": "ui_management"
   },
@@ -7345,7 +7369,7 @@
     ],
     "name": "diagnostics_data",
     "operation_id": null,
-    "order": 611,
+    "order": 613,
     "path": "/ui/management/backup-restore/diagnostics/data",
     "plane": "ui_management"
   },
@@ -7357,7 +7381,7 @@
     ],
     "name": "diagnostics_create",
     "operation_id": null,
-    "order": 612,
+    "order": 614,
     "path": "/ui/management/backup-restore/diagnostics/create",
     "plane": "ui_management"
   },
@@ -7369,7 +7393,7 @@
     ],
     "name": "diagnostics_detail",
     "operation_id": null,
-    "order": 613,
+    "order": 615,
     "path": "/ui/management/backup-restore/diagnostics/{bundle_id}",
     "plane": "ui_management"
   },
@@ -7381,7 +7405,7 @@
     ],
     "name": "diagnostics_download",
     "operation_id": null,
-    "order": 614,
+    "order": 616,
     "path": "/ui/management/backup-restore/diagnostics/{bundle_id}/download",
     "plane": "ui_management"
   },
@@ -7393,7 +7417,7 @@
     ],
     "name": "diagnostics_delete",
     "operation_id": null,
-    "order": 615,
+    "order": 617,
     "path": "/ui/management/backup-restore/diagnostics/{bundle_id}/delete",
     "plane": "ui_management"
   },
@@ -7405,7 +7429,7 @@
     ],
     "name": "diagnostics_cancel",
     "operation_id": null,
-    "order": 616,
+    "order": 618,
     "path": "/ui/management/backup-restore/diagnostics/{bundle_id}/cancel",
     "plane": "ui_management"
   },
@@ -7417,7 +7441,7 @@
     ],
     "name": "placeholder_page",
     "operation_id": null,
-    "order": 617,
+    "order": 619,
     "path": "/ui/management/{page}",
     "plane": "ui_management"
   },
@@ -7429,7 +7453,7 @@
     ],
     "name": "create_upload",
     "operation_id": null,
-    "order": 618,
+    "order": 620,
     "path": "/ui/management/uploads/chunks",
     "plane": "ui_management"
   },
@@ -7441,7 +7465,7 @@
     ],
     "name": "append_chunk",
     "operation_id": null,
-    "order": 619,
+    "order": 621,
     "path": "/ui/management/uploads/chunks/data",
     "plane": "ui_management"
   },
@@ -7453,7 +7477,7 @@
     ],
     "name": "cancel_upload",
     "operation_id": null,
-    "order": 620,
+    "order": 622,
     "path": "/ui/management/uploads/chunks/data",
     "plane": "ui_management"
   }
