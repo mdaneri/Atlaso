@@ -22,6 +22,31 @@ from atlaso.app.services.vcf_backup_native import (
 from atlaso.app.services.vcf_certificate_remote import Credentials, RemoteError
 
 
+@pytest.mark.parametrize("state,expected", [("SUCCEEDED", "succeeded"), ("IN_PROGRESS", "running"), ("FAILED", "failed"), (503, "running")])
+def test_vcenter_removal_reads_recorded_job_after_named_schedule_was_deleted(state, expected):
+    """Read only the original job while normal execution still requires its schedule.
+
+    Args:
+        state: Native task status or a temporary HTTP outage.
+        expected: Safe removal-read state.
+    """
+    transport = FakeTransport(None, [(503, None) if state == 503 else (200, {"state": state})])
+    adapter = NativeBackup(source("vcenter"), credentials(), transport_factory=lambda _target: transport)
+    adapter._session = "session"
+    adapter._version = "9.1.1"
+    adapter._inventory = {"groups": [{"id": "atlaso-vcf-backup", "component_ids": ["vcenter"]}]}
+    reference = {"kind": "vcenter", "group_id": "daily", "component_ids": ["vcenter"],
+                 "started_at": "2026-11-02T22:00:00Z", "native_task_id": "backup-1"}
+    with pytest.raises(ValueError, match="Unknown native backup group"):
+        adapter.backup_task_status("daily", reference)
+    with pytest.raises(ValueError, match="does not match"):
+        adapter.vcenter_removal_task_status("daily", {**reference, "group_id": "other"})
+    assert transport.requests == []
+    result = adapter.vcenter_removal_task_status("daily", reference)
+    assert result["state"] == expected
+    assert len(transport.requests) == 1 and transport.requests[0][0:2] == ("GET", "/api/appliance/recovery/backup/job/backup-1")
+
+
 def test_unconfigured_native_defaults_do_not_report_a_configured_destination():
     """Retain the native flag even when an internal default server is present."""
     current = NativeBackup._safe_settings({"isConfigured": False, "backupLocations": [

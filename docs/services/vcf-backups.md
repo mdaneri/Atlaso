@@ -152,6 +152,7 @@ files is not completion evidence.
 Configuration and initial-backup verification each have a one-hour bound. Temporary HTTP 503 responses during
 read-only status checks keep the recorded native reference and continue polling within that bound. Native writes are
 never automatically repeated.
+Operations manager configuration and backup polling also preserve temporary HTTP 503 status without repeating writes.
 Fleet polling can refresh an expired API token once through Operations after HTTP 401. The discovered service identity
 must still match the reviewed service before the same read is retried.
 
@@ -201,6 +202,8 @@ incremental chain in the same folder, another operation referencing the files, a
 removal. Atlaso uses the ordinary pinned SFTP account and does not recursively delete directories. Arrange native backup
 retention separately when a shared folder contains later backups. If removal is interrupted, the history entry remains;
 reload it and perform a fresh removal review for any remaining files. An old confirmation cannot be replayed.
+Deleting a non-default vCenter schedule does not prevent removal review: Atlaso rechecks the recorded vCenter instance
+UUID, the original backup job, and every remaining schedule's destination before allowing its recorded files to be removed.
 
 If the recorded checkpoints prove that no native write was attempted, you can explicitly finish recovery even when
 the reviewed receiver credentials no longer work. This releases the operation's reservations without contacting the

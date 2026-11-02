@@ -132,16 +132,18 @@ def test_manager_configuration_waits_for_its_recorded_task_and_rejects_another_t
                  {"id": "unrelated-task", "status": "SUCCESSFUL"}]
     calls = []
 
-    def request(method, path, body=None):
+    def request(method, path, body=None, **options):
         """Return acceptance and native task states without repeating configuration.
 
         Args:
             method: Native HTTP method.
             path: Exact native route.
             body: Request-local native settings.
+            **options: Native poll options requesting the original HTTP status.
         """
         calls.append((method, path))
-        return responses.pop(0)
+        result = responses.pop(0)
+        return (200, result) if options.get("include_status") else result
 
     monkeypatch.setattr(child, "_call", request)
     proposed = {"host": "receiver.example.test", "port": 22, "user": "backup", "directory": "/backups/test",

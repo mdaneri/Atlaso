@@ -309,7 +309,9 @@ class OperationsProxy:
             self._tokens[resource_id] = cached
         response = self.web.request(method, f"/vcf-operations/plug/{self.plugin_key}/plugin/api{path}",
                                     headers={**self._headers(), "vmware-vrops-token": cached[0], "Accept-Language": "en-US"}, body=body)
-        return response.status, self._json(response)
+        # Native adapters classify retryable read-only statuses. Do not decode
+        # error bodies (which may echo secrets), or replay a failed write.
+        return response.status, self._json(response) if 200 <= response.status < 300 else None
 
     def close(self) -> None:
         """Close only this owned session and forget all cookies and tokens."""

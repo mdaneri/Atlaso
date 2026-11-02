@@ -13,6 +13,7 @@ from atlaso.app.services.vcf_backup_native import (
     _extract_task_id,
     _openssh_sha256_fingerprint,
     _state,
+    _TransientPollUnavailable,
     _validate_encryption_passphrase,
     _validation_result,
 )
@@ -215,7 +216,10 @@ class ManagedSddcBackup(NativeBackup):
         task_id = _extract_task_id({"id": reference.get("native_task_id")}) if isinstance(reference, dict) else None
         if task_id is None or reference.get("kind") != "sddc" or reference.get("group_id") != group:
             raise ValueError("Native manager configuration reference does not match this group")
-        result = self._call("GET", "/v1/tasks/" + quote(task_id, safe=""))
+        try:
+            result = self._poll_call("/v1/tasks/" + quote(task_id, safe=""))
+        except _TransientPollUnavailable:
+            return {"state": "running", "warning": "Operations manager configuration status is temporarily unavailable; polling the recorded task will continue."}
         if not isinstance(result, dict) or result.get("id") != task_id:
             raise RemoteError("Operations returned a different manager configuration task")
         return {"state": _state(result.get("status"))}

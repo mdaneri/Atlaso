@@ -23,6 +23,31 @@ from atlaso.app.services.vcf_backup_receiver import (
 )
 
 
+def _vcenter_destinations(native: NativeBackup, source: dict[str, Any], group: dict[str, Any]) -> list[dict[str, Any]]:
+    """Allow a deleted scheduler only on the same recorded vCenter appliance.
+
+    Args:
+        native: Authenticated pinned vCenter adapter, used only for removal reads.
+        source: Recorded appliance identity and originally inspected schedulers.
+        group: Recorded backup whose files are being reviewed for removal.
+    """
+    reviewed = source["inventory"]
+    original = [item for item in reviewed["groups"] if item["id"] == group["native_group_id"]]
+    instance = original[0].get("native_identity", {}).get("instance_uuid") if len(original) == 1 else None
+    latest = native.discover()
+    groups = latest.get("groups")
+    if (
+        not isinstance(instance, str) or not instance or reviewed["identity"] != "vcenter:" + instance
+        or any(latest.get(key) != reviewed.get(key) for key in ("identity", "version", "service"))
+        or not isinstance(groups, list) or not groups
+        or any(not isinstance(item, dict) or not isinstance(item.get("native_identity"), dict)
+               or item["native_identity"].get("instance_uuid") != instance
+               or not isinstance(item.get("current"), dict) for item in groups)
+    ):
+        raise workflow.BackupOperationError("The recorded vCenter appliance identity changed; stored files must be retained.")
+    return [item["current"] for item in groups]
+
+
 def _idle(db: Session, state: dict[str, Any]) -> None:
     """Refuse removal while configuration, recovery, or another removal is active.
 
@@ -57,22 +82,35 @@ def _native_idle(db: Session, state: dict[str, Any], values: dict[str, Any]) -> 
         source, credential = inputs[group["source_id"]]
         with workflow._native(source, credential, factory=NativeBackup) as native:
             native.login()
-            workflow._current_native_identity(native, source)
-            current = native.current(group["native_group_id"])
-            directory = current.get("directory")
-            if current.get("host") and (not isinstance(directory, str) or not directory):
-                raise workflow.BackupOperationError("The native destination is ambiguous. Remove it in the native product first.")
-            if current.get("host") and isinstance(directory, str):
-                target, root = PurePosixPath(directory), PurePosixPath(group["receiver_directory"])
-                if target == root or target in root.parents or root in target.parents:
-                    raise workflow.BackupOperationError("Remove this backup destination in the native product before deleting its stored files.")
+            if source["kind"] == "vcenter":
+                destinations = _vcenter_destinations(native, source, group)
+            else:
+                workflow._current_native_identity(native, source)
+                destinations = [native.current(group["native_group_id"])]
+            for current in destinations:
+                directory = current.get("directory")
+                if current.get("host") and (not isinstance(directory, str) or not directory):
+                    raise workflow.BackupOperationError("The native destination is ambiguous. Remove it in the native product first.")
+                if current.get("host") and isinstance(directory, str):
+                    target, root = PurePosixPath(directory), PurePosixPath(group["receiver_directory"])
+                    if not target.is_absolute() or ".." in target.parts or "\\" in directory or any(ord(char) < 32 for char in directory):
+                        raise workflow.BackupOperationError("The native destination is ambiguous. Remove it in the native product first.")
+                    if target == root or target in root.parents or root in target.parents:
+                        raise workflow.BackupOperationError("Remove this backup destination in the native product before deleting its stored files.")
             report: dict[str, Any] = {}
             reference = group.get("backup_reference")
             if reference is not None:
-                report["native_backup"] = native.backup_task_status(group["native_group_id"], reference.get("reference", reference))
+                status = native.vcenter_removal_task_status if source["kind"] == "vcenter" else native.backup_task_status
+                report["native_backup"] = status(group["native_group_id"], reference.get("reference", reference))
             reference = group.get("configuration_reference")
             if reference is not None:
-                report["native_configuration"] = native.configuration_status(group["native_group_id"], reference)
+                if source["kind"] == "vcenter":
+                    if (not isinstance(reference, dict) or reference.get("kind") not in (None, "vcenter")
+                            or reference.get("group_id") not in (None, group["native_group_id"]) or reference.get("native_task_id") is not None):
+                        raise workflow.BackupOperationError("The recorded vCenter configuration reference is ambiguous.")
+                    report["native_configuration"] = {"state": "succeeded"}  # vCenter schedule writes are synchronous.
+                else:
+                    report["native_configuration"] = native.configuration_status(group["native_group_id"], reference)
             reports.append(report)
     if not workflow._native_tasks_terminal(groups, reports):
         raise workflow.BackupOperationError("A recorded native task is still running or unknown; its files cannot be removed.")

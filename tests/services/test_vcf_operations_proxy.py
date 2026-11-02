@@ -177,11 +177,33 @@ def test_operations_proxy_never_retries_an_uncertain_native_write() -> None:
     adapter, web = session()
     adapter.login()
     web.responses += [reply({"accessToken": SECRET, "ttl": 300000}), reply({"password": SECRET}, 401)]
-    with pytest.raises(RemoteError, match="HTTP 401") as error:
-        adapter.request(RESOURCE, "PUT", "/v1/system/backup-configuration", {"password": SECRET})
-    assert SECRET not in str(error.value)
+    result = adapter.request(RESOURCE, "PUT", "/v1/system/backup-configuration", {"password": SECRET})
+    assert result == (401, None)
+    assert SECRET not in str(result)
     assert len([item for item in web.requests if item[0] == "PUT"]) == 1
     assert not web.responses
+
+
+def test_operations_proxy_preserves_temporary_native_poll_status_without_error_body():
+    """A managed backup's temporary outage reaches the existing native poll guard."""
+    from atlaso.app.services.vcf_operations_backup import ManagedSddcBackup
+
+    adapter, web = session()
+    adapter.login()
+    web.responses += [reply({"accessToken": SECRET, "ttl": 300000}), reply({"password": SECRET}, 503)]
+    child = ManagedSddcBackup({"kind": "fleet", "address": "ops.example.test", "port": 443, "fingerprint": "a" * 64},
+                              Credentials("admin", SECRET), adapter, {"resource_id": RESOURCE})
+    child._session = "operations-proxy"
+    child._version = "9.1.1"
+    child._inventory = {"groups": [{"id": "sddc-manager", "component_ids": ["sddc-manager"]}]}
+    result = child.backup_status("sddc-manager", {"kind": "sddc", "group_id": "sddc-manager",
+        "component_ids": ["sddc-manager"], "started_at": "2026-11-02T22:00:00Z", "native_task_id": "backup-1"})
+    assert result["state"] == "running" and SECRET not in str(result)
+    assert sum(method == "GET" and "/v1/tasks/backup-1" in path for method, path, _ in web.requests) == 1
+    web.responses.append(reply({"password": SECRET}, 503))
+    result = child.configuration_status("sddc-manager", {"kind": "sddc", "group_id": "sddc-manager", "native_task_id": "configuration-1"})
+    assert result["state"] == "running" and SECRET not in str(result)
+    assert sum(method == "GET" and "/v1/tasks/configuration-1" in path for method, path, _ in web.requests) == 1
 
 
 def test_operations_transport_checks_certificate_before_sending_credentials(monkeypatch: pytest.MonkeyPatch) -> None:

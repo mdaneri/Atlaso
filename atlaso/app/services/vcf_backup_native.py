@@ -1738,16 +1738,19 @@ class NativeBackup:
         reference.update(baseline_ref)
         return {"reference": reference}
 
-    def _backup_reference(self, group: str, reference: dict[str, Any]) -> dict[str, Any]:
+    def _backup_reference(self, group: str, reference: dict[str, Any], *, expected_components: list[str] | None = None) -> dict[str, Any]:
         """Validate recorded backup ownership before reading native task state.
 
             Args:
                 group: Rediscovered native scheduler group.
                 reference: Recorded task and original component coverage.
+                expected_components: Removal-only coverage for a deleted vCenter schedule.
         """
         if not isinstance(reference, dict) or reference.get("kind") not in (None, self.kind) or reference.get("group_id") not in (None, group):
             raise ValueError("Native backup reference does not match this group")
-        item = self._group(group)
+        if expected_components is not None and (self.kind != "vcenter" or expected_components != ["vcenter"]):
+            raise ValueError("Absent schedule references are supported only for vCenter removal")
+        item = self._group(group) if expected_components is None else {"component_ids": expected_components}
         component_ids = reference.get("component_ids")
         if (
             not isinstance(component_ids, list)
@@ -1763,6 +1766,21 @@ class NativeBackup:
         if self.kind != "nsx" and not isinstance(raw_ref, str):
             raise ValueError("Native backup reference is missing its task ID")
         return item
+
+    def vcenter_removal_task_status(self, group: str, reference: dict[str, Any]) -> dict[str, Any]:
+        """Read a recorded vCenter job after removal rechecks its appliance UUID.
+
+        Args:
+            group: Originally recorded schedule, which may now be absent.
+            reference: Recorded job and exact vCenter component coverage.
+        """
+        self._backup_reference(group, reference, expected_components=["vcenter"])
+        ref = self._public_id(reference["native_task_id"])
+        try:
+            raw = self._poll_call(f"/api/appliance/recovery/backup/job/{quote(ref, safe='')}")
+        except _TransientPollUnavailable:
+            return _pending_poll_result(ref, "vCenter backup task is temporarily unavailable; stored files must be retained.")
+        return {"state": _state(self._pick(raw, "status", "state")) if isinstance(raw, dict) else "running"}
 
     def backup_task_status(self, group: str, reference: dict[str, Any]) -> dict[str, Any]:
         """Read task termination without requiring Fleet restore-point history.
