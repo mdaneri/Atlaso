@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import sysconfig
@@ -16,6 +17,24 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/interop"))
 import certificate_iso_bootstrap as bootstrap  # noqa: E402 - Reviewed interop entrypoint.
+
+
+def test_guest_python_transport_preserves_multiline_docstrings_and_quotes(tmp_path):
+    """Run the exact encoded command argument through a native Python process.
+
+    Args:
+        tmp_path: Unrelated directory used as the subprocess working directory.
+    """
+    program = ('"""A multiline probe.\nSQL uses both \'single\' and "double" quotes.\n"""\n'
+               'import json\nprint(json.dumps({"query": "type = \'table\'", "line": "a\\nb"}))\n')
+    command = bootstrap.guest_python_command(program)
+    assert command.isascii() and "\n" not in command and "\r" not in command
+    arguments = shlex.split(command)
+    assert arguments[:4] == ["/opt/atlaso/.venv/bin/python", "-B", "-I", "-c"]
+    result = subprocess.run([sys.executable, *arguments[1:]], cwd=tmp_path,
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"query": "type = 'table'", "line": "a\nb"}
 
 
 @pytest.mark.parametrize("late_stop_failure", [False, True])

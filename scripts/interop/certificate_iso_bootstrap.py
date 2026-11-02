@@ -7,14 +7,15 @@ peer and LAN receipts precede both authentication and desired-state mutation.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import ipaddress
 import json
 import os
-import shlex
 import ssl
 import subprocess
 import sys
+import zlib
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -108,6 +109,20 @@ def sudo_read(session, command: str, password: str) -> bytes:
         channel.close()
 
 
+def guest_python_command(program: str) -> str:
+    """Encode public inspection code using the ISO inspector's portable transport.
+
+    Args:
+        program: Reviewed Python inspection source, with no credential values.
+
+    Returns:
+        One ASCII command for the installed, isolated application interpreter.
+    """
+    encoded = base64.b64encode(zlib.compress(program.encode("utf-8"), 9)).decode("ascii")
+    return ('/opt/atlaso/.venv/bin/python -B -I -c \'exec(__import__("zlib").decompress('
+            '__import__("base64").b64decode("' + encoded + '")))\'')
+
+
 def guest_identity(session, plan: dict, password: str) -> dict:
     """Measure routing absence and the actual admitted ISO payload without changing it.
 
@@ -120,7 +135,7 @@ def guest_identity(session, plan: dict, password: str) -> dict:
         Public routing, service, helper, and wheel facts measured from the guest.
     """
     probe = Path(__file__).with_name("certificate_source_probe.py").read_bytes()
-    routing = json.loads(sudo_read(session, "python3 -c " + shlex.quote(probe.decode()), password))
+    routing = json.loads(sudo_read(session, guest_python_command(probe.decode()), password))
     if routing.get("state") != "proven-absent":
         raise Refusal("bootstrap_routing_intent_present")
     routing["probe_sha256"] = hashlib.sha256(probe).hexdigest()
@@ -149,7 +164,7 @@ def guest_identity(session, plan: dict, password: str) -> dict:
         "assert w.is_relative_to(p) and w.is_file() and w.stat().st_size<268435456; "
         "print(hashlib.sha256(w.read_bytes()).hexdigest())"
     )
-    wheel = sudo_read(session, "python3 -c " + shlex.quote(wheel_probe), password).decode().strip()
+    wheel = sudo_read(session, guest_python_command(wheel_probe), password).decode().strip()
     if wheel != installed.get("wheel_sha256"):
         raise Refusal("bootstrap_installed_wheel_changed")
     return {"route_snapshot": routing, "app_service": states, "helper_sha256": helper, "wheel_sha256": wheel}

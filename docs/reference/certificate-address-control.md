@@ -186,6 +186,9 @@ helper and wheel, original desired fields, served TLS identity, DNS, and topolog
 admitted lease, and the selected interface, original MAC, public CA, resource source ancestry, installed inspection,
 and two-member topology all match the original receipts.
 
+The bootstrap sends its reviewed Python probes as encoded, single-line commands to the installed application
+interpreter, matching the ISO inspector. It does not rely on the guest login shell to preserve multiline Python quoting.
+
 With the same reviewed entrypoint and plan, invoke it with `-Bootstrap -ExecuteBootstrap` to establish the first
 static baseline.
 This explicit option edits Physical Interfaces through the existing authenticated UI, preserving unrelated
