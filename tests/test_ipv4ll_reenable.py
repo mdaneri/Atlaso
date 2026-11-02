@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -41,15 +42,8 @@ def reenable(tmp_path, monkeypatch):
     interface = PhysicalInterface(name="eth0", mac_address="02:00:00:00:10:77", role="management",
                                   mode="access", admin_state="up", oper_state="up", mtu=1500,
                                   ipv4_method="dhcp", ipv6_enabled=False, check_duplicate_ip_addresses=True)
-    config = tmp_path / "network.conf"
-    config.write_text(render_network_config(interfaces=[interface], vlans=[],
-                                            ipv4_link_local_fallback_enabled=False))
-    files, _, _ = helper._systemd_networkd_files(config)
-    old = networkd / "00-atlaso-mgmt.network"
-    old.write_text(files[old.name])
-    config.write_text(render_network_config(interfaces=[interface], vlans=[],
-                                            ipv4_link_local_fallback_enabled=True))
-    native = {"addresses": [], "routes": [], "mac": interface.mac_address, "route_reads": []}
+    native = {"addresses": [], "routes": [], "mac": interface.mac_address,
+              "route_reads": [], "runtime_address_reads": []}
 
     def observe(command, **_kwargs):
         """Return a complete empty native baseline, or an injected refusal case.
@@ -68,6 +62,33 @@ def reenable(tmp_path, monkeypatch):
             rows = native.get("routes_by_family", {}).get(family, native["routes"])
         return subprocess.CompletedProcess(command, 0, json.dumps(rows), "")
 
+    def run_native(command, **kwargs):
+        """Allow the Linux runtime-address read while refusing every mutation.
+
+        Args:
+            command: Exact read-only address query from the production renderer.
+            **kwargs: Options forwarded to the native observation fixture.
+        """
+        if command != ["ip", "-j", "address", "show", "dev", "eth0"]:
+            pytest.fail("No old route may be invented")
+        native["runtime_address_reads"].append(command)
+        return observe(command, **kwargs)
+
+    # Exercise the iproute2-present branch on every platform without consulting
+    # host interfaces or weakening the assertion against native route writes.
+    monkeypatch.setattr(helper, "shutil", SimpleNamespace(**{
+        **vars(helper.shutil), "which": lambda name: "/fixture/bin/ip" if name == "ip" else None,
+    }))
+    monkeypatch.setattr(helper, "_run", run_native)
+    config = tmp_path / "network.conf"
+    config.write_text(render_network_config(interfaces=[interface], vlans=[],
+                                            ipv4_link_local_fallback_enabled=False))
+    files, _, _ = helper._systemd_networkd_files(config)
+    old = networkd / "00-atlaso-mgmt.network"
+    old.write_text(files[old.name])
+    config.write_text(render_network_config(interfaces=[interface], vlans=[],
+                                            ipv4_link_local_fallback_enabled=True))
+
     state = {}
     events = []
     monkeypatch.setattr(helper, "_network_observation_command", observe)
@@ -84,7 +105,6 @@ def reenable(tmp_path, monkeypatch):
     monkeypatch.setattr(helper, "_restore_network_transaction", lambda *_args: events.append("rollback"))
     monkeypatch.setattr(helper, "_fsync_file", lambda *_args: None)
     monkeypatch.setattr(helper, "_fsync_directory", lambda *_args: None)
-    monkeypatch.setattr(helper, "_run", lambda *_args: pytest.fail("No old route may be invented"))
     return helper, config, old, native, state, events
 
 
@@ -99,6 +119,7 @@ def test_reenable_snapshots_empty_old_domain_without_inventing_routes(reenable):
     with helper._network_apply_transaction(config):
         helper._seed_transition_routes(state, bindings, config.parent / "state.json")
     assert events == []
+    assert native["runtime_address_reads"]
     assert len(native["route_reads"]) == 2
     assert state["previous_management_routing"]["eth0"] == {
         "mac": native["mac"], "table": 100, "cidrs": [], "ipv4ll_cidrs": [], "routes": [],

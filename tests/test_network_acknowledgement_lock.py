@@ -96,7 +96,11 @@ def test_lock_errors_are_not_retried_as_contention(monkeypatch):
     helper = load_helper_module()
 
     def denied(*_args):
-        """Represent a failed lock operation without retry authority."""
+        """Represent a failed lock operation without retry authority.
+
+        Args:
+            *_args: Ignored lock descriptor and operation flags.
+        """
         raise PermissionError("lock descriptor refused")
 
     monkeypatch.setattr(helper, "fcntl", SimpleNamespace(flock=denied, LOCK_EX=1, LOCK_NB=2))
