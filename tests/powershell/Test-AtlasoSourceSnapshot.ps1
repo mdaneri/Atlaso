@@ -348,7 +348,9 @@ $inspectorFiles = @(
     'scripts/interop/certificate_peer_transport.py', 'scripts/installation/__init__.py',
     'scripts/interop/certificate_trusted_host.py', 'scripts/interop/certificate_retirement.py',
     'scripts/interop/certificate_iso_bootstrap.py', 'scripts/interop/certificate_source_probe.py',
-    'scripts/installation/vnc_console.py', 'scripts/installation/vnc_frame.py'
+    'scripts/installation/vnc_console.py', 'scripts/installation/vnc_frame.py',
+    'scripts/interop/certificate_fixture_init.py', 'scripts/interop/certificate_peer_time.py',
+    'scripts/interop/time_source_guest.py'
 )
 foreach ($relative in $inspectorFiles) {
     $path = Join-Path $inspectorRepository $relative

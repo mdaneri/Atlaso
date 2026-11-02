@@ -171,6 +171,54 @@ ciphertext in its separately restricted host credential artifact; plans contain 
 Do not substitute an agent's personal key or fall back to another SSH identity if the approved task key is unavailable
 or rejected; stop and reconcile the approved key and its receipts.
 
+### Initialize a fresh appliance fixture
+
+A manual ISO installation can still have pending first-run DNS/DHCP and NTP settings. Establish the fixture baseline
+before the certificate bootstrap; its protected handoff bundle must not absorb those independent changes.
+This preparation reuses the existing non-grid **Appliance Settings**, **DNS**, and **NTP and NTS** forms and normal
+**Appliance Apply** review.
+
+Keep one real clock authority on the peer. For an Alpine peer already synchronized by Chrony, the seed's optional
+`--serve-ntp` uses its existing upstream configuration and admits only the private peer and the three appliance
+addresses on UDP 123. The IPv4 server binds to the peer's private address; IPv6 serving is confined to loopback.
+It refuses competing time controllers, synthetic local-clock sources, or an unsynchronized peer. It does not select
+new upstream sources. For an existing admitted peer, stage the same public configuration and installer returned by
+`certificate_peer_time.peer_time_files` over its pinned SSH session; preserve the original config and task-bound
+before/after records. Keep the original VM, host keys, interfaces and DHCP configuration. Do not reseed or create a
+second peer for this step. The verifier requires both recent genuine synchronization and a real, nonce-matched NTP reply.
+Chrony's [`bindaddress` and `allow` directives](https://chrony-project.org/doc/4.8/chrony.conf.html)
+define this serving scope.
+
+Add this explicit initialization intent to the existing receipt-bound plan, using its admitted peer address:
+
+```json
+"fixture_initialization": {
+  "peer_time_address": "192.168.77.1",
+  "resolver_address": "192.168.77.1",
+  "disable_dns_server": true,
+  "disable_ntp_server": true
+}
+```
+
+Using the reviewed Git-blob entrypoint and the same original resource references, run `-InitializeFixture` first.
+Review `fixture-initialization-inspection.json`, which contains public form fingerprints, original interface and TLS
+facts, and genuine peer-time observations. Tokens and private-material selectors remain in memory. Bind that immutable
+inspection's path and SHA-256 in a new plan reference named `fixture_initialization_inspection`, then run the entrypoint
+with `-InitializeFixture -ExecuteInitialization` and that execution plan.
+
+The explicit execution disables the fixture's DNS and NTP server roles, sets stable resolver/upstream values to the
+peer, and selects an NTP client with only the real private peer enabled as its time source. Other successful form
+controls and the factory upstream rows are preserved. It submits only the reviewed initialization roots: Appliance
+Settings, Network, CA, Firewall, Public Services, DNS/DHCP and NTP. A required disabled WAN/NAT replay is allowed only
+with the original routing-absence proof; independent pending work is refused.
+
+Require a successful task, clean Apply state, unchanged DHCP management interface, original CA and payload pins,
+continued routing absence, a synchronized NTP client with no competing controller, and the private peer selected in
+native `ntpq` readback. This preparation does not establish certificate acceptance. DNS verification records the
+configured resolver and upstream values through the later address transitions.
+The initialization journals precede desired edits and Apply submission. An unknown task outcome requires reconciliation
+from those records; never rerun it or overwrite the evidence. Then continue with the static bootstrap below.
+
 After the original ISO adapter is rewired and the trusted-host topology is admitted, use the reviewed Git-blob
 `scripts/windows/vmware/inspect-certificate-peer.ps1` entrypoint described in the
 [VMware lifecycle certificate workflow](vmware-workstation-lifecycle-testing.md#single-command-run). Do not invoke

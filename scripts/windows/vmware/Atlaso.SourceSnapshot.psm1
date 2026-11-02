@@ -597,7 +597,10 @@ function New-AtlasoCertificateInspectorSnapshot {
                 'scripts/interop/certificate_trusted_host.py',
                 'scripts/interop/certificate_retirement.py',
                 'scripts/interop/certificate_iso_bootstrap.py',
+                'scripts/interop/certificate_fixture_init.py',
+                'scripts/interop/certificate_peer_time.py',
                 'scripts/interop/certificate_source_probe.py',
+                'scripts/interop/time_source_guest.py',
                 'scripts/completed_task_files.py'
             ) } else { @(
                 'scripts/__init__.py', 'scripts/installation/__init__.py',

@@ -10,6 +10,7 @@ import re
 import sys
 from pathlib import Path
 
+from certificate_peer_time import peer_time_files
 from create_nocloud_seed_iso import add_file
 
 
@@ -92,6 +93,9 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
             ) for value in tunnel_addresses)
             or (tunnel_addresses and lease not in tunnel_addresses)):
         raise ValueError("Management tunnel addresses must be distinct appliance addresses including the DHCP lease.")
+    serve_ntp = getattr(args, "serve_ntp", False)
+    if not isinstance(serve_ntp, bool) or (serve_ntp and len(tunnel_addresses) != 3):
+        raise ValueError("Private NTP serving requires the three exact management addresses.")
 
     # dnsmasq's static range has no dynamic pool: only this exact MAC receives
     # the reservation. eth0 stays on the management network for SSH control.
@@ -106,6 +110,7 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
     extra_write_files = ""
     extra_commands = ""
     ssh_policy_command = ""
+    ntp_command = ""
     if publish_host_key:
         extra_packages = "  - open-vm-tools\n  - open-vm-tools-openrc\n  - open-vm-tools-guestinfo\n  - iproute2\n  - sudo\n"
         publisher = _host_key_serial_script()
@@ -140,6 +145,13 @@ sshd -T | grep -Fx 'gatewayports no'
             extra_write_files += (f"  - path: {path}\n    permissions: '{permissions}'\n    content: |\n"
                                   + "".join(f"      {line}\n" for line in content.splitlines()))
         ssh_policy_command = "  - /usr/local/sbin/atlaso-certificate-peer-sshd\n"
+    if serve_ntp:
+        extra_packages += "  - chrony\n"
+        for path, content in peer_time_files(str(network.ip), [str(value) for value in tunnel_addresses]).items():
+            permissions = "0755" if path.startswith("/usr/local/sbin/") else "0644"
+            extra_write_files += (f"  - path: {path}\n    permissions: '{permissions}'\n    content: |\n"
+                                  + "".join(f"      {line}\n" for line in content.splitlines()))
+        ntp_command = "  - /usr/local/sbin/atlaso-certificate-peer-chrony\n"
     host_key_policy = "ssh_deletekeys: false\n" if preserve_host_keys else ""
     user_data = f"""#cloud-config
 {host_key_policy}hostname: {args.hostname}
@@ -182,7 +194,7 @@ packages:
   - dnsmasq --test --conf-file=/etc/dnsmasq.conf
   - rc-update add dnsmasq default
   - rc-service dnsmasq restart
-{extra_commands}"""
+{extra_commands}{ntp_command}"""
     network_config = f"""version: 2
 ethernets:
   eth0:
@@ -212,6 +224,7 @@ def main() -> int:
     parser.add_argument("--publish-host-key-to-serial", action="store_true")
     parser.add_argument("--preserve-host-keys", action="store_true")
     parser.add_argument("--management-address", dest="management_addresses", action="append", default=[])
+    parser.add_argument("--serve-ntp", action="store_true")
     parser.add_argument("--instance-id")
     args = parser.parse_args()
     files = peer_files(args)

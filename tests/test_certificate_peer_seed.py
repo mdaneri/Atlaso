@@ -127,6 +127,20 @@ def test_management_channels_are_limited_to_three_addresses_before_sshd_restart(
     assert "AllowTcpForwarding" not in peer_files(_args())["user-data"]
 
 
+def test_optional_ntp_uses_the_same_peer_after_public_ssh_admission():
+    """Add real time serving without adding a VM or changing upstream sources."""
+    parsed = yaml.safe_load(peer_files(_args(serve_ntp=True, publish_host_key_to_serial=True,
+                                           management_addresses=["192.168.77.10", "192.168.77.30", "192.168.77.40"]))["user-data"])
+    assert "chrony" in parsed["packages"]
+    assert parsed["runcmd"].index("/usr/local/sbin/atlaso-certificate-peer-publish-host-key") < parsed["runcmd"].index(
+        "/usr/local/sbin/atlaso-certificate-peer-chrony")
+    config = next(row["content"] for row in parsed["write_files"] if row["path"].endswith("peer-chrony.conf"))
+    assert "bindaddress 192.168.77.1" in config and "allow 192.168.77.40/32" in config
+    assert "local stratum" not in config and "server " not in config
+    with pytest.raises(ValueError):
+        peer_files(_args(serve_ntp=True))
+
+
 @pytest.mark.parametrize("addresses", [
     ["192.168.78.10"], ["192.168.77.1"], ["192.168.77.0"], ["192.168.77.255"],
     ["192.168.77.30"], ["192.168.77.10", "192.168.77.10"], ["any"],

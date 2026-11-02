@@ -19,6 +19,10 @@ Task-owned isolated Python virtual environment with locked native dependencies.
 Inspect the original ISO fixture before its first static certificate-test baseline.
 .PARAMETER ExecuteBootstrap
 Permit the bootstrap's reviewed Physical Interfaces and Appliance Apply transition.
+.PARAMETER InitializeFixture
+Inspect first-run DNS and clock prerequisites on the original ISO fixture.
+.PARAMETER ExecuteInitialization
+Permit the inspected fixture's fixed DNS and real-peer NTP client initialization through normal Apply.
 #>
 [CmdletBinding()]
 param(
@@ -30,11 +34,15 @@ param(
     [Parameter(Mandatory)][string]$EnvironmentId,
     [Parameter(Mandatory)][string]$PythonPath,
     [switch]$Bootstrap,
-    [switch]$ExecuteBootstrap
+    [switch]$ExecuteBootstrap,
+    [switch]$InitializeFixture,
+    [switch]$ExecuteInitialization
 )
 
 $ErrorActionPreference = 'Stop'
 if ($ExecuteBootstrap -and -not $Bootstrap) { throw 'ExecuteBootstrap requires Bootstrap.' }
+if ($ExecuteInitialization -and -not $InitializeFixture) { throw 'ExecuteInitialization requires InitializeFixture.' }
+if ($InitializeFixture -and $Bootstrap) { throw 'Fixture initialization and static bootstrap are separate operations.' }
 if ($PSScriptRoot) {
     throw 'Invoke the certificate inspector from reviewed Git-blob bytes, not a checkout script path.'
 }
@@ -135,8 +143,9 @@ try {
     foreach ($pin in (Protect-AtlasoCertificateProofInputs -Plan $Plan -EvidenceRoot $evidenceRoot)) {
         $snapshot.Pins.Add($pin)
     }
-    $scriptPath = Join-Path $snapshot.Root $(if ($Bootstrap) { 'scripts/interop/certificate_iso_bootstrap.py' } else { 'scripts/interop/certificate_peer_proof.py' })
-    $scriptArguments = if ($Bootstrap) {
+    $scriptPath = Join-Path $snapshot.Root $(if ($InitializeFixture) { 'scripts/interop/certificate_fixture_init.py' }
+        elseif ($Bootstrap) { 'scripts/interop/certificate_iso_bootstrap.py' } else { 'scripts/interop/certificate_peer_proof.py' })
+    $scriptArguments = if ($Bootstrap -or $InitializeFixture) {
         @('--plan', $Plan, '--output-directory', [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($AddressEvidence)))
     } else { @('--plan', $Plan, '--address-output', $AddressEvidence, '--runtime-output', $RuntimeEvidence) }
     $arguments = New-AtlasoCertificatePythonArguments -Runtime $runtime -ScriptPath $scriptPath `
@@ -145,7 +154,7 @@ try {
         -TimeoutSeconds 30 -Action 'Certificate original peer admission' -DiscardOutput | Out-Null
     $null = Assert-AtlasoSourceSnapshot -Root $snapshot.Root -ExpectedSha256 $snapshot.Sha256 `
         -ExpectedFileCount $snapshot.FileCount
-    if ($ExecuteBootstrap) { $arguments += '--execute' }
+    if ($ExecuteBootstrap -or $ExecuteInitialization) { $arguments += '--execute' }
     $pair = $null
     $plain = $null
     $protectedPeerKey = $null
