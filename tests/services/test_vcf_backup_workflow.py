@@ -2318,3 +2318,23 @@ def test_stop_or_actor_revocation_after_preflight_prevents_next_native_write(har
     assert harness["backend"].backup_starts == []
     expected = "task was stopped" if revocation == "stop-job" else "enabled administrator"
     assert expected in state["error"]
+
+
+def test_reconciliation_rejects_replaced_native_identity_before_task_lookup(harness):
+    """Never interpret an old task ID through a replacement discovered appliance.
+
+    Args:
+        harness: Pinned native and receiver integrations with replaceable identity.
+    """
+    inspected, source, state = _leave_backup_submitted_for_recovery(harness)
+    backend = harness["backend"]
+    backend.status_references.clear()
+    backend.appliance_identities[source["address"]] = "replacement-manager"
+    with SessionLocal() as db:
+        with pytest.raises(workflow.BackupOperationError, match="identity changed"):
+            settled_reconcile(db, "admin", "reconcile", {
+                "operation_id": inspected["operation_id"], "sources": [source], "close_reviewed": True,
+            }, CapturedDispatcher())
+        assert read_operation(db, inspected["operation_id"])["state"] == state["state"]
+        assert db.query(Setting).filter(Setting.key.startswith(workflow.LOCK_PREFIX)).all()
+    assert backend.status_references == []

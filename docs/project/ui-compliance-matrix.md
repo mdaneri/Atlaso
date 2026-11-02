@@ -133,7 +133,7 @@ read-only or unavailable surface has a mutation workflow.
 | `/ui/management/vcf-offline-depot` — settings, VCFDT, profiles, tasks | Wizard-backed Tabulator and non-grid settings; ESX Storage/DNS and Automation schedule references | Profile fallback, settings summaries, validation, Tasks fallback, and task status | Admin writes; contextual four-step schedule binds type/profile server-side; transient Start feedback; per-profile queue and exclusive identity/apply boundaries preserved | Pass D/N/K/F/Z/V | E1–E8 |
 | `/ui/management/vcf-offline-depot/tasks/{job_id}/log` — task log | Established read-only task/log detail | Bounded, redacted log and error state render in HTML | Authenticated read; no mutation | Pass D/N/K/F/Z; V N/A | E1, E3–E5, E7–E8 |
 | `/ui/management/vcf-private-registry` — settings and bundles | Wizard-backed Tabulator and non-grid settings; ESX Storage/DNS references | Bundle fallback, settings, validation, and redacted previews | Admin desired-state writes; shared deletion confirmation; global registry apply only | Pass D/N/K/F/Z/V | E1–E8 |
-| `/ui/management/vcf-backups` — SFTP settings and validation | Non-grid settings; DNS reference | Complete settings, validation, and redacted config preview render in HTML | Admin autosave with CSRF; selected-user dependency; global `vcf_backups` apply only | Pass D/N/K/F/Z/V | E1–E8 |
+| `/ui/management/vcf-backups` — SFTP settings, validation, and backup operations | Non-grid settings; read-only Tabulator using Tasks/Audit Events `createGrid` references | Complete settings and redacted config preview; semantic operations-table fallback; date, local time, elapsed runtime, status, component and source columns | Admin SFTP autosave with CSRF and global `vcf_backups` apply only; admin operation status and read-only reconciliation | Pass D/N/K/F/Z/V | E1–E8 |
 | `/ui/management/esx-storage` — volumes and NFS datastores | Wizard-backed Tabulator; ESX Storage reference | Paired volume/share fallback tables and rendered validation/instructions | Admin writes; format authorization and removal confirmation; global `esx_storage` apply only | Pass D/N/K/F/Z/V | E1–E8 |
 | `/ui/management/authentication` — provider, clients, keys, mappings, tokens | Wizard-backed, direct-edit, and read-only Tabulator; ESX Storage/Physical Interfaces/Tasks references | Five paired fallbacks and complete provider settings | Admin writes, CSRF, one-time secret display, shared delete confirmation; no host apply side effect | Pass D/N/K/F/Z/V | E1–E8 |
 | `/ui/management/openid-connect` — canonical OIDC entry | Same authenticated surface and contract as `/ui/management/authentication` | Same server response and paired fallbacks | Same role, secret, validation, and confirmation boundaries | Pass D/N/K/F/Z/V | E1–E8 |
@@ -232,7 +232,7 @@ Shared-only templates are `base.html`, `public_portal_base.html`, `partials/appl
 `partials/brand_mark.html`, `partials/config_preview_action.html`, `partials/resource_wizard.html`,
 `partials/port_forwarding.html`,
 `partials/task_grid.html`, `partials/task_modals.html`, `partials/terminal_panel.html`, `partials/vcf_ldap_modal.html`,
-`partials/vcf_backup_modal.html`, `partials/vcf_backup_status_modal.html`,
+`partials/vcf_backup_modal.html`, `partials/vcf_backup_operations.html`, `partials/vcf_backup_status_modal.html`,
 `partials/vcf_sddc_deploy_modal.html`, `partials/vcf_sddc_upload_modal.html`, `partials/vcf_target_depot_modal.html`, `partials/vcf_trust_modal.html`,
 `partials/vcf_vault_credential_picker.html`, `partials/vcf_vault_import_modal.html`, and
 `partials/vcf_appliance_certificate_modal.html`.
@@ -306,6 +306,12 @@ backup completion is recorded only after task and receiver-artifact verification
 through `vcf-backup-status-modal`, following the **Tasks** status reference. Operators can load an existing operation,
 review its task, and explicitly reconcile native state without repeating native writes. This records the interaction
 contract without claiming deployed-appliance or native VCF acceptance.
+
+`partials/vcf_backup_operations.html` adds the administrator-only, read-only Operations grid to VCF Backups. It reuses
+the shared `createGrid` pattern from **Tasks** and **Audit Events**, with a semantic fallback while JavaScript loads or
+if grid setup fails. Loaded rows support column filters and pagination through **Load more operations**; date, local
+time, elapsed runtime, status, component count, and source are visible. Opening a row shows the existing status popup;
+reconciliation remains an explicit read-only refresh of native state and does not repeat native writes.
 
 ### VCF lab overrides (#849, #873)
 

@@ -2441,6 +2441,7 @@ Export-ModuleMember -Function @(
     'ConvertFrom-AtlasoVmrunListOutput',
     'Get-AtlasoPathIdentity',
     'Get-AtlasoVmxDisplayName',
+    'Confirm-AtlasoWorkstationVmInactive',
     'Repair-AtlasoWorkstationStaleRegistrations',
     'Remove-AtlasoWorkstationArtifactRoot',
     'Remove-AtlasoWorkstationVmArtifacts',

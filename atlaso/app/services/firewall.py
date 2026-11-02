@@ -1045,7 +1045,8 @@ def render_nftables_config(
             lines.append(f'    ip saddr {effective_management_source_cidr} tcp dport {{ 22, 80, 443 }} accept comment "Atlaso management access"')
         if settings.allow_icmp:
             lines.append('    meta l4proto icmp accept comment "Atlaso ICMP diagnostics"')
-            lines.append('    meta l4proto ipv6-icmp accept comment "Atlaso IPv6 ICMP diagnostics"')
+            # Minimal Photon installations need not include /etc/protocols.
+            lines.append('    meta l4proto 58 accept comment "Atlaso IPv6 ICMP diagnostics"')
         for rule in sorted(
             [item for item in chain_rules if item not in prelude],
             key=lambda item: item.priority,

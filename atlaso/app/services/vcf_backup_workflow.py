@@ -654,9 +654,9 @@ def _current_native_identity(native: NativeBackup, source: dict[str, Any]) -> No
             "groups": sorted(({
                 "id": group["id"],
                 "product": group.get("product"),
-                "component_ids": group.get("component_ids", []),
+                "component_ids": sorted(group.get("component_ids", [])),
                 "native_identity": {key: value for key, value in group.get("native_identity", {}).items() if key != "exists"},
-                "reservation_keys": group.get("reservation_keys", []),
+                "reservation_keys": sorted(group.get("reservation_keys", [])),
             } for group in inventory["groups"]), key=lambda group: group["id"]),
             "components": sorted(({
                 key: component.get(key)
@@ -1369,7 +1369,7 @@ def _reconcile(db: Session, actor: str, row: Setting, state: dict[str, Any], val
         source, credential = inputs[group["source_id"]]
         with NativeBackup(source, credential) as native:
             native.login()
-            native.discover()
+            _current_native_identity(native, source)
             report = {"group_id": group["id"], "checkpoint": group["checkpoint"], "current": native.current(group["native_group_id"])}
             report["configuration_matches_review"] = _matches(report["current"], group["proposed"])
             reference = group.get("backup_reference")

@@ -1716,7 +1716,12 @@ class NativeBackup:
             raise ValueError("Native backup reference does not match this group")
         item = self._group(group)
         component_ids = reference.get("component_ids")
-        if not isinstance(component_ids, list) or component_ids != item["component_ids"]:
+        if (
+            not isinstance(component_ids, list)
+            or any(not isinstance(component_id, str) or not component_id for component_id in component_ids)
+            or len(component_ids) != len(set(component_ids))
+            or set(component_ids) != set(item["component_ids"])
+        ):
             raise ValueError("Native backup reference has invalid component coverage")
         started_at = reference.get("started_at")
         if not isinstance(started_at, str) or not started_at:

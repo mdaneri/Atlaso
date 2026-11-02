@@ -2240,3 +2240,63 @@ def test_native_validation_execution_status_overrides_result_success(payload: di
     result = _validation_result(payload)
     assert result["supported"] is True
     assert result["valid"] is False
+
+
+def test_fleet_status_accepts_recorded_component_coverage_in_any_order() -> None:
+    root_transport = FakeTransport(None, [])
+    fleet_transport = FakeTransport(
+        None,
+        [
+            (200, {"status": "SUCCEEDED"}),
+            (200, {"backups": [{"name": "2026-10-28T10-00-00Z", "path": "/backups/a", "points": ["2026-10-28T10-00-00Z"]}]}),
+            (200, {"backups": [{"name": "2026-10-28T10-01-00Z", "path": "/backups/b", "points": ["2026-10-28T10-01-00Z"]}]}),
+        ],
+    )
+    adapter = NativeBackup(source(), credentials(), transport_factory=lambda _target: root_transport)
+    attach_fleet_transport(adapter, fleet_transport)
+    adapter._inventory = {"groups": [{"id": "lcm-1", "product": "fleet", "component_ids": ["a", "b"]}]}
+    reference = {
+        "kind": "fleet", "group_id": "lcm-1", "native_task_id": "task-1",
+        "component_ids": ["b", "a"], "fleet_artifacts": [],
+        "started_at": "2026-10-28T10:00:00+00:00",
+    }
+
+    status = adapter.backup_status("lcm-1", reference)
+
+    assert status["state"] == "succeeded"
+    assert [artifact["component_id"] for artifact in status["artifacts"]] == ["a", "b"]
+
+
+@pytest.mark.parametrize(
+    "component_ids",
+    [
+        ["a", "a"],
+        ["a", "other"],
+        ["a", ["b"]],
+        ["a", None],
+        "a",
+    ],
+)
+def test_fleet_status_rejects_duplicate_malformed_or_ineligible_component_coverage(
+    component_ids: Any,
+) -> None:
+    """Reject malformed or changed recorded coverage before any native request.
+
+    Args:
+        component_ids: Invalid recorded component membership supplied by the parameterized case.
+    """
+    root_transport = FakeTransport(None, [])
+    fleet_transport = FakeTransport(None, [])
+    adapter = NativeBackup(source(), credentials(), transport_factory=lambda _target: root_transport)
+    attach_fleet_transport(adapter, fleet_transport)
+    adapter._inventory = {"groups": [{"id": "lcm-1", "product": "fleet", "component_ids": ["a", "b"]}]}
+    reference = {
+        "kind": "fleet", "group_id": "lcm-1", "native_task_id": "task-1",
+        "component_ids": component_ids, "fleet_artifacts": [],
+        "started_at": "2026-10-28T10:00:00+00:00",
+    }
+
+    with pytest.raises(ValueError, match="invalid component coverage"):
+        adapter.backup_status("lcm-1", reference)
+
+    assert fleet_transport.requests == []

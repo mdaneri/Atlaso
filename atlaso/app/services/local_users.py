@@ -8,6 +8,10 @@ from datetime import datetime
 from typing import Any
 
 from atlaso.app.models import User, utcnow
+from atlaso.local_user_password_policy import (
+    DEFAULT_PASSWORD_POLICY as DEFAULT_PASSWORD_POLICY,
+)
+from atlaso.local_user_password_policy import validate_password as validate_password
 
 LOCAL_USERS_PASSWORD_POLICY_KEY = "local_users.password_policy.v1"
 LOCAL_USERS_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/local-users/atlaso-users.json"
@@ -36,15 +40,6 @@ RESERVED_USERNAMES = {
     "sync",
     "systemd-network",
     "systemd-resolve",
-}
-
-DEFAULT_PASSWORD_POLICY: dict[str, bool | int] = {
-    "min_length": 12,
-    "require_uppercase": True,
-    "require_lowercase": True,
-    "require_number": True,
-    "require_special": True,
-    "disallow_username": True,
 }
 
 _PENDING_OS_PASSWORDS: dict[str, tuple[str, datetime]] = {}
@@ -216,35 +211,6 @@ def password_policy_summary(policy: dict[str, bool | int]) -> str:
     if policy.get("disallow_username"):
         parts.append("no username")
     return ", ".join(parts)
-
-
-def validate_password(password: str, username: str, policy: dict[str, bool | int]) -> list[str]:
-    """Validate password.
-
-    Args:
-        password: Password supplied for the immediate authenticated operation.
-        username: Account name used for authentication or lookup.
-        policy: Policy values to validate or enforce.
-
-    Returns:
-        The validate password result.
-    """
-    errors: list[str] = []
-    min_length = int(policy.get("min_length") or DEFAULT_PASSWORD_POLICY["min_length"])
-    if len(password) < min_length:
-        errors.append(f"Password must be at least {min_length} characters.")
-    if policy.get("require_uppercase") and not any(character.isupper() for character in password):
-        errors.append("Password must include an uppercase letter.")
-    if policy.get("require_lowercase") and not any(character.islower() for character in password):
-        errors.append("Password must include a lowercase letter.")
-    if policy.get("require_number") and not any(character.isdigit() for character in password):
-        errors.append("Password must include a number.")
-    if policy.get("require_special") and not any(not character.isalnum() for character in password):
-        errors.append("Password must include a special character.")
-    normalized_username = username.strip().lower()
-    if policy.get("disallow_username") and normalized_username and normalized_username in password.lower():
-        errors.append("Password must not contain the username.")
-    return errors
 
 
 def validate_local_usernames(users: list[User]) -> list[str]:

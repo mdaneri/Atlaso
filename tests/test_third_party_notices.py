@@ -24,6 +24,29 @@ def load_module():
     return module
 
 
+def test_notice_version_lock(tmp_path):
+    """A selected release's installed package cannot satisfy a newer source lock.
+
+    Args:
+        tmp_path: Isolated installed metadata and different dependency locks.
+    """
+    module = load_module()
+    environment = tmp_path / "environment"
+    metadata = environment / "Lib/site-packages/authlib-1.8.0.dist-info/METADATA"
+    metadata.parent.mkdir(parents=True)
+    metadata.write_text(
+        "Metadata-Version: 2.4\nName: Authlib\nVersion: 1.8.0\n"
+        "License-Expression: BSD-3-Clause\nHome-page: https://example.invalid/authlib\n"
+    )
+    release, checkout = tmp_path / "release.lock", tmp_path / "checkout.lock"
+    release.write_text("authlib==1.8.0\n")
+    checkout.write_text("authlib==1.9.1\n")
+    records = module.installed_python_records(environment, module.locked_packages(release))
+    assert records["authlib"]["version"] == "1.8.0"
+    with pytest.raises(ValueError, match="installed Python version mismatch"):
+        module.installed_python_records(environment, module.locked_packages(checkout))
+
+
 def write_wheel(path: Path, *, license_name: str = "MIT") -> None:
     """Persist wheel.
 

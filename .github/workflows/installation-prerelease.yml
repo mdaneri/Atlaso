@@ -1,0 +1,227 @@
+name: Finalize offline installation prerelease
+run-name: Finalize ${{ inputs.prerelease_tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact successful main software-release commit
+        required: true
+        type: string
+      prerelease_tag:
+        description: Existing annotated installation-vX.Y.Z-rc.N tag with a hidden draft containing candidate inputs
+        required: true
+        type: string
+      publish:
+        description: Publish an already signed hidden candidate after exact-ISO validation
+        type: boolean
+        default: false
+      validated_iso_sha256:
+        description: ISO SHA-256 whose offline install, reboot, update/rollback, and unselected-disk preservation the maintainer verified
+        type: string
+        required: false
+
+concurrency:
+  group: installation-prerelease-${{ inputs.prerelease_tag }}
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    name: Verify, sign, and publish installation prerelease
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: appliance-release
+    permissions:
+      actions: read
+      contents: write
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Install locked application and release tooling
+        env:
+          PIP_CONFIG_FILE: /dev/null
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends rpm rpm2cpio cpio createrepo-c
+          python -m pip install --require-hashes --requirement requirements-appliance.lock
+          python -m pip install --require-hashes --requirement requirements-release-tools.lock
+      - name: Admit exact main release and immutable installation tag
+        id: admission
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_TAG: ${{ inputs.prerelease_tag }}
+          PUBLISH: ${{ inputs.publish }}
+          VALIDATED_ISO_SHA256: ${{ inputs.validated_iso_sha256 }}
+        run: |
+          set -euo pipefail
+          python - "$RELEASE_SHA" "$RELEASE_TAG" <<'PY'
+          import re, sys
+          if not re.fullmatch(r'[0-9a-f]{40}', sys.argv[1]):
+              raise SystemExit('release_sha must be a full commit SHA')
+          match = re.fullmatch(r'installation-v([0-9]+\.[0-9]+\.[0-9]+)-rc\.[1-9][0-9]*', sys.argv[2])
+          if not match:
+              raise SystemExit('only installation prerelease tags are supported')
+          with open('installation.env', 'w') as handle:
+              handle.write(f'VERSION={match[1]}\n')
+          PY
+          . ./installation.env
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor "$RELEASE_SHA" origin/main
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/v$VERSION" --jq .sha)" = "$RELEASE_SHA"
+          COUNT="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+            -f head_sha="$RELEASE_SHA" -f branch=main -f event=push -f status=success -f per_page=100 --jq .total_count)"
+          test "$COUNT" -ge 1
+          TAG="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.type + " " + .object.sha')"
+          test "${TAG%% *}" = tag
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/tags/${TAG#* }" --jq .object.sha)" = "$RELEASE_SHA"
+          gh release view "v$VERSION" --json isDraft,isPrerelease > software-release.json
+          test "$(jq -r '.isDraft or .isPrerelease' software-release.json)" = false
+          gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,assets > candidate-release.json
+          test "$(jq -r .isPrerelease candidate-release.json)" = true
+          echo "draft=$(jq -r .isDraft candidate-release.json)" >> "$GITHUB_OUTPUT"
+          echo "build=false" >> "$GITHUB_OUTPUT"
+          mkdir inputs final validation finalization verification
+          if test "$(jq -r .isDraft candidate-release.json)" = false || \
+            jq --exit-status '.assets | any(.name == "installation-artifact-index.json")' candidate-release.json >/dev/null; then
+            gh release download "$RELEASE_TAG" --dir final
+            python scripts/verify_installation_iso.py --assets final \
+              --trust-key image/common/update-trust/atlaso-release-2026-01.pem \
+              --version "$VERSION" --commit "$RELEASE_SHA" --scratch verification
+            if test "$PUBLISH" = true; then
+              test "${#VALIDATED_ISO_SHA256}" -eq 64
+              test "$(jq -r .asset_manifest.iso.sha256 final/installation-artifact-index.json)" = "$VALIDATED_ISO_SHA256"
+              python - <<'PY'
+          import json
+          index = json.load(open('final/installation-artifact-index.json'))
+          expected = {item['name'] for item in index['asset_manifest']['assets']}
+          expected |= {'installation-artifact-index.json', 'installation-artifact-index.json.sig', index['verifier']['name']}
+          actual = {item['name'] for item in json.load(open('candidate-release.json'))['assets']}
+          if actual != expected:
+              raise SystemExit('candidate contains extra or partially uploaded assets; preserve it for reconciliation')
+          PY
+            fi
+          else
+            test "$PUBLISH" != true || { echo 'Stage the signed ISO and validate it before requesting publication.'; exit 1; }
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            python - <<'PY'
+          import json
+          assets = json.load(open('candidate-release.json'))['assets']
+          names = [item['name'] for item in assets]
+          allowed = all(name == 'installation-inputs-index.json' or name.startswith('installation-inputs.tar.gz') for name in names)
+          if not names or len(names) != len(set(names)) or not allowed or sum(item['size'] for item in assets) > 18 * 1024**3:
+              raise SystemExit('candidate draft is incomplete, oversized, or partially finalized; preserve it for reconciliation')
+          PY
+            gh release download "$RELEASE_TAG" --dir inputs
+            python - <<'PY'
+          import json
+          from pathlib import Path
+          from scripts.installation.assets import verify_and_reassemble
+          value = json.loads(Path('inputs/installation-inputs-index.json').read_bytes())
+          if value.get('iso', {}).get('size', 0) > 16 * 1024**3 or value.get('iso', {}).get('name') != 'installation-inputs.tar.gz':
+              raise SystemExit('candidate input archive is invalid or oversized')
+          verify_and_reassemble(value, Path('inputs'), Path('installation-inputs.tar.gz'))
+          PY
+            python scripts/build_installation_iso.py unpack-inputs --archive installation-inputs.tar.gz --output payload
+            python scripts/build_installation_iso.py validate --payload payload --commit "$RELEASE_SHA" \
+              --version "$VERSION" --scratch validation
+          fi
+      - name: Download pinned Photon boot media
+        if: steps.admission.outputs.build == 'true'
+        run: |
+          curl --fail --location --proto '=https' --tlsv1.2 --output photon.iso \
+            https://packages.broadcom.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso
+      - name: Materialize protected signing key
+        if: steps.admission.outputs.build == 'true'
+        env:
+          RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY }}
+        run: |
+          test -n "$RELEASE_SIGNING_PRIVATE_KEY"
+          umask 077
+          printf '%s\n' "$RELEASE_SIGNING_PRIVATE_KEY" > "$RUNNER_TEMP/installation-signing-key.pem"
+      - name: Sign embedded payload and exact ISO assets
+        if: steps.admission.outputs.build == 'true'
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          . ./installation.env
+          python scripts/build_installation_iso.py finalize --payload payload --commit "$RELEASE_SHA" \
+            --version "$VERSION" --source-iso photon.iso --output final --scratch finalization \
+            --signing-key "$RUNNER_TEMP/installation-signing-key.pem"
+          python scripts/verify_installation_iso.py --assets final \
+            --trust-key image/common/update-trust/atlaso-release-2026-01.pem \
+            --version "$VERSION" --commit "$RELEASE_SHA" --scratch verification
+      - uses: actions/attest-build-provenance@v4
+        if: steps.admission.outputs.build == 'true'
+        with:
+          subject-path: final/*
+      - name: Stage only the signed prerelease asset set
+        if: steps.admission.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.prerelease_tag }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+          TAG="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.sha)"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG" --jq .object.sha)" = "$RELEASE_SHA"
+          for file in final/*; do gh release upload "$RELEASE_TAG" "$file"; done
+          python - <<'PY' > input-assets.txt
+          import json
+          for asset in json.load(open('candidate-release.json'))['assets']:
+              print(asset['name'])
+          PY
+          while IFS= read -r name; do gh release delete-asset "$RELEASE_TAG" "$name" --yes; done < input-assets.txt
+      - name: Publish maintainer-validated exact ISO
+        if: inputs.publish && steps.admission.outputs.draft == 'true' && steps.admission.outputs.build != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.prerelease_tag }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          VALIDATED_ISO_SHA256: ${{ inputs.validated_iso_sha256 }}
+        run: |
+          set -euo pipefail
+          test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true
+          TAG="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.sha)"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG" --jq .object.sha)" = "$RELEASE_SHA"
+          mkdir publication-candidate
+          gh release view "$RELEASE_TAG" --json assets > publication-release.json
+          gh release download "$RELEASE_TAG" --dir publication-candidate
+          . ./installation.env
+          python scripts/verify_installation_iso.py --assets publication-candidate \
+            --trust-key image/common/update-trust/atlaso-release-2026-01.pem \
+            --version "$VERSION" --commit "$RELEASE_SHA" --scratch verification
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          index = json.load(open('publication-candidate/installation-artifact-index.json'))
+          expected = {item['name'] for item in index['asset_manifest']['assets']}
+          expected |= {'installation-artifact-index.json', 'installation-artifact-index.json.sig', index['verifier']['name']}
+          current = {item['name'] for item in json.load(open('publication-release.json'))['assets']}
+          downloaded = {item.name for item in Path('publication-candidate').iterdir()}
+          if current != expected or downloaded != expected or index['asset_manifest']['iso']['sha256'] != os.environ['VALIDATED_ISO_SHA256']:
+              raise SystemExit('publication candidate differs from the validated signed asset set')
+          PY
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false \
+            --notes 'Signed offline x86-64 UEFI installation candidate. Secure Boot disabled. Physical-hardware acceptance remains pending; see issue #542.'
+          mkdir published
+          gh release download "$RELEASE_TAG" --dir published
+          . ./installation.env
+          python scripts/verify_installation_iso.py --assets published \
+            --trust-key image/common/update-trust/atlaso-release-2026-01.pem \
+            --version "$VERSION" --commit "$RELEASE_SHA" --scratch verification
+      - name: Remove protected key
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/installation-signing-key.pem"

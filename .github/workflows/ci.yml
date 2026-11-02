@@ -178,6 +178,9 @@ jobs:
           ./tests/powershell/Test-AtlasoVirtualizationCapacity.ps1
           ./tests/powershell/Test-AtlasoVirtualizationIsoCapacity.ps1
           ./tests/powershell/Test-AtlasoSmokeConsole.ps1
+          ./tests/powershell/Test-InstallationIsoVm.ps1
+          ./tests/powershell/Test-InstallationIsoHostCapacity.ps1
+          ./tests/powershell/Test-InstallationValidationRoot.ps1
           ./tests/powershell/Test-AtlasoWorkstationLanSegments.ps1 -StateRoot (Join-Path $env:GITHUB_WORKSPACE 'test-results/lan-segments')
       - name: Verify VMware launcher console isolation
         shell: pwsh

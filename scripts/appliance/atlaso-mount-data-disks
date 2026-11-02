@@ -30,6 +30,12 @@ load_policy() {
   # The image build writes this root-owned file from fixed, non-operator input.
   # shellcheck disable=SC1090
   . "$POLICY_PATH"
+  # ISO installations have already partitioned every explicitly consented disk.
+  # Never enter virtual-disk discovery/formatting, even when the receipt is lost.
+  if [ "${ATLASO_STORAGE_PROFILE:-}" = "installation" ] ||
+    [ -e /etc/atlaso/installation-profile ] || [ -L /etc/atlaso/installation-profile ]; then
+    exec python3 /opt/atlaso/scripts/installation/layout.py verify
+  fi
   : "${ATLASO_DATA_DISK_SIZE_BYTES:?missing data-disk capacity policy}"
   if [ -z "${ATLASO_DEPOT_SCSI_TUPLE:-}" ] || [ -z "${ATLASO_BACKUP_SCSI_TUPLE:-}" ]; then
     virtualization_provider="${ATLASO_VIRTUALIZATION_PROVIDER:-}"

@@ -74,6 +74,11 @@ intentionally omitted for this field.
 
 ## Verify and recover
 
+Generated IPv6 ICMP diagnostic rules use protocol number `58`, so loading them does not require an `/etc/protocols`
+database. A `Could not resolve protocol name` error from an older ruleset is a ruleset validation failure, independent
+of whether DHCP assigned an address. Check the failing rule with `nft -c -f /etc/atlaso/nftables.d/atlaso.nft` before
+recovery; submit corrected desired state through the global Firewall Apply workflow.
+
 Port-forward admissions appear as read-only generated rows attributed to their Traffic Publishing resource. They
 match the original listener, protocol, external ports, source boundary, and ingress of the translated connection.
 Edit the owning [port forward](../operate/traffic-publishing.md#configure-port-forwarding) to change that boundary.

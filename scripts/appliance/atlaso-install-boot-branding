@@ -3,6 +3,11 @@ set -eu
 
 theme_source="${1:?GRUB theme source path required}"
 background_source="${2:?GRUB background source path required}"
+serial_option="${3:-}"
+case "$serial_option" in
+    ''|--development-serial-console) ;;
+    *) echo "Unknown Atlaso boot branding option." >&2; exit 2 ;;
+esac
 grub_config="${ATLASO_GRUB_CONFIG:-/boot/grub2/grub.cfg}"
 theme_dir="${ATLASO_GRUB_THEME_DIR:-/boot/grub2/themes/atlaso}"
 
@@ -22,10 +27,17 @@ if ! grep -Eq '^set theme=' "$grub_config"; then
     echo "Photon GRUB configuration does not declare a theme." >&2
     exit 2
 fi
-if ! grep -Eq '^[[:space:]]*linux /\$photon_linux([[:space:]]|$)' "$grub_config"; then
+if grep -Eq '^[[:space:]]*linux /boot/\$photon_linux([[:space:]]|$)' "$grub_config"; then
+    kernel_regex='/boot/\$photon_linux'
+    theme_path='/boot/grub2/themes/atlaso/theme.txt'
+elif grep -Eq '^[[:space:]]*linux /\$photon_linux([[:space:]]|$)' "$grub_config"; then
+    kernel_regex='/\$photon_linux'
+    theme_path='/grub2/themes/atlaso/theme.txt'
+else
     echo "Photon GRUB configuration does not declare a Photon kernel entry." >&2
     exit 2
 fi
+kernel_line_pattern="^[[:space:]]*linux ${kernel_regex}"
 install -d -o root -g root -m 0755 "$theme_dir"
 install -o root -g root -m 0644 "$theme_source" "$theme_dir/theme.txt"
 install -o root -g root -m 0644 "$background_source" "$theme_dir/atlaso.png"
@@ -33,8 +45,8 @@ install -o root -g root -m 0644 "$background_source" "$theme_dir/atlaso.png"
 if [ ! -f "$grub_config.atlaso-backup" ]; then
     install -o root -g root -m 0644 "$grub_config" "$grub_config.atlaso-backup"
 fi
-sed -i 's#^set theme=.*#set theme=/grub2/themes/atlaso/theme.txt#' "$grub_config"
-sed -i '/^menuentry "\(Photon\|Atlaso Appliance\|Atlaso\)" {/s//menuentry " " {/' "$grub_config"
+sed -i "s#^set theme=.*#set theme=$theme_path#" "$grub_config"
+sed -i '/^menuentry "\(Photon\|Atlaso Appliance\|Atlaso\| \)" {/s//menuentry "Atlaso Appliance" {/' "$grub_config"
 if grep -Eq '^(set[[:space:]]+)?gfxmode=' "$grub_config"; then
     sed -i 's/^\(set[[:space:]]\+\)\?gfxmode=.*/gfxmode="1280x800"/' "$grub_config"
 else
@@ -45,16 +57,32 @@ if grep -Eq '^(set[[:space:]]+)?gfxpayload=' "$grub_config"; then
 else
     sed -i '/^set theme=/i gfxpayload=keep' "$grub_config"
 fi
-sed -i '/^[[:space:]]*linux \/\$photon_linux\([[:space:]]\|$\)/ {
+sed -i '/^[[:space:]]*linux \/\(boot\/\)\?\$photon_linux\([[:space:]]\|$\)/ {
     s/\([[:space:]]\)fbcon=font:[^[:space:]]*/\1fbcon=font:VGA8x16/g
     /[[:space:]]fbcon=font:VGA8x16\([[:space:]]\|$\)/! s/$/ fbcon=font:VGA8x16/
 }' "$grub_config"
 
-grep -q '^set theme=/grub2/themes/atlaso/theme.txt$' "$grub_config"
-grep -q '^menuentry " " {$' "$grub_config"
+if [ "$serial_option" = '--development-serial-console' ]; then
+    # Only the admitted development installer requests this console; ordinary
+    # image provisioning keeps the existing VGA configuration and kernel args.
+    if ! grep -Fqx 'insmod serial' "$grub_config"; then
+        sed -i '/^terminal_output gfxterm/i insmod serial\nserial --unit=0 --speed=115200 --word=8 --parity=no --stop=1\nterminal_input console serial' "$grub_config"
+    fi
+    sed -i 's/^terminal_output gfxterm$/terminal_output gfxterm serial/' "$grub_config"
+    sed -i '/^[[:space:]]*linux \/\(boot\/\)\?\$photon_linux\([[:space:]]\|$\)/ {
+        s/[[:space:]]console=[^[:space:]]*//g
+        s/$/ console=tty0 console=ttyS0,115200n8/
+    }' "$grub_config"
+    grep -Fqx 'terminal_output gfxterm serial' "$grub_config"
+    grep -Fqx 'terminal_input console serial' "$grub_config"
+    grep -Fqx 'serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1' "$grub_config"
+fi
+
+grep -Fqx "set theme=$theme_path" "$grub_config"
+grep -q '^menuentry "Atlaso Appliance" {$' "$grub_config"
 grep -q '^gfxmode="1280x800"$' "$grub_config"
 grep -q '^gfxpayload=keep$' "$grub_config"
-grep -Eq '^[[:space:]]*linux /\$photon_linux .* fbcon=font:VGA8x16([[:space:]]|$)' "$grub_config"
+grep -Eq "${kernel_line_pattern} .* fbcon=font:VGA8x16([[:space:]]|\$)" "$grub_config"
 if grep -Eq '^set[[:space:]]+(gfxmode|gfxpayload)=' "$grub_config"; then
     echo "Photon GRUB framebuffer assignments use unsupported set syntax." >&2
     exit 2
