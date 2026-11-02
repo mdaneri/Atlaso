@@ -13,6 +13,7 @@
     </div>
 
     <form id="appliance-settings-form" class="hidden" action="{{ management_ui_root }}/settings" method="post" data-autosave-form data-appliance-settings data-autosave-status-id="appliance-settings-autosave-status"><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>
+    <p id="appliance-settings-autosave-status" class="autosave-status" data-state="idle" aria-live="polite">Changes save automatically.</p>
     <div class="tab-panels settings-tab-panels">
       <section id="settings-general" class="tab-panel active" role="tabpanel" aria-labelledby="settings-general-tab">
         <div class="panel-head compact">
@@ -63,7 +64,6 @@
           <div><span>Repository path</span><strong>{{ app_settings.repository_path }}</strong></div>
           <div><span>VCF backup path</span><strong>{{ app_settings.vcf_backup_path }}</strong></div>
         </div>
-        <p id="appliance-settings-autosave-status" class="autosave-status" data-state="idle">Changes save automatically.</p>
       </section>
 
       <section id="settings-access" class="tab-panel" role="tabpanel" aria-labelledby="settings-access-tab" hidden>

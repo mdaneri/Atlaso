@@ -15,6 +15,9 @@ class SettingsFormsParser(HTMLParser):
         self.forms: dict[str, dict[str, object]] = {}
         self.form_depth = 0
         self.nested_forms = False
+        self.section_panels: list[str | None] = []
+        self.shared_status_panels: list[list[str]] = []
+        self.shared_status_live: list[str | None] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         """Record form associations in the rendered document.
@@ -24,6 +27,11 @@ class SettingsFormsParser(HTMLParser):
             attrs: Rendered element attributes.
         """
         values = dict(attrs)
+        if tag == "section":
+            self.section_panels.append(values.get("id") if values.get("role") == "tabpanel" else None)
+        if values.get("id") == "appliance-settings-autosave-status":
+            self.shared_status_panels.append([panel for panel in self.section_panels if panel is not None])
+            self.shared_status_live.append(values.get("aria-live"))
         if tag == "form":
             self.nested_forms = self.nested_forms or self.form_depth > 0
             self.form_depth += 1
@@ -46,6 +54,8 @@ class SettingsFormsParser(HTMLParser):
         """
         if tag == "form":
             self.form_depth = max(0, self.form_depth - 1)
+        elif tag == "section":
+            self.section_panels.pop()
 
 
 def test_settings_tabs_preserve_complete_autosave_form_ownership(client):
@@ -64,6 +74,9 @@ def test_settings_tabs_preserve_complete_autosave_form_ownership(client):
     parser = SettingsFormsParser()
     parser.feed(response.text)
     assert not parser.nested_forms
+    # One shared live status must remain visible when either form-owning tab is hidden.
+    assert parser.shared_status_panels == [[]]
+    assert parser.shared_status_live == ["polite"]
     assert {
         "fqdn",
         "management_https_enabled",

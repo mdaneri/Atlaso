@@ -139,6 +139,8 @@ management connectivity or SSH policy. Routine field changes autosave, but they 
 1. Change only the desired-state fields required for the maintenance window. Authentication lifetime fields use their
    separate immediate autosave boundary described above.
 2. Watch the compact autosave status.
+   General and Access & Security share the status above the tab contents, so saving errors remain visible when you
+   switch tabs. Correct the reported error and retry the change before applying it.
 3. Resolve errors or warnings in the Validation card.
 4. Open the rendered preview and confirm the hostname, resolver, HTTPS, and SSH effects.
 5. Open **Pending Appliance Changes** and submit the valid Appliance Settings unit.
