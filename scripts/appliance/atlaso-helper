@@ -32162,6 +32162,25 @@ def _management_handoff_previous_addresses(payload: dict) -> list[str]:
     return list(dict.fromkeys(previous_addresses))
 
 
+def _is_kernel_ipv6_link_multicast_route(route: object, name: str) -> bool:
+    """Recognize only the inert IPv6 local multicast row of an unaddressed link.
+
+    Args:
+        route: One row from the native IPv6 all-table query filtered by device.
+        name: Device already selected by that query.
+    """
+    if not isinstance(route, dict):
+        return False
+    expected = {"type": "multicast", "dst": "ff00::/8", "protocol": "kernel",
+                "scope": "global", "metric": 256, "flags": [], "pref": "medium"}
+    return (set(route) <= set(expected) | {"table", "dev"}
+            and all(route.get(key) == value for key, value in expected.items())
+            and type(route.get("metric")) is int
+            and type(route.get("table")) in {str, int}
+            and route["table"] in {"local", "255", 255}
+            and route.get("dev", name) == name)
+
+
 def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str, int]) -> dict:
     """Capture only observed old-interface addresses and unicast domain/main routes.
 
@@ -32225,7 +32244,12 @@ def _snapshot_management_handoff_routing(interfaces: list[str], tables: dict[str
             entries = json.loads(result.stdout)
             if not isinstance(entries, list) or len(entries) > 4096:
                 raise ValueError("previous routing-domain routes are malformed")
-            if unaddressed_reenable and entries:
+            # IPv6 retains this kernel-owned local multicast row even with no
+            # addresses. It is not a previous unicast domain and is never seeded.
+            # Admit only its complete native shape, alone in the IPv6 inventory.
+            inert_multicast_only = (family == 6 and len(entries) == 1
+                                   and _is_kernel_ipv6_link_multicast_route(entries[0], name))
+            if unaddressed_reenable and entries and not inert_multicast_only:
                 raise ValueError("unaddressed fallback re-enable has existing routing-domain routes")
             observed_route_counts[family] = {
                 "all": len(entries),
