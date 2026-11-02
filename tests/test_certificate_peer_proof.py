@@ -347,6 +347,7 @@ def test_trusted_host_native_readback_is_explicitly_not_independent(
     monkeypatch.setattr(proof, "inspect_trusted_host", lambda _plan: topology)
     monkeypatch.setattr(proof, "assert_same_topology", lambda _before, _after: None)
     monkeypatch.setattr(proof, "verify_peer_isolation", lambda _peer: {"authenticated": True})
+    monkeypatch.setattr(proof, "verify_peer_tunnel_scope", lambda _peer, addresses: {"local_forwarding_only": True})
     result = proof.read_native(plan, fixture, FakePeer(), FakeAppliance())
     assert result["pr"] == 1074
     assert result["trust_model"] == "trusted-host"

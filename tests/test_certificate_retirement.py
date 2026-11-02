@@ -324,3 +324,44 @@ def test_peer_isolation_refuses_forwarding_or_bridging(peer: Session, reason: st
     """
     with pytest.raises(retirement.Refusal, match=reason):
         retirement.verify_peer_isolation(peer)
+
+
+@pytest.mark.parametrize("change", [None, "broad", "missing_candidate", "remote", "duplicate", "match_denied"])
+def test_tunnel_policy_requires_exact_effective_destinations(change: str | None) -> None:
+    """Refuse a handoff before Apply when later addresses cannot be tunneled safely.
+
+    Args:
+        change: Effective SSH policy defect to simulate, or a valid policy.
+    """
+    addresses = ["192.168.77.10", "192.168.77.30", "192.168.77.40"]
+    policy = ("disableforwarding no\nallowtcpforwarding local\ngatewayports no\n"
+              "allowagentforwarding no\nx11forwarding no\npermitopen "
+              + " ".join(f"{address}:{port}" for address in addresses for port in (22, 443)) + "\n")
+    if change == "broad":
+        policy = policy.replace("permitopen ", "permitopen any ")
+    elif change == "missing_candidate":
+        policy = policy.replace(" 192.168.77.40:22 192.168.77.40:443", "")
+    elif change == "remote":
+        policy = policy.replace("allowtcpforwarding local", "allowtcpforwarding yes")
+    elif change == "duplicate":
+        policy += "disableforwarding no\n"
+    elif change == "match_denied":
+        policy = policy.replace("disableforwarding no", "disableforwarding yes")
+
+    class ScopePeer:
+        def command(self, command: str) -> bytes:
+            """Return effective configuration only for the authenticated source context.
+
+            Args:
+                command: Read-only SSH policy evaluation command.
+            """
+            assert 'sshd -T -C "user=$(id -un),host=${SSH_CONNECTION%% *},addr=${SSH_CONNECTION%% *}"' in command
+            return policy.encode()
+
+    if change:
+        with pytest.raises(retirement.Refusal, match="peer_tunnel_policy_invalid"):
+            retirement.verify_peer_tunnel_scope(ScopePeer(), addresses)
+    else:
+        result = retirement.verify_peer_tunnel_scope(ScopePeer(), addresses)
+        assert result["local_forwarding_only"] is True
+        assert len(result["permitted_destinations"]) == 6

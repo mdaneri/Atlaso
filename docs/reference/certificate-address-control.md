@@ -150,6 +150,14 @@ pin the host key before any SSH connection. Do not establish peer SSH trust from
 unverified first connection. The seed's `--public-key` is the public key selected for this task's peer SSH identity;
 never stage its private half in the seed or receipts.
 
+For the trusted-host verifier, supply `--management-address` once for each admitted appliance address: the DHCP lease,
+static baseline, and static candidate. The seed then permits local SSH channels only to those addresses on ports 22
+and 443, verifies the effective SSH policy, and keeps remote forwarding and gateway listeners disabled. For the
+example plan these addresses are `192.168.77.10`, `192.168.77.30`, and `192.168.77.40`. This SSH byte transport does not
+enable kernel IP forwarding or bridging. Before the first address-changing Apply, the verifier evaluates the effective
+SSH policy for its authenticated user and source and refuses missing destinations, unrestricted forwarding, or extra
+destinations.
+
 The ordinary credential policy remains the default. A task-only peer SSH key protected with current-user Windows
 DPAPI is an optional exception only when the maintainer has explicitly approved that key and its lab lifetime. Before
 creating it, preserve the original approval receipt and bind it to this task, repository, PR, exact peer ownership, and

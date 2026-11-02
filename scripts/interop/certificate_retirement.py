@@ -326,3 +326,38 @@ def verify_peer_isolation(peer: Any) -> dict[str, Any]:
         "bridge_membership_detected": False,
         "interface_count": len(links),
     }
+
+
+def verify_peer_tunnel_scope(peer: Any, addresses: list[str]) -> dict[str, Any]:
+    """Verify the effective SSH policy before an address-changing Apply.
+
+    Args:
+        peer: Pinned peer exposing bounded ``command``.
+        addresses: DHCP, static baseline, and candidate appliance addresses.
+    """
+    normalized = [_ipv4(value, "peer_tunnel_addresses_invalid") for value in addresses]
+    if len(normalized) != 3 or len(set(normalized)) != 3:
+        raise Refusal("peer_tunnel_addresses_invalid")
+    expected = {f"{address}:{port}" for address in normalized for port in (22, 443)}
+    # Evaluate Match rules for the actual authenticated user and source too.
+    command = ('sudo -n sshd -T -C "user=$(id -un),host=${SSH_CONNECTION%% *},addr=${SSH_CONNECTION%% *}" '
+               "| grep -E '^(disableforwarding|allowtcpforwarding|permitopen|gatewayports|allowagentforwarding|x11forwarding) '")
+    try:
+        output = peer.command(command)
+    except Exception:  # noqa: BLE001 - Do not expose remote configuration or transport diagnostics.
+        raise Refusal("peer_tunnel_policy_readback_failed") from None
+    if not isinstance(output, bytes) or len(output) > 4096:
+        raise Refusal("peer_tunnel_policy_invalid")
+    try:
+        rows = [line.split() for line in output.decode("ascii").splitlines()]
+    except UnicodeDecodeError:
+        raise Refusal("peer_tunnel_policy_invalid") from None
+    settings = {row[0]: row[1:] for row in rows if len(row) >= 2}
+    fixed = {"disableforwarding": ["no"], "allowtcpforwarding": ["local"], "gatewayports": ["no"],
+             "allowagentforwarding": ["no"], "x11forwarding": ["no"]}
+    permitted = settings.get("permitopen", [])
+    if (len(rows) != 6 or len(settings) != 6 or any(settings.get(key) != value for key, value in fixed.items())
+            or len(permitted) != 6 or set(permitted) != expected):
+        raise Refusal("peer_tunnel_policy_invalid")
+    return {"kind": "certificate-peer-ssh-scope", "local_forwarding_only": True,
+            "permitted_destinations": sorted(expected), "gateway_listeners_enabled": False}

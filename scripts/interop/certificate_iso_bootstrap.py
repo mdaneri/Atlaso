@@ -40,7 +40,7 @@ from certificate_peer_transport import (
     PinnedPeerTransport,
 )
 from certificate_retirement import Refusal as RetirementRefusal
-from certificate_retirement import verify_peer_isolation
+from certificate_retirement import verify_peer_isolation, verify_peer_tunnel_scope
 from certificate_trusted_host import Refusal as HostRefusal
 from certificate_trusted_host import TrustedHostMonitor, inspect_trusted_host
 from cryptography import x509
@@ -225,6 +225,7 @@ def setup(plan: dict, output: Path, password: str, *, execute: bool) -> dict:
         ) as peer:
             peer.topology_guard = monitor.check
             verify_peer_isolation(peer)
+            verify_peer_tunnel_scope(peer, [current, baseline, plan["static_candidate_address"]])
             with PinnedApplianceSession(peer, current, plan["appliance_user"], password, plan["appliance_ssh_host_key"]) as appliance:
                 facts = guest_identity(appliance, plan, password)
                 actual_ca = appliance.command("cat /etc/atlaso/ca/root.crt")

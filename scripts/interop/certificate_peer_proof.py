@@ -34,6 +34,7 @@ from certificate_retirement import (
 )
 from certificate_retirement import (
     verify_peer_isolation,  # noqa: E402 - Pinned sibling module.
+    verify_peer_tunnel_scope,
 )
 from certificate_trusted_host import (
     Refusal as HostRefusal,  # noqa: E402 - Pinned sibling module.
@@ -467,6 +468,7 @@ def read_native(plan: dict, fixture: dict, peer: PinnedPeerTransport, appliance:
     baseline = str(ipaddress.IPv4Address(plan["baseline_address"]))
     candidate = str(ipaddress.IPv4Address(plan["static_candidate_address"]))
     dhcp = str(ipaddress.IPv4Address(fixture["lease_address"]))
+    tunnel_scope = verify_peer_tunnel_scope(peer, [dhcp, baseline, candidate]) if trusted else None
     if len({str(network.ip), baseline, candidate, dhcp}) != 4 or any(
         ipaddress.IPv4Address(value) not in network.network for value in (baseline, candidate, dhcp)
     ):
@@ -541,7 +543,7 @@ def read_native(plan: dict, fixture: dict, peer: PinnedPeerTransport, appliance:
     if trusted:
         assert_same_topology(topology, inspect_trusted_host(plan))
         result.update(trust_model="trusted-host", address_ownership_state="trusted-host-controlled",
-                      trusted_host_topology=topology, peer_isolation=isolation,
+                      trusted_host_topology=topology, peer_isolation=isolation, peer_ssh_scope=tunnel_scope,
                       candidate_observation_limit="Controlled lab on a trusted host; adversarial address exclusion is not established.")
     return result
 

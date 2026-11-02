@@ -133,7 +133,8 @@ def test_unknown_bootstrap_apply_retains_original_and_forbids_automatic_retry(tm
     ca = b"-----BEGIN CERTIFICATE-----\npublic\n-----END CERTIFICATE-----\n"
     plan = {
         "trust_model": "trusted-host", "interface": "eth0", "current_address": "192.0.2.10",
-        "baseline_address": "192.0.2.30", "task_id": "task", "source_commit": "a" * 40,
+        "baseline_address": "192.0.2.30", "static_candidate_address": "192.0.2.40",
+        "task_id": "task", "source_commit": "a" * 40,
         "deployed_commit": "b" * 40, "pr": 1085, "vmx_path": "owned.vmx", "mac": "00:50:56:aa:bb:cc",
         "appliance_user": "admin", "appliance_ssh_host_key": "public-pin", "ca_path": "public-ca.pem",
         "ca_sha256": hashlib.sha256(ca).hexdigest(), "appliance_ownership": {"sha256": "c" * 64},
@@ -228,6 +229,7 @@ def test_unknown_bootstrap_apply_retains_original_and_forbids_automatic_retry(tm
     monkeypatch.setattr(bootstrap, "PinnedPeerTransport", Session)
     monkeypatch.setattr(bootstrap, "PinnedApplianceSession", Session)
     monkeypatch.setattr(bootstrap, "verify_peer_isolation", lambda _peer: {})
+    monkeypatch.setattr(bootstrap, "verify_peer_tunnel_scope", lambda _peer, addresses: {})
     monkeypatch.setattr(bootstrap, "guest_identity", lambda *args: {
         "app_service": {}, "route_snapshot": {}, "helper_sha256": "a" * 64, "wheel_sha256": "b" * 64})
     monkeypatch.setattr(bootstrap, "tls_name", lambda *args: plan["current_address"])
@@ -247,6 +249,24 @@ def test_unknown_bootstrap_apply_retains_original_and_forbids_automatic_retry(tm
 
     monkeypatch.setattr(bootstrap, "submit", submit)
     secret = "synthetic-concealed-value"
+    def refuse_scope(_peer, addresses):
+        """Model a peer that denies the future static candidate tunnel.
+
+        Args:
+            _peer: Admitted peer whose effective policy is being checked.
+            addresses: All addresses needed across the handoff.
+        """
+        assert addresses == ["192.0.2.10", "192.0.2.30", "192.0.2.40"]
+        raise bootstrap.RetirementRefusal("peer_tunnel_policy_invalid")
+
+    monkeypatch.setattr(bootstrap, "verify_peer_tunnel_scope", refuse_scope)
+    rejected = tmp_path / "scope-rejected"
+    rejected.mkdir()
+    with pytest.raises(bootstrap.RetirementRefusal, match="peer_tunnel_policy_invalid"):
+        bootstrap.setup(plan, rejected, secret, execute=True)
+    assert calls == []
+    assert not (rejected / "mutation-started.json").exists()
+    monkeypatch.setattr(bootstrap, "verify_peer_tunnel_scope", lambda _peer, addresses: {})
     inspected = bootstrap.setup(plan, tmp_path, secret, execute=False)
     assert inspected["stage"] == "inspected_no_mutation"
     assert calls == []

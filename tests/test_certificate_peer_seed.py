@@ -108,6 +108,40 @@ def test_authorized_reseed_preserves_original_console_host_key() -> None:
     assert "ssh_deletekeys" not in yaml.safe_load(peer_files(_args())["user-data"])
 
 
+def test_management_channels_are_limited_to_three_addresses_before_sshd_restart() -> None:
+    """Configure the private SSH destinations without enabling remote forwarding."""
+    parsed = yaml.safe_load(peer_files(_args(management_addresses=[
+        "192.168.77.40", "192.168.77.10", "192.168.77.30",
+    ]))["user-data"])
+    files = {item["path"]: item["content"] for item in parsed["write_files"]}
+    policy = files["/etc/ssh/sshd_config.d/00-atlaso-certificate-peer.conf"]
+    assert policy == (
+        "DisableForwarding no\nAllowTcpForwarding local\nGatewayPorts no\n"
+        "AllowAgentForwarding no\nX11Forwarding no\n"
+        "PermitOpen 192.168.77.10:22 192.168.77.10:443 192.168.77.30:22 "
+        "192.168.77.30:443 192.168.77.40:22 192.168.77.40:443\n"
+    )
+    installer = "/usr/local/sbin/atlaso-certificate-peer-sshd"
+    assert 'sshd -t\n' in files[installer]
+    assert parsed["runcmd"].index(installer) < parsed["runcmd"].index("rc-service sshd restart")
+    assert "AllowTcpForwarding" not in peer_files(_args())["user-data"]
+
+
+@pytest.mark.parametrize("addresses", [
+    ["192.168.78.10"], ["192.168.77.1"], ["192.168.77.0"], ["192.168.77.255"],
+    ["192.168.77.30"], ["192.168.77.10", "192.168.77.10"], ["any"],
+    ["192.168.77.10", "192.168.77.30", "192.168.77.40", "192.168.77.50"],
+])
+def test_management_channels_reject_ambiguous_or_external_destinations(addresses: list[str]) -> None:
+    """Reject tunnel destinations outside the exact appliance address set.
+
+    Args:
+        addresses: Invalid destination list supplied to the seed generator.
+    """
+    with pytest.raises(ValueError):
+        peer_files(_args(management_addresses=addresses))
+
+
 @pytest.mark.parametrize(
     "bad",
     [
