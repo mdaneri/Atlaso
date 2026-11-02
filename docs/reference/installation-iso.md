@@ -70,6 +70,9 @@ provisioning inputs, PowerCLI modules, trust material, notices, firmware, and a 
 are embedded and inventoried. Dependency closure is resolved during authorized ISO preparation; installation does
 not use network package repositories. Shared provisioning explicitly installs `iproute2` for the console and diagnostics;
 the final package-state verifier requires it. The complete captured RPM closure must include its dependencies.
+The base package selection also requires Photon's signed `iana-etc` package, which supplies `/etc/services`
+and `/etc/protocols`. NTPsec's local verification uses these databases to resolve standard service and protocol
+names. A capture missing this package fails admission; regenerate it through the canonical native capture workflow.
 The boot package selection includes Photon’s native `initramfs` package and
 its resolved dependencies. Installation requires the kernel and initrd selected by Photon’s GRUB environment to
 exist before applying chosen credentials or reporting completion.
@@ -489,6 +492,8 @@ Add `-InspectContent` alongside `-InspectInstalled` to run five additional check
 - **PowerCLI:** run the existing provisioning script in `Validate` mode against its original lock and module root.
 - **RPMs:** reuse Photon package-state validation, require installed package identities to belong to the ISO closure,
   verify nonconfiguration, nonghost package files without plugins or verification scripts, and verify firmware files.
+  Separately verify both `iana-etc` configuration files, their package ownership and safe file metadata, then require
+  native lookups of `ntp/udp`, UDP and TCP to return their standard numbers before accepting the installed system.
 - **Notices:** regenerate the notices from the original source inputs and installed package inventories in RAM,
   then compare them with the installed document.
 

@@ -147,6 +147,7 @@ def _report(kind, **changes):
             "runtime_rpcbind_metadata_verified": True,
             "runtime_efi_metadata_verified": True,
             "runtime_module_indexes_verified": True,
+            "runtime_network_databases_verified": True,
             "runtime_media_directories_absent": 0,
         },
         "notices": {"notices_sha256": "a" * 64, "notice_inputs_verified": True},
@@ -174,11 +175,28 @@ def _runtime_fixture_helper():
                            INSTALLATION_GRUB_EFI_SHA256=content_inspection.PHOTON_GRUB_EFI_SHA256,
                            INSTALLATION_MODULE_GENERATED_PATHS=frozenset({"/lib/modules/6.12.114-1.ph5/modules.alias"}),
                            verify_installation_module_indexes=lambda: {"runtime_module_indexes_verified": True},
+                           verify_installation_network_databases=lambda: {"runtime_network_databases_verified": True},
                            verify_installation_metadata=lambda *_checksums: {**fields, "runtime_journal_metadata_verified": True,
                                                                             "runtime_audit_metadata_verified": True,
                                                                             "runtime_openssh_metadata_verified": True,
                                                                             "runtime_openldap_metadata_verified": True,
                                                                             "runtime_rpcbind_metadata_verified": True, "runtime_efi_metadata_verified": True})
+
+
+@pytest.mark.parametrize("proof", [None, 1, "true"])
+def test_rpm_content_requires_strict_network_database_proof(proof):
+    """Refuse a missing native service/protocol lookup proof or a truthy scalar.
+
+    Args:
+        proof: Invalid value replacing the native boolean proof.
+    """
+    expected = _expectation("rpm")
+    report = _report("rpm", runtime_network_databases_verified=proof)
+    with pytest.raises(ValueError, match="native verification is incomplete"):
+        content_inspection.validate_content_report(json.dumps(report).encode(), expected)
+    report.pop("runtime_network_databases_verified")
+    with pytest.raises(ValueError, match="schema"):
+        content_inspection.validate_content_report(json.dumps(report).encode(), expected)
 
 
 def _decode_guest_program(command):
@@ -731,6 +749,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"runtime_openldap_metadata_verified": False},
         {"runtime_efi_metadata_verified": False},
         {"runtime_module_indexes_verified": False},
+        {"runtime_network_databases_verified": False},
         {"runtime_media_directories_absent": True},
         {"runtime_media_directories_absent": 3},
         {"installed_inventory": _inventory({"linux": ["wrong", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"]})},
@@ -739,7 +758,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"], "rogue": ["1.0", "noarch"]})},
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"]})},
     ],
-    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "runtime-mail-spool", "runtime-journal-metadata", "runtime-audit-metadata", "runtime-rpcbind-metadata", "runtime-openssh-metadata", "runtime-openldap-metadata", "runtime-efi-metadata", "native-module-indexes", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
+    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "runtime-mail-spool", "runtime-journal-metadata", "runtime-audit-metadata", "runtime-rpcbind-metadata", "runtime-openssh-metadata", "runtime-openldap-metadata", "runtime-efi-metadata", "native-module-indexes", "network-databases", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
 )
 def test_validate_content_report_rejects_unverified_rpm_closure(changes):
     """The installed RPM identities must satisfy the signed allowed closure.
@@ -1411,6 +1430,7 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
         ("S.5....T. /lib/modules/6.12.114-1.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
         ("S.5....T. /lib/modules/6.12.114-1.ph5/modules.alias\n", 1, b"", "modulefail", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
         ("S.5....T. /lib/modules/6.12.114-1.ph5/modules.alias\n", 1, b"", "modulerace", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        ("", 0, b"", "networkdbfail", stat.S_IFDIR | 0o555, 0, 0, "network-databases"),
         (".M....... /lib/modules/6.12.114-1.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         ("......G.. /lib/modules/6.12.114-1.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         ("S.5....T. /lib/modules/6.12.114-1.ph5/kernel/private.ko.xz\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
@@ -1658,6 +1678,16 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         return {"runtime_module_indexes_verified": True}
 
     monkeypatch.setattr(helper, "verify_installation_module_indexes", verify_modules)
+    network_database_checks = []
+
+    def verify_network_databases():
+        """Retain the final native database proof inside its fixed public phase."""
+        network_database_checks.append(firmware_checked)
+        if mount == "networkdbfail":
+            raise ValueError("private network database drift")
+        return {"runtime_network_databases_verified": True}
+
+    monkeypatch.setattr(helper, "verify_installation_network_databases", verify_network_databases)
     monkeypatch.setattr(helper, "verify_installation_rpcbind_metadata", verify_rpc)
     monkeypatch.setattr(helper, "verify_installation_audit_metadata", verify_audit)
     monkeypatch.setattr(helper, "verify_installation_journal_metadata", verify_journal)
@@ -1682,6 +1712,8 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         assert report["runtime_journal_metadata_verified"] is True
         assert report["runtime_efi_metadata_verified"] is True
         assert report["runtime_module_indexes_verified"] is True
+        assert report["runtime_network_databases_verified"] is True
+        assert network_database_checks == [True]
         assert module_checks == [False, True]
         assert len(efi_checks) == 2
         assert len(journal_checks) == 2

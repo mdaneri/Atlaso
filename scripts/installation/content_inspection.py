@@ -555,7 +555,7 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
         "assets": {"source_digest", "source_file_count", "deployed_files", "trust_digest", "trust_keys"},
         "python": {"python_payload_sha256", "python_files", "python_distributions", "python_external_files"},
         "powercli": {"powercli_lock_sha256", "module_count"},
-        "rpm": {"installed_inventory", "firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_media_directories_absent", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified", "runtime_audit_metadata_verified", "runtime_rpcbind_metadata_verified", "runtime_openssh_metadata_verified", "runtime_openldap_metadata_verified", "runtime_efi_metadata_verified", "runtime_module_indexes_verified"},
+        "rpm": {"installed_inventory", "firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_media_directories_absent", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified", "runtime_audit_metadata_verified", "runtime_rpcbind_metadata_verified", "runtime_openssh_metadata_verified", "runtime_openldap_metadata_verified", "runtime_efi_metadata_verified", "runtime_module_indexes_verified", "runtime_network_databases_verified"},
         "notices": {"notices_sha256", "notice_inputs_verified"},
     }[kind]
     if (not isinstance(value, dict) or set(value) != _COMMON_KEYS | keys or type(value.get("schema")) is not int or value["schema"] != 1
@@ -587,7 +587,7 @@ def validate_content_report(raw: bytes, expected: dict[str, Any]) -> dict[str, A
             raise MissingRequiredRpms([i for i, name in enumerate(required) if name not in actual])
         if any(name not in allowed or identity != allowed[name] for name, identity in actual.items()):
             raise ValueError("installed RPM identity differs from media")
-        if any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified", "runtime_audit_metadata_verified", "runtime_rpcbind_metadata_verified", "runtime_openssh_metadata_verified", "runtime_openldap_metadata_verified", "runtime_efi_metadata_verified", "runtime_module_indexes_verified")):
+        if any(value[key] is not True for key in ("firmware_verified", "rpm_files_verified", "package_state_verified", "runtime_proc_verified", "runtime_run_verified", "runtime_login_metadata_verified", "runtime_mail_spool_verified", "runtime_journal_metadata_verified", "runtime_audit_metadata_verified", "runtime_rpcbind_metadata_verified", "runtime_openssh_metadata_verified", "runtime_openldap_metadata_verified", "runtime_efi_metadata_verified", "runtime_module_indexes_verified", "runtime_network_databases_verified")):
             raise ValueError("installed RPM native verification is incomplete")
         if type(value["runtime_media_directories_absent"]) is not int or not 0 <= value["runtime_media_directories_absent"] <= 2:
             raise ValueError("installed RPM absent directory count is invalid")
@@ -724,6 +724,8 @@ run(["rpm","--noplugins","-V","--noscripts","--nodeps","linux-firmware"],60)
 stage="system-rpm-runtime"
 runtime=h.verify_installation_metadata()
 runtime.update(h.verify_installation_module_indexes())
+stage="system-rpm-network-databases"
+runtime.update(h.verify_installation_network_databases())
 r=dict(installed_inventory=base64.b64encode(zlib.compress(json.dumps(installed,sort_keys=True,separators=(",", ":")).encode(),9)).decode(),firmware_verified=True,rpm_files_verified=True,package_state_verified=True,runtime_media_directories_absent=len(absent),**runtime)
 ''',
     "assets": r'''

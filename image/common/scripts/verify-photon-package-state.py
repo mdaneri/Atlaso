@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import socket
 import stat
 import subprocess
 from collections.abc import Callable, Sequence
@@ -70,6 +71,8 @@ INSTALLATION_MODULE_GENERATED_PATHS = frozenset(
 INSTALLATION_LAYOUT_HELPER_PATH = Path(__file__).resolve().parents[3] / "scripts/installation/layout.py"
 INSTALLATION_LAYOUT_HELPER_SHA256 = "1feb571697f3a1e592e3839bc303cd4c20cd8d40f7acd4e3d7df93449de99608"
 INSTALLATION_EFI_PATH = Path("/boot/efi")
+INSTALLATION_NETWORK_DATABASE_MAX_BYTES = 1024 * 1024
+INSTALLATION_NETWORK_DATABASES = (Path("/etc/services"), Path("/etc/protocols"))
 # Public sizes, hashes and modification times from the admitted shim/GRUB RPMs.
 INSTALLATION_EFI_FILES = (
     ("EFI/BOOT/bootx64.efi", 1018992, "0b9a7492dcb168b00033d4ccc1edda816c9da3822fcb7e901cce72a017cf08fa", 1781509843),
@@ -1076,6 +1079,63 @@ def verify_installation_efi_metadata(shim_sha256: str, grub_efi_sha256: str) -> 
                 or metadata.st_mtime_ns != (modified // 2 * 2) * 1_000_000_000):
             raise ValueError("installation EFI bytes or native timestamp differ")
     return {"runtime_efi_metadata_verified": True}
+
+
+def verify_installation_network_databases(
+    *,
+    image_root: Path = Path("/"),
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> dict[str, bool]:
+    """Verify the signed Photon service and protocol databases used by libc lookups.
+
+    Args:
+        image_root: Root beneath which the bounded native database files are read.
+        runner: Subprocess-compatible command runner for read-only RPM queries.
+    """
+    for path in INSTALLATION_NETWORK_DATABASES:
+        owner = runner(
+            ["rpm", "--noplugins", "-qf", "--qf", "%{NAME}\\n", "--", str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if owner.returncode != 0 or owner.stdout.splitlines() != ["iana-etc"] or owner.stderr:
+            raise ValueError("installation network database RPM owner differs")
+
+    # No --noconfig: RPM must verify the installed %config files as well as
+    # every other file in the admitted iana-etc package.
+    def verify_iana_etc() -> None:
+        """Verify the complete installed package without executing scripts."""
+        verified = runner(
+            ["rpm", "--noplugins", "--noscripts", "--nodeps", "-V", "iana-etc"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if verified.returncode != 0 or verified.stdout or verified.stderr:
+            raise ValueError("installation network database RPM verification differs")
+
+    verify_iana_etc()
+
+    for path in INSTALLATION_NETWORK_DATABASES:
+        _read_installation_tmpfiles(
+            image_root / path.relative_to("/"),
+            0o644,
+            INSTALLATION_NETWORK_DATABASE_MAX_BYTES,
+            "network database",
+        )
+
+    try:
+        if socket.getservbyname("ntp", "udp") != 123:
+            raise ValueError("installation NTP service lookup differs")
+        if socket.getprotobyname("udp") != 17 or socket.getprotobyname("tcp") != 6:
+            raise ValueError("installation IP protocol lookup differs")
+    except OSError as exc:
+        raise ValueError("installation network database lookup failed") from exc
+    verify_iana_etc()
+    return {"runtime_network_databases_verified": True}
 
 
 def verify_installation_metadata(

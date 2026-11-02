@@ -1615,3 +1615,72 @@ def test_installation_efi_layout_pin_matches_shared_helper():
     assert hashlib.sha256(Path("scripts/installation/layout.py").read_bytes()).hexdigest() == (
         verifier.INSTALLATION_LAYOUT_HELPER_SHA256
     )
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [None, "unsafe-file", "rpm-owner", "rpm-config", "service-port", "service-error", "udp-number", "tcp-number"],
+)
+def test_installation_network_databases_require_admitted_files_and_standard_lookups(
+    monkeypatch, tmp_path: Path, defect: str | None
+):
+    """Require verified iana-etc files and libc service/protocol resolution.
+
+    Args:
+        monkeypatch: Replace bounded native readers and subprocess boundaries.
+        tmp_path: Temporary isolated image root for file-path assertions.
+        defect: Independent missing, ownership, RPM, or lookup mismatch to reject.
+    """
+    verifier = load_verifier()
+    observations = []
+    expected_paths = tuple(tmp_path / path.relative_to("/") for path in verifier.INSTALLATION_NETWORK_DATABASES)
+
+    def read(path, mode, maximum_bytes, policy_name):
+        """Exercise the helper's fixed paths and strict safe-reader contract."""
+        observations.append(("read", path))
+        assert path in expected_paths
+        assert (mode, maximum_bytes, policy_name) == (
+            0o644, verifier.INSTALLATION_NETWORK_DATABASE_MAX_BYTES, "network database"
+        )
+        if defect == "unsafe-file":
+            raise ValueError("simulated bounded network database metadata refusal")
+        return b"public Photon network database fixture\n"
+
+    def rpm(command, **options):
+        """Return only fixed package ownership and verification results."""
+        observations.append(("rpm", command))
+        assert options == {"check": False, "capture_output": True, "text": True, "timeout": 10}
+        if "-qf" in command:
+            assert command[:6] == ["rpm", "--noplugins", "-qf", "--qf", "%{NAME}\\n", "--"]
+            package = "other-package" if defect == "rpm-owner" else "iana-etc"
+            return subprocess.CompletedProcess(command, 0, f"{package}\n", "")
+        assert command == ["rpm", "--noplugins", "--noscripts", "--nodeps", "-V", "iana-etc"]
+        return subprocess.CompletedProcess(command, 0, "changed config\n" if defect == "rpm-config" else "", "")
+
+    monkeypatch.setattr(verifier, "_read_installation_tmpfiles", read)
+
+    def getservbyname(_name, _protocol):
+        """Return the public ntp port, or one bounded lookup failure."""
+        if defect == "service-error":
+            raise OSError("service name unavailable")
+        return 124 if defect == "service-port" else 123
+
+    monkeypatch.setattr(verifier.socket, "getservbyname", getservbyname)
+    monkeypatch.setattr(verifier.socket, "getprotobyname", lambda name: {
+        "udp": 18 if defect == "udp-number" else 17,
+        "tcp": 7 if defect == "tcp-number" else 6,
+    }[name])
+
+    if defect:
+        with pytest.raises(ValueError):
+            verifier.verify_installation_network_databases(image_root=tmp_path, runner=rpm)
+    else:
+        assert verifier.verify_installation_network_databases(image_root=tmp_path, runner=rpm) == {
+            "runtime_network_databases_verified": True
+        }
+        assert [item for item in observations if item[0] == "read"] == [
+            ("read", expected_paths[0]), ("read", expected_paths[1])
+        ]
+        verify_commands = [command for kind, command in observations if kind == "rpm" and "-V" in command]
+        assert len(verify_commands) == 2
+        assert all("--noconfig" not in command for command in verify_commands)

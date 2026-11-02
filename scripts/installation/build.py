@@ -26,7 +26,7 @@ from scripts.installation.manifest import (
 )
 
 MEDIA = "/mnt/atlaso-install/atlaso"
-BASE_PACKAGES = {"filesystem", "bash", "linux", "initramfs", "linux-firmware", "photon-release", "rpm", "tdnf", "systemd", "util-linux", "ca-certificates", "grub2", "grub2-efi-image", "xfsprogs", "btrfs-progs", "dosfstools"}
+BASE_PACKAGES = {"filesystem", "bash", "linux", "initramfs", "linux-firmware", "photon-release", "rpm", "tdnf", "systemd", "util-linux", "ca-certificates", "grub2", "grub2-efi-image", "xfsprogs", "btrfs-progs", "dosfstools", "iana-etc"}
 
 
 def package_selection(source: Path) -> list[str]:
