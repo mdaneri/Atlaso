@@ -4013,6 +4013,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vcf-native-backup-wizard-1066" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        VCF native backup wizard (#1066)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vcf-lab-overrides-849-873" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4423,6 +4434,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vcf-native-backup-wizard-1066" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        VCF native backup wizard (#1066)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vcf-lab-overrides-849-873" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4801,10 +4823,10 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/ui/management/vcf-helper</code> — FQDN and remote VCF workflows</td>
-<td>Established VCF Helper workflows and shared wizards; VCF credential-wizard reference</td>
-<td>Server-rendered forms, reviewed FQDN semantic summary, and recoverable errors</td>
-<td>Admin permission, TLS fingerprint before credentials, shared confirmation; DNS edits remain global-apply desired state</td>
+<td><code>/ui/management/vcf-helper</code> — FQDN and remote VCF workflows, including native backup setup and recovery</td>
+<td>Established VCF Helper workflows; explicitly approved VCF Offline Depot tile/modal pattern; shared wizard and Tasks status references</td>
+<td>Server-rendered forms, reviewed FQDN semantic summary, readiness guidance, recoverable errors, and backup operation status</td>
+<td>Admin permission; VCF backup readiness and TLS fingerprint before credentials; reviewed native changes and task-backed verification; DNS edits remain global-apply desired state</td>
 <td>Pass D/N/K/F/Z/V</td>
 <td>E1–E8</td>
 </tr>
@@ -4841,10 +4863,10 @@ read-only or unavailable surface has a mutation workflow.</p>
 <td>E1–E8</td>
 </tr>
 <tr>
-<td><code>/ui/management/vcf-backups</code> — SFTP settings and validation</td>
-<td>Non-grid settings; DNS reference</td>
-<td>Complete settings, validation, and redacted config preview render in HTML</td>
-<td>Admin autosave with CSRF; selected-user dependency; global <code>vcf_backups</code> apply only</td>
+<td><code>/ui/management/vcf-backups</code> — SFTP settings, validation, and backup operations</td>
+<td>Non-grid settings; read-only Tabulator using Tasks/Audit Events <code>createGrid</code> references</td>
+<td>Complete settings and redacted config preview; semantic operations-table fallback; date, local time, elapsed runtime, status, component and source columns</td>
+<td>Admin SFTP autosave with CSRF and global <code>vcf_backups</code> apply only; admin operation status and read-only reconciliation</td>
 <td>Pass D/N/K/F/Z/V</td>
 <td>E1–E8</td>
 </tr>
@@ -5092,6 +5114,7 @@ are explicitly inventoried so route/template changes cannot silently escape the 
 <li>VCF workflows: <code>vcf-fqdn-modal</code>, <code>vcf-ldap-modal</code>, <code>vcf-trust-modal</code>, <code>vcf-lab-modal</code>, <code>vcf-sddc-deploy-modal</code>, <code>vcf-target-depot-modal</code>,
   <code>vcf-vault-import-modal</code>, <code>vcf-depot-profile-dialog</code>, <code>vcf-depot-tool-package-dialog</code>,
   <code>vcf-depot-configuration-dialog</code>, <code>vcf-depot-tool-reset-modal</code>, <code>vcf-depot-schedule-modal</code>,
+  <code>vcf-backup-modal</code>, <code>vcf-backup-status-modal</code>,
   <code>vcf-registry-bundle-dialog</code>, and <code>vcf-appliance-certificate-modal</code>.</li>
 <li>Vaults and Monitor: <code>vault-create-modal</code>, <code>vault-entry-modal</code>, and <code>monitor-chart-modal</code>.</li>
 </ul>
@@ -5119,6 +5142,7 @@ non-grid DNS settings reference, and optional schedules reuse the Automation Sch
 <code>partials/brand_mark.html</code>, <code>partials/config_preview_action.html</code>, <code>partials/resource_wizard.html</code>,
 <code>partials/port_forwarding.html</code>, <code>partials/settings_hardware.html</code>,
 <code>partials/task_grid.html</code>, <code>partials/task_modals.html</code>, <code>partials/terminal_panel.html</code>, <code>partials/vcf_ldap_modal.html</code>,
+<code>partials/vcf_backup_modal.html</code>, <code>partials/vcf_backup_operations.html</code>, <code>partials/vcf_backup_status_modal.html</code>,
 <code>partials/vcf_sddc_deploy_modal.html</code>, <code>partials/vcf_sddc_upload_modal.html</code>, <code>partials/vcf_target_depot_modal.html</code>, <code>partials/vcf_trust_modal.html</code>,
 <code>partials/vcf_vault_credential_picker.html</code>, <code>partials/vcf_vault_import_modal.html</code>, and
 <code>partials/vcf_appliance_certificate_modal.html</code>.</p>
@@ -5168,6 +5192,21 @@ only propose work. CSR generation/signing and replacement require separate admin
 single-use ten-minute review before VCF Operations' asynchronous EXTERNAL_CA workflow. Native vCenter Machine SSL
 acceptance on VCF Operations 9.1.1 remains pending. Record native acceptance only after the exact installed leaf,
 fresh strict TLS, and health are verified; the UI must not imply Atlaso changes VCF's own renewal status.</p>
+<h3 id="vcf-native-backup-wizard-1066">VCF native backup wizard (#1066)<a class="headerlink" href="#vcf-native-backup-wizard-1066" title="Permanent link">&para;</a></h3>
+<p><code>partials/vcf_backup_modal.html</code> is the explicitly maintainer-approved <code>custom/other</code> VCF Helper tile/modal workflow,
+using the <strong>Configure VCF Offline Depot</strong> reference and <code>AtlasoUiPatterns.createWizard</code>. The <code>vcf-backup-modal</code>
+workflow requires ready VCF Backup SFTP settings and administrator access; explicit TLS fingerprint confirmation
+precedes credentials, and native configuration proceeds only after component discovery and reviewed settings. Initial
+backup completion is recorded only after task and receiver-artifact verification.</p>
+<p><code>partials/vcf_backup_status_modal.html</code> provides the administrator-requested operation status and recovery surface
+through <code>vcf-backup-status-modal</code>, following the <strong>Tasks</strong> status reference. Operators can load an existing operation,
+review its task, and explicitly reconcile native state without repeating native writes. This records the interaction
+contract without claiming deployed-appliance or native VCF acceptance.</p>
+<p><code>partials/vcf_backup_operations.html</code> adds the administrator-only, read-only Operations grid to VCF Backups. It reuses
+the shared <code>createGrid</code> pattern from <strong>Tasks</strong> and <strong>Audit Events</strong>, with a semantic fallback while JavaScript loads or
+if grid setup fails. Loaded rows support column filters and pagination through <strong>Load more operations</strong>; date, local
+time, elapsed runtime, status, component count, and source are visible. Opening a row shows the existing status popup;
+reconciliation remains an explicit read-only refresh of native state and does not repeat native writes.</p>
 <h3 id="vcf-lab-overrides-849-873">VCF lab overrides (#849, #873)<a class="headerlink" href="#vcf-lab-overrides-849-873" title="Permanent link">&para;</a></h3>
 <p><code>partials/vcf_lab_overrides.html</code> uses the approved custom/other VCF Certificate Trust tile/modal reference,
 <code>AtlasoUiPatterns.createWizard</code>, and the generic wizard DOM contract. Administrator-only operations support
