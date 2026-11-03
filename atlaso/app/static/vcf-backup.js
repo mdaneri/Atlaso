@@ -56,6 +56,7 @@
   let removalBusy = false;
   let removalToken = "";
   let pollTimer = null;
+  let pollFailures = 0;
   let statusViewEpoch = 0;
 
   const setStatus = (message, error = false) => {
@@ -195,6 +196,7 @@
     statusViewEpoch += 1;
     busy = false;
     removalBusy = false;
+    pollFailures = 0;
     return statusViewEpoch;
   }
   function isCurrentStatusView(epoch, id) {
@@ -1457,7 +1459,14 @@
   }
   function schedulePoll(delay) {
     window.clearTimeout(pollTimer);
-    pollTimer = window.setTimeout(() => { if (statusDialog.open && operationId) pollOperation().catch(() => {}); }, delay);
+    const requestedId = operationId;
+    const viewEpoch = statusViewEpoch;
+    pollTimer = window.setTimeout(() => {
+      if (!isCurrentStatusView(viewEpoch, requestedId)) return;
+      pollTimer = null;
+      if (busy) { schedulePoll(delay); return; }
+      return pollOperation().catch(() => {});
+    }, delay);
   }
   function lockSubmitAfterOperation() {
     window.setTimeout(() => {
@@ -1471,7 +1480,22 @@
     busy = true;
     try {
       const result = await call(`/operations/${encodeURIComponent(requestedId)}`);
-      if (isCurrentStatusView(viewEpoch, requestedId)) renderOperation(result);
+      if (!isCurrentStatusView(viewEpoch, requestedId)) return;
+      if (pollFailures) setStatus("");
+      pollFailures = 0;
+      renderOperation(result);
+    }
+    catch (error) {
+      if (!isCurrentStatusView(viewEpoch, requestedId)) return;
+      pollFailures += 1;
+      const status = error?.status;
+      const transient = status === undefined || status === 408 || status === 429 || (status >= 500 && status < 600);
+      if (transient && pollFailures <= 5) {
+        setStatus(`Status is temporarily unavailable. Retrying (${pollFailures}/5); the backup or reconciliation continues independently.`, true);
+        schedulePoll(Math.min(30000, 2000 * (2 ** (pollFailures - 1))));
+      } else {
+        setStatus("Status could not be refreshed. Close and reopen this popup to try again. The backup or reconciliation continues independently.", true);
+      }
     }
     finally { if (statusViewEpoch === viewEpoch && operationId === requestedId) busy = false; }
   }

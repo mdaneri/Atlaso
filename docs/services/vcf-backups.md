@@ -169,6 +169,10 @@ loading more rows. Open a row to load that operation directly in its standalone 
 displayed read-only; no separate ID entry or load action is needed. **Configure VCF Backup** always starts a fresh
 configuration wizard; opening it does not cancel an existing operation. Closing the status popup or browser does not
 stop an admitted backup or reconciliation.
+If a status read fails temporarily, the popup shows a warning and retries that read up to five times with increasing
+delays capped at 30 seconds. A successful read clears the warning. Closing the popup or selecting another operation
+cancels its retries. After repeated failures, or an access/client error, close and reopen the popup to request status
+again; native backup and reconciliation work continue independently.
 Read-only reconciliation is admitted promptly and continues in the background; the popup shows queued, running,
 completed, or failed status independently of the original backup outcome. Reopening the operation loads that durable
 status. Repeated clicks while reconciliation is active reuse the same run. If Atlaso restarts during reconciliation,

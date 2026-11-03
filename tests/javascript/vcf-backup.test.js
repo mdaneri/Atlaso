@@ -28,7 +28,7 @@ test('Backup configuration stays in VCF Helper while operations link to the VCF 
   assert.match(js, /const receiverReady = configurationForm\?\.dataset\.setupReady === "true"/);
   assert.match(js, /function openBackupConfiguration\(launcher\) \{\s+if \(!receiverReady\) return;/);
   assert.match(backupsPage, /\{% if identity\.has_role\('admin'\) %\}[\s\S]*?partials\/vcf_backup_operations\.html[\s\S]*?\{% endif %\}/);
-  assert.match(backupsPage, /\{% if identity\.has_role\('admin'\) %\}[\s\S]*?partials\/vcf_backup_status_modal\.html[\s\S]*?vcf-backup\.js\?v=issue-1066-22[\s\S]*?\{% endif %\}/);
+  assert.match(backupsPage, /\{% if identity\.has_role\('admin'\) %\}[\s\S]*?partials\/vcf_backup_status_modal\.html[\s\S]*?vcf-backup\.js\?v=issue-1066-23[\s\S]*?\{% endif %\}/);
   assert.match(operationsPartial, /data-vcf-backup-operations-section/);
   assert.match(operationsPartial, /data-vcf-backup-operations-grid/);
   assert.match(operationsPartial, /data-vcf-backup-operations-refresh/);
@@ -481,7 +481,7 @@ test('Review presents exact current and proposed native settings with operator l
     '"Retention mode"', '"Retention count or age"', '"Most recent backups retained"',
     '"Hourly backup retention (days)"', '"Daily backup retention (days)"', '"Backup parts"',
   ]) assert.ok(js.includes(label), `Missing review label ${label}`);
-  assert.match(js, /Current: \$\{publicValue\(current, key, formatter\)\} → Proposed: \$\{publicValue\(proposed, key, formatter\)\}/);
+  assert.match(js, /Current: \$\{publicValue\(current, key, formatter\)\} â†’ Proposed: \$\{publicValue\(proposed, key, formatter\)\}/);
   assert.match(js, /if \(!settings \|\| typeof settings !== "object" \|\| !Object\.prototype\.hasOwnProperty\.call\(settings, key\)\) return "Not returned"/);
   assert.match(js, /value === null \|\| value === undefined \|\| value === ""\) return "Not set"/);
   assert.doesNotMatch(js, /JSON\.stringify\(item\.(current|proposed)\)|JSON\.stringify\(review\.policy/);
@@ -511,16 +511,16 @@ test('Fleet and Operations-managed SDDC review use the verified SSH fingerprint 
     },
   };
   const rows = context.groupSettingRows({kind: 'fleet', current, proposed});
-  assert.equal(rows.find(([label]) => label === 'SSH host-key fingerprint')[1], 'Current: SHA256:verified-rsa → Proposed: SHA256:verified-ecdsa');
-  assert.equal(rows.find(([label]) => label === 'Full schedule start time (RFC 3339)')[1], `Current: ${preservedStartTime} → Proposed: ${preservedStartTime}`);
-  assert.equal(rows.find(([label]) => label === 'Incremental fallback to full backup')[1], 'Current: false → Proposed: false');
+  assert.equal(rows.find(([label]) => label === 'SSH host-key fingerprint')[1], 'Current: SHA256:verified-rsa â†’ Proposed: SHA256:verified-ecdsa');
+  assert.equal(rows.find(([label]) => label === 'Full schedule start time (RFC 3339)')[1], `Current: ${preservedStartTime} â†’ Proposed: ${preservedStartTime}`);
+  assert.equal(rows.find(([label]) => label === 'Incremental fallback to full backup')[1], 'Current: false â†’ Proposed: false');
   assert.equal(context.groupCurrentSettings('fleet', current).find(([label]) => label === 'SSH host-key fingerprint')[1], 'SHA256:verified-rsa');
   assert.equal(context.fleetSshFingerprint({ecdsa_fingerprint: 'SHA256:historical'}), 'SHA256:historical');
   assert.equal(context.fleetSshFingerprint({ssh_fingerprint: null, ecdsa_fingerprint: 'SHA256:historical'}), 'Not set');
   const sddcCurrent = {ecdsa_fingerprint: 'SHA256:manager-current'};
   const sddcProposed = {host_key: 'SHA256:receiver-rsa'};
   const sddcRows = context.groupSettingRows({kind: 'sddc', current: sddcCurrent, proposed: sddcProposed});
-  assert.equal(sddcRows.find(([label]) => label === 'SSH host-key fingerprint')[1], 'Current: SHA256:manager-current → Proposed: SHA256:receiver-rsa');
+  assert.equal(sddcRows.find(([label]) => label === 'SSH host-key fingerprint')[1], 'Current: SHA256:manager-current â†’ Proposed: SHA256:receiver-rsa');
   assert.equal(context.groupCurrentSettings('sddc', sddcCurrent).find(([label]) => label === 'SSH host-key fingerprint')[1], 'SHA256:manager-current');
   assert.equal(context.sddcSshFingerprint({ssh_fingerprint: 'SHA256:shared-alias', host_key: 'SHA256:receiver-rsa'}), 'SHA256:shared-alias');
   assert.equal(context.sddcSshFingerprint({}), 'Not returned');
@@ -572,8 +572,8 @@ test('Disabled Operations recurrence intent remains in the human review', () => 
   assert.ok(intent);
   assert.equal(intent[1].find(([label]) => label === 'Scheduling intent')?.[1], 'Disable recurring backups');
   const settings = sections.find(([title]) => title === 'Operations');
-  assert.equal(settings[1].find(([label]) => label === 'Full schedule start time (RFC 3339)')[1], 'Current: Not set → Proposed: Not set');
-  assert.equal(settings[1].find(([label]) => label === 'Incremental fallback to full backup')[1], 'Current: Not set → Proposed: Not set');
+  assert.equal(settings[1].find(([label]) => label === 'Full schedule start time (RFC 3339)')[1], 'Current: Not set â†’ Proposed: Not set');
+  assert.equal(settings[1].find(([label]) => label === 'Incremental fallback to full backup')[1], 'Current: Not set â†’ Proposed: Not set');
 });
 
 test('Current review matrix uses compact configured labels and operation state/checkpoints are operator friendly', () => {
@@ -633,7 +633,7 @@ test('Operation status renders reconciliation settings, native progress, verific
   assert.equal(sections[1].children[0].tagName, 'summary');
   assert.equal(sections[1].children[0].textContent, 'Latest native settings');
   assert.match(sections[1].className, /validation-settings-list/);
-  assert.match(text, /SDDC Manager — operation status/);
+  assert.match(text, /SDDC Manager â€” operation status/);
   assert.match(text, /Latest checkpoint: Initial backup submitted to the native appliance/);
   assert.match(text, /Native configuration task Running/);
   assert.match(text, /Initial backup task Succeeded/);
@@ -933,9 +933,9 @@ test('Coverage gaps are labeled as outside the plan and explain Fleet ineligibil
 
 test('The updated backup script URL and service worker cache version stay aligned', () => {
   const worker = fs.readFileSync(path.join(__dirname, '../../atlaso/app/static/service-worker.js'), 'utf8');
-  assert.match(helper, /vcf-backup\.js\?v=issue-1066-22/);
-  assert.match(worker, /ATLASO_CACHE_PREFIX\}414/);
-  assert.match(worker, /vcf-backup\.js\?v=issue-1066-22/);
+  assert.match(helper, /vcf-backup\.js\?v=issue-1066-23/);
+  assert.match(worker, /ATLASO_CACHE_PREFIX\}415/);
+  assert.match(worker, /vcf-backup\.js\?v=issue-1066-23/);
 });
 
 test('Review binds the selected component IDs, source credentials, policy, and saved secret references', () => {
@@ -1004,7 +1004,7 @@ test('Read-only reconciliation progress remains visible and polls after the nati
   };
   let pollDelay = 0;
   const context = vm.createContext({
-    operationId: 'op-1', operationState: '', canCloseWithoutCredentials: false, receiverReady: true,
+    operationId: 'op-1', operationState: '', canCloseWithoutCredentials: false, receiverReady: true, statusViewEpoch: 1,
     window: {clearTimeout() {}, setTimeout(_callback, delay) { pollDelay = delay; }}, pollTimer: null,
     node, syncOperationView() {}, operationStateLabel: (state) => state,
     safeText: (value, fallback) => value || fallback, nativeOperationRunning: () => false,
@@ -1088,7 +1088,7 @@ test('Late operation lookups cannot replace the operation selected afterward', a
   assert.equal(statusDialog.open, true);
   assert.equal(context.operationId, 'current-operation');
   assert.equal(context.isCurrentStatusView(context.statusViewEpoch, 'current-operation'), true);
-  assert.deepEqual(statuses, [['Loading operation status…', undefined], ['Loading operation status…', undefined]]);
+  assert.deepEqual(statuses, [['Loading operation statusâ€¦', undefined], ['Loading operation statusâ€¦', undefined]]);
   pending.get('/operations/old-operation')({operation_id: 'old-operation'});
   await oldLookup;
   assert.deepEqual(hydrated, ['current-operation']);
@@ -1121,10 +1121,11 @@ test('Late poll and reconciliation results are ignored after selection or popup 
   const pollCalls = [];
   let pollContext;
   pollContext = vm.createContext({
-    operationId: 'old-operation', statusViewEpoch: 1, statusDialog: {open: true}, busy: false,
+    operationId: 'old-operation', statusViewEpoch: 1, statusDialog: {open: true}, busy: false, pollFailures: 0,
     isCurrentStatusView: (epoch, id) => pollContext.statusDialog.open && pollContext.statusViewEpoch === epoch && pollContext.operationId === id,
     call(path) { const request = deferred(); pollCalls.push({path, ...request}); return request.promise; },
     renderOperation: (result) => pollResults.push(result.operation_id),
+    setStatus() {},
   });
   pollContext.pollOperation = vm.runInContext(`(async ${pollDeclaration})`, pollContext);
   const oldPoll = pollContext.pollOperation();
@@ -1201,7 +1202,7 @@ test('Backup Operations list uses the shared read-only grid and opens selected o
   gridConfig.onOpenRow({operation_id: 'operation-123'});
   assert.equal(openedOperation, 'operation-123');
   const terminalActions = gridConfig.rowActions(null, {getData: () => ({operation_id: 'operation-123', state: 'succeeded'})});
-  assert.deepEqual(Array.from(terminalActions, (action) => action.label), ['View status', 'Remove backup…']);
+  assert.deepEqual(Array.from(terminalActions, (action) => action.label), ['View status', 'Remove backupâ€¦']);
   terminalActions[1].action();
   assert.equal(openedOperation, 'operation-123');
   assert.equal(openedIntent, 'remove');
@@ -1682,4 +1683,149 @@ test('Manual credentials are requested again when the terminal operation has no 
   assert.deepEqual(calls, []);
   assert.equal(context.credentialPrompts, 1);
   assert.match(context.removalStatus.textContent, /enter the source password/i);
+});
+function statusPollingHarness(outcomes) {
+  const timers = new Map();
+  const delays = [];
+  const requests = [];
+  const statuses = [];
+  const elements = new Map();
+  let nextTimer = 0;
+  const node = (selector) => {
+    if (!elements.has(selector)) elements.set(selector, {
+      textContent: '', hidden: false, disabled: false, childElementCount: 0,
+      classList: {toggle() {}, add() {}, remove() {}}, replaceChildren() {}, removeAttribute() {},
+    });
+    return elements.get(selector);
+  };
+  const context = vm.createContext({
+    operationId: 'polled-operation', operationState: '', statusViewEpoch: 1,
+    statusDialog: {open: true, dataset: {}}, configurationForm: null,
+    busy: false, removalBusy: false, pollTimer: null, pollFailures: 0,
+    window: {
+      clearTimeout(id) { timers.delete(id); },
+      setTimeout(callback, delay) { const id = ++nextTimer; timers.set(id, {callback, delay}); delays.push(delay); return id; },
+    },
+    node, syncOperationView() {}, operationStateLabel: (state) => state,
+    safeText: (value, fallback) => value || fallback, nativeOperationRunning: () => false,
+    renderOperationGroups() {}, renderOperationSources() {}, clearManualPasswords() {}, renderRecoveryCredentials() {},
+    setStatus(message, error = false) { statuses.push({message, error}); },
+    async call(requestPath, payload) {
+      requests.push({path: requestPath, payload});
+      const result = outcomes.shift();
+      if (result instanceof Error) throw result;
+      return typeof result === 'function' ? result() : result;
+    },
+  });
+  for (const name of ['isCurrentStatusView', 'invalidateStatusView', 'schedulePoll', 'reconciliationStatusText', 'renderOperation']) {
+    vm.runInContext(functionDeclaration(name), context);
+  }
+  vm.runInContext(`async ${functionDeclaration('pollOperation')}`, context);
+  const render = (state = 'running') => context.renderOperation({operation_id: context.operationId, state: 'needs_recovery', reconciliation_state: state, groups: []});
+  const takeTimer = () => {
+    assert.equal(timers.size, 1, 'only one status timer may remain scheduled');
+    const [id, timer] = timers.entries().next().value;
+    timers.delete(id);
+    return timer.callback;
+  };
+  return {context, timers, delays, requests, statuses, node, render, takeTimer};
+}
+
+test('Status polling recovers from network and 503 failures and unlocks completed reconciliation', async () => {
+  const h = statusPollingHarness([
+    new TypeError('network interruption'), Object.assign(new Error('temporary failure'), {status: 503}),
+    {operation_id: 'polled-operation', state: 'needs_recovery', reconciliation_state: 'succeeded', groups: []},
+  ]);
+  h.render();
+  assert.equal(h.node('[data-vcf-backup-reconcile]').disabled, true);
+  await h.takeTimer()();
+  assert.match(h.statuses.at(-1).message, /temporarily unavailable.*Retrying/);
+  assert.equal(h.statuses.at(-1).error, true);
+  await h.takeTimer()();
+  await h.takeTimer()();
+  assert.deepEqual(h.delays, [1800, 2000, 4000]);
+  assert.equal(h.timers.size, 0);
+  assert.equal(h.node('[data-vcf-backup-reconcile]').disabled, false);
+  assert.equal(h.statuses.at(-1).message, '');
+  assert.equal(h.context.pollFailures, 0);
+  assert.equal(h.context.busy, false);
+  assert.ok(h.requests.every(({path, payload}) => path === '/operations/polled-operation' && payload === undefined), 'only the recorded status GET may repeat');
+});
+
+test('Status read retries use capped backoff and stop after five automatic retries', async () => {
+  const h = statusPollingHarness(Array.from({length: 6}, () => new TypeError('offline')));
+  h.render();
+  for (let index = 0; index < 6; index += 1) await h.takeTimer()();
+  assert.deepEqual(h.delays, [1800, 2000, 4000, 8000, 16000, 30000]);
+  assert.equal(h.requests.length, 6);
+  assert.equal(h.timers.size, 0);
+  assert.match(h.statuses.at(-1).message, /Close and reopen.*continues independently/);
+  assert.equal(h.context.busy, false);
+});
+
+test('A successful active status read resets the retry budget', async () => {
+  const failure = () => Object.assign(new Error('temporary failure'), {status: 503});
+  const h = statusPollingHarness([failure(), {state: 'running', groups: []}, failure(), {state: 'succeeded', groups: []}]);
+  h.render();
+  for (let index = 0; index < 4; index += 1) await h.takeTimer()();
+  assert.deepEqual(h.delays, [1800, 2000, 1800, 2000]);
+  assert.equal(h.timers.size, 0);
+});
+
+test('Permission and permanent client failures are visible without automatic retries', async () => {
+  for (const status of [400, 401, 403, 404]) {
+    const h = statusPollingHarness([Object.assign(new Error('request refused'), {status})]);
+    h.render();
+    await h.takeTimer()();
+    assert.equal(h.timers.size, 0, `HTTP ${status} must not retry`);
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.statuses.at(-1).error, true);
+  }
+});
+
+test('Closing or switching the status view cancels queued and late failed reads', async () => {
+  for (const closed of [false, true]) {
+    let reject;
+    const pending = new Promise((_resolve, fail) => { reject = fail; });
+    const h = statusPollingHarness([() => pending]);
+    h.render();
+    const reading = h.takeTimer()();
+    h.context.invalidateStatusView();
+    h.context.operationId = 'new-operation';
+    h.context.statusDialog.open = !closed;
+    h.context.pollFailures = 2;
+    h.context.busy = true;
+    reject(new TypeError('late failure'));
+    await reading;
+    assert.equal(h.timers.size, 0);
+    assert.equal(h.statuses.length, 0);
+    assert.equal(h.context.pollFailures, 2, 'a stale failure cannot change the newer retry budget');
+    assert.equal(h.context.busy, true, 'a stale finally cannot unlock a newer request');
+
+    const queued = statusPollingHarness([]);
+    queued.render();
+    const callback = queued.takeTimer();
+    queued.context.invalidateStatusView();
+    queued.context.statusDialog.open = !closed;
+    queued.context.operationId = 'another-operation';
+    if (!closed) queued.render();
+    const currentTimer = queued.context.pollTimer;
+    await callback();
+    assert.equal(queued.requests.length, 0);
+    assert.equal(queued.context.pollTimer, currentTimer, 'an old queued callback must not discard the new timer');
+    assert.equal(queued.timers.size, closed ? 0 : 1);
+  }
+});
+
+test('A busy status view reschedules its read without consuming the retry budget', async () => {
+  const h = statusPollingHarness([{state: 'succeeded', groups: []}]);
+  h.render();
+  h.context.busy = true;
+  await h.takeTimer()();
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.context.pollFailures, 0);
+  h.context.busy = false;
+  await h.takeTimer()();
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.timers.size, 0);
 });
