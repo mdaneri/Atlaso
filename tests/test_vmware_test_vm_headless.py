@@ -9,7 +9,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "scripts/windows/vmware/create-atlaso-test-vm.ps1"
-pytestmark = pytest.mark.skipif(not shutil.which("pwsh"), reason="PowerShell runtime required")
+# Keep the skip decision and subprocess bound to the same executable even when
+# another test replaces the shared shutil.which function after collection.
+PWSH = shutil.which("pwsh")
+pytestmark = pytest.mark.skipif(not PWSH, reason="PowerShell runtime required")
 
 
 def run_fixture(tmp_path, body):
@@ -52,7 +55,7 @@ function Invoke-AtlasoBoundedProcess {param($FilePath,$ArgumentList,$TimeoutSeco
     $modes.Add($ArgumentList[$index+1]);$events.Add('launch')
 }
 """.replace("@SOURCE@", source) + body, encoding="utf-8")
-    result = subprocess.run([shutil.which("pwsh"), "-NoProfile", "-NonInteractive", "-File", str(script)],
+    result = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(script)],
                             capture_output=True, text=True, check=False, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
     return json.loads(result.stdout)
