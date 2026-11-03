@@ -78,6 +78,9 @@ Protected Network Apply can admit a newly acquired fallback address from the rev
 evidence; the normal TLS certificate-coverage and readiness checks still apply.
 Settings-only Apply uses the same verified APIPA management context while keeping that address out of ordinary
 DHCP, DNS and service-listener inventory.
+The selected management NIC also remains available to Web Terminal validation and its Settings preview on APIPA.
+Saving a different management NIC or static address keeps that desired identity selected; the old applied setup
+publication cannot replace it while its new address is pending.
 
 This path serves management UI/API and their static and CA-download dependencies only, to link-local source addresses.
 Existing authentication and management firewall source restrictions still apply. It does not enable public protocols,

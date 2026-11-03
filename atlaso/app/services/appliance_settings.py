@@ -96,22 +96,31 @@ def web_terminal_interfaces_to_json(values: list[str]) -> str:
 def web_terminal_interface_options(
     interfaces: list[PhysicalInterface],
     vlans: list[VlanInterface],
+    *, management_interface: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Return web terminal interface options.
 
     Args:
         interfaces: Interfaces consumed by web terminal interface options.
         vlans: Vlans consumed by web terminal interface options.
+        management_interface: Settings-specific context from the verified setup publication projection.
     """
     options: list[dict[str, Any]] = []
     parents = {interface.name: interface for interface in interfaces}
     management_name = management_interface_context(interfaces).get("name", "")
+    if management_interface and management_interface.get("ip"):
+        management_name = management_interface.get("name", "")
     for interface in interfaces:
         role = normalize_interface_role(interface.role)
         mode = normalize_interface_mode(interface.mode)
         ipv4_cidr = interface.host_ip_cidr if normalize_ipv4_method(interface.ipv4_method) == "dhcp" else interface.ip_cidr
         addresses = _interface_addresses(ipv4_cidr, interface.ipv6_cidr,
                                          *(interface.host_ip_cidrs or []), *physical_ipv6_cidrs(interface))
+        if (management_interface and management_interface.get("ip")
+                and interface.name == management_name and role == "management"):
+            # Only an explicit management consumer supplies this verified context;
+            # ordinary service inventory and interface rows remain unchanged.
+            addresses = list(management_interface.get("addresses") or [management_interface["ip"]])
         if interface.oper_state == "missing" or interface.admin_state != "up" or role == "unused" or mode == "trunk" or not addresses:
             continue
         options.append(

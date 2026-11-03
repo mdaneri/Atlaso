@@ -14,7 +14,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from atlaso.app.models import PhysicalInterface, Setting
+from atlaso.app.models import PhysicalInterface, Setting, VlanInterface
 
 PUBLICATION_PATH = Path("/run/atlaso-dynamic-management/publication.json")
 BASELINES_KEY = "appliance_apply.baselines.v1"
@@ -150,3 +150,38 @@ def publication_bindings(db: Session) -> list[dict[str, str]]:
     return [{"interface": value["interface"], "role": "management", "address": address,
              "management_ui": "true", "local_setup": "true" if address in value["apipa_addresses"] else "false"}
             for address in value.get("addresses", [])]
+
+
+def settings_management_context(
+    db: Session, interfaces: list[PhysicalInterface], vlans: list[VlanInterface],
+) -> dict[str, Any]:
+    """Project verified setup addresses only onto the selected desired management NIC.
+
+    Args:
+        db: Read-only session admitting the applied publication.
+        interfaces: Desired physical identities, including pending management changes.
+        vlans: Desired VLAN management candidates.
+    """
+    from atlaso.app.services.appliance_settings import management_ui_context
+    from atlaso.app.services.networking import (
+        normalize_interface_mode,
+        normalize_interface_role,
+        normalize_ipv4_method,
+    )
+
+    context = management_ui_context(interfaces, vlans)
+    published = read_publication(db)
+    selected = next((row for row in interfaces if row.name == context.get("name")), None)
+    # Applied publication remains valid while desired state changes. It must not
+    # replace a pending NIC, MAC, static address, role or availability decision.
+    if (not published or selected is None or selected.name != published["interface"]
+            or selected.mac_address.lower() != str(published.get("mac", "")).lower()
+            or normalize_interface_role(selected.role) != "management"
+            or normalize_interface_mode(selected.mode) != "access"
+            or normalize_ipv4_method(selected.ipv4_method) != "dhcp"
+            or selected.admin_state != "up" or selected.oper_state == "missing"):
+        return context
+    address = published["addresses"][0]
+    cidr = f"{address}/16" if address in published["apipa_addresses"] else ""
+    return {"name": selected.name, "ip": address, "ip_cidr": cidr, "ipv4_cidr": cidr,
+            "ipv6_cidr": "", "addresses": published["addresses"], "ipv4_method": "dhcp"}

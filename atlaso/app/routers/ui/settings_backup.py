@@ -591,7 +591,7 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
             .all()
         )
         terminal_options = web_terminal_interface_options(
-            physical_interfaces, vlan_interfaces
+            physical_interfaces, vlan_interfaces, management_interface=management
         )
         requested_terminal_interfaces = (
             web_terminal_interfaces

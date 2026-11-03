@@ -2432,17 +2432,9 @@ def appliance_settings_management_context(db: Session) -> dict[str, Any]:
         .where(VlanInterface.enabled.is_(True))
         .order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)
     ).scalars().all()
-    context = management_ui_context(interfaces, vlans)
-    from atlaso.app.services.dynamic_management import read_publication
+    from atlaso.app.services.dynamic_management import settings_management_context
 
-    published = read_publication(db)
-    if published and (not context.get("ip") or context.get("name") == published["interface"]):
-        address = published["addresses"][0]
-        return {"name": published["interface"], "ip": address,
-                "ip_cidr": f"{address}/16" if address in published["apipa_addresses"] else "",
-                "ipv4_cidr": f"{address}/16" if address in published["apipa_addresses"] else "",
-                "ipv6_cidr": "", "addresses": published["addresses"], "ipv4_method": "dhcp"}
-    return context
+    return settings_management_context(db, interfaces, vlans)
 
 
 def management_ui_addresses(db: Session) -> list[str]:
@@ -2674,7 +2666,7 @@ def appliance_settings_context(
         setup_management = appliance_settings_management_context(db)
         if setup_management.get("ip"):
             management = setup_management
-    terminal_options = web_terminal_interface_options(interfaces, vlans)
+    terminal_options = web_terminal_interface_options(interfaces, vlans, management_interface=management)
     ca_settings = get_ca_settings_row(db)
     management_https_cert_path, management_https_key_path, _management_https_chain_path = ca_managed_certificate_paths(db, "appliance:https")
     management_https_cert_available = bool(management_https_cert_path and management_https_key_path and ca_certificate_available(db, "appliance:https"))
@@ -4845,7 +4837,7 @@ def public_services_context(db: Session, *, reconcile: bool = True) -> dict[str,
         entry["management_ui"] = entry.get("interface") in management_interfaces
     appliance_settings = get_appliance_settings_row(db)
     management = appliance_settings_management_context(db)
-    terminal_options = web_terminal_interface_options(interfaces, vlans)
+    terminal_options = web_terminal_interface_options(interfaces, vlans, management_interface=management)
     terminal_interfaces = web_terminal_listener_interfaces(
         normalized_web_terminal_interfaces(appliance_settings, management),
         terminal_options,
@@ -5254,7 +5246,7 @@ def public_service_directory_context(db: Session, binding: dict[str, Any], *, in
     physical_interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlan_interfaces = db.execute(select(VlanInterface).where(VlanInterface.enabled.is_(True)).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
     management = appliance_settings_management_context(db)
-    terminal_options = web_terminal_interface_options(physical_interfaces, vlan_interfaces)
+    terminal_options = web_terminal_interface_options(physical_interfaces, vlan_interfaces, management_interface=management)
     terminal_interfaces = web_terminal_listener_interfaces(
         normalized_web_terminal_interfaces(appliance_settings, management),
         terminal_options,

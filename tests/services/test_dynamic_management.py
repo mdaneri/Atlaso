@@ -562,6 +562,10 @@ def test_publication_receipt_is_fresh_and_bound_to_applied_inputs(client, tmp_pa
         context = ui.appliance_settings_context(db, reconcile_dns=False)
         settings_payload = json.loads(context["appliance_settings_config_preview"])
         assert settings_payload["management_ip"] == ("169.254.20.10" if change == "none" else "")
+        setup_terminal = [option for option in context["web_terminal_interface_options"] if option["name"] == identity.name]
+        assert bool(setup_terminal) == (change == "none")
+        if setup_terminal:
+            assert setup_terminal[0]["addresses"] == ["169.254.20.10"]
         ordinary, _dns = ui.management_dhcp_dns_context([identity], [])
         assert not ordinary.get("ip")
         assert identity.host_ip_cidr is None
