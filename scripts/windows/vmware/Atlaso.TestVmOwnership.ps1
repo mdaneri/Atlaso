@@ -5,6 +5,8 @@ Create durable ownership records for normal VMware test VMs.
 Records preserve task/source intent before creation and publish original VM identities afterward.
 #>
 
+. (Join-Path $PSScriptRoot 'Atlaso.TestVmContinuation.ps1')
+
 <#
 .SYNOPSIS
 Test whether one canonical path is strictly beneath another.
@@ -487,6 +489,10 @@ Exact task identity for an explicit human CLI run.
 Original receipt path preserved in the task resource inventory for redeployment.
 .PARAMETER OwnershipReceiptSha256
 Creation-time receipt digest preserved independently in the task inventory.
+.PARAMETER ContinuationReceiptPath
+Immutable resource-specific successor authorization receipt for an existing VM.
+.PARAMETER ContinuationReceiptSha256
+Independently preserved continuation receipt digest.
 .PARAMETER ValidationRootReceiptPath
 Original receipt path for the separately approved external installation-ISO validation root.
 .PARAMETER ValidationRootReceiptSha256
@@ -515,6 +521,8 @@ function New-AtlasoTestVmOwnershipContext {
         [string]$OwnershipTaskId = '',
         [string]$OwnershipReceiptPath = '',
         [string]$OwnershipReceiptSha256 = '',
+        [string]$ContinuationReceiptPath = '',
+        [string]$ContinuationReceiptSha256 = '',
         [string]$ValidationRootReceiptPath = '',
         [string]$ValidationRootReceiptSha256 = '',
         [Parameter(Mandatory = $true)][string]$OutputDirectory,
@@ -538,6 +546,9 @@ function New-AtlasoTestVmOwnershipContext {
         throw 'Pass both -OwnershipRoot and -OwnershipTaskId to opt in to human CLI ownership receipts.'
     }
     $agentMode = -not [string]::IsNullOrWhiteSpace($agentTaskId)
+    if (($ContinuationReceiptPath -or $ContinuationReceiptSha256) -and -not $agentMode) {
+        throw 'Continuation is available only to the real active agent, never human CLI mode.'
+    }
     if ($agentMode -and ($manualRootSupplied -or $manualTaskSupplied)) {
         throw 'Agent ownership receipts use the active Codex task and configured worktree root; explicit human selectors are not accepted.'
     }
@@ -670,6 +681,18 @@ function New-AtlasoTestVmOwnershipContext {
         }
         $admittedEvidenceDirectoryId = [Atlaso.WorkstationFileIdentity]::Get($evidenceFullPath)
         $admittedWorktreeDirectoryId = [Atlaso.WorkstationFileIdentity]::Get($worktreePath)
+        $continuationContext = [pscustomobject]@{
+            TaskId=$taskId;Repository='mdaneri/Atlaso';Worktree=$worktreePath;WorktreeDirectoryId=$admittedWorktreeDirectoryId;
+            Branch=$SourceBranch;SourceCommit=$SourceCommit;PullRequestNumber=$PullRequestNumber;LocalBuilder=[bool]$LocalBuilder;
+            Name=$Name;OutputDirectory=$outputPath;VmxPath=$vmxFullPath;EvidenceDirectory=$evidenceFullPath;PermittedRoot=$configuredRoot;
+            ReceiptPath=$OwnershipReceiptPath;ReceiptSha256=$OwnershipReceiptSha256.ToLowerInvariant()
+        }
+        $continuationPins = [Collections.Generic.List[object]]::new()
+        try {
+            $taskId = Resolve-AtlasoTestVmContinuation -Context $continuationContext -Path $ContinuationReceiptPath `
+                -Sha256 $ContinuationReceiptSha256 -Pins $continuationPins
+        }
+        finally { for ($i=$continuationPins.Count-1; $i -ge 0; $i--) { $continuationPins[$i].Dispose() } }
         if ($hasValidationRootReceiptPath) {
             $contextForValidationRoot = [pscustomobject]@{
                 TaskId = $taskId
@@ -706,6 +729,9 @@ function New-AtlasoTestVmOwnershipContext {
     return [pscustomobject]@{
         Enabled             = $true
         TaskId              = $taskId
+        ActiveTaskId        = $agentTaskId
+        ContinuationReceiptPath = $ContinuationReceiptPath
+        ContinuationReceiptSha256 = $ContinuationReceiptSha256
         Repository          = 'mdaneri/Atlaso'
         Worktree            = $worktreePath
         WorktreeDirectoryId = $admittedWorktreeDirectoryId
@@ -752,6 +778,11 @@ function Assert-AtlasoTestVmCheckoutSource {
     $worktreePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath([string]$Context.Worktree, $true)
     try {
     if ($sourcePin.Disposed) { throw 'Verified checkout source handles were already released; mutation refused.' }
+    if ($Context.PSObject.Properties['ContinuationReceiptPath']) {
+        $owner = Resolve-AtlasoTestVmContinuation -Context $Context -Path $Context.ContinuationReceiptPath `
+            -Sha256 $Context.ContinuationReceiptSha256 -Pins $sourcePin.Pins
+        if ($owner -cne $Context.TaskId) { throw 'The admitted continuation owner changed.' }
+    }
     if ($Context.PSObject.Properties['ValidationRootAdmission'] -and $Context.ValidationRootAdmission) {
         if ($Context.ValidationRootAdmission.Disposed -or
             [Atlaso.WorkstationFileIdentity]::Get([string]$Context.ValidationRootAdmission.RootPath) -cne
@@ -1215,6 +1246,12 @@ function Publish-AtlasoTestVmOwnershipRecord {
     )
 
     if (-not $Context.Enabled) { throw 'Cannot publish ownership for a disabled task context.' }
+    if ($Context.PSObject.Properties['ContinuationReceiptPath'] -and $Context.ContinuationReceiptPath) {
+        if ($Kind -cne 'installation-resume') { throw 'Continuation supports retained VM resume only, never creation or redeployment.' }
+        $Record['executor_task_id'] = [string]$Context.ActiveTaskId
+        $Record['continuation_receipt_path'] = [string]$Context.ContinuationReceiptPath
+        $Record['continuation_receipt_sha256'] = [string]$Context.ContinuationReceiptSha256
+    }
     if ($Context.PSObject.Properties['ValidationRootAdmission'] -and $Context.ValidationRootAdmission) {
         $rootBinding = [ordered]@{
             path = [string]$Context.ValidationRootAdmission.RootPath
@@ -1307,6 +1344,9 @@ function New-AtlasoTestVmOwnershipIntent {
     )
 
     if (-not $Context.Enabled) { return $null }
+    if ($Context.PSObject.Properties['ContinuationReceiptPath'] -and $Context.ContinuationReceiptPath) {
+        throw 'Continuation cannot create or redeploy a VM.'
+    }
     $restored=$Context.PSObject.Properties['RestoredDirectoryReceiptPath'] -and $Context.RestoredDirectoryReceiptPath
     if ($restored) { Assert-AtlasoTestVmRestoredDirectory -Context $Context | Out-Null }
     if ((Test-Path -LiteralPath $Context.OutputDirectory) -and $null -eq $ExistingReceipt -and -not $restored) {
