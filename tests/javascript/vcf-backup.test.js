@@ -481,7 +481,7 @@ test('Review presents exact current and proposed native settings with operator l
     '"Retention mode"', '"Retention count or age"', '"Most recent backups retained"',
     '"Hourly backup retention (days)"', '"Daily backup retention (days)"', '"Backup parts"',
   ]) assert.ok(js.includes(label), `Missing review label ${label}`);
-  assert.match(js, /Current: \$\{publicValue\(current, key, formatter\)\} â†’ Proposed: \$\{publicValue\(proposed, key, formatter\)\}/);
+  assert.match(js, /Current: \$\{publicValue\(current, key, formatter\)\} \u2192 Proposed: \$\{publicValue\(proposed, key, formatter\)\}/);
   assert.match(js, /if \(!settings \|\| typeof settings !== "object" \|\| !Object\.prototype\.hasOwnProperty\.call\(settings, key\)\) return "Not returned"/);
   assert.match(js, /value === null \|\| value === undefined \|\| value === ""\) return "Not set"/);
   assert.doesNotMatch(js, /JSON\.stringify\(item\.(current|proposed)\)|JSON\.stringify\(review\.policy/);
@@ -511,16 +511,16 @@ test('Fleet and Operations-managed SDDC review use the verified SSH fingerprint 
     },
   };
   const rows = context.groupSettingRows({kind: 'fleet', current, proposed});
-  assert.equal(rows.find(([label]) => label === 'SSH host-key fingerprint')[1], 'Current: SHA256:verified-rsa â†’ Proposed: SHA256:verified-ecdsa');
-  assert.equal(rows.find(([label]) => label === 'Full schedule start time (RFC 3339)')[1], `Current: ${preservedStartTime} â†’ Proposed: ${preservedStartTime}`);
-  assert.equal(rows.find(([label]) => label === 'Incremental fallback to full backup')[1], 'Current: false â†’ Proposed: false');
+  assert.equal(rows.find(([label]) => label === 'SSH host-key fingerprint')[1], 'Current: SHA256:verified-rsa \u2192 Proposed: SHA256:verified-ecdsa');
+  assert.equal(rows.find(([label]) => label === 'Full schedule start time (RFC 3339)')[1], `Current: ${preservedStartTime} \u2192 Proposed: ${preservedStartTime}`);
+  assert.equal(rows.find(([label]) => label === 'Incremental fallback to full backup')[1], 'Current: false \u2192 Proposed: false');
   assert.equal(context.groupCurrentSettings('fleet', current).find(([label]) => label === 'SSH host-key fingerprint')[1], 'SHA256:verified-rsa');
   assert.equal(context.fleetSshFingerprint({ecdsa_fingerprint: 'SHA256:historical'}), 'SHA256:historical');
   assert.equal(context.fleetSshFingerprint({ssh_fingerprint: null, ecdsa_fingerprint: 'SHA256:historical'}), 'Not set');
   const sddcCurrent = {ecdsa_fingerprint: 'SHA256:manager-current'};
   const sddcProposed = {host_key: 'SHA256:receiver-rsa'};
   const sddcRows = context.groupSettingRows({kind: 'sddc', current: sddcCurrent, proposed: sddcProposed});
-  assert.equal(sddcRows.find(([label]) => label === 'SSH host-key fingerprint')[1], 'Current: SHA256:manager-current â†’ Proposed: SHA256:receiver-rsa');
+  assert.equal(sddcRows.find(([label]) => label === 'SSH host-key fingerprint')[1], 'Current: SHA256:manager-current \u2192 Proposed: SHA256:receiver-rsa');
   assert.equal(context.groupCurrentSettings('sddc', sddcCurrent).find(([label]) => label === 'SSH host-key fingerprint')[1], 'SHA256:manager-current');
   assert.equal(context.sddcSshFingerprint({ssh_fingerprint: 'SHA256:shared-alias', host_key: 'SHA256:receiver-rsa'}), 'SHA256:shared-alias');
   assert.equal(context.sddcSshFingerprint({}), 'Not returned');
@@ -572,8 +572,8 @@ test('Disabled Operations recurrence intent remains in the human review', () => 
   assert.ok(intent);
   assert.equal(intent[1].find(([label]) => label === 'Scheduling intent')?.[1], 'Disable recurring backups');
   const settings = sections.find(([title]) => title === 'Operations');
-  assert.equal(settings[1].find(([label]) => label === 'Full schedule start time (RFC 3339)')[1], 'Current: Not set â†’ Proposed: Not set');
-  assert.equal(settings[1].find(([label]) => label === 'Incremental fallback to full backup')[1], 'Current: Not set â†’ Proposed: Not set');
+  assert.equal(settings[1].find(([label]) => label === 'Full schedule start time (RFC 3339)')[1], 'Current: Not set \u2192 Proposed: Not set');
+  assert.equal(settings[1].find(([label]) => label === 'Incremental fallback to full backup')[1], 'Current: Not set \u2192 Proposed: Not set');
 });
 
 test('Current review matrix uses compact configured labels and operation state/checkpoints are operator friendly', () => {
@@ -633,7 +633,7 @@ test('Operation status renders reconciliation settings, native progress, verific
   assert.equal(sections[1].children[0].tagName, 'summary');
   assert.equal(sections[1].children[0].textContent, 'Latest native settings');
   assert.match(sections[1].className, /validation-settings-list/);
-  assert.match(text, /SDDC Manager â€” operation status/);
+  assert.match(text, /SDDC Manager \u2014 operation status/);
   assert.match(text, /Latest checkpoint: Initial backup submitted to the native appliance/);
   assert.match(text, /Native configuration task Running/);
   assert.match(text, /Initial backup task Succeeded/);
@@ -1088,7 +1088,7 @@ test('Late operation lookups cannot replace the operation selected afterward', a
   assert.equal(statusDialog.open, true);
   assert.equal(context.operationId, 'current-operation');
   assert.equal(context.isCurrentStatusView(context.statusViewEpoch, 'current-operation'), true);
-  assert.deepEqual(statuses, [['Loading operation statusâ€¦', undefined], ['Loading operation statusâ€¦', undefined]]);
+  assert.deepEqual(statuses, [['Loading operation status\u2026', undefined], ['Loading operation status\u2026', undefined]]);
   pending.get('/operations/old-operation')({operation_id: 'old-operation'});
   await oldLookup;
   assert.deepEqual(hydrated, ['current-operation']);
@@ -1202,7 +1202,7 @@ test('Backup Operations list uses the shared read-only grid and opens selected o
   gridConfig.onOpenRow({operation_id: 'operation-123'});
   assert.equal(openedOperation, 'operation-123');
   const terminalActions = gridConfig.rowActions(null, {getData: () => ({operation_id: 'operation-123', state: 'succeeded'})});
-  assert.deepEqual(Array.from(terminalActions, (action) => action.label), ['View status', 'Remove backupâ€¦']);
+  assert.deepEqual(Array.from(terminalActions, (action) => action.label), ['View status', 'Remove backup\u2026']);
   terminalActions[1].action();
   assert.equal(openedOperation, 'operation-123');
   assert.equal(openedIntent, 'remove');
