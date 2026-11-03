@@ -1431,7 +1431,11 @@ pwsh -ExecutionPolicy Bypass `
 ```
 
 For exploratory normal-VM testing before a pull request exists, replace `-PullRequestNumber <number>` with
-`-LocalBuilder`. A clean checked-out branch derives
+`-LocalBuilder`. Add `-Headless` to start the VM in the background, including the restart after development-signer
+removal and any resumed import cleanup. The default opens the Workstation console. Headless operation retains the
+normal encrypted CA import, signer removal, source checks, and readiness checks; it does not enable `-NoStart`.
+
+With `-LocalBuilder`, a clean checked-out branch derives
 `Atlaso-Local-<12-character-source-commit>-test-vm[-<collision-safe-suffix>]` while retaining exact VM ownership and
 redeploy checks. Lifecycle labs and acceptance evidence remain PR-numbered.
 
