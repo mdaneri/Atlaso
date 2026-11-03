@@ -1986,6 +1986,7 @@ class VcfBackupSettings(Base):
         allow_password_auth: Whether password auth is permitted.
         allow_public_key_auth: Whether public key auth is permitted.
         max_sessions: Maximum accepted sessions.
+        trusted_backup_sources: Explicit single-host addresses exempt from SSH connection penalties.
         config_path: Filesystem path used for config.
         updated_at: UTC timestamp when the resource was last updated.
         sftp_user: Persisted sftp user for the vcfbackupsettings resource.
@@ -2003,6 +2004,7 @@ class VcfBackupSettings(Base):
     allow_password_auth: Mapped[bool] = mapped_column(Boolean, default=True)
     allow_public_key_auth: Mapped[bool] = mapped_column(Boolean, default=True)
     max_sessions: Mapped[int] = mapped_column(Integer, default=4)
+    trusted_backup_sources: Mapped[str] = mapped_column(String(1024), default="")
     config_path: Mapped[str] = mapped_column(String(240), default="/etc/atlaso/ssh/atlaso-vcf-backups-sshd.conf")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

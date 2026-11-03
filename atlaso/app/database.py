@@ -85,6 +85,7 @@ def _create_database_schema(bind: Engine) -> None:
                 _reconcile_interface_address_check_columns(connection)
                 _reconcile_ntp_time_source_column(connection)
                 _reconcile_dhcp_availability_column(connection)
+                _reconcile_vcf_backup_probe_column(connection)
             except Exception:
                 connection.rollback()
                 raise
@@ -103,6 +104,7 @@ def _create_database_schema(bind: Engine) -> None:
             _reconcile_interface_address_check_columns(connection)
             _reconcile_ntp_time_source_column(connection)
             _reconcile_dhcp_availability_column(connection)
+            _reconcile_vcf_backup_probe_column(connection)
         return
     with bind.begin() as connection:
         Base.metadata.create_all(bind=connection)
@@ -112,6 +114,18 @@ def _create_database_schema(bind: Engine) -> None:
         _reconcile_interface_address_check_columns(connection)
         _reconcile_ntp_time_source_column(connection)
         _reconcile_dhcp_availability_column(connection)
+        _reconcile_vcf_backup_probe_column(connection)
+
+
+def _reconcile_vcf_backup_probe_column(connection: Connection) -> None:
+    """Leave legacy backup receivers with no automatic SSH penalty exemptions.
+
+    Args:
+        connection: Transaction holding the startup schema lock.
+    """
+    columns = {column["name"] for column in inspect(connection).get_columns("vcf_backup_settings")}
+    if "trusted_backup_sources" not in columns:
+        connection.execute(text("ALTER TABLE vcf_backup_settings ADD COLUMN trusted_backup_sources VARCHAR(1024) NOT NULL DEFAULT ''"))
 
 
 def _reconcile_dhcp_availability_column(connection: Connection) -> None:

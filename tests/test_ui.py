@@ -1039,7 +1039,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}392`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}415`;' in service_worker.text
     assert "/static/settings-hardware.js?v=issue-1080-1" in service_worker.text
     assert "/static/vcf-certificate-renewal.js?v=issue-1052-4" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
@@ -1058,7 +1058,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert '!hasDownloadLikePath(url)' in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
     assert "/static/app.css?v=ca-csr-intake-1028-1" in service_worker.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11" in service_worker.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-12" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
     assert "/static/app.js?v=same-interface-gateway-1045-2" in service_worker.text
@@ -1120,10 +1120,10 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-12"
         )
         assert shell.index(
-            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11"
+            "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-12"
         ) < shell.index(app_asset)
     assert "/static/app.css?v=ca-csr-intake-1028-1" in public_base
 
@@ -1790,7 +1790,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=vcf-helper-tabs-1027-2" in page.text
-    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-11" in page.text
+    assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-12" in page.text
     assert "/static/app.js?v=ipv4ll-1077-1" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
@@ -11371,6 +11371,17 @@ def test_vcf_backups_page_uses_local_user_for_sftp(client):
     assert "/mnt/atlaso-vcf-backups" in page.text
     assert "/backups" in page.text
     assert 'action="/ui/management/vcf-backups/settings"' in page.text
+    assert 'data-vcf-backup-operations-grid' in page.text
+    assert 'id="vcf-backup-status-modal"' in page.text
+    assert 'data-endpoint="/ui/management/vcf-helper/backups"' in page.text
+    assert 'data-vcf-backup-form' not in page.text
+    assert '/static/vcf-backup.js?v=issue-1066-23' in page.text
+    assert 'data-vcf-backup-load-operation' not in page.text
+    assert 'name="recovery_operation_id"' not in page.text
+    helper = client.get("/vcf-helper")
+    assert helper.status_code == 200
+    assert 'data-vcf-backup-operations-grid' not in helper.text
+    assert 'href="/ui/management/vcf-backups#vcf-backup-operations-title"' in helper.text
     assert 'data-autosave-status-id="vcf-backup-settings-status"' in page.text
     assert 'href="/ui/management/dashboard#appliance-apply-review"' in page.text
     assert "Review appliance changes" in page.text
@@ -14350,6 +14361,7 @@ def test_vcf_backups_settings_autosave_and_status_api(client):
             "allow_password_auth": "on",
             "allow_public_key_auth": "on",
             "max_sessions": "4",
+            "trusted_backup_sources": "192.0.2.41",
             "config_path": "/etc/atlaso/ssh/sshd_config.d/atlaso-vcf-backups.conf",
             "csrf": csrf,
         },
@@ -14367,6 +14379,7 @@ def test_vcf_backups_settings_autosave_and_status_api(client):
     assert "# Service listener targets: 192.168.50.1:22" in response.json()["config_preview"]
     assert "Match User vcf-backup" in response.json()["config_preview"]
     assert "ForceCommand internal-sftp -d /backups" in response.json()["config_preview"]
+    assert "# Trusted backup probe sources: 192.0.2.41/32" in response.json()["config_preview"]
     assert response.json()["appliance_apply_status"]["id"] == "vcf_backups"
     assert response.json()["appliance_apply_status"]["changed"] is True
     assert "enabled" in client.get("/vcf-backups").text
@@ -14379,6 +14392,33 @@ def test_vcf_backups_settings_autosave_and_status_api(client):
     assert status.json()["sftp_username"] == "vcf-backup"
     assert status.json()["storage_path"] == "/mnt/atlaso-vcf-backups"
     assert status.json()["remote_directory"] == "/backups"
+
+
+def test_vcf_backup_ssh_penalty_exemptions_require_an_administrator(client):
+    """A service administrator cannot expand global SSH source exemptions.
+
+    Args:
+        client: HTTP client with an isolated desired-state database.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Role, User, VcfBackupSettings
+    from atlaso.app.security import roles_to_json
+
+    with SessionLocal() as db:
+        admin = db.scalar(select(User).where(User.username == "admin"))
+        admin.role = Role.SERVICE_ADMIN.value
+        admin.roles_json = roles_to_json([Role.SERVICE_ADMIN.value])
+        db.commit()
+    login(client)
+    page = client.get("/vcf-backups")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    assert 'data-tag-name="trusted_backup_sources"' not in page.text
+    result = client.post("/vcf-backups/settings", data={"csrf": csrf, "trusted_backup_sources": "192.0.2.41/32"})
+    assert result.status_code == 403
+    with SessionLocal() as db:
+        assert db.scalar(select(VcfBackupSettings)).trusted_backup_sources == ""
 
 
 def test_vcf_backups_settings_accept_multiple_listen_targets(client):
@@ -18422,7 +18462,7 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
 
     assert response.status_code == 200
     assert 'data-tab-storage-key="atlaso:vcf-helper:active-tab"' in response.text
-    for tab_id in ("deployment", "credentials", "certificates", "ldap", "lab"):
+    for tab_id in ("deployment", "credentials", "certificates", "ldap", "backup", "lab"):
         assert f'data-tab-target="vcf-helper-{tab_id}"' in response.text
         assert f'id="vcf-helper-{tab_id}" role="tabpanel"' in response.text
     assert 'aria-selected="true">Deployment</button>' in response.text
@@ -18437,14 +18477,25 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert "Lab / Non-production Overrides requires JavaScript." in fallback
     assert "No changes are made by opening this page." in fallback
     assert "Review DNS" not in visible_workspace
-    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 10
+    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 12
+    assert "Configure VCF Backup" in visible_workspace
+    assert "View Backup Operations" in visible_workspace
+    assert 'href="/ui/management/vcf-backups#vcf-backup-operations-title"' in visible_workspace
+    assert "Resume Existing Backup Operation" not in visible_workspace
     assert "Import passwords into a vault" in visible_workspace
-    assert visible_workspace.count('class="vcf-helper-action-bands"') == 5
-    groups = {key: visible_workspace.split(f'id="vcf-helper-{key}" role="tabpanel"', 1)[1].split('class="tab-panel', 1)[0] for key in ("deployment", "credentials", "certificates", "ldap", "lab")}
+    assert visible_workspace.count('class="vcf-helper-action-bands"') == 6
+    groups = {
+        key: visible_workspace.split(
+            f'id="vcf-helper-{key}" role="tabpanel"', 1
+        )[1].split('class="tab-panel', 1)[0]
+        for key in ("deployment", "credentials", "certificates", "ldap", "backup", "lab")
+    }
     assert "Import passwords into a vault" in groups["credentials"]
     assert "VCF Certificate Trust" in groups["certificates"]
     assert "Generate LDAP Test Directory" in groups["ldap"]
     assert "Lab / Non-production Overrides" in groups["lab"]
+    assert "View Backup Operations" in groups["backup"]
+    assert "Resume Existing Backup Operation" not in groups["backup"]
     assert "Import passwords into a vault" not in groups["deployment"]
     assert "vcf-helper-action-arrow" not in visible_workspace
     assert "service-summary-grid" not in visible_workspace
