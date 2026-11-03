@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Configure Atlaso identity, authentication lifetimes, resolver, management HTTPS, and root SSH state.">
+        <meta name="description" content="Configure appliance identity and access, inspect hardware, manage guest tools, and set operational logging.">
       
       
         <meta name="author" content="Atlaso contributors">
@@ -1229,6 +1229,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Configure authentication lifetimes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inspect-hardware-and-guest-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Inspect hardware and guest tools
       </span>
     </span>
   </a>
@@ -4268,6 +4279,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#inspect-hardware-and-guest-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Inspect hardware and guest tools
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#before-you-begin" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4461,13 +4483,16 @@
 
 
 <h1 id="appliance-settings">Appliance settings<a class="headerlink" href="#appliance-settings" title="Permanent link">&para;</a></h1>
-<p>Open <strong>Appliance Settings</strong> to edit appliance-wide desired state: the appliance FQDN, OS hostname, resolver mode and
-servers, management UI HTTPS preference, and root SSH login preference.</p>
+<p>Open <strong>Settings</strong> and choose the tab for the information or control you need. The page groups settings into <strong>General</strong>,
+<strong>Access &amp; Security</strong>, <strong>Hardware</strong>, and <strong>Logging</strong>. Existing identity, resolver, access, authentication, product
+preference, and logging forms keep their current save behavior. Appliance changes that affect host services still wait
+for the global Appliance Apply workflow; immediate application settings and explicit maintenance tasks are labeled at
+the point of action.</p>
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
 <p>This verified appliance view provides visual orientation before you begin.</p>
-<p><img alt="Atlaso Settings page in the clean-appliance desktop viewport." src="../../assets/screenshots/settings-clean-desktop.webp" /></p>
-<p><em>Figure: Settings in the verified clean-appliance desktop state.</em></p>
+<p><img alt="Atlaso Settings General tab in the desktop layout." src="../../assets/screenshots/settings-clean-desktop.webp" /></p>
+<p><em>Figure: General tab in the dedicated documentation appliance at the desktop viewport.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
 <p>Atlaso retires Photon's unchanged nginx HTTP welcome server when preparing the
@@ -4484,7 +4509,7 @@ maintenance guards keep the front door closed until recovery completes.
 A failed nginx configuration check blocks startup and restores the configuration
 from before cleanup.</p>
 <h2 id="configure-authentication-lifetimes">Configure authentication lifetimes<a class="headerlink" href="#configure-authentication-lifetimes" title="Permanent link">&para;</a></h2>
-<p>The <strong>Authentication lifetimes</strong> section saves immediately and does not create a pending Appliance Apply unit:</p>
+<p>On <strong>Access &amp; Security</strong>, <strong>Authentication lifetimes</strong> saves immediately and does not create a pending Appliance Apply unit:</p>
 <ul>
 <li><strong>Browser session inactivity timeout</strong> defaults to 30 minutes and accepts 5 through 1,440 minutes. Atlaso evaluates
   the current value before every protected browser handler, so lowering it can expire an existing inactive session on
@@ -4511,7 +4536,51 @@ credential submission starts the session, while silent <code>prompt=none</code> 
 deadline is reached, silent authorization returns <code>login_required</code>, and raising the policy cannot resurrect that
 expired session; a new interactive sign-in is required.</p>
 <p>Settings archives preserve both policy values but exclude active browser-session records. Factory reset restores the
-30-minute and 90-day defaults and invalidates all earlier sessions and tokens.
+30-minute and 90-day defaults and invalidates all earlier sessions and tokens.</p>
+<h2 id="inspect-hardware-and-guest-tools">Inspect hardware and guest tools<a class="headerlink" href="#inspect-hardware-and-guest-tools" title="Permanent link">&para;</a></h2>
+<p>The <strong>Hardware</strong> tab reports the detected virtualization platform, manufacturer and model when firmware provides
+them, CPU architecture and model, processor count, memory, and read-only disk and network-adapter inventories. An
+inventory error is shown separately from a successful check that found no devices. Hardware inventory never claims or
+changes a disk, NIC, mount, or interface configuration.
+Each disk row includes filesystem types and mount locations observed on its partitions and nested volumes, with
+repeated values shown once. Unpartitioned disks and optical media report their own filesystem and mounts.</p>
+<p>The guest-tools section recommends only the integration compatible with the detected VMware, Hyper-V, or KVM/QEMU
+platform; Proxmox uses the QEMU guest agent. Each check reports the detected provider, package version and state,
+effective service state, supported components, payload availability, clock-safety status, and any reboot impact. A
+provider check is observational and does not install or start software. The page distinguishes a missing package, an
+installed but stopped service, a healthy service, an unsupported environment, and an unknown result when observation
+failed. Bare-metal appliances do not require a guest agent.</p>
+<p>Compare <strong>Installed version</strong> and <strong>Available version</strong> to see the guest tool version without a dependency-package
+listing. The available version describes the verified offline payload, even when a clock-safety prerequisite currently
+prevents maintenance.</p>
+<p>When the compatible verified offline package closure is available, an administrator can review its package and
+service plan and explicitly queue installation or repair. Package maintenance runs as a serialized, audited background
+task; follow its progress and final result in Tasks. Repeat the check after an interrupted or partial failure. A
+successful package command alone does not prove the service is healthy. The task preserves the appliance's selected
+clock authority; it does not introduce another time-source setting. Guest-tools maintenance retains its own result
+record and preserves the last Appliance Update evidence. See <a href="../../services/ntp/#appliance-clock-source">Appliance time source</a>.</p>
+<p>The retained closure supplies offline dependencies, while the package plan accounts for what is already installed.
+Only the detected agent and its required package changes enter the transaction. An incompatible dependency plan fails
+before package installation; the task does not remove conflicting appliance packages or use a network repository to
+work around the conflict.</p>
+<p>Appliance image builds and new offline ISO installations retain verified VMware, Hyper-V, and QEMU guest-tools
+closures under
+<code>/var/lib/atlaso-privileged/guest-tools</code> for this workflow. Existing installations may not have those closures,
+especially after a
+portable first-boot selection has securely removed its separate temporary package staging. In that case Settings shows
+the supported compatible-payload prerequisite and does not download from arbitrary repositories or fall back to
+unreviewed network installation. Continue with the documented supported source or a compatible appliance image that
+carries the verified closure; checking and opening Hardware remain safe without it.
+New ISO media includes the prebuilt agents and dependency closures in its authenticated file inventory. Disconnected
+installation retains those bytes without building, downloading, or enabling an agent. After installing the appliance,
+open <strong>Settings → Hardware</strong>, check the detected provider, review the proposed install or repair, and submit the task.
+Keep the required host guest-agent channel enabled; installation and repair use the retained local RPMs even when
+the appliance has no package-repository access.</p>
+<p>Hyper-V reports only the supported Linux integration components. KVP and VSS are supported; the legacy file-copy
+daemon uses a transport absent from Atlaso's supported Linux 6.12 kernel. QEMU guest-agent host communication requires
+the guest channel expected by the hypervisor. A host must expose that channel before the guest service can become
+healthy. See the <a href="../../reference/virtualization-artifacts/#operator-managed-guest-tools">virtualization artifact guide</a>
+for provider details and limitations.
 During the first upgrade that introduces the persisted token policy, Atlaso migrates a valid legacy
 <code>ATLASO_API_TOKEN_TTL_DAYS</code> value instead of silently replacing it with the 90-day default. Subsequent startups retain
 the database policy, so removing or changing that legacy environment variable does not overwrite operator state.</p>
@@ -4522,7 +4591,9 @@ management connectivity or SSH policy. Routine field changes autosave, but they 
 <ol>
 <li>Change only the desired-state fields required for the maintenance window. Authentication lifetime fields use their
    separate immediate autosave boundary described above.</li>
-<li>Watch the compact autosave status.</li>
+<li>Watch the compact autosave status.
+   General and Access &amp; Security share the status above the tab contents, so saving errors remain visible when you
+   switch tabs. Correct the reported error and retry the change before applying it.</li>
 <li>Resolve errors or warnings in the Validation card.</li>
 <li>Open the rendered preview and confirm the hostname, resolver, HTTPS, and SSH effects.</li>
 <li>Open <strong>Pending Appliance Changes</strong> and submit the valid Appliance Settings unit.</li>
@@ -4543,8 +4614,24 @@ the <a href="../appliance-console/">local appliance console</a> to inspect netwo
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
 <h3 id="appliance-settings_1">Appliance Settings<a class="headerlink" href="#appliance-settings_1" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso Settings page in the clean-appliance responsive viewport." src="../../assets/screenshots/settings-clean-responsive.webp" /></p>
-<p><em>Figure: Settings in the verified clean-appliance responsive state.</em></p>
+<p><img alt="Atlaso Settings Access &amp; Security tab in the desktop layout." src="../../assets/screenshots/settings-access-security-desktop.webp" /></p>
+<p><em>Figure: Access &amp; Security tab in the dedicated documentation appliance at the desktop viewport.</em></p>
+<p><img alt="Atlaso Settings Access &amp; Security tab in the responsive layout." src="../../assets/screenshots/settings-access-security-responsive.webp" /></p>
+<p><em>Figure: Access &amp; Security tab in the dedicated documentation appliance at the responsive viewport.</em></p>
+<p><img alt="Atlaso Settings General tab in the responsive layout." src="../../assets/screenshots/settings-clean-responsive.webp" /></p>
+<p><em>Figure: General tab in the dedicated documentation appliance at the responsive viewport.</em></p>
+<p><img alt="Atlaso Hardware guest-tools details showing VMware Tools 13.1.0 installed and available, with a healthy protected clock." src="../../assets/screenshots/settings-guest-tools-ready-desktop.webp" /></p>
+<p><em>Figure: VMware Tools are installed and healthy; maintenance is disabled because no package or service change is needed.</em></p>
+<p><img alt="Atlaso Hardware tab showing detected VMware hardware, installed and available tool versions, and healthy clock protection in the desktop layout." src="../../assets/screenshots/settings-hardware-desktop.webp" /></p>
+<p><em>Figure: Hardware summary with healthy VMware Tools and a protected synchronized NTP clock in the desktop layout.</em></p>
+<p><img alt="Atlaso Hardware inventories showing four disks and two network adapters with their observed details." src="../../assets/screenshots/settings-hardware-inventories-desktop.webp" /></p>
+<p><em>Figure: Read-only inventories show the documentation appliance disks and network adapters.</em></p>
+<p><img alt="Atlaso Hardware tab showing detected VMware hardware, installed and available tool versions, and healthy clock protection in the responsive layout." src="../../assets/screenshots/settings-hardware-responsive.webp" /></p>
+<p><em>Figure: Hardware summary with healthy VMware Tools and a protected synchronized NTP clock in the responsive layout.</em></p>
+<p><img alt="Atlaso Settings Logging tab in the desktop layout." src="../../assets/screenshots/settings-logging-desktop.webp" /></p>
+<p><em>Figure: Logging tab in the dedicated documentation appliance at the desktop viewport.</em></p>
+<p><img alt="Atlaso Settings Logging tab in the responsive layout." src="../../assets/screenshots/settings-logging-responsive.webp" /></p>
+<p><em>Figure: Logging tab in the dedicated documentation appliance at the responsive viewport.</em></p>
 <p><img alt="Atlaso Settings page with valid pending appliance identity changes." src="../../assets/screenshots/settings-pending-desktop.webp" /></p>
 <p><em>Figure: Valid Appliance Settings waiting for global appliance apply.</em></p>
 <p><img alt="Atlaso configuration preview dialog with the rendered Appliance Settings JSON." src="../../assets/screenshots/settings-preview-modal-desktop.webp" /></p>

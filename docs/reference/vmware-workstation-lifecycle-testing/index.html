@@ -3176,6 +3176,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Normal test-VM creation ownership">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#continue-retained-vm-validation-in-a-successor-chat" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Continue retained VM validation in a successor chat
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4603,6 +4620,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Normal test-VM creation ownership">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#continue-retained-vm-validation-in-a-successor-chat" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Continue retained VM validation in a successor chat
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -5970,30 +6004,80 @@ as <code>-ExpectedPersistentVmIdentitySha256</code>; the owning remover binds it
 Preserve the receipts outside cleanup scopes and record provider, VM path, and resource absence
 separately. A published creation receipt establishes ownership; it does not establish appliance readiness or KMIP
 interoperability.</p>
+<h3 id="continue-retained-vm-validation-in-a-successor-chat">Continue retained VM validation in a successor chat<a class="headerlink" href="#continue-retained-vm-validation-in-a-successor-chat" title="Permanent link">&para;</a></h3>
+<p>An explicit maintainer request to continue a task in a new Codex chat does not change the original resource owner.
+Never replace <code>CODEX_THREAD_ID</code>, select human CLI mode, edit original receipts, or adopt current snapshots as creation
+evidence. Issue a separate immutable successor receipt for each retained VM instead. The first version supports
+ordinary in-worktree VMs; registration of separately receipted external validation roots and chained successors is not
+supported. It does not authorize cloning, redeployment, installation, interruption, removal, or receipt reconstruction.</p>
+<p>The live trusted controller must first verify the original task and resource inventory using supported Codex chat
+reads, the original creation-time selectors, and the maintainer's direct instruction. Prove that the originating chat
+is idle, all its native consumers are terminal, and this is the sole authorized successor. Keep the originating chat
+idle for the entire continuation; stop continuation before resuming its native work. Chat snapshots are not an atomic
+cross-application activity lock. The controller evidence is an attestation inside the existing trusted-host boundary,
+not authentication against an operator who can modify the host or supply forged controller evidence.</p>
+<ol>
+<li>Load the startup gate in the existing clean task worktree and independently resolve its configured durable root.
+   Preserve the original owner, worktree identity, resource identities, receipt paths, and creation-time hashes.</li>
+<li>Capture sanitized controller evidence outside the worktree and every resource removal root, beneath that configured
+   durable root. Its schema-1 JSON contains <code>successor_task_id</code>, <code>originating_task_id</code>, <code>original_receipt_path</code>,
+   <code>original_receipt_sha256</code>, the exact current <code>source_commit</code>, UTC <code>observed_at</code>, and at least two nonempty
+   <code>evidence_refs</code> identifying the supported originating-chat observation and direct human authorization.
+   UTC <code>Z</code> and <code>+00:00</code> timestamps retain the same instant when PowerShell parses the JSON; timezone-free values are refused.
+   Set <code>human_authorized</code>, <code>originating_chat_idle</code>, <code>original_native_consumers_terminal</code>, and <code>exclusive_successor</code> to
+   literal JSON <code>true</code> only after independent verification. Preserve its digest immediately. Missing evidence blocks
+   publication. Publication requires evidence from the previous five minutes; do not refresh its timestamp without
+   repeating the live observations.</li>
+<li>Load <code>Atlaso.TestVmOwnership.ps1</code>. Build <code>New-AtlasoTestVmOwnershipContext</code> for the real active successor using the
+   independently verified current branch/commit, exact original VM name/path/PR and original
+   <code>-OwnershipReceiptPath</code>/<code>-OwnershipReceiptSha256</code>. Do not pass human ownership overrides. Pass this context to:</li>
+</ol>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nv">$continuation</span> <span class="p">=</span> <span class="nb">New-AtlasoTestVmContinuation</span> <span class="n">-Context</span> <span class="nv">$successorContext</span> <span class="p">`</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>  <span class="n">-ControllerEvidencePath</span> <span class="nv">$controllerEvidence</span> <span class="n">-ControllerEvidenceSha256</span> <span class="nv">$controllerEvidenceSha256</span>
+</span></code></pre></div>
+<p>Retain the returned <code>Path</code> and <code>Sha256</code> independently in the task inventory. Release the context's
+   <code>CheckoutSourcePin</code> in <code>finally</code>. Publication refuses an existing successor record without replacement, and retains
+   failed stages for diagnosis. It rechecks the original sealed receipt, source ancestry, VM directory and persistent
+   identity without changing the original receipt or VM. Evidence and source bytes stay pinned while admitted.
+4. Re-admit the retained VM through a fresh context with the returned <code>-ContinuationReceiptPath</code> and
+   <code>-ContinuationReceiptSha256</code>. <code>TaskId</code> remains the original owner; <code>ActiveTaskId</code> records the actual successor.
+   For an installed ISO VM, pass both continuation selectors alongside all original VM/baseline/boot selectors to
+   <code>test-installation-iso.ps1 -Mode ResumeInstalled</code>, <code>AdmitConsole</code>, <code>AdmitNetwork</code>, or <code>Verify</code>, or to
+   <code>invoke-installation-iso-test.ps1 -Scenario LoginInstalled</code>. The console wrapper forwards them to its bounded child
+   and every subsequent admission and verification. No completed installation is repeated.</p>
+<p>The native source guard rechecks and pins the successor record, original receipt and controller evidence at each
+operation boundary. Other chats, changed evidence, replaced resources and divergent source ancestry fail closed.
+Subsequent resume records retain the original <code>task_id</code> and add <code>executor_task_id</code>, <code>continuation_receipt_path</code> and
+<code>continuation_receipt_sha256</code>. Existing receipts remain unchanged. A successor receipt proves permission to continue
+the exact retained resource; it does not prove power state, address ownership, host-key or certificate trust, service
+readiness, clock safety or acceptance. Reobserve those through the existing procedures after host restart.</p>
+<p>Keep the original owner and all successor evidence in the eventual cleanup-ready handoff. This continuation mechanism
+does not extend cleanup authority: the primary-checkout controller must still inspect both chats, quiescence and the
+complete retained-resource inventory under the ordinary cleanup contract.</p>
 <h2 id="normal-test-vm">Normal Test VM<a class="headerlink" href="#normal-test-vm" title="Permanent link">&para;</a></h2>
 <p>For a normal Workstation appliance VM, separate from the lifecycle lab, store the exact <code>Atlaso</code> Environment ID once in
 the checkout-local, Git-ignored configuration file. The prompt is masked and the command does not print the ID:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nv">$atlasoLocal</span> <span class="p">=</span> <span class="nb">Join-Path</span> <span class="p">(</span><span class="n">git</span> <span class="n">rev-parse</span> <span class="p">-</span><span class="n">-show-toplevel</span><span class="p">)</span> <span class="s1">&#39;.atlaso-local&#39;</span>
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="nb">New-Item</span> <span class="n">-ItemType</span> <span class="n">Directory</span> <span class="n">-Path</span> <span class="nv">$atlasoLocal</span> <span class="n">-Force</span> <span class="p">|</span> <span class="nb">Out-Null</span>
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="nv">$atlasoEnvironmentId</span> <span class="p">=</span> <span class="nb">Read-Host</span> <span class="s1">&#39;Paste the Atlaso Environment ID&#39;</span> <span class="n">-MaskInput</span>
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="k">try</span> <span class="p">{</span>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>    <span class="no">[System.IO.File]</span><span class="p">::</span><span class="n">WriteAllText</span><span class="p">(</span>
-</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>        <span class="p">(</span><span class="nb">Join-Path</span> <span class="nv">$atlasoLocal</span> <span class="s1">&#39;onepassword-environment-id&#39;</span><span class="p">),</span>
-</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>        <span class="nv">$atlasoEnvironmentId</span>
-</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>    <span class="p">)</span>
-</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="p">}</span>
-</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="k">finally</span> <span class="p">{</span>
-</span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>    <span class="nb">Remove-Variable</span> <span class="n">atlasoEnvironmentId</span> <span class="n">-ErrorAction</span> <span class="n">SilentlyContinue</span>
-</span><span id="__span-12-12"><a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="p">}</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nv">$atlasoLocal</span> <span class="p">=</span> <span class="nb">Join-Path</span> <span class="p">(</span><span class="n">git</span> <span class="n">rev-parse</span> <span class="p">-</span><span class="n">-show-toplevel</span><span class="p">)</span> <span class="s1">&#39;.atlaso-local&#39;</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="nb">New-Item</span> <span class="n">-ItemType</span> <span class="n">Directory</span> <span class="n">-Path</span> <span class="nv">$atlasoLocal</span> <span class="n">-Force</span> <span class="p">|</span> <span class="nb">Out-Null</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="nv">$atlasoEnvironmentId</span> <span class="p">=</span> <span class="nb">Read-Host</span> <span class="s1">&#39;Paste the Atlaso Environment ID&#39;</span> <span class="n">-MaskInput</span>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="k">try</span> <span class="p">{</span>
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>    <span class="no">[System.IO.File]</span><span class="p">::</span><span class="n">WriteAllText</span><span class="p">(</span>
+</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>        <span class="p">(</span><span class="nb">Join-Path</span> <span class="nv">$atlasoLocal</span> <span class="s1">&#39;onepassword-environment-id&#39;</span><span class="p">),</span>
+</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>        <span class="nv">$atlasoEnvironmentId</span>
+</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>    <span class="p">)</span>
+</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="p">}</span>
+</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="k">finally</span> <span class="p">{</span>
+</span><span id="__span-13-11"><a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a>    <span class="nb">Remove-Variable</span> <span class="n">atlasoEnvironmentId</span> <span class="n">-ErrorAction</span> <span class="n">SilentlyContinue</span>
+</span><span id="__span-13-12"><a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a><span class="p">}</span>
 </span></code></pre></div>
 <p>Then use the ordinary command without an ID argument:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
-</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
-</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>  <span class="n">-WaitForIp</span> <span class="p">`</span>
-</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>  <span class="n">-TrustRootCa</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>  <span class="n">-WaitForIp</span> <span class="p">`</span>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>  <span class="n">-TrustRootCa</span>
 </span></code></pre></div>
 <p>For exploratory normal-VM testing before a pull request exists, replace <code>-PullRequestNumber &lt;number&gt;</code> with
 <code>-LocalBuilder</code>. A clean checked-out branch derives
@@ -6198,10 +6282,10 @@ closing that stopped tab and completing checked VM cleanup, use the standalone r
 and a Windows restart are unnecessary when the saved proof is valid.</p>
 <p>Use the exact handoff path reported by the build, under its admitted <code>BuildStateRoot</code> in
 <code>vmware-builder-addresses/pending-releases</code>. The default build state is <code>.atlaso-local/photon-image-build-state</code>:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="nv">$handoff</span> <span class="p">=</span> <span class="s1">&#39;E:\task\.atlaso-local\photon-image-build-state\vmware-builder-addresses\pending-releases\builder-address-reservation-0123456789abcdef0123456789abcdef.json&#39;</span>
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">manage-builder-reservation</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-HandoffPath</span> <span class="nv">$handoff</span> <span class="n">-Json</span>
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">manage-builder-reservation</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-HandoffPath</span> <span class="nv">$handoff</span> <span class="n">-Cleanup</span> <span class="n">-WhatIf</span>
-</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">manage-builder-reservation</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-HandoffPath</span> <span class="nv">$handoff</span> <span class="n">-Cleanup</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nv">$handoff</span> <span class="p">=</span> <span class="s1">&#39;E:\task\.atlaso-local\photon-image-build-state\vmware-builder-addresses\pending-releases\builder-address-reservation-0123456789abcdef0123456789abcdef.json&#39;</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">manage-builder-reservation</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-HandoffPath</span> <span class="nv">$handoff</span> <span class="n">-Json</span>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">manage-builder-reservation</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-HandoffPath</span> <span class="nv">$handoff</span> <span class="n">-Cleanup</span> <span class="n">-WhatIf</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">manage-builder-reservation</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-HandoffPath</span> <span class="nv">$handoff</span> <span class="n">-Cleanup</span>
 </span></code></pre></div>
 <p>The default and <code>-WhatIf</code> verify without changing reservation or handoff contents. <code>-Cleanup</code> rechecks the exact
 allocation under the shared allocator lock, releases only that record, and then removes its handoff. It does not

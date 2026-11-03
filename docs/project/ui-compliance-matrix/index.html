@@ -4039,6 +4039,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#settings-hardware-and-guest-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings hardware and guest tools
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4432,6 +4443,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Reverse proxy acceptance
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#settings-hardware-and-guest-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings hardware and guest tools
       </span>
     </span>
   </a>
@@ -5095,7 +5117,7 @@ explicit nonresponse/unknown states; <strong>Verify pool</strong> creates a canc
 non-grid DNS settings reference, and optional schedules reuse the Automation Schedules wizard.</p>
 <p>Shared-only templates are <code>base.html</code>, <code>public_portal_base.html</code>, <code>partials/appliance_apply_status.html</code>,
 <code>partials/brand_mark.html</code>, <code>partials/config_preview_action.html</code>, <code>partials/resource_wizard.html</code>,
-<code>partials/port_forwarding.html</code>,
+<code>partials/port_forwarding.html</code>, <code>partials/settings_hardware.html</code>,
 <code>partials/task_grid.html</code>, <code>partials/task_modals.html</code>, <code>partials/terminal_panel.html</code>, <code>partials/vcf_ldap_modal.html</code>,
 <code>partials/vcf_sddc_deploy_modal.html</code>, <code>partials/vcf_sddc_upload_modal.html</code>, <code>partials/vcf_target_depot_modal.html</code>, <code>partials/vcf_trust_modal.html</code>,
 <code>partials/vcf_vault_credential_picker.html</code>, <code>partials/vcf_vault_import_modal.html</code>, and
@@ -5164,6 +5186,14 @@ deployed-appliance UI verification remain outstanding.</p>
 and read-only health grid. <code>reverse-proxy-dialog</code> reuses the step-wizard validation and review interaction.
 Behavioral tests cover wizard payloads and fallback visibility; native desktop and narrow-viewport screenshot acceptance
 remains pending under issue #723. This entry records interaction coverage without claiming deployed acceptance.</p>
+<h2 id="settings-hardware-and-guest-tools">Settings hardware and guest tools<a class="headerlink" href="#settings-hardware-and-guest-tools" title="Permanent link">&para;</a></h2>
+<p>Settings groups existing controls in General, Access &amp; Security, Hardware and Logging tabs, using the shared tabs
+and DNS non-grid settings/validation rail. <code>partials/settings_hardware.html</code> adds read-only Tabulator disk and
+network-adapter inventories using the Tasks reference. Unknown or failed observations remain distinct from empty
+inventories. Guest integration is observed on demand; installation requires an administrator-reviewed maintenance
+task with CSRF, live plan revalidation and the existing Tasks history. Existing full-form autosave and Apply
+boundaries remain intact. Focused browser-adapter tests cover review text and unknown-state gating; deployed desktop,
+narrow, keyboard and native provider acceptance remain pending for #1078 and #1080.</p>
 
 
 
