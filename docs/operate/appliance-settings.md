@@ -1,6 +1,6 @@
 ---
 title: Appliance settings
-description: Configure Atlaso identity, authentication lifetimes, resolver, management HTTPS, and root SSH state.
+description: Configure appliance identity and access, inspect hardware, manage guest tools, and set operational logging.
 audience:
   - operator
 status: current
@@ -8,17 +8,20 @@ status: current
 
 # Appliance settings
 
-Open **Appliance Settings** to edit appliance-wide desired state: the appliance FQDN, OS hostname, resolver mode and
-servers, management UI HTTPS preference, and root SSH login preference.
+Open **Settings** and choose the tab for the information or control you need. The page groups settings into **General**,
+**Access & Security**, **Hardware**, and **Logging**. Existing identity, resolver, access, authentication, product
+preference, and logging forms keep their current save behavior. Appliance changes that affect host services still wait
+for the global Appliance Apply workflow; immediate application settings and explicit maintenance tasks are labeled at
+the point of action.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
 This verified appliance view provides visual orientation before you begin.
 
-![Atlaso Settings page in the clean-appliance desktop viewport.](../assets/screenshots/settings-clean-desktop.webp)
+![Atlaso Settings General tab in the desktop layout.](../assets/screenshots/settings-clean-desktop.webp)
 
-*Figure: Settings in the verified clean-appliance desktop state.*
+*Figure: General tab in the dedicated documentation appliance at the desktop viewport.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
@@ -38,7 +41,7 @@ from before cleanup.
 
 ## Configure authentication lifetimes
 
-The **Authentication lifetimes** section saves immediately and does not create a pending Appliance Apply unit:
+On **Access & Security**, **Authentication lifetimes** saves immediately and does not create a pending Appliance Apply unit:
 
 - **Browser session inactivity timeout** defaults to 30 minutes and accepts 5 through 1,440 minutes. Atlaso evaluates
   the current value before every protected browser handler, so lowering it can expire an existing inactive session on
@@ -70,6 +73,58 @@ expired session; a new interactive sign-in is required.
 
 Settings archives preserve both policy values but exclude active browser-session records. Factory reset restores the
 30-minute and 90-day defaults and invalidates all earlier sessions and tokens.
+
+## Inspect hardware and guest tools
+
+The **Hardware** tab reports the detected virtualization platform, manufacturer and model when firmware provides
+them, CPU architecture and model, processor count, memory, and read-only disk and network-adapter inventories. An
+inventory error is shown separately from a successful check that found no devices. Hardware inventory never claims or
+changes a disk, NIC, mount, or interface configuration.
+Each disk row includes filesystem types and mount locations observed on its partitions and nested volumes, with
+repeated values shown once. Unpartitioned disks and optical media report their own filesystem and mounts.
+
+The guest-tools section recommends only the integration compatible with the detected VMware, Hyper-V, or KVM/QEMU
+platform; Proxmox uses the QEMU guest agent. Each check reports the detected provider, package version and state,
+effective service state, supported components, payload availability, clock-safety status, and any reboot impact. A
+provider check is observational and does not install or start software. The page distinguishes a missing package, an
+installed but stopped service, a healthy service, an unsupported environment, and an unknown result when observation
+failed. Bare-metal appliances do not require a guest agent.
+
+Compare **Installed version** and **Available version** to see the guest tool version without a dependency-package
+listing. The available version describes the verified offline payload, even when a clock-safety prerequisite currently
+prevents maintenance.
+
+When the compatible verified offline package closure is available, an administrator can review its package and
+service plan and explicitly queue installation or repair. Package maintenance runs as a serialized, audited background
+task; follow its progress and final result in Tasks. Repeat the check after an interrupted or partial failure. A
+successful package command alone does not prove the service is healthy. The task preserves the appliance's selected
+clock authority; it does not introduce another time-source setting. Guest-tools maintenance retains its own result
+record and preserves the last Appliance Update evidence. See [Appliance time source](../services/ntp.md#appliance-clock-source).
+
+The retained closure supplies offline dependencies, while the package plan accounts for what is already installed.
+Only the detected agent and its required package changes enter the transaction. An incompatible dependency plan fails
+before package installation; the task does not remove conflicting appliance packages or use a network repository to
+work around the conflict.
+
+Appliance image builds and new offline ISO installations retain verified VMware, Hyper-V, and QEMU guest-tools
+closures under
+`/var/lib/atlaso-privileged/guest-tools` for this workflow. Existing installations may not have those closures,
+especially after a
+portable first-boot selection has securely removed its separate temporary package staging. In that case Settings shows
+the supported compatible-payload prerequisite and does not download from arbitrary repositories or fall back to
+unreviewed network installation. Continue with the documented supported source or a compatible appliance image that
+carries the verified closure; checking and opening Hardware remain safe without it.
+New ISO media includes the prebuilt agents and dependency closures in its authenticated file inventory. Disconnected
+installation retains those bytes without building, downloading, or enabling an agent. After installing the appliance,
+open **Settings → Hardware**, check the detected provider, review the proposed install or repair, and submit the task.
+Keep the required host guest-agent channel enabled; installation and repair use the retained local RPMs even when
+the appliance has no package-repository access.
+
+Hyper-V reports only the supported Linux integration components. KVP and VSS are supported; the legacy file-copy
+daemon uses a transport absent from Atlaso's supported Linux 6.12 kernel. QEMU guest-agent host communication requires
+the guest channel expected by the hypervisor. A host must expose that channel before the guest service can become
+healthy. See the [virtualization artifact guide](../reference/virtualization-artifacts.md#operator-managed-guest-tools)
+for provider details and limitations.
 During the first upgrade that introduces the persisted token policy, Atlaso migrates a valid legacy
 `ATLASO_API_TOKEN_TTL_DAYS` value instead of silently replacing it with the 90-day default. Subsequent startups retain
 the database policy, so removing or changing that legacy environment variable does not overwrite operator state.
@@ -84,6 +139,8 @@ management connectivity or SSH policy. Routine field changes autosave, but they 
 1. Change only the desired-state fields required for the maintenance window. Authentication lifetime fields use their
    separate immediate autosave boundary described above.
 2. Watch the compact autosave status.
+   General and Access & Security share the status above the tab contents, so saving errors remain visible when you
+   switch tabs. Correct the reported error and retry the change before applying it.
 3. Resolve errors or warnings in the Validation card.
 4. Open the rendered preview and confirm the hostname, resolver, HTTPS, and SSH effects.
 5. Open **Pending Appliance Changes** and submit the valid Appliance Settings unit.
@@ -112,9 +169,41 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### Appliance Settings
 
-![Atlaso Settings page in the clean-appliance responsive viewport.](../assets/screenshots/settings-clean-responsive.webp)
+![Atlaso Settings Access & Security tab in the desktop layout.](../assets/screenshots/settings-access-security-desktop.webp)
 
-*Figure: Settings in the verified clean-appliance responsive state.*
+*Figure: Access & Security tab in the dedicated documentation appliance at the desktop viewport.*
+
+![Atlaso Settings Access & Security tab in the responsive layout.](../assets/screenshots/settings-access-security-responsive.webp)
+
+*Figure: Access & Security tab in the dedicated documentation appliance at the responsive viewport.*
+
+![Atlaso Settings General tab in the responsive layout.](../assets/screenshots/settings-clean-responsive.webp)
+
+*Figure: General tab in the dedicated documentation appliance at the responsive viewport.*
+
+![Atlaso Hardware guest-tools details showing VMware Tools 13.1.0 installed and available, with a healthy protected clock.](../assets/screenshots/settings-guest-tools-ready-desktop.webp)
+
+*Figure: VMware Tools are installed and healthy; maintenance is disabled because no package or service change is needed.*
+
+![Atlaso Hardware tab showing detected VMware hardware, installed and available tool versions, and healthy clock protection in the desktop layout.](../assets/screenshots/settings-hardware-desktop.webp)
+
+*Figure: Hardware summary with healthy VMware Tools and a protected synchronized NTP clock in the desktop layout.*
+
+![Atlaso Hardware inventories showing four disks and two network adapters with their observed details.](../assets/screenshots/settings-hardware-inventories-desktop.webp)
+
+*Figure: Read-only inventories show the documentation appliance disks and network adapters.*
+
+![Atlaso Hardware tab showing detected VMware hardware, installed and available tool versions, and healthy clock protection in the responsive layout.](../assets/screenshots/settings-hardware-responsive.webp)
+
+*Figure: Hardware summary with healthy VMware Tools and a protected synchronized NTP clock in the responsive layout.*
+
+![Atlaso Settings Logging tab in the desktop layout.](../assets/screenshots/settings-logging-desktop.webp)
+
+*Figure: Logging tab in the dedicated documentation appliance at the desktop viewport.*
+
+![Atlaso Settings Logging tab in the responsive layout.](../assets/screenshots/settings-logging-responsive.webp)
+
+*Figure: Logging tab in the dedicated documentation appliance at the responsive viewport.*
 
 ![Atlaso Settings page with valid pending appliance identity changes.](../assets/screenshots/settings-pending-desktop.webp)
 

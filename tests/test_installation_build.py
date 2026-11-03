@@ -68,6 +68,7 @@ def test_package_selection_reuses_shared_packages_and_adds_offline_boot_assets(t
         "initramfs",
         "filesystem",
         "grub2-efi-image",
+        "iana-etc",
     } <= set(packages)
     assert "open-vm-tools" not in packages
     assert packages == sorted(set(packages))
@@ -807,6 +808,26 @@ def test_verify_rpms_rejects_missing_or_duplicate_tagged_metadata_rows(
     )
 
     with pytest.raises(ValueError, match="architecture is unsupported"):
+        build.verify_rpms(root, source, scratch)
+
+
+def test_verify_rpms_rejects_payload_missing_required_iana_etc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject an older signed RPM capture that lacks the ISO's service database.
+
+    Args:
+        tmp_path: Pytest-owned fixture directory.
+        monkeypatch: Pytest fixture for replacing controlled dependencies.
+    """
+    root, source, scratch, _commands = _mock_rpm_verification(
+        tmp_path,
+        monkeypatch,
+        "python3-3.14.1-1.x86_64.rpm: digests signatures OK",
+    )
+    monkeypatch.setattr(build, "package_selection", lambda _source: ["iana-etc", "python3"])
+
+    with pytest.raises(ValueError, match="installation RPM closure is incomplete"):
         build.verify_rpms(root, source, scratch)
 
 

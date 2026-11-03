@@ -1363,6 +1363,63 @@ Preserve the receipts outside cleanup scopes and record provider, VM path, and r
 separately. A published creation receipt establishes ownership; it does not establish appliance readiness or KMIP
 interoperability.
 
+### Continue retained VM validation in a successor chat
+
+An explicit maintainer request to continue a task in a new Codex chat does not change the original resource owner.
+Never replace `CODEX_THREAD_ID`, select human CLI mode, edit original receipts, or adopt current snapshots as creation
+evidence. Issue a separate immutable successor receipt for each retained VM instead. The first version supports
+ordinary in-worktree VMs; registration of separately receipted external validation roots and chained successors is not
+supported. It does not authorize cloning, redeployment, installation, interruption, removal, or receipt reconstruction.
+
+The live trusted controller must first verify the original task and resource inventory using supported Codex chat
+reads, the original creation-time selectors, and the maintainer's direct instruction. Prove that the originating chat
+is idle, all its native consumers are terminal, and this is the sole authorized successor. Keep the originating chat
+idle for the entire continuation; stop continuation before resuming its native work. Chat snapshots are not an atomic
+cross-application activity lock. The controller evidence is an attestation inside the existing trusted-host boundary,
+not authentication against an operator who can modify the host or supply forged controller evidence.
+
+1. Load the startup gate in the existing clean task worktree and independently resolve its configured durable root.
+   Preserve the original owner, worktree identity, resource identities, receipt paths, and creation-time hashes.
+2. Capture sanitized controller evidence outside the worktree and every resource removal root, beneath that configured
+   durable root. Its schema-1 JSON contains `successor_task_id`, `originating_task_id`, `original_receipt_path`,
+   `original_receipt_sha256`, the exact current `source_commit`, UTC `observed_at`, and at least two nonempty
+   `evidence_refs` identifying the supported originating-chat observation and direct human authorization.
+   UTC `Z` and `+00:00` timestamps retain the same instant when PowerShell parses the JSON; timezone-free values are refused.
+   Set `human_authorized`, `originating_chat_idle`, `original_native_consumers_terminal`, and `exclusive_successor` to
+   literal JSON `true` only after independent verification. Preserve its digest immediately. Missing evidence blocks
+   publication. Publication requires evidence from the previous five minutes; do not refresh its timestamp without
+   repeating the live observations.
+3. Load `Atlaso.TestVmOwnership.ps1`. Build `New-AtlasoTestVmOwnershipContext` for the real active successor using the
+   independently verified current branch/commit, exact original VM name/path/PR and original
+   `-OwnershipReceiptPath`/`-OwnershipReceiptSha256`. Do not pass human ownership overrides. Pass this context to:
+
+   ```powershell
+   $continuation = New-AtlasoTestVmContinuation -Context $successorContext `
+     -ControllerEvidencePath $controllerEvidence -ControllerEvidenceSha256 $controllerEvidenceSha256
+   ```
+
+   Retain the returned `Path` and `Sha256` independently in the task inventory. Release the context's
+   `CheckoutSourcePin` in `finally`. Publication refuses an existing successor record without replacement, and retains
+   failed stages for diagnosis. It rechecks the original sealed receipt, source ancestry, VM directory and persistent
+   identity without changing the original receipt or VM. Evidence and source bytes stay pinned while admitted.
+4. Re-admit the retained VM through a fresh context with the returned `-ContinuationReceiptPath` and
+   `-ContinuationReceiptSha256`. `TaskId` remains the original owner; `ActiveTaskId` records the actual successor.
+   For an installed ISO VM, pass both continuation selectors alongside all original VM/baseline/boot selectors to
+   `test-installation-iso.ps1 -Mode ResumeInstalled`, `AdmitConsole`, `AdmitNetwork`, or `Verify`, or to
+   `invoke-installation-iso-test.ps1 -Scenario LoginInstalled`. The console wrapper forwards them to its bounded child
+   and every subsequent admission and verification. No completed installation is repeated.
+
+The native source guard rechecks and pins the successor record, original receipt and controller evidence at each
+operation boundary. Other chats, changed evidence, replaced resources and divergent source ancestry fail closed.
+Subsequent resume records retain the original `task_id` and add `executor_task_id`, `continuation_receipt_path` and
+`continuation_receipt_sha256`. Existing receipts remain unchanged. A successor receipt proves permission to continue
+the exact retained resource; it does not prove power state, address ownership, host-key or certificate trust, service
+readiness, clock safety or acceptance. Reobserve those through the existing procedures after host restart.
+
+Keep the original owner and all successor evidence in the eventual cleanup-ready handoff. This continuation mechanism
+does not extend cleanup authority: the primary-checkout controller must still inspect both chats, quiescence and the
+complete retained-resource inventory under the ordinary cleanup contract.
+
 ## Normal Test VM
 
 For a normal Workstation appliance VM, separate from the lifecycle lab, store the exact `Atlaso` Environment ID once in

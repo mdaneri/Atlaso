@@ -70,6 +70,9 @@ provisioning inputs, PowerCLI modules, trust material, notices, firmware, and a 
 are embedded and inventoried. Dependency closure is resolved during authorized ISO preparation; installation does
 not use network package repositories. Shared provisioning explicitly installs `iproute2` for the console and diagnostics;
 the final package-state verifier requires it. The complete captured RPM closure must include its dependencies.
+The base package selection also requires Photon's signed `iana-etc` package, which supplies `/etc/services`
+and `/etc/protocols`. NTPsec's local verification uses these databases to resolve standard service and protocol
+names. A capture missing this package fails admission; regenerate it through the canonical native capture workflow.
 The boot package selection includes Photon’s native `initramfs` package and
 its resolved dependencies. Installation requires the kernel and initrd selected by Photon’s GRUB environment to
 exist before applying chosen credentials or reporting completion.
@@ -120,8 +123,14 @@ created output. Begin from authorized builder preparation state and capture the 
 and required firmware:
 
 ```text
-python scripts/build_installation_iso.py capture-rpms --output <absent-absolute-directory>
+python scripts/build_installation_iso.py capture-rpms --output <absent-absolute-directory> --guest-tools /var/lib/atlaso-privileged/guest-tools
 ```
+
+Select the guest-tools directory produced by this same admitted online native image build. It contains prebuilt
+VMware, Hyper-V and QEMU agents with complete dependency closures. Capture retains it as a `guest-tools` companion
+inside the RPM input directory; ISO preparation moves it to a separate media directory. It never enters the
+GPG-enforced Photon automatic-install repository. Sources that support ISO guest tools reject missing companion
+payloads, so old captures require a fresh admitted build. No additional input path or archive is needed in refresh plans.
 
 Prepare the candidate from that closure, the exact signed software payload, and the PowerCLI modules accepted by the
 existing `Validate` mode of `image/common/powershell/provision-powercli.ps1`:
@@ -146,6 +155,13 @@ candidate as an RPM transaction against a fresh database containing only the adm
 RPM capability requirements, and conflicts must pass with scripts, triggers, and plugins disabled. No host-installed
 package database or network repository can supply a missing dependency. An unsupported host RPM capability or
 incomplete closure stops validation. This check does not replace disconnected installation and reboot acceptance.
+Each guest-tools profile also passes an independent dependency transaction check. Photon RPMs retain signature and
+current repository admission checks. The Atlaso-built QEMU RPM is authenticated by the signed media inventory; its
+pinned version, architecture, two-file payload, reviewed service-unit digest and lack of scripts/triggers are checked
+before signing. Offline installation verifies the media before disk consent and retains the exact payload under
+`/var/lib/atlaso-privileged/guest-tools` with root-only ownership and permissions. It never runs the QEMU source builder
+or a guest-tools package transaction. Use **Settings → Hardware** afterward to review and queue installation or repair
+without contacting a repository. The portable first-boot selector keeps its separate empty ISO agent inventory.
 
 The workflow then signs the candidate, assembles the ISO, and stages the signed installation assets in the existing hidden
 `installation-vX.Y.Z-rc.N` draft. This staging run leaves the release as a draft. Installation artifacts remain
@@ -155,12 +171,17 @@ the x86-64 release contract.
 
 ## Development-only VMware test image
 
-The existing PR builder accepts `-CaptureInstallationRpms` to download the resolved Photon RPM closure and installed
+The existing PR builder accepts `-CaptureInstallationRpms` to download the resolved Photon RPM closure, retained
+guest-tools payloads and installed
 PowerCLI modules. Pass an existing, empty, creation-receipted `-InstallationCaptureDirectory` and its original
 `-InstallationCaptureRootIdentity`. Keep this directory separate from the VM output: Packer removes temporary archive
 files from the VM output during cleanup. The capture directory preserves `installation-rpms.tar` and
 `installation-powercli.tar` for independent verification and ISO assembly. This option is rejected for release builders.
 Capture staging uses `/var/tmp` so it does not consume the guest's `/tmp` memory filesystem during shared provisioning.
+The RPM archive is sealed after shared provisioning has built and retained all three guest-tools closures. Their
+original capture hashes are checked again during development ISO readback, including the relocated compatibility and
+checksum metadata. Capture reuse fingerprints include the provisioner, pinned QEMU builder/spec/unit and payload
+validator, so changes to these inputs require a fresh capture.
 Use `-Headless` for unattended capture without opening the Workstation console. Independently validate all captured
 inputs before assembly; capturing files alone does not establish a successful appliance build.
 
@@ -430,6 +451,11 @@ For the administrator's PowerShell shell, the adapter waits for the cursor hands
 that challenge. Prompt bytes alone do not establish terminal readiness.
 PowerShell commands use carriage return for ordinary Enter; the Unix .NET console treats line feed as Ctrl+Enter.
 
+If installation completed but the initial stop or reboot verification failed before a boot receipt was published,
+retain the original VM and disk-baseline selectors. Resume with `-Scenario BootInstalled`, the original ISO path and
+digest, and `-InspectInstalled -InspectContent`; this verifies the existing disks and boots without media. Do not
+repeat installation or recreate its baseline to recover a verification failure.
+
 To retry login diagnostics on a retained installed VM, use `-Scenario LoginInstalled` with the same ISO identity and
 existing VM directory. Supply `-OriginalReceiptPath`, `-OriginalReceiptSha256`, `-BaselineReceiptPath`,
 `-BaselineReceiptSha256`, `-BootReceiptPath`, and `-BootReceiptSha256` from the original live creation/boot output.
@@ -466,6 +492,8 @@ Add `-InspectContent` alongside `-InspectInstalled` to run five additional check
 - **PowerCLI:** run the existing provisioning script in `Validate` mode against its original lock and module root.
 - **RPMs:** reuse Photon package-state validation, require installed package identities to belong to the ISO closure,
   verify nonconfiguration, nonghost package files without plugins or verification scripts, and verify firmware files.
+  Separately verify both `iana-etc` configuration files, their package ownership and safe file metadata, then require
+  native lookups of `ntp/udp`, UDP and TCP to return their standard numbers before accepting the installed system.
 - **Notices:** regenerate the notices from the original source inputs and installed package inventories in RAM,
   then compare them with the installed document.
 

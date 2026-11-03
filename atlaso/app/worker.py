@@ -1661,7 +1661,7 @@ def _run_appliance_update_admitted(job_id: str) -> None:
             mode == "run" and str(config.get("status_transaction_id") or "")
         )
         actor = job.created_by
-        credentials = update_source_credentials(db)
+        credentials = {} if selected == ["guest_tools"] else update_source_credentials(db)
         if mode != "source_sync":
             stored_order = config.get("execution_order")
             if not isinstance(stored_order, list):

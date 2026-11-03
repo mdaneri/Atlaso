@@ -1039,7 +1039,8 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}412`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}414`;' in service_worker.text
+    assert "/static/settings-hardware.js?v=issue-1080-1" in service_worker.text
     assert "/static/vcf-certificate-renewal.js?v=issue-1052-4" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
@@ -11374,7 +11375,7 @@ def test_vcf_backups_page_uses_local_user_for_sftp(client):
     assert 'id="vcf-backup-status-modal"' in page.text
     assert 'data-endpoint="/ui/management/vcf-helper/backups"' in page.text
     assert 'data-vcf-backup-form' not in page.text
-    assert '/static/vcf-backup.js?v=issue-1066-21' in page.text
+    assert '/static/vcf-backup.js?v=issue-1066-22' in page.text
     assert 'data-vcf-backup-load-operation' not in page.text
     assert 'name="recovery_operation_id"' not in page.text
     helper = client.get("/vcf-helper")
