@@ -9311,6 +9311,7 @@ def _task_type_label(job_type: str) -> str:
         "appliance-shutdown": "Appliance Shutdown",
         "appliance-update": "Appliance Update",
         "vcf-sddc-manager-deploy": "Deploy SDDC Manager",
+        "vcf-backup-configuration": "VCF Backup Configuration",
         "vcf-offline-depot-target-config": "Configure VCF Offline Depot",
         "vcf-ca-trust": "VCF Certificate Trust",
         "vcf-depot-download": "VCF Depot Download",

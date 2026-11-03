@@ -46,6 +46,9 @@
         <div><span>Remote directory</span><strong data-vcf-remote-directory>{{ vcf_backup_remote_directory }}</strong></div>
       </div>
     </section>
+    {% if identity.has_role('admin') %}
+      {% include "partials/vcf_backup_operations.html" %}
+    {% endif %}
   </div>
 
   <aside class="side-stack">
@@ -123,6 +126,22 @@
           <span class="field-label"><span>Max sessions</span><button class="help-icon" type="button" data-help="Maximum concurrent SFTP sessions for the selected backup user.">i</button></span>
           <input type="number" name="max_sessions" value="{{ vcf_backup_settings.max_sessions }}" min="1" max="64">
         </label>
+        <div class="form-field">
+          <span class="field-label"><span>Trusted backup source IPs</span><button class="help-icon" type="button" data-help="Optional single-host IPs. Exempts these hosts from OpenSSH connection penalties across appliance SSH. VCF manager fingerprint probes use nonexistent usernames and can trigger these penalties. Use the manager source IP shown in SSH logs. Authentication and host-key verification remain required. Save and review VCF Backups in Appliance Apply.">i</button></span>
+          {% if identity.has_role('admin') %}
+            <input type="hidden" name="trusted_backup_sources_present" value="1">
+            <div class="tag-editor" data-tag-editor data-tag-name="trusted_backup_sources">
+              <div class="tag-editor-tags" data-tag-list>
+                {% for source in (vcf_backup_settings.trusted_backup_sources or '').split(',') if source %}
+                  <span class="tag-token" data-value="{{ source }}"><span>{{ source }}</span><button type="button" data-tag-remove aria-label="Remove {{ source }}">×</button><input type="hidden" name="trusted_backup_sources" value="{{ source }}"></span>
+                {% endfor %}
+              </div>
+              <input class="tag-editor-input" type="text" placeholder="Add source IP and press Enter" data-tag-entry autocomplete="off" aria-label="Add trusted backup source IP">
+            </div>
+          {% else %}
+            <div class="derived-field fixed-value-field">{{ vcf_backup_settings.trusted_backup_sources or 'None' }}</div>
+          {% endif %}
+        </div>
         <p id="vcf-backup-settings-status" class="autosave-status" data-state="idle">Changes save automatically.</p>
       </form>
     </div>
@@ -154,4 +173,8 @@
     </div>
   </aside>
 </section>
+{% if identity.has_role('admin') %}
+  {% include "partials/vcf_backup_status_modal.html" %}
+  <script src="/static/vcf-backup.js?v=issue-1066-23" defer></script>
+{% endif %}
 {% endblock %}

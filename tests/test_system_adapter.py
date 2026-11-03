@@ -34,6 +34,33 @@ def test_kmip_listener_observation_uses_bounded_readonly_helper(monkeypatch):
     assert calls == []
 
 
+def test_vcf_probe_observation_uses_bounded_readonly_helper(monkeypatch):
+    """The unprivileged web service asks for a fixed public policy observation.
+
+    Args:
+        monkeypatch: Fixture recording the constrained helper subprocess.
+    """
+    calls = []
+
+    def run(command, **kwargs):
+        """Record fixed arguments and timeout without invoking SSH or sudo.
+
+        Args:
+            command: Constrained helper command.
+            **kwargs: Bounded subprocess options.
+        """
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, '{"trusted_backup_sources":"192.0.2.41/32"}', "")
+
+    monkeypatch.setattr("atlaso.app.adapters.system.subprocess.run", run)
+    assert not SystemAdapter(dry_run=False).read_vcf_backup_probe_status().dry_run
+    assert calls[0][0][-3:] == ["vcf-backups", "status", "--real"]
+    assert calls[0][1]["timeout"] == 10 and "input" not in calls[0][1]
+    calls.clear()
+    assert SystemAdapter(dry_run=True).read_vcf_backup_probe_status().dry_run
+    assert not calls
+
+
 def test_appliance_update_inspection_is_safely_absent_in_development():
     """Avoid privileged helper execution for development-only status checks."""
     status = SystemAdapter(dry_run=True).inspect_appliance_update_status()
