@@ -219,10 +219,10 @@ def _reconcile_once(helper: dict[str, Any], bootstrap: dict[str, Any], *, bootst
             public_tls = helper["_management_handoff_candidate_public_tls_addresses"](
                 public_site, int(settings.get("management_public_https_port") or 443)) if public_site.is_file() else set()
             https_addresses = [address for address in addresses if address not in public_tls]
-            previous = read_publication(db)
+            previous = read_publication(db, include_withdrawn=True)
             site_path = helper["NGINX_MANAGEMENT_SITE_PATH"]
             current_leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
-            if (previous and previous.get("addresses") == native["addresses"]
+            if (previous.get("phase") == "ready" and previous.get("addresses") == native["addresses"]
                     and previous.get("apipa_addresses") == native["apipa_addresses"]
                     and (not settings.get("management_https_enabled") or current_leaf is not None
                          and current_leaf.enabled and current_leaf.status != "revoked" and current_leaf.expires_at is not None
@@ -245,7 +245,6 @@ def _reconcile_once(helper: dict[str, Any], bootstrap: dict[str, Any], *, bootst
                 write_publication(previous)
                 return False
             if not native["addresses"]:
-                write_publication({**published, "phase": "withdrawn"})
                 # Remove only the owned dynamic listener. Other management paths
                 # remain represented by the applied binding inventory.
                 kept = sorted(set(retained + ["127.0.0.1", "::1"]))
@@ -253,12 +252,26 @@ def _reconcile_once(helper: dict[str, Any], bootstrap: dict[str, Any], *, bootst
                             http_listen_addresses=kept, https_listen_addresses=[address for address in kept if address not in public_tls],
                             cert_path=Path(settings["management_https_cert_path"]) if settings.get("management_https_enabled") else None,
                             key_path=Path(settings["management_https_key_path"]) if settings.get("management_https_enabled") else None)
-                if helper["_install_nginx_site"](helper["NGINX_MANAGEMENT_SITE_PATH"], site):
-                    raise ValueError("obsolete dynamic management listener could not be withdrawn")
+                withdrawal_unchanged = (
+                    previous.get("phase") == "withdrawn" and site_path.is_file()
+                    and previous.get("site_digest") == hashlib.sha256(site_path.read_bytes()).hexdigest()
+                    and site_path.read_text(encoding="utf-8") == site
+                    and helper["_run"](["systemctl", "is-active", "--quiet", "nginx.service"], timeout=5).returncode == 0
+                )
+                withdrawn = {**published, "phase": "withdrawn"}
+                if not withdrawal_unchanged:
+                    # Retire public admission before activation. A written file
+                    # alone is not proof of a successful reload: failed activation
+                    # leaves no checkpoint digest, so the next pass must retry.
+                    write_publication(withdrawn)
+                    if helper["_install_nginx_site"](site_path, site):
+                        raise ValueError("obsolete dynamic management listener could not be withdrawn")
+                write_publication({**withdrawn, "site_digest": hashlib.sha256(site_path.read_bytes()).hexdigest(),
+                                   "observed_at": datetime.now(timezone.utc).isoformat()})
                 identity.host_ip_cidr = None
                 identity.host_ip_cidrs = []
                 db.commit()
-                if previous:
+                if previous.get("phase") == "ready":
                     record_audit(db, actor="system:networkd", action="withdraw_dynamic_management", resource_type="network",
                                  resource_id=row["name"], detail=f"{row['name']}: {native['ipv4_state']}; dynamic setup listener withdrawn.")
                 return False

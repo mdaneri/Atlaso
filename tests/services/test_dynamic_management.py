@@ -332,6 +332,7 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
     import json
     import subprocess
     from contextlib import nullcontext
+    from datetime import datetime, timezone
 
     from cryptography import x509
     from cryptography.hazmat.primitives import serialization
@@ -427,7 +428,28 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
         return 0, None
 
     helper["_configure_atlaso_management_https"] = publish_config
-    helper["_install_nginx_site"] = lambda path, text: (path.write_text(text), 0)[1]
+    installs = []
+    activation_failure = [False]
+    service_active = [True]
+    install_completed = []
+
+    def install_site(path, text):
+        """Model a written site even when activation fails, requiring a later retry.
+
+        Args:
+            path: Owned synthetic nginx site.
+            text: Expected withdrawal configuration.
+        """
+        installs.append(text)
+        path.write_text(text)
+        if activation_failure[0]:
+            return 1
+        service_active[0] = True
+        install_completed.append(datetime.now(timezone.utc))
+        return 0
+
+    helper["_install_nginx_site"] = install_site
+    helper["_run"] = lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0 if service_active[0] else 1)
     ui_prepared = []
 
     def prepare_ui():
@@ -456,7 +478,9 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
                  "write_text_atomic": lambda path, text, **_kwargs: path.write_text(text),
                  "record_ca_publication_baseline": lambda *args, **kwargs: receipts.append(kwargs)}
     monkeypatch.setattr(publisher, "write_publication", lambda value: receipts.append(deepcopy(value)))
-    monkeypatch.setattr(publisher, "read_publication", lambda _db: next((item for item in reversed(receipts) if item.get("phase") == "ready"), {}))
+    monkeypatch.setattr(publisher, "read_publication", lambda _db, **kwargs: (
+        receipts[-1] if receipts and receipts[-1].get("phase") in (
+            {"ready", "withdrawn"} if kwargs.get("include_withdrawn") else {"ready"}) else {}))
     monkeypatch.setattr(publisher.ssl, "get_server_certificate", lambda *_args, **_kwargs: x509.load_pem_x509_certificate(
         cert_path.read_bytes()).public_bytes(serialization.Encoding.PEM).decode())
     publisher.reconcile(helper, bootstrap)
@@ -464,6 +488,9 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
     if warmup_carrier_loss:
         assert publications == []
         assert receipts[-1]["phase"] == "withdrawn"
+        count = len(installs)
+        publisher.reconcile(helper, bootstrap)
+        assert len(installs) == count
         return
     assert receipts[-1]["apipa_addresses"] == ["169.254.20.10"]
     assert publications[-1][0]["fqdn"] == "applied.atlaso.internal"
@@ -502,6 +529,27 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
     publisher.reconcile(helper, bootstrap)
     assert receipts[-1]["phase"] == "withdrawn"
     assert "192.168.50.10" not in site.read_text()
+    assert datetime.fromisoformat(receipts[-1]["observed_at"]) >= install_completed[-1]
+    count = len(installs)
+    for _ in range(3):
+        publisher.reconcile(helper, bootstrap)
+    assert len(installs) == count
+    site.write_text("drifted site")
+    publisher.reconcile(helper, bootstrap)
+    assert len(installs) == count + 1
+    service_active[0] = False
+    publisher.reconcile(helper, bootstrap)
+    assert len(installs) == count + 2
+    site.write_text("another drift")
+    activation_failure[0] = True
+    with pytest.raises(ValueError, match="could not be withdrawn"):
+        publisher.reconcile(helper, bootstrap)
+    assert "site_digest" not in receipts[-1]
+    activation_failure[0] = False
+    publisher.reconcile(helper, bootstrap)
+    assert len(installs) == count + 4
+    publisher.reconcile(helper, bootstrap)
+    assert len(installs) == count + 4
     with SessionLocal() as db:
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == current_name))
         assert interface.host_ip_cidr is None
@@ -570,6 +618,61 @@ def test_publication_receipt_is_fresh_and_bound_to_applied_inputs(client, tmp_pa
         assert not ordinary.get("ip")
         assert identity.host_ip_cidr is None
         assert identity.host_ip_cidrs == []
+
+
+@pytest.mark.parametrize("change", ["none", "expired", "future", "network", "settings", "identity", "nonempty", "phase", "apipa-only", "ready-empty"])
+def test_withdrawal_checkpoint_is_private_fresh_and_bound(client, tmp_path, monkeypatch, change):
+    """Addressless observer checkpoints never become publicly usable management bindings.
+
+    Args:
+        client: Isolated appliance database.
+        tmp_path: Owned synthetic publication path.
+        monkeypatch: Model root-owned Linux metadata on the test platform.
+        change: Freshness, applied identity or withdrawal shape to invalidate.
+    """
+    import json
+    import stat
+    from datetime import datetime, timedelta, timezone
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.services import dynamic_management as admission
+
+    path = tmp_path / "withdrawn.json"
+    with SessionLocal() as db:
+        identity = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        value = {"phase": "withdrawn", "observed_at": datetime.now(timezone.utc).isoformat(),
+                 "interface": identity.name, "mac": identity.mac_address, "addresses": [], "apipa_addresses": [],
+                 "network_digest": admission.snapshot_digest(admission.applied_snapshots(db).get("network")),
+                 "settings_digest": admission.snapshot_digest(admission.applied_snapshots(db).get("appliance_settings"))}
+        if change in {"expired", "future"}:
+            value["observed_at"] = (datetime.now(timezone.utc) + timedelta(seconds=-30 if change == "expired" else 30)).isoformat()
+        elif change in {"network", "settings"}:
+            value[change + "_digest"] = "superseded"
+        elif change == "identity":
+            value["mac"] = "02:00:00:00:10:78"
+        elif change == "nonempty":
+            value["addresses"] = ["169.254.20.10"]
+        elif change == "phase":
+            value["phase"] = "pending"
+        elif change == "apipa-only":
+            value["apipa_addresses"] = ["169.254.20.10"]
+        elif change == "ready-empty":
+            value["phase"] = "ready"
+        path.write_text(json.dumps(value))
+        original_lstat = Path.lstat
+        monkeypatch.setattr(Path, "lstat", lambda item: SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0)
+                            if item == tmp_path else original_lstat(item))
+        monkeypatch.setattr(admission, "PUBLICATION_PATH", path)
+        monkeypatch.setattr(admission.os, "fstat", lambda _fd: SimpleNamespace(
+            st_mode=stat.S_IFREG | 0o644, st_uid=0, st_size=path.stat().st_size, st_nlink=1))
+        assert admission.read_publication(db) == {}
+        assert admission.publication_bindings(db) == []
+        assert bool(admission.read_publication(db, include_withdrawn=True)) == (change == "none")
 
 
 def test_console_uses_only_ready_setup_receipt_for_apipa_url(client, monkeypatch):

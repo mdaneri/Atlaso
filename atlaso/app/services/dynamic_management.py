@@ -93,12 +93,15 @@ def native_management_addresses(row: dict[str, str], observation: dict[str, Any]
     return {"addresses": sorted(set(ipv6)), "apipa_addresses": [], "ipv4_state": "waiting-dhcp"}
 
 
-def read_publication(db: Session, *, max_age_seconds: int = MAX_AGE_SECONDS) -> dict[str, Any]:
+def read_publication(
+    db: Session, *, max_age_seconds: int = MAX_AGE_SECONDS, include_withdrawn: bool = False,
+) -> dict[str, Any]:
     """Read only a fresh root-published, applied-snapshot-bound management receipt.
 
     Args:
         db: Read-only database transaction authorizing the applied identity.
         max_age_seconds: Bounded handoff callers may retain proof while native ownership is rechecked.
+        include_withdrawn: Internal observer may read an addressless withdrawal checkpoint; public callers exclude it.
     """
     try:
         parent_metadata = PUBLICATION_PATH.parent.lstat()
@@ -114,7 +117,9 @@ def read_publication(db: Session, *, max_age_seconds: int = MAX_AGE_SECONDS) -> 
             value = json.loads(stream.read(16385))
         now = datetime.now(timezone.utc)
         age = (now - datetime.fromisoformat(value["observed_at"])).total_seconds()
-        if not 0 <= age <= min(max_age_seconds, 120) or value.get("phase") != "ready":
+        phase = value.get("phase")
+        if (not 0 <= age <= min(max_age_seconds, 120)
+                or phase not in ({"ready", "withdrawn"} if include_withdrawn else {"ready"})):
             return {}
         baselines = applied_snapshots(db)
         if value.get("network_digest") != snapshot_digest(baselines.get("network")):
@@ -126,7 +131,8 @@ def read_publication(db: Session, *, max_age_seconds: int = MAX_AGE_SECONDS) -> 
             return {}
         addresses = [str(ip_address(address)) for address in value["addresses"]]
         apipa = [str(ip_address(address)) for address in value["apipa_addresses"]]
-        if not addresses or not set(apipa) <= set(addresses):
+        if (phase == "withdrawn" and (addresses or apipa)
+                or phase == "ready" and (not addresses or not set(apipa) <= set(addresses))):
             return {}
         for address in addresses:
             parsed = ip_address(address)

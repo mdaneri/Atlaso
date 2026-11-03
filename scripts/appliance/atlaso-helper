@@ -15514,7 +15514,8 @@ def _wait_network_addresses(
                    if item in matches or item["address"] == candidate_ip):
                 raise ValueError(f"IP conflict on {name}: {address}")
             if (not observation.get("complete") or not links.get(name, {}).get("configured")
-                    or not links.get(name, {}).get("up") or not links.get(name, {}).get("carrier")
+                    or (address in {"dhcp4", "auto6"}
+                        and (not links.get(name, {}).get("up") or not links.get(name, {}).get("carrier")))
                     or not any(item["state"] == "assigned" for item in matches)):
                 missing.append((name, address))
         for name in _IPV4LL_DISABLE_ONLY_LINKS.get():
