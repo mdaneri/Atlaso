@@ -199,6 +199,39 @@ def test_setup_nginx_excludes_public_protocols_and_nonlocal_clients():
     assert "listen 169.254.20.10:80" in excluded
 
 
+@pytest.mark.parametrize("https", [False, True])
+def test_setup_nginx_proxies_exact_terminal_websocket_dependency(https):
+    """Keep the terminal ticket's WebSocket reachable without exposing other paths.
+
+    Args:
+        https: Render the applied management listener's protocol.
+    """
+    from pathlib import Path
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    text = helper._ipv4ll_setup_nginx_server(
+        {"fqdn": "core.atlaso.internal", "management_https_enabled": https},
+        "169.254.20.10", Path("/etc/atlaso/https/certs/core.pem"),
+        Path("/etc/atlaso/https/certs/core.key"), http_allowed=not https,
+    )
+    location = "  location = /terminal/ws {"
+    assert location in text
+    websocket = text.split(location, 1)[1].split("\n  }", 1)[0]
+    assert "proxy_pass http://127.0.0.1:8000;" in websocket
+    assert "proxy_http_version 1.1;" in websocket
+    assert "proxy_set_header Upgrade $http_upgrade;" in websocket
+    assert 'proxy_set_header Connection "upgrade";' in websocket
+    assert "proxy_set_header X-Atlaso-Listener-Address $server_addr;" in websocket
+    assert f"proxy_set_header X-Forwarded-Proto {'https' if https else 'http'};" in websocket
+    guard = 'if ($remote_addr !~ "^169\\.254\\.") { return 403; }'
+    assert text.index(guard) < text.index(location)
+    assert "location ^~ /terminal/" not in text
+    assert "location /terminal/" not in text
+    assert "location / { return 404; }" in text
+
+
 def test_publication_timer_is_bounded_and_reuses_existing_runtime(tmp_path, monkeypatch):
     """Install only fixed root-owned observer units using an isolated systemd directory.
 

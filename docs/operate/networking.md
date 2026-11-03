@@ -85,6 +85,7 @@ Dynamic DHCP/IPv4LL and automatic IPv6 acquisition still require an administrati
 Once a management listener withdrawal has activated successfully, unchanged observer passes refresh its verified
 checkpoint without reloading nginx. A changed site, inactive service or failed activation still requires a retry.
 The selected management NIC also remains available to Web Terminal validation and its Settings preview on APIPA.
+The exact `/terminal/ws` dependency shares that management proxy and its source and authentication restrictions.
 Saving a different management NIC or static address keeps that desired identity selected; the old applied setup
 publication cannot replace it while its new address is pending.
 
