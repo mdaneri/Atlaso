@@ -229,7 +229,7 @@ non-grid DNS settings reference, and optional schedules reuse the Automation Sch
 
 Shared-only templates are `base.html`, `public_portal_base.html`, `partials/appliance_apply_status.html`,
 `partials/brand_mark.html`, `partials/config_preview_action.html`, `partials/resource_wizard.html`,
-`partials/port_forwarding.html`,
+`partials/port_forwarding.html`, `partials/settings_hardware.html`,
 `partials/task_grid.html`, `partials/task_modals.html`, `partials/terminal_panel.html`, `partials/vcf_ldap_modal.html`,
 `partials/vcf_sddc_deploy_modal.html`, `partials/vcf_sddc_upload_modal.html`, `partials/vcf_target_depot_modal.html`, `partials/vcf_trust_modal.html`,
 `partials/vcf_vault_credential_picker.html`, `partials/vcf_vault_import_modal.html`, and
@@ -313,3 +313,13 @@ deployed-appliance UI verification remain outstanding.
 and read-only health grid. `reverse-proxy-dialog` reuses the step-wizard validation and review interaction.
 Behavioral tests cover wizard payloads and fallback visibility; native desktop and narrow-viewport screenshot acceptance
 remains pending under issue #723. This entry records interaction coverage without claiming deployed acceptance.
+
+## Settings hardware and guest tools
+
+Settings groups existing controls in General, Access & Security, Hardware and Logging tabs, using the shared tabs
+and DNS non-grid settings/validation rail. `partials/settings_hardware.html` adds read-only Tabulator disk and
+network-adapter inventories using the Tasks reference. Unknown or failed observations remain distinct from empty
+inventories. Guest integration is observed on demand; installation requires an administrator-reviewed maintenance
+task with CSRF, live plan revalidation and the existing Tasks history. Existing full-form autosave and Apply
+boundaries remain intact. Focused browser-adapter tests cover review text and unknown-state gating; deployed desktop,
+narrow, keyboard and native provider acceptance remain pending for #1078 and #1080.

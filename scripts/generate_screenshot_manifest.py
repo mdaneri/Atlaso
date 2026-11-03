@@ -19,6 +19,26 @@ CANONICAL_BROWSER_ROOTS = {
 }
 
 CAPTURE_OVERRIDES = {
+    # Captured from the dedicated documentation appliance at exact PR source.
+    **{
+        stem: {
+            "source_commit": "903062d0c863f8e67eb11d774a2466c4de387c8c",
+            "atlaso_version": "0.9.472",
+            "capture_method": "playwright-chromium",
+        }
+        for stem in (
+            "settings-clean-desktop",
+            "settings-access-security-desktop",
+            "settings-logging-desktop",
+            "settings-clean-responsive",
+            "settings-access-security-responsive",
+            "settings-logging-responsive",
+            "settings-guest-tools-ready-desktop",
+            "settings-hardware-inventories-desktop",
+            "settings-hardware-desktop",
+            "settings-hardware-responsive",
+        )
+    },
     **{
         stem: {
             "source_commit": "5486d1671f59f67ea0778b9d98f42e0988f19d23+working-tree",
@@ -390,6 +410,66 @@ ROUTES = {
 }
 
 SPECIAL = {
+    "settings-clean-desktop": (
+        "/settings",
+        "clean",
+        "General tab in the dedicated documentation appliance at the desktop viewport.",
+        "Atlaso Settings General tab in the desktop layout.",
+    ),
+    "settings-access-security-desktop": (
+        "/ui/management/settings",
+        "access-security",
+        "Access & Security tab in the dedicated documentation appliance at the desktop viewport.",
+        "Atlaso Settings Access & Security tab in the desktop layout.",
+    ),
+    "settings-logging-desktop": (
+        "/ui/management/settings",
+        "logging",
+        "Logging tab in the dedicated documentation appliance at the desktop viewport.",
+        "Atlaso Settings Logging tab in the desktop layout.",
+    ),
+    "settings-clean-responsive": (
+        "/settings",
+        "clean",
+        "General tab in the dedicated documentation appliance at the responsive viewport.",
+        "Atlaso Settings General tab in the responsive layout.",
+    ),
+    "settings-access-security-responsive": (
+        "/ui/management/settings",
+        "access-security",
+        "Access & Security tab in the dedicated documentation appliance at the responsive viewport.",
+        "Atlaso Settings Access & Security tab in the responsive layout.",
+    ),
+    "settings-logging-responsive": (
+        "/ui/management/settings",
+        "logging",
+        "Logging tab in the dedicated documentation appliance at the responsive viewport.",
+        "Atlaso Settings Logging tab in the responsive layout.",
+    ),
+    "settings-guest-tools-ready-desktop": (
+        "/ui/management/settings",
+        "guest-tools-ready",
+        "VMware Tools are installed and healthy; maintenance is disabled because no package or service change is needed.",
+        "Atlaso Hardware guest-tools details showing VMware Tools 13.1.0 installed and available, with a healthy protected clock.",
+    ),
+    "settings-hardware-inventories-desktop": (
+        "/ui/management/settings",
+        "hardware-inventories",
+        "Read-only inventories show the documentation appliance disks and network adapters.",
+        "Atlaso Hardware inventories showing four disks and two network adapters with their observed details.",
+    ),
+    "settings-hardware-desktop": (
+        "/ui/management/settings",
+        "hardware",
+        "Hardware summary with healthy VMware Tools and a protected synchronized NTP clock in the desktop layout.",
+        "Atlaso Hardware tab showing detected VMware hardware, installed and available tool versions, and healthy clock protection in the desktop layout.",
+    ),
+    "settings-hardware-responsive": (
+        "/ui/management/settings",
+        "hardware",
+        "Hardware summary with healthy VMware Tools and a protected synchronized NTP clock in the responsive layout.",
+        "Atlaso Hardware tab showing detected VMware hardware, installed and available tool versions, and healthy clock protection in the responsive layout.",
+    ),
     **{
         f"vcf-appliance-certificate-sddc-server-{viewport}": (
             "/ui/management/vcf-helper", "sddc-target-selection",
@@ -877,7 +957,7 @@ def metadata(path: Path) -> dict[str, object]:
     else:
         route, state, caption, alt = clean_entry(stem)
     responsive = "responsive" in stem or "narrow" in stem
-    entry = {
+    entry: dict[str, object] = {
         "path": path.relative_to(ROOT / "docs").as_posix(),
         "route": route,
         "state": state,

@@ -36,11 +36,13 @@ DEFAULT_ATLASO_RELEASE_URL = "https://mdaneri.github.io/Atlaso/updates"
 DEFAULT_ATLASO_MANIFEST_URL = f"{DEFAULT_ATLASO_RELEASE_URL}/channels/stable/manifest.json"
 UPDATE_STREAMS = ("photon_os", "powershell_modules", "atlaso_release")
 APPLIANCE_UPDATE_EXECUTION_ORDER = ("photon_os", "powershell_modules", "atlaso_release")
+MAINTENANCE_STREAMS = (*UPDATE_STREAMS, "guest_tools")
 APPLIANCE_UPDATE_LEGACY_EXECUTION_ORDER = ("atlaso_release", "powershell_modules", "photon_os")
 UPDATE_STREAM_LABELS = {
     "photon_os": "Photon OS",
     "powershell_modules": "PowerShell Modules",
     "atlaso_release": "Atlaso Release",
+    "guest_tools": "Guest Tools",
 }
 
 AVAILABILITY_CHANGE_LIMIT = 100
@@ -593,7 +595,7 @@ def ensure_appliance_update_job_steps(
     Returns:
         The ensure appliance update job steps result.
     """
-    selected = set(selected_update_streams(selected_streams))
+    selected = set(selected_update_streams(selected_streams, include_guest_tools=True))
     existing = {step.component_key: step for step in job.steps}
     steps: list[JobStep] = []
     if execution_order is None:
@@ -612,10 +614,10 @@ def ensure_appliance_update_job_steps(
                 for stream in APPLIANCE_UPDATE_LEGACY_EXECUTION_ORDER
                 if stream in selected
             ]
-    ordered_streams = tuple(execution_order or APPLIANCE_UPDATE_EXECUTION_ORDER)
+    ordered_streams = tuple(execution_order or (*APPLIANCE_UPDATE_EXECUTION_ORDER, "guest_tools"))
     if set(ordered_streams) != selected or len(ordered_streams) != len(selected):
         ordered_streams = tuple(
-            stream for stream in APPLIANCE_UPDATE_EXECUTION_ORDER if stream in selected
+            stream for stream in (*APPLIANCE_UPDATE_EXECUTION_ORDER, "guest_tools") if stream in selected
         )
     for position, stream in enumerate(
         (stream for stream in ordered_streams if stream in selected),
@@ -871,14 +873,17 @@ def validate_update_settings(settings: dict[str, Any]) -> list[str]:
     return errors
 
 
-def selected_update_streams(raw_streams: list[str] | tuple[str, ...]) -> list[str]:
+def selected_update_streams(
+    raw_streams: list[str] | tuple[str, ...], *, include_guest_tools: bool = False,
+) -> list[str]:
     """Return selected update streams.
 
     Args:
         raw_streams: Raw streams consumed by selected update streams.
+        include_guest_tools: Admit the internal Hardware maintenance child, never ordinary schedules.
     """
     normalized = set(raw_streams)
-    selected = [stream for stream in UPDATE_STREAMS if stream in normalized]
+    selected = [stream for stream in (MAINTENANCE_STREAMS if include_guest_tools else UPDATE_STREAMS) if stream in normalized]
     return selected
 
 
@@ -932,6 +937,7 @@ def render_update_manifest(
         },
         "powershell_modules": settings.get("powershell_modules") if isinstance(settings.get("powershell_modules"), list) else [],
         "source_definitions": settings.get("source_definitions") if isinstance(settings.get("source_definitions"), list) else [],
+        "guest_tools": settings.get("guest_tools") if isinstance(settings.get("guest_tools"), dict) else {},
         "current": current_version_info(),
         "policy": {
             "auto_reboot": False,
