@@ -225,43 +225,78 @@ def test_publication_timer_is_bounded_and_reuses_existing_runtime(tmp_path, monk
     assert not any("restart" in command for command in calls)
 
 
-@pytest.mark.parametrize("invalid", ["none", "expired", "mac", "interface", "candidate", "ambiguous", "disabled"])
+@pytest.mark.parametrize("invalid", [
+    "none", "missing-proof", "expired", "future", "captured-mac", "observed-mac", "helper-mac", "interface",
+    "candidate", "ambiguous", "disabled", "admin-down", "mode", "role", "static", "unconfigured", "incomplete",
+    "inventory", "no-carrier", "link-down", "ethernet", "tentative", "foreign", "scope", "cidr", "duplicate", "dhcp", "stale-generic",
+])
 def test_apipa_handoff_refresh_and_settings_acknowledgement(monkeypatch, invalid):
-    """Acknowledge the proven setup address without treating it as a DHCP lease.
+    """Acknowledge newly acquired native fallback while the observer cannot publish.
 
     Args:
-        monkeypatch: Supply admitted readback and isolated in-memory Apply state.
-        invalid: Receipt or captured-policy prerequisite to invalidate.
+        monkeypatch: Supply helper readback and isolated in-memory Apply state.
+        invalid: Captured policy, native identity or helper evidence prerequisite to invalidate.
     """
     import json
+    from datetime import datetime, timedelta, timezone
     from types import SimpleNamespace
 
     from atlaso.app import ui
     from atlaso.app.services import dynamic_management as admission
-
-    mac = "02:00:00:00:10:77"
+    row, observation = fixture_observation()
+    mac = row["mac"]
+    observation["observed_at"] = datetime.now(timezone.utc).isoformat()
     interface = SimpleNamespace(mac_address=mac, host_ip_cidr="192.0.2.10/24", host_ip_cidrs=["192.0.2.10/24"])
-    observed = SimpleNamespace(name="eth0", host_dhcp_ip_cidr=None, host_ip_cidr=None, host_ip_cidrs=[])
+    observed = SimpleNamespace(name="eth0", mac_address=mac, host_dhcp_ip_cidr=None, host_ip_cidr=None, host_ip_cidrs=[])
     db = SimpleNamespace(scalar=lambda _statement: interface, flush=lambda: None)
-    receipt = {"interface": "eth0", "mac": mac, "apipa_addresses": ["169.254.20.10"]}
     evidence = {"candidate_addresses": ["169.254.20.10"]}
-    if invalid == "expired":
-        receipt = {}
-    elif invalid == "mac":
-        receipt["mac"] = "02:00:00:00:10:78"
+    link = observation["links"][0]
+    record = link["addresses"][0]
+    if invalid in {"expired", "future"}:
+        observation["observed_at"] = (datetime.now(timezone.utc) + timedelta(seconds=-121 if invalid == "expired" else 30)).isoformat()
+    elif invalid == "captured-mac":
+        row["mac"] = "02:00:00:00:10:78"
+    elif invalid == "observed-mac":
+        observed.mac_address = "02:00:00:00:10:78"
+    elif invalid == "helper-mac":
+        link["mac"] = "02:00:00:00:10:78"
     elif invalid == "interface":
-        receipt["interface"] = "eth1"
+        link["name"] = "eth1"
     elif invalid == "candidate":
         evidence["candidate_addresses"] = ["169.254.20.11"]
     elif invalid == "ambiguous":
-        receipt["apipa_addresses"].append("169.254.20.11")
+        link["addresses"].append({**record, "address": "169.254.20.11", "cidr": "169.254.20.11/16"})
         evidence["candidate_addresses"].append("169.254.20.11")
-    monkeypatch.setattr(admission, "read_publication", lambda *_args, **_kwargs: receipt)
+    elif invalid == "disabled":
+        row["ipv4_link_local_fallback_enabled"] = "false"
+    elif invalid == "admin-down":
+        row["admin_state"] = "down"
+    elif invalid in {"mode", "role"}:
+        row[invalid] = "unused" if invalid == "mode" else "access"
+    elif invalid == "static":
+        row["ip_cidr"] = "192.0.2.10/24"
+    elif invalid == "unconfigured":
+        link["configured"] = False
+    elif invalid == "incomplete":
+        observation["complete"] = False
+    elif invalid in {"inventory", "no-carrier", "link-down", "ethernet"}:
+        link[{"inventory": "address_inventory_complete", "no-carrier": "carrier", "link-down": "up", "ethernet": "ethernet"}[invalid]] = False
+    elif invalid in {"tentative", "foreign", "scope", "cidr", "dhcp"}:
+        key, value = {"tentative": ("state", "checking"), "foreign": ("source", "static"), "scope": ("scope", "global"),
+                      "cidr": ("cidr", "169.254.20.10/24"), "dhcp": ("source", "DHCPv4")}[invalid]
+        record[key] = value
+    elif invalid == "duplicate":
+        observation["links"].append({**deepcopy(link), "name": "eth1", "mac": "02:00:00:00:10:78"})
+    elif invalid == "stale-generic":
+        interface.host_ip_cidr = "169.254.20.10/16"
+    if invalid not in {"missing-proof", "stale-generic"}:
+        evidence["management_address_observation"] = observation
+    # The observer is excluded while a protected handoff/Apply is active. A
+    # stale prior publication cannot be a prerequisite or substitute for proof.
+    monkeypatch.setattr(admission, "read_publication", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(ui, "acquire_network_objects_write_lock", lambda _db: None)
     monkeypatch.setattr(ui, "discover_host_physical_interfaces", lambda **_kwargs: [observed])
-    preview = ("[physical_interfaces]\ninterface=eth0\nrole=management\nmode=access\nadmin_state=up\n"
-               "ipv4_method=dhcp\nip_cidr=\nipv6_enabled=false\n"
-               f"ipv4_link_local_fallback_enabled={'false' if invalid == 'disabled' else 'true'}\n")
+    preview = "[physical_interfaces]\ninterface=eth0\n" + "".join(f"{key}={value}\n" for key, value in row.items() if key != "name")
     captured = {"management_interface": "eth0", "management_ip": "", "management_ip_cidr": "",
                 "web_terminal_enabled": True, "web_terminal_addresses": ["198.51.100.10"], "root_ssh_enabled": False}
     unit = ui.make_appliance_apply_unit(unit_id="appliance_settings", label="Appliance Settings", page_url="/settings",
@@ -270,14 +305,18 @@ def test_apipa_handoff_refresh_and_settings_acknowledgement(monkeypatch, invalid
     original = unit["snapshot_hash"]
 
     def acknowledge():
-        """Follow the successful protected-handoff caller's exact acknowledgement sequence."""
+        """Follow the protected-handoff caller's exact completion sequence."""
         ui.refresh_management_handoff_dynamic_observations(db, preview, evidence)
         ui.baseline_management_handoff_dhcp_settings(db, unit, preview, evidence)
 
     if invalid != "none":
-        with pytest.raises(RuntimeError, match="confirm"):
+        with pytest.raises(RuntimeError, match="confirm|captured"):
             acknowledge()
+        if invalid != "observed-mac":
+            with pytest.raises(RuntimeError, match="confirm|captured"):
+                ui.baseline_management_handoff_dhcp_settings(db, unit, preview, evidence)
         assert unit["snapshot_hash"] == original
+        assert interface.host_ip_cidr == ("169.254.20.10/16" if invalid == "stale-generic" else "192.0.2.10/24")
         return
     acknowledge()
     resolved = json.loads(unit["raw_config_preview"])
@@ -288,6 +327,26 @@ def test_apipa_handoff_refresh_and_settings_acknowledgement(monkeypatch, invalid
     assert unit["snapshot_hash"] != original
     assert interface.host_ip_cidr is None
     assert interface.host_ip_cidrs == []
+
+
+@pytest.mark.parametrize("oversized", ["none", "links", "addresses"])
+def test_handoff_native_readback_preserves_identity_and_refuses_truncation(oversized):
+    """The bounded helper projection retains the exact fallback admission inputs.
+
+    Args:
+        oversized: Inventory bound to exceed, or a complete ordinary observation.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    row, observation = fixture_observation()
+    if oversized == "links":
+        observation["links"] *= 257
+    elif oversized == "addresses":
+        observation["links"][0]["addresses"] *= 33
+    projected = helper._management_handoff_service_address_observation(observation)
+    assert projected["complete"] is (oversized == "none")
+    assert bool(native_management_addresses(row, projected)["apipa_addresses"]) is (oversized == "none")
 
 
 def test_disabling_only_fallback_requires_native_withdrawal(tmp_path, monkeypatch):

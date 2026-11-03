@@ -425,6 +425,9 @@ def test_management_handoff_orders_publication_and_reports_final_observation(
     else:
         result_document = json.loads(capsys.readouterr().out.splitlines()[-1])
         assert result_document["management_handoff"] == "awaiting application commit"
+        assert result_document["management_address_observation"] == helper._management_handoff_service_address_observation(
+            final_observation,
+        )
         assert result_document["public_service_address_moves"] == [{
             "interface": "eth9",
             "old_address": old_public_address,

@@ -78,6 +78,8 @@ Protected Network Apply can admit a newly acquired fallback address from the rev
 evidence; the normal TLS certificate-coverage and readiness checks still apply.
 Settings-only Apply uses the same verified APIPA management context while keeping that address out of ordinary
 DHCP, DNS and service-listener inventory.
+Protected handoff completion uses the helper's fresh final native readback and the captured management MAC and fallback
+policy. A newly acquired APIPA address does not need a prior observer publication while the handoff is still active.
 Carrier loss on an unrelated static interface does not invalidate its complete, assigned-address readiness evidence.
 Dynamic DHCP/IPv4LL and automatic IPv6 acquisition still require an administratively up link with carrier.
 Once a management listener withdrawal has activated successfully, unchanged observer passes refresh its verified

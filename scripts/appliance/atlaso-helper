@@ -31783,7 +31783,9 @@ def _management_handoff_service_address_observation(observation: dict) -> dict:
     """
     return {
         "observed_at": str(observation.get("observed_at") or "")[:64],
-        "complete": observation.get("complete") is True,
+        "complete": (observation.get("complete") is True and len(observation.get("links", [])) <= 256
+                     and all(isinstance(link, dict) and len(link.get("addresses", [])) <= 32
+                             for link in observation.get("links", []))),
         "links": [
             {
                 "name": str(link.get("name") or "")[:32],
@@ -31792,6 +31794,9 @@ def _management_handoff_service_address_observation(observation: dict) -> dict:
                 "vlan_id": link.get("vlan_id") if isinstance(link.get("vlan_id"), int) else None,
                 "parent": str(link.get("parent") or "")[:32],
                 "mac": str(link.get("mac") or "")[:17],
+                "ethernet": link.get("ethernet") is True,
+                "up": link.get("up") is True,
+                "carrier": link.get("carrier") is True,
                 "configured": link.get("configured") is True,
                 "address_inventory_complete": link.get("address_inventory_complete") is True,
                 "addresses": [
@@ -36206,6 +36211,7 @@ def _apply_management_handoff(payload: dict) -> int:
                 "management_handoff": "awaiting application commit",
                 "job_id": state["job_id"],
                 "candidate_addresses": candidate_addresses,
+                "management_address_observation": _management_handoff_service_address_observation(final_address_observation),
                 "previous_preflight": previous_preflight,
                 "upstream_readiness": upstream_readiness,
                 "old_path_readiness": old_readiness,

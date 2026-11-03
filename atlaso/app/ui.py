@@ -10929,6 +10929,40 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
     )
 
 
+def _confirmed_management_handoff_ipv4ll_address(
+    network_preview: str, evidence: dict[str, Any], interface: PhysicalInterface, name: str,
+) -> str:
+    """Admit fallback from final helper readback while observer publication is excluded.
+
+    Args:
+        network_preview: Captured Network identity and fallback policy executed by the helper.
+        evidence: Successful handoff result with final native readback and probed addresses.
+        interface: Current database identity which must still match the captured MAC.
+        name: Captured management interface name being completed.
+    """
+    from atlaso.app.services.dynamic_management import native_management_addresses
+
+    try:
+        observation = evidence.get("management_address_observation") or {}
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(observation["observed_at"])).total_seconds()
+        rows = [row for row in network_interface_entries(network_preview)
+                if row.get("kind") == "physical" and row.get("name") == name]
+        if (not 0 <= age <= 120 or len(rows) != 1 or rows[0].get("ip_cidr")
+                or not rows[0].get("mac") or rows[0]["mac"].lower() != str(interface.mac_address).lower()):
+            raise ValueError("captured identity or freshness differs")
+        row = rows[0]
+        links = [link for link in observation.get("links", []) if link.get("name") == row["name"]]
+        if len(links) != 1 or not links[0].get("configured"):
+            raise ValueError("native configuration is unavailable")
+        native = native_management_addresses(row, observation)
+        addresses = native["apipa_addresses"]
+        if len(addresses) != 1 or addresses[0] not in evidence.get("candidate_addresses", []):
+            raise ValueError("native fallback was not confirmed")
+        return str(addresses[0])
+    except (ValueError, KeyError, TypeError, AttributeError, IndexError) as exc:
+        raise RuntimeError("Protected handoff did not confirm the resolved DHCP management address.") from exc
+
+
 def refresh_management_handoff_dynamic_observations(
     db: Session,
     config_preview: str,
@@ -10978,16 +11012,11 @@ def refresh_management_handoff_dynamic_observations(
         required = []
         if path.get("ipv4_method") == "dhcp":
             if not observed.host_dhcp_ip_cidr:
-                from atlaso.app.services.dynamic_management import read_publication
-
-                setup = read_publication(db, max_age_seconds=120)
-                if (setup.get("interface") == name and setup.get("mac") == interface.mac_address.lower()
-                        and set(setup.get("apipa_addresses", [])) & confirmed_addresses):
-                    # IPv4LL remains separate from DHCP/service inventory. The
-                    # helper already re-attested it before the handoff succeeded.
-                    interface.host_ip_cidr = None
-                else:
-                    required.append(("IPv4", None, "host_ip_cidr"))
+                if str(observed.mac_address).lower() != str(interface.mac_address).lower():
+                    raise RuntimeError("Management handoff could not confirm the observed physical identity.")
+                _confirmed_management_handoff_ipv4ll_address(config_preview, handoff_evidence, interface, name)
+                # Fallback remains setup-only; it is never persisted as a DHCP lease.
+                interface.host_ip_cidr = None
             else:
                 required.append(("IPv4", observed.host_dhcp_ip_cidr, "host_ip_cidr"))
         if path.get("ipv6_enabled", "").lower() == "true" and not path.get("ipv6_cidr"):
@@ -11095,17 +11124,10 @@ def baseline_management_handoff_dhcp_settings(
     interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == name))
     cidr = str(interface.host_ip_cidr or "") if interface is not None else ""
     address = address_from_cidr(cidr)
-    if not address or address not in handoff_evidence.get("candidate_addresses", []):
-        from atlaso.app.services.dynamic_management import read_publication
-
-        setup = read_publication(db, max_age_seconds=120) if interface is not None else {}
-        fallback = set(setup.get("apipa_addresses", [])) & set(handoff_evidence.get("candidate_addresses", []))
-        fallback_enabled = any(row.get("name") == name and row.get("ipv4_link_local_fallback_enabled", "true") == "true"
-                               for row in network_interface_entries(network_preview))
-        if (interface is None or setup.get("interface") != name
-                or setup.get("mac") != interface.mac_address.lower() or len(fallback) != 1 or not fallback_enabled):
+    if not address or ip_address(address).is_link_local or address not in handoff_evidence.get("candidate_addresses", []):
+        if interface is None:
             raise RuntimeError("Protected handoff did not confirm the resolved DHCP management address.")
-        address = fallback.pop()
+        address = _confirmed_management_handoff_ipv4ll_address(network_preview, handoff_evidence, interface, name)
         cidr = address + "/16"
     captured["management_ip"] = address
     captured["management_ip_cidr"] = cidr
