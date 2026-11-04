@@ -13736,11 +13736,13 @@ def _network_row_has_usable_management_address(row: dict[str, str]) -> bool:
     return False
 
 
-def _published_ipv4ll_address(value: str) -> bool:
+def _published_ipv4ll_address(value: str, *, expected_interface: str = "", expected_mac: str = "") -> bool:
     """Verify a root-published setup address against current native ownership.
 
     Args:
         value: Address being considered by an existing management handoff guard.
+        expected_interface: Optional old listener interface whose address is being captured.
+        expected_mac: Optional MAC from that same native interface read.
     """
     try:
         address = ip_address(value)
@@ -13754,6 +13756,9 @@ def _published_ipv4ll_address(value: str) -> bool:
                 or not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0 or parent.st_mode & 0o022):
             return False
         receipt = json.loads(path.read_text(encoding="utf-8"))
+        if (expected_interface and receipt.get("interface") != expected_interface
+                or expected_mac and str(receipt.get("mac") or "").lower() != expected_mac.lower()):
+            return False
         age = (datetime.now(timezone.utc) - datetime.fromisoformat(receipt["observed_at"])).total_seconds()
         if receipt.get("phase") != "ready" or not 0 <= age <= 120 or value not in receipt.get("apipa_addresses", []):
             return False
@@ -33387,7 +33392,7 @@ def _management_handoff_previous_addresses(payload: dict) -> list[str]:
         payload: Validated management-handoff manifest.
 
     Returns:
-        Deduplicated global addresses that comprise the previous management path.
+        Global or verified published IPv4LL addresses of the previous path.
     """
     previous_addresses = [str(ip_address(address)) for address in payload["previous_management_addresses"]]
     for interface in payload["previous_management_interfaces"]:
@@ -33410,6 +33415,15 @@ def _management_handoff_previous_addresses(payload: dict) -> list[str]:
                 local = str(info.get("local") or "")
                 if info.get("scope") == "global" and local:
                     previous_addresses.append(str(ip_address(local)))
+                elif (info.get("scope") == "link" and info.get("family") == "inet" and local
+                        and info.get("prefixlen") == 16 and entry.get("ifname") == interface
+                        and _valid_network_mac(str(entry.get("address") or ""))
+                        and _published_ipv4ll_address(local, expected_interface=str(interface),
+                                                     expected_mac=str(entry["address"]))):
+                    # DHCP intent has no configured CIDR. Capture its advertised
+                    # old setup listener before the later routing snapshot, using
+                    # the same fresh native/publication ownership proof.
+                    previous_addresses.append(local)
     if not previous_addresses:
         raise ValueError("previous management listener addresses could not be captured")
     return list(dict.fromkeys(previous_addresses))

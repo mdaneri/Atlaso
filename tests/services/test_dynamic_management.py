@@ -169,6 +169,9 @@ def test_handoff_rechecks_live_setup_ownership(tmp_path, monkeypatch, duplicate)
     monkeypatch.setattr(helper, "DYNAMIC_MANAGEMENT_PUBLICATION_PATH", path)
     monkeypatch.setattr(helper, "_network_address_observation", lambda: observation)
     assert helper._published_ipv4ll_address("169.254.20.10") is not duplicate
+    assert helper._published_ipv4ll_address("169.254.20.10", expected_interface="eth0", expected_mac=row["mac"]) is not duplicate
+    assert not helper._published_ipv4ll_address("169.254.20.10", expected_interface="eth1", expected_mac=row["mac"])
+    assert not helper._published_ipv4ll_address("169.254.20.10", expected_interface="eth0", expected_mac="02:00:00:00:10:78")
 
 
 def test_setup_nginx_excludes_public_protocols_and_nonlocal_clients():

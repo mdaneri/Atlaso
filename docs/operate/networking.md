@@ -77,6 +77,9 @@ then repeats native observation and applied-state admission before activating a 
 access available during initialization without accepting stale address or CA inputs.
 Protected Network Apply can admit a newly acquired fallback address from the reviewed NIC identity and fresh native
 evidence; the normal TLS certificate-coverage and readiness checks still apply.
+When moving from an APIPA-only setup address to static IPv4, Apply captures the old published listener from fresh
+native interface/MAC ownership before preparing the handoff. Unpublished, stale or unready link-local addresses
+cannot become that previous path; IPv6 link-local addresses remain excluded.
 Settings-only Apply uses the same verified APIPA management context while keeping that address out of ordinary
 DHCP, DNS and service-listener inventory.
 Protected handoff completion uses the helper's fresh final native readback and the captured management MAC and fallback
