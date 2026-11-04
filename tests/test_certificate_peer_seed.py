@@ -89,6 +89,19 @@ def test_optional_bootstrap_installs_tools_and_publishes_only_public_host_key() 
     assert "/etc/ssh/ssh_host_ed25519_key \"" not in publisher
 
 
+def test_seed_removal_preserves_provisioned_host_keys_and_network_without_optional_console_helper() -> None:
+    """Keep the same trusted peer after detaching its original public NoCloud seed."""
+    parsed = yaml.safe_load(peer_files(_args())['user-data'])
+    assert parsed["ssh"] == {"emit_keys_to_console": False}
+    policy = next(item for item in parsed["write_files"]
+                  if item["path"] == "/etc/cloud/cloud.cfg.d/99-atlaso-certificate-retained-peer.cfg")
+    assert policy["permissions"] == '0644'
+    retained = yaml.safe_load(policy["content"])
+    assert retained == {"datasource_list": ["NoCloud", "None"], "ssh_deletekeys": False,
+                        "ssh": {"emit_keys_to_console": False}, "network": {"config": "disabled"}}
+    assert "ssh_deletekeys" not in parsed  # The first boot still generates fresh host keys.
+
+
 def test_optional_instance_id_is_quoted_and_safe_for_cloud_init() -> None:
     files = peer_files(_args(instance_id="certificate-peer-rerun-001"))
 

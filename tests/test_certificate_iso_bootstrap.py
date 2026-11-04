@@ -272,7 +272,8 @@ def test_unknown_bootstrap_apply_retains_original_and_forbids_automatic_retry(tm
     monkeypatch.setattr(bootstrap, "verify_peer_isolation", lambda _peer: {})
     monkeypatch.setattr(bootstrap, "verify_peer_tunnel_scope", lambda _peer, addresses: {})
     monkeypatch.setattr(bootstrap, "guest_identity", lambda *args: {
-        "app_service": {}, "route_snapshot": {}, "helper_sha256": "a" * 64, "wheel_sha256": "b" * 64})
+        "app_service": {}, "route_snapshot": {}, "helper_sha256": "a" * 64,
+        "helper_source_commit": "b" * 40, "wheel_sha256": "b" * 64})
     monkeypatch.setattr(bootstrap, "tls_name", lambda *args: plan["current_address"])
     monkeypatch.setattr(bootstrap, "Client", Client)
     monkeypatch.setattr(bootstrap, "dns_baseline", lambda _client: {})

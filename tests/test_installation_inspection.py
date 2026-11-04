@@ -39,12 +39,13 @@ def _add(iso: pycdlib.PyCdlib, iso_path: str, rr_name: str, content: bytes) -> N
     iso.add_fp(stream, len(content), iso_path=iso_path, rr_name=rr_name)
 
 
-def _iso(path: Path, *, development: bool = True) -> str:
+def _iso(path: Path, *, development: bool = True, helper_inventory_valid: bool = True) -> str:
     """Create minimal development or production media and return its digest.
 
     Args:
         path: Task-owned output file.
         development: Whether to include the explicit non-production marker.
+        helper_inventory_valid: Whether the helper matches its original inventory.
     """
     version = "0.9.453"
     commit = "b" * 40
@@ -64,11 +65,14 @@ def _iso(path: Path, *, development: bool = True) -> str:
         f"software/packages/{wheel_name}": wheel,
         "source/image/common/scripts/verify-template-software.py": b"verifier source",
         "source/scripts/interop/routing_deployment_inspection.py": b"inspector source",
+        "source/scripts/appliance/atlaso-helper": b"installer helper\r\n",
     }
     files = [
         {"path": name, "size": len(content), "sha256": hashlib.sha256(content).hexdigest()}
         for name, content in sorted(inventory.items())
     ]
+    if not helper_inventory_valid:
+        inventory["source/scripts/appliance/atlaso-helper"] = b"changed helper\n"
     manifest = {
         "schema": 1,
         "version": version,
@@ -88,6 +92,7 @@ def _iso(path: Path, *, development: bool = True) -> str:
     media.add_directory("/ATLASO/SOURCE/IMAGE/COMMON/SCRIPTS", rr_name="scripts")
     media.add_directory("/ATLASO/SOURCE/SCRIPTS", rr_name="scripts")
     media.add_directory("/ATLASO/SOURCE/SCRIPTS/INTEROP", rr_name="interop")
+    media.add_directory("/ATLASO/SOURCE/SCRIPTS/APPLIANCE", rr_name="appliance")
     _add(media, "/ATLASO/PAYLOAD_MANIFEST.JSON;1", "payload-manifest.json", json.dumps(manifest).encode())
     for name, content in inventory.items():
         iso_member_path = "/ATLASO/" + name.upper().replace(".", "_").replace("-", "_") + ";1"
@@ -95,6 +100,34 @@ def _iso(path: Path, *, development: bool = True) -> str:
     media.write(str(path))
     media.close()
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_helper_inputs_keep_installer_and_signed_wheel_sources_separate(tmp_path: Path) -> None:
+    """Use the exact media helper, including provisioning's line-ending normalization.
+
+    Args:
+        tmp_path: Task-owned synthetic ISO output directory.
+    """
+    image = tmp_path / "helper.iso"
+    expected = inspection.helper_inputs(image, _iso(image))
+    assert expected["installer_source_commit"] == "c" * 40
+    assert expected["source_commit"] == "b" * 40
+    assert expected["helper_sha256"] == hashlib.sha256(b"installer helper\n").hexdigest()
+    assert expected["wheel_sha256"] == hashlib.sha256(b"wheel bytes").hexdigest()
+    with pytest.raises(ValueError, match="admitted digest"):
+        inspection.helper_inputs(image, "a" * 64)
+
+
+def test_helper_inputs_reject_changed_helper_inside_checksum_admitted_iso(tmp_path: Path) -> None:
+    """A matching whole-media digest does not excuse a broken helper inventory.
+
+    Args:
+        tmp_path: Task-owned synthetic ISO output directory.
+    """
+    image = tmp_path / "changed-helper.iso"
+    digest = _iso(image, helper_inventory_valid=False)
+    with pytest.raises(ValueError, match="helper differs"):
+        inspection.helper_inputs(image, digest)
 
 
 def test_expected_inputs_bind_dev_manifest_and_helper_hashes(tmp_path: Path) -> None:

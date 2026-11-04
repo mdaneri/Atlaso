@@ -158,6 +158,8 @@ sshd -T | grep -Fx 'gatewayports no'
 manage_etc_hosts: true
 disable_root: true
 ssh_pwauth: false
+ssh:
+  emit_keys_to_console: false
 users:
   - default
   - name: {args.user}
@@ -186,6 +188,15 @@ packages:
       case "$2" in ''|*[!0-9.]*) exit 2;; esac
       curl --fail --silent --show-error --max-time 20 --noproxy '*' \\
         --proto '=https' --cacert "$1" "https://$2/openapi.json" >/dev/null
+  - path: /etc/cloud/cloud.cfg.d/99-atlaso-certificate-retained-peer.cfg
+    permissions: '0644'
+    content: |
+      datasource_list: [ NoCloud, None ]
+      ssh_deletekeys: false
+      ssh:
+        emit_keys_to_console: false
+      network:
+        config: disabled
 {extra_write_files}runcmd:
 {ssh_policy_command}  - rc-update add sshd default
   - rc-service sshd restart

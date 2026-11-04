@@ -27,6 +27,7 @@ from certificate_iso_bootstrap import (
     tls_name,
     watched_topology,
 )
+from certificate_iso_identity import reviewed_helper_identity
 from certificate_peer_proof import admit_fixture, admit_output, bound_json, publish
 from certificate_peer_time import verify_peer_time
 from certificate_peer_transport import PinnedApplianceSession, PinnedPeerTransport
@@ -290,6 +291,7 @@ def admit_initialization(plan: dict, output: Path) -> tuple[dict, str]:
     """
     admit_output(plan, output / "source.json", output / "bootstrap-runtime.json")
     fixture = admit_fixture(plan)
+    reviewed_helper_identity(plan)
     network = ipaddress.ip_interface(fixture["peer_cidr"])
     peer_address = str(network.ip)
     requested = plan.get("fixture_initialization")

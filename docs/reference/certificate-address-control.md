@@ -118,6 +118,17 @@ values separately from the current reviewed harness commit. The original resourc
 source recorded when the VM was created; the current harness source identifies the later reviewed code and must
 descend from that resource source. Never rewrite original ISO receipts to make their source match a newer harness.
 
+A development ISO can contain a newer installer source and an older signed application wheel. The helper comes from
+the installer source, while `deployed_commit` continues to identify the signed wheel. Before credential access, admission
+reads the original checksum-pinned ISO, verifies its helper against the media inventory and exact installer Git source,
+and binds the software source and wheel digest to the installed inspection. Native readback must match that helper;
+bootstrap runtime evidence records `helper_source_commit` separately. Neither source is relabelled to satisfy admission.
+
+The certificate peer seed suppresses cloud-init's optional SSH-key console helper; its explicit public-key marker remains
+available for console pinning. It persists the provisioned network and host keys before seed removal, restricts later
+datasource discovery to NoCloud and None, and preserves the peer's original instance history. Recheck the original SSH
+pin and native readiness after the seed-removal restart; never reseed to clear a provisioning failure.
+
 After creating the task-owned peer and LAN through their admitted owning paths, stop the ISO appliance gracefully.
 Use its exact preserved selectors to attach its existing adapter to that segment; the command refuses an active VM,
 extra adapters, an unknown MAC, or mismatched original evidence:

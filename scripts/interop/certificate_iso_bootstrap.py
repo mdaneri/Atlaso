@@ -33,6 +33,7 @@ from certificate_handoff_native import (
     wait_task,
 )
 from certificate_handoff_native import Refusal as HandoffRefusal
+from certificate_iso_identity import reviewed_helper_identity
 from certificate_peer_proof import Refusal as ProofRefusal
 from certificate_peer_proof import admit_fixture, admit_output, bound_json, publish
 from certificate_peer_transport import (
@@ -144,12 +145,8 @@ def guest_identity(session, plan: dict, password: str) -> dict:
     if states != {"LoadState": "loaded", "ActiveState": "active"}:
         raise Refusal("bootstrap_application_inactive")
     helper = session.command("sha256sum /opt/atlaso/bin/atlaso-helper").decode().split()[0]
-    environment = {key: value for key, value in os.environ.items() if not key.startswith("ATLASO_NATIVE_")}
-    expected = subprocess.run(
-        ["git", "-C", str(Path(__file__).resolve().parents[2]), "show", plan["deployed_commit"] + ":scripts/appliance/atlaso-helper"],
-        capture_output=True, check=True, env=environment, timeout=15,
-    ).stdout
-    if helper != hashlib.sha256(expected).hexdigest():
+    expected = reviewed_helper_identity(plan)
+    if helper != expected["helper_sha256"]:
         raise Refusal("bootstrap_reviewed_helper_mismatch")
     installed = bound_json(plan["installed_inspection"])
     if (installed.get("source_commit") != plan["deployed_commit"]
@@ -167,7 +164,7 @@ def guest_identity(session, plan: dict, password: str) -> dict:
     wheel = sudo_read(session, guest_python_command(wheel_probe), password).decode().strip()
     if wheel != installed.get("wheel_sha256"):
         raise Refusal("bootstrap_installed_wheel_changed")
-    return {"route_snapshot": routing, "app_service": states, "helper_sha256": helper, "wheel_sha256": wheel}
+    return {"route_snapshot": routing, "app_service": states, **expected, "wheel_sha256": wheel}
 
 
 def tls_name(peer, address: str, ca: str) -> str:
@@ -257,6 +254,7 @@ def setup(plan: dict, output: Path, password: str, *, execute: bool) -> dict:
             runtime = {"schema": 1, "phase": "iso-before-static-baseline", "vmx_path": plan["vmx_path"],
                        "vm_ownership_sha256": plan["appliance_ownership"]["sha256"],
                        "deployed_commit": plan["deployed_commit"], "helper_sha256": facts["helper_sha256"],
+                       "helper_source_commit": facts["helper_source_commit"],
                        "wheel_sha256": facts["wheel_sha256"], "interface": "eth0", "mac": plan["mac"],
                        "observed_address": current, "address_ownership_state": "unproven"}
             name = tls_name(peer, current, plan["ca_path"])
@@ -346,6 +344,7 @@ def main() -> int:
         output = Path(args.output_directory).resolve(strict=True)
         admit_output(plan, output / "source.json", output / "bootstrap-runtime.json")
         admit_fixture(plan)
+        reviewed_helper_identity(plan)
         if args.preflight_only:
             return 0
         password = os.environ.pop("ATLASO_NATIVE_ADMIN", "")

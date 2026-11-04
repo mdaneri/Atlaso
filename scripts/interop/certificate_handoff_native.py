@@ -22,6 +22,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from certificate_iso_identity import reviewed_helper_identity
 from certificate_peer_proof import Refusal as PeerProofRefusal
 from certificate_peer_proof import admit_receipts as admit_private_receipts
 from certificate_peer_proof import original_vm, plan_pr
@@ -645,13 +646,13 @@ def admit_execution(plan):
     except (PeerProofRefusal, OSError, KeyError, ValueError, TypeError, RuntimeError):
         raise Refusal("private_original_receipts_unproven") from None
     if trusted:
-        helper_bytes = subprocess.run(
-            ["git", "-C", str(Path(__file__).resolve().parents[2]), "show", f"{deployed_commit}:scripts/appliance/atlaso-helper"],
-            capture_output=True, check=True, env=git_environment, timeout=15,
-        ).stdout
+        expected_helper = reviewed_helper_identity(plan)
+        actual_helper = expected_helper["helper_sha256"]
+        if runtime.get("helper_source_commit") != expected_helper["helper_source_commit"]:
+            raise Refusal("installed_helper_source_mismatch")
     else:
         helper_bytes = (Path(__file__).resolve().parents[2] / "scripts/appliance/atlaso-helper").read_bytes()
-    actual_helper = hashlib.sha256(helper_bytes).hexdigest()
+        actual_helper = hashlib.sha256(helper_bytes).hexdigest()
     if actual_helper != runtime["helper_sha256"]:
         raise Refusal("reviewed_helper_digest_mismatch")
     address = str(ipaddress.ip_interface(plan["candidate_cidr"]).ip) if plan["scenario"] == "static-success" else str(ipaddress.IPv4Address(plan["expected_dhcp_address"]))

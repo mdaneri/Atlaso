@@ -589,6 +589,10 @@ function New-AtlasoCertificateInspectorSnapshot {
         $namespace = if ($Purpose -eq 'certificate') { 'interop' } else { 'installation' }
         $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
             (Join-Path $scriptsRoot $namespace), $false, $true))
+        if ($Purpose -eq 'certificate') {
+            $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
+                    (Join-Path $scriptsRoot 'installation'), $false, $true))
+        }
         $inspectorFiles = if ($Purpose -eq 'certificate') { @(
                 'scripts/__init__.py',
                 'scripts/interop/certificate_handoff_native.py',
@@ -597,11 +601,17 @@ function New-AtlasoCertificateInspectorSnapshot {
                 'scripts/interop/certificate_trusted_host.py',
                 'scripts/interop/certificate_retirement.py',
                 'scripts/interop/certificate_iso_bootstrap.py',
+                'scripts/interop/certificate_iso_identity.py',
                 'scripts/interop/certificate_fixture_init.py',
                 'scripts/interop/certificate_peer_time.py',
                 'scripts/interop/certificate_source_probe.py',
                 'scripts/interop/time_source_guest.py',
-                'scripts/completed_task_files.py'
+                'scripts/completed_task_files.py',
+                'scripts/installation/__init__.py',
+                'scripts/installation/inspection.py',
+                'scripts/installation/iso.py',
+                'scripts/installation/manifest.py',
+                'scripts/interop/create_photon_kickstart_iso.py'
             ) } else { @(
                 'scripts/__init__.py', 'scripts/installation/__init__.py',
                 'scripts/installation/vnc_console.py', 'scripts/installation/vnc_frame.py'
