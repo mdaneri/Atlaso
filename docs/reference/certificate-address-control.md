@@ -233,6 +233,30 @@ configured resolver and upstream values through the later address transitions.
 The initialization journals precede desired edits and Apply submission. An unknown task outcome requires reconciliation
 from those records; never rerun it or overwrite the evidence. Then continue with the static bootstrap below.
 
+### Recover a terminal initial NTP synchronization timeout
+
+If the initializer failed only because the selected NTP client did not synchronize within its 60-second guard,
+preserve its result and task ID. Read the existing task and native clock/routing observations first. An active or
+unknown task, another failed component, changed management interface or TLS identity, unrelated pending work, or
+different DNS/NTP desired settings prevents this recovery. The NTP synchronization guard and safe rollback remain
+unchanged; a listening service or a small measured clock offset does not establish a healthy controller.
+
+Create a fresh, originally receipted output namespace and retain the original failed result as the plan reference
+`fixture_initialization_failure` with its original path and SHA-256. Using the same reviewed Git-blob wrapper, run
+`-RecoverFixture` without execution. Review `fixture-recovery-inspection.json`: only NTP may be pending, the other
+initializer components must have succeeded, and Public Services must have been skipped. Desired state must already
+select only the admitted private peer as an NTP client, with DNS and NTP/NTS server roles disabled. Normal Apply review
+must select exactly NTP and Public Services for this new task.
+
+Bind that inspection as `fixture_recovery_inspection`, then use `-RecoverFixture -ExecuteRecovery`. This submits a
+distinct two-unit recovery through normal Appliance Apply, without saving forms or replaying the initializer's other
+components. Before submission, an immutable `fixture-ntp-recovery-claim.json` beside the original failure claims its
+single recovery attempt across output namespaces. An existing claim requires reconciliation; a new output directory
+cannot authorize another submission. The original failed result remains unchanged. Require task success, clean Apply
+state, the original interface/CA/payload/routing identities, and genuine exclusive NTP-client synchronization with the
+private peer selected in native `ntpq` readback. Preserve the new task's journals and `fixture-recovery-result.json`
+alongside the original failure. A failed or unknown recovery blocks bootstrap.
+
 After the original ISO adapter is rewired and the trusted-host topology is admitted, use the reviewed Git-blob
 `scripts/windows/vmware/inspect-certificate-peer.ps1` entrypoint described in the
 [VMware lifecycle certificate workflow](vmware-workstation-lifecycle-testing.md#single-command-run). Do not invoke

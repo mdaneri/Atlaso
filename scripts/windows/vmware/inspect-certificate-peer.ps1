@@ -23,6 +23,10 @@ Permit the bootstrap's reviewed Physical Interfaces and Appliance Apply transiti
 Inspect first-run DNS and clock prerequisites on the original ISO fixture.
 .PARAMETER ExecuteInitialization
 Permit the inspected fixture's fixed DNS and real-peer NTP client initialization through normal Apply.
+.PARAMETER RecoverFixture
+Inspect a terminal initial NTP synchronization failure for a distinct NTP/public-service recovery.
+.PARAMETER ExecuteRecovery
+Permit the inspected two-unit recovery once, preserving the original failed initializer.
 #>
 [CmdletBinding()]
 param(
@@ -36,13 +40,18 @@ param(
     [switch]$Bootstrap,
     [switch]$ExecuteBootstrap,
     [switch]$InitializeFixture,
-    [switch]$ExecuteInitialization
+    [switch]$ExecuteInitialization,
+    [switch]$RecoverFixture,
+    [switch]$ExecuteRecovery
 )
 
 $ErrorActionPreference = 'Stop'
 if ($ExecuteBootstrap -and -not $Bootstrap) { throw 'ExecuteBootstrap requires Bootstrap.' }
 if ($ExecuteInitialization -and -not $InitializeFixture) { throw 'ExecuteInitialization requires InitializeFixture.' }
-if ($InitializeFixture -and $Bootstrap) { throw 'Fixture initialization and static bootstrap are separate operations.' }
+if ($ExecuteRecovery -and -not $RecoverFixture) { throw 'ExecuteRecovery requires RecoverFixture.' }
+if (([int][bool]$InitializeFixture + [int][bool]$Bootstrap + [int][bool]$RecoverFixture) -gt 1) {
+    throw 'Fixture initialization, recovery and static bootstrap are separate operations.'
+}
 if ($PSScriptRoot) {
     throw 'Invoke the certificate inspector from reviewed Git-blob bytes, not a checkout script path.'
 }
@@ -143,18 +152,19 @@ try {
     foreach ($pin in (Protect-AtlasoCertificateProofInputs -Plan $Plan -EvidenceRoot $evidenceRoot)) {
         $snapshot.Pins.Add($pin)
     }
-    $scriptPath = Join-Path $snapshot.Root $(if ($InitializeFixture) { 'scripts/interop/certificate_fixture_init.py' }
+    $scriptPath = Join-Path $snapshot.Root $(if ($InitializeFixture -or $RecoverFixture) { 'scripts/interop/certificate_fixture_init.py' }
         elseif ($Bootstrap) { 'scripts/interop/certificate_iso_bootstrap.py' } else { 'scripts/interop/certificate_peer_proof.py' })
-    $scriptArguments = if ($Bootstrap -or $InitializeFixture) {
+    $scriptArguments = if ($Bootstrap -or $InitializeFixture -or $RecoverFixture) {
         @('--plan', $Plan, '--output-directory', [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($AddressEvidence)))
     } else { @('--plan', $Plan, '--address-output', $AddressEvidence, '--runtime-output', $RuntimeEvidence) }
+    if ($RecoverFixture) { $scriptArguments += '--recover' }
     $arguments = New-AtlasoCertificatePythonArguments -Runtime $runtime -ScriptPath $scriptPath `
         -ScriptArguments $scriptArguments
     Invoke-AtlasoBoundedProcess -FilePath $PythonPath -ArgumentList ($arguments + '--preflight-only') `
         -TimeoutSeconds 30 -Action 'Certificate original peer admission' -DiscardOutput | Out-Null
     $null = Assert-AtlasoSourceSnapshot -Root $snapshot.Root -ExpectedSha256 $snapshot.Sha256 `
         -ExpectedFileCount $snapshot.FileCount
-    if ($ExecuteBootstrap -or $ExecuteInitialization) { $arguments += '--execute' }
+    if ($ExecuteBootstrap -or $ExecuteInitialization -or $ExecuteRecovery) { $arguments += '--execute' }
     $pair = $null
     $plain = $null
     $protectedPeerKey = $null

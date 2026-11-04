@@ -7,6 +7,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -28,7 +29,13 @@ from certificate_iso_bootstrap import (
     watched_topology,
 )
 from certificate_iso_identity import reviewed_helper_identity
-from certificate_peer_proof import admit_fixture, admit_output, bound_json, publish
+from certificate_peer_proof import (
+    admit_fixture,
+    admit_output,
+    bound_json,
+    publish,
+    require_reviewed_ancestor,
+)
 from certificate_peer_time import verify_peer_time
 from certificate_peer_transport import PinnedApplianceSession, PinnedPeerTransport
 from certificate_retirement import verify_peer_isolation, verify_peer_tunnel_scope
@@ -44,6 +51,7 @@ ROOTS = {"appliance_settings", "network", "ca", "firewall", "public_services", "
 # A first network baseline can require disabled WAN/NAT enforcement. The
 # original routing-absence proof is mandatory; no routing desired state is edited.
 CLOSURE = ROOTS | {"wan", "nat"}
+RECOVERY_ROOTS = {"ntpd", "public_services"}
 
 
 class Refusal(Exception):
@@ -183,6 +191,9 @@ def prepare_forms(client, peer_address: str) -> tuple[dict, dict]:
     public["ntp"].update(enabled=ntp.get("enabled") == "on", time_source=ntp.get("time_source"),
                          nts_server_enabled=ntp.get("nts_server_enabled") == "on",
                          upstream_count=len(sources), enabled_upstream_count=sum(bool(row.get("enabled")) for row in sources))
+    enabled = [row for row in sources if row.get("enabled")]
+    public["ntp"]["peer_only"] = (len(enabled) == 1 and enabled[0].get("source") == peer_address
+                                  and enabled[0].get("use_nts") is False)
     sources = [dict(row, enabled=False) for row in sources if row.get("source") != peer_address]
     sources.append({"id": "certificate-fixture-peer", "source": peer_address, "enabled": True,
                     "use_nts": False, "description": "Isolated certificate fixture peer"})
@@ -212,23 +223,34 @@ def validate_review(review: dict) -> None:
         raise Refusal("fixture_unrelated_pending_units")
 
 
-def submit_initialization(client) -> tuple[str, str]:
+def submit_initialization(client, *, roots: set[str] | None = None) -> tuple[str, str]:
     """Submit only the server-reviewed fixed initialization roots and dependencies.
 
     Args:
         client: Authenticated, CA-validated management client.
+        roots: Fixed recovery roots, or the original initialization roots.
     """
+    roots = ROOTS if roots is None else roots
+    if roots != ROOTS and roots != RECOVERY_ROOTS:
+        raise Refusal("fixture_review_scope_changed")
     _, review = client.json("/ui/management/appliance-apply/review")
     validate_review(review)
-    _, review = client.json(apply_review_path("/ui/management/appliance-apply/review", sorted(ROOTS)))
+    if roots == RECOVERY_ROOTS and (review.get("initial_apply_required") is not True
+                                  or review.get("pending_count") != 1 or {
+        unit.get("id") for unit in review["units"] if unit.get("changed")
+    } != {"ntpd"}):
+        raise Refusal("fixture_recovery_state_changed")
+    _, review = client.json(apply_review_path("/ui/management/appliance-apply/review", sorted(roots)))
     try:
         fields = apply_review_fields(review)
     except ValueError:
         raise Refusal("fixture_review_invalid") from None
-    if set(review.get("requested_units", [])) != ROOTS or any(
+    if set(review.get("requested_units", [])) != roots or any(
         unit.get("id") not in CLOSURE for unit in review.get("units", []) if unit.get("selected")
     ):
         raise Refusal("fixture_review_scope_changed")
+    if roots == RECOVERY_ROOTS and recovery_selection(review) != sorted(RECOVERY_ROOTS):
+        raise Refusal("fixture_recovery_scope_changed")
     _, body = client.request("/ui/management/physical-interfaces")
     csrf = Page(body).csrf
     if not csrf:
@@ -312,7 +334,89 @@ def admit_initialization(plan: dict, output: Path) -> tuple[dict, str]:
     return fixture, peer_address
 
 
-def initialize(plan: dict, output: Path, password: str, *, execute: bool) -> dict:
+def admit_recovery_failure(plan: dict) -> tuple[dict, Path]:
+    """Bind one terminal initializer failure and refuse a previously claimed recovery.
+
+    Args:
+        plan: Current source plan retaining the original failed initializer result.
+    """
+    reference = plan["fixture_initialization_failure"]
+    failure = bound_json(reference)
+    path = Path(reference["path"])
+    if (path.name != "fixture-initialization-result.json"
+            or failure.get("kind") != "certificate-fixture-initialization"
+            or failure.get("task_id") != plan["task_id"] or failure.get("success") is not False
+            or failure.get("stage") != "apply_wait" or failure.get("recovery") != "preserve_and_reconcile"
+            or not re.fullmatch(r"job_[0-9a-f]{12}", failure.get("job_id", ""))):
+        raise Refusal("fixture_recovery_requires_terminal_initialization_failure")
+    require_reviewed_ancestor(plan, failure.get("source_commit", ""), "fixture_recovery_failure_source_invalid")
+    claim = path.parent / "fixture-ntp-recovery-claim.json"
+    if claim.exists() or claim.is_symlink():
+        raise Refusal("fixture_recovery_already_claimed_requires_reconciliation")
+    return failure, claim
+
+
+def recovery_selection(review: dict) -> list[str]:
+    """Require exactly the pending NTP and skipped public-service recovery units.
+
+    Args:
+        review: Selection-specific normal Appliance Apply review.
+    """
+    selected = [unit for unit in review.get("units", []) if unit.get("selected")]
+    if (review.get("active_task") is not None or set(review.get("requested_units", [])) != RECOVERY_ROOTS
+            or any(not unit.get("valid") for unit in selected)
+            or any(unit.get("changed") is not (unit.get("id") == "ntpd") for unit in selected)
+            or sorted(unit.get("id", "") for unit in selected) != sorted(RECOVERY_ROOTS)):
+        raise Refusal("fixture_recovery_scope_changed")
+    return sorted(unit["id"] for unit in selected)
+
+
+def inspect_recovery(client, failure: dict, review: dict, public: dict, original: dict, tls: dict,
+                     peer_address: str) -> dict:
+    """Admit a distinct two-unit recovery without saving any desired-state forms.
+
+    Args:
+        client: Authenticated original appliance client.
+        failure: Immutable original initializer failure.
+        review: Fresh default Apply review.
+        public: Current public form fingerprints and prerequisite facts.
+        original: Current saved management interface fields.
+        tls: Current CA-validated served public leaf identity.
+        peer_address: Original admitted private NTP peer address.
+    """
+    if (review.get("active_task") is not None or review.get("initial_apply_required") is not True
+            or review.get("pending_count") != 1
+            or {unit.get("id") for unit in review.get("units", []) if unit.get("changed")} != {"ntpd"}
+            or original != failure.get("original_interface") or tls != failure.get("original_tls")
+            or public["dns"].get("enabled") is not False
+            or public["dns"].get("upstream_servers") != [peer_address]
+            or public["settings"].get("external_dns_servers") != [peer_address]
+            or public["ntp"].get("enabled") is not False
+            or public["ntp"].get("nts_server_enabled") is not False
+            or public["ntp"].get("time_source") != "ntp_client" or public["ntp"].get("peer_only") is not True):
+        raise Refusal("fixture_recovery_state_changed")
+    _, payload = client.json("/tasks/" + failure["job_id"] + "/status")
+    task = payload.get("task", {})
+    children = task.get("_children", [])
+    states = {child.get("component_key"): child.get("status") for child in children}
+    required = ROOTS - RECOVERY_ROOTS
+    ntp = [child for child in children if child.get("component_key") == "ntpd"]
+    if (task.get("id") != failure["job_id"] or task.get("type") != "appliance-apply"
+            or task.get("status") != "failed" or len(states) != len(children)
+            or not required <= states.keys() or not states.keys() <= CLOSURE
+            or states.get("ntpd") != "failed" or states.get("public_services") != "skipped"
+            or any(state != "succeeded" for unit, state in states.items() if unit not in RECOVERY_ROOTS)
+            or len(ntp) != 1 or not str(ntp[0].get("error", "")).startswith(
+                "ntpd clock-source transition failed: ntpd is active as the only selected clock source, "
+                "but did not synchronize within 60 seconds:")
+            or "Previous config is restored;" not in ntp[0].get("error", "")):
+        raise Refusal("fixture_recovery_failure_not_admitted")
+    _, selected = client.json(apply_review_path("/ui/management/appliance-apply/review", sorted(RECOVERY_ROOTS)))
+    return {"failed_job_id": failure["job_id"], "reason": "terminal_initial_ntp_synchronization_timeout",
+            "selected_units": recovery_selection(selected)}
+
+
+def initialize(plan: dict, output: Path, password: str, *, execute: bool, recovery: bool = False) -> dict:
     """Inspect or initialize one original ISO fixture before certificate cases.
 
     Args:
@@ -320,14 +424,21 @@ def initialize(plan: dict, output: Path, password: str, *, execute: bool) -> dic
         output: Original task-owned evidence directory.
         password: Administrator credential confined to this bounded child.
         execute: Explicit permission to edit the three forms and submit one Apply.
+        recovery: Inspect or submit only the reconciled NTP/public-service recovery.
     """
     fixture, peer_address = admit_initialization(plan, output)
+    failure, claim = admit_recovery_failure(plan) if recovery else (None, None)
+    prefix = "fixture-recovery" if recovery else "fixture"
+    kind = "certificate-fixture-recovery" if recovery else "certificate-fixture-initialization"
+    started = prefix + ("-started.json" if recovery else "-mutation-started.json")
+    result_name = "fixture-recovery-result.json" if recovery else "fixture-initialization-result.json"
+    inspection_name = "fixture-recovery-inspection.json" if recovery else "fixture-initialization-inspection.json"
     requested = plan.get("fixture_initialization")
     if execute and any((output / name).exists() for name in (
-        "fixture-mutation-started.json", "fixture-apply-submitted.json", "fixture-initialization-result.json",
+        started, prefix + "-apply-submitted.json", result_name,
     )):
         raise Refusal("fixture_prior_execution_requires_reconciliation")
-    result = {"schema": 1, "kind": "certificate-fixture-initialization", "source_commit": plan["source_commit"],
+    result = {"schema": 1, "kind": kind, "source_commit": plan["source_commit"],
               "task_id": plan["task_id"], "success": False, "stage": "admission"}
     mutation = False
     terminal = True
@@ -369,11 +480,15 @@ def initialize(plan: dict, output: Path, password: str, *, execute: bool) -> dic
             prepared, public = prepare_forms(client, peer_address)
             result.update(stage="inspected_no_mutation", original_interface=original, original_forms=public,
                           original_tls=client.tls_identity(), guest_identity=facts)
+            if recovery:
+                result["recovery_admission"] = inspect_recovery(
+                    client, failure, review, public, original, result["original_tls"], peer_address)
+                result["failed_initialization_sha256"] = plan["fixture_initialization_failure"]["sha256"]
             if not execute:
                 result["success"] = True
                 return result
-            inspection = bound_json(plan["fixture_initialization_inspection"])
-            if (inspection.get("kind") != "certificate-fixture-initialization"
+            inspection = bound_json(plan["fixture_recovery_inspection" if recovery else "fixture_initialization_inspection"])
+            if (inspection.get("kind") != kind
                     or inspection.get("stage") != "inspected_no_mutation" or inspection.get("success") is not True
                     or inspection.get("task_id") != plan["task_id"]
                     or inspection.get("source_commit") != plan["source_commit"]
@@ -382,9 +497,17 @@ def initialize(plan: dict, output: Path, password: str, *, execute: bool) -> dic
                     or inspection.get("original_forms") != public
                     or inspection.get("original_interface") != original):
                 raise Refusal("fixture_inspected_state_changed")
-            publish(output / "fixture-mutation-started.json", {**result, "requested_initialization": requested})
+            if recovery:
+                if (inspection.get("recovery_admission") != result["recovery_admission"]
+                        or inspection.get("failed_initialization_sha256") != result["failed_initialization_sha256"]):
+                    raise Refusal("fixture_recovery_inspected_state_changed")
+                publish(claim, {"schema": 1, "kind": "certificate-fixture-ntp-recovery-claim",
+                                "task_id": plan["task_id"], "source_commit": plan["source_commit"],
+                                "failed_job_id": failure["job_id"], "output_directory": str(output),
+                                "failure_sha256": plan["fixture_initialization_failure"]["sha256"]})
+            publish(output / started, {**result, "requested_initialization": requested})
             mutation = True
-            for page in ("dns", "settings", "ntp"):
+            for page in (() if recovery else ("dns", "settings", "ntp")):
                 result["stage"] = "desired_" + page
                 # Refresh the settings form after DNS is disabled: its resolver
                 # control can switch from a preserved hidden input to a textarea.
@@ -398,8 +521,9 @@ def initialize(plan: dict, output: Path, password: str, *, execute: bool) -> dic
                     raise Refusal("fixture_saved_settings_invalid")
             terminal = False
             result["stage"] = "apply_submission"
-            job, status_path = submit_initialization(client)
-            publish(output / "fixture-apply-submitted.json", {"job_id": job, "status_path": status_path})
+            job, status_path = (submit_initialization(client, roots=RECOVERY_ROOTS) if recovery
+                                else submit_initialization(client))
+            publish(output / (prefix + "-apply-submitted.json"), {"job_id": job, "status_path": status_path})
             result.update(job_id=job, stage="apply_wait")
             task, _ = wait_task([client], status_path, plan.get("username", "admin"), password)
             terminal = True
@@ -427,7 +551,8 @@ def initialize(plan: dict, output: Path, password: str, *, execute: bool) -> dic
                 peers = sudo_read(appliance, "ntpq -pn", password).decode("ascii").splitlines()
                 if [line.split()[0] for line in peers if line.startswith("*")] != ["*" + peer_address]:
                     raise Refusal("fixture_clock_upstream_changed")
-            result.update(stage="initialized_clean_baseline", success=True, dns=dns, final_tls=client.tls_identity())
+            result.update(stage="recovered_clean_baseline" if recovery else "initialized_clean_baseline",
+                          success=True, dns=dns, final_tls=client.tls_identity())
         mutation = False
         return result
     except Exception:
@@ -435,7 +560,7 @@ def initialize(plan: dict, output: Path, password: str, *, execute: bool) -> dic
                       else "preserve_and_reconcile") if mutation else "no_desired_mutation_started")
         raise
     finally:
-        publish(output / ("fixture-initialization-result.json" if execute else "fixture-initialization-inspection.json"), result)
+        publish(output / (result_name if execute else inspection_name), result)
 
 
 def main() -> int:
@@ -445,17 +570,20 @@ def main() -> int:
     parser.add_argument("--output-directory", required=True)
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--preflight-only", action="store_true")
+    parser.add_argument("--recover", action="store_true")
     args = parser.parse_args()
     try:
         plan = json.loads(Path(args.plan).read_text())
         output = Path(args.output_directory).resolve(strict=True)
         admit_initialization(plan, output)
+        if args.recover:
+            admit_recovery_failure(plan)
         if args.preflight_only:
             return 0
         password = os.environ.pop("ATLASO_NATIVE_ADMIN", "")
         if len(password) < 12 or password != password.strip():
             raise Refusal("fixture_bounded_credential_bridge_required")
-        initialize(plan, output, password, execute=args.execute)
+        initialize(plan, output, password, execute=args.execute, recovery=args.recover)
         return 0
     except Exception:  # noqa: BLE001 - Nothing from credentials, guest responses or parser errors may escape.
         print(json.dumps({"success": False, "reason": "fixture_initialization_refused"}))
