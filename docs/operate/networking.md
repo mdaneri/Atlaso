@@ -71,9 +71,10 @@ listener and URL; the obsolete SAN is retired after the listener transition. No-
 never establish usable fallback. Publication failures leave the URL unpublished or let its short receipt expire;
 use the local console to inspect networking and CA readiness, restore connectivity, and retry the normal Apply workflow.
 An interrupted management certificate/key replacement restores the previous pair before retrying listener activation.
-Cold publication helpers load outside the database writer and Network Apply locks. The observer then repeats native
-observation and applied-state admission before activating a listener, keeping audited console access available during
-initialization without accepting stale address or CA inputs.
+Cold publication helpers load and the initial application-upstream readiness wait runs outside the database writer
+and Network Apply locks, so application startup can commit state and acquire its own native admission. The observer
+then repeats native observation and applied-state admission before activating a listener, keeping audited console
+access available during initialization without accepting stale address or CA inputs.
 Protected Network Apply can admit a newly acquired fallback address from the reviewed NIC identity and fresh native
 evidence; the normal TLS certificate-coverage and readiness checks still apply.
 Settings-only Apply uses the same verified APIPA management context while keeping that address out of ordinary

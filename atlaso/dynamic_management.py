@@ -15,7 +15,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address, ip_interface
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from cryptography import x509
 from cryptography.exceptions import UnsupportedAlgorithm
@@ -58,6 +58,14 @@ from atlaso.app.services.network_objects import acquire_network_objects_write_lo
 HELPER_PATH = Path("/opt/atlaso/bin/atlaso-helper")
 BOOTSTRAP_PATH = Path("/opt/atlaso/bin/atlaso-bootstrap-https")
 BOOTSTRAP_NETWORK_PATH = Path("/etc/systemd/network/00-atlaso-mgmt.network")
+
+
+class _PublicationPreparation(NamedTuple):
+    """Bind slow preparation to the applied upstream and HTTPS policy."""
+
+    upstream_host: str
+    upstream_port: int
+    https_enabled: bool
 
 
 def installed_pair_matches(leaf: CaCertificate, certificate: Path, private_key: Path) -> bool:
@@ -140,22 +148,24 @@ def bootstrap_row(db: Session, observation: dict[str, Any]) -> dict[str, str]:
             "ipv6_cidr": static_ipv6[0] if static_ipv6 else ""}
 
 
-def _reconcile_once(helper: dict[str, Any], bootstrap: dict[str, Any], *, bootstrap_ready: bool) -> bool:
-    """Reconcile fresh inputs, requesting cold UI preparation outside the writer lock.
+def _reconcile_once(
+    helper: dict[str, Any], bootstrap: dict[str, Any], *, prepared: _PublicationPreparation | None,
+) -> _PublicationPreparation | None:
+    """Reconcile fresh inputs, requesting slow preparation outside the writer lock.
 
     Args:
         helper: Canonical installed privileged helper functions.
         bootstrap: Canonical installed HTTPS bootstrap/recovery helpers.
-        bootstrap_ready: Whether potentially expensive publication helpers are already imported.
+        prepared: Applied upstream and HTTPS policy whose slow prerequisites completed without locks.
 
     Returns:
-        Whether the caller must prepare the bootstrap helpers and retry with fresh inputs.
+        Prerequisites to prepare before retrying with fresh inputs, or no further work.
     """
     with helper["_network_transaction_lock"]():
         if helper["_network_transaction_state"]() or helper["MANAGEMENT_HANDOFF_STATE_PATH"].exists():
-            return False
+            return None
         if not helper["_console_bootstrap_is_idle"]():
-            return False
+            return None
         # An interrupted front-door publication must recover before any newer one.
         if helper["_recover_management_front_door"](quiet=True):
             raise ValueError("previous management publication requires recovery")
@@ -163,14 +173,14 @@ def _reconcile_once(helper: dict[str, Any], bootstrap: dict[str, Any], *, bootst
         with SessionLocal() as db:
             acquire_network_objects_write_lock(db)
             if db.scalar(select(Job.id).where(Job.type == "appliance-apply", Job.status.in_(["pending", "running"]))):
-                return False
+                return None
             baselines = applied_snapshots(db)
             network = baselines.get("network")
             rows = _network_rows(network["config_preview"]) if network else [bootstrap_row(db, observation)]
             candidates = [row for row in rows if row.get("role") == "management" and row.get("ipv4_method") == "dhcp"]
             if len(candidates) != 1:
                 write_publication({"phase": "withdrawn"})
-                return False
+                return None
             row = candidates[0]
             if network:
                 row = {**row, "name": network.get("physical_interface_aliases", {}).get(row["name"], row["name"])}
@@ -178,7 +188,7 @@ def _reconcile_once(helper: dict[str, Any], bootstrap: dict[str, Any], *, bootst
             if native["ipv4_state"] == "unknown":
                 # Observation failure cannot authorize listener retirement. The
                 # public receipt ages out while the last working runtime stays.
-                return False
+                return None
             identity = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == row["name"]))
             if identity is None or identity.mac_address.lower() != row.get("mac", "").lower():
                 raise ValueError("applied management inventory identity changed")
@@ -193,7 +203,7 @@ def _reconcile_once(helper: dict[str, Any], bootstrap: dict[str, Any], *, bootst
                 published_leaves = [item for item in ca_baseline.get("certificates", []) if item.get("managed_owner") == "appliance:https"]
                 if (appliance is None or len(published_leaves) != 1
                         or bootstrap["read_regular_text"](bootstrap["MARKER_PATH"], maximum_size=256) != bootstrap["COMPLETION_MARKER_TEXT"]):
-                    return False
+                    return None
                 published_leaf = published_leaves[0]
                 settings = {"fqdn": published_leaf["common_name"], "management_https_enabled": True,
                             "management_https_cert_path": published_leaf["cert_path"], "management_https_key_path": published_leaf["key_path"],
@@ -203,7 +213,7 @@ def _reconcile_once(helper: dict[str, Any], bootstrap: dict[str, Any], *, bootst
             if network:
                 settings_interface = network.get("physical_interface_aliases", {}).get(settings_interface, settings_interface)
             if settings_interface not in (None, "", row["name"]):
-                return False
+                return None
             settings = {**settings, "management_interface": row["name"]}
             published = {"interface": row["name"], "mac": row["mac"], **native,
                          "network_digest": snapshot_digest(network), "settings_digest": snapshot_digest(settings_baseline),
@@ -243,7 +253,7 @@ def _reconcile_once(helper: dict[str, Any], bootstrap: dict[str, Any], *, bootst
                 # fresh, while pending desired CA/settings edits stay pending.
                 previous["observed_at"] = datetime.now(timezone.utc).isoformat()
                 write_publication(previous)
-                return False
+                return None
             if not native["addresses"]:
                 # Remove only the owned dynamic listener. Other management paths
                 # remain represented by the applied binding inventory.
@@ -274,9 +284,16 @@ def _reconcile_once(helper: dict[str, Any], bootstrap: dict[str, Any], *, bootst
                 if previous.get("phase") == "ready":
                     record_audit(db, actor="system:networkd", action="withdraw_dynamic_management", resource_type="network",
                                  resource_id=row["name"], detail=f"{row['name']}: {native['ipv4_state']}; dynamic setup listener withdrawn.")
-                return False
-            if settings.get("management_https_enabled") and not bootstrap_ready:
-                return True
+                return None
+            prerequisites = _PublicationPreparation(
+                str(settings.get("management_upstream_host") or "127.0.0.1"),
+                int(settings.get("management_upstream_port") or settings.get("management_http_port") or 8000),
+                bool(settings.get("management_https_enabled")),
+            )
+            if prepared is None:
+                return prerequisites
+            if prepared != prerequisites:
+                raise ValueError("applied management upstream changed during publication preparation")
             settings["management_ip"] = native["addresses"][0]
             leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
             ca = db.scalar(select(CaSettings))
@@ -354,21 +371,29 @@ def _reconcile_once(helper: dict[str, Any], bootstrap: dict[str, Any], *, bootst
                              urls=[f"{scheme}://{'[' + address + ']' if ':' in address else address}:{port}/ui/management/"
                                    for address in native["addresses"]])
             write_publication(published)
-    return False
+    return None
 
 
 def reconcile(helper: dict[str, Any], bootstrap: dict[str, Any]) -> None:
-    """Prepare cold publication helpers without holding SQLite writer or native Apply locks.
+    """Prepare publication without blocking application startup or audited console access.
 
     Args:
         helper: Canonical installed privileged helper functions.
         bootstrap: Canonical installed HTTPS bootstrap/recovery helpers.
     """
-    if _reconcile_once(helper, bootstrap, bootstrap_ready=False):
-        # Cold UI/schema imports can outlast SQLite's busy timeout. Release the
-        # first probe transaction, then re-observe and re-admit every input.
-        bootstrap["_ui_functions"]()
-        _reconcile_once(helper, bootstrap, bootstrap_ready=True)
+    preparation = _reconcile_once(helper, bootstrap, prepared=None)
+    if preparation is not None:
+        # Web startup needs SQLite writes and native Network admission before
+        # it can answer HTTP. Waiting for it while holding either lock creates
+        # a startup/publication cycle and blocks unrelated console audit writes.
+        if preparation.https_enabled:
+            bootstrap["_ui_functions"]()
+        helper["_management_handoff_upstream_readiness"](
+            upstream_host=preparation.upstream_host, upstream_port=preparation.upstream_port,
+        )
+        # No admission survives the unlocked wait: repeat observation, applied
+        # snapshots, pending-Apply checks and endpoint binding before activation.
+        _reconcile_once(helper, bootstrap, prepared=preparation)
 
 
 def main() -> int:

@@ -423,7 +423,7 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
     """
     import json
     import subprocess
-    from contextlib import nullcontext
+    from contextlib import contextmanager
     from datetime import datetime, timezone
 
     from cryptography import x509
@@ -497,11 +497,39 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
 
     publications = []
     receipts = []
-    helper = {"_network_transaction_lock": nullcontext, "_network_transaction_state": lambda: {},
+    startup_pending = [True]
+    upstream_checks = []
+    network_lock_held = [False]
+
+    @contextmanager
+    def network_transaction_lock():
+        """Model native admission independently of the real SQLite writer."""
+        assert not network_lock_held[0]
+        network_lock_held[0] = True
+        try:
+            yield
+        finally:
+            network_lock_held[0] = False
+
+    def upstream_readiness(**kwargs):
+        """Let application startup and console audits write while waiting for HTTP.
+
+        Args:
+            **kwargs: Exact applied loopback upstream endpoint.
+        """
+        from atlaso.app.appliance_console import record_console_shell
+
+        assert not network_lock_held[0], "upstream startup must be able to acquire native admission"
+        record_console_shell("open")
+        upstream_checks.append(kwargs)
+        startup_pending[0] = False
+
+    helper = {"_network_transaction_lock": network_transaction_lock, "_network_transaction_state": lambda: {},
               "MANAGEMENT_HANDOFF_STATE_PATH": tmp_path / "absent-state", "_console_bootstrap_is_idle": lambda: True,
               "_recover_management_front_door": lambda **_kwargs: 0, "_network_address_observation": lambda: observation,
               "NGINX_MANAGEMENT_SITE_PATH": site, "NGINX_PUBLIC_SERVICES_SITE_PATH": tmp_path / "absent-public-site",
               "_management_nginx_config": helper_module._management_nginx_config,
+              "_management_handoff_upstream_readiness": upstream_readiness,
               "_ca_managed_path": lambda value, _label: type(cert_path)(value),
               "_run": lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0)}
 
@@ -512,6 +540,11 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
             payload: Applied Settings identity, independent of pending desired state.
             **kwargs: Explicit verified HTTP/HTTPS listener scopes.
         """
+        if startup_pending[0]:
+            # The real web startup must finish its own database writes before
+            # answering the helper's readiness probe. Model that dependency
+            # with a second real SQLite connection, not a mocked writer lock.
+            upstream_readiness()
         writer = kwargs.pop("material_writer", None)
         if writer is not None:
             writer()
@@ -577,6 +610,7 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
         cert_path.read_bytes()).public_bytes(serialization.Encoding.PEM).decode())
     publisher.reconcile(helper, bootstrap)
     assert ui_prepared == [True]
+    assert upstream_checks == [{"upstream_host": "127.0.0.1", "upstream_port": 8000}]
     if warmup_carrier_loss:
         assert publications == []
         assert receipts[-1]["phase"] == "withdrawn"
@@ -589,6 +623,9 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
     assert publications[-1][0]["management_interface"] == current_name
     first = x509.load_pem_x509_certificate(cert_path.read_bytes())
     assert str(first.extensions.get_extension_for_class(x509.SubjectAlternativeName).value.get_values_for_type(x509.IPAddress)[0]) == "169.254.20.10"
+    checks_before_fast_path = len(upstream_checks)
+    publisher.reconcile(helper, bootstrap)
+    assert len(upstream_checks) == checks_before_fast_path
     key_path.write_text(earlier_key)
     before_repair = len(publications)
     publisher.reconcile(helper, bootstrap)
@@ -646,6 +683,126 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == current_name))
         assert interface.host_ip_cidr is None
         assert interface.host_ip_cidrs == []
+
+
+@pytest.mark.parametrize("change", ["ready", "unavailable", "upstream", "https", "apply", "carrier"])
+def test_http_publication_readmits_after_unlocked_upstream_wait(client, tmp_path, monkeypatch, change):
+    """Allow real startup/audit writes while retaining fresh atomic activation admission.
+
+    Args:
+        client: Initialized isolated SQLite application.
+        tmp_path: Owned synthetic native files.
+        monkeypatch: Replace native effects, retaining real database transactions.
+        change: Readiness failure or concurrent applied/native change during the unlocked wait.
+    """
+    import json
+    from contextlib import contextmanager
+
+    from sqlalchemy import select
+    from sqlalchemy.exc import OperationalError
+
+    from atlaso import dynamic_management as publisher
+    from atlaso.app.appliance_console import record_console_shell
+    from atlaso.app.database import SessionLocal, engine
+    from atlaso.app.models import Job, PhysicalInterface, Setting
+    from atlaso.app.services.dynamic_management import BASELINES_KEY
+    from atlaso.app.services.networking import render_network_config
+
+    row, observation = fixture_observation()
+    settings = {"fqdn": "applied.atlaso.internal", "management_interface": "eth0",
+                "management_https_enabled": False, "management_http_port": 8099}
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+        interface.mac_address = row["mac"]
+        interface.role, interface.mode, interface.admin_state = "management", "access", "up"
+        interface.ipv4_method, interface.ip_cidr, interface.ipv6_enabled = "dhcp", None, False
+        baselines = {"network": {"config_preview": render_network_config(interfaces=[interface], vlans=[])},
+                     "appliance_settings": {"config_preview": json.dumps(settings)}}
+        saved = db.scalar(select(Setting).where(Setting.key == BASELINES_KEY))
+        if saved is None:
+            db.add(Setting(key=BASELINES_KEY, value=json.dumps(baselines)))
+        else:
+            saved.value = json.dumps(baselines)
+        db.commit()
+
+    network_locked = [False]
+    activated = []
+    publications = []
+    site = tmp_path / "management.conf"
+
+    @contextmanager
+    def native_lock():
+        """Track exclusive native admission separately from SQLite admission."""
+        assert not network_locked[0]
+        network_locked[0] = True
+        try:
+            yield
+        finally:
+            network_locked[0] = False
+
+    def wait_upstream(**kwargs):
+        """Model web startup requiring both native admission and an audit transaction.
+
+        Args:
+            **kwargs: Endpoint from applied Settings, including the legacy backend port field.
+        """
+        assert kwargs == {"upstream_host": "127.0.0.1", "upstream_port": 8099}
+        with native_lock():
+            record_console_shell("open")
+        if change == "unavailable":
+            raise ValueError("upstream unavailable")
+        if change == "carrier":
+            observation["links"][0]["carrier"] = False
+        if change in {"upstream", "https", "apply"}:
+            with SessionLocal() as db:
+                if change == "apply":
+                    db.add(Job(id="concurrent-apply", type="appliance-apply", created_by="test"))
+                else:
+                    settings.update({"management_http_port": 8100} if change == "upstream" else {"management_https_enabled": True})
+                    baselines["appliance_settings"]["config_preview"] = json.dumps(settings)
+                    db.scalar(select(Setting).where(Setting.key == BASELINES_KEY)).value = json.dumps(baselines)
+                db.commit()
+
+    def activate(payload, **_kwargs):
+        """Require both writer and native admission through the actual activation.
+
+        Args:
+            payload: Fresh applied Settings selected after the unlocked wait.
+            **_kwargs: Verified native listener scopes.
+        """
+        assert network_locked[0]
+        with engine.connect() as other:
+            other.exec_driver_sql("PRAGMA busy_timeout=0")
+            with pytest.raises(OperationalError, match="locked"):
+                other.exec_driver_sql("UPDATE settings SET value=value WHERE 0")
+        activated.append(payload)
+        site.write_text("owned listener")
+        return 0, None
+
+    helper = {"_network_transaction_lock": native_lock, "_network_transaction_state": lambda: {},
+              "MANAGEMENT_HANDOFF_STATE_PATH": tmp_path / "absent-handoff", "_console_bootstrap_is_idle": lambda: True,
+              "_recover_management_front_door": lambda **_kwargs: 0, "_network_address_observation": lambda: observation,
+              "NGINX_PUBLIC_SERVICES_SITE_PATH": tmp_path / "absent-public-site", "NGINX_MANAGEMENT_SITE_PATH": site,
+              "_management_handoff_upstream_readiness": wait_upstream, "_configure_atlaso_management_https": activate,
+              "_management_nginx_config": lambda *_args, **_kwargs: "withdrawn listener",
+              "_install_nginx_site": lambda path, value: (path.write_text(value), 0)[1]}
+    monkeypatch.setattr(publisher, "read_publication", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(publisher, "write_publication", lambda value: publications.append(value))
+    if change in {"unavailable", "upstream", "https"}:
+        with pytest.raises(ValueError, match="unavailable|changed during publication preparation"):
+            publisher.reconcile(helper, {})
+    else:
+        publisher.reconcile(helper, {})
+    assert len(activated) == (1 if change == "ready" else 0)
+    if change == "ready":
+        assert publications[-1]["phase"] == "ready"
+    elif change == "carrier":
+        assert publications[-1]["phase"] == "withdrawn"
+    else:
+        assert publications == []
+        assert not site.exists()
+    # A failed or deferred preflight must release every transaction as well.
+    record_console_shell("close")
 
 
 @pytest.mark.parametrize("change", ["none", "expired", "future", "network", "settings", "identity", "withdrawn"])
