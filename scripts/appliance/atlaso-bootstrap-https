@@ -1040,11 +1040,13 @@ def refresh_completed_management_certificate(network_job_id: str) -> int:
         return 0
 
 
-def main(network_job_id: str | None = None) -> int:
+def main(network_job_id: str | None = None, *, completed_boot_admission: bool = False) -> int:
     """Run the command-line entry point.
 
     Args:
         network_job_id: Completed console Network task binding certificate recovery.
+        completed_boot_admission: Admit a previously completed systemd boot without
+            requiring old dynamic listeners to bind before the backend can start.
     """
     network_job_id = network_job_id or os.environ.get("ATLASO_CONSOLE_NETWORK_JOB_ID")
     if network_job_id is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", network_job_id):
@@ -1064,13 +1066,20 @@ def main(network_job_id: str | None = None) -> int:
         if nginx is None:
             print("nginx is unavailable; completed first-boot HTTPS state cannot be validated")
             return 2
-        validation = run([nginx, "-t"])
-        if validation.stdout:
-            print(validation.stdout, end="")
-        if validation.stderr:
-            print(validation.stderr, end="")
-        if validation.returncode != 0:
-            return validation.returncode
+        if not completed_boot_admission:
+            validation = run([nginx, "-t"])
+            if validation.stdout:
+                print(validation.stdout, end="")
+            if validation.stderr:
+                print(validation.stderr, end="")
+            if validation.returncode != 0:
+                return validation.returncode
+        # A former DHCP listener can be unbindable after a lease change or
+        # IPv4LL acquisition. Blocking this completed boot would also block
+        # atlaso.service, whose upstream the dynamic publisher needs. This
+        # admits only the already completed artifacts and root proof below;
+        # nginx.service still validates its configuration, and the observer
+        # retains fresh native/TLS admission and atomic listener activation.
         try:
             publish_first_boot_stage("https-development-root-proof")
             published = publish_development_root_ca_import_proof()
@@ -1236,6 +1245,8 @@ def main(network_job_id: str | None = None) -> int:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--completed-boot-admission"]:
+        raise SystemExit(main(completed_boot_admission=True))
     if sys.argv[1:] == ["--verify-imported-development-root"]:
         try:
             verified = verify_imported_development_root(sys.stdin.read(32769))

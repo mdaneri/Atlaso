@@ -75,6 +75,10 @@ Cold publication helpers load and the initial application-upstream readiness wai
 and Network Apply locks, so application startup can commit state and acquire its own native admission. The observer
 then repeats native observation and applied-state admission before activating a listener, keeping audited console
 access available during initialization without accepting stale address or CA inputs.
+On subsequent boots, the completed HTTPS bootstrap admits its existing artifacts and encrypted-root proof without
+requiring a former DHCP address to bind before the control plane starts. The nginx service still validates its
+configuration; the observer then verifies and atomically publishes the current DHCP or IPv4LL listener. Initial
+bootstrap, direct bootstrap invocation and completed Network certificate recovery retain their native validation.
 Protected Network Apply can admit a newly acquired fallback address from the reviewed NIC identity and fresh native
 evidence; the normal TLS certificate-coverage and readiness checks still apply.
 When moving from an APIPA-only setup address to static IPv4, Apply captures the old published listener from fresh
