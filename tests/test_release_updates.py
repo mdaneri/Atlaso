@@ -3012,9 +3012,48 @@ def test_photon_candidate_abi_uses_python_nevra_and_transaction_is_test_only(mon
     command, abi = helper._candidate_photon_python_abi()
     assert command["success"] is True
     assert abi == "cp314"
-    helper_text = (ROOT / "scripts/appliance/atlaso-helper").read_text(encoding="utf-8")
-    assert '[tdnf, "-y", "update", "--testonly"]' in helper_text
-    assert "--assumeno" not in helper_text
+
+    photon_commands = []
+
+    def fake_photon_command(_payload, _credentials, command, **_kwargs):
+        """Record the actual Photon apply sequence and fail its live update.
+
+        Args:
+            _payload: Photon update payload supplied by the helper.
+            _credentials: Scoped package-source credentials.
+            command: Photon package-manager invocation selected by the helper.
+            **_kwargs: Additional command-capture options.
+        """
+        photon_commands.append(command)
+        succeeded = command[-1] != "update"
+        return {
+            "command": command,
+            "returncode": 0 if succeeded else 1,
+            "success": succeeded,
+            "stdout": "",
+            "stderr": "simulated update failure" if not succeeded else "",
+        }
+
+    monkeypatch.setattr(helper, "_photon_command_payload", fake_photon_command)
+    monkeypatch.setattr(
+        helper,
+        "_photon_python_compatibility",
+        lambda *_args, **_kwargs: {"command": ["compatibility"], "success": True},
+    )
+    monkeypatch.setattr(helper, "_current_python_abi", lambda: "cp314")
+    monkeypatch.setattr(helper, "_write_update_info", lambda _payload: None)
+
+    result = helper._apply_appliance_update(
+        {"selected_streams": ["photon_os"], "sources": {}}
+    )
+
+    assert photon_commands == [
+        ["/usr/bin/tdnf", "-y", "makecache"],
+        ["/usr/bin/tdnf", "-y", "update", "--testonly"],
+        ["/usr/bin/tdnf", "-y", "update"],
+    ]
+    assert result["attempted"]["photon_os"]["transaction_inspected"] is True
+    assert result["attempted"]["photon_os"]["packages_installed"] is False
 
 
 def test_helper_rejects_unsafe_release_archive(tmp_path):

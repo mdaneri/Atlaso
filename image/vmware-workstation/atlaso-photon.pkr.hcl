@@ -395,19 +395,10 @@ build {
     inline = [
       "set -eu",
       "test ! -e /var/tmp/atlaso-installation-rpms",
-      "PYTHONPATH=/tmp/atlaso-src python3 -c 'from pathlib import Path; from scripts.installation.build import capture_packages; capture_packages(Path(\"/tmp/atlaso-src\"), Path(\"/var/tmp/atlaso-installation-rpms\"))'",
-      "tar -C /var/tmp -cf /var/tmp/atlaso-installation-rpms.tar atlaso-installation-rpms",
-      "chmod 0644 /var/tmp/atlaso-installation-rpms.tar"
+      "PYTHONPATH=/tmp/atlaso-src python3 -c 'from pathlib import Path; from scripts.installation.build import capture_packages; capture_packages(Path(\"/tmp/atlaso-src\"), Path(\"/var/tmp/atlaso-installation-rpms\"))'"
     ]
     execute_command = "printf '%s' '${local.ssh_password_stdin_base64}' | base64 -d | sudo -S -E sh -c '{{ .Vars }} {{ .Path }}'"
     only            = var.capture_installation_rpms ? ["vmware-iso.photon"] : ["vmware-iso.disabled"]
-  }
-
-  provisioner "file" {
-    direction   = "download"
-    source      = "/var/tmp/atlaso-installation-rpms.tar"
-    destination = "${local.verified_capture_directory}/installation-rpms.tar"
-    only        = var.capture_installation_rpms ? ["vmware-iso.photon"] : ["vmware-iso.disabled"]
   }
 
   provisioner "file" {
@@ -443,12 +434,23 @@ build {
   provisioner "shell" {
     inline = [
       "set -eu",
+      "test ! -e /var/tmp/atlaso-installation-rpms/guest-tools && test ! -L /var/tmp/atlaso-installation-rpms/guest-tools",
+      "cp -R /var/lib/atlaso-privileged/guest-tools /var/tmp/atlaso-installation-rpms/guest-tools",
+      "tar -C /var/tmp -cf /var/tmp/atlaso-installation-rpms.tar atlaso-installation-rpms",
+      "chmod 0644 /var/tmp/atlaso-installation-rpms.tar",
       "test -d /usr/local/share/powershell/Modules",
       "tar -C /usr/local/share/powershell -cf /var/tmp/atlaso-installation-powercli.tar Modules",
       "chmod 0644 /var/tmp/atlaso-installation-powercli.tar"
     ]
     execute_command = "printf '%s' '${local.ssh_password_stdin_base64}' | base64 -d | sudo -S -E sh -c '{{ .Vars }} {{ .Path }}'"
     only            = var.capture_installation_rpms ? ["vmware-iso.photon"] : ["vmware-iso.disabled"]
+  }
+
+  provisioner "file" {
+    direction   = "download"
+    source      = "/var/tmp/atlaso-installation-rpms.tar"
+    destination = "${local.verified_capture_directory}/installation-rpms.tar"
+    only        = var.capture_installation_rpms ? ["vmware-iso.photon"] : ["vmware-iso.disabled"]
   }
 
   provisioner "file" {

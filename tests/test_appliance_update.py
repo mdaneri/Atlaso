@@ -400,12 +400,13 @@ def test_update_evidence_state_validates_available_and_actionable_records(tmp_pa
     assert mixed_timezone["state"] == "needs_attention"
 
 
-def test_update_evidence_panel_accessibility_states(client, monkeypatch):
+def test_update_evidence_panel_accessibility_states(client, monkeypatch, tmp_path):
     """Render neutral evidence without an alert and actionable evidence with one.
 
     Args:
         client: HTTP test client used to render the management page.
         monkeypatch: Pytest fixture used to replace the evidence projection.
+        tmp_path: Isolated path for realistic updater evidence fixtures.
     """
     from atlaso.app import ui
 
@@ -490,6 +491,120 @@ def test_update_evidence_panel_accessibility_states(client, monkeypatch):
     assert captured["qualifying_install_job_id"] == "job_real_evidence_expected"
     assert captured["qualifying_install_stream"] == "atlaso_release"
     assert isinstance(captured["qualifying_install_started_at"], datetime)
+
+    # Hardware maintenance shares the parent task type but its child stream is
+    # not part of the durable Appliance Update evidence contract. Keep the
+    # actual evidence reader bound to the latest ordinary updater child.
+    photon_started = datetime(2026, 8, 22, 20, 1, tzinfo=timezone.utc)
+    guest_tools_started = datetime(2026, 8, 22, 20, 2, tzinfo=timezone.utc)
+    with SessionLocal() as db:
+        db.add(
+            Job(
+                id="job_photon_evidence_expected",
+                type="appliance-update",
+                status="succeeded",
+                created_by="admin",
+                started_at=photon_started,
+                task_config_json=json.dumps(
+                    {"mode": "run", "selected_streams": ["photon_os"]}
+                ),
+                result=json.dumps({"dry_run": False, "apply_started": True}),
+            )
+        )
+        db.add(
+            JobStep(
+                id="job_photon_evidence_expected:photon_os",
+                job_id="job_photon_evidence_expected",
+                component_key="photon_os",
+                label="Photon OS",
+                position=0,
+                status="succeeded",
+                started_at=photon_started,
+                result=json.dumps({"apply_started": True}),
+            )
+        )
+        db.add(
+            Job(
+                id="job_guest_tools_evidence_newer",
+                type="appliance-update",
+                status="succeeded",
+                created_by="admin",
+                started_at=guest_tools_started,
+                task_config_json=json.dumps(
+                    {"mode": "run", "selected_streams": ["guest_tools"]}
+                ),
+                result=json.dumps({"dry_run": False, "apply_started": True}),
+            )
+        )
+        db.add(
+            JobStep(
+                id="job_guest_tools_evidence_newer:guest_tools",
+                job_id="job_guest_tools_evidence_newer",
+                component_key="guest_tools",
+                label="Guest Tools",
+                position=0,
+                status="succeeded",
+                started_at=guest_tools_started,
+                result=json.dumps({"apply_started": True}),
+            )
+        )
+        db.commit()
+
+    from atlaso.app.services.appliance_update import appliance_update_evidence_state
+
+    update_info_path = tmp_path / "photon-update-info.json"
+    finalizer_path = tmp_path / "photon-finalizer-status.json"
+    update_info_path.write_text(
+        json.dumps(
+            {
+                "status": "succeeded",
+                "job_id": "job_photon_evidence_expected",
+                "applied": {"photon_os": {}},
+                "attempted": {"photon_os": {}},
+                "commands": [],
+                "reboot_recommended": False,
+                "restart_required": False,
+                "selected_streams": ["photon_os"],
+                "finished_at": "2026-08-22T20:01:30+00:00",
+                "finalizer_status_path": "",
+            }
+        ),
+        encoding="utf-8",
+    )
+    captured.clear()
+
+    def read_real_update_evidence(**kwargs):
+        """Use the production evidence reader with task-owned test evidence.
+
+        Args:
+            **kwargs: Qualifying updater task binding from the page context.
+        """
+        captured.update(kwargs)
+        evidence = appliance_update_evidence_state(
+            update_info_path=str(update_info_path),
+            finalizer_path=str(finalizer_path),
+            **kwargs,
+        )
+        captured["evidence_state"] = evidence["state"]
+        return evidence
+
+    monkeypatch.setattr(ui, "appliance_update_evidence_state", read_real_update_evidence)
+    response = client.get("/ui/management/appliance-update")
+    assert captured["qualifying_install_job_id"] == "job_photon_evidence_expected"
+    assert captured["qualifying_install_stream"] == "photon_os"
+    assert captured["qualifying_install_started_at"] == photon_started.replace(tzinfo=None)
+    assert captured["evidence_state"] == "available"
+    assert "Available" in response.text
+    with SessionLocal() as db:
+        for job_id in ("job_photon_evidence_expected", "job_guest_tools_evidence_newer"):
+            job = db.get(Job, job_id)
+            assert job is not None
+            for step in list(job.steps):
+                db.delete(step)
+            db.delete(job)
+        db.commit()
+    monkeypatch.setattr(ui, "appliance_update_evidence_state", capture_expected_state)
+    captured.clear()
 
     with SessionLocal() as db:
         job = db.get(Job, "job_real_evidence_expected")

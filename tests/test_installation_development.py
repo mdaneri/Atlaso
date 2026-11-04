@@ -90,15 +90,17 @@ def _mock_build_tools(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     )
     validation_scratch: list[Path] = []
 
-    def verify_rpms(_rpms: Path, _source: Path, scratch: Path) -> list[dict[str, str]]:
+    def verify_rpms(_rpms: Path, _source: Path, scratch: Path, *, allow_guest_tools: bool = False) -> list[dict[str, str]]:
         """Stub RPM verification and record its private scratch directory.
 
         Args:
             _rpms: RPM repository supplied to the verifier.
             _source: Trusted source checkout supplied to the verifier.
             scratch: Existing directory for RPM validation state.
+            allow_guest_tools: Whether the original capture companion may be present.
         """
         (scratch / "rpmdb").mkdir()
+        assert allow_guest_tools is (_rpms / "guest-tools").exists()
         validation_scratch.append(scratch)
         return [{
             "file": "package.rpm",
@@ -135,16 +137,27 @@ def _mock_build_tools(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     return validation_scratch
 
 
+@pytest.mark.parametrize("guest_payload", [False, True])
 def test_prepare_payload_separates_pr_source_from_main_software_identity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, guest_payload: bool,
 ) -> None:
     """Development provenance records independent source and software commits.
 
     Args:
         tmp_path: Pytest-owned fixture directory.
         monkeypatch: Pytest fixture for controlled replacement.
+        guest_payload: Whether the admitted capture includes retained guest-tools closures.
     """
     repository, software, rpms, powercli, scratch = _inputs(tmp_path)
+    if guest_payload:
+        from scripts.installation.guest_tools import payload_inventory
+        from tests.test_installation_guest_tools import payload
+
+        payload(rpms / "guest-tools")
+        (repository / "scripts/installation/guest_tools.py").write_text("# source capability fixture")
+        _git(repository, "add", ".")
+        _git(repository, "commit", "--quiet", "-m", "guest-tools-capable fixture")
+        monkeypatch.setattr(build, "verify_guest_tools", lambda root, source, scratch: payload_inventory(root))
     source_commit = _git(repository, "rev-parse", "HEAD")
     software_commit = "b" * 40
     rpm_scratch = _mock_build_tools(monkeypatch)
@@ -180,6 +193,10 @@ def test_prepare_payload_separates_pr_source_from_main_software_identity(
     assert repository_bytes == expected_repository.encode("utf-8")
     assert b"\r" not in configuration_bytes and b"\r" not in repository_bytes
     assert len(rpm_scratch) == 2
+    if guest_payload:
+        assert (output / "guest-tools/qemu/atlaso-qemu-guest-agent.rpm").read_bytes() == (rpms / "guest-tools/qemu/atlaso-qemu-guest-agent.rpm").read_bytes()
+        assert not (output / "rpms/guest-tools").exists()
+        assert any(row["path"].startswith("guest-tools/") for row in manifest["files"])
     assert rpm_scratch[0] != rpm_scratch[1]
     assert all((path / "rpmdb").is_dir() for path in rpm_scratch)
 

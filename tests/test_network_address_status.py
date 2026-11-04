@@ -508,11 +508,13 @@ def test_upgrade_defaults_on_without_overwriting_explicit_opt_out(client):
             assert connection.execute(text(f"SELECT COUNT(*) FROM {table} WHERE check_duplicate_ip_addresses != 0")).scalar_one() == 0
 
 
-def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch):
+@pytest.mark.parametrize("backup_probe_column_exists", [False, True])
+def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch, backup_probe_column_exists):
     """Exercise the PostgreSQL startup branch and repeat it without rewriting values.
 
     Args:
         monkeypatch: Supply a recording PostgreSQL connection without a server.
+        backup_probe_column_exists: Whether the backup receiver schema is already upgraded.
     """
     from contextlib import nullcontext
     from types import SimpleNamespace
@@ -523,6 +525,9 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch):
     columns = {table: [{"name": "id"}] for table in ("physical_interfaces", "vlan_interfaces", "routing_rules")}
     columns["dhcp_settings"] = [{"name": "id"}]
     columns["ntp_settings"] = [{"name": "id"}, {"name": "time_source"}]
+    columns["vcf_backup_settings"] = [{"name": "id"}]
+    if backup_probe_column_exists:
+        columns["vcf_backup_settings"].append({"name": "trusted_backup_sources"})
     columns["jobs"] = [{"name": name} for name in (
         "id", "cancel_requested_at", "cancel_requested_by", "cancel_completed_at", "cancel_outcome",
     )]
@@ -546,6 +551,9 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch):
                 assert table == "physical_interfaces"
                 assert sql.endswith("JSON NOT NULL DEFAULT '[]'")
                 columns[table].append({"name": sql.split()[5]})
+            elif table == "vcf_backup_settings":
+                assert sql == "ALTER TABLE vcf_backup_settings ADD COLUMN trusted_backup_sources VARCHAR(1024) NOT NULL DEFAULT ''"
+                columns[table].append({"name": "trusted_backup_sources"})
             else:
                 assert sql.endswith("BOOLEAN NOT NULL DEFAULT TRUE")
                 columns[table].append({"name": sql.split()[5]})
@@ -557,7 +565,8 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch):
     monkeypatch.setattr(database, "_reconcile_nat_ingress_column", lambda _connection: None)
     database._create_database_schema(engine)
     database._create_database_schema(engine)
-    assert len([sql for sql in calls if sql.startswith("ALTER TABLE")]) == 7
+    assert len([sql for sql in calls if sql.startswith("ALTER TABLE")]) == (7 if backup_probe_column_exists else 8)
+    assert {column["name"] for column in columns["vcf_backup_settings"]} == {"id", "trusted_backup_sources"}
     assert {column["name"] for column in columns["dhcp_settings"]} == {"id", "check_ip_availability"}
     assert {column["name"] for column in columns["routing_rules"]} == {"id", "policy", "ip_family"}
     assert {column["name"] for column in columns["physical_interfaces"]} == {

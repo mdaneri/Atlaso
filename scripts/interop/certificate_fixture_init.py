@@ -61,9 +61,20 @@ class FixtureForm(FormParser):
         """
         self.expected_action = action
         self.matches = 0
+        self.selected_form_id = ""
+        self.form_ids = []
+        self.discovering = True
         super().__init__()
         self.feed(body)
-        if self.matches != 1 or self.form_action != action:
+        if (self.matches != 1
+                or (self.selected_form_id and self.form_ids.count(self.selected_form_id) != 1)):
+            raise Refusal("fixture_form_ambiguous")
+        # Settings uses a hidden form with controls across tabs. Resolve its
+        # original ID before collecting controls, including those before it.
+        self.discovering = False
+        super().__init__()
+        self.feed(body)
+        if self.form_action != action:
             raise Refusal("fixture_form_ambiguous")
         tokens = [value for key, value in self.fields if key == "csrf"]
         if len(tokens) != 1 or not tokens[0]:
@@ -83,18 +94,40 @@ class FixtureForm(FormParser):
             matched = (values.get("action") == self.expected_action
                        and (not self.expected_action.endswith("/ntp/settings")
                             or values.get("id") == "ntp-settings-form"))
-            if matched:
-                if values.get("method", "get").lower() != "post":
-                    raise Refusal("fixture_form_method_invalid")
-                self.matches += 1
+            if self.discovering:
+                self.form_ids.append(values.get("id", ""))
+                if matched:
+                    if values.get("method", "get").lower() != "post":
+                        raise Refusal("fixture_form_method_invalid")
+                    self.matches += 1
+                    self.selected_form_id = values.get("id", "")
+                return
             attrs = [(key, value) for key, value in attrs if key != "id"]
             attrs.append(("id", "ntp-settings-form" if matched else "unselected-fixture-form"))
+        if self.discovering:
+            return
+        if tag in {"input", "select", "textarea"} and "disabled" in values:
+            return
+        external_owner = values.get("form")
+        external_selected = bool(self.selected_form_id and external_owner == self.selected_form_id)
+        if tag in {"input", "select", "textarea"} and external_owner is not None:
+            if not external_selected:
+                return
+            attrs = [(key, value) for key, value in attrs if key != "form"]
+            attrs.append(("form", "ntp-settings-form"))
         if tag == "input" and values.get("type", "text").lower() in {"checkbox", "radio"} and "value" not in values:
             attrs = [*attrs, ("value", "on")]
         if (tag == "input" and values.get("type", "").lower() == "password"
-                and (self.in_form or values.get("form") == "ntp-settings-form")):
+                and (self.in_form or external_selected)):
             raise Refusal("fixture_secret_form_refused")
-        super().handle_starttag(tag, attrs)
+        in_form = self.in_form
+        try:
+            if tag == "textarea" and external_selected:
+                self.in_form = True
+            super().handle_starttag(tag, attrs)
+        finally:
+            if tag == "textarea":
+                self.in_form = in_form
 
 
 def replace_fields(fields: list[tuple[str, str]], changes: dict[str, str], remove: set[str] | None = None) -> list[tuple[str, str]]:

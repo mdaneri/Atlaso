@@ -86,6 +86,45 @@ def test_form_selection_refuses_ambiguous_or_secret_controls(body):
         init.FixtureForm(body, "/target")
 
 
+def test_form_selection_collects_only_controls_owned_by_the_original_form_id():
+    """Preserve tabbed Settings controls without absorbing another form's values."""
+    form = init.FixtureForm(
+        '<input form="settings-owner" name="before" value="retained">'
+        '<form id="settings-owner" action="/target" method="post">'
+        '<input name="csrf" value="token">'
+        '<input form="other" name="foreign_nested" value="ignored"></form>'
+        '<input form="settings-owner" name="root_ssh_enabled" type="checkbox" checked>'
+        '<input form="settings-owner" name="unchecked" type="checkbox">'
+        '<textarea form="settings-owner" name="external_dns_servers">192.0.2.1</textarea>'
+        '<textarea form="settings-owner" name="disabled_text" disabled>ignored</textarea>'
+        '<select form="settings-owner" name="naming"><option value="ip">IP</option>'
+        '<option value="interface" selected>Interface</option></select>'
+        '<input form="ntp-settings-form" name="foreign_external" value="ignored">'
+        '<form id="other" action="/other"><input name="unrelated" value="ignored"></form>',
+        "/target",
+    )
+    assert form.fields == [
+        ("before", "retained"), ("csrf", "token"), ("root_ssh_enabled", "on"),
+        ("external_dns_servers", "192.0.2.1"), ("naming", "interface"),
+    ]
+
+
+@pytest.mark.parametrize("extra", [
+    '<input form="settings-owner" type="password" name="secret">',
+    '<form id="settings-owner" action="/other"></form>',
+])
+def test_external_settings_controls_refuse_secrets_and_duplicate_owner_ids(extra):
+    """Do not collect private controls or guess an ambiguous HTML form owner.
+
+    Args:
+        extra: Secret control or conflicting form identity appended to the page.
+    """
+    body = ('<form id="settings-owner" action="/target" method="post">'
+            '<input name="csrf" value="token"></form>' + extra)
+    with pytest.raises(init.Refusal):
+        init.FixtureForm(body, "/target")
+
+
 @pytest.mark.parametrize("review", [
     {"active_task": {"id": "other"}, "units": []},
     {"units": [{"id": "ldap", "changed": True}]},
@@ -339,7 +378,10 @@ def test_fixture_forms_use_real_router_autosave_contract(client, monkeypatch, pa
     # Match the ISO inspection prerequisite; the generic web-test database
     # deliberately starts without a deployed HTTPS management front door.
     with SessionLocal() as db:
-        get_appliance_settings_row(db).management_https_enabled = True
+        settings = get_appliance_settings_row(db)
+        settings.management_https_enabled = True
+        settings.root_ssh_enabled = True
+        settings.service_dns_target_naming = "interface"
         db.commit()
     native = init.Client.__new__(init.Client)
     native.url = "http://testserver"
@@ -375,3 +417,7 @@ def test_fixture_forms_use_real_router_autosave_contract(client, monkeypatch, pa
     status, payload = native.json(path, fields, autosave=True)
     assert status == 200 and payload["status"] == "saved", payload
     assert dict(sent[-1].header_items())["X-atlaso-autosave"] == "1"
+    with SessionLocal() as db:
+        settings = get_appliance_settings_row(db)
+        assert settings.management_https_enabled and settings.root_ssh_enabled
+        assert settings.service_dns_target_naming == "interface"

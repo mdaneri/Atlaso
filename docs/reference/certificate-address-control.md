@@ -177,6 +177,9 @@ A manual ISO installation can still have pending first-run DNS/DHCP and NTP sett
 before the certificate bootstrap; its protected handoff bundle must not absorb those independent changes.
 This preparation reuses the existing non-grid **Appliance Settings**, **DNS**, and **NTP and NTS** forms and normal
 **Appliance Apply** review.
+The initializer follows the Settings form's original ID across tabs, including external controls, so changing the
+fixture resolver preserves the existing HTTPS, SSH, terminal, and service DNS settings. Ambiguous form IDs or selected
+password controls stop preparation before submission.
 
 Keep one real clock authority on the peer. For an Alpine peer already synchronized by Chrony, the seed's optional
 `--serve-ntp` uses its existing upstream configuration and admits only the private peer and the three appliance

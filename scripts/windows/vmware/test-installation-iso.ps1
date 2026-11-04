@@ -50,6 +50,10 @@ Bind ownership as a local development VM instead of a pull-request VM.
 Existing configured durable root for explicit human-run ownership.
 .PARAMETER OwnershipTaskId
 Exact task identity paired with OwnershipRoot for explicit human-run ownership.
+.PARAMETER ContinuationReceiptPath
+Immutable successor authorization for this exact retained installation VM.
+.PARAMETER ContinuationReceiptSha256
+Independently preserved successor receipt digest.
 .PARAMETER IsoPath
 Pinned installation ISO path required when creating the VM.
 .PARAMETER IsoSha256
@@ -109,6 +113,8 @@ param(
     [switch]$LocalBuilder,
     [string]$OwnershipRoot = '',
     [string]$OwnershipTaskId = '',
+    [string]$ContinuationReceiptPath = '',
+    [string]$ContinuationReceiptSha256 = '',
     [string]$IsoPath = '',
     [string]$IsoSha256 = '',
     [string]$SerialPipePath = '',
@@ -393,6 +399,8 @@ function New-InstallationVmContext {
     $branch = ([string](& git -C $Root branch --show-current 2>$null)).Trim()
     if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the exact worktree branch.' }
     New-AtlasoTestVmOwnershipContext -Worktree $Root -OwnershipRoot $OwnershipRoot -OwnershipTaskId $OwnershipTaskId `
+        -OwnershipReceiptPath $OriginalReceiptPath -OwnershipReceiptSha256 $OriginalReceiptSha256 `
+        -ContinuationReceiptPath $ContinuationReceiptPath -ContinuationReceiptSha256 $ContinuationReceiptSha256 `
         -OutputDirectory $Destination -VmxPath (Join-Path $Destination "$Name.vmx") -Name $Name `
         -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
         -SourceCommit $commit -SourceBranch $branch -PullRequestNumber $PullRequestNumber -LocalBuilder:$LocalBuilder
@@ -1355,6 +1363,11 @@ $context = New-InstallationVmContext -Root $resolvedWorktree -Destination $resol
 $context | Add-Member -NotePropertyName FixtureProfile -NotePropertyValue ((Get-AtlasoInstallationFixture -FixtureProfile $FixtureProfile).Profile) -Force
 # The external-root lease must also close on early preflight failures and returns.
 try {
+
+if (($ContinuationReceiptPath -or $ContinuationReceiptSha256) -and
+    ($Mode -notin @('AdmitConsole', 'AdmitNetwork', 'Verify', 'ResumeInstalled') -or $MarkInterrupted)) {
+    throw 'Continuation supports retained installed-VM observation, verification and resume only.'
+}
 
 if ($MarkInterrupted -and $Mode -ne 'Verify') { throw 'MarkInterrupted is valid only with owning Verify.' }
 if (($InterruptionReceiptPath -or $InterruptionReceiptSha256) -and $Mode -notin @('Verify', 'ResumeInstaller')) { throw 'Interruption selectors require Verify or ResumeInstaller.' }
