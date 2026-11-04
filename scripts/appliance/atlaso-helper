@@ -15875,14 +15875,26 @@ def _ipv4ll_policy_only_links(path: Path, files: dict[str, str], *, enabled: boo
     """
     physical, _vlans, _removed = _parse_network_config(path)
     allowed = set()
-    def remaining(text: str) -> list[str]:
+    def remaining(text: str, *, bootstrap_routes: bool = False) -> list[str]:
         """Compare every directive except the explicitly changed fallback policy.
 
         Args:
             text: One owned old or candidate networkd file.
+            bootstrap_routes: Admit only the initial DHCP/RA table migration.
         """
-        return [line for line in text.splitlines() if line.strip() and not line.startswith("#")
-                and not line.startswith(("LinkLocalAddressing=", "ConfigureWithoutCarrier=", "IPv4LLRoute="))]
+        result = []
+        section = ""
+        for line in text.splitlines():
+            if line.startswith("["):
+                section = line
+            if not line.strip() or line.startswith("#") or line.startswith(
+                ("LinkLocalAddressing=", "ConfigureWithoutCarrier=", "IPv4LLRoute=")
+            ):
+                continue
+            if bootstrap_routes and section in {"[DHCPv4]", "[IPv6AcceptRA]"} and line == "RouteTable=main":
+                line = f"RouteTable={MANAGEMENT_ROUTE_TABLE_ID}"
+            result.append(line)
+        return result
     for row in physical:
         if (row.get("ipv4_method") != "dhcp"
                 or row.get("ipv4_link_local_fallback_enabled") != str(enabled).lower()):
@@ -15895,9 +15907,21 @@ def _ipv4ll_policy_only_links(path: Path, files: dict[str, str], *, enabled: boo
         old_path = NETWORKD_CONFIG_DIR / filename
         if old_path.is_file() and not old_path.is_symlink():
             old = old_path.read_text(encoding="utf-8")
+            # A fresh image keeps dynamic connected routes in main until this
+            # first Network Apply installs the MAC-bound source-rule owner.
+            # Admit only those exact DHCP/RA directives, only on Management,
+            # and never reinterpret an already applied routing domain.
+            bootstrap_routes = (
+                row.get("role") == "management"
+                and "# Atlaso bootstrap dynamic routes=main" in old.splitlines()
+                and not ROUTE_DOMAIN_CONFIG_PATH.exists()
+                and not ROUTE_DOMAIN_CONFIG_PATH.is_symlink()
+                and not ROUTE_DOMAIN_SERVICE_PATH.exists()
+                and not ROUTE_DOMAIN_SERVICE_PATH.is_symlink()
+            )
             if (f"# Atlaso IPv4LL fallback enabled={str(not enabled).lower()}" in old and filename in files
                     and (not enabled or f"# Atlaso IPv4LL fallback enabled={str(enabled).lower()}" in files[filename])
-                    and remaining(old) == remaining(files[filename])):
+                    and remaining(old, bootstrap_routes=bootstrap_routes) == remaining(files[filename])):
                 allowed.add(row["name"])
     return allowed
 

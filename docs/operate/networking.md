@@ -110,6 +110,12 @@ An explicit disabled choice survives reboot, upgrade and supported settings arch
 without this field retains the target appliance's current choice. Before initial image provisioning, the equivalent
 configuration is `ATLASO_IPV4_LINK_LOCAL_FALLBACK_ENABLED=false`; first-boot customization preserves that explicit choice.
 
+Before the first Network Apply, image provisioning and first-boot customization keep DHCP and automatic IPv6 routes
+in the main routing table. This retains the connected management subnet as well as its default route, so replies to
+clients on the same subnet go directly to the client. Network Apply installs the applied, MAC-bound routing-domain
+owner as it moves management traffic into table `100`. An initial fallback-only change admits this exact bootstrap
+transition; an existing applied owner or any other routing edit retains the normal readiness checks.
+
 ### Convert management DHCP to static IPv4
 
 Use **Convert DHCP lease to static** from the management interface row menu. Atlaso reviews the observed IPv4 CIDR and

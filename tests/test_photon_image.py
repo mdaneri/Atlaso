@@ -1191,8 +1191,10 @@ def test_photon_management_lease_retention(dhcp: str, fallback: str) -> None:
         assert parsed["DHCPv4"].getboolean("SendRelease") is False
         assert parsed["DHCPv4"].getboolean("SendDecline") is True
         assert parsed["DHCPv4"]["MaxAttempts"] == "infinity"
-        assert parsed["DHCPv4"]["RouteTable"] == "100"
-        assert parsed["IPv6AcceptRA"]["RouteTable"] == "100"
+        # No applied route-domain watcher exists in the first-boot image. Both
+        # the connected subnet and the default must be usable without RPDB rules.
+        assert parsed["DHCPv4"]["RouteTable"] == "main"
+        assert parsed["IPv6AcceptRA"]["RouteTable"] == "main"
         assert routes == [
             {"destination": "0.0.0.0/0", "gateway": "_dhcp4", "gatewayonlink": "yes", "table": "main"},
             {"destination": "::/0", "gateway": "_ipv6ra", "table": "main"},

@@ -193,6 +193,39 @@ def test_native_apply_accepts_only_owned_ready_ipv4ll(tmp_path, monkeypatch):
         helper._wait_network_addresses(path, attempts=1)
 
 
+@pytest.mark.parametrize("fallback", [True, False])
+@pytest.mark.parametrize("ipv6_mode", ["disabled", "auto", "static"])
+def test_first_boot_dynamic_routes_work_before_route_domain_apply(tmp_path, monkeypatch, fallback, ipv6_mode):
+    """Keep same-subnet replies direct before any source-rule owner is installed.
+
+    Args:
+        tmp_path: Isolated networkd destination.
+        monkeypatch: Replace appliance filesystem paths.
+        fallback: Global IPv4LL choice, independent of DHCP route reachability.
+        ipv6_mode: Initial disabled, SLAAC, or static IPv6 choice.
+    """
+    import configparser
+
+    from tests.test_vmware_ovf_customization import load_customizer
+
+    customizer = load_customizer()
+    destination = tmp_path / "00-atlaso-mgmt.network"
+    monkeypatch.setattr(customizer, "NETWORKD_PATH", destination)
+    monkeypatch.setattr(customizer, "ENV_PATH", tmp_path / "atlaso.env")
+    customizer.write_networkd_config({
+        "management_mode": "dhcp", "ipv6_mode": ipv6_mode,
+        "ipv6_cidr": "2001:db8:1::10/64", "ipv6_gateway": "fe80::1",
+        "dns_servers": [], "ipv4_link_local_fallback_enabled": fallback,
+    })
+    parsed = configparser.ConfigParser(strict=False)
+    parsed.read_string(destination.read_text())
+    assert parsed["DHCPv4"]["RouteTable"] == "main"
+    if ipv6_mode == "auto":
+        assert parsed["IPv6AcceptRA"]["RouteTable"] == "main"
+    assert parsed["DHCPv4"].getboolean("SendRelease") is False
+    assert parsed["DHCPv4"]["MaxAttempts"] == "infinity"
+
+
 @pytest.mark.parametrize("ipv6_mode", ["disabled", "auto", "static"])
 @pytest.mark.parametrize("dns", [[], ["192.0.2.53"]])
 def test_first_boot_opt_out_keeps_network_apply_address_requirements(tmp_path, monkeypatch, ipv6_mode, dns):
@@ -212,6 +245,8 @@ def test_first_boot_opt_out_keeps_network_apply_address_requirements(tmp_path, m
     monkeypatch.setattr(customizer, "NETWORKD_PATH", destination)
     monkeypatch.setattr(customizer, "ENV_PATH", tmp_path / "atlaso.env")
     monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(helper, "ROUTE_DOMAIN_CONFIG_PATH", tmp_path / "route-domains.json")
+    monkeypatch.setattr(helper, "ROUTE_DOMAIN_SERVICE_PATH", tmp_path / "route-domains.service")
     monkeypatch.setattr(helper, "_read_existing_management_network_values",
                         lambda *_args: {"DNS": dns, "Domains": [], "Gateway": []})
     ipv6_cidr = "2001:db8:1::10/64" if ipv6_mode == "static" else None
@@ -231,6 +266,15 @@ def test_first_boot_opt_out_keeps_network_apply_address_requirements(tmp_path, m
                                          ipv4_link_local_fallback_enabled=False))
     files, _, _ = helper._systemd_networkd_files(path)
     assert helper._ipv4ll_disable_only_links(path, files) == {"eth0"}
+    bootstrap = destination.read_text()
+    # Neither a different route table nor a pre-existing applied owner is the
+    # known first-boot transition that may skip replacement-lease readiness.
+    destination.write_text(bootstrap.replace("RouteTable=main", "RouteTable=200"))
+    assert helper._ipv4ll_disable_only_links(path, files) == set()
+    destination.write_text(bootstrap)
+    helper.ROUTE_DOMAIN_CONFIG_PATH.write_text("{}")
+    assert helper._ipv4ll_disable_only_links(path, files) == set()
+    helper.ROUTE_DOMAIN_CONFIG_PATH.unlink()
     changed = {name: text.replace("DHCP=ipv4", "DHCP=no") for name, text in files.items()}
     assert helper._ipv4ll_disable_only_links(path, changed) == set()
     destination.write_text(destination.read_text().replace("DHCP=ipv4", "DHCP=no"))

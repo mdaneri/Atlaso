@@ -16,6 +16,45 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $readinessScript = Join-Path $RepositoryRoot 'scripts/windows/vmware/get-atlaso-vm-ip.ps1'
+$parseTokens = $null
+$parseErrors = $null
+$readinessAst = [Management.Automation.Language.Parser]::ParseFile(
+    $readinessScript, [ref]$parseTokens, [ref]$parseErrors)
+$ipFunctions = @($readinessAst.FindAll({
+    param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Get-VmwareGuestIPv4Address'
+}, $true))
+if ($parseErrors.Count -or $ipFunctions.Count -ne 1) { throw 'Target IP reader definition is ambiguous.' }
+& {
+    . ([scriptblock]::Create($ipFunctions[0].Extent.Text))
+    <#
+    .SYNOPSIS
+    Model Tools that supplies an address only to the native waiting operation.
+    .PARAMETER VmrunPath
+    Synthetic provider name; no process is started.
+    .PARAMETER Arguments
+    Actual argument list from the production IP reader.
+    .PARAMETER Deadline
+    Original deadline that must remain effective for the waiting query.
+    #>
+    function Invoke-AtlasoWorkstationVmrunBounded {
+        param([string]$VmrunPath, [string[]]$Arguments, [datetime]$Deadline)
+        if ($VmrunPath -cne 'fixture-vmrun' -or $Deadline -ne $expectedDeadline) {
+            throw 'The waiting IP query changed its provider or shared deadline.'
+        }
+        $waiting = ($Arguments -join '|') -ceq '-T|ws|getGuestIPAddress|fixture.vmx|-wait'
+        return [pscustomobject]@{
+            ExitCode = if ($waiting) { 0 } else { 1 }
+            TimedOut = $false
+            StdOut = if ($waiting) { '192.0.2.10' } else { '' }
+            StdErr = if ($waiting) { '' } else { 'ToolsUnavailable' }
+        }
+    }
+    $expectedDeadline = (Get-Date).AddSeconds(3)
+    $reported = Get-VmwareGuestIPv4Address -VmrunPath 'fixture-vmrun' -VmxPath 'fixture.vmx' -Deadline $expectedDeadline
+    if ($reported -cne '192.0.2.10') { throw 'Native waiting Tools address was not admitted.' }
+}
 # Invalid timing must fail during binding, before path or provider access.
 foreach ($invalidTiming in @(
         @{ TimeoutSeconds = 0 }, @{ TimeoutSeconds = -1 },

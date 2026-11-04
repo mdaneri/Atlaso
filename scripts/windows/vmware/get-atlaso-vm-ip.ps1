@@ -74,7 +74,10 @@ function Get-VmwareGuestIPv4Address {
         [Parameter(Mandatory = $true)][string]$VmxPath,
         [Parameter(Mandatory = $true)][datetime]$Deadline
     )
-    $arguments = @('-T', 'ws', 'getGuestIPAddress', $VmxPath)
+    # Tools can publish an address to the native waiting query while its
+    # non-waiting lookup still reports unavailable. The shared process deadline
+    # below bounds -wait; it does not relax complete-inventory or MAC admission.
+    $arguments = @('-T', 'ws', 'getGuestIPAddress', $VmxPath, '-wait')
     $result = Invoke-AtlasoWorkstationVmrunBounded `
         -VmrunPath $VmrunPath -Arguments $arguments -Deadline $Deadline
     $reported = @($result.StdOut -split '\r?\n' | Where-Object { $_ }) | Select-Object -First 1

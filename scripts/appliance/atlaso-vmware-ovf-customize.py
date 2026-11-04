@@ -1496,6 +1496,7 @@ def write_networkd_config(config: dict[str, object]) -> None:
     """
     fallback_enabled = ipv4ll_fallback_enabled(config)
     lines = ["# Atlaso IPv4LL fallback enabled=" + ("true" if fallback_enabled else "false"),
+             "# Atlaso bootstrap dynamic routes=main",
              "[Match]", f"Name={DEFAULT_INTERFACE}", "", "[Network]"]
     if config["management_mode"] == "dhcp":
         lines.append("DHCP=ipv4")
@@ -1514,8 +1515,9 @@ def write_networkd_config(config: dict[str, object]) -> None:
         lines.extend(["ConfigureWithoutCarrier=no", "IPv4LLRoute=no"])
     lines.extend(f"DNS={server}" for server in config["dns_servers"])
     if config["management_mode"] == "dhcp":
-        # Match Network Apply from the first boot. Otherwise its unchanged DHCP
-        # route ownership looks like another edit when only fallback is disabled.
+        # Source-rule ownership is installed by Network Apply, not first boot.
+        # Sending connected routes to table 100 before those rules exist sends
+        # same-subnet replies through main's gateway instead of directly on-link.
         if config["ipv6_mode"] == "static" and config["ipv6_gateway"]:
             lines.extend(["", "[Route]", f"Gateway={config['ipv6_gateway']}", "GatewayOnLink=yes",
                           "", "[Route]", f"Gateway={config['ipv6_gateway']}", "GatewayOnLink=yes", "Table=100"])
@@ -1523,13 +1525,13 @@ def write_networkd_config(config: dict[str, object]) -> None:
         if config["dns_servers"]:
             lines.append("UseDNS=no")
         lines.extend(["SendRelease=no", "SendDecline=yes", "MaxAttempts=infinity",
-                      "RouteTable=100", "", "[Route]", "Destination=0.0.0.0/0", "Gateway=_dhcp4",
+                      "RouteTable=main", "", "[Route]", "Destination=0.0.0.0/0", "Gateway=_dhcp4",
                       "GatewayOnLink=yes", "Table=main"])
         if config["ipv6_mode"] == "auto":
             lines.extend(["", "[IPv6AcceptRA]"])
             if config["dns_servers"]:
                 lines.append("UseDNS=no")
-            lines.extend(["RouteTable=100", "", "[Route]", "Destination=::/0",
+            lines.extend(["RouteTable=main", "", "[Route]", "Destination=::/0",
                           "Gateway=_ipv6ra", "Table=main"])
     if config["management_mode"] != "dhcp":
         lines.extend(["", "[Address]", f"Address={config['cidr']}", "DuplicateAddressDetection=ipv4"])

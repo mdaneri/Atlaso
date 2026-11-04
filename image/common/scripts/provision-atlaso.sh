@@ -1177,6 +1177,7 @@ fi
 log_step "configuring final appliance management network"
 {
   printf '# Atlaso IPv4LL fallback enabled=%s\n' "$ATLASO_IPV4_LINK_LOCAL_FALLBACK_ENABLED"
+  printf '# Atlaso bootstrap dynamic routes=main\n'
   printf '[Match]\n'
   printf 'Name=%s\n\n' "$ATLASO_MGMT_INTERFACE"
   printf '[Network]\n'
@@ -1187,10 +1188,11 @@ log_step "configuring final appliance management network"
     else
       printf 'LinkLocalAddressing=ipv6\n'
     fi
-    # Match Network Apply's lease retention and management route ownership.
-    printf '\n[DHCPv4]\nSendRelease=no\nSendDecline=yes\nMaxAttempts=infinity\nRouteTable=100\n'
+    # First boot has no applied routing-domain source-rule owner. Keep connected
+    # DHCP/RA routes usable in main until Network Apply installs that owner.
+    printf '\n[DHCPv4]\nSendRelease=no\nSendDecline=yes\nMaxAttempts=infinity\nRouteTable=main\n'
     printf '\n[Route]\nDestination=0.0.0.0/0\nGateway=_dhcp4\nGatewayOnLink=yes\nTable=main\n'
-    printf '\n[IPv6AcceptRA]\nRouteTable=100\n'
+    printf '\n[IPv6AcceptRA]\nRouteTable=main\n'
     printf '\n[Route]\nDestination=::/0\nGateway=_ipv6ra\nTable=main\n'
   else
     if [ -n "$ATLASO_MGMT_GATEWAY" ]; then
