@@ -21976,6 +21976,72 @@ function initializeHistoryBackButtons() {
   });
 }
 
+function vaultCredentialChoices(entries, {
+  preferredServices = [],
+  preferredProtocols = ["https"],
+  allowedProtocols = ["http", "https"],
+} = {}) {
+  const normalizeProtocols = (values) => (Array.isArray(values) ? values : [])
+    .map((value) => String(value || "").trim().toLowerCase().replace(/:$/, ""))
+    .filter(Boolean);
+  const normalizedServices = (Array.isArray(preferredServices) ? preferredServices : [])
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+  const preferred = normalizeProtocols(preferredProtocols);
+  const allowed = new Set(normalizeProtocols(allowedProtocols));
+  const compareText = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
+  const choices = [];
+
+  (Array.isArray(entries) ? entries : []).forEach((entry) => {
+    (Array.isArray(entry?.uris) ? entry.uris : []).forEach((uri, uriIndex) => {
+      if (typeof uri !== "string") return;
+      let parsed;
+      try {
+        parsed = new URL(uri);
+      } catch {
+        return;
+      }
+      const protocol = String(parsed.protocol || "").toLowerCase().replace(/:$/, "");
+      if (!allowed.has(protocol) || !parsed.hostname || parsed.username || parsed.password) return;
+      const service = String(entry.service_type || "unknown").trim().toLowerCase();
+      const serviceMatched = normalizedServices.includes(service);
+      const serviceRank = serviceMatched ? 0 : Number.MAX_SAFE_INTEGER;
+      const protocolRank = preferred.indexOf(protocol);
+      const matched = serviceMatched && protocolRank >= 0;
+      const displayName = String(entry.display_name || entry.key || "Unknown");
+      const username = String(entry.username || "");
+      const serviceLabel = String(entry.service_type_label || "Unknown");
+      const recommended = matched ? "Recommended · " : "";
+      choices.push({
+        entry,
+        uri,
+        uriIndex,
+        protocol,
+        matched,
+        label: `${recommended}${serviceLabel} · ${protocol.toUpperCase()} · ${displayName}${username ? ` · ${username}` : ""} — ${uri}`,
+        serviceRank,
+        protocolRank: protocolRank >= 0 ? protocolRank : Number.MAX_SAFE_INTEGER,
+        displayName,
+        username,
+        key: String(entry.key || ""),
+        entryId: String(entry.id ?? ""),
+      });
+    });
+  });
+
+  choices.sort((left, right) => left.serviceRank - right.serviceRank
+    || left.protocolRank - right.protocolRank
+    || compareText(left.displayName, right.displayName)
+    || compareText(left.username, right.username)
+    || compareText(left.uri, right.uri)
+    || compareText(left.key, right.key)
+    || compareText(left.entryId, right.entryId)
+    || left.uriIndex - right.uriIndex);
+  return choices.map(({ entry, uri, uriIndex, protocol, matched, label }) => ({ entry, uri, uriIndex, protocol, matched, label }));
+}
+
+window.AtlasoVaultCredentials = { choices: vaultCredentialChoices };
+
 function initializeVcfVaultCredentialPickers() {
   const dataElement = document.getElementById("vcf-vault-credential-options");
   let vaults = [];
@@ -21991,6 +22057,28 @@ function initializeVcfVaultCredentialPickers() {
     const entrySelect = picker.querySelector("[data-vcf-credential-entry]");
     const status = picker.querySelector("[data-vcf-credential-status]");
     if (!(form instanceof HTMLFormElement) || !(vaultSelect instanceof HTMLSelectElement) || !(entrySelect instanceof HTMLSelectElement)) return;
+    const preferredServices = String(picker.dataset.preferredServices || "").split(/\s+/).filter(Boolean);
+    const configuredPreferredProtocols = String(picker.dataset.preferredProtocols || "https").split(/\s+/).filter(Boolean);
+    let serviceMap = {};
+    try {
+      const parsedServiceMap = JSON.parse(picker.dataset.serviceMap || "{}");
+      if (parsedServiceMap && typeof parsedServiceMap === "object" && !Array.isArray(parsedServiceMap)) {
+        serviceMap = parsedServiceMap;
+      }
+    } catch {
+      serviceMap = {};
+    }
+    const serviceField = picker.dataset.serviceField
+      ? form.elements.namedItem(picker.dataset.serviceField)
+      : null;
+    const choicePreferences = () => {
+      const dynamic = serviceField ? serviceMap[String(serviceField.value || "")] : undefined;
+      const dynamicServices = Array.isArray(dynamic) ? dynamic : dynamic ? [dynamic] : [];
+      const services = [...dynamicServices, ...preferredServices]
+        .map((value) => String(value || "").trim().toLowerCase())
+        .filter((value, index, values) => value && values.indexOf(value) === index);
+      return { preferredServices: services, preferredProtocols: configuredPreferredProtocols, allowedProtocols: ["http", "https"] };
+    };
     const addressControl = form.elements.namedItem(picker.dataset.addressField || "");
     const usernameControl = form.elements.namedItem(picker.dataset.usernameField || "");
     const passwordControl = form.elements.namedItem(picker.dataset.passwordField || "");
@@ -22014,25 +22102,33 @@ function initializeVcfVaultCredentialPickers() {
         status.textContent = message || (vaults.length ? "Manual credentials are active." : "No vault keys are available to this account.");
       }
     };
-    const fillEntryOptions = () => {
+    const fillEntryOptions = ({ preserveSelection = false } = {}) => {
+      const previousEntryId = preserveSelection ? String(entrySelect.value || "") : "";
+      const previousUri = preserveSelection ? String(entrySelect.selectedOptions[0]?.dataset.endpoint || "") : "";
       const vault = byVaultId.get(vaultSelect.value);
       entrySelect.replaceChildren(new Option(vault ? "Choose a key and HTTP/HTTPS URI" : "Choose a vault first", ""));
-      let endpointCount = 0;
-      (vault?.entries || []).forEach((entry) => {
-        const username = entry.username ? ` — ${entry.username}` : "";
-        (entry.uris || []).filter((uri) => /^https?:\/\//i.test(uri)).forEach((endpoint) => {
-          const option = new Option(`${entry.display_name || entry.key || "Unknown"}${username} — ${endpoint}`, String(entry.id));
-          option.title = String(entry.key || "");
-          option.dataset.endpoint = endpoint;
-          entrySelect.append(option);
-          endpointCount += 1;
-        });
+      const choices = window.AtlasoVaultCredentials.choices(vault?.entries || [], choicePreferences());
+      choices.forEach((choice) => {
+        const option = new Option(choice.label, String(choice.entry.id));
+        option.title = String(choice.entry.key || "");
+        option.dataset.endpoint = choice.uri;
+        option.dataset.uriIndex = String(choice.uriIndex);
+        entrySelect.append(option);
       });
+      const endpointCount = choices.length;
+      if (previousEntryId && previousUri) {
+        const matchingIndex = [...entrySelect.options].findIndex((option) => (
+          option.value === previousEntryId && option.dataset.endpoint === previousUri
+        ));
+        if (matchingIndex >= 0) entrySelect.selectedIndex = matchingIndex;
+      }
       if (vault && endpointCount === 0) {
         entrySelect.replaceChildren(new Option("No HTTP/HTTPS credentials available", ""));
       }
       entrySelect.disabled = !vault || endpointCount === 0;
-      setManualMode(vault && endpointCount === 0 ? "This vault has no keys with an HTTP or HTTPS URI. Continue with manual credentials." : "");
+      if (!preserveSelection || endpointCount === 0) {
+        setManualMode(vault && endpointCount === 0 ? "This vault has no keys with an HTTP or HTTPS URI. Continue with manual credentials." : "");
+      }
     };
     const applyEntry = () => {
       const vault = byVaultId.get(vaultSelect.value);
@@ -22077,6 +22173,7 @@ function initializeVcfVaultCredentialPickers() {
       }
     };
     vaultSelect.addEventListener("change", fillEntryOptions);
+    serviceField?.addEventListener("change", () => fillEntryOptions({ preserveSelection: true }));
     entrySelect.addEventListener("change", applyEntry);
     form.addEventListener("reset", () => window.setTimeout(() => {
       fillEntryOptions();

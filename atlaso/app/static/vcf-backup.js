@@ -207,18 +207,52 @@
     if (!selected?.value) return null;
     return {vault_id: String(vaultSelect.value), entry_id: String(selected.value), uri: selected.dataset.uri || ""};
   }
-  function fillVaultEntries() {
+  function fillVaultEntries(preserveSelection = false) {
     if (!vaultSelect || !entrySelect) return;
+    const previous = preserveSelection ? selectedVaultEntry() : null;
     const vault = vaultById.get(String(vaultSelect.value));
     entrySelect.replaceChildren(new Option(vault ? "Choose a key and HTTPS URI" : "Choose a Vault first", ""));
-    (vault?.entries || []).forEach((entry) => {
-      (entry.uris || []).filter((uri) => /^https:\/\//i.test(uri)).forEach((uri) => {
-        const option = new Option(`${entry.key}${entry.username ? ` — ${entry.username}` : ""} — ${uri}`, String(entry.id));
-        option.dataset.uri = uri;
-        entrySelect.append(option);
+    const services = {fleet: "operations", sddc: "operations", vcenter: "vcenter", nsx: "nsx"};
+    const choices = window.AtlasoVaultCredentials.choices(vault?.entries || [], {
+      preferredServices: [services[sourceKind?.value] || ""], preferredProtocols: ["https"], allowedProtocols: ["https"],
+    });
+    choices.forEach(({entry, uri, label}) => {
+      const option = new Option(label, String(entry.id));
+      option.title = String(entry.key || "");
+      option.dataset.uri = uri;
+      entrySelect.append(option);
+    });
+    const selectedIndex = previous ? Array.from(entrySelect.options).findIndex((option) => option.value === previous.entry_id && option.dataset.uri === previous.uri) : 0;
+    entrySelect.selectedIndex = Math.max(0, selectedIndex);
+    entrySelect.disabled = !vault || entrySelect.options.length < 2;
+  }
+  function fillDestinationSecretChoices() {
+    const select = field("sftp_secret_ref");
+    if (!select) return;
+    const previous = select.value;
+    const remaining = new Set(secrets.map((secret) => `${secret.vault_id}:${secret.entry_id}`));
+    select.replaceChildren(new Option("Choose saved Vault secret", ""));
+    vaults.forEach((vault) => {
+      const ranked = window.AtlasoVaultCredentials.choices(vault.entries || [], {
+        preferredProtocols: ["sftp", "ssh"], allowedProtocols: ["sftp", "ssh"],
+      });
+      const order = new Map();
+      ranked.forEach(({entry}, index) => { if (!order.has(String(entry.id))) order.set(String(entry.id), index); });
+      secrets.filter((secret) => String(secret.vault_id) === String(vault.id)).sort((left, right) =>
+        (order.get(String(left.entry_id)) ?? Number.MAX_SAFE_INTEGER) - (order.get(String(right.entry_id)) ?? Number.MAX_SAFE_INTEGER)
+      ).forEach((secret) => {
+        const reference = `${secret.vault_id}:${secret.entry_id}`;
+        const entry = (vault.entries || []).find((item) => String(item.id) === String(secret.entry_id));
+        const label = `${vault.name} / ${entry?.display_name || secret.label}${order.has(String(secret.entry_id)) ? " · SSH/SFTP" : ""}`;
+        select.append(new Option(label, reference));
+        remaining.delete(reference);
       });
     });
-    entrySelect.disabled = !vault || entrySelect.options.length < 2;
+    secrets.forEach((secret) => {
+      const reference = `${secret.vault_id}:${secret.entry_id}`;
+      if (remaining.has(reference)) select.append(new Option(String(secret.label || reference), reference));
+    });
+    select.value = Array.from(select.options).some((option) => option.value === previous) ? previous : "";
   }
   function updateCredentialMode() {
     const isVault = mode?.value === "vault";
@@ -1766,7 +1800,7 @@
     updateSourceFields(); invalidateReview(); tlsFingerprints.server = "";
     const checkbox = node('[data-vcf-backup-confirm="server"]'); if (checkbox) { checkbox.checked = false; checkbox.disabled = true; }
   });
-  sourceKind?.addEventListener("change", () => { updateSourceFields(); invalidateReview(); });
+  sourceKind?.addEventListener("change", () => { fillVaultEntries(true); updateSourceFields(); invalidateReview(); });
   form.addEventListener("input", (event) => {
     if (event.target.matches("[data-vcf-backup-plan-kind]")) invalidateReview();
     if (event.target.matches("[name='address'],[name='port']")) {
@@ -1820,5 +1854,5 @@
     invalidateReview();
     if (!operationId) { inspectedSources = []; components = []; receiver = null; }
   });
-  syncOperationsScopes(); fillVaultEntries(); updateCredentialMode(); updateSourceFields();
+  syncOperationsScopes(); fillVaultEntries(); fillDestinationSecretChoices(); updateCredentialMode(); updateSourceFields();
 })();

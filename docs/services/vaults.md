@@ -158,6 +158,13 @@ and [Get Credential API](https://developer.broadcom.com/xapis/vmware-cloud-found
 
 ## VCF Helper autofill
 
+Within each vault, credential choices put matching service types and preferred protocols first, with the service and
+protocol shown in each label. API workflows prefer HTTPS; SSH lab maintenance prefers SDDC Manager SSH credentials.
+Backup discovery follows the current Operations or vCenter connection, and its SFTP destination selector puts SSH/SFTP
+references first. Other credentials that were already usable remain available, including entries marked Unknown.
+Changing a product reorders recommendations while retaining an explicitly selected endpoint. Recommendations do not
+verify account permissions or authenticate automatically; select the credential and complete the existing trust checks.
+
 VCF Helper remote-connection wizards start with an administrator-only **Vault** and **Key** choice. Imported choices show
 readable names with account and full URI details; their stable key remains available in the Vaults entry wizard.
 Selecting a key

@@ -7,7 +7,7 @@
     <div class="alert error hidden" data-atlaso-wizard-error></div>
     <p class="muted" data-vcf-renewal-reconfirm-context></p>
     <section data-atlaso-wizard-step="credential">
-      <fieldset class="vcf-vault-credential-picker" data-vcf-vault-credential-picker data-address-field="address" data-username-field="" data-password-field="" data-port-field="port" data-address-mode="server">
+      <fieldset class="vcf-vault-credential-picker" data-vcf-vault-credential-picker data-preferred-services="operations" data-preferred-protocols="https" data-address-field="address" data-username-field="" data-password-field="" data-port-field="port" data-address-mode="server">
         <legend>Saved VCF Operations credential</legend>
         <div class="form-grid">
           <label><span class="field-label"><span>Vault</span><button class="help-icon" type="button" data-help="Choose a saved Vault entry with an HTTP or HTTPS URI for this VCF Operations endpoint.">i</button></span><select name="credential_vault_id" data-vcf-credential-vault required><option value="">Choose a vault</option>{% for vault in vcf_vault_credential_options %}<option value="{{ vault.id }}">{{ vault.name }}</option>{% endfor %}</select></label>
@@ -50,7 +50,7 @@
       <p>Target host: <strong data-vcf-renewal-target-host>Choose a target first.</strong></p>
       <p>Observed vCenter TLS fingerprint: <code data-vcf-renewal-target-fingerprint>Choose a target first.</code></p>
       <label><span class="field-label"><span>Target identity confirmation</span><button class="help-icon" type="button" data-help="Independently compare the observed vCenter fingerprint with a trusted source. The saved health credential must also match this target host.">i</button></span><input type="checkbox" name="confirm_target_fingerprint" required><span>I confirmed this target fingerprint against a trusted source.</span></label>
-      <fieldset class="vcf-vault-credential-picker" data-vcf-vault-credential-picker data-address-field="vcf_renewal_health_address_unused" data-username-field="vcf_renewal_health_username_unused" data-password-field="vcf_renewal_health_password_unused" data-port-field="vcf_renewal_health_port_unused" data-address-mode="server">
+      <fieldset class="vcf-vault-credential-picker" data-vcf-vault-credential-picker data-preferred-services="vcenter" data-preferred-protocols="https" data-address-field="vcf_renewal_health_address_unused" data-username-field="vcf_renewal_health_username_unused" data-password-field="vcf_renewal_health_password_unused" data-port-field="vcf_renewal_health_port_unused" data-address-mode="server">
         <legend>Saved vCenter health credential</legend>
         <div class="form-grid">
           <label><span class="field-label"><span>Vault</span><button class="help-icon" type="button" data-help="Choose a Vault containing an HTTP or HTTPS credential for read-only native vCenter checks.">i</button></span><select name="health_credential_vault_id" data-vcf-credential-vault required><option value="">Choose a vault</option>{% for vault in vcf_vault_credential_options %}<option value="{{ vault.id }}">{{ vault.name }}</option>{% endfor %}</select></label>
@@ -94,7 +94,7 @@
     <p>Saved target: <strong data-vcf-renewal-health-host></strong></p>
     <p class="muted">This changes only the saved health credential. Retained certificate material, native requests and reservations stay in place. Prepared replacements require a fresh review.</p>
     <section data-atlaso-wizard-step="credential">
-      <fieldset class="vcf-vault-credential-picker" data-vcf-vault-credential-picker data-address-field="vcf_health_reconfirm_address_unused" data-username-field="vcf_health_reconfirm_username_unused" data-password-field="vcf_health_reconfirm_password_unused" data-port-field="vcf_health_reconfirm_port_unused" data-address-mode="server">
+      <fieldset class="vcf-vault-credential-picker" data-vcf-vault-credential-picker data-preferred-services="vcenter" data-preferred-protocols="https" data-address-field="vcf_health_reconfirm_address_unused" data-username-field="vcf_health_reconfirm_username_unused" data-password-field="vcf_health_reconfirm_password_unused" data-port-field="vcf_health_reconfirm_port_unused" data-address-mode="server">
         <legend>Current vCenter health credential</legend>
         <div class="form-grid">
           <label><span class="field-label"><span>Vault</span><button class="help-icon" type="button" data-help="Choose the Vault containing the current saved credential for this vCenter. No password is loaded into the page.">i</button></span><select name="health_credential_vault_id" data-vcf-credential-vault required><option value="">Choose a vault</option>{% for vault in vcf_vault_credential_options %}<option value="{{ vault.id }}">{{ vault.name }}</option>{% endfor %}</select></label>

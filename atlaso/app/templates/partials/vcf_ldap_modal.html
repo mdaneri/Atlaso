@@ -54,6 +54,7 @@
               {% set credential_username_field = "username" %}
               {% set credential_password_field = "password" %}
               {% set credential_address_mode = "url" %}
+              {% set credential_preferred_services = "automation" %}
               {% include "partials/vcf_vault_credential_picker.html" %}
               <div class="form-stack">
                 <label><span class="field-label"><span>VCF Automation URL</span><button class="help-icon" type="button" data-help="HTTPS address of the VCF Automation endpoint. Atlaso reads the presented TLS fingerprint before sending credentials.">i</button></span><input name="target_url" value="{{ vcf_ldap_selected_organization.vcf_target_url }}" required></label>

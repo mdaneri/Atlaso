@@ -193,12 +193,42 @@ class CredentialOption extends FakeElement {
 class CredentialSelect extends FakeElement {
   constructor(value = "") {
     super();
-    this.value = value;
+    this._value = value;
+    this._selectedIndex = -1;
     this.disabled = false;
   }
 
+  get value() {
+    return this._selectedIndex >= 0 ? this.children[this._selectedIndex]?.value || "" : this._value;
+  }
+
+  set value(value) {
+    this._value = String(value || "");
+    this._selectedIndex = this.children.findIndex((option) => option.value === this._value);
+  }
+
+  get options() { return this.children; }
+
+  get selectedIndex() { return this._selectedIndex; }
+
+  set selectedIndex(index) {
+    this._selectedIndex = Number(index);
+    this._value = this.children[this._selectedIndex]?.value || "";
+  }
+
   get selectedOptions() {
-    return [this.children.find((option) => option.value === this.value) || this.children[0] || new CredentialOption("", "")];
+    return [this.children[this._selectedIndex] || this.children.find((option) => option.value === this._value) || this.children[0] || new CredentialOption("", "")];
+  }
+
+  append(...children) {
+    super.append(...children);
+    if (this._selectedIndex < 0 && this._value) this._selectedIndex = this.children.findIndex((option) => option.value === this._value);
+  }
+
+  replaceChildren(...children) {
+    super.replaceChildren(...children);
+    this._selectedIndex = children.length ? 0 : -1;
+    this._value = children[0]?.value || "";
   }
 }
 
@@ -212,22 +242,24 @@ class CredentialForm extends FakeElement {
   }
 }
 
-function makeCredentialPickerRuntime() {
+function makeCredentialPickerRuntime({ entries, pickerDataset = {} } = {}) {
   const data = new FakeElement();
   data.textContent = JSON.stringify([{
     id: 7,
     name: "Primary",
-    entries: [{
+    entries: entries || [{
       id: 42, key: "vcf.operations.admin", display_name: "Operations · vc01.lab.example · admin",
+      service_type: "vcf_operations", service_type_label: "Operations",
       username: "admin", uris: ["https://vc01.lab.example"],
     }],
   }]);
   const form = new CredentialForm();
+  form.elements.product = new CredentialSelect("operations");
   const vaultSelect = new CredentialSelect("7");
   const entrySelect = new CredentialSelect();
   const status = new FakeElement();
   const picker = new FakeElement();
-  picker.dataset = { addressField: "address", usernameField: "username", passwordField: "password", portField: "port", addressMode: "server" };
+  picker.dataset = { addressField: "address", usernameField: "username", passwordField: "password", portField: "port", addressMode: "server", ...pickerDataset };
   picker.closest = () => form;
   picker.querySelector = (selector) => ({
     "[data-vcf-credential-vault]": vaultSelect,
@@ -245,8 +277,8 @@ function makeCredentialPickerRuntime() {
     URL,
     Event: class Event {},
   });
-  vm.runInContext(`${functionSource("initializeVcfVaultCredentialPickers")}; initializeVcfVaultCredentialPickers();`, context);
-  return { form, entrySelect, status };
+  vm.runInContext(`${functionSource("vaultCredentialChoices")}; window.AtlasoVaultCredentials = { choices: vaultCredentialChoices }; ${functionSource("initializeVcfVaultCredentialPickers")}; initializeVcfVaultCredentialPickers();`, context);
+  return { form, entrySelect, status, picker };
 }
 
 test("saved credential picker shows the readable name but preserves key and entry identity", () => {
@@ -254,7 +286,7 @@ test("saved credential picker shows the readable name but preserves key and entr
   const option = entrySelect.children.find((child) => child.value === "42");
 
   assert.ok(option);
-  assert.equal(option.textContent, "Operations · vc01.lab.example · admin — admin — https://vc01.lab.example");
+  assert.equal(option.textContent, "Operations · HTTPS · Operations · vc01.lab.example · admin · admin — https://vc01.lab.example");
   assert.equal(option.title, "vcf.operations.admin");
   assert.equal(option.dataset.endpoint, "https://vc01.lab.example");
   entrySelect.value = "42";
@@ -263,6 +295,33 @@ test("saved credential picker shows the readable name but preserves key and entr
   assert.equal(form.elements.address.value, "vc01.lab.example");
   assert.equal(form.elements.username.value, "admin");
   assert.match(status.textContent, /Using Primary \/ vcf\.operations\.admin\./);
+});
+
+test("saved credential picker leaves the placeholder selected and preserves the exact URI when re-ranked", () => {
+  const entries = [
+    { id: 42, key: "ops-admin", display_name: "Operations · vc01 · admin", service_type: "vcf_operations", service_type_label: "Operations", username: "admin", uris: ["https://vc01.lab.example", "https://vc02.lab.example"] },
+    { id: 43, key: "vc-admin", display_name: "vCenter · vc03 · admin", service_type: "vcenter", service_type_label: "vCenter", username: "admin", uris: ["https://vc03.lab.example"] },
+  ];
+  const { form, entrySelect, status } = makeCredentialPickerRuntime({
+    entries,
+    pickerDataset: { serviceField: "product", serviceMap: JSON.stringify({ operations: "vcf_operations", vcenter: "vcenter" }) },
+  });
+  assert.equal(entrySelect.value, "", "a populated picker must not automatically select credentials");
+
+  const secondUriIndex = entrySelect.children.findIndex((option) => option.dataset.endpoint === "https://vc02.lab.example");
+  entrySelect.selectedIndex = secondUriIndex;
+  entrySelect.listeners.get("change")();
+  assert.equal(form.elements.address.value, "vc02.lab.example");
+  const statusBeforeRerank = status.textContent;
+
+  form.elements.product.value = "vcenter";
+  form.elements.product.listeners.get("change")();
+
+  assert.equal(entrySelect.value, "42");
+  assert.equal(entrySelect.selectedOptions[0].dataset.endpoint, "https://vc02.lab.example");
+  assert.equal(entrySelect.children[1].dataset.endpoint, "https://vc03.lab.example", "the mapped service should now rank first");
+  assert.equal(status.textContent, statusBeforeRerank, "reranking must not reapply credentials or disturb the active form state");
+  assert.equal(form.elements.address.value, "vc02.lab.example");
 });
 
 function discoveredPayload(candidates) {
