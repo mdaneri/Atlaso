@@ -18,6 +18,46 @@ def fixture_observation():
     return row, {"complete": True, "links": [link], "conflicts": []}
 
 
+@pytest.mark.parametrize("change", ["none", "fingerprint", "key", "address", "hostname", "expired", "future", "missing-san"])
+def test_published_tls_pair_requires_applied_identity(tmp_path, change):
+    """Pending desired state cannot substitute an unverified installed TLS identity.
+
+    Args:
+        tmp_path: Owned isolated certificate fixture directory.
+        change: One installed-pair or published-identity prerequisite to invalidate.
+    """
+    from datetime import datetime, timedelta, timezone
+    from ipaddress import ip_address
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    from atlaso.dynamic_management import published_pair_matches
+
+    now = datetime.now(timezone.utc)
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "applied.atlaso.internal")])
+    builder = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+               .serial_number(x509.random_serial_number())
+               .not_valid_before(now + timedelta(minutes=5) if change == "future" else now - timedelta(days=1))
+               .not_valid_after(now - timedelta(seconds=1) if change == "expired" else now + timedelta(days=1)))
+    if change != "missing-san":
+        builder = builder.add_extension(x509.SubjectAlternativeName([
+            x509.DNSName("pending.atlaso.internal" if change == "hostname" else "applied.atlaso.internal"),
+            x509.IPAddress(ip_address("192.0.2.20" if change == "address" else "169.254.20.10")),
+        ]), critical=False)
+    public = builder.sign(key, hashes.SHA256())
+    cert_path, key_path = tmp_path / "leaf.crt", tmp_path / "leaf.key"
+    cert_path.write_bytes(public.public_bytes(serialization.Encoding.PEM))
+    installed_key = ec.generate_private_key(ec.SECP256R1()) if change == "key" else key
+    key_path.write_bytes(installed_key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    fingerprint = "0" * 64 if change == "fingerprint" else public.fingerprint(hashes.SHA256()).hex()
+    assert published_pair_matches(fingerprint, {"169.254.20.10"}, "applied.atlaso.internal", cert_path, key_path) == (change == "none")
+
+
 def test_observer_bootstrap_utilities_do_not_import_ui(tmp_path, monkeypatch):
     """Keep steady observer startup independent of the large UI/schema import graph.
 
@@ -424,13 +464,14 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
         renamed: Preserve the original Settings name while reconciling the applied NIC through its MAC-bound alias.
         warmup_carrier_loss: Withdraw carrier while slow publication helpers initialize outside the writer transaction.
     """
+    import hashlib
     import json
     import subprocess
     from contextlib import contextmanager
     from datetime import datetime, timezone
 
     from cryptography import x509
-    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives import hashes, serialization
     from sqlalchemy import select
 
     from atlaso import dynamic_management as publisher
@@ -629,6 +670,53 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
     checks_before_fast_path = len(upstream_checks)
     publisher.reconcile(helper, bootstrap)
     assert len(upstream_checks) == checks_before_fast_path
+
+    # A normal UI review can issue a pending leaf for the future static
+    # addresses while this applied IPv4LL listener remains unchanged. Refreshing
+    # its publication must neither overwrite that desired leaf nor deploy it.
+    with SessionLocal() as db:
+        leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        original_leaf = {column.key: getattr(leaf, column.key) for column in CaCertificate.__table__.columns}
+        ca = db.scalar(select(CaSettings))
+        profiles = list(db.scalars(select(CaProfile)))
+        pending = ManagedCertificateSpec(
+            "appliance:https", "applied.atlaso.internal", ["applied.atlaso.internal"],
+            ["169.254.20.10", "192.0.2.20", "fd00:1084:1077::20"],
+            CA_SERVER_PROFILE_NAME, leaf.description, str(cert_path), str(key_path), leaf.chain_path,
+        )
+        ensure_managed_certificate_rows(db, settings=ca, profiles=profiles, specs=[pending])
+        assert issue_certificate(ca, profiles, leaf)
+        db.commit()
+        pending_fingerprint = leaf.fingerprint
+        pending_addresses = leaf.ip_addresses
+        pending_key_digest = hashlib.sha256(leaf.private_key_encrypted.encode()).hexdigest()
+    installed_before = [hashlib.sha256(path.read_bytes()).hexdigest() for path in (cert_path, key_path)]
+    publications_before = len(publications)
+    publisher.reconcile(helper, bootstrap)
+    with SessionLocal() as db:
+        leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        assert leaf.fingerprint == pending_fingerprint
+        assert leaf.ip_addresses == pending_addresses
+        assert hashlib.sha256(leaf.private_key_encrypted.encode()).hexdigest() == pending_key_digest
+    assert len(publications) == publications_before
+    assert len(upstream_checks) == checks_before_fast_path
+    assert [hashlib.sha256(path.read_bytes()).hexdigest() for path in (cert_path, key_path)] == installed_before
+    assert receipts[-1]["leaf_fingerprint"] == first.fingerprint(hashes.SHA256()).hex()
+    with SessionLocal() as db:
+        leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        leaf.status = "revoked"
+        db.commit()
+    with pytest.raises(ValueError, match="unavailable or revoked"):
+        publisher.reconcile(helper, bootstrap)
+    assert len(publications) == publications_before
+    assert [hashlib.sha256(path.read_bytes()).hexdigest() for path in (cert_path, key_path)] == installed_before
+    with SessionLocal() as db:
+        leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        # Restore only this synthetic desired row so the separate key-repair,
+        # lease-change and carrier-loss cases below retain their original setup.
+        for key, value in original_leaf.items():
+            setattr(leaf, key, value)
+        db.commit()
     key_path.write_text(earlier_key)
     before_repair = len(publications)
     publisher.reconcile(helper, bootstrap)

@@ -68,22 +68,62 @@ class _PublicationPreparation(NamedTuple):
     https_enabled: bool
 
 
-def installed_pair_matches(leaf: CaCertificate, certificate: Path, private_key: Path) -> bool:
-    """Require the installed pair and encrypted candidate to describe the same leaf.
+def _installed_certificate_pair(certificate: Path, private_key: Path) -> x509.Certificate | None:
+    """Read a matching installed pair without exposing its private material.
 
     Args:
-        leaf: Existing management-only encrypted certificate row.
         certificate: Applied managed public certificate path.
         private_key: Applied managed private-key path; its contents never leave this process.
     """
     try:
         public = x509.load_pem_x509_certificate(certificate.read_bytes())
         private = serialization.load_pem_private_key(private_key.read_bytes(), password=None)
-        return (public.fingerprint(hashes.SHA256()).hex() == leaf.fingerprint
-                and public.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
-                == private.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo))
+        if (public.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+                == private.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)):
+            return public
     except (OSError, ValueError, TypeError, UnsupportedAlgorithm):
+        return None
+    return None
+
+
+def installed_pair_matches(leaf: CaCertificate, certificate: Path, private_key: Path) -> bool:
+    """Require an installed pair to match the specified desired certificate row.
+
+    Args:
+        leaf: Existing management-only encrypted certificate row.
+        certificate: Applied managed public certificate path.
+        private_key: Applied managed private-key path; its contents never leave this process.
+    """
+    public = _installed_certificate_pair(certificate, private_key)
+    return public is not None and public.fingerprint(hashes.SHA256()).hex() == leaf.fingerprint
+
+
+def published_pair_matches(
+    fingerprint: str, addresses: set[str], fqdn: str, certificate: Path, private_key: Path,
+) -> bool:
+    """Verify the unchanged applied publication independently of pending CA edits.
+
+    Args:
+        fingerprint: Leaf identity from the checked root-owned applied publication.
+        addresses: Current applied non-loopback listener SANs.
+        fqdn: Applied appliance identity, independent of pending Settings.
+        certificate: Applied managed public certificate path.
+        private_key: Applied managed private-key path; its contents never leave this process.
+    """
+    if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
         return False
+    public = _installed_certificate_pair(certificate, private_key)
+    if public is None or public.fingerprint(hashes.SHA256()).hex() != fingerprint:
+        return False
+    now = datetime.now(timezone.utc)
+    if public.not_valid_before_utc > now or public.not_valid_after_utc <= now + timedelta(seconds=90):
+        return False
+    try:
+        sans = public.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    except x509.ExtensionNotFound:
+        return False
+    return (set(map(str, sans.get_values_for_type(x509.IPAddress))) == addresses
+            and {name.casefold() for name in sans.get_values_for_type(x509.DNSName)} == {fqdn.casefold()})
 
 
 def write_publication(value: dict[str, Any]) -> None:
@@ -235,11 +275,8 @@ def _reconcile_once(
             if (previous.get("phase") == "ready" and previous.get("addresses") == native["addresses"]
                     and previous.get("apipa_addresses") == native["apipa_addresses"]
                     and (not settings.get("management_https_enabled") or current_leaf is not None
-                         and current_leaf.enabled and current_leaf.status != "revoked" and current_leaf.expires_at is not None
-                         and ensure_aware(current_leaf.expires_at) > datetime.now(timezone.utc) + timedelta(seconds=90)
-                         and set((current_leaf.ip_addresses or "").splitlines()) == target_sans
-                         and current_leaf.fingerprint == previous.get("leaf_fingerprint")
-                         and installed_pair_matches(current_leaf,
+                         and current_leaf.enabled and current_leaf.status != "revoked"
+                         and published_pair_matches(str(previous.get("leaf_fingerprint") or ""), target_sans, settings["fqdn"],
                              helper["_ca_managed_path"](settings["management_https_cert_path"], "management_https_cert_path"),
                              helper["_ca_managed_path"](settings["management_https_key_path"], "management_https_key_path")))
                     and site_path.is_file()

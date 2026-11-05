@@ -70,6 +70,10 @@ CA root, protocol, port and unrelated service changes remain pending. A later DH
 listener and URL; the obsolete SAN is retired after the listener transition. No-carrier and incomplete observations
 never establish usable fallback. Publication failures leave the URL unpublished or let its short receipt expire;
 use the local console to inspect networking and CA readiness, restore connectivity, and retry the normal Apply workflow.
+When the applied listener is unchanged, the observer verifies its installed certificate/key pair, SANs, validity and
+served fingerprint against the published identity. A certificate prepared by an Appliance Apply review for pending
+static addresses stays pending and is neither deployed nor overwritten by that refresh. Disabled or revoked
+management certificates still block refresh; certificate repair and address changes retain their normal CA checks.
 An interrupted management certificate/key replacement restores the previous pair before retrying listener activation.
 Cold publication helpers load and the initial application-upstream readiness wait runs outside the database writer
 and Network Apply locks, so application startup can commit state and acquire its own native admission. The observer
