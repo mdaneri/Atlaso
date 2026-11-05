@@ -1047,7 +1047,11 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                         uris=uris or candidate.uris,
                     ),
                     actor=identity.username,
+                    overwrite_existing=source_type != "vcf_installer",
                 )
+                if source_type == "vcf_installer" and not created:
+                    skipped_existing += 1
+                    continue
                 imported.append(entry.key)
                 created_count += int(created)
             db.commit()

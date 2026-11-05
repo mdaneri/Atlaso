@@ -2095,6 +2095,52 @@ def test_deployment_import_preserves_existing_values_and_imports_only_new_entrie
     assert repeated.json()["imported_keys"] == []
 
 
+def test_deployment_import_preserves_an_entry_created_before_the_final_write(client, monkeypatch):
+    """Recheck create-only policy at the shared writer rather than relying on the earlier lookup.
+
+    Args:
+        client: HTTP test client used to exercise the application.
+        monkeypatch: Fixture injecting a concurrent destination entry before the final write.
+    """
+    from dataclasses import replace
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VaultEntry
+    from atlaso.app.routers.ui import vcf_workflows
+    from atlaso.app.secrets import decrypt_secret
+
+    csrf, vault_id = _create_empty_vcf_import_vault(client)
+    candidate = _canonical_test_vcf_candidate(
+        candidate_id="late-created-operations", natural_key="vcf.operations.admin", value="StaleDeploymentSecret!",
+    )
+    original_upsert = vcf_workflows.upsert_vault_entry
+
+    def insert_before_final_lookup(db, *, vault, entry, actor, overwrite_existing=True):
+        """Model a new current value becoming visible after the router's first lookup.
+
+        Args:
+            db: Test database session.
+            vault: Destination vault.
+            entry: Proposed retained deployment value.
+            actor: Acting administrator.
+            overwrite_existing: Create-only policy passed by the import route.
+        """
+        original_upsert(db, vault=vault, entry=replace(entry, value="ConcurrentCurrentSecret!"), actor=actor)
+        return original_upsert(db, vault=vault, entry=entry, actor=actor, overwrite_existing=overwrite_existing)
+
+    monkeypatch.setattr(vcf_workflows, "upsert_vault_entry", insert_before_final_lookup)
+    response = _post_fake_vcf_import(
+        client, monkeypatch, csrf=csrf, vault_id=vault_id, candidates=[candidate],
+        address="sddc-manager.example.internal", source_type="vcf_installer",
+    )
+    assert response.status_code == 200
+    assert response.json()["created"] == response.json()["rotated"] == 0
+    assert response.json()["skipped_existing"] == 1
+    with SessionLocal() as db:
+        stored = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalar_one()
+        assert decrypt_secret(stored.encrypted_value) == "ConcurrentCurrentSecret!"
+
+
 def test_vcf_import_rotates_matching_legacy_key_and_keeps_operator_uris(client, monkeypatch):
     """Rotate one matching legacy key while preserving its operator URI positions.
 
