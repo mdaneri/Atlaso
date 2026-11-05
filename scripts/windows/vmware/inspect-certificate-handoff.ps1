@@ -142,6 +142,7 @@ try {
     $plain = $null
     $protectedPeerKey = $null
     $peerPlain = $null
+    $consumerEnvironment = $null
     try {
         if ([string]$planIdentity.peer_transport.authentication_mode -ceq 'dpapi-task-key') {
             $keyPath = [string]$planIdentity.peer_key.path
@@ -160,10 +161,17 @@ try {
             -OnePasswordServiceAccountTokenFile (Join-Path $repoRoot '.atlaso-local/onepassword-service-account-token.dpapi') `
             -OnePasswordPython $PythonPath -TimeoutSeconds 300 -ConsumerDescription 'Certificate inspection'
         $plain = [Net.NetworkCredential]::new('', $pair.AdminPassword).Password
+        # Agent mode has no exported private key. Supply only the selected
+        # credential set, after clearing inherited native credential values.
+        $consumerEnvironment = @{ ATLASO_NATIVE_ADMIN = $plain; TEMP = $evidenceRoot; TMP = $evidenceRoot }
+        if ([string]$planIdentity.peer_transport.authentication_mode -ceq 'dpapi-task-key') {
+            $consumerEnvironment.ATLASO_NATIVE_PEER_KEY = $peerPlain
+        }
         Invoke-AtlasoBoundedProcess -FilePath $PythonPath -ArgumentList $arguments `
-            -EnvironmentVariables @{ ATLASO_NATIVE_ADMIN = $plain; ATLASO_NATIVE_PEER_KEY = $peerPlain; TEMP = $evidenceRoot; TMP = $evidenceRoot } `
+            -ClearEnvironmentVariablePrefixes @('ATLASO_NATIVE_') -EnvironmentVariables $consumerEnvironment `
             -TimeoutSeconds 1500 -Action 'Certificate inspection' -DiscardOutput | Out-Null
     } finally {
+        if ($consumerEnvironment) { $consumerEnvironment.Clear() }
         $plain = $null
         $peerPlain = $null
         if ($protectedPeerKey) { $protectedPeerKey.Dispose() }

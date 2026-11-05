@@ -169,6 +169,11 @@ enable kernel IP forwarding or bridging. Before the first address-changing Apply
 SSH policy for its authenticated user and source and refuses missing destinations, unrestricted forwarding, or extra
 destinations.
 
+For the normal `peer_transport.authentication_mode: "agent"` selection, or when that selection is omitted, unlock the
+SSH agent and approve the selected key for the task's Python runtime before starting unattended inspection. The key
+must match the public key admitted for this peer. The bounded child receives no peer private-key value in agent mode;
+the bridge clears inherited native credential values before supplying the selected credentials.
+
 The ordinary credential policy remains the default. A task-only peer SSH key protected with current-user Windows
 DPAPI is an optional exception only when the maintainer has explicitly approved that key and its lab lifetime. Before
 creating it, preserve the original approval receipt and bind it to this task, repository, PR, exact peer ownership, and
