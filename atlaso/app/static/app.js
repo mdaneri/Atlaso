@@ -25331,6 +25331,7 @@ function initializeVaultsPage() {
     },
     prepareReview: () => {
       entryForm.querySelector("[data-vault-entry-review-key]").textContent = String(entryForm.elements.key.value || "");
+      entryForm.querySelector("[data-vault-entry-review-service]").textContent = String(entryForm.elements.service_type.selectedOptions[0]?.textContent || "Unknown");
       entryForm.querySelector("[data-vault-entry-review-username]").textContent = String(entryForm.elements.username.value || "") || "Not specified";
       entryForm.querySelector("[data-vault-entry-review-password]").textContent = entryForm.elements.value.value ? "New encrypted value supplied" : "Existing encrypted value retained";
       entryForm.querySelector("[data-vault-entry-review-uris]").textContent = uriValues().length ? `${uriValues().length} configured` : "None";
@@ -25349,6 +25350,7 @@ function initializeVaultsPage() {
       entryForm.elements.copy_entry_id.value = copying ? String(row.id) : "";
       entryForm.dataset.vaultId = String(vaultId || "");
       entryForm.elements.key.value = copying ? String(context.copyKey || "") : row?.key || "";
+      entryForm.elements.service_type.value = String(row?.service_type || "unknown");
       entryForm.elements.description.value = row?.description || "";
       entryForm.elements.username.value = row?.username || "";
       renderUriRows(row?.uris || []);
@@ -25492,6 +25494,13 @@ function initializeVaultsPage() {
               : `<code>${escapeHtml(cell.getValue())}</code>`,
             cellClick: (_event, cell) => entryWizard.open({ context: { vaultId, row: cell.getRow().getData().is_new ? null : cell.getRow().getData() }, launcher: cell.getElement() }),
           },
+          {
+            title: "Service",
+            field: "service_type_label",
+            minWidth: 160,
+            headerFilter: "input",
+            formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "Unknown"),
+          },
           { title: "Description", field: "description", minWidth: 220, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "—") },
           { title: "Username", field: "username", minWidth: 180, formatter: (cell) => cell.getRow().getData().is_new ? "" : `<code>${escapeHtml(cell.getValue() || "—")}</code>` },
           {
@@ -25604,7 +25613,7 @@ function initializeVcfVaultImport() {
         ? "VCF password" : candidate.secret_type === "esx_password" ? "ESX password" : "Other credential";
       const accountDescription = document.createElement("small");
       accountDescription.className = "muted";
-      accountDescription.textContent = `${credentialTypeLabel} · ${String(candidate.username || "Username unavailable")}`;
+      accountDescription.textContent = `${String(candidate.service_type_label || "Unknown")} · ${credentialTypeLabel} · ${String(candidate.username || "Username unavailable")}`;
       const description = document.createElement("small");
       description.className = "muted";
       description.textContent = String(candidate.description || candidate.resource_name || "");

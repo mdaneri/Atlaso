@@ -1044,6 +1044,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                         source_type=source_type,
                         source_endpoint=_canonical_vcf_vault_source_endpoint(address, port),
                         imported_at=utcnow(),
+                        service_type=candidate.service_type,
                         uris=uris or candidate.uris,
                     ),
                     actor=identity.username,

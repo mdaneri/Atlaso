@@ -197,6 +197,7 @@ test("VCF vault inspect reports discovery coverage and renders safe URI repair g
         candidate_id: "candidate-1",
         key: "<script>alert(1)</script>",
         description: "<img src=x onerror=alert(1)>",
+        service_type_label: "Operations",
         secret_type: "vcf_password",
         username: "<img src=x onerror=alert(2)>",
         resource_name: "vc01.lab.example",
@@ -234,13 +235,13 @@ test("VCF vault inspect reports discovery coverage and renders safe URI repair g
   assert.equal(verifiedCopy.innerHTML, "");
   assert.equal(verifiedCopy.children[0].children[0].textContent, "<script>alert(1)</script>");
   assert.equal(verifiedCopy.children[0].innerHTML, "");
-  assert.equal(verifiedCopy.children[1].textContent, "VCF password · <img src=x onerror=alert(2)>");
+  assert.equal(verifiedCopy.children[1].textContent, "Operations · VCF password · <img src=x onerror=alert(2)>");
   assert.equal(verifiedCopy.children[1].innerHTML, "");
   assert.equal(verifiedCopy.children[2].textContent, "<img src=x onerror=alert(1)>");
   assert.equal(verifiedCopy.children[2].innerHTML, "");
   assert.equal(verifiedCopy.children[3].textContent, "https://vc01.lab.example");
   assert.equal(verifiedCopy.children[3].innerHTML, "");
-  assert.equal(runtime.form.candidates.children[1].children[1].children[1].textContent, "ESX password · root");
+  assert.equal(runtime.form.candidates.children[1].children[1].children[1].textContent, "Unknown · ESX password · root");
   assert.match(
     runtime.form.candidates.children[1].children[1].children[3].textContent,
     /Add a URI in the Vault editor after import\./,
@@ -307,6 +308,7 @@ test("VCF candidate rows distinguish accounts with the same resource and endpoin
       {
         candidate_id: "admin-candidate",
         key: "vcf-vault-key",
+        service_type_label: "vCenter",
         secret_type: "vcf_password",
         username: "administrator",
         resource_name: "vc01.lab.example",
@@ -316,6 +318,7 @@ test("VCF candidate rows distinguish accounts with the same resource and endpoin
       {
         candidate_id: "audit-candidate",
         key: "vcf-vault-key",
+        service_type_label: "Unknown",
         secret_type: "vcf_password",
         username: "audit",
         resource_name: "vc01.lab.example",
@@ -328,7 +331,7 @@ test("VCF candidate rows distinguish accounts with the same resource and endpoin
   await runtime.getWizardOptions().onNext({ controller: { setError() {} }, step: { id: "credentials" } });
 
   const accountLabels = runtime.form.candidates.children.map((row) => row.children[1].children[1].textContent);
-  assert.deepEqual(accountLabels, ["VCF password · administrator", "VCF password · audit"]);
+  assert.deepEqual(accountLabels, ["vCenter · VCF password · administrator", "Unknown · VCF password · audit"]);
   assert.deepEqual(
     runtime.form.candidates.children.map((row) => row.children[1].children[3].textContent),
     ["https://vc01.lab.example", "https://vc01.lab.example"],
@@ -351,7 +354,7 @@ test("unknown VCF credential types use a readable fallback label", async () => {
 
   await runtime.getWizardOptions().onNext({ controller: { setError() {} }, step: { id: "credentials" } });
 
-  assert.equal(runtime.form.candidates.children[0].children[1].children[1].textContent, "Other credential · operator");
+  assert.equal(runtime.form.candidates.children[0].children[1].children[1].textContent, "Unknown · Other credential · operator");
 });
 
 test("zero VCF candidates preserve the skip reason and block selection validation", async () => {

@@ -14,6 +14,10 @@ from sqlalchemy.orm import Session, selectinload
 
 from atlaso.app.models import Vault, VaultEntry, utcnow
 from atlaso.app.secrets import decrypt_secret, encrypt_secret
+from atlaso.app.services.vault_service_types import (
+    VAULT_SERVICE_TYPE_LABELS,
+    normalize_vault_service_type,
+)
 
 VAULT_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$")
 VAULT_SECRET_TYPES = {"vcf_password", "esx_password"}
@@ -37,6 +41,7 @@ class VaultEntryInput:
         source_endpoint: Source endpoint maintained by this vaultentryinput.
         uris: Uris maintained by this vaultentryinput.
         imported_at: UTC timestamp associated with imported.
+        service_type: Canonical product or service associated with the account.
     """
     key: str
     secret_type: str
@@ -48,6 +53,7 @@ class VaultEntryInput:
     source_endpoint: str = ""
     uris: tuple[str, ...] = ()
     imported_at: datetime | None = None
+    service_type: str = "unknown"
 
 
 def vault_scope_identity(vault: Vault) -> str:
@@ -220,6 +226,7 @@ def validate_entry_input(entry: VaultEntryInput, *, require_value: bool = True) 
         source_endpoint=entry.source_endpoint.strip(),
         uris=normalize_vault_uris(entry.uris),
         imported_at=entry.imported_at,
+        service_type=normalize_vault_service_type(entry.service_type),
     )
 
 
@@ -312,6 +319,7 @@ def upsert_vault_entry(
         current.updated_at = utcnow()
     current.description = normalized.description
     current.secret_type = normalized.secret_type
+    current.service_type = normalized.service_type
     current.username = normalized.username
     current.resource_name = normalized.resource_name
     current.source_type = normalized.source_type
@@ -332,6 +340,7 @@ def update_vault_entry(
     resource_name: str,
     description: str,
     uris: tuple[str, ...],
+    service_type: str | None = None,
 ) -> None:
     """Update vault entry.
 
@@ -344,6 +353,7 @@ def update_vault_entry(
         resource_name: Resource name supplied by the caller.
         description: Human-readable description of the resource.
         uris: Uris supplied by the caller.
+        service_type: Optional service correction; omitted inputs preserve the existing service.
     """
     normalized = validate_entry_input(
         VaultEntryInput(
@@ -357,12 +367,14 @@ def update_vault_entry(
             source_endpoint=entry.source_endpoint,
             uris=uris,
             imported_at=entry.imported_at,
+            service_type=entry.service_type if service_type is None else service_type,
         ),
         require_value=False,
     )
     entry.key = normalized.key
     entry.description = normalized.description
     entry.secret_type = normalized.secret_type
+    entry.service_type = normalized.service_type
     entry.username = normalized.username
     entry.resource_name = normalized.resource_name
     entry.uris_json = json.dumps(normalized.uris)
@@ -485,6 +497,8 @@ def vault_entry_metadata(entry: VaultEntry) -> dict[str, object]:
         "description": entry.description,
         "secret_type": entry.secret_type,
         "secret_type_label": "VCF password" if entry.secret_type == "vcf_password" else "ESX password",
+        "service_type": entry.service_type or "unknown",
+        "service_type_label": VAULT_SERVICE_TYPE_LABELS.get(entry.service_type or "unknown", "Unknown"),
         "username": entry.username,
         "resource_name": entry.resource_name,
         "source_type": entry.source_type,

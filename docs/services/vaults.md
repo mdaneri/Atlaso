@@ -9,8 +9,11 @@ status: current
 # Vaults
 
 Open **VCF Workflows > Vaults** to manage encrypted VCF and ESX passwords. Each named vault appears as a tab containing
-a table with **Key**, **Description**, **Username**, **URI(s)**, and **Password** columns. Multiple URIs are displayed
-on separate lines. Passwords are masked by default. Administrators can use the compact eye control to reveal one value
+a table with **Key**, **Service**, **Description**, **Username**, **URI(s)**, and **Password** columns. Service labels
+identify the account's product component from source metadata. Known historical imports receive labels from their saved
+metadata without decrypting or reimporting passwords; ambiguous or unrecognized entries show **Unknown**. Use the entry
+wizard's **Edit** action to correct a label. Multiple URIs are displayed on separate lines. Passwords are masked by
+default. Administrators can use the compact eye control to reveal one value
 for 15 seconds; Atlaso audits the reveal without recording the value and returns it with browser caching disabled.
 
 Vault keys use lowercase dotted segments, for example `vcf.sddc_manager.admin` or `esx.esx01.root`. Values are encrypted

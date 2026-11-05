@@ -32,6 +32,79 @@ def csrf_from_page(text: str) -> str:
     return text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
 
 
+def test_vault_service_choice_survives_copy_and_password_preserving_edits(client):
+    """Store validated service metadata and preserve it when older clients omit the field.
+
+    Args:
+        client: HTTP test client exercising vault add, copy, and edit transports.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VaultEntry
+    from atlaso.app.services.vaults import vault_entry_metadata
+
+    csrf, vault_id = _create_empty_vcf_import_vault(client)
+    base = {"csrf": csrf, "key": "vcf.operations.admin", "description": "Operations admin",
+            "username": "admin", "uris_json": '["https://ops.example.test"]'}
+    created = client.post(f"/vaults/{vault_id}/entries", data={**base, "service_type": "operations", "value": "FixtureServiceSecret!"})
+    assert created.status_code == 200
+    with SessionLocal() as db:
+        original = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalar_one()
+        original_id, original_ciphertext = original.id, original.encrypted_value
+        assert vault_entry_metadata(original)["service_type_label"] == "Operations"
+    copied = client.post(f"/vaults/{vault_id}/entries", data={**base, "key": "vcf.operations.copy", "copy_entry_id": str(original_id)})
+    assert copied.status_code == 200
+    with SessionLocal() as db:
+        copied_entry = db.execute(select(VaultEntry).where(VaultEntry.key == "vcf.operations.copy")).scalar_one()
+        assert copied_entry.service_type == "operations"
+    # A client using the old form contract must not clear the new metadata.
+    edited = client.post(f"/vaults/{vault_id}/entries/{original_id}/edit", data={**base, "value": ""})
+    assert edited.status_code == 200
+    with SessionLocal() as db:
+        entry = db.get(VaultEntry, original_id)
+        assert entry.service_type == "operations"
+        assert entry.encrypted_value == original_ciphertext
+    corrected = client.post(f"/vaults/{vault_id}/entries/{original_id}/edit", data={**base, "value": "", "service_type": "automation"})
+    assert corrected.status_code == 200
+    with SessionLocal() as db:
+        entry = db.get(VaultEntry, original_id)
+        assert entry.service_type == "automation"
+        assert entry.encrypted_value == original_ciphertext
+    rejected = client.post(f"/vaults/{vault_id}/entries/{original_id}/edit", data={**base, "value": "", "service_type": "<svg>invalid-service</svg>"})
+    assert rejected.status_code == 422
+    assert "Choose a supported vault service." in rejected.text
+    with SessionLocal() as db:
+        entry = db.get(VaultEntry, original_id)
+        assert entry.service_type == "automation"
+        assert entry.encrypted_value == original_ciphertext
+
+
+def test_vcf_import_service_is_reviewed_and_stored_as_safe_metadata(client, monkeypatch):
+    """Carry an explicit product from source selection through encrypted storage.
+
+    Args:
+        client: HTTP test client exercising the import transport.
+        monkeypatch: Fixture replacing the source API with reviewed candidates.
+    """
+    from dataclasses import replace
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VaultEntry
+
+    csrf, vault_id = _create_empty_vcf_import_vault(client)
+    candidate = replace(_canonical_test_vcf_candidate(
+        candidate_id="operations-service", natural_key="vcf.operations.admin", value="FixtureServiceSecret!",
+    ), service_type="operations")
+    assert candidate.sanitized()["service_type_label"] == "Operations"
+    response = _post_fake_vcf_import(
+        client, monkeypatch, csrf=csrf, vault_id=vault_id, candidates=[candidate], address="sddc.example.test",
+    )
+    assert response.status_code == 200
+    assert "FixtureServiceSecret!" not in response.text
+    with SessionLocal() as db:
+        stored = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalar_one()
+        assert stored.service_type == "operations"
+
+
 def _seed_legacy_vcf_import_entry(
     client,
     *,
@@ -1776,6 +1849,7 @@ def test_vcf_import_replaces_operator_uris_when_source_or_account_changes(
         ("secret_type", "esx_password"),
         ("key", "vcf.changed.key"),
         ("description", "Changed after review"),
+        ("service_type", "operations"),
     ],
 )
 def test_vcf_import_rejects_candidate_metadata_drift_since_inspection(
