@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -40,12 +41,26 @@ def test_wrapper_refuses_mixed_recovery_modes_before_source_or_credentials(switc
         reason: Fixed expected pre-credential refusal.
     """
     root = Path(__file__).resolve().parents[1]
+    parameters = {
+        "RepositoryRoot": str(root), "ReviewedSourceCommit": "a" * 40, "Plan": "unused",
+        "AddressEvidence": "unused", "RuntimeEvidence": "unused", "EnvironmentId": "unused",
+        "PythonPath": "unused", **{switch.removeprefix("-"): True for switch in switches},
+    }
+    # Catch the real gate, but assert its message independently of PowerShell's
+    # terminal-width wrapping and ANSI error renderer on Linux CI.
+    command = (
+        "$ErrorActionPreference='Stop'; try { "
+        "$parameters=ConvertFrom-Json -AsHashtable $env:ATLASO_TEST_CERTIFICATE_PARAMETERS; "
+        "& $env:ATLASO_TEST_CERTIFICATE_WRAPPER @parameters; exit 0 "
+        "} catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }"
+    )
     result = subprocess.run([
-        "pwsh", "-NoProfile", "-File", str(root / "scripts/windows/vmware/inspect-certificate-peer.ps1"),
-        "-RepositoryRoot", str(root), "-ReviewedSourceCommit", "a" * 40, "-Plan", "unused",
-        "-AddressEvidence", "unused", "-RuntimeEvidence", "unused", "-EnvironmentId", "unused",
-        "-PythonPath", "unused", *switches,
-    ], capture_output=True, text=True, timeout=15)
+        "pwsh", "-NoProfile", "-Command", command,
+    ], capture_output=True, text=True, timeout=15, env={
+        **os.environ,
+        "ATLASO_TEST_CERTIFICATE_WRAPPER": str(root / "scripts/windows/vmware/inspect-certificate-peer.ps1"),
+        "ATLASO_TEST_CERTIFICATE_PARAMETERS": json.dumps(parameters),
+    })
     assert result.returncode != 0 and reason in result.stderr
 
 
