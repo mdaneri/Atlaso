@@ -74,6 +74,10 @@ When the applied listener is unchanged, the observer verifies its installed cert
 served fingerprint against the published identity. A certificate prepared by an Appliance Apply review for pending
 static addresses stays pending and is neither deployed nor overwritten by that refresh. Disabled or revoked
 management certificates still block refresh; certificate repair and address changes retain their normal CA checks.
+Public receipt readers still reject expired observations. The observer can use its root-owned,
+applied-identity-bound checkpoint only to repeat native ownership, installed certificate/key, site and live TLS
+verification before publishing a fresh observation. A delay in observer execution cannot by itself overwrite a
+pending certificate, and the stale checkpoint never grants public listener admission.
 An interrupted management certificate/key replacement restores the previous pair before retrying listener activation.
 Cold publication helpers load and the initial application-upstream readiness wait runs outside the database writer
 and Network Apply locks, so application startup can commit state and acquire its own native admission. The observer

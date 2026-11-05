@@ -46,7 +46,7 @@ from atlaso.app.services.dynamic_management import (
     PUBLICATION_PATH,
     applied_snapshots,
     native_management_addresses,
-    read_publication,
+    read_observer_checkpoint,
     snapshot_digest,
 )
 from atlaso.app.services.management_bindings import (
@@ -269,7 +269,7 @@ def _reconcile_once(
             public_tls = helper["_management_handoff_candidate_public_tls_addresses"](
                 public_site, int(settings.get("management_public_https_port") or 443)) if public_site.is_file() else set()
             https_addresses = [address for address in addresses if address not in public_tls]
-            previous = read_publication(db, include_withdrawn=True)
+            previous = read_observer_checkpoint(db, include_withdrawn=True)
             site_path = helper["NGINX_MANAGEMENT_SITE_PATH"]
             current_leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
             if (previous.get("phase") == "ready" and previous.get("addresses") == native["addresses"]

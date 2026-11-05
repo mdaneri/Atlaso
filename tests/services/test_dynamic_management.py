@@ -466,9 +466,12 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
     """
     import hashlib
     import json
+    import stat
     import subprocess
     from contextlib import contextmanager
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
+    from pathlib import Path
+    from types import SimpleNamespace
 
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
@@ -484,6 +487,7 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
         Setting,
     )
     from atlaso.app.secrets import decrypt_secret
+    from atlaso.app.services import dynamic_management as admission
     from atlaso.app.services.ca import (
         CA_SERVER_PROFILE_NAME,
         ManagedCertificateSpec,
@@ -646,10 +650,36 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
                  "write_secret_text_atomic": lambda path, text: path.write_text(text),
                  "write_text_atomic": lambda path, text, **_kwargs: path.write_text(text),
                  "record_ca_publication_baseline": lambda *args, **kwargs: receipts.append(kwargs)}
-    monkeypatch.setattr(publisher, "write_publication", lambda value: receipts.append(deepcopy(value)))
-    monkeypatch.setattr(publisher, "read_publication", lambda _db, **kwargs: (
-        receipts[-1] if receipts and receipts[-1].get("phase") in (
-            {"ready", "withdrawn"} if kwargs.get("include_withdrawn") else {"ready"}) else {}))
+    publication_path = tmp_path / "publication.json"
+    original_lstat, original_fstat = Path.lstat, admission.os.fstat
+    monkeypatch.setattr(admission, "PUBLICATION_PATH", publication_path)
+    monkeypatch.setattr(Path, "lstat", lambda path: SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0)
+                        if path == tmp_path else original_lstat(path))
+
+    def published_metadata(descriptor):
+        """Model only the owned publication's Linux root metadata on Windows.
+
+        Args:
+            descriptor: Actual open file descriptor, retaining native identity checks.
+        """
+        metadata = original_fstat(descriptor)
+        if publication_path.exists():
+            current = publication_path.stat()
+            if (metadata.st_dev, metadata.st_ino) == (current.st_dev, current.st_ino):
+                return SimpleNamespace(st_mode=stat.S_IFREG | 0o644, st_uid=0, st_size=current.st_size, st_nlink=1)
+        return metadata
+
+    def retain_publication(value):
+        """Exercise the real receipt reader against an isolated public JSON file.
+
+        Args:
+            value: Public applied checkpoint to retain for observation and readback.
+        """
+        receipts.append(deepcopy(value))
+        publication_path.write_text(json.dumps(value))
+
+    monkeypatch.setattr(admission.os, "fstat", published_metadata)
+    monkeypatch.setattr(publisher, "write_publication", retain_publication)
     monkeypatch.setattr(publisher.ssl, "get_server_certificate", lambda *_args, **_kwargs: x509.load_pem_x509_certificate(
         cert_path.read_bytes()).public_bytes(serialization.Encoding.PEM).decode())
     publisher.reconcile(helper, bootstrap)
@@ -702,6 +732,25 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
     assert len(upstream_checks) == checks_before_fast_path
     assert [hashlib.sha256(path.read_bytes()).hexdigest() for path in (cert_path, key_path)] == installed_before
     assert receipts[-1]["leaf_fingerprint"] == first.fingerprint(hashes.SHA256()).hex()
+
+    # Unrelated Apply can exclude the observer longer than the public receipt's
+    # TTL. Expiry must withdraw public admission without authorizing replacement
+    # of an independently unchanged installed pair or the pending desired leaf.
+    expired = json.loads(publication_path.read_text())
+    expired["observed_at"] = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    publication_path.write_text(json.dumps(expired))
+    with SessionLocal() as db:
+        assert admission.read_publication(db) == {}
+    publisher.reconcile(helper, bootstrap)
+    with SessionLocal() as db:
+        leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        assert leaf.fingerprint == pending_fingerprint
+        assert leaf.ip_addresses == pending_addresses
+        assert hashlib.sha256(leaf.private_key_encrypted.encode()).hexdigest() == pending_key_digest
+        assert admission.read_publication(db)["leaf_fingerprint"] == first.fingerprint(hashes.SHA256()).hex()
+    assert len(publications) == publications_before
+    assert len(upstream_checks) == checks_before_fast_path
+    assert [hashlib.sha256(path.read_bytes()).hexdigest() for path in (cert_path, key_path)] == installed_before
     with SessionLocal() as db:
         leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
         leaf.status = "revoked"
@@ -877,7 +926,7 @@ def test_http_publication_readmits_after_unlocked_upstream_wait(client, tmp_path
               "_management_handoff_upstream_readiness": wait_upstream, "_configure_atlaso_management_https": activate,
               "_management_nginx_config": lambda *_args, **_kwargs: "withdrawn listener",
               "_install_nginx_site": lambda path, value: (path.write_text(value), 0)[1]}
-    monkeypatch.setattr(publisher, "read_publication", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(publisher, "read_observer_checkpoint", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(publisher, "write_publication", lambda value: publications.append(value))
     if change in {"unavailable", "upstream", "https"}:
         with pytest.raises(ValueError, match="unavailable|changed during publication preparation"):
@@ -947,6 +996,7 @@ def test_publication_receipt_is_fresh_and_bound_to_applied_inputs(client, tmp_pa
         monkeypatch.setattr(admission.os, "fstat", lambda _fd: SimpleNamespace(
             st_mode=stat.S_IFREG | 0o644, st_uid=0, st_size=path.stat().st_size, st_nlink=1))
         assert bool(admission.read_publication(db)) == (change == "none")
+        assert bool(admission.read_observer_checkpoint(db)) == (change in {"none", "expired"})
         context = ui.appliance_settings_context(db, reconcile_dns=False)
         settings_payload = json.loads(context["appliance_settings_config_preview"])
         assert settings_payload["management_ip"] == ("169.254.20.10" if change == "none" else "")
@@ -1013,6 +1063,7 @@ def test_withdrawal_checkpoint_is_private_fresh_and_bound(client, tmp_path, monk
         assert admission.read_publication(db) == {}
         assert admission.publication_bindings(db) == []
         assert bool(admission.read_publication(db, include_withdrawn=True)) == (change == "none")
+        assert bool(admission.read_observer_checkpoint(db, include_withdrawn=True)) == (change in {"none", "expired"})
 
 
 def test_console_uses_only_ready_setup_receipt_for_apipa_url(client, monkeypatch):

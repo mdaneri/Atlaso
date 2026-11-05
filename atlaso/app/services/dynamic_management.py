@@ -101,7 +101,32 @@ def read_publication(
     Args:
         db: Read-only database transaction authorizing the applied identity.
         max_age_seconds: Bounded handoff callers may retain proof while native ownership is rechecked.
-        include_withdrawn: Internal observer may read an addressless withdrawal checkpoint; public callers exclude it.
+        include_withdrawn: Permit a fresh addressless checkpoint; public projections exclude it.
+    """
+    return _read_publication(db, max_age_seconds=max_age_seconds, include_withdrawn=include_withdrawn)
+
+
+def read_observer_checkpoint(db: Session, *, include_withdrawn: bool = False) -> dict[str, Any]:
+    """Read an applied checkpoint for independent observer revalidation, never admission.
+
+    Public readers still require a fresh receipt. Only the observer may use an
+    older checkpoint, and must freshly verify native ownership, installed TLS,
+    site and live service identity before publishing a new observation.
+
+    Args:
+        db: Admitted observer transaction verifying current applied snapshots and MAC.
+        include_withdrawn: Permit an addressless checkpoint for withdrawal revalidation.
+    """
+    return _read_publication(db, max_age_seconds=None, include_withdrawn=include_withdrawn)
+
+
+def _read_publication(db: Session, *, max_age_seconds: int | None, include_withdrawn: bool) -> dict[str, Any]:
+    """Share root-file, schema and applied-identity checks across both reader contracts.
+
+    Args:
+        db: Caller transaction used to verify applied snapshots and interface identity.
+        max_age_seconds: Public admission TTL, or no TTL for internal revalidation only.
+        include_withdrawn: Permit a structurally valid addressless checkpoint.
     """
     try:
         parent_metadata = PUBLICATION_PATH.parent.lstat()
@@ -118,7 +143,7 @@ def read_publication(
         now = datetime.now(timezone.utc)
         age = (now - datetime.fromisoformat(value["observed_at"])).total_seconds()
         phase = value.get("phase")
-        if (not 0 <= age <= min(max_age_seconds, 120)
+        if (age < 0 or max_age_seconds is not None and age > min(max_age_seconds, 120)
                 or phase not in ({"ready", "withdrawn"} if include_withdrawn else {"ready"})):
             return {}
         baselines = applied_snapshots(db)
