@@ -283,6 +283,139 @@ def test_retirement_refuses_transport_failure_instead_of_treating_it_as_closed()
     assert str(error.value) == "retirement_tcp_probe_failed"
 
 
+@pytest.mark.parametrize("final", [False, True, "pending"])
+def test_retirement_reobserves_pending_connection_without_accepting_timeout(final) -> None:
+    """Only a later explicit negative probe can complete the native absence proof.
+
+    Args:
+        final: Eventual TCP result or a persistently inconclusive channel.
+    """
+    from certificate_peer_transport import PeerTcpProbePending
+
+    class SettlingPeer(Peer):
+        def tcp_reachable(self, address, port):
+            self.probes.append((address, port))
+            if address == ACTIVE:
+                return True
+            count = self.probes.count((RETIRED, 443))
+            if count == 1 or final == "pending":
+                raise PeerTcpProbePending("peer_tcp_probe_unproven")
+            return final
+
+    peer = SettlingPeer()
+    appliance = _appliance()
+    if final is False:
+        result = retirement.verify_retired_address(_plan(), peer, appliance, RETIRED, ACTIVE)
+        assert result["peer_retired_tcp_reachable"] is False
+        assert [x["outcome"] for x in result["tcp_observations"]] == ["channel_open_pending", "explicit_tcp_nonacceptance"]
+    else:
+        reason = "retired_address_still_reachable" if final is True else "retirement_tcp_probe_failed"
+        with pytest.raises(retirement.Refusal, match=reason) as result:
+            retirement.verify_retired_address(_plan(), peer, appliance, RETIRED, ACTIVE)
+        assert result.value.observations[0]["outcome"] == "channel_open_pending"
+    assert appliance.commands.count("ip -j -4 addr show") >= 2
+    assert peer.probes.count((RETIRED, 443)) <= 3
+
+
+def test_retirement_pending_probe_rechecks_native_ownership() -> None:
+    """An address that reappears during observation must fail before another probe."""
+    from certificate_peer_transport import PeerTcpProbePending
+
+    appliance = _appliance()
+
+    class ChangingPeer(Peer):
+        def tcp_reachable(self, address, port):
+            self.probes.append((address, port))
+            if address == ACTIVE:
+                return True
+            appliance.outputs["ip -j -4 addr show"] = _json([{"addr_info": [{"local": RETIRED}]}])
+            raise PeerTcpProbePending("peer_tcp_probe_unproven")
+
+    peer = ChangingPeer()
+    with pytest.raises(retirement.Refusal, match="retired_address_still_owned"):
+        retirement.verify_retired_address(_plan(), peer, appliance, RETIRED, ACTIVE)
+    assert peer.probes.count((RETIRED, 443)) == 1
+
+
+def test_retirement_does_not_start_probe_outside_observation_budget(monkeypatch) -> None:
+    """Native readback consuming the budget cannot admit a late TCP attempt.
+
+    Args:
+        monkeypatch: Pytest clock replacement.
+    """
+    ticks = iter([0, 0, 23])
+    monkeypatch.setattr(retirement.time, "monotonic", lambda: next(ticks))
+    peer = Peer()
+    with pytest.raises(retirement.Refusal, match="retirement_tcp_probe_failed"):
+        retirement.verify_retired_address(_plan(), peer, _appliance(), RETIRED, ACTIVE)
+    assert peer.probes == []
+
+
+def test_retirement_pending_probe_requires_positive_active_path() -> None:
+    """A pending retired connection cannot retry after the active path disappears."""
+    from certificate_peer_transport import PeerTcpProbePending
+
+    class LostActivePeer(Peer):
+        def tcp_reachable(self, address, port):
+            self.probes.append((address, port))
+            if address == RETIRED:
+                raise PeerTcpProbePending("peer_tcp_probe_unproven")
+            return False
+
+    peer = LostActivePeer()
+    with pytest.raises(retirement.Refusal, match="active_address_unreachable"):
+        retirement.verify_retired_address(_plan(), peer, _appliance(), RETIRED, ACTIVE)
+    assert peer.probes == [(RETIRED, 443), (ACTIVE, 443)]
+
+
+@pytest.mark.parametrize("category", ["administrative_denial", "ssh_failure", "transport_failure", "remote secret detail"])
+def test_retirement_does_not_retry_other_failures_or_publish_remote_details(category: str) -> None:
+    """Unknown or denied channels stop immediately and retain fixed public categories.
+
+    Args:
+        category: Recognized fixed category or an untrusted diagnostic value.
+    """
+    from certificate_peer_transport import PeerTransportRefusal
+
+    class RefusedPeer(Peer):
+        def tcp_reachable(self, address, port):
+            self.probes.append((address, port))
+            raise PeerTransportRefusal("peer_tcp_probe_unproven", probe_failure=category)
+
+    peer = RefusedPeer()
+    with pytest.raises(retirement.Refusal, match="retirement_tcp_probe_failed") as result:
+        retirement.verify_retired_address(_plan(), peer, _appliance(), RETIRED, ACTIVE)
+    assert peer.probes == [(RETIRED, 443)]
+    expected = "unclassified" if category == "remote secret detail" else category
+    assert result.value.observations[0]["failure_category"] == expected
+    assert "remote secret detail" not in json.dumps(result.value.observations)
+
+
+def test_retirement_pending_observation_does_not_reset_deadline(monkeypatch) -> None:
+    """A successful active-path check cannot renew the total observation budget.
+
+    Args:
+        monkeypatch: Pytest clock replacement.
+    """
+    from certificate_peer_transport import PeerTcpProbePending
+
+    ticks = iter([0, 0, 0, 0, 23])
+    monkeypatch.setattr(retirement.time, "monotonic", lambda: next(ticks))
+
+    class WaitingPeer(Peer):
+        def tcp_reachable(self, address, port):
+            self.probes.append((address, port))
+            if address == RETIRED:
+                raise PeerTcpProbePending("peer_tcp_probe_unproven")
+            return True
+
+    peer = WaitingPeer()
+    with pytest.raises(retirement.Refusal, match="retirement_tcp_probe_failed") as result:
+        retirement.verify_retired_address(_plan(), peer, _appliance(), RETIRED, ACTIVE)
+    assert peer.probes == [(RETIRED, 443), (ACTIVE, 443)]
+    assert result.value.observations[0]["outcome"] == "channel_open_pending"
+
+
 def test_retirement_requires_active_address_reachable_from_same_peer() -> None:
     with pytest.raises(retirement.Refusal, match="active_address_unreachable"):
         retirement.verify_retired_address(_plan(), Peer(active=False), _appliance(), RETIRED, ACTIVE)

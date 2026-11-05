@@ -271,3 +271,43 @@ def test_tcp_probe_reports_open_and_requires_active_authenticated_ssh() -> None:
     transport.authenticated = False
     with pytest.raises(PeerTransportRefusal, match="peer_transport_inactive"):
         peer.tcp_reachable("192.168.77.40")
+
+
+@pytest.mark.parametrize(
+    ("message", "live", "authenticated"),
+    [("Timeout opening channel.", True, True), ("other transport failure", True, True),
+     ("Timeout opening channel.", False, True), ("Timeout opening channel.", True, False)],
+)
+def test_tcp_probe_identifies_only_live_channel_open_deadline(message: str, live: bool, authenticated: bool) -> None:
+    """A pending connection remains unknown instead of becoming a closed port.
+
+    Args:
+        message: Fixed Paramiko timeout or another SSH failure.
+        live: Peer transport state after the channel failure.
+        authenticated: Peer authentication state after the channel failure.
+    """
+    from certificate_peer_transport import PeerTcpProbePending
+
+    class WaitingTransport:
+        failed = False
+
+        def is_active(self):
+            return live if self.failed else True
+
+        def is_authenticated(self):
+            return authenticated if self.failed else True
+
+        def open_channel(self, *_args, **_kwargs):
+            self.failed = True
+            raise paramiko.SSHException(message)
+
+    peer = PinnedPeerTransport(
+        "192.168.167.20", "alpine", "ssh-ed25519 " + "A" * 44,
+        "SHA256:" + "A" * 43, "192.168.77.0/24",
+    )
+    peer.transport = WaitingTransport()  # type: ignore[assignment]  # Exercise exact SSH failure classification.
+    pending = message == "Timeout opening channel." and live and authenticated
+    expected = PeerTcpProbePending if pending else PeerTransportRefusal
+    with pytest.raises(expected, match="peer_tcp_probe_unproven") as result:
+        peer.tcp_reachable("192.168.77.40")
+    assert isinstance(result.value, PeerTcpProbePending) == pending

@@ -25,6 +25,20 @@ import paramiko
 class PeerTransportRefusal(Exception):
     """Fixed non-secret transport refusal."""
 
+    def __init__(self, reason: str, *, probe_failure: str = "unclassified"):
+        """Retain a fixed public probe category without remote error text.
+
+        Args:
+            reason: Fixed refusal identifier.
+            probe_failure: Caller-selected public TCP failure category.
+        """
+        super().__init__(reason)
+        self.probe_failure = probe_failure
+
+
+class PeerTcpProbePending(PeerTransportRefusal):
+    """A live SSH peer has not yet returned the TCP connection outcome."""
+
 
 def _forward(source: socket.socket | paramiko.Channel, destination: socket.socket | paramiko.Channel) -> None:
     """Handle forward for certificate handoff verification.
@@ -208,9 +222,16 @@ class PinnedPeerTransport(AbstractContextManager["PinnedPeerTransport"]):
             # as non-acceptance. Administrative denial and lost SSH do not.
             if exc.code == paramiko.OPEN_FAILED_CONNECT_FAILED and self.transport.is_active() and self.transport.is_authenticated():
                 return False
-            raise PeerTransportRefusal("peer_tcp_probe_unproven") from None
-        except (OSError, EOFError, paramiko.SSHException):
-            raise PeerTransportRefusal("peer_tcp_probe_unproven") from None
+            category = ("administrative_denial" if exc.code == paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+                        else "channel_failure")
+            raise PeerTransportRefusal("peer_tcp_probe_unproven", probe_failure=category) from None
+        except paramiko.SSHException as exc:
+            if (type(exc) is paramiko.SSHException and str(exc) == "Timeout opening channel."
+                    and self.transport.is_active() and self.transport.is_authenticated()):
+                raise PeerTcpProbePending("peer_tcp_probe_unproven", probe_failure="channel_open_pending") from None
+            raise PeerTransportRefusal("peer_tcp_probe_unproven", probe_failure="ssh_failure") from None
+        except (OSError, EOFError):
+            raise PeerTransportRefusal("peer_tcp_probe_unproven", probe_failure="transport_failure") from None
 
     def command(self, command: str, stdin: bytes = b"") -> bytes:
         """Read bounded peer output without persisting credentials or response text.

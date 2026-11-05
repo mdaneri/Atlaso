@@ -890,6 +890,8 @@ def main():
             evidence.update(stage="negative_case_and_desired_restore_complete", success=True)
     except (Refusal, PeerProofRefusal, HostRefusal, RetirementRefusal, PeerTransportRefusal, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
         evidence["failure"] = str(exc) if isinstance(exc, (Refusal, PeerProofRefusal, HostRefusal, RetirementRefusal, PeerTransportRefusal)) else type(exc).__name__
+        if isinstance(exc, RetirementRefusal) and exc.observations:
+            evidence["retirement_tcp_observations"] = exc.observations
         if mutation_started and isinstance(exc, HostRefusal):
             evidence["recovery"] = "topology_changed_preserve_lab_and_original_rollback_inputs"
         elif mutation_started:

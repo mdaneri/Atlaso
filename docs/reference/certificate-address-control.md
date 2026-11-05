@@ -462,6 +462,16 @@ A TLS mismatch, HTTP denial, or failed ping alone is not evidence that the liste
 must agree with native address/listener absence; if peer routing, transport, or the host inventory check is uncertain,
 preserve the lab and report acceptance incomplete rather than treating a timeout as proof.
 
+When a live authenticated SSH peer has not returned its TCP channel-open outcome within the existing eight-second
+probe deadline, the retirement observer may make at most three read-only observations. A 30-second monotonic budget
+prevents starting another observation or TCP probe without the full eight-second probe allowance remaining;
+existing native-command timeouts and the bounded child still apply to readbacks.
+Before each new probe it repeats native address, listener, route and rule absence checks; a pending probe also requires
+positive TCP acceptance at the active address before another observation. Only a later explicit connect-failed reply
+can prove nonacceptance. Administrative denial, lost authentication, other transport errors, persistent pending outcomes,
+reappearing native ownership or an accepted retired connection still fail. Evidence retains every pending observation;
+this window does not replay Apply or change the 60-second NTP guard.
+
 ## Hand off lab resources for cleanup
 
 After successful acceptance or a recorded terminal failure disposition, preserve the acceptance or failure record,

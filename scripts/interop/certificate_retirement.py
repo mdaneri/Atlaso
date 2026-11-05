@@ -5,11 +5,24 @@ from __future__ import annotations
 import ipaddress
 import json
 import re
+import time
 from typing import Any
+
+from certificate_peer_transport import PeerTcpProbePending, PeerTransportRefusal
 
 
 class Refusal(Exception):
     """Fixed, non-secret reason that prevents a retirement claim."""
+
+    def __init__(self, reason: str, *, observations: list[dict[str, Any]] | None = None):
+        """Retain only fixed public probe outcomes alongside the refusal.
+
+        Args:
+            reason: Fixed refusal identifier.
+            observations: Bounded native observer outcomes, without response text.
+        """
+        super().__init__(reason)
+        self.observations = observations or []
 
 
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
@@ -239,10 +252,36 @@ def _rule_facts(value: Any, retired: str) -> int:
     return count
 
 
+def _retired_native_absence(appliance: Any, retired: str) -> dict[str, Any]:
+    """Require fresh native absence before each TCP observation.
+
+    Args:
+        appliance: Pinned appliance session exposing bounded read-only commands.
+        retired: Exact retired IPv4 address.
+    """
+    addresses = _json_output(appliance, "ip -j -4 addr show", "retirement_address_readback_failed")
+    retired_present = _address_facts(addresses, retired)
+    listeners = _read_listeners(appliance, retired)
+    routes = _json_output(
+        appliance, "ip -j -4 route show table all", "retirement_route_readback_failed",
+    )
+    retired_routes = _route_facts(routes, retired)
+    rules = _json_output(appliance, "ip -j -4 rule show", "retirement_rule_readback_failed")
+    retired_rules = _rule_facts(rules, retired)
+    if retired_present or listeners or retired_routes or retired_rules:
+        raise Refusal("retired_address_still_owned")
+    return {
+        "retired_address_present": False,
+        "retired_listener_count": listeners,
+        "retired_route_reference_count": retired_routes,
+        "retired_rule_reference_count": retired_rules,
+    }
+
+
 def verify_retired_address(
     plan: dict[str, Any], peer: Any, appliance: Any, retired_address: str, active_address: str,
 ) -> dict[str, Any]:
-    """Read back address retirement and probe both endpoints from the peer.
+    """Require native absence and an explicit live-peer TCP nonacceptance.
 
     Args:
         plan: Positive task, repository, PR, and source identity.
@@ -256,44 +295,69 @@ def verify_retired_address(
     active = _ipv4(active_address, "retirement_address_invalid")
     if retired == active:
         raise Refusal("retirement_addresses_must_differ")
-
-    addresses = _json_output(appliance, "ip -j -4 addr show", "retirement_address_readback_failed")
-    retired_present = _address_facts(addresses, retired)
-    listeners = _read_listeners(appliance, retired)
-    routes = _json_output(
-        appliance, "ip -j -4 route show table all", "retirement_route_readback_failed",
-    )
-    retired_routes = _route_facts(routes, retired)
-    rules = _json_output(appliance, "ip -j -4 rule show", "retirement_rule_readback_failed")
-    retired_rules = _rule_facts(rules, retired)
-    if retired_present or listeners or retired_routes or retired_rules:
-        raise Refusal("retired_address_still_owned")
-
-    try:
-        retired_reachable = peer.tcp_reachable(retired, 443)
-        active_reachable = peer.tcp_reachable(active, 443)
-    except Exception:  # noqa: BLE001 - Peer transport has a stable wrapper but flexible test doubles.
-        raise Refusal("retirement_tcp_probe_failed") from None
-    if not isinstance(retired_reachable, bool) or not isinstance(active_reachable, bool):
-        raise Refusal("retirement_tcp_probe_invalid")
-    if retired_reachable:
-        raise Refusal("retired_address_still_reachable")
-    if not active_reachable:
-        raise Refusal("active_address_unreachable")
-
-    return {
-        "schema": 1,
-        "kind": "certificate-address-retirement",
-        **identity,
-        "retired_ipv4": retired,
-        "active_ipv4": active,
-        "retired_address_present": False,
-        "retired_listener_count": listeners,
-        "retired_route_reference_count": retired_routes,
-        "retired_rule_reference_count": retired_rules,
-        "peer_retired_tcp_reachable": retired_reachable,
-        "peer_active_tcp_reachable": active_reachable,
-    }
+    deadline = time.monotonic() + 30
+    observations: list[dict[str, Any]] = []
+    for attempt in range(1, 4):
+        if deadline - time.monotonic() < 8:
+            raise Refusal("retirement_tcp_probe_failed", observations=observations)
+        try:
+            native = _retired_native_absence(appliance, retired)
+        except Refusal as exc:
+            exc.observations = observations.copy()
+            raise
+        if deadline - time.monotonic() < 8:
+            raise Refusal("retirement_tcp_probe_failed", observations=observations)
+        pending = False
+        try:
+            retired_reachable = peer.tcp_reachable(retired, 443)
+        except PeerTcpProbePending:
+            # A channel-open deadline has no TCP outcome. Require positive
+            # active-path proof before another read-only native observation.
+            retired_reachable = None
+            pending = True
+        except Exception as exc:  # noqa: BLE001 - Transport-specific errors remain inconclusive.
+            category = getattr(exc, "probe_failure", "unclassified") if isinstance(exc, PeerTransportRefusal) else "unclassified"
+            if category not in {"administrative_denial", "channel_failure", "ssh_failure", "transport_failure"}:
+                category = "unclassified"
+            observations.append({"attempt": attempt, "retired_ipv4": retired,
+                                 "outcome": "tcp_probe_unproven", "failure_category": category})
+            raise Refusal("retirement_tcp_probe_failed", observations=observations) from None
+        observation: dict[str, Any] = {
+            "attempt": attempt, "retired_ipv4": retired,
+            "outcome": "channel_open_pending" if pending else (
+                "tcp_acceptance" if retired_reachable is True else (
+                    "explicit_tcp_nonacceptance" if retired_reachable is False else "invalid_tcp_result"
+                )
+            ),
+        }
+        observations.append(observation)
+        if deadline - time.monotonic() < 8:
+            raise Refusal("retirement_tcp_probe_failed", observations=observations)
+        try:
+            active_reachable = peer.tcp_reachable(active, 443)
+        except Exception:  # noqa: BLE001 - Unknown active-path outcomes cannot authorize another observation.
+            raise Refusal("retirement_tcp_probe_failed", observations=observations) from None
+        observation["active_tcp_reachable"] = active_reachable if isinstance(active_reachable, bool) else None
+        if not isinstance(active_reachable, bool) or not (pending or isinstance(retired_reachable, bool)):
+            raise Refusal("retirement_tcp_probe_invalid", observations=observations)
+        if retired_reachable is True:
+            raise Refusal("retired_address_still_reachable", observations=observations)
+        if not active_reachable:
+            raise Refusal("active_address_unreachable", observations=observations)
+        if pending:
+            continue
+        return {
+            "schema": 1,
+            "kind": "certificate-address-retirement",
+            **identity,
+            "retired_ipv4": retired,
+            "active_ipv4": active,
+            **native,
+            "peer_retired_tcp_reachable": False,
+            "peer_active_tcp_reachable": active_reachable,
+            "tcp_observations": observations,
+        }
+    raise Refusal("retirement_tcp_probe_failed", observations=observations)
 
 
 def verify_peer_isolation(peer: Any) -> dict[str, Any]:
