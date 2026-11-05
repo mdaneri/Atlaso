@@ -333,6 +333,12 @@ Any observed drift remains a failure even if the original topology is later rest
 
 ## Run and accept the static-address case
 
+Protected handoff validation checks the staged candidate certificate's format, configured paths, and key pair without
+requiring it to authenticate the old listener addresses. The transaction preserves and verifies the old TLS path with
+its snapshotted certificate, then validates the candidate leaf against every actual candidate address before publishing
+that listener. An ordinary Appliance Settings certificate change still requires coverage of its retained listeners.
+This separation also applies to DHCP: an unknown lease does not waive certificate validation after acquisition.
+
 Use the standard Atlaso [Network configuration](../operate/networking.md) pages and [Appliance
 Apply](../operate/appliance-apply.md) workflow for the admitted source. Match the reviewed native submission boundary:
 submit only units selected and validated by Apply review from the protected Network, CA, Firewall, Appliance Settings,

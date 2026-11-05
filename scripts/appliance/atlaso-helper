@@ -9546,6 +9546,7 @@ def _appliance_settings_config_errors(
     *,
     staged_ca_path: Path | None = None,
     pending_dhcp_management_interface: str = "",
+    validate_retained_certificate_scope: bool = True,
 ) -> list[str]:
     """Perform appliance settings config errors.
 
@@ -9553,6 +9554,8 @@ def _appliance_settings_config_errors(
         path: Filesystem path read, validated, or updated by the operation.
         staged_ca_path: Bundled CA payload that will install management TLS material.
         pending_dhcp_management_interface: Reviewed handoff DHCP listener awaiting its lease.
+        validate_retained_certificate_scope: Require the replacement leaf to cover existing listeners.
+            Protected handoffs retain the old TLS material and validate candidate addresses separately.
     """
     errors: list[str] = []
     try:
@@ -9714,7 +9717,7 @@ def _appliance_settings_config_errors(
         if cert_pem is not None:
             try:
                 scoped_listeners = _existing_management_scoped_addresses()
-                if scoped_listeners is not None:
+                if scoped_listeners is not None and validate_retained_certificate_scope:
                     _management_certificate_covers_scoped_addresses(cert_pem, scoped_listeners[0])
             except (OSError, ValueError) as exc:
                 errors.append(str(exc))
@@ -31961,6 +31964,9 @@ def _management_handoff_validation_errors(payload: dict) -> list[str]:
             Path(payload["appliance_settings_config_path"]),
             staged_ca_path=staged_ca_path,
             pending_dhcp_management_interface=pending_dhcp_interface,
+            # The transaction snapshots and verifies the old TLS path separately.
+            # Check the staged leaf against acquired candidate IPs before publication.
+            validate_retained_certificate_scope=False,
         )
     )
     errors.extend(
