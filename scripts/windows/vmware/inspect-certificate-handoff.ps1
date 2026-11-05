@@ -114,7 +114,8 @@ try {
     if (([string](& $trustedGit -C $repoRoot rev-parse --verify 'HEAD^{commit}')).Trim() -cne $sourceCommit) {
         throw 'Certificate helper source commit changed during import.'
     }
-$runtime = Protect-AtlasoCertificatePythonRuntime -PythonPath $PythonPath -EvidenceRoot $evidenceRoot
+$runtime = Protect-AtlasoCertificatePythonRuntime -PythonPath $PythonPath -EvidenceRoot $evidenceRoot `
+    -RequiredModules @('paramiko', 'pycdlib')
 try {
     $PythonPath = $runtime.Executable
     $importPaths = Invoke-AtlasoBoundedProcess -FilePath $PythonPath `

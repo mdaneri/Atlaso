@@ -174,6 +174,10 @@ SSH agent and approve the selected key for the task's Python runtime before star
 must match the public key admitted for this peer. The bounded child receives no peer private-key value in agent mode;
 the bridge clears inherited native credential values before supplying the selected credentials.
 
+Install the task's isolated Python runtime from `requirements-onepassword-deploy.lock`, which includes both the SSH
+transport (`paramiko`) and ISO reader (`pycdlib`). Both certificate inspectors refuse a runtime missing either package
+before retrieving credentials or creating their source snapshot. Development dependencies are not required.
+
 The ordinary credential policy remains the default. A task-only peer SSH key protected with current-user Windows
 DPAPI is an optional exception only when the maintainer has explicitly approved that key and its lab lifetime. Before
 creating it, preserve the original approval receipt and bind it to this task, repository, PR, exact peer ownership, and

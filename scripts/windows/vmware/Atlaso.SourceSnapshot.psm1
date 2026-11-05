@@ -642,7 +642,7 @@ function Protect-AtlasoCertificatePythonRuntime {
     Task-owned evidence root containing the isolated virtual environment.
 
     .PARAMETER RequiredModules
-    Top-level packages required by the credentialed validation consumer. Existing certificate callers require paramiko.
+    Top-level packages required by the credentialed validation consumer. Certificate callers require paramiko and pycdlib.
     #>
     [CmdletBinding()]
     param(
