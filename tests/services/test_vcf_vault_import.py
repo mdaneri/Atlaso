@@ -418,13 +418,108 @@ def test_installer_import_uses_local_endpoints_and_skips_masked_latest_spec(fake
 
     assert [candidate.uris for candidate in candidates] == [("ssh://esx01.lab.example",)]
     assert candidates[0].username == "root"
-    assert candidates.summary()["scope"].startswith("Passwords in the latest VCF Installer SDDC specification only")
+    assert "latest deployment specification only" in candidates.summary()["scope"]
+    assert "may be stale after rotation" in candidates.summary()["scope"]
     assert candidates.summary()["skipped"] == {
-        "Password missing, masked, or unsupported in the latest specification": 1,
+        "Password masked in the latest specification": 1,
         "Unsupported password container in the latest specification": 1,
     }
     assert len(requests) == 2
     assert all("fixture-container-value" not in repr(candidate.sanitized()) for candidate in candidates)
+
+
+@pytest.mark.parametrize("role, version, admitted", [
+    ("SddcManager", "9.1.1.0.25713928", True),
+    ("SddcManager", "9.1.0", True),
+    ("VcfInstaller", "9.0.2", True),
+    ("VcfInstaller", "9.1.1", True),
+    ("SddcManager", "9.0.2", False),
+    ("SddcManager", "9.10.1", False),
+    ("SddcManager", "", False),
+    ("Operations", "9.1.1", False),
+])
+def test_deployment_discovery_admits_verified_converted_manager(
+    fake_api_factory, monkeypatch, role, version, admitted
+):
+    """Read retained passwords only for the supported source role and version.
+
+    Args:
+        fake_api_factory: Fixture supplying a request-recording transport.
+        monkeypatch: Pytest fixture replacing the pinned API client.
+        role: Reported appliance role.
+        version: Reported appliance version.
+        admitted: Whether retained-specification reads are permitted.
+    """
+    spec = {
+        "vcfOperationsSpec": {
+            "adminUserPassword": "fixture-ops-deployment",
+            "nodes": [{"hostname": "ops.lab.example", "rootUserPassword": "********"}],
+        },
+        "vcfAutomationSpec": {"hostname": "auto.lab.example", "adminUserPassword": "fixture-auto-deployment"},
+        "unavailableSpec": {"password": None, "apiPassword": 123},
+    }
+
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Answer only the retained-specification read path.
+
+        Args:
+            request: Intercepted API request.
+        """
+        if request.url.path == "/v1/sddcs/latest":
+            return 200, {"id": "converted-deployment"}
+        assert request.url.path == "/v1/sddcs/converted-deployment/spec"
+        return 200, spec
+
+    api, requests = fake_api_factory(handler)
+    api.appliance_info = lambda: {"role": role, "version": version}
+    monkeypatch.setattr(service, "VcfDepotApiClient", lambda *_args, **_kwargs: nullcontext(api))
+    arguments = dict(source_type="vcf_installer", address="manager.lab.example", port=443,
+                     username="admin@local", password="fixture-source", expected_fingerprint="AA:BB")
+    if not admitted:
+        with pytest.raises(VcfDepotTargetError, match="selected source type"):
+            service.discover_vcf_passwords(**arguments)
+        assert requests == []
+        return
+    discovered = service.discover_vcf_passwords(**arguments)
+    assert {item.uris for item in discovered} == {("https://ops.lab.example",), ("https://auto.lab.example",)}
+    assert {item.value for item in discovered} == {"fixture-ops-deployment", "fixture-auto-deployment"}
+    assert all(item.username == "admin" for item in discovered)
+    assert all("Deployment-time" in item.description for item in discovered)
+    assert len(requests) == 2
+    assert discovered.summary()["skipped"] == {
+        "Password masked in the latest specification": 1,
+        "Password missing in the latest specification": 1,
+        "Unsupported password value in the latest specification": 1,
+    }
+    assert "fixture-ops-deployment" not in repr([item.sanitized() for item in discovered])
+
+
+@pytest.mark.parametrize("failed_path, status", [
+    ("/v1/sddcs/latest", 404),
+    ("/v1/sddcs/converted/spec", 403),
+    ("/v1/sddcs/converted/spec", 404),
+])
+def test_unavailable_deployment_spec_fails_without_live_inventory_fallback(fake_api_factory, failed_path, status):
+    """Report unavailable retained data without substituting live accounts or vendor errors.
+
+    Args:
+        fake_api_factory: Fixture supplying a request-recording transport.
+        failed_path: Retained-specification endpoint to reject.
+        status: Fake vendor failure status.
+    """
+    def handler(request: httpx.Request) -> tuple[int, Any]:
+        """Return a safe latest record or a vendor failure.
+
+        Args:
+            request: Intercepted API request.
+        """
+        assert request.url.path in {"/v1/sddcs/latest", "/v1/sddcs/converted/spec"}
+        return (status, {"message": "fixture-private-vendor-message"}) if request.url.path == failed_path else (200, {"id": "converted"})
+
+    api, _requests = fake_api_factory(handler)
+    with pytest.raises(VcfDepotTargetError) as caught:
+        service._vcf_installer_candidates(api)
+    assert "fixture-private-vendor-message" not in str(caught.value)
 
 
 def test_installer_does_not_guess_protocol_for_unidentified_password_purpose(fake_api_factory):
