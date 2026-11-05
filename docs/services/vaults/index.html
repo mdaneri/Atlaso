@@ -4463,11 +4463,16 @@ After confirmation, Atlaso creates a short-lived one-use launch token, rechecks 
 authentication server-side. The password is not sent to the browser, included in the launch URL, or written to the
 audit event. An SFTP URI opens an interactive SSH terminal on the same endpoint; file-transfer browsing is not provided.</p>
 <h2 id="vcf-helper-import">VCF Helper import<a class="headerlink" href="#vcf-helper-import" title="Permanent link">&para;</a></h2>
-<p><strong>VCF Helper &gt; Import passwords into a vault</strong> discovers supported password metadata from a VCF 9 SDDC Manager or VCF
-Installer. After the server page, Atlaso probes without resolving or sending credentials and opens a dedicated TLS
-page. Confirm the observed SHA-256 fingerprint out of band before authentication, select the passwords, and choose a
-destination vault. Discovery covers credentials the authenticated account can access; it is not a complete inventory of
-every appliance account. For SDDC Manager, Atlaso requests the credential collection with the documented
+<p><strong>VCF Helper &gt; Import passwords into a vault</strong> offers two source modes: live SDDC Manager inventory, or a retained
+deployment specification from VCF Installer 9.x or converted SDDC Manager 9.1.x. Deployment mode reads the latest
+specification from <code>GET /v1/sddcs/latest</code> and its details from <code>GET /v1/sddcs/{id}/spec</code>. It reflects deployment-time
+values and can be stale after password rotations. Missing or masked passwords are unavailable, and deployment
+discovery is not a complete live inventory; retained values may include Operations and Automation accounts. Atlaso
+reads the specification only and never rotates its source passwords. These limitations are shown on the source step,
+before authentication. After the server page, Atlaso probes without resolving or sending credentials and opens a
+dedicated TLS page. Confirm the observed SHA-256 fingerprint out of band before authentication, select the passwords,
+and choose a destination vault. Live discovery covers credentials the authenticated account can access; it is not a
+complete inventory of every appliance account. For SDDC Manager, Atlaso requests the credential collection with the documented
 <code>pageSize=0</code> all-records behavior and follows additional pages only when response metadata explicitly reports them.
 Duplicate or incomplete page results stop discovery. If a listed SDDC Manager password is absent or masked, Atlaso
 retrieves that supported credential by ID with <code>GET /v1/credentials/{id}</code>. For VCF Installer, discovery reads password
@@ -4478,7 +4483,7 @@ accounts on one appliance can be distinguished. The <strong>Passwords to import<
 each complete choice is clickable, and keyboard focus and checked state remain visible.</p>
 <p>Atlaso builds credential-free URIs only from authoritative resource metadata. SDDC Manager SSH credentials use a
 validated FQDN <code>resourceName</code> or <code>resourceIp</code>; API, SSO, AUDIT, and missing credential types use HTTPS only for known
-web resource types. Installer mappings use the latest available SDDC specification only, not a live appliance
+web resource types. Deployment-spec mappings use the latest available SDDC specification only, not a live appliance
 inventory: vCenter root uses SSH to <code>vcenterHostname</code>; vCenter SSO uses <code>adminUserSsoUsername</code> and HTTPS to
 <code>vcenterHostname</code>; each <code>nsxtManagers[].hostname</code> gets an NSX root SSH URI (never the cluster VIP); NSX admin and audit
 use HTTPS to <code>vipFqdn</code>. If <code>adminUserSsoUsername</code> is blank or omitted, Atlaso uses
@@ -4496,7 +4501,8 @@ import, inspect the source again; the password value itself may refresh without 
 Every discovered credential receives a bounded identity suffix, keeping its canonical key stable when peers are added,
 removed, or reordered. Existing natural keys are rotated in place only when the source/resource/account matches and
 discovery has exactly one candidate for that legacy resource/account identity; ambiguous or unrelated legacy entries
-remain separate.
+remain separate. Deployment-spec imports preserve existing destination keys and skip matching keys without rotation;
+live-inventory rotation and operator-URI preservation rules below are unchanged.
 Operations nodes and the Operations collector map <code>rootUserPassword</code> to <code>root</code> over SSH to their adjacent <code>hostname</code>.
 Operations <code>adminUserPassword</code> uses <code>admin</code> over HTTPS to <code>loadBalancerFqdn</code>, or the explicit master/single node when
 the load balancer is absent. Automation <code>adminUserPassword</code> uses <code>admin</code> over HTTPS to its <code>hostname</code>.
@@ -4509,7 +4515,8 @@ use the entry's <strong>Edit</strong> action to add a verified endpoint. Reimpor
 URI list only when the source type, source endpoint, resource name, account, and secret type match. A different source
 or account replaces the URI list with its discovered endpoints, including an empty list when none are known. Same-source
 rotation adds discovered URIs only when the existing list is empty. Atlaso re-reads the selected values during the reviewed
-import and encrypts them immediately; existing keys are rotated. See Broadcom's <a href="https://developer.broadcom.com/xapis/vcf-installer-api/latest/data-structures/SddcSpec/">SDDC specification</a>
+import and encrypts them immediately; live-inventory imports may rotate existing keys under the matching rules above.
+See Broadcom's <a href="https://developer.broadcom.com/xapis/vcf-installer-api/latest/data-structures/SddcSpec/">SDDC specification</a>
 for the source field definitions. Source endpoints are canonicalized before storage and identity comparison, including legacy
 stored spellings: DNS names ignore case and a trailing root dot, equivalent IPv6 spellings identify the same host, and
 different ports remain distinct sources.</p>
