@@ -934,7 +934,7 @@ test('Coverage gaps are labeled as outside the plan and explain Fleet ineligibil
 test('The updated backup script URL and service worker cache version stay aligned', () => {
   const worker = fs.readFileSync(path.join(__dirname, '../../atlaso/app/static/service-worker.js'), 'utf8');
   assert.match(helper, /vcf-backup\.js\?v=issue-1066-24/);
-  assert.match(worker, /ATLASO_CACHE_PREFIX\}417/);
+  assert.match(worker, /ATLASO_CACHE_PREFIX\}418/);
   assert.match(worker, /vcf-backup\.js\?v=issue-1066-24/);
 });
 

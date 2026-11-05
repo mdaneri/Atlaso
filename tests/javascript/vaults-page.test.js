@@ -117,8 +117,9 @@ function makeRuntime() {
   const copiedText = [];
   const statuses = [];
   const newRecordFields = [];
+  let wizardOpenOptions;
   let wizardOptions;
-  const wizard = { open() {} };
+  const wizard = { open(options) { wizardOpenOptions = options; } };
   const context = vm.createContext({
     document: {
       querySelector: (selector) => selector === "[data-vaults-workspace]" ? workspace : selector === "[data-vault-entry-form]" ? form : null,
@@ -146,7 +147,7 @@ function makeRuntime() {
     escapeHtml: (value) => String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]),
   });
   vm.runInContext(`${functionSource("initializeVaultsPage")}; initializeVaultsPage();`, context);
-  return { form, gridConfig: gridConfigs[0], wizardOptions, copiedText, statuses, newRecordFields };
+  return { form, gridConfig: gridConfigs[0], wizardOptions, wizardOpenOptions: () => wizardOpenOptions, copiedText, statuses, newRecordFields };
 }
 
 class FakeImportForm extends FakeForm {
@@ -244,6 +245,45 @@ test("Vault add row keeps the Name cell visible under shared pending-row styles"
   gridConfig.options.rowFormatter(row);
   assert.deepEqual(newRecordFields, [nameColumn.field]);
   assert.match(nameColumn.formatter({ getRow: () => row }), /\+ Add password here/);
+});
+
+test("Vault Name and Service filters retain the add row and match existing labels case-insensitively", () => {
+  const { gridConfig, wizardOpenOptions } = makeRuntime();
+  const nameColumn = gridConfig.options.columns.find((column) => column.field === "display_name");
+  const serviceColumn = gridConfig.options.columns.find((column) => column.field === "service_type_label");
+  const entry = { display_name: "Operations · vc01 · admin", service_type_label: "Operations" };
+  const addRow = { is_new: true };
+
+  assert.equal(nameColumn.headerFilterFunc("VC01", entry.display_name, entry), true);
+  assert.equal(nameColumn.headerFilterFunc("nomatch", entry.display_name, entry), false);
+  assert.equal(serviceColumn.headerFilterFunc("OPERATIONS", entry.service_type_label, entry), true);
+  assert.equal(serviceColumn.headerFilterFunc("nomatch", entry.service_type_label, entry), false);
+  assert.equal(nameColumn.headerFilterFunc("nomatch", "", addRow), true);
+  assert.equal(serviceColumn.headerFilterFunc("nomatch", "", addRow), true);
+  assert.equal(
+    nameColumn.headerFilterFunc("VCF", "VCF Admin", entry)
+      && serviceColumn.headerFilterFunc("operations", "Operations", entry),
+    true,
+  );
+  assert.equal(
+    nameColumn.headerFilterFunc("nomatch", "VCF Admin", entry)
+      && serviceColumn.headerFilterFunc("operations", "Operations", entry),
+    false,
+  );
+  assert.equal(
+    nameColumn.headerFilterFunc("VCF", "VCF Admin", entry)
+      && serviceColumn.headerFilterFunc("nomatch", "Operations", entry),
+    false,
+  );
+
+  const launcher = new FakeElement();
+  nameColumn.cellClick({}, {
+    getRow: () => ({ getData: () => addRow }),
+    getElement: () => launcher,
+  });
+  assert.equal(wizardOpenOptions().context.vaultId, 4);
+  assert.equal(wizardOpenOptions().context.row, null);
+  assert.equal(wizardOpenOptions().launcher, launcher);
 });
 
 test("Vault entry wizard defaults to Unknown and preserves service through Edit, Copy, and Review", () => {

@@ -25229,6 +25229,8 @@ function initializeEsxStorageVolumeSource() {
 }
 
 function initializeVaultsPage() {
+  const vaultTextHeaderFilter = (filterValue, cellValue, rowData) => rowData?.is_new
+    || String(cellValue ?? "").toLowerCase().includes(String(filterValue ?? "").toLowerCase());
   const workspace = document.querySelector("[data-vaults-workspace]");
   if (!(workspace instanceof HTMLElement) || !window.AtlasoUiPatterns) return;
   const createModal = document.getElementById("vault-create-modal");
@@ -25598,6 +25600,7 @@ function initializeVaultsPage() {
             field: "display_name",
             minWidth: 230,
             headerFilter: "input",
+            headerFilterFunc: vaultTextHeaderFilter,
             formatter: (cell) => {
               const row = cell.getRow().getData();
               if (row.is_new) return '<button class="add-row-button" type="button">+ Add password here</button>';
@@ -25610,6 +25613,7 @@ function initializeVaultsPage() {
             field: "service_type_label",
             minWidth: 160,
             headerFilter: "input",
+            headerFilterFunc: vaultTextHeaderFilter,
             formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "Unknown"),
           },
           { title: "Description", field: "description", minWidth: 220, formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() || "—") },
