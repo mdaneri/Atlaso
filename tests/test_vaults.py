@@ -905,8 +905,9 @@ def test_vault_javascript_uses_shared_grid_wizard_and_timed_eye():
     assert "Step 1 of 7" in depot_template
     assert 'data-atlaso-wizard-nav="tls"' in depot_template
     assert "addressControl.readOnly = true;" in source
-    assert 'filter((uri) => /^https?:\\/\\//i.test(uri)).forEach((endpoint) =>' in source
-    assert "option.dataset.endpoint = endpoint;" in source
+    assert "window.AtlasoVaultCredentials.choices(vault?.entries || [], choicePreferences())" in source
+    assert "option.dataset.endpoint = choice.uri;" in source
+    assert "option.dataset.uriIndex = String(choice.uriIndex);" in source
     assert 'new Option("No HTTP/HTTPS credentials available", "")' in source
     assert 'picker.dataset.addressMode === "url"' in source
     assert "parsedEndpoint.hostname" in source

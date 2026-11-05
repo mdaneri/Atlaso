@@ -131,6 +131,11 @@ def vault_entry_display_name(*, key: str, service_type: str, username: str, uris
     # Display names are deliberately not identifiers: two domains may share a
     # short hostname. Full URIs, account details and the stable key remain available.
     def segment(value: str) -> str:
+        """Normalize one display-name component.
+
+        Args:
+            value: Host or account label to normalize for display.
+        """
         return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")[:48]
 
     host_label, account_label = segment(host), segment(username)

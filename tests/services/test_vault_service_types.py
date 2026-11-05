@@ -117,6 +117,11 @@ def test_display_names_do_not_decrypt_or_mutate_existing_keys(monkeypatch):
     from atlaso.app.services import vaults
 
     def reject_decryption(*_args):
+        """Fail if metadata rendering attempts password decryption.
+
+        Args:
+            *_args: Arguments supplied to the decryption function being guarded.
+        """
         raise AssertionError("Display metadata must never decrypt a password")
 
     monkeypatch.setattr(vaults, "decrypt_secret", reject_decryption)

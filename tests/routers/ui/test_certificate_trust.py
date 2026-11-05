@@ -754,6 +754,11 @@ def test_enrollment_choices_prefer_vcenter_within_each_vault_without_decryption(
         db.commit()
 
     def reject_secret(*_args):
+        """Fail if rendering attempts to decrypt a stored secret.
+
+        Args:
+            *_args: Arguments supplied to the decryption function being guarded.
+        """
         raise AssertionError("Sorting credential metadata must not decrypt or authenticate")
 
     monkeypatch.setattr(transport, "decrypt_secret", reject_secret)
