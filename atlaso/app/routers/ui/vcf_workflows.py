@@ -994,6 +994,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 )
             imported: list[str] = []
             created_count = 0
+            skipped_existing = 0
             legacy_identity_counts = Counter(
                 (candidate.natural_key, candidate.resource_name.strip(), candidate.username.strip(), candidate.secret_type.strip().lower())
                 for candidate in candidates if candidate.natural_key
@@ -1016,6 +1017,11 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                         and legacy.secret_type == candidate.secret_type.strip().lower()
                     ):
                         existing = legacy
+                # Retained deployment values may predate a password rotation. Never replace
+                # an existing destination entry (including a matching legacy import).
+                if source_type == "vcf_installer" and existing is not None:
+                    skipped_existing += 1
+                    continue
                 # Preserve operator URI positions only for the same source and account.
                 same_source = existing is not None and (
                     existing.source_type == source_type
@@ -1041,7 +1047,11 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                         uris=uris or candidate.uris,
                     ),
                     actor=identity.username,
+                    overwrite_existing=source_type != "vcf_installer",
                 )
+                if source_type == "vcf_installer" and not created:
+                    skipped_existing += 1
+                    continue
                 imported.append(entry.key)
                 created_count += int(created)
             db.commit()
@@ -1057,7 +1067,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             action="import_vcf_vault_entries",
             resource_type="vault",
             resource_id=str(vault.id),
-            detail=f"source_type={source_type}; imported={len(imported)}; created={created_count}; rotated={len(imported) - created_count}",
+            detail=f"source_type={source_type}; imported={len(imported)}; created={created_count}; rotated={len(imported) - created_count}; skipped_existing={skipped_existing}",
         )
         return JSONResponse(
             {
@@ -1066,6 +1076,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 "imported_keys": imported,
                 "created": created_count,
                 "rotated": len(imported) - created_count,
+                "skipped_existing": skipped_existing,
             },
             headers={"Cache-Control": "no-store, private", "Pragma": "no-cache"},
         )
