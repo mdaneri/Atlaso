@@ -504,9 +504,13 @@ def read_native(plan: dict, fixture: dict, peer: PinnedPeerTransport, appliance:
         for item in addr[0].get("addr_info", [])
     ):
         raise Refusal("appliance_static_baseline_missing")
-    routes = json.loads(appliance.command("ip -j -4 route show dev eth0"))
+    # A device-filtered iproute2 response can omit dev. Read the dedicated
+    # management table without that filter, then match its owned prefix.
+    routes = json.loads(appliance.command("ip -j -4 route show table 100"))
     if not any(
-        route.get("dev") == "eth0" and route.get("prefsrc", route.get("src")) == baseline
+        route.get("dev") == "eth0" and route.get("dst") == str(network.network)
+        and route.get("prefsrc", route.get("src")) == baseline and route.get("scope") == "link"
+        and not route.get("gateway") and not route.get("via")
         for route in routes
     ):
         raise Refusal("appliance_eth0_route_missing")

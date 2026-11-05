@@ -340,6 +340,11 @@ running VMs; a running VM omitted from the saved inventory still enters membersh
 be running. The scenario samples host topology in the background and rechecks it around authenticated HTTP operations.
 Any observed drift remains a failure even if the original topology is later restored.
 
+For the dedicated-management baseline route, the producer reads `ip -j -4 route show table 100` and requires the
+exact connected prefix, `eth0`, preferred source, and on-link scope without a gateway. Keep this query unfiltered by
+device: iproute2 can omit `dev` when `dev eth0` is already a query filter. A main-table route alone does not prove the
+management routing-domain baseline.
+
 ## Run and accept the static-address case
 
 Protected handoff validation checks the staged candidate certificate's format, configured paths, and key pair without

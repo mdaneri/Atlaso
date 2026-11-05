@@ -50,6 +50,14 @@ class FakePeer:
 class FakeAppliance:
     """Return management address and route readbacks."""
 
+    def __init__(self, *, route_fault: str | None = None):
+        """Select an independently invalid management connected-route observation.
+
+        Args:
+            route_fault: Route ownership field to corrupt, or None for the native baseline.
+        """
+        self.route_fault = route_fault
+
     def command(self, command: str) -> bytes:
         """Handle command for certificate handoff verification.
 
@@ -60,16 +68,31 @@ class FakeAppliance:
         if command == "ip -j -4 addr show dev eth0":
             return json.dumps([{"addr_info": [{"local": "192.168.77.30", "prefixlen": 24}]}]).encode()
         if command == "ip -j -4 route show dev eth0":
-            return json.dumps([{"dev": "eth0", "prefsrc": "192.168.77.30"}]).encode()
+            # Native iproute2 omits dev when the query already filters by it.
+            return json.dumps([{"dst": "192.168.77.0/24", "prefsrc": "192.168.77.30", "scope": "link"}]).encode()
+        if command == "ip -j -4 route show table 100":
+            route = {"dst": "192.168.77.0/24", "dev": "eth0", "prefsrc": "192.168.77.30", "scope": "link"}
+            changes = {
+                "interface": {"dev": "eth1"}, "source": {"prefsrc": "192.168.77.31"},
+                "prefix": {"dst": "192.168.78.0/24"}, "scope": {"scope": "global"},
+                "gateway": {"gateway": "192.168.77.1"}, "default": {"dst": "default"},
+            }
+            route.update(changes.get(self.route_fault, {}))
+            return json.dumps([] if self.route_fault == "missing" else [route]).encode()
         raise AssertionError(command)
 
 
-def test_read_native_requires_exact_unexpired_lease_before_tls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Handle test read native requires exact unexpired lease before tls for certificate handoff verification.
+@pytest.mark.parametrize("route_fault", [None, "missing", "interface", "source", "prefix", "scope", "gateway", "default"])
+def test_read_native_requires_exact_lease_and_management_route_before_tls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route_fault: str | None,
+) -> None:
+    """Admit the real route projection and refuse independent ownership mismatches.
 
     Args:
         tmp_path: Pytest-owned temporary directory.
-        monkeypatch: Pytest fixture for isolated test overrides."""
+        monkeypatch: Pytest fixture for isolated test overrides.
+        route_fault: Management connected-route observation to corrupt.
+    """
     ca = tmp_path / "ca.pem"
     ca.write_bytes(b"-----BEGIN CERTIFICATE-----\npublic\n-----END CERTIFICATE-----\n")
     plan = {
@@ -123,6 +146,10 @@ def test_read_native_requires_exact_unexpired_lease_before_tls(tmp_path: Path, m
     monkeypatch.setattr(proof, "PeerHTTPSConnection", FakeHTTPS)
     with pytest.raises(proof.Refusal, match="peer_original_mac_lease_expired_or_missing"):
         proof.read_native(plan, fixture, FakePeer(wrong_lease=True), FakeAppliance())
+    if route_fault is not None:
+        with pytest.raises(proof.Refusal, match="appliance_eth0_route_missing"):
+            proof.read_native(plan, fixture, FakePeer(), FakeAppliance(route_fault=route_fault))
+        return
     result = proof.read_native(plan, fixture, FakePeer(), FakeAppliance())
     assert context.minimum_version == proof.ssl.TLSVersion.TLSv1_2
     assert result["address_ownership_state"] == "unproven"
