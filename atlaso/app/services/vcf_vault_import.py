@@ -403,7 +403,13 @@ def _installer_password_nodes(
                                        if component == "nsxtspec" and key == "rootNsxtManagerPassword" else "",
                                        path_identifier))
                 elif skipped is not None:
-                    skipped["Password missing, masked, or unsupported in the latest specification"] += 1
+                    if child is None or child == "":
+                        reason = "Password missing in the latest specification"
+                    elif isinstance(child, str):
+                        reason = "Password masked in the latest specification"
+                    else:
+                        reason = "Unsupported password value in the latest specification"
+                    skipped[reason] += 1
             else:
                 # A sibling component spec must identify its own endpoint.
                 nested_endpoint = "" if str(key).lower().endswith("spec") else endpoint
@@ -447,7 +453,11 @@ def _vcf_installer_candidates(api: VcfDepotApiClient) -> list[VcfPasswordCandida
     spec = _read_json(api, f"/v1/sddcs/{quote(sddc_id, safe='')}/spec")
     if not isinstance(spec, dict):
         raise VcfDepotTargetError("VCF Installer returned an invalid SDDC specification.")
-    result = VcfPasswordDiscovery(scope="Passwords in the latest VCF Installer SDDC specification only; this is not a complete live credential inventory.")
+    result = VcfPasswordDiscovery(scope=(
+        "Passwords retained in the latest deployment specification only, including available Operations and Automation "
+        "passwords. These deployment-time values may be stale after rotation; this is not a complete live credential "
+        "inventory. Existing destination keys are preserved."
+    ))
     for path, password, endpoint, username, host_identifier, path_identifier in _installer_password_nodes(spec, skipped=result.skipped):
         lowered = ".".join(path).lower()
         secret_type = "esx_password" if any(item.lower() in {"hostspec", "hostspecs", "hosts", "esx", "esxi"}
@@ -475,7 +485,7 @@ def _vcf_installer_candidates(api: VcfDepotApiClient) -> list[VcfPasswordCandida
             VcfPasswordCandidate(
                 candidate_id=candidate_id,
                 key=key,
-                description=f"Imported VCF Installer password from {'.'.join(path)}.",
+                description=f"Deployment-time password from {'.'.join(path)}; may be stale after rotation.",
                 secret_type=secret_type,
                 username=username or ("root" if secret_type == "esx_password" else ""),
                 resource_name=resource_name,
@@ -519,9 +529,15 @@ def discover_vcf_passwords(
         expected_fingerprint=expected_fingerprint,
     ) as api:
         appliance = api.appliance_info()
-        if appliance["role"] != expected_role:
+        converted_manager = (
+            source_type == "vcf_installer"
+            and appliance["role"] == "SddcManager"
+            and re.fullmatch(r"9\.1\.\d+(?:[.+-].*)?", appliance.get("version", "")) is not None
+        )
+        if appliance["role"] != expected_role and not converted_manager:
             raise VcfDepotTargetError(
-                f"The selected source type does not match the detected appliance role {appliance['role']}."
+                "The selected source type does not match the detected appliance role "
+                f"{appliance['role']}. Deployment passwords support VCF Installer 9.x or converted SDDC Manager 9.1.x."
             )
         candidates = (
             _sddc_manager_candidates(api)

@@ -84,9 +84,10 @@ class FakeForm extends FakeElement {
     this.fingerprintConfirm = new FakeInput();
     this.reviewSource = new FakeElement();
     this.reviewCount = new FakeElement();
+    this.reviewPolicy = new FakeElement();
     this.elements = {
       csrf: new FakeInput("fixture-csrf"),
-      source_type: new FakeSelect("sddc_manager"),
+      source_type: new FakeSelect("sddc_manager", "Live inventory"),
       address: new FakeInput("sddc01.lab.example"),
       port: new FakeInput("443"),
       confirmed_fingerprint: new FakeInput("fixture-fingerprint"),
@@ -108,6 +109,7 @@ class FakeForm extends FakeElement {
       "[data-vcf-vault-fingerprint-confirm]": this.fingerprintConfirm,
       "[data-vcf-vault-review-source]": this.reviewSource,
       "[data-vcf-vault-review-count]": this.reviewCount,
+      "[data-vcf-vault-review-policy]": this.reviewPolicy,
     };
     if (selector === 'input[name="candidate_ids"]:checked') {
       return this.querySelectorAll('input[name="candidate_ids"]:checked')[0] || null;
@@ -258,6 +260,45 @@ test("VCF password candidates use the semantic password choice group and shared 
   assert.match(appCss, /\.vcf-vault-candidate-copy code,\s*\.vcf-vault-candidate-copy small\s*\{\s*overflow-wrap: anywhere;/);
   assert.match(appCss, /\.scope-choice-grid\s*\{[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(appCss, /@media \(max-width: 640px\)\s*\{[\s\S]*?\.scope-choice-grid\s*\{\s*grid-template-columns: 1fr;/);
+});
+
+test("VCF import source choices explain live versus retained deployment data before authentication", () => {
+  assert.match(importTemplate, /value="sddc_manager">Live inventory<\/option>/);
+  assert.match(importTemplate, /value="vcf_installer">Deployment passwords<\/option>/);
+  assert.match(importTemplate, /data-vcf-vault-source-notice[\s\S]*?live inventory reads SDDC Manager credentials[\s\S]*?VCF Installer 9\.x or converted SDDC Manager 9\.1\.x[\s\S]*?Operations or Automation[\s\S]*?Missing or masked values are unavailable[\s\S]*?stale after rotations[\s\S]*?not a complete live inventory/);
+});
+
+test("VCF import review preserves deployment keys and retains live rotation policy", () => {
+  const runtime = makeRuntime([]);
+  const prepareReview = runtime.getWizardOptions().prepareReview;
+
+  prepareReview();
+  assert.match(runtime.form.reviewPolicy.textContent, /Live inventory imports may rotate matching existing keys/);
+  runtime.form.elements.source_type.value = "vcf_installer";
+  runtime.form.elements.source_type.selectedOptions[0].textContent = "Deployment passwords";
+  prepareReview();
+  assert.match(runtime.form.reviewSource.textContent, /Deployment passwords/);
+  assert.equal(runtime.form.reviewPolicy.textContent, "Deployment-spec imports preserve the destination: existing keys are skipped, never rotated.");
+});
+
+test("VCF source fingerprint gate stays ahead of authentication for either source type", async () => {
+  const runtime = makeRuntime([{ fingerprint: "sha256-fixture" }]);
+  runtime.form.elements.source_type.value = "vcf_installer";
+  runtime.form.elements.username.value = "";
+  runtime.form.elements.password.value = "";
+  const controller = { setError() {} };
+
+  runtime.context.fetch = async (url, options) => {
+    runtime.requests.push({ url, options });
+    return { status: 409, ok: false, json: async () => ({ fingerprint: "sha256-fixture" }) };
+  };
+  assert.equal(await runtime.getWizardOptions().onNext({ controller, step: { id: "source" } }), "tls");
+  const inspected = JSON.parse(runtime.requests[0].options.body);
+  assert.equal(inspected.source_type, "vcf_installer");
+  assert.equal(inspected.confirmed_fingerprint, "");
+  assert.equal(inspected.username, "");
+  assert.equal(inspected.password, "");
+  assert.equal(runtime.form.fingerprint.textContent, "sha256-fixture");
 });
 
 test("VCF candidate rows distinguish accounts with the same resource and endpoint", async () => {

@@ -1651,7 +1651,6 @@ def test_vcf_helper_inspection_returns_metadata_and_import_encrypts_value(client
 @pytest.mark.parametrize(
     "mismatch, candidate_uris, expected_source_type, expected_address, expected_port",
     [
-        ({"source_type": "vcf_installer"}, ("https://fresh.example.internal",), "vcf_installer", "sddc-manager.example.internal", 443),
         ({"address": "rotated-source.example.internal"}, (), "sddc_manager", "rotated-source.example.internal", 443),
         ({"resource_name": "different-resource"}, ("ssh://fresh.example.internal",), "sddc_manager", "sddc-manager.example.internal", 443),
         ({"username": "different-account"}, (), "sddc_manager", "sddc-manager.example.internal", 443),
@@ -2029,6 +2028,117 @@ def test_vcf_import_accepts_password_refresh_when_reviewed_metadata_is_unchanged
         entry = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalar_one()
         assert entry.key == candidate.key
         assert decrypt_secret(entry.encrypted_value) == "FixtureCredentialCurrentPassword!"
+
+
+@pytest.mark.parametrize("entry_kind, stored_source", [
+    ("canonical", "vcf_installer"),
+    ("canonical", "sddc_manager"),
+    ("legacy", "vcf_installer"),
+])
+def test_deployment_import_preserves_existing_values_and_imports_only_new_entries(
+    client, monkeypatch, entry_kind, stored_source
+):
+    """Never overwrite current encrypted values or metadata with retained deployment data.
+
+    Args:
+        client: HTTP test client used to exercise the application.
+        monkeypatch: Fixture replacing discovery and TLS dependencies.
+        entry_kind: Existing stable identity or matching legacy import.
+        stored_source: Existing import source, including a live inventory entry.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VaultEntry
+    from atlaso.app.secrets import decrypt_secret
+
+    existing_candidate = _canonical_test_vcf_candidate(
+        candidate_id="retained-operations-admin", natural_key="vcf.operations.admin", value="StaleDeploymentSecret!",
+    )
+    key = existing_candidate.key if entry_kind == "canonical" else existing_candidate.natural_key
+    csrf, vault_id = _seed_legacy_vcf_import_entry(
+        client, natural_key=key, secret_value="ReviewedCurrentSecret!", username="admin",
+        resource_name="manager.example.internal", secret_type="vcf_password", source_type=stored_source,
+        source_endpoint="sddc-manager.example.internal:443", uris=("https://operator.example.internal",),
+    )
+    new_candidate = _canonical_test_vcf_candidate(
+        candidate_id="retained-automation-admin", natural_key="vcf.automation.admin", value="NewDeploymentSecret!",
+        resource_name="automation.example.internal", uris=("https://automation.example.internal",),
+    )
+    with SessionLocal() as db:
+        prior = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalar_one()
+        prior_state = {column.name: getattr(prior, column.name) for column in VaultEntry.__table__.columns}
+    response = _post_fake_vcf_import(
+        client, monkeypatch, csrf=csrf, vault_id=vault_id, candidates=[existing_candidate, new_candidate],
+        address="sddc-manager.example.internal", source_type="vcf_installer",
+    )
+    assert response.status_code == 200
+    assert response.json()["created"] == 1
+    assert response.json()["rotated"] == 0
+    assert response.json()["skipped_existing"] == 1
+    assert response.json()["imported_keys"] == [new_candidate.key]
+    assert "Secret!" not in response.text
+    with SessionLocal() as db:
+        entries = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalars().all()
+        assert len(entries) == 2
+        existing = next(entry for entry in entries if entry.key == key)
+        assert {column.name: getattr(existing, column.name) for column in VaultEntry.__table__.columns} == prior_state
+        added = next(entry for entry in entries if entry.key == new_candidate.key)
+        assert decrypt_secret(added.encrypted_value) == "NewDeploymentSecret!"
+        assert added.source_type == "vcf_installer"
+        assert json.loads(added.uris_json) == ["https://automation.example.internal"]
+    repeated = _post_fake_vcf_import(
+        client, monkeypatch, csrf=csrf, vault_id=vault_id, candidates=[existing_candidate, new_candidate],
+        address="sddc-manager.example.internal", source_type="vcf_installer",
+    )
+    assert repeated.status_code == 200
+    assert repeated.json()["created"] == repeated.json()["rotated"] == 0
+    assert repeated.json()["skipped_existing"] == 2
+    assert repeated.json()["imported_keys"] == []
+
+
+def test_deployment_import_preserves_an_entry_created_before_the_final_write(client, monkeypatch):
+    """Recheck create-only policy at the shared writer rather than relying on the earlier lookup.
+
+    Args:
+        client: HTTP test client used to exercise the application.
+        monkeypatch: Fixture injecting a concurrent destination entry before the final write.
+    """
+    from dataclasses import replace
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VaultEntry
+    from atlaso.app.routers.ui import vcf_workflows
+    from atlaso.app.secrets import decrypt_secret
+
+    csrf, vault_id = _create_empty_vcf_import_vault(client)
+    candidate = _canonical_test_vcf_candidate(
+        candidate_id="late-created-operations", natural_key="vcf.operations.admin", value="StaleDeploymentSecret!",
+    )
+    original_upsert = vcf_workflows.upsert_vault_entry
+
+    def insert_before_final_lookup(db, *, vault, entry, actor, overwrite_existing=True):
+        """Model a new current value becoming visible after the router's first lookup.
+
+        Args:
+            db: Test database session.
+            vault: Destination vault.
+            entry: Proposed retained deployment value.
+            actor: Acting administrator.
+            overwrite_existing: Create-only policy passed by the import route.
+        """
+        original_upsert(db, vault=vault, entry=replace(entry, value="ConcurrentCurrentSecret!"), actor=actor)
+        return original_upsert(db, vault=vault, entry=entry, actor=actor, overwrite_existing=overwrite_existing)
+
+    monkeypatch.setattr(vcf_workflows, "upsert_vault_entry", insert_before_final_lookup)
+    response = _post_fake_vcf_import(
+        client, monkeypatch, csrf=csrf, vault_id=vault_id, candidates=[candidate],
+        address="sddc-manager.example.internal", source_type="vcf_installer",
+    )
+    assert response.status_code == 200
+    assert response.json()["created"] == response.json()["rotated"] == 0
+    assert response.json()["skipped_existing"] == 1
+    with SessionLocal() as db:
+        stored = db.execute(select(VaultEntry).where(VaultEntry.vault_id == vault_id)).scalar_one()
+        assert decrypt_secret(stored.encrypted_value) == "ConcurrentCurrentSecret!"
 
 
 def test_vcf_import_rotates_matching_legacy_key_and_keeps_operator_uris(client, monkeypatch):
