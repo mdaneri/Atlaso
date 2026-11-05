@@ -87,7 +87,7 @@ class FakeForm extends FakeElement {
     this.reviewPolicy = new FakeElement();
     this.elements = {
       csrf: new FakeInput("fixture-csrf"),
-      source_type: new FakeSelect("sddc_manager", "Live inventory — SDDC Manager"),
+      source_type: new FakeSelect("sddc_manager", "Live inventory"),
       address: new FakeInput("sddc01.lab.example"),
       port: new FakeInput("443"),
       confirmed_fingerprint: new FakeInput("fixture-fingerprint"),
@@ -263,9 +263,9 @@ test("VCF password candidates use the semantic password choice group and shared 
 });
 
 test("VCF import source choices explain live versus retained deployment data before authentication", () => {
-  assert.match(importTemplate, /value="sddc_manager">Live inventory — SDDC Manager/);
-  assert.match(importTemplate, /value="vcf_installer">Deployment spec — VCF Installer 9\.x or converted SDDC Manager 9\.1\.x/);
-  assert.match(importTemplate, /data-vcf-vault-source-notice[\s\S]*?deployment-time passwords[\s\S]*?Operations and Automation[\s\S]*?stale after rotations[\s\S]*?not a complete live inventory/);
+  assert.match(importTemplate, /value="sddc_manager">Live inventory<\/option>/);
+  assert.match(importTemplate, /value="vcf_installer">Deployment passwords<\/option>/);
+  assert.match(importTemplate, /data-vcf-vault-source-notice[\s\S]*?live inventory reads SDDC Manager credentials[\s\S]*?VCF Installer 9\.x or converted SDDC Manager 9\.1\.x[\s\S]*?Operations or Automation[\s\S]*?Missing or masked values are unavailable[\s\S]*?stale after rotations[\s\S]*?not a complete live inventory/);
 });
 
 test("VCF import review preserves deployment keys and retains live rotation policy", () => {
@@ -275,9 +275,9 @@ test("VCF import review preserves deployment keys and retains live rotation poli
   prepareReview();
   assert.match(runtime.form.reviewPolicy.textContent, /Live inventory imports may rotate matching existing keys/);
   runtime.form.elements.source_type.value = "vcf_installer";
-  runtime.form.elements.source_type.selectedOptions[0].textContent = "Deployment spec — VCF Installer 9.x";
+  runtime.form.elements.source_type.selectedOptions[0].textContent = "Deployment passwords";
   prepareReview();
-  assert.match(runtime.form.reviewSource.textContent, /Deployment spec — VCF Installer 9\.x/);
+  assert.match(runtime.form.reviewSource.textContent, /Deployment passwords/);
   assert.equal(runtime.form.reviewPolicy.textContent, "Deployment-spec imports preserve the destination: existing keys are skipped, never rotated.");
 });
 

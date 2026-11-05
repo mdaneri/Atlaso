@@ -21,10 +21,10 @@
         {% include "partials/vcf_vault_credential_picker.html" %}
       </section>
       <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="source"><div class="form-stack"><div class="form-grid">
-        <label><span>Source type</span><select name="source_type"><option value="sddc_manager">Live inventory — SDDC Manager</option><option value="vcf_installer">Deployment spec — VCF Installer 9.x or converted SDDC Manager 9.1.x</option></select></label>
+        <label><span>Source type</span><select name="source_type"><option value="sddc_manager">Live inventory</option><option value="vcf_installer">Deployment passwords</option></select></label>
         <label><span>Server address</span><input name="address" required placeholder="sddc-manager.example.internal" autocomplete="off"></label>
         <label><span>API port</span><input name="port" type="number" min="1" max="65535" value="443" required></label>
-      </div><p class="muted" data-vcf-vault-source-notice>Before authentication, note that deployment-spec mode reads retained deployment-time passwords, which may include Operations and Automation accounts. In this mode, missing or masked passwords are unavailable, retained values may be stale after rotations, and results are not a complete live inventory.</p></div>
+      </div><p class="muted" data-vcf-vault-source-notice>Before authentication: live inventory reads SDDC Manager credentials. Deployment passwords come from VCF Installer 9.x or converted SDDC Manager 9.1.x specifications and may include Operations or Automation accounts. Missing or masked values are unavailable; passwords may be stale after rotations. Deployment results are not a complete live inventory.</p></div>
       </section>
       <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="tls">
         <label class="vcf-sddc-tls-check">
