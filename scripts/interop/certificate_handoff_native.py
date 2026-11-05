@@ -370,9 +370,18 @@ def wait_task(clients, status_path, username, password):
                     return task, client
                 if not task:
                     client.login(username, password)
+            except PeerTransportRefusal as exc:
+                if exc.args != ("peer_private_channel_refused",):
+                    raise
+                # Retirement can close this origin before the next admitted
+                # origin is ready. Do not reauthenticate at a closed address.
+                continue
             except (Refusal, OSError, ValueError):
                 try:
                     client.login(username, password)
+                except PeerTransportRefusal as exc:
+                    if exc.args != ("peer_private_channel_refused",):
+                        raise
                 except (Refusal, OSError, ValueError):
                     pass
         time.sleep(1)
@@ -483,6 +492,10 @@ def restore_original(clients, plan, fields, before, username, password, original
             candidate.login(username, password)
             reachable = candidate
             break
+        except PeerTransportRefusal as exc:
+            if exc.args != ("peer_private_channel_refused",):
+                raise
+            continue
         except (Refusal, OSError, ValueError):
             continue
     if reachable is None:

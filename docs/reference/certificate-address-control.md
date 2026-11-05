@@ -291,6 +291,12 @@ not receive the server's automatic generated-record dependency. It saves no DNS 
 DNS settings. Pre-existing DNS changes and unrelated pending components still stop admission. Address restoration
 uses the same reviewed scope and must leave no pending units.
 
+Task polling and restoration try only the predeclared original and candidate origins. A private-channel refusal at
+the retired origin permits trying the other admitted origin while following the same submitted task and deadline;
+it never submits again. Inactive peer transport, changed SSH trust, out-of-scope destinations, and topology failures
+still stop the run. A failed observer result stays preserved even if later read-only reconciliation finds a successful
+task; reconcile the recorded state before planning another attempt.
+
 Using the verified in-memory `$entrypoint` and receipt-bound paths from the linked workflow:
 
 ```powershell

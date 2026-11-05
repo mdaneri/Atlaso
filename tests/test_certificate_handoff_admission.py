@@ -5,12 +5,146 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "interop"))
 import certificate_handoff_native as handoff  # noqa: E402 - Local interop import after path setup.
+
+
+@pytest.mark.parametrize("during_login", [False, True])
+def test_task_polling_follows_candidate_after_old_peer_channel_retires(during_login):
+    """A cutover must continue on its declared candidate without another submission.
+
+    Args:
+        during_login: Whether retirement happens during an ordinary session refresh.
+    """
+    calls = []
+    task = {"id": "job_123456789abc", "type": "appliance-apply", "status": "succeeded"}
+
+    class Retired:
+        def json(self, _path):
+            """Model the retired original socket or an expired HTTP session.
+
+            Args:
+                _path: The already submitted task's status path.
+            """
+            calls.append("old-status")
+            if during_login:
+                raise handoff.Refusal("http_401")
+            raise handoff.PeerTransportRefusal("peer_private_channel_refused")
+
+        def login(self, *_args):
+            """Model retirement during a session refresh, never a new Apply.
+
+            Args:
+                *_args: Synthetic login values kept within this test.
+            """
+            assert during_login
+            calls.append("old-login")
+            raise handoff.PeerTransportRefusal("peer_private_channel_refused")
+
+    candidate = SimpleNamespace(json=lambda _path: (200, {"task": task}))
+    observed, origin = handoff.wait_task([Retired(), candidate], "/tasks/job_123456789abc/status", "fixture", "synthetic")
+    assert observed == task and origin is candidate
+    assert calls == ["old-status", *(["old-login"] if during_login else [])]
+
+
+@pytest.mark.parametrize("reason", ["peer_transport_inactive", "target_outside_owned_private_subnet", "peer_host_key_changed"])
+@pytest.mark.parametrize("during_login", [False, True])
+def test_task_polling_does_not_hide_peer_trust_or_scope_refusals(reason, during_login):
+    """Only an individual private-channel refusal permits origin failover.
+
+    Args:
+        reason: Fatal peer admission or lifetime failure.
+        during_login: Whether the failure occurs while refreshing the HTTP session.
+    """
+    def status(_path):
+        """Raise the selected refusal before any candidate can be trusted.
+
+        Args:
+            _path: Submitted task's status URL.
+        """
+        if during_login:
+            raise handoff.Refusal("http_401")
+        raise handoff.PeerTransportRefusal(reason)
+
+    def login(*_args):
+        """Raise the same fatal condition during reauthentication.
+
+        Args:
+            *_args: Unused synthetic login inputs.
+        """
+        raise handoff.PeerTransportRefusal(reason)
+
+    candidate = SimpleNamespace(json=lambda _path: pytest.fail("candidate reached after fatal peer refusal"))
+    with pytest.raises(handoff.PeerTransportRefusal, match=reason):
+        handoff.wait_task([SimpleNamespace(json=status, login=login), candidate], "/tasks/job_123456789abc/status", "fixture", "synthetic")
+
+
+def test_task_polling_keeps_deadline_when_all_admitted_origins_are_closed(monkeypatch):
+    """Unavailable origins never authorize an indefinite wait or resubmission.
+
+    Args:
+        monkeypatch: Control only the deadline clock and sleeping.
+    """
+    times = iter([0, 0, 301])
+    monkeypatch.setattr(handoff.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(handoff.time, "sleep", lambda _seconds: None)
+
+    def status(_path):
+        """Report a closed origin while retaining the exact original task.
+
+        Args:
+            _path: Submitted task status URL.
+        """
+        raise handoff.PeerTransportRefusal("peer_private_channel_refused")
+
+    with pytest.raises(handoff.Refusal, match="task_timeout_do_not_resubmit"):
+        handoff.wait_task([SimpleNamespace(json=status), SimpleNamespace(json=status)], "/tasks/job_123456789abc/status", "fixture", "synthetic")
+
+
+@pytest.mark.parametrize("reason", ["peer_private_channel_refused", "peer_transport_inactive", "target_outside_owned_private_subnet"])
+def test_restoration_uses_declared_live_origin_only_for_closed_channel(monkeypatch, reason):
+    """Restoration can start at the candidate after the original address retires.
+
+    Args:
+        monkeypatch: Stop at the first desired-state edit to isolate origin choice.
+        reason: Expected channel refusal or a fatal transport/scope failure.
+    """
+    class ReachedEditor(Exception):
+        pass
+
+    calls = []
+
+    def unavailable(*_args):
+        """Model the original origin's login outcome.
+
+        Args:
+            *_args: Synthetic credentials, never logged.
+        """
+        raise handoff.PeerTransportRefusal(reason)
+
+    candidate = SimpleNamespace(login=lambda *_args: calls.append("candidate-login"))
+
+    def edit(client, *_args):
+        """Prove the editor receives only the admitted live candidate.
+
+        Args:
+            client: Selected client for restoration.
+            *_args: Original desired fields and identity inputs.
+        """
+        assert client is candidate
+        calls.append("edit")
+        raise ReachedEditor()
+
+    monkeypatch.setattr(handoff, "edit", edit)
+    expected = ReachedEditor if reason == "peer_private_channel_refused" else handoff.PeerTransportRefusal
+    with pytest.raises(expected):
+        handoff.restore_original([SimpleNamespace(login=unavailable), candidate], {"interface": "eth0", "mac": "fixture"}, {}, {}, "fixture", "synthetic", {})
+    assert calls == (["candidate-login", "edit"] if reason == "peer_private_channel_refused" else [])
 
 
 @pytest.mark.parametrize(("include_dns", "dns_changed", "other_changed", "refused"), [
