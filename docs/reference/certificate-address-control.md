@@ -429,7 +429,9 @@ refuse a missing or changed pin without collecting acceptance observations or ac
 console alternative, recheck the console's binding to the original VMX and VM root identity. Use only the admitted
 transport for read-only `ip -j -4 addr show` and route/listener inspection. Verify the retired address is absent from
 every guest interface, not merely from saved desired state,
-and that no active management listener or owned handoff route still binds that address. Record the actual native
+and that no active management listener or owned handoff route still binds that address. Native `ss` endpoints can
+include an interface suffix such as `%lo`; compare the address itself so that suffix neither invalidates an unrelated
+loopback listener nor conceals a binding to the retired address. Record the actual native
 observations after the terminal Apply result; a pending task or unavailable observation cannot establish retirement.
 
 From the admitted private peer, attempt a direct TCP connection to the retired IPv4 address on the configured

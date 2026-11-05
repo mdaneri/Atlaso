@@ -124,6 +124,40 @@ def test_retirement_accepts_connected_subnet_and_requires_active_same_path() -> 
     assert "ip -j -4 rule show" in appliance.commands
 
 
+@pytest.mark.parametrize("endpoint", ["127.0.0.53%lo:53", "[fe80::1%eth0]:443"])
+def test_retirement_accepts_interface_qualified_unrelated_listeners(endpoint: str) -> None:
+    """Accept native ss interface suffixes without hiding retired bindings.
+
+    Args:
+        endpoint: Native local endpoint unrelated to the retired IPv4 address.
+    """
+    appliance = _appliance(**{"ss -H -lnt": f"LISTEN 0 4096 {endpoint} 0.0.0.0:*\n".encode()})
+    assert retirement.verify_retired_address(_plan(), Peer(), appliance, RETIRED, ACTIVE)["retired_listener_count"] == 0
+
+
+@pytest.mark.parametrize("endpoint", [f"{RETIRED}%eth0:443", f"[::ffff:{RETIRED}%eth0]:443"])
+def test_retirement_refuses_interface_qualified_retired_listeners(endpoint: str) -> None:
+    """An interface suffix must never conceal a binding to the retired address.
+
+    Args:
+        endpoint: Native local endpoint bound to the retired IPv4 address.
+    """
+    appliance = _appliance(**{"ss -H -lnt": f"LISTEN 0 128 {endpoint} 0.0.0.0:*\n".encode()})
+    with pytest.raises(retirement.Refusal, match="retired_address_still_owned"):
+        retirement.verify_retired_address(_plan(), Peer(), appliance, RETIRED, ACTIVE)
+
+
+@pytest.mark.parametrize("host", ["127.0.0.53%", "127.0.0.53%lo%eth0", "127.0.0.53%lo/eth0", "bad%lo"])
+def test_retirement_refuses_malformed_interface_qualified_listeners(host: str) -> None:
+    """Preserve refusal for malformed native listener endpoints.
+
+    Args:
+        host: Invalid address or interface qualifier.
+    """
+    with pytest.raises(retirement.Refusal, match="retirement_listener_readback_invalid"):
+        retirement._listener_count(f"LISTEN 0 128 {host}:53 0.0.0.0:*\n".encode(), RETIRED)
+
+
 @pytest.mark.parametrize(
     ("command", "value", "reason"),
     [

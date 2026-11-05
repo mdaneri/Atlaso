@@ -118,6 +118,10 @@ def _listener_count(output: bytes, retired: str) -> int:
         if not separator or not host:
             raise Refusal("retirement_listener_readback_invalid")
         address_text = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+        if "%" in address_text:
+            address_text, interface = address_text.split("%", 1)
+            if re.fullmatch(r"[A-Za-z0-9_.-]{1,15}", interface) is None:
+                raise Refusal("retirement_listener_readback_invalid")
         try:
             address = ipaddress.ip_address(address_text)
         except ValueError:
