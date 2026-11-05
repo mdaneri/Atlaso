@@ -302,16 +302,24 @@ def edit(client, name, fields, expected_mac):
     client.request(f"/ui/management/physical-interfaces/{int(current['id'])}/edit", form)
 
 
-def submit(client):
+def submit(client, *, include_generated_dns=False):
     """Run ordinary review/admission and return the exact master task URL.
 
     Args:
-        client: Authenticated appliance client used for this request."""
+        client: Authenticated appliance client used for this request.
+        include_generated_dns: Include DNS changed by the preceding physical-interface edit.
+            The caller must admit a clean baseline before starting that controlled handoff.
+    """
     _, review = client.json("/ui/management/appliance-apply/review")
     if review.get("active_task"):
         raise Refusal("apply_already_active")
     protected = {"network", "ca", "firewall", "appliance_settings", "public_services"}
     units = review.get("units", [])
+    if include_generated_dns and any(unit.get("id") == "dnsmasq" and unit.get("changed") for unit in units):
+        # Disabled local DNS does not receive the planner's automatic generated-
+        # record dependency. Explicitly review its changed snapshot with the
+        # handoff instead of leaving the editor's owned record changes pending.
+        protected.add("dnsmasq")
     if any(unit.get("id") not in protected and unit.get("changed", True) for unit in units):
         raise Refusal("unrelated_pending_units")
     if any(not unit.get("valid") for unit in units):
@@ -485,7 +493,7 @@ def restore_original(clients, plan, fields, before, username, password, original
         raise Refusal("restore_requires_terminal_task")
     job_id = None
     if review.get("units"):
-        job_id, path = submit(reachable)
+        job_id, path = submit(reachable, include_generated_dns=plan.get("trust_model") == "trusted-host")
         task, _ = wait_task(clients, path, username, password)
         if task.get("status") != "succeeded":
             raise Refusal("restore_apply_failed")
@@ -805,7 +813,7 @@ def main():
                 raise Refusal("selected_certificate_public_leaf_mismatch")
         evidence["stage"] = "apply_submission"
         task_terminal = False
-        job_id, status_path = submit(client)
+        job_id, status_path = submit(client, include_generated_dns=plan.get("trust_model") == "trusted-host")
         evidence.update(job_id=job_id, stage="apply_wait")
         task, _ = wait_task(clients, status_path, plan.get("username", "admin"), password)
         task_terminal = True

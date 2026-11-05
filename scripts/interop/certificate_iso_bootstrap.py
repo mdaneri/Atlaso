@@ -71,7 +71,7 @@ def watched_topology(plan: dict, original: dict):
 
 
 def initial_review(client) -> None:
-    """Refuse another Apply or unrelated pending work before desired editing.
+    """Require a clean applied baseline before the controlled interface edit.
 
     Args:
         client: Authenticated, CA-validated appliance UI client.
@@ -82,6 +82,10 @@ def initial_review(client) -> None:
         raise Refusal("bootstrap_apply_already_active")
     if any(unit.get("changed", True) and unit.get("id") not in protected for unit in review.get("units", [])):
         raise Refusal("bootstrap_unrelated_pending_units")
+    try:
+        clean_baseline(client)
+    except HandoffRefusal:
+        raise Refusal("bootstrap_requires_clean_applied_baseline") from None
 
 
 def sudo_read(session, command: str, password: str) -> bytes:
@@ -287,7 +291,7 @@ def setup(plan: dict, output: Path, password: str, *, execute: bool) -> dict:
             mutation_started = True
             edit(client, "eth0", changed, plan["mac"])
             task_terminal = False
-            job, status_path = submit(client)
+            job, status_path = submit(client, include_generated_dns=True)
             result.update(stage="apply_wait", job_id=job, status_path=status_path)
             publish(output / "apply-submitted.json", {"schema": 1, "job_id": job, "status_path": status_path})
             target = Client("https://" + baseline, plan["ca_path"], peer=peer, connect_ip=baseline)

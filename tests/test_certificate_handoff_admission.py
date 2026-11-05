@@ -5,11 +5,82 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "interop"))
 import certificate_handoff_native as handoff  # noqa: E402 - Local interop import after path setup.
+
+
+@pytest.mark.parametrize(("include_dns", "dns_changed", "other_changed", "refused"), [
+    (True, True, None, False),
+    (True, False, None, False),
+    (False, True, None, True),
+    (True, True, "ntpd", True),
+])
+def test_interface_handoff_reviews_generated_dns_without_absorbing_other_work(
+    include_dns, dns_changed, other_changed, refused,
+):
+    """Replay the disabled-DNS review shape observed on the native fixture.
+
+    Args:
+        include_dns: Consent from the controlled physical-interface transition.
+        dns_changed: Whether the editor changed generated records after admission.
+        other_changed: Independent pending component that must remain rejected.
+        refused: Whether the review must stop without submitting a task.
+    """
+    roots = {"network", "ca", "firewall", "appliance_settings", "public_services"}
+    posts = []
+
+    class Client:
+        def request(self, path):
+            """Expose only the existing interface page's public CSRF control.
+
+            Args:
+                path: Existing UI inventory path requested by the harness.
+            """
+            assert path == "/ui/management/physical-interfaces"
+            return 200, '<input name="csrf" value="test-csrf">'
+
+        def json(self, path, form=None):
+            """Model ordinary and selection-specific review plus one submission.
+
+            Args:
+                path: Reviewed UI path, including explicit selection roots.
+                form: Consent fields for the final protected Apply request.
+            """
+            if form is not None:
+                assert path == "/ui/management/appliance-apply"
+                posts.append(form)
+                return 202, {"job_id": "job_123456789abc", "status_url": "/tasks/job_123456789abc/status"}
+            selected = parse_qs(urlsplit(path).query).get("selected_units")
+            rows = [{"id": name, "changed": name == "network", "valid": True,
+                     "selected": selected is not None and name in selected} for name in sorted(roots)]
+            rows.append({"id": "dnsmasq", "changed": dns_changed, "valid": True,
+                         "selected": selected is not None and "dnsmasq" in selected})
+            if other_changed:
+                rows.append({"id": other_changed, "changed": True, "valid": True, "selected": False})
+            if selected is None:
+                return 200, {"units": rows, "active_task": None}
+            # The ordinary planner also replays unchanged routing/NAT dependencies.
+            rows.extend({"id": name, "changed": False, "valid": True,
+                         "selected": True, "required_dependency": True} for name in ("wan", "nat"))
+            return 200, {"units": rows, "requested_units": selected, "plan_token": "test-reviewed-plan"}
+
+    if refused:
+        with pytest.raises(handoff.Refusal, match="unrelated_pending_units"):
+            handoff.submit(Client(), include_generated_dns=include_dns)
+        assert posts == []
+        return
+    assert handoff.submit(Client(), include_generated_dns=include_dns) == (
+        "job_123456789abc", "/tasks/job_123456789abc/status",
+    )
+    assert len(posts) == 1
+    expected = roots | ({"dnsmasq"} if dns_changed else set())
+    assert set(posts[0]["requested_units"]) == expected
+    assert set(posts[0]["selected_units"]) == expected | {"wan", "nat"}
+    assert posts[0]["reviewed_plan"] == "test-reviewed-plan"
 
 
 def test_inspect_admits_before_credential_or_peer_connection(

@@ -284,6 +284,13 @@ terminal task and verifies the desired fields, TLS identity, `/openapi.json`, cl
 installed wheel/helper identity, and trusted-host topology. Use the addresses from the admitted plan when the lab
 uses a different approved baseline subnet; do not copy the example address into another lab.
 
+Bootstrap inspection and execution require a clean applied baseline before editing the interface. The controlled
+interface edit can also change Atlaso-owned DNS records while local DNS is disabled. In that case the trusted-host
+harness explicitly includes the changed **DNS/DHCP (dnsmasq)** unit in the same reviewed handoff; disabled DNS does
+not receive the server's automatic generated-record dependency. It saves no DNS forms and preserves the admitted
+DNS settings. Pre-existing DNS changes and unrelated pending components still stop admission. Address restoration
+uses the same reviewed scope and must leave no pending units.
+
 Using the verified in-memory `$entrypoint` and receipt-bound paths from the linked workflow:
 
 ```powershell
@@ -323,7 +330,8 @@ Any observed drift remains a failure even if the original topology is later rest
 Use the standard Atlaso [Network configuration](../operate/networking.md) pages and [Appliance
 Apply](../operate/appliance-apply.md) workflow for the admitted source. Match the reviewed native submission boundary:
 submit only units selected and validated by Apply review from the protected Network, CA, Firewall, Appliance Settings,
-and Public Services set. Do not include unrelated pending units. Do not use a local helper, direct database edit, ad
+and Public Services set, plus the generated DNS changes described above. Do not include unrelated pending units.
+Do not use a local helper, direct database edit, ad
 hoc API caller, or a script that bypasses that workflow. Keep the appliance on its recorded static management
 baseline while establishing the peer control path. Before changing it, record the host inventory, exact appliance
 and peer LAN membership, adapter bindings, addresses, peer reservation, CA, and trust pins.

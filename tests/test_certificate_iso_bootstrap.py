@@ -99,6 +99,20 @@ def test_bootstrap_refuses_active_apply_or_unrelated_pending_changes(review, rea
         bootstrap.initial_review(client)
 
 
+@pytest.mark.parametrize("unit", ["network", "ca", "dnsmasq"])
+def test_bootstrap_refuses_preexisting_changes_before_interface_edit(unit):
+    """Generated DNS consent cannot absorb work already pending before bootstrap.
+
+    Args:
+        unit: Existing pending component in the otherwise applied fixture.
+    """
+    review = {"units": [{"id": unit, "changed": True, "valid": True}],
+              "pending_count": 1, "initial_apply_required": False, "active_task": None}
+    client = SimpleNamespace(json=lambda _path: (200, review))
+    with pytest.raises(bootstrap.Refusal, match="bootstrap_unrelated_pending_units|requires_clean_applied_baseline"):
+        bootstrap.initial_review(client)
+
+
 def test_sudo_read_confines_password_to_stdin_and_discards_errors():
     import io
 
@@ -253,7 +267,7 @@ def test_unknown_bootstrap_apply_retains_original_and_forbids_automatic_retry(tm
             Args:
                 _path: Management API path requested by the client.
             """
-            return 200, {"units": []}
+            return 200, {"units": [], "pending_count": 0, "initial_apply_required": False}
 
         def interface(self, _name):
             """Return the synthetic interface settings and CSRF value.
@@ -280,12 +294,14 @@ def test_unknown_bootstrap_apply_retains_original_and_forbids_automatic_retry(tm
     calls = []
     monkeypatch.setattr(bootstrap, "edit", lambda *args: calls.append("edit"))
 
-    def submit(_client):
+    def submit(_client, *, include_generated_dns):
         """Simulate a connection loss after a possible Apply submission.
 
         Args:
             _client: Management client whose Apply request was submitted.
+            include_generated_dns: Explicit consent for the interface's generated record changes.
         """
+        assert include_generated_dns is True
         calls.append("submit")
         raise OSError("connection lost after possible submission")
 
@@ -348,7 +364,7 @@ def test_unknown_bootstrap_apply_retains_original_and_forbids_automatic_retry(tm
 
     monkeypatch.setattr(bootstrap, "watched_topology", failed_on_exit)
     monkeypatch.setattr(bootstrap, "edit", successful_edit)
-    monkeypatch.setattr(bootstrap, "submit", lambda _client: ("job-test", "/status/test"))
+    monkeypatch.setattr(bootstrap, "submit", lambda _client, **_kwargs: ("job-test", "/status/test"))
     monkeypatch.setattr(bootstrap, "wait_task", lambda *args: ({"status": "succeeded"}, None))
     monkeypatch.setattr(bootstrap, "clean_baseline", lambda _client: None)
     late = tmp_path / "late-topology-failure"
