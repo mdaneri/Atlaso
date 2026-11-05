@@ -22021,7 +22021,8 @@ function initializeVcfVaultCredentialPickers() {
       (vault?.entries || []).forEach((entry) => {
         const username = entry.username ? ` — ${entry.username}` : "";
         (entry.uris || []).filter((uri) => /^https?:\/\//i.test(uri)).forEach((endpoint) => {
-          const option = new Option(`${entry.key}${username} — ${endpoint}`, String(entry.id));
+          const option = new Option(`${entry.display_name || entry.key || "Unknown"}${username} — ${endpoint}`, String(entry.id));
+          option.title = String(entry.key || "");
           option.dataset.endpoint = endpoint;
           entrySelect.append(option);
           endpointCount += 1;
@@ -25462,6 +25463,16 @@ function initializeVaultsPage() {
               }),
             },
             {
+              label: "Copy key",
+              action: async (_menuEvent, rowComponent) => {
+                try {
+                  await copyTextToClipboard(String(rowComponent.getData().key || ""), "Key copied");
+                } catch {
+                  showTransientGridStatus("Copy failed");
+                }
+              },
+            },
+            {
               label: "Copy",
               action: (_menuEvent, rowComponent) => entryWizard.open({
                 context: { vaultId, row: rowComponent.getData(), copy: true, copyKey },
@@ -25486,12 +25497,15 @@ function initializeVaultsPage() {
         },
         columns: [
           {
-            title: "Key",
-            field: "key",
+            title: "Name",
+            field: "display_name",
             minWidth: 230,
-            formatter: (cell) => cell.getRow().getData().is_new
-              ? '<button class="add-row-button" type="button">+ Add password here</button>'
-              : `<code>${escapeHtml(cell.getValue())}</code>`,
+            headerFilter: "input",
+            formatter: (cell) => {
+              const row = cell.getRow().getData();
+              if (row.is_new) return '<button class="add-row-button" type="button">+ Add password here</button>';
+              return `<span title="${escapeHtml(row.key || "")}">${escapeHtml(cell.getValue() || row.key || "")}</span>`;
+            },
             cellClick: (_event, cell) => entryWizard.open({ context: { vaultId, row: cell.getRow().getData().is_new ? null : cell.getRow().getData() }, launcher: cell.getElement() }),
           },
           {
@@ -25606,7 +25620,8 @@ function initializeVcfVaultImport() {
       const copy = document.createElement("span");
       copy.className = "scope-choice-copy vcf-vault-candidate-copy";
       const key = document.createElement("code");
-      key.textContent = String(candidate.key || "");
+      key.textContent = String(candidate.display_name || candidate.key || "");
+      key.title = String(candidate.key || "");
       const keyLabel = document.createElement("strong");
       keyLabel.append(key);
       const credentialTypeLabel = candidate.secret_type === "vcf_password"

@@ -9,7 +9,11 @@ status: current
 # Vaults
 
 Open **VCF Workflows > Vaults** to manage encrypted VCF and ESX passwords. Each named vault appears as a tab containing
-a table with **Key**, **Service**, **Description**, **Username**, **URI(s)**, and **Password** columns. Service labels
+a table with **Name**, **Service**, **Description**, **Username**, **URI(s)**, and **Password** columns. Imported names
+such as `operations.ops01.admin` are generated from service, endpoint, and account metadata; manual entries show their
+chosen key. Names are for browsing and can coincide when endpoints share a short hostname. Check the full URI and
+account to distinguish them. The stable key remains unchanged: use **Copy key** in the row menu for scripts, or view
+it in the entry wizard. Changing a service label or URI updates the displayed name without renaming the key. Service labels
 identify the account's product component from source metadata. Known historical imports receive labels from their saved
 metadata without decrypting or reimporting passwords; ambiguous or unrecognized entries show **Unknown**. Use the entry
 wizard's **Edit** action to correct a label. Multiple URIs are displayed on separate lines. Passwords are masked by
@@ -20,7 +24,8 @@ Vault keys use lowercase dotted segments, for example `vcf.sddc_manager.admin` o
 with the appliance secrets key before database storage. Keep `ATLASO_SECRETS_KEY` with the appliance recovery material.
 Each entry may also store up to nine credential-free HTTP, HTTPS, SSH, or SFTP URIs. Add them on the third page of the
 entry wizard. Right-click an existing row, or focus it and press **Shift+F10**, to open its context menu. **Edit**
-reopens the entry wizard, **Copy** creates a new entry without loading the encrypted value into the page, **Open**
+reopens the entry wizard, **Copy key** copies the exact stable key, **Copy** creates a new entry without loading the
+encrypted value into the page, **Open**
 contains a submenu with every configured URI, and **Remove** uses the shared destructive confirmation. HTTP and HTTPS
 open in a separate browser tab; SSH and SFTP open the Atlaso Web Terminal and authenticate with the entry username and
 password. Atlaso opens the remote terminal window only after the administrator accepts the displayed host-key
@@ -104,7 +109,7 @@ Duplicate or incomplete page results stop discovery. If a listed SDDC Manager pa
 retrieves that supported credential by ID with `GET /v1/credentials/{id}`. For VCF Installer, discovery reads password
 fields from its latest available SDDC specification only. Unsupported, unavailable, masked, or permission-limited
 candidates are summarized by skipped count and reason; vendor error messages and password values are not shown.
-The selection list shows each account and credential type alongside its key, resource, and discovered URIs so multiple
+The selection list shows a readable name, account and credential type alongside its resource and discovered URIs so multiple
 accounts on one appliance can be distinguished. The **Passwords to import** group contains native checkbox choices;
 each complete choice is clickable, and keyboard focus and checked state remain visible.
 
@@ -153,7 +158,9 @@ and [Get Credential API](https://developer.broadcom.com/xapis/vmware-cloud-found
 
 ## VCF Helper autofill
 
-VCF Helper remote-connection wizards start with an administrator-only **Vault** and **Key** choice. Selecting a key
+VCF Helper remote-connection wizards start with an administrator-only **Vault** and **Key** choice. Imported choices show
+readable names with account and full URI details; their stable key remains available in the Vaults entry wizard.
+Selecting a key
 fills and locks the server address from the chosen HTTP or HTTPS URI, fills its username, and skips the manual API-login
 page. The picker hides keys without an HTTP or HTTPS URI and creates one choice per valid URI when a key has several.
 A vault with no usable keys shows **No HTTP/HTTPS credentials available** and leaves manual entry active. The password

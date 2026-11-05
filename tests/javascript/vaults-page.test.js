@@ -111,9 +111,11 @@ function makeRuntime() {
   table.dataset.vaultId = "4";
   const source = new FakeElement();
   source.textContent = JSON.stringify([
-    { id: 9, key: "vcf.operations.admin", service_type: "operations", service_type_label: "Operations", username: "admin", description: "Historical entry", uris: [], has_value: true },
+    { id: 9, key: "vcf.operations.admin", display_name: "Operations · vc01 · admin", service_type: "operations", service_type_label: "Operations", username: "admin", description: "Historical entry", uris: [], has_value: true },
   ]);
   const gridConfigs = [];
+  const copiedText = [];
+  const statuses = [];
   let wizardOptions;
   const wizard = { open() {} };
   const context = vm.createContext({
@@ -137,10 +139,12 @@ function makeRuntime() {
     HTMLInputElement: FakeInput,
     HTMLButtonElement: FakeButton,
     managementUiPath: (path) => path,
+    copyTextToClipboard: async (value, message) => { copiedText.push({ value, message }); },
+    showTransientGridStatus: (message) => statuses.push(message),
     escapeHtml: (value) => String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]),
   });
   vm.runInContext(`${functionSource("initializeVaultsPage")}; initializeVaultsPage();`, context);
-  return { form, gridConfig: gridConfigs[0], wizardOptions };
+  return { form, gridConfig: gridConfigs[0], wizardOptions, copiedText, statuses };
 }
 
 class FakeImportForm extends FakeForm {
@@ -193,16 +197,42 @@ function makeImportRuntime(payload) {
   return { form, wizardOptions };
 }
 
-test("Vaults grid exposes a safe sortable and filterable service column and readable fallback", () => {
+test("Vaults grid displays readable names with escaped stable-key tooltips and fallback", () => {
   const { gridConfig } = makeRuntime();
+  const nameColumn = gridConfig.options.columns.find((column) => column.field === "display_name");
+  assert.ok(nameColumn);
+  assert.equal(nameColumn.title, "Name");
+  assert.equal(nameColumn.headerFilter, "input");
+  const renderedName = nameColumn.formatter({
+    getRow: () => ({ getData: () => ({ key: 'vcf.<script>"admin"' }) }),
+    getValue: () => "Readable <name>",
+  });
+  assert.equal(renderedName, '<span title="vcf.&lt;script&gt;&quot;admin&quot;">Readable &lt;name&gt;</span>');
+  assert.equal(nameColumn.formatter({ getRow: () => ({ getData: () => ({ key: "vcf.fallback" }) }), getValue: () => "" }), '<span title="vcf.fallback">vcf.fallback</span>');
   const serviceColumn = gridConfig.options.columns.find((column) => column.field === "service_type_label");
   assert.ok(serviceColumn);
   assert.equal(serviceColumn.title, "Service");
   assert.equal(serviceColumn.headerFilter, "input");
   assert.equal(serviceColumn.formatter({ getRow: () => ({ getData: () => ({}) }), getValue: () => "Operations <script>" }), "Operations &lt;script&gt;");
-  assert.match(vaultTemplate, /<th>Key<\/th><th>Service<\/th>/);
+  assert.match(vaultTemplate, /<th>Name<\/th><th>Service<\/th>/);
+  assert.match(vaultTemplate, /title="\{\{ entry\.key \}\}"/);
+  assert.match(vaultTemplate, /entry\.display_name or entry\.key/);
   assert.match(vaultTemplate, /entry\.service_type_label or "Unknown"/);
   assert.match(vaultTemplate, /<td colspan="4">No passwords are stored/);
+  assert.match(vaultTemplate, /stable key is used by scripts and Kickstarts/);
+});
+
+test("Vault row Copy key action copies the stable key and keeps duplicate Copy", async () => {
+  const { gridConfig, copiedText, statuses } = makeRuntime();
+  const row = { id: 9, key: "vcf.operations.admin", display_name: "Operations · vc01 · admin", uris: [] };
+  const component = { getData: () => row, getElement: () => new FakeElement() };
+  const actions = gridConfig.options.rowContextMenu(null, component);
+  const copyKey = actions.find((action) => action.label === "Copy key");
+  assert.ok(copyKey);
+  assert.ok(actions.some((action) => action.label === "Copy"));
+  await copyKey.action(null, component);
+  assert.deepEqual(copiedText, [{ value: "vcf.operations.admin", message: "Key copied" }]);
+  assert.deepEqual(statuses, []);
 });
 
 test("Vault entry wizard defaults to Unknown and preserves service through Edit, Copy, and Review", () => {
@@ -225,12 +255,15 @@ test("VCF import candidate account details include the service label as text", a
   const { form, wizardOptions } = makeImportRuntime({
     discovery: { scope: "Fixture source" },
     candidates: [
-      { candidate_id: "candidate-1", key: "vcf.operations.admin", service_type: "operations", service_type_label: "Operations", secret_type: "vcf_password", username: "admin", uris: [] },
+      { candidate_id: "candidate-1", key: "vcf.operations.admin", display_name: "operations.ops01.admin", service_type: "operations", service_type_label: "Operations", secret_type: "vcf_password", username: "admin", uris: [] },
       { candidate_id: "candidate-2", key: "vcf.unknown.admin", secret_type: "other", username: "operator", uris: [] },
     ],
   });
   await wizardOptions.onNext({ controller: { setError() {} }, step: { id: "credentials" } });
   const accountDescription = form.candidates.children[0].children[1].children[1];
+  const name = form.candidates.children[0].children[1].children[0].children[0];
+  assert.equal(name.textContent, "operations.ops01.admin");
+  assert.equal(name.title, "vcf.operations.admin");
   assert.equal(accountDescription.textContent, "Operations · VCF password · admin");
   assert.equal(form.candidates.children[1].children[1].children[1].textContent, "Unknown · Other credential · operator");
 });

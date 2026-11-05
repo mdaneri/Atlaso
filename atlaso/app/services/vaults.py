@@ -17,6 +17,7 @@ from atlaso.app.secrets import decrypt_secret, encrypt_secret
 from atlaso.app.services.vault_service_types import (
     VAULT_SERVICE_TYPE_LABELS,
     normalize_vault_service_type,
+    vault_entry_display_name,
 )
 
 VAULT_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*$")
@@ -491,9 +492,14 @@ def vault_entry_metadata(entry: VaultEntry) -> dict[str, object]:
     Args:
         entry: Entry consumed by vault entry metadata.
     """
+    uris = vault_entry_uris(entry)
+    display_name = vault_entry_display_name(
+        key=entry.key, service_type=entry.service_type or "unknown", username=entry.username, uris=uris,
+    ) if entry.source_type in {"sddc_manager", "vcf_installer"} else entry.key
     return {
         "id": entry.id,
         "key": entry.key,
+        "display_name": display_name,
         "description": entry.description,
         "secret_type": entry.secret_type,
         "secret_type_label": "VCF password" if entry.secret_type == "vcf_password" else "ESX password",
@@ -503,7 +509,7 @@ def vault_entry_metadata(entry: VaultEntry) -> dict[str, object]:
         "resource_name": entry.resource_name,
         "source_type": entry.source_type,
         "source_endpoint": entry.source_endpoint,
-        "uris": list(vault_entry_uris(entry)),
+        "uris": list(uris),
         "has_value": bool(entry.encrypted_value),
         "updated_at": entry.updated_at.isoformat() if entry.updated_at else "",
     }

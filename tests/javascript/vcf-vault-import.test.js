@@ -53,6 +53,8 @@ class FakeElement {
   addEventListener(name, callback) {
     this.listeners.set(name, callback);
   }
+
+  dispatchEvent() { return true; }
 }
 
 class FakeDialog extends FakeElement {}
@@ -179,6 +181,89 @@ function makeRuntime(responses) {
   context.initializeImport();
   return { context, form, requests, getWizardOptions: () => wizardOptions };
 }
+
+class CredentialOption extends FakeElement {
+  constructor(label, value) {
+    super();
+    this.textContent = label;
+    this.value = value;
+  }
+}
+
+class CredentialSelect extends FakeElement {
+  constructor(value = "") {
+    super();
+    this.value = value;
+    this.disabled = false;
+  }
+
+  get selectedOptions() {
+    return [this.children.find((option) => option.value === this.value) || this.children[0] || new CredentialOption("", "")];
+  }
+}
+
+class CredentialForm extends FakeElement {
+  constructor() {
+    super();
+    this.elements = {
+      address: new FakeInput(), username: new FakeInput(), password: new FakeInput(), port: new FakeInput(),
+    };
+    this.elements.namedItem = (name) => this.elements[name] || null;
+  }
+}
+
+function makeCredentialPickerRuntime() {
+  const data = new FakeElement();
+  data.textContent = JSON.stringify([{
+    id: 7,
+    name: "Primary",
+    entries: [{
+      id: 42, key: "vcf.operations.admin", display_name: "Operations · vc01.lab.example · admin",
+      username: "admin", uris: ["https://vc01.lab.example"],
+    }],
+  }]);
+  const form = new CredentialForm();
+  const vaultSelect = new CredentialSelect("7");
+  const entrySelect = new CredentialSelect();
+  const status = new FakeElement();
+  const picker = new FakeElement();
+  picker.dataset = { addressField: "address", usernameField: "username", passwordField: "password", portField: "port", addressMode: "server" };
+  picker.closest = () => form;
+  picker.querySelector = (selector) => ({
+    "[data-vcf-credential-vault]": vaultSelect,
+    "[data-vcf-credential-entry]": entrySelect,
+    "[data-vcf-credential-status]": status,
+  })[selector] || null;
+  const context = vm.createContext({
+    document: { getElementById: () => data, querySelectorAll: () => [picker] },
+    window: { setTimeout() {} },
+    HTMLElement: FakeElement,
+    HTMLFormElement: CredentialForm,
+    HTMLInputElement: FakeInput,
+    HTMLSelectElement: CredentialSelect,
+    Option: CredentialOption,
+    URL,
+    Event: class Event {},
+  });
+  vm.runInContext(`${functionSource("initializeVcfVaultCredentialPickers")}; initializeVcfVaultCredentialPickers();`, context);
+  return { form, entrySelect, status };
+}
+
+test("saved credential picker shows the readable name but preserves key and entry identity", () => {
+  const { form, entrySelect, status } = makeCredentialPickerRuntime();
+  const option = entrySelect.children.find((child) => child.value === "42");
+
+  assert.ok(option);
+  assert.equal(option.textContent, "Operations · vc01.lab.example · admin — admin — https://vc01.lab.example");
+  assert.equal(option.title, "vcf.operations.admin");
+  assert.equal(option.dataset.endpoint, "https://vc01.lab.example");
+  entrySelect.value = "42";
+  entrySelect.listeners.get("change")();
+  assert.equal(entrySelect.value, "42");
+  assert.equal(form.elements.address.value, "vc01.lab.example");
+  assert.equal(form.elements.username.value, "admin");
+  assert.match(status.textContent, /Using Primary \/ vcf\.operations\.admin\./);
+});
 
 function discoveredPayload(candidates) {
   return {

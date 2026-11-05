@@ -14,6 +14,7 @@ import httpx
 
 from atlaso.app.services.vault_service_types import (
     VAULT_SERVICE_TYPE_LABELS,
+    vault_entry_display_name,
     vault_service_from_deployment_path,
     vault_service_from_resource,
 )
@@ -64,6 +65,11 @@ class VcfPasswordCandidate:
         metadata = {
             "candidate_id": self.candidate_id,
             "key": self.key,
+            "display_name": vault_entry_display_name(
+                key=redact_secret_values(self.key, [self.value]), service_type=self.service_type,
+                username=redact_secret_values(self.username, [self.value]),
+                uris=tuple(redact_secret_values(uri, [self.value]) for uri in self.uris),
+            ),
             "description": self.description,
             "secret_type": self.secret_type,
             "service_type": self.service_type,

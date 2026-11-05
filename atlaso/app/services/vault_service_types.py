@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from ipaddress import ip_address
+from urllib.parse import urlsplit
 
 VAULT_SERVICE_TYPE_LABELS: dict[str, str] = {
     "unknown": "Unknown",
@@ -100,3 +102,39 @@ def legacy_vault_service_type(*, source_type: str, secret_type: str, description
                 path = description.removeprefix(prefix).split(";", 1)[0].removesuffix(".")
                 return vault_service_from_deployment_path(tuple(path.split(".")))
     return "unknown"
+
+
+def vault_entry_display_name(*, key: str, service_type: str, username: str, uris: tuple[str, ...]) -> str:
+    """Build an imported entry's readable name without changing its stable key.
+
+    Args:
+        key: Exact stable key retained for scripts and credential matching.
+        service_type: Explicit service metadata, never inferred from a hostname.
+        username: Non-secret account name.
+        uris: Credential-free endpoint associations in operator-defined order.
+    """
+    host = ""
+    for uri in uris:
+        try:
+            endpoint = urlsplit(uri)
+            if endpoint.scheme not in {"http", "https", "ssh", "sftp"} or endpoint.username or endpoint.password:
+                continue
+            candidate_host = endpoint.hostname or ""
+        except ValueError:
+            continue
+        if candidate_host:
+            try:
+                host = str(ip_address(candidate_host))
+            except ValueError:
+                host = candidate_host.rstrip(".").split(".", 1)[0]
+            break
+    # Display names are deliberately not identifiers: two domains may share a
+    # short hostname. Full URIs, account details and the stable key remain available.
+    def segment(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")[:48]
+
+    host_label, account_label = segment(host), segment(username)
+    if not host_label and not account_label:
+        return key
+    service = service_type if service_type in VAULT_SERVICE_TYPE_LABELS else "unknown"
+    return ".".join(part for part in (service, host_label, account_label) if part)
