@@ -25435,7 +25435,7 @@ function initializeVaultsPage() {
         layout: "fitColumns",
         height: "100%",
         placeholder: "No passwords are stored in this vault.",
-        rowFormatter: (row) => markNewRecordRow(row, "key"),
+        rowFormatter: (row) => markNewRecordRow(row, "display_name"),
         rowContextMenu: (_event, component) => {
           const row = component.getData();
           if (row.is_new) return [];

@@ -116,6 +116,7 @@ function makeRuntime() {
   const gridConfigs = [];
   const copiedText = [];
   const statuses = [];
+  const newRecordFields = [];
   let wizardOptions;
   const wizard = { open() {} };
   const context = vm.createContext({
@@ -141,10 +142,11 @@ function makeRuntime() {
     managementUiPath: (path) => path,
     copyTextToClipboard: async (value, message) => { copiedText.push({ value, message }); },
     showTransientGridStatus: (message) => statuses.push(message),
+    markNewRecordRow: (_row, field) => newRecordFields.push(field),
     escapeHtml: (value) => String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]),
   });
   vm.runInContext(`${functionSource("initializeVaultsPage")}; initializeVaultsPage();`, context);
-  return { form, gridConfig: gridConfigs[0], wizardOptions, copiedText, statuses };
+  return { form, gridConfig: gridConfigs[0], wizardOptions, copiedText, statuses, newRecordFields };
 }
 
 class FakeImportForm extends FakeForm {
@@ -233,6 +235,15 @@ test("Vault row Copy key action copies the stable key and keeps duplicate Copy",
   await copyKey.action(null, component);
   assert.deepEqual(copiedText, [{ value: "vcf.operations.admin", message: "Key copied" }]);
   assert.deepEqual(statuses, []);
+});
+
+test("Vault add row keeps the Name cell visible under shared pending-row styles", () => {
+  const { gridConfig, newRecordFields } = makeRuntime();
+  const row = { getData: () => ({ is_new: true, key: "" }) };
+  const nameColumn = gridConfig.options.columns.find((column) => column.title === "Name");
+  gridConfig.options.rowFormatter(row);
+  assert.deepEqual(newRecordFields, [nameColumn.field]);
+  assert.match(nameColumn.formatter({ getRow: () => row }), /\+ Add password here/);
 });
 
 test("Vault entry wizard defaults to Unknown and preserves service through Edit, Copy, and Review", () => {
