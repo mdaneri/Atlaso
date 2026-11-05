@@ -3,15 +3,93 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
+from datetime import UTC, datetime, timedelta
+from ipaddress import IPv4Address
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+
+from atlaso.app.ui_routes import is_protocol_path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "interop"))
 import certificate_handoff_native as handoff  # noqa: E402 - Local interop import after path setup.
+
+
+@pytest.mark.parametrize("case", ["excluded", "covered", "wrong_ca"])
+def test_public_leaf_download_uses_protocol_route_and_real_chain_ip_checks(tmp_path, case):
+    """Exercise protocol ownership and actual OpenSSL verification using public fixtures.
+
+    Args:
+        tmp_path: Owned directory containing public certificates only.
+        case: Expected uncovered address, covered address, or wrong trust anchor.
+    """
+    openssl = shutil.which("openssl")
+    packaged = Path("C:/Program Files/Git/usr/bin/openssl.exe")
+    if openssl is None and packaged.is_file():
+        openssl = str(packaged)
+    if openssl is None:
+        pytest.skip("OpenSSL is required for real public-certificate validation")
+    now = datetime.now(UTC)
+    root_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Fixture CA")])
+    root_key = ec.generate_private_key(ec.SECP256R1())
+
+    def root_certificate(key):
+        """Return a short-lived public CA while its fixture key stays in memory.
+
+        Args:
+            key: In-memory test signing key, never serialized.
+        """
+        return (x509.CertificateBuilder().subject_name(root_name).issuer_name(root_name)
+                .public_key(key.public_key()).serial_number(x509.random_serial_number())
+                .not_valid_before(now - timedelta(minutes=1)).not_valid_after(now + timedelta(hours=1))
+                .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+                .sign(key, hashes.SHA256()))
+
+    root = root_certificate(root_key)
+    leaf = (x509.CertificateBuilder()
+            .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "certificate-lab.test")]))
+            .issuer_name(root_name).public_key(ec.generate_private_key(ec.SECP256R1()).public_key())
+            .serial_number(x509.random_serial_number()).not_valid_before(now - timedelta(minutes=1))
+            .not_valid_after(now + timedelta(hours=1))
+            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
+            .add_extension(x509.SubjectAlternativeName([x509.IPAddress(IPv4Address("192.0.2.30"))]), critical=False)
+            .sign(root_key, hashes.SHA256()))
+    ca = tmp_path / "public-ca.pem"
+    if case == "wrong_ca":
+        root = root_certificate(ec.generate_private_key(ec.SECP256R1()))
+    ca.write_bytes(root.public_bytes(serialization.Encoding.PEM))
+    pem = leaf.public_bytes(serialization.Encoding.PEM).decode("ascii")
+    paths = []
+
+    def download(path):
+        """Enforce the application's real protocol-plane ownership rule.
+
+        Args:
+            path: Authenticated public-leaf download request.
+        """
+        assert is_protocol_path(path)
+        assert not path.startswith("/ui/")
+        paths.append(path)
+        return 200, pem
+
+    address = "192.0.2.30" if case == "covered" else "192.0.2.10"
+    arguments = (SimpleNamespace(request=download), 7, address, str(ca), tmp_path / "public-leaf.pem", openssl)
+    if case == "excluded":
+        assert handoff.public_certificate_excludes(*arguments) == leaf.fingerprint(hashes.SHA256()).hex()
+    else:
+        reason = "desired_certificate_chain_invalid" if case == "wrong_ca" else "desired_certificate_covers_negative_address"
+        with pytest.raises(handoff.Refusal, match=reason):
+            handoff.public_certificate_excludes(*arguments)
+    assert paths == ["/certificate-authority/certificates/7/downloads/certificate.pem"]
 
 
 @pytest.mark.parametrize("during_login", [False, True])

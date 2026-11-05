@@ -421,7 +421,7 @@ def public_certificate_excludes(client, certificate_id, address, ca, destination
         ca: Trusted CA certificate used for TLS verification.
         destination: Destination endpoint of the transport.
         openssl: OpenSSL executable for certificate verification."""
-    _, pem = client.request(f"/ui/management/certificate-authority/certificates/{certificate_id}/downloads/certificate.pem")
+    _, pem = client.request(f"/certificate-authority/certificates/{certificate_id}/downloads/certificate.pem")
     if "PRIVATE KEY" in pem or not pem.startswith("-----BEGIN CERTIFICATE-----"):
         raise Refusal("unexpected_public_certificate_response")
     with destination.open("x", encoding="utf-8") as stream:

@@ -386,6 +386,11 @@ before submitting Apply, verify again that the enabled appliance:https inventory
 captured at admission. Validate its public chain with the admitted CA and confirm that it does not cover the expected
 acquired address. The trusted host keeps the LAN inventory stable and rechecks the peer reservation throughout.
 
+Download the desired public leaf from the certificate's authenticated `certificate.pem` protocol download endpoint.
+This download remains outside `/ui/management`;
+the certificate inventory page stays under the management UI. Export no private key. Verify the downloaded public
+certificate's actual chain and IP coverage with OpenSSL before accepting the negative-case prerequisite.
+
 On **Physical Interfaces**, request DHCP for the selected management interface. Review pending changes and submit the
 protected **Network** Apply bundle with **Submit appliance changes**, including every dependency selected by review.
 The expected outcome is rejection at the certificate prerequisite after the acquired address is known, with
