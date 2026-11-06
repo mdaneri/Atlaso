@@ -225,7 +225,11 @@ def test_native_reader_parses_tab_delimited_metadata_with_spaces(monkeypatch, tm
 
 
 def _guest_tools_payload(root: Path) -> dict[str, str]:
-    """Create the exact public closure layout accepted by payload_inventory."""
+    """Create the exact public closure layout accepted by payload_inventory.
+
+    Args:
+        root: Absent companion directory receiving all three provider closures.
+    """
     root.mkdir(parents=True)
     inventory = {}
     for profile, package in guest_tools.PROFILES.items():
@@ -240,7 +244,12 @@ def _guest_tools_payload(root: Path) -> dict[str, str]:
 
 
 def _inspect_fixture(tmp_path: Path, *, modern_source: bool = True) -> tuple[Path, Path, Path]:
-    """Prepare one tiny source tree and captured top-level RPM for drift inspection."""
+    """Prepare one tiny source tree and captured top-level RPM for drift inspection.
+
+    Args:
+        tmp_path: Isolated directory owning the synthetic source and capture.
+        modern_source: Whether the source declares retained guest-tools support.
+    """
     source = tmp_path / "source"
     if modern_source:
         marker = source / "scripts/installation/guest_tools.py"
@@ -256,7 +265,12 @@ def _inspect_fixture(tmp_path: Path, *, modern_source: bool = True) -> tuple[Pat
 
 
 def _stub_capture_metadata(monkeypatch: pytest.MonkeyPatch, package: Path) -> None:
-    """Provide one matching Photon record while leaving payload validation real."""
+    """Provide one matching Photon record while leaving payload validation real.
+
+    Args:
+        monkeypatch: Replace repository and native metadata queries.
+        package: Captured top-level RPM whose identity the metadata must match.
+    """
     sha256 = hashlib.sha256(package.read_bytes()).hexdigest()
     monkeypatch.setattr(refresh_drift, "package_selection", lambda _source: ["python3"])
     monkeypatch.setattr(
@@ -274,7 +288,12 @@ def _stub_capture_metadata(monkeypatch: pytest.MonkeyPatch, package: Path) -> No
 def test_inspect_capture_validates_real_guest_tools_inventory_before_native_rpm_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Validate canonical companion bytes while keeping drift inspection non-authenticating."""
+    """Validate canonical companion bytes while keeping drift inspection non-authenticating.
+
+    Args:
+        tmp_path: Isolated directory owning the source and retained payload fixtures.
+        monkeypatch: Replace metadata reads while retaining real payload validation.
+    """
     source, rpms, package = _inspect_fixture(tmp_path)
     expected = _guest_tools_payload(rpms / "guest-tools")
     _stub_capture_metadata(monkeypatch, package)
@@ -294,7 +313,13 @@ def test_inspect_capture_validates_real_guest_tools_inventory_before_native_rpm_
 def test_inspect_capture_rejects_invalid_guest_tools_before_official_or_native_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str,
 ) -> None:
-    """Refuse malformed retained closures before consulting package metadata or RPM tools."""
+    """Refuse malformed retained closures before consulting package metadata or RPM tools.
+
+    Args:
+        tmp_path: Isolated directory owning the source and malformed capture.
+        monkeypatch: Replace metadata reads with boundaries that must stay unused.
+        defect: Independent payload layout or checksum violation to introduce.
+    """
     source, rpms, _package = _inspect_fixture(tmp_path)
     payload = rpms / "guest-tools"
     _guest_tools_payload(payload)
@@ -310,6 +335,12 @@ def test_inspect_capture_rejects_invalid_guest_tools_before_official_or_native_m
     calls = []
 
     def should_not_read_metadata(*_args, **_kwargs):
+        """Fail if malformed companion admission reaches external metadata.
+
+        Args:
+            *_args: Positional metadata-query arguments that must remain unused.
+            **_kwargs: Keyword metadata-query arguments that must remain unused.
+        """
         calls.append("metadata-or-rpm")
         raise AssertionError("guest-tools admission ran after native metadata")
 
@@ -325,7 +356,12 @@ def test_inspect_capture_rejects_invalid_guest_tools_before_official_or_native_m
 
 @pytest.mark.skipif(os.name != "nt", reason="Reparse admission requires Windows filesystem semantics")
 def test_inspect_capture_rejects_reparse_guest_tools_before_metadata(tmp_path, monkeypatch):
-    """Refuse a directory-link substitution before any metadata or native RPM read."""
+    """Refuse a directory-link substitution before any metadata or native RPM read.
+
+    Args:
+        tmp_path: Isolated directory owning the source and linked capture.
+        monkeypatch: Replace metadata reads with boundaries that must stay unused.
+    """
     source, rpms, _package = _inspect_fixture(tmp_path)
     target = tmp_path / "payload-target"
     _guest_tools_payload(target)
@@ -335,6 +371,12 @@ def test_inspect_capture_rejects_reparse_guest_tools_before_metadata(tmp_path, m
         pytest.skip(f"directory symlink creation unavailable: {type(error).__name__}")
 
     def should_not_read_metadata(*_args, **_kwargs):
+        """Fail if linked companion admission reaches external metadata.
+
+        Args:
+            *_args: Positional metadata-query arguments that must remain unused.
+            **_kwargs: Keyword metadata-query arguments that must remain unused.
+        """
         raise AssertionError("guest-tools reparse admission ran after native metadata")
 
     monkeypatch.setattr(refresh_drift, "package_selection", lambda _source: ["python3"])
@@ -347,7 +389,12 @@ def test_inspect_capture_rejects_reparse_guest_tools_before_metadata(tmp_path, m
 def test_inspect_capture_requires_new_payload_but_keeps_legacy_source_optional(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Require the companion for current source while allowing old source captures without it."""
+    """Require the companion for current source while allowing old source captures without it.
+
+    Args:
+        tmp_path: Isolated directory owning modern and legacy capture fixtures.
+        monkeypatch: Replace metadata reads while retaining payload-contract selection.
+    """
     source, rpms, package = _inspect_fixture(tmp_path)
     _stub_capture_metadata(monkeypatch, package)
 
