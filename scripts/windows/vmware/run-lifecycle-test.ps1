@@ -3120,6 +3120,7 @@ function Write-CertificateLabReceipt {
     if (-not $singleApplianceFixture -or $Name -notmatch '^[a-z][a-z0-9-]*\.json$') {
         throw 'Certificate evidence publication was requested outside its supported mode.'
     }
+    if ($NtpColdStartOnly) { $Value['observed_utc'] = [DateTime]::UtcNow.ToString('o') }
     $evidenceRoot = if ($NtpColdStartOnly) { Join-Path $durableOwnershipRoot "$LabName-ntp-native" }
         else { Join-Path $repoRoot "test-results/certificate-native-evidence/$LabName" }
     [IO.Directory]::CreateDirectory($evidenceRoot) | Out-Null

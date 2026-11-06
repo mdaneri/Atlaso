@@ -151,10 +151,17 @@ def admit_plan(plan: dict) -> dict:
         raise Refusal("ntp_fixture_address_plan_invalid")
     reviewed_source(plan)
     fixture = bound_json(plan["peer_fixture"])
+    host = plan["trusted_host"]
     if (fixture.get("kind") != "ntp-cold-start-peer-fixture" or fixture.get("schema") != 1
             or any(fixture.get(key) != plan[key] for key in ("task_id", "repository", "pr", "source_commit"))
             or fixture.get("appliance_ownership_sha256") != plan["appliance_ownership"]["sha256"]
-            or fixture.get("peer_ownership_sha256") != plan["peer_ownership"]["sha256"]):
+            or fixture.get("peer_ownership_sha256") != plan["peer_ownership"]["sha256"]
+            or fixture.get("appliance_vmx") != host.get("appliance_vmx")
+            or fixture.get("peer_vmx") != host.get("peer_vmx")
+            or fixture.get("private_network") != "lan:" + host["segment_name"]
+            or fixture.get("lan_segment_id") != host["segment_id"]
+            or fixture.get("lan_segment_receipt") != host["segment_receipt"]["path"]
+            or fixture.get("lan_segment_receipt_sha256") != host["segment_receipt"]["sha256"]):
         raise Refusal("ntp_fixture_original_binding_invalid")
     peer_identity = bound_json(plan["peer_identity"])
     transport = plan["peer_transport"]
@@ -472,15 +479,19 @@ print(json.dumps(result))
         channel.close()
 
 
-def run(plan: dict, output: Path, password: str) -> dict:
+def run(plan: dict, output: Path, password: str, *, appliance_password: str | None = None) -> dict:
     """Verify cold Apply, packet isolation and a failed-candidate rollback once.
 
     Args:
         plan: New NTP-only originally receipted plan.
         output: Existing task-owned result namespace, with no previous NTP attempt.
         password: Administrator credential confined to authenticated channels.
+        appliance_password: Separate root SSH credential when root is selected.
     """
     admit_plan(plan)
+    ssh_password = appliance_password if plan["appliance_user"] == "root" else password
+    if not isinstance(ssh_password, str) or not ssh_password or len(ssh_password) > 4096:
+        raise Refusal("ntp_fixture_protected_ssh_credential_missing")
     ownership = bound_json(plan["appliance_ownership"])
     if output.resolve() != Path(ownership["lab_root"]).resolve():
         raise Refusal("ntp_fixture_output_original_ownership_mismatch")
@@ -491,6 +502,7 @@ def run(plan: dict, output: Path, password: str) -> dict:
     publish(output / "ntp-native-started.json", result)
     try:
         with watched_topology(plan) as (topology, check):
+            result["topology"] = topology
             p = plan["peer_transport"]
             with PinnedPeerTransport(p["host"], p["user"], p["ssh_public_key"], p["ssh_host_key"], p["private_subnet"]) as peer:
                 peer.topology_guard = check
@@ -498,13 +510,13 @@ def run(plan: dict, output: Path, password: str) -> dict:
                 addresses = [plan["current_address"], plan["baseline_address"], plan["static_candidate_address"]]
                 verify_peer_tunnel_scope(peer, addresses)
                 result["peer_time"] = verify_peer_time(peer, plan["peer_address"], addresses)
-                with PinnedApplianceSession(peer, plan["current_address"], plan["appliance_user"], password,
+                with PinnedApplianceSession(peer, plan["current_address"], plan["appliance_user"], ssh_password,
                                             plan["appliance_ssh_host_key"]) as session:
-                    result["payload"] = payload_identity(session, plan, password)
+                    result["payload"] = payload_identity(session, plan, ssh_password)
                     ca = session.command("cat /etc/atlaso/ca/root.crt")
                     if hashlib.sha256(ca).hexdigest() != plan["ca_sha256"]:
                         raise Refusal("ntp_fixture_original_ca_changed")
-                    initial = json.loads(sudo_read(session, "/opt/atlaso/bin/atlaso-helper ntpd status --real", password))
+                    initial = json.loads(sudo_read(session, "/opt/atlaso/bin/atlaso-helper ntpd status --real", ssh_password))
                     initial_controllers = initial.get("daemon_conflicts", {})
                     if (initial.get("mode") != "unmanaged" or initial.get("selected_controller", {}).get("active") is True
                             or set(initial_controllers) != {"ntpd", "chronyd", "systemd_timesyncd", "vmware_tools"}
@@ -513,7 +525,7 @@ def run(plan: dict, output: Path, password: str) -> dict:
                         raise Refusal("ntp_fixture_cold_state_not_proven")
                     result["cold_initial_state"] = {"mode": "unmanaged", "clock_controllers_inactive": True}
                     probe = Path(__file__).with_name("certificate_source_probe.py").read_text(encoding="utf-8")
-                    routing = json.loads(sudo_read(session, guest_python_command(probe), password))
+                    routing = json.loads(sudo_read(session, guest_python_command(probe), ssh_password))
                     if routing.get("state") != "proven-absent":
                         raise Refusal("ntp_fixture_routing_intent_present")
                     client = Client("https://" + tls_name(peer, plan["current_address"], plan["ca_path"]), plan["ca_path"],
@@ -523,43 +535,43 @@ def run(plan: dict, output: Path, password: str) -> dict:
                     result["stage"] = "first_run_desired_state"
                     original = prepare_baseline(client, plan)
                     result["stage"] = "cold_apply"
-                    cold_checkpoint = journal_checkpoint(session, password)
+                    cold_checkpoint = journal_checkpoint(session, ssh_password)
                     first = apply_once(client, output, "ntp-native-cold", password)
                     if first["status"] != "succeeded":
                         raise Refusal("ntp_fixture_cold_apply_failed")
                     result["cold_apply"] = first
-                    result["cold_clock"] = native_clock(session, password, plan["peer_address"])
-                    result["cold_acquisition"] = acquisition_observation(session, password, cold_checkpoint)
+                    result["cold_clock"] = native_clock(session, ssh_password, plan["peer_address"])
+                    result["cold_acquisition"] = acquisition_observation(session, ssh_password, cold_checkpoint)
                     clean_baseline(client)
                     # Initial Network/CA Apply may publish the first applied leaf.
                     # Keep the independently pinned CA and hostname verification;
                     # bind subsequent NTP-only transitions to this applied leaf.
                     result["baseline_tls"] = client.tls_identity()
-                    result["client_refusal"] = packet_probe(session, peer, password, plan["current_address"], plan["peer_address"], response_expected=False)
+                    result["client_refusal"] = packet_probe(session, peer, ssh_password, plan["current_address"], plan["peer_address"], response_expected=False)
                     result["stage"] = "server_apply"
                     save_ntp(client, plan["peer_address"], "ntp_server")
                     server = apply_once(client, output, "ntp-native-server", password)
                     if server["status"] != "succeeded":
                         raise Refusal("ntp_fixture_server_apply_failed")
-                    result["server_clock"] = native_clock(session, password, plan["peer_address"], "ntp_server")
-                    result["server_response"] = packet_probe(session, peer, password, "192.168.78.10", "192.168.78.1", response_expected=True)
-                    result["server_unselected_refusal"] = packet_probe(session, peer, password, plan["current_address"], plan["peer_address"], response_expected=False)
-                    prior = applied_config(session, password)
-                    checkpoint = journal_checkpoint(session, password)
+                    result["server_clock"] = native_clock(session, ssh_password, plan["peer_address"], "ntp_server")
+                    result["server_response"] = packet_probe(session, peer, ssh_password, "192.168.78.10", "192.168.78.1", response_expected=True)
+                    result["server_unselected_refusal"] = packet_probe(session, peer, ssh_password, plan["current_address"], plan["peer_address"], response_expected=False)
+                    prior = applied_config(session, ssh_password)
+                    checkpoint = journal_checkpoint(session, ssh_password)
                     result["stage"] = "negative_candidate"
                     save_ntp(client, plan["negative_address"], "ntp_server")
                     failed = apply_once(client, output, "ntp-native-negative", password)
                     if failed["status"] != "failed":
                         raise Refusal("ntp_fixture_negative_candidate_did_not_fail")
-                    result["negative_acquisition"] = acquisition_failure(session, password, checkpoint)
-                    restored = applied_config(session, password)
+                    result["negative_acquisition"] = acquisition_failure(session, ssh_password, checkpoint)
+                    restored = applied_config(session, ssh_password)
                     if restored["sha256"] != prior["sha256"]:
                         raise Refusal("ntp_fixture_rollback_config_not_restored")
-                    result["rollback_clock"] = native_clock(session, password, plan["peer_address"], "ntp_server")
+                    result["rollback_clock"] = native_clock(session, ssh_password, plan["peer_address"], "ntp_server")
                     result["negative_candidate"] = {**failed, "prior_configuration_restored": True}
                     if saved_fields(client.interface("eth0")[0]) != original:
                         raise Refusal("ntp_fixture_original_management_changed")
-                    result["payload_after"] = payload_identity(session, plan, password)
+                    result["payload_after"] = payload_identity(session, plan, ssh_password)
                     result["final_tls"] = client.tls_identity()
                     if result["final_tls"] != result["baseline_tls"]:
                         raise Refusal("ntp_fixture_tls_changed")
@@ -581,15 +593,17 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     password = None
+    appliance_password = None
     try:
         plan = json.loads(args.plan.read_text(encoding="utf-8"))
         admit_plan(plan)
         envelope = json.loads(sys.stdin.readline(65537))
         password = envelope.pop("password", None)
+        appliance_password = envelope.pop("appliance_ssh_password", None)
         envelope.clear()
         if not isinstance(password, str) or not password or len(password) > 4096:
             raise Refusal("ntp_fixture_protected_credential_missing")
-        run(plan, args.output, password)
+        run(plan, args.output, password, appliance_password=appliance_password)
         print(json.dumps({"success": True, "kind": "ntp-cold-start-native-result"}))
         return 0
     except Exception:  # noqa: BLE001 - Public output deliberately excludes exception and native text.
@@ -597,6 +611,7 @@ def main() -> int:
         return 2
     finally:
         password = None
+        appliance_password = None
 
 
 if __name__ == "__main__":

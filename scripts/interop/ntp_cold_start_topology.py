@@ -6,6 +6,7 @@ import hashlib
 import json
 import threading
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 from certificate_peer_proof import bound_json
@@ -22,6 +23,18 @@ from certificate_trusted_host import (
 
 class Refusal(Exception):
     """Fixed public topology refusal."""
+
+
+_MAX_TOPOLOGY_OBSERVATIONS = 4096
+
+
+def _stable_projection(topology: dict) -> dict:
+    """Remove dynamic observation metadata before topology equality checks.
+
+    Args:
+        topology: Public topology snapshot.
+    """
+    return {key: value for key, value in topology.items() if key not in {"observed_utc", "observations"}}
 
 
 def inspect_topology(plan: dict) -> dict:
@@ -91,6 +104,7 @@ def inspect_topology(plan: dict) -> dict:
               "registered_vm_count": len(registered), "running_vm_count": len(running),
               "stale_registration_count": stale, "vacant_registration_count": vacant}
     public["sha256"] = hashlib.sha256(json.dumps(public, sort_keys=True).encode()).hexdigest()
+    public["observed_utc"] = datetime.now(UTC).isoformat()
     return public
 
 
@@ -102,16 +116,27 @@ def watched_topology(plan: dict):
         plan: Admitted NTP-only plan.
     """
     original = inspect_topology(plan)
+    stable_original = _stable_projection(original)
+    observations = [{"observed_utc": original["observed_utc"], "topology_sha256": original["sha256"]}]
+    original["observations"] = observations
     stop = threading.Event()
     failed = threading.Event()
+    observation_lock = threading.Lock()
 
     def check():
         """Refuse any current or previously observed identity drift."""
         if failed.is_set():
             raise Refusal("ntp_topology_changed")
         try:
-            if inspect_topology(plan) != original:
+            current = inspect_topology(plan)
+            if _stable_projection(current) != stable_original:
                 raise Refusal("ntp_topology_changed")
+            with observation_lock:
+                if len(observations) >= _MAX_TOPOLOGY_OBSERVATIONS:
+                    failed.set()
+                    raise Refusal("ntp_topology_observation_limit")
+                observations.append({"observed_utc": current["observed_utc"],
+                                     "topology_sha256": current["sha256"]})
         except Exception:  # noqa: BLE001 - Any provider uncertainty invalidates admission.
             failed.set()
             raise Refusal("ntp_topology_changed") from None

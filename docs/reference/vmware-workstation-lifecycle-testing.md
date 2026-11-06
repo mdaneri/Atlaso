@@ -81,6 +81,8 @@ $arguments = @{
 ```
 
 Retrieve the protected credential pair only through the bounded exact-Atlaso-Environment bridge described above.
+Web authentication always uses `AdminPassword`. When `-ApplianceSshUser root` is explicitly selected, the bounded
+consumer retains and uses the separate `RootPassword` for SSH and native readbacks; it never substitutes the web password.
 No development signing key or Windows trust-store change is part of this mode. The launcher refuses address/URL
 overrides, dry-run Apply, another focused mode, missing protected credentials and absent source provenance.
 Run only from the clean reviewed head. Inspect `-PlanOnly` first with the same public source selectors and a distinct
@@ -91,6 +93,7 @@ its original VMX and ownership receipt before boot. The appliance publishes only
 that authorized console; the peer seed publishes its public-key marker. SSH requires those pins, including after seed
 retirement. Public CA bytes are read through the original appliance VM channel, matched again over pinned SSH, and
 used with normal CA and hostname verification for HTTPS. Endpoint scans and trust-on-first-use are not admission.
+Original console receipts and bounded topology observations retain explicit UTC observation times.
 The NTP mode has its own original clone admission; it never represents a clone as an ISO installation.
 
 The consumer requires an unmanaged appliance with every clock controller inactive, then uses the existing settings

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -79,6 +80,7 @@ def test_inspect_topology_accepts_exact_two_private_appliance_nics_and_split_pee
     assert result["kind"] == "ntp-cold-start-trusted-host-topology"
     assert result["segment_id"] == admitted_topology["segment_id"]
     assert result["running_vm_count"] == 2
+    assert datetime.fromisoformat(result["observed_utc"]).utcoffset() == timedelta(0)
     adapter_rows = list(result["lab_adapters"].values())
     assert sorted(len(rows) for rows in adapter_rows) == [2, 2]
     assert any(rows[0]["network"] == "VMnet8" for rows in adapter_rows)
@@ -155,21 +157,48 @@ def test_inspect_topology_rejects_changed_original_lan_binding(
 def test_watched_topology_keeps_a_detected_change_sticky(
     admitted_topology: dict, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A transient host observation failure remains a failure after state recovers."""
-    observed = {"changed": False}
-    real_inspect = topology.inspect_topology
-
-    def inspect(plan: dict) -> dict:
-        if observed["changed"]:
-            raise topology.Refusal("ntp_topology_adapter_binding_changed")
-        return real_inspect(plan)
-
-    monkeypatch.setattr(topology, "inspect_topology", inspect)
+    """A detected MAC change remains a failure after the adapter is restored."""
     with pytest.raises(topology.Refusal, match="ntp_topology_observer_unverified"):
         with topology.watched_topology(admitted_topology["plan"]) as (_original, check):
-            observed["changed"] = True
+            row = admitted_topology["vmx"][str(admitted_topology["appliance"])][0]
+            original_mac = row["address"]
+            row["address"] = "00:50:56:aa:ff:fe"
             with pytest.raises(topology.Refusal, match="ntp_topology_changed"):
                 check()
-            observed["changed"] = False
+            row["address"] = original_mac
+            with pytest.raises(topology.Refusal, match="ntp_topology_changed"):
+                check()
+
+
+def test_watched_topology_records_utc_samples_without_treating_time_as_drift(
+    admitted_topology: dict, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stable topology hashes survive changing sample timestamps and retain bounded evidence."""
+    instants = iter(datetime(2026, 11, 6, 12, tzinfo=timezone.utc) + timedelta(seconds=i) for i in range(3))
+
+    class Clock:
+        @staticmethod
+        def now(_timezone: object) -> datetime:
+            return next(instants)
+
+    monkeypatch.setattr(topology, "datetime", Clock)
+    with topology.watched_topology(admitted_topology["plan"]) as (snapshot, check):
+        original_hash = snapshot["sha256"]
+        check()
+
+    assert snapshot["sha256"] == original_hash
+    assert len(snapshot["observations"]) == 3
+    assert [row["topology_sha256"] for row in snapshot["observations"]] == [original_hash] * 3
+    assert len({row["observed_utc"] for row in snapshot["observations"]}) == 3
+
+
+def test_watched_topology_fails_closed_when_observation_bound_is_exceeded(
+    admitted_topology: dict, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Observation evidence remains bounded and overflow permanently invalidates the watch."""
+    monkeypatch.setattr(topology, "_MAX_TOPOLOGY_OBSERVATIONS", 2)
+    with pytest.raises(topology.Refusal, match="ntp_topology_observer_unverified"):
+        with topology.watched_topology(admitted_topology["plan"]) as (_snapshot, check):
+            check()
             with pytest.raises(topology.Refusal, match="ntp_topology_changed"):
                 check()

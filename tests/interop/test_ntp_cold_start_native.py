@@ -279,7 +279,7 @@ def orchestration_plan() -> dict[str, object]:
                            "ssh_host_key": "SHA256:peer", "private_subnet": "192.168.77.0/24"},
         "current_address": "192.168.77.10", "baseline_address": "192.168.77.30",
         "static_candidate_address": "192.168.77.40", "negative_address": TEST_CANDIDATE,
-        "peer_address": PEER, "appliance_user": "root", "appliance_ssh_host_key": "SHA256:appliance",
+        "peer_address": PEER, "appliance_user": "admin", "appliance_ssh_host_key": "SHA256:appliance",
         "username": "admin", "ca_path": "unused-test-ca.pem",
         "ca_sha256": hashlib.sha256(b"synthetic-ca-placeholder").hexdigest(),
         "trusted_host": {"appliance_service_mac": "00:50:56:00:00:02"},
@@ -465,6 +465,34 @@ def test_ntp_only_tls_identity_drift_refuses_acceptance(tmp_path, fake_run, monk
     with pytest.raises(fixture.Refusal, match="preserve_and_reconcile"):
         fixture.run(orchestration_plan(), tmp_path, "synthetic-test-credential")
     assert json.loads((tmp_path / "ntp-native-result.json").read_text())["success"] is False
+
+
+def test_root_ssh_and_web_authentication_use_distinct_credentials(tmp_path, fake_run, monkeypatch):
+    """Root native reads use the root value while web Apply keeps administrator auth."""
+    plan = orchestration_plan()
+    plan["appliance_user"] = "root"
+    web = "synthetic-web-credential"
+    root = "synthetic-root-credential"
+    authenticated = []
+    logins = []
+
+    class RootSession(FakeApplianceSession):
+        def __init__(self, *args):
+            authenticated.append((args[2], args[3]))
+
+    original_read = fixture.sudo_read
+
+    def read(session, command, password):
+        assert password == root
+        return original_read(session, command, password)
+
+    monkeypatch.setattr(fixture, "PinnedApplianceSession", RootSession)
+    monkeypatch.setattr(fixture, "sudo_read", read)
+    monkeypatch.setattr(FakeRunClient, "login", lambda _, username, password: logins.append((username, password)))
+    result = fixture.run(plan, tmp_path, web, appliance_password=root)
+    assert result["success"] is True
+    assert authenticated == [("root", root)] and logins == [("admin", web)]
+    assert root not in json.dumps(result) and web not in json.dumps(result)
 
 
 def test_run_unknown_wait_preserves_submission_without_terminal_or_resubmission(
