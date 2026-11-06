@@ -449,6 +449,35 @@ def test_run_does_not_retry_a_failed_cold_apply(tmp_path: Path, fake_run: dict[s
     assert not (tmp_path / "ntp-native-server-submission-intent.json").exists()
 
 
+@pytest.mark.parametrize("boundary", ["topology", "peer", "appliance"])
+def test_context_exit_failure_cannot_publish_success(tmp_path, fake_run, monkeypatch, boundary):
+    """Final admission and transport teardown failures invalidate the retained result."""
+    if boundary == "topology":
+        @contextmanager
+        def failing_watch(_plan):
+            yield {"sha256": "3" * 64}, lambda: None
+            raise fixture.Refusal("ntp_topology_observer_unverified")
+
+        monkeypatch.setattr(fixture, "watched_topology", failing_watch)
+    else:
+        target = FakeTransport if boundary == "peer" else FakeApplianceSession
+
+        def fail_exit(self, *_exc):
+            raise fixture.Refusal("native_context_exit_unverified")
+
+        monkeypatch.setattr(target, "__exit__", fail_exit)
+
+    with pytest.raises(fixture.Refusal, match="preserve_and_reconcile"):
+        fixture.run(orchestration_plan(), tmp_path, "synthetic-test-credential")
+
+    result = json.loads((tmp_path / "ntp-native-result.json").read_text())
+    assert fake_run["submissions"] == ["job-1", "job-2", "job-3"]
+    assert result["success"] is False and result["stage"] == "final_context_validation"
+    assert result["failure"] == "ntp_fixture_acceptance_failed_preserve_and_reconcile"
+    assert result["negative_candidate"]["prior_configuration_restored"] is True
+    assert "helper_startup_and_verification_budget_seconds" not in result
+
+
 def test_first_global_apply_can_publish_its_applied_tls_leaf(tmp_path, fake_run, monkeypatch):
     """Setup may publish a leaf; later NTP-only transitions must preserve it."""
     leaves = iter([{"fingerprint": "bootstrap"}, {"fingerprint": "applied"}, {"fingerprint": "applied"}])

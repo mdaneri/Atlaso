@@ -3149,7 +3149,7 @@ function Get-CertificateSourceGuestState {
     $guestPath = "/tmp/$LabName-source-app.txt"
     $hostPath = Join-Path $resultRoot 'source-app-readback.txt'
     $script = "systemctl show atlaso.service --property=LoadState,ActiveState > '$guestPath'"
-    $password = ConvertFrom-SecureString -SecureString $adminPasswordSecure -AsPlainText
+    $password = ConvertFrom-SecureString -SecureString $applianceSshPasswordSecure -AsPlainText
     try {
         $query = Invoke-VmrunBounded -Arguments @(
             '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $password,
@@ -3277,7 +3277,7 @@ function Get-CertificateInstalledHelperSha256 {
     $guestPath = "/tmp/$LabName-helper-sha256.txt"
     $hostPath = Join-Path $resultRoot 'helper-sha256-readback.txt'
     $script = "sha256sum /opt/atlaso/bin/atlaso-helper > '$guestPath'"
-    $password = ConvertFrom-SecureString -SecureString $adminPasswordSecure -AsPlainText
+    $password = ConvertFrom-SecureString -SecureString $applianceSshPasswordSecure -AsPlainText
     try {
         $query = Invoke-VmrunBounded -Arguments @(
             '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $password,
@@ -3966,7 +3966,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         Start-WorkstationVm -Path $applianceVmx
         # The preserved MAC can leave an old management address in the host neighbor cache.
         # Wait for the reserved lease from VMware Tools or guest operations instead.
-        $privateAddress = Wait-GuestIPv4 -Path $applianceVmx -TimeoutSeconds 300 -GuestUser $ApplianceSshUser -GuestPassword $adminPasswordSecure -Name $applianceName -ExpectedAddress $CertificateLeaseAddress -SkipHostNeighbor
+        $privateAddress = Wait-GuestIPv4 -Path $applianceVmx -TimeoutSeconds 300 -GuestUser $ApplianceSshUser -GuestPassword $applianceSshPasswordSecure -Name $applianceName -ExpectedAddress $CertificateLeaseAddress -SkipHostNeighbor
         if ($privateAddress -cne $CertificateLeaseAddress) {
             throw 'Certificate appliance did not report the reserved private DHCP address after eth0 rewire.'
         }

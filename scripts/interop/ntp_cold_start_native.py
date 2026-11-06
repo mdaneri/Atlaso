@@ -575,9 +575,12 @@ def run(plan: dict, output: Path, password: str, *, appliance_password: str | No
                     result["final_tls"] = client.tls_identity()
                     if result["final_tls"] != result["baseline_tls"]:
                         raise Refusal("ntp_fixture_tls_changed")
-                    result.update(success=True, stage="verified_cold_apply_and_rollback", topology_sha256=topology["sha256"],
-                                  helper_startup_and_verification_budget_seconds=60,
-                                  remaining_desired_state="failed negative candidate retained; no automatic retry")
+                    result["stage"] = "final_context_validation"
+        # Context exit includes the final topology check and observer shutdown.
+        # No immutable acceptance claim may precede their successful completion.
+        result.update(success=True, stage="verified_cold_apply_and_rollback", topology_sha256=topology["sha256"],
+                      helper_startup_and_verification_budget_seconds=60,
+                      remaining_desired_state="failed negative candidate retained; no automatic retry")
     except Exception:  # noqa: BLE001 - No raw HTTP, native or credential failure escapes the bounded child.
         result["failure"] = "ntp_fixture_acceptance_failed_preserve_and_reconcile"
         raise Refusal(result["failure"]) from None
