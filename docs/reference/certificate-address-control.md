@@ -332,6 +332,67 @@ configured resolver and upstream values through the later address transitions.
 The initialization journals precede desired edits and Apply submission. An unknown task outcome requires reconciliation
 from those records; never rerun it or overwrite the evidence. Then continue with the static bootstrap below.
 
+### Deploy the reviewed app wheel before private-LAN preparation
+
+A development ISO has separate software identities: its signed original app wheel and its installer/helper source.
+To test a newer CA fix, retain both original identities and add a separate deployment receipt for the actual running
+PR wheel. Do this on a fresh originally receipted appliance, before its private-LAN rewire and fixture initialization.
+Use the [separately admitted host-only procedure](installation-iso.md#inspect-a-separately-admitted-host-only-connection)
+first. Preserve its disconnected account/content checks, original VM, disk-baseline and installed-boot receipts,
+stopped unselected-disk verification, exact VMX backup and console network inspection. The selected existing host-only
+vmnet must have DHCP; both default routes must remain absent.
+
+The immutable public deployment plan retains `task_id`, positive `pr`, `trust_model: "trusted-host"`, the reviewed
+`source_commit` and identical `deployed_commit`, and the original appliance `mac`. Bind original receipt paths and
+SHA-256 digests under `appliance_intent`, `appliance_ownership`, `appliance_disk_baseline`,
+`appliance_installed_boot` and `installed_inspection`. Add `deployment_network_inspection` for the original console
+network report and `deployment_network_binding` with its native `vmnet`, `subnet` and integer `prefixlen`.
+
+Before the stopped host-only configuration transition, publish `host_only_transition` as a path/digest reference to
+an immutable public record. Its schema is `1`, kind is `certificate-iso-host-only-transition`, and it binds the exact
+task, repository, PR, source, `vmx_path`, selected `vmnet`, original `ownership` and `boot` references, and original
+`backup_path`/`backup_sha256`. Record `boot_configuration_sha256` from the original boot receipt and literal
+`stopped_vm_verified: true` and `unselected_disk_unchanged: true` only after their owning checks succeed. The backup
+captures the actual stopped VMX, including permitted VMware runtime fields; preserve its bytes independently of the
+boot transition's configuration digest. Missing pre-transition evidence prevents deployment; never reconstruct it
+from the later connected VM.
+
+Load the new owner from the exact reviewed Git commit, as with the certificate inspector:
+
+```powershell
+$relative = 'scripts/windows/vmware/deploy-certificate-iso-wheel.ps1'
+$bytes = @(& git -C $repoRoot show "${reviewedCommit}:$relative")
+if ($LASTEXITCODE -ne 0) { throw 'Reviewed deployment owner is unavailable.' }
+$deployOwner = [scriptblock]::Create(($bytes -join "`n"))
+& $deployOwner -RepositoryRoot $repoRoot -ReviewedSourceCommit $reviewedCommit `
+    -Plan $deploymentPlan -PythonPath $pythonPath -EnvironmentId $environmentId `
+    -RuntimeDependencyDirectory $originalSignedCp314Wheelhouse
+# Inspect the public original-media/network report before the explicit deployment.
+& $deployOwner -RepositoryRoot $repoRoot -ReviewedSourceCommit $reviewedCommit `
+    -Plan $deploymentPlan -PythonPath $pythonPath -EnvironmentId $environmentId `
+    -RuntimeDependencyDirectory $originalSignedCp314Wheelhouse -Execute
+```
+
+Use a prepared, originally owned isolated Python environment beneath this worktree's `test-results` with the locked
+native inspector and wheel-build dependencies. The runtime and immutable Git archive stay pinned through every
+consumer. The owner creates and receipts a fresh artifact root before use, builds one wheel from that archive, and
+requires its dependency declarations to match the original signed app. The complete offline cp314 wheelhouse must
+match the original ISO's release inventory. The existing direct deployer keeps its bootstrap, deployment-lock and
+Appliance Update guards. It verifies the original console-observed SSH key before authentication, uses one private
+remote staging directory, verifies every uploaded file, and retains the original helper and console/boot assets.
+
+The original-fixture claim is exclusive across output directories. Process ownership is published while the child
+is suspended, before credential access or guest mutation. Success requires a quiescent process job, unchanged source
+guards and native VM/network binding, exact active wheel payload and original public machine/helper/assets identity.
+Preserve `deployment.json` separately and bind its path/digest as `iso_wheel_deployment` in the later certificate plan.
+Keep `installed_inspection` unchanged: it continues to describe the original signed software. Subsequent certificate
+admission measures the active PR wheel again before and after rotation.
+
+On failure or an unknown outcome, preserve the fixture, exclusive claim and all process/intent records. Reconcile
+those records before any recovery; another output directory never permits redeployment. After success, stop the VM,
+restore and verify the original backed-up adapter declaration through the owning procedure, then use the existing
+private-LAN rewire. The host-only phase grants no host route, NAT or bridge to the private certificate LAN.
+
 ### Recover a terminal initial NTP synchronization timeout
 
 If the initializer failed only because the selected NTP client did not synchronize within its 60-second guard,
@@ -382,6 +443,19 @@ fields. It submits only the validated protected Apply bundle selected by the ser
 terminal task and verifies the desired fields, TLS identity, `/openapi.json`, clean Apply state, route snapshot,
 installed wheel/helper identity, and trusted-host topology. Use the addresses from the admitted plan when the lab
 uses a different approved baseline subnet; do not copy the example address into another lab.
+
+For a fresh ordinary CA case that must retain DHCP, select `"scenario": "ordinary-ca-rotation"` and
+`"ordinary_ca_baseline_mode": "dhcp"` in its immutable plan. Keep `current_address` equal to the original peer fixture's
+fixed lease. The same bootstrap inspection/execution commands then observe the clean existing DHCP configuration;
+they submit no interface edit or Apply task. Success publishes `dhcp-baseline-observation.json` and a separate proof
+plan with phase `iso-dhcp-baseline-observed`, preserving the original MAC lease, connected route, absence of default
+routes, TLS identity and deployed payload. Do not substitute this observation for a static rewire receipt.
+
+Run each static/DHCP and Web Terminal disabled/enabled combination on a fresh original fixture. Ordinary rotation
+requires the running app to match the current reviewed source. DHCP admission checks the original lease and native
+address owner both before and after CA rotation; an extra address, changed lease owner, default route or changed
+deployed payload prevents success. The static baseline address remains distinct from the predeclared handoff candidate
+and DHCP lease; it need not appear in the candidate-only address list.
 
 Bootstrap inspection and execution require a clean applied baseline before editing the interface. The controlled
 interface edit can also change Atlaso-owned DNS records while local DNS is disabled. In that case the trusted-host

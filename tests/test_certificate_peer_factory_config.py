@@ -14,6 +14,11 @@ _DIGEST = "a" * 64
 
 
 def _spec(**overrides: object) -> dict[str, object]:
+    """Build a valid factory specification with selected test overrides.
+
+    Args:
+        **overrides: Specification fields replaced for the validation case.
+    """
     spec: dict[str, object] = {
         "schema": 1,
         "trust_model": "trusted-host",
@@ -42,6 +47,11 @@ def _spec(**overrides: object) -> dict[str, object]:
 
 
 def _render(**overrides: object) -> str:
+    """Render a peer VMX from the valid fixture and supplied overrides.
+
+    Args:
+        **overrides: VMX identity or specification fields for the case.
+    """
     spec = _spec(**overrides.pop("spec", {}))  # type: ignore[arg-type]  # Test helper accepts spec overrides.
     return render_vmx(
         spec,
@@ -147,6 +157,12 @@ def test_render_vmx_builds_offline_peer_with_receipt_identity_and_serial_log() -
     ],
 )
 def test_validate_spec_rejects_invalid_fields(field: str, value: object) -> None:
+    """Reject a factory specification field with an invalid value.
+
+    Args:
+        field: Specification key under validation.
+        value: Invalid value assigned to that key.
+    """
     with pytest.raises(ValueError):
         validate_spec(_spec(**{field: value}))
 
@@ -173,5 +189,11 @@ def test_validate_spec_rejects_unexpected_top_level_and_reference_fields() -> No
     ],
 )
 def test_render_vmx_refuses_injection_and_identity_mismatch(kwargs: dict[str, object], message: str) -> None:
+    """Refuse VMX injection and mismatches between VM and receipt identity.
+
+    Args:
+        kwargs: Rendering overrides that introduce the invalid input.
+        message: Expected validation message pattern.
+    """
     with pytest.raises(ValueError, match=message):
         _render(**kwargs)

@@ -120,7 +120,7 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
         .splitlines()
     )
 
-    assert analyzer_requirements == {"ruff==0.17.1", "mypy==2.4.0"}
+    assert analyzer_requirements == {"ruff==0.17.2", "mypy==2.4.0"}
     assert project["tool"]["ruff"] == {
         "target-version": "py314",
         "per-file-target-version": {"atlaso/app/services/vcf_lab_remote.py": "py310"},
@@ -155,6 +155,9 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
             "atlaso/app/services/dhcp_pool_verification.py",
             "scripts/interop/dedicated_host_contract.py",
             "scripts/interop/dedicated_host_proof.py",
+            "scripts/interop/certificate_ca_baseline.py",
+            "scripts/interop/certificate_iso_deployment.py",
+            "scripts/interop/certificate_iso_transport.py",
             "atlaso/app/services/routing_permissions.py",
             "atlaso/app/routers/api_v1/routing_permissions.py",
             "atlaso/app/routing_permission_schemas.py",

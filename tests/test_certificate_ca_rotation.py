@@ -32,7 +32,12 @@ _TASK_MARKER = "synthetic-task-private-result"
 
 
 def _public_certificate(common_name: str, *, address: str | None = None) -> tuple[str, str]:
-    """Create an ephemeral public certificate fixture and its normalized digest."""
+    """Create an ephemeral public certificate fixture and its normalized digest.
+
+    Args:
+        common_name: Synthetic public certificate common name.
+        address: Optional IPv4 subject alternative name for the fixture.
+    """
     key = ed25519.Ed25519PrivateKey.generate()
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, common_name)])
     builder = (
@@ -81,6 +86,7 @@ class RotationClient:
         self.web_terminal_enabled = False
         self.web_terminal_interfaces: list[str] = []
         self.address = _ADDRESS
+        self.management_mode = "static"
         self.expected_old_served = True
         self.final_served_old_leaf = False
         self.malformed_original_pem = False
@@ -104,8 +110,9 @@ class RotationClient:
             "id": 1,
             "name": "eth0",
             "role": "management",
-            "ipv4_method": "static",
-            "ip_cidr": f"{address}/24",
+            "ipv4_method": self.management_mode,
+            "ip_cidr": f"{address}/24" if self.management_mode == "static" else "",
+            "gateway": "" if self.management_mode == "dhcp" else None,
             "host_ip_cidr": None,
             "ipv6_enabled": False,
             "ipv6_method": "disabled",
@@ -199,6 +206,13 @@ class RotationClient:
         *,
         accept: str | None = None,
     ) -> tuple[int, str]:
+        """Serve the public fixture projections and record permitted mutations.
+
+        Args:
+            path: Public route requested by the rotation producer.
+            form: Optional submitted form values in the fake client.
+            accept: Optional response media type requested by the caller.
+        """
         self.request_calls.append((path, form))
         if form is not None and path.endswith(f"/{_OLD_ID}/revoke"):
             self.mutations.append("revoke")
@@ -232,6 +246,12 @@ class RotationClient:
         raise AssertionError(f"Unexpected fake HTTP request: {path}")
 
     def json(self, path: str, form: dict[str, Any] | None = None) -> tuple[int, dict[str, Any]]:
+        """Serve public Apply projections and task status for the fixture.
+
+        Args:
+            path: Public JSON route requested by the rotation producer.
+            form: Optional reviewed form submitted to Apply.
+        """
         self.json_calls.append((path, form))
         if path == "/ui/management/appliance-apply/review":
             if self.baseline_pending:
@@ -288,6 +308,11 @@ class RotationClient:
         raise AssertionError(f"Unexpected fake JSON request: {path}")
 
     def interface(self, name: str) -> tuple[dict[str, Any], str]:
+        """Return the admitted interface projection and public CSRF value.
+
+        Args:
+            name: Interface name requested by the rotation producer.
+        """
         assert name == "eth0"
         return self._physical_row(), "csrf-public"
 
@@ -299,7 +324,17 @@ class RotationClient:
         }
 
 
-def _exercise(client: RotationClient, *, expected_root_sha256: str | None = None) -> dict[str, Any]:
+def _exercise(
+    client: RotationClient, *, expected_root_sha256: str | None = None,
+    management_mode: str = "static",
+) -> dict[str, Any]:
+    """Run the rotation producer against the stateful public-projection client.
+
+    Args:
+        client: Synthetic authenticated client modeling one appliance listener.
+        expected_root_sha256: Optional receipt-pinned public root digest.
+        management_mode: Static legacy default or explicit receipt-bound DHCP baseline.
+    """
     return rotation.exercise_ca_rotation(
         client,
         certificate_id=_OLD_ID,
@@ -310,6 +345,7 @@ def _exercise(client: RotationClient, *, expected_root_sha256: str | None = None
         interface_name="eth0",
         expected_mac=_MAC,
         expected_address=_ADDRESS,
+        management_mode=management_mode,
     )
 
 
@@ -320,6 +356,12 @@ def _exercise(client: RotationClient, *, expected_root_sha256: str | None = None
 def test_exercise_ca_rotation_revokes_replaces_reviews_and_proves_served_leaf(
     enabled: bool, interfaces: list[str],
 ) -> None:
+    """Exercise the ordinary revoke, replace, review, and served-leaf path.
+
+    Args:
+        enabled: Expected Web Terminal checkbox state.
+        interfaces: Expected Web Terminal interface selection.
+    """
     client = RotationClient()
     client.web_terminal_enabled = enabled
     client.web_terminal_interfaces = interfaces
@@ -337,6 +379,7 @@ def test_exercise_ca_rotation_revokes_replaces_reviews_and_proves_served_leaf(
     assert evidence["review_requested_units"] == ["ca"]
     assert evidence["review_selected_units"] == ["ca", "appliance_settings", "public_services"]
     assert evidence["task_id"] == _JOB_ID and evidence["task_status"] == "succeeded"
+    assert evidence["ordinary_ca_baseline_mode"] == "static"
     assert client.submit_form == {
         "csrf": "csrf-public",
         "reviewed_plan": "synthetic-plan-token",
@@ -359,6 +402,7 @@ def test_exercise_ca_rotation_revokes_replaces_reviews_and_proves_served_leaf(
         "review_selected_units",
         "task_id",
         "task_status",
+        "ordinary_ca_baseline_mode",
     }
     public_evidence = json.dumps(evidence)
     assert _PASSWORD not in public_evidence
@@ -366,6 +410,30 @@ def test_exercise_ca_rotation_revokes_replaces_reviews_and_proves_served_leaf(
     assert _TASK_MARKER not in public_evidence
     assert "PRIVATE KEY" not in public_evidence
     assert client.old_pem not in public_evidence and client.new_pem not in public_evidence
+
+
+def test_exercise_ca_rotation_preserves_receipt_pinned_dhcp_baseline() -> None:
+    """Run CA-only rotation on DHCP while retaining the live lease and method."""
+    client = RotationClient()
+    client.management_mode = "dhcp"
+
+    evidence = _exercise(client, management_mode="dhcp")
+
+    assert evidence["ordinary_ca_baseline_mode"] == "dhcp"
+    assert evidence["address"] == _ADDRESS
+    assert client.mutations == ["revoke", "replace", "submit"]
+    assert client._physical_row()["ipv4_method"] == "dhcp"
+    assert client._physical_row()["ip_cidr"] == ""
+
+
+def test_exercise_ca_rotation_rejects_static_settings_in_dhcp_mode_before_mutation() -> None:
+    """Refuse DHCP acceptance when the admitted live interface is static."""
+    client = RotationClient()
+
+    with pytest.raises(rotation.Refusal, match="management_interface_dhcp_baseline_required"):
+        _exercise(client, management_mode="dhcp")
+
+    assert client.mutations == []
 
 
 @pytest.mark.parametrize(
@@ -384,6 +452,13 @@ def test_preflight_refusal_does_not_mutate_or_emit_evidence(
     expected_web_terminal: bool,
     reason: str | None,
 ) -> None:
+    """Refuse invalid starting state before any certificate action.
+
+    Args:
+        defect: Synthetic initial-state defect to exercise.
+        expected_web_terminal: Requested Web Terminal expectation.
+        reason: Expected fixed refusal reason, if applicable.
+    """
     client = RotationClient()
     if defect == "pending":
         client.baseline_pending = True
@@ -436,6 +511,12 @@ def test_receipt_pinned_root_mismatch_refuses_before_revocation() -> None:
     ],
 )
 def test_ca_review_refusal_never_submits_or_rolls_back_rotation(review_variant: str, reason: str) -> None:
+    """Preserve the staged rotation if reviewed CA scope is invalid.
+
+    Args:
+        review_variant: Invalid synthetic Apply review projection.
+        reason: Expected fixed refusal reason.
+    """
     client = RotationClient()
     client.review_variant = review_variant
 
@@ -466,6 +547,13 @@ def test_post_submit_failure_preserves_task_evidence_without_retry_or_rollback(
     defect: str,
     reason: str,
 ) -> None:
+    """Refuse uncertain or changed post-submit state without retrying mutations.
+
+    Args:
+        monkeypatch: Replace only bounded task polling where a custom task is needed.
+        defect: Synthetic task or post-Apply state defect.
+        reason: Expected fixed refusal reason.
+    """
     client = RotationClient()
     if defect == "failed_task":
         client.task_status = "failed"

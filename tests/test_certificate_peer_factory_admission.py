@@ -28,6 +28,12 @@ _VMDK_NAME = "peer.vmdk"
 
 
 def _write_json(path: Path, value: dict) -> dict[str, str]:
+    """Write one fixture receipt and return its path and content digest.
+
+    Args:
+        path: Destination for the compact JSON receipt.
+        value: Receipt fields serialized into the fixture file.
+    """
     payload = json.dumps(value, separators=(",", ":")).encode("utf-8")
     path.write_bytes(payload)
     return {"path": str(path), "sha256": hashlib.sha256(payload).hexdigest()}
@@ -41,6 +47,15 @@ def _sparse_vmdk(
     magic: bytes = b"KDMV",
     descriptor: str | None = None,
 ) -> bytes:
+    """Build a minimal sparse VMDK header for disk-admission tests.
+
+    Args:
+        capacity: Declared virtual disk capacity in sectors.
+        offset: Grain-table offset encoded in the sparse header.
+        sectors: Grain-table extent length in sectors.
+        magic: Sparse-header signature bytes.
+        descriptor: Optional descriptor text embedded in the header.
+    """
     text = descriptor or (
         '# Disk DescriptorFile\n'
         'version=1\n'
@@ -63,7 +78,12 @@ def _sparse_vmdk(
 
 @pytest.fixture
 def admitted_inputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    """Create immutable-shaped receipts and checksum-bound local source fixtures."""
+    """Create immutable-shaped receipts and checksum-bound local source fixtures.
+
+    Args:
+        tmp_path: Pytest-owned root for source, repository, and receipt fixtures.
+        monkeypatch: Pytest patch manager for capturing ancestry checks.
+    """
     repo = tmp_path / "repository"
     prep_script = repo / "scripts" / "windows" / "vmware" / "prepare-tiny-linux-client.ps1"
     prep_script.parent.mkdir(parents=True)
@@ -196,6 +216,13 @@ def admitted_inputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNa
 
 
 def _rewrite_reference(inputs: SimpleNamespace, record_name: str, reference_name: str) -> None:
+    """Rewrite one fixture receipt and refresh its spec reference.
+
+    Args:
+        inputs: Admitted fixture state containing receipt paths and the spec.
+        record_name: Receipt object and path prefix to serialize again.
+        reference_name: Specification key bound to the rewritten receipt.
+    """
     record = getattr(inputs, record_name)
     path = getattr(inputs, f"{record_name}_path")
     inputs.spec[reference_name] = _write_json(path, record)
@@ -204,6 +231,11 @@ def _rewrite_reference(inputs: SimpleNamespace, record_name: str, reference_name
 def test_inspect_inputs_admits_original_iso_and_checksum_bound_standalone_peer(
     admitted_inputs: SimpleNamespace,
 ) -> None:
+    """Admit the original ISO and checksum-bound standalone peer source.
+
+    Args:
+        admitted_inputs: Receipt-bound source fixture from the admission factory.
+    """
     result = factory.inspect_inputs(admitted_inputs.spec, admitted_inputs.repo)
 
     assert result["source_disk"] == str(admitted_inputs.disk)
@@ -238,6 +270,13 @@ def test_inspect_inputs_refuses_unbound_or_changed_original_state(
     case: str,
     reason: str,
 ) -> None:
+    """Refuse changed or unbound identities in the original appliance receipts.
+
+    Args:
+        admitted_inputs: Receipt-bound source fixture from the admission factory.
+        case: Binding field or source element altered for this refusal case.
+        reason: Expected stable refusal identifier for the changed state.
+    """
     inputs = admitted_inputs
     if case == "task":
         inputs.ownership["task_id"] = "other-task"
@@ -286,6 +325,12 @@ def test_inspect_inputs_refuses_tampered_original_receipt(
     admitted_inputs: SimpleNamespace,
     reference_name: str,
 ) -> None:
+    """Refuse original receipt bytes that no longer match their bound digest.
+
+    Args:
+        admitted_inputs: Receipt-bound source fixture from the admission factory.
+        reference_name: Spec key naming the original receipt to tamper with.
+    """
     path = Path(admitted_inputs.spec[reference_name]["path"])
     path.write_bytes(path.read_bytes() + b" ")
 
@@ -294,6 +339,11 @@ def test_inspect_inputs_refuses_tampered_original_receipt(
 
 
 def test_bound_json_refuses_oversized_receipt_even_when_digest_matches(tmp_path: Path) -> None:
+    """Refuse a receipt that exceeds the bounded JSON reader limit.
+
+    Args:
+        tmp_path: Pytest-owned location for the oversized receipt.
+    """
     path = tmp_path / "oversized.json"
     data = b" " * 262145
     path.write_bytes(data)
@@ -306,9 +356,21 @@ def test_require_ancestor_refuses_non_ancestor_without_exposing_git_output(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """Refuse a source commit outside the admitted ancestry without exposing diagnostics.
+
+    Args:
+        monkeypatch: Pytest patch manager for the simulated Git result.
+        tmp_path: Pytest-owned repository path supplied to the ancestry check.
+    """
     observed: list[list[str]] = []
 
     def run(arguments: list[str], **kwargs: object) -> SimpleNamespace:
+        """Capture the bounded Git call and return a private failure diagnostic.
+
+        Args:
+            arguments: Git command and source ancestry operands.
+            **kwargs: Process capture and timeout controls from the caller.
+        """
         observed.append(arguments)
         assert kwargs["capture_output"] is True
         assert kwargs["timeout"] == 15
@@ -344,6 +406,14 @@ def test_standalone_disk_refuses_parent_or_external_extent_before_tool_use(
     kwargs: dict[str, object],
     reason: str,
 ) -> None:
+    """Refuse sparse disks with parent links or extents outside the source file.
+
+    Args:
+        tmp_path: Pytest-owned path for the malformed VMDK fixture.
+        monkeypatch: Pytest patch manager used to forbid external tool execution.
+        kwargs: Sparse-header fields that create the malformed disk case.
+        reason: Stable refusal identifier expected for the malformed extent.
+    """
     disk = tmp_path / _VMDK_NAME
     disk.write_bytes(_sparse_vmdk(**kwargs))
     monkeypatch.setattr(factory.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("Unexpected tool execution"))
@@ -353,6 +423,11 @@ def test_standalone_disk_refuses_parent_or_external_extent_before_tool_use(
 
 
 def test_public_file_refuses_hard_link_and_symlink_inputs(tmp_path: Path) -> None:
+    """Refuse receipt inputs that are links instead of ordinary files.
+
+    Args:
+        tmp_path: Pytest-owned location for the target and linked paths.
+    """
     target = tmp_path / "target.json"
     target.write_text("{}", encoding="utf-8")
     hard_link = tmp_path / "hard-link.json"

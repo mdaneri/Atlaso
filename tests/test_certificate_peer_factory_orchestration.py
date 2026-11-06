@@ -20,12 +20,20 @@ pytestmark = pytest.mark.skipif(
 
 
 def ps_literal(value: str | Path) -> str:
-    """Quote one non-secret literal for an isolated PowerShell command."""
+    """Quote one non-secret literal for an isolated PowerShell command.
+
+    Args:
+        value: Path or string embedded as a PowerShell single-quoted literal.
+    """
     return "'" + str(value).replace("'", "''") + "'"
 
 
 def script_function(name: str) -> str:
-    """Return one uniquely defined function body from the factory's PowerShell AST."""
+    """Return one uniquely defined function body from the factory's PowerShell AST.
+
+    Args:
+        name: Factory function name to locate in the parsed script.
+    """
     return f"""
 $tokens=$null; $errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile({ps_literal(SCRIPT)},[ref]$tokens,[ref]$errors)
@@ -37,7 +45,12 @@ if ($matches.Count -ne 1) {{ throw 'Expected one factory function.' }}
 
 
 def run_powershell(command: str, *, check: bool = True) -> subprocess.CompletedProcess[str]:
-    """Run a short PowerShell fixture with no inherited command-line startup."""
+    """Run a short PowerShell fixture with no inherited command-line startup.
+
+    Args:
+        command: Isolated PowerShell source to execute.
+        check: Whether a nonzero process result raises an exception.
+    """
     return subprocess.run(
         ["pwsh", "-NoProfile", "-Command", command],
         capture_output=True,
@@ -83,7 +96,12 @@ if ($errors.Count) {{ $errors | Out-String | Write-Error; exit 1 }}
     ],
 )
 def test_pull_request_gate_rejects_mismatched_admission_before_creation(field: str, value: object):
-    """The isolated PR gate rejects each changed binding without reaching any provider."""
+    """The isolated PR gate rejects each changed binding without reaching any provider.
+
+    Args:
+        field: Pull-request admission binding modified by the case.
+        value: Mismatched value supplied for that binding.
+    """
     pr = {
         "state": "OPEN",
         "isDraft": False,
@@ -166,7 +184,11 @@ def test_create_publishes_intent_and_original_before_output_payload_and_seed():
 
 
 def test_factory_record_helper_publishes_real_receipt_outside_removal_root(tmp_path: Path):
-    """The factory's wrapper reaches the durable publisher with an actual Windows identity."""
+    """The factory's wrapper reaches the durable publisher with an actual Windows identity.
+
+    Args:
+        tmp_path: Pytest-owned root for the output and durable receipt directories.
+    """
     evidence = tmp_path / "evidence"
     output = tmp_path / "new-peer"
     evidence.mkdir()
@@ -235,7 +257,16 @@ def lower_body_harness(
     fail_seed: bool = False,
     tamper_receipt: bool = False,
 ) -> tuple[Path, Path]:
-    """Write a synthetic script that executes the factory's real lower body with mocks."""
+    """Write a synthetic script that executes the factory's real lower body with mocks.
+
+    Args:
+        tmp_path: Pytest-owned root for the harness, checkout, and synthetic receipts.
+        mode: Factory operation to execute, such as Plan, Create, or Inspect.
+        mismatched_disk: Whether source-disk bytes change before pinning.
+        successful_create: Whether local copy and prepared-receipt steps succeed.
+        fail_seed: Whether the mocked seed step raises after the disk copy.
+        tamper_receipt: Whether the original receipt bytes change before inspection.
+    """
     source = SCRIPT.read_text(encoding="utf-8")
     lower_body = source[source.index("$pins = [Collections.Generic.List[object]]::new()"):]
     checkout = tmp_path / "s"
@@ -247,6 +278,12 @@ def lower_body_harness(
     durable.mkdir()
 
     def fixture(name: str, contents: bytes = b"fixture") -> Path:
+        """Create one ordinary file beneath the synthetic fixture directory.
+
+        Args:
+            name: Relative filename used by the harness case.
+            contents: Bytes written as the fixture file contents.
+        """
         path = fixture_root / name
         path.write_bytes(contents)
         return path
@@ -309,6 +346,11 @@ def lower_body_harness(
         cleanup_module = ROOT / "scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1"
 
         def native_identity(path: Path) -> str:
+            """Read a fixture path's Windows identity through the cleanup module.
+
+            Args:
+                path: Existing path whose native file identity is needed.
+            """
             command = (
                 f"Import-Module {ps_literal(cleanup_module)} -Force; "
                 f"[Atlaso.WorkstationFileIdentity]::Get({ps_literal(path)})"
@@ -353,6 +395,11 @@ def lower_body_harness(
             receipt_path.write_bytes(original_bytes + b"tampered\n")
 
     def ps_json(value: object) -> str:
+        """Serialize one fixture value as a PowerShell-safe JSON literal.
+
+        Args:
+            value: JSON-compatible value embedded in the synthetic script.
+        """
         return ps_literal(json.dumps(value))
 
     successful_functions = ""
@@ -524,7 +571,11 @@ $destination=Join-Path {ps_literal(checkout)} 'image/vmware-workstation/test-vms
 
 
 def run_lower_body_harness(harness: Path) -> dict[str, object]:
-    """Execute the generated synthetic PowerShell harness and decode its summary."""
+    """Execute the generated synthetic PowerShell harness and decode its summary.
+
+    Args:
+        harness: Path to the generated isolated PowerShell script.
+    """
     result = subprocess.run(
         ["pwsh", "-NoProfile", "-File", str(harness)],
         capture_output=True,
@@ -536,7 +587,11 @@ def run_lower_body_harness(harness: Path) -> dict[str, object]:
 
 
 def test_full_lower_body_plan_executes_with_mocked_source_and_admission(tmp_path: Path):
-    """Run actual Plan orchestration and prove it reaches no output or provider boundary."""
+    """Run actual Plan orchestration and prove it reaches no output or provider boundary.
+
+    Args:
+        tmp_path: Pytest-owned root for the generated harness and checkout.
+    """
     harness, checkout = lower_body_harness(tmp_path, mode="Plan")
     observed = run_lower_body_harness(harness)
     assert observed["error"] is None
@@ -553,7 +608,11 @@ def test_full_lower_body_plan_executes_with_mocked_source_and_admission(tmp_path
 
 
 def test_full_lower_body_create_refuses_changed_source_before_external_boundaries(tmp_path: Path):
-    """Run actual Create orchestration through source hashing, then preserve a failed boundary."""
+    """Run actual Create orchestration through source hashing, then preserve a failed boundary.
+
+    Args:
+        tmp_path: Pytest-owned root for the generated harness and checkout.
+    """
     harness, checkout = lower_body_harness(tmp_path, mode="Create", mismatched_disk=True)
     observed = run_lower_body_harness(harness)
     assert "independently admitted certificate peer source changed before pinning" in observed["error"]
@@ -566,7 +625,11 @@ def test_full_lower_body_create_refuses_changed_source_before_external_boundarie
 
 
 def test_full_lower_body_create_publishes_receipts_before_copy_and_seed(tmp_path: Path):
-    """Execute positive Create through local disk copy, seed mock, and prepared receipt."""
+    """Execute positive Create through local disk copy, seed mock, and prepared receipt.
+
+    Args:
+        tmp_path: Pytest-owned root for the generated harness and checkout.
+    """
     harness, checkout = lower_body_harness(tmp_path, mode="Create", successful_create=True)
     observed = run_lower_body_harness(harness)
     assert observed["error"] is None, observed
@@ -614,7 +677,11 @@ def test_full_lower_body_create_publishes_receipts_before_copy_and_seed(tmp_path
 
 
 def test_full_lower_body_seed_failure_preserves_original_receipt_and_disk(tmp_path: Path):
-    """A seed boundary failure retains the original peer receipt and copied disk."""
+    """A seed boundary failure retains the original peer receipt and copied disk.
+
+    Args:
+        tmp_path: Pytest-owned root for the generated harness and checkout.
+    """
     harness, checkout = lower_body_harness(tmp_path, mode="Create", successful_create=True, fail_seed=True)
     observed = run_lower_body_harness(harness)
     assert "Synthetic seed generation failure" in observed["error"]
@@ -634,7 +701,11 @@ def test_full_lower_body_seed_failure_preserves_original_receipt_and_disk(tmp_pa
 
 
 def test_full_lower_body_inspect_uses_real_sealed_reader_with_bound_original_receipt(tmp_path: Path):
-    """Inspect validates the exact standard ownership receipt before reporting success."""
+    """Inspect validates the exact standard ownership receipt before reporting success.
+
+    Args:
+        tmp_path: Pytest-owned root for the generated harness and checkout.
+    """
     harness, checkout = lower_body_harness(tmp_path, mode="Inspect")
     observed = run_lower_body_harness(harness)
     assert observed["error"] is None, observed
@@ -648,7 +719,11 @@ def test_full_lower_body_inspect_uses_real_sealed_reader_with_bound_original_rec
 
 
 def test_full_lower_body_inspect_refuses_tampered_original_digest_before_ancestry(tmp_path: Path):
-    """The real sealed reader rejects changed receipt bytes before trusting ancestry."""
+    """The real sealed reader rejects changed receipt bytes before trusting ancestry.
+
+    Args:
+        tmp_path: Pytest-owned root for the generated harness and checkout.
+    """
     harness, _ = lower_body_harness(tmp_path, mode="Inspect", tamper_receipt=True)
     observed = run_lower_body_harness(harness)
     assert "Original recovery receipt changed" in observed["error"]
@@ -658,7 +733,11 @@ def test_full_lower_body_inspect_refuses_tampered_original_digest_before_ancestr
 
 
 def test_prepared_output_helper_publishes_receipt_readable_by_real_sealed_reader(tmp_path: Path):
-    """The actual empty-directory helper publishes its original identity before returning."""
+    """The actual empty-directory helper publishes its original identity before returning.
+
+    Args:
+        tmp_path: Pytest-owned root for durable receipt, worktree, and output fixtures.
+    """
     durable = tmp_path / "durable"
     worktree = tmp_path / "worktree"
     output = tmp_path / "peer"

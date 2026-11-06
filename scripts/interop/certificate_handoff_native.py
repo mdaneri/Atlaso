@@ -22,6 +22,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from certificate_ca_baseline import baseline_address, baseline_mode
 from certificate_iso_identity import reviewed_helper_identity
 from certificate_peer_proof import Refusal as PeerProofRefusal
 from certificate_peer_proof import admit_receipts as admit_private_receipts
@@ -568,6 +569,7 @@ def admit_execution(plan):
     Args:
         plan: Validated task plan bound to the owned test resources."""
     deployed_commit = plan.get("deployed_commit", "")
+    mode = baseline_mode(plan)
     git_environment = os.environ.copy()
     git_environment.pop("ATLASO_NATIVE_ADMIN", None)
     git_environment.pop("ATLASO_NATIVE_PEER", None)
@@ -658,8 +660,9 @@ def admit_execution(plan):
     ownership_state = "trusted-host-controlled" if trusted else "proven-controlled"
     if runtime.get("address_ownership_state") != ownership_state:
         raise Refusal("task_address_ownership_unproven")
+    baseline_reference = "dhcp_baseline_observation" if mode == "dhcp" else "rewired_runtime"
     if (runtime.get("kind") != "certificate-controlled-runtime"
-            or runtime.get("rewired_runtime_sha256") != plan["rewired_runtime"]["sha256"]
+            or runtime.get(baseline_reference + "_sha256") != plan[baseline_reference]["sha256"]
             or runtime.get("address_proof_sha256") != plan["address_evidence"]["sha256"]):
         raise Refusal("controlled_runtime_proof_binding_mismatch")
     try:
@@ -677,7 +680,9 @@ def admit_execution(plan):
     if actual_helper != runtime["helper_sha256"]:
         raise Refusal("reviewed_helper_digest_mismatch")
     if plan["scenario"] == "ordinary-ca-rotation":
-        address = str(ipaddress.IPv4Address(plan["peer_transport"]["baseline_address"]))
+        if deployed_commit != plan.get("source_commit"):
+            raise Refusal("ordinary_ca_requires_exact_deployed_source")
+        address = baseline_address(plan, fixture)
     elif plan["scenario"] == "static-success":
         address = str(ipaddress.ip_interface(plan["candidate_cidr"]).ip)
     else:
@@ -691,20 +696,23 @@ def admit_execution(plan):
     if (reservation.get("schema") != 1 or reservation.get("kind") != "certificate-private-address-proof"
             or (not trusted and reservation.get("exclusive_attachment_state") != "verified-current")
             or (not trusted and reservation.get("candidate_conflict_state") != "clear-current")
-            or reservation.get("phase") != "static-baseline-preflight"
+            or reservation.get("phase") != ("dhcp-baseline-preflight" if mode == "dhcp" else "static-baseline-preflight")
             or reservation.get("task_id") != plan["task_id"]
             or reservation.get("vmx_path") != plan["vmx_path"]
             or reservation.get("peer_fixture_sha256") != plan["peer_fixture"]["sha256"]
-            or reservation.get("rewired_runtime_sha256") != plan["rewired_runtime"]["sha256"]
+            or reservation.get(baseline_reference + "_sha256") != plan[baseline_reference]["sha256"]
             or reservation.get("lan_segment_receipt_sha256") != fixture["lan_segment_receipt_sha256"]
             or reservation.get("ca_sha256") != hashlib.sha256(Path(plan["ca_path"]).read_bytes()).hexdigest()
             or reservation.get("peer_routed_baseline_https") != "explicit-ca-and-ip-hostname-verified"
-            or address not in reservation.get("addresses", [])):
+            or (plan["scenario"] != "ordinary-ca-rotation" and address not in reservation.get("addresses", []))
+            or (mode == "dhcp" and (reservation.get("ordinary_ca_baseline_mode") != "dhcp"
+                or reservation.get("dhcp_reservation") != address))):
         raise Refusal("task_address_ownership_unproven")
     peer_plan = plan["peer_transport"]
-    baseline = ipaddress.IPv4Address(peer_plan["baseline_address"])
+    baseline = ipaddress.IPv4Address(baseline_address(plan, fixture) if plan["scenario"] == "ordinary-ca-rotation"
+                                   else peer_plan["baseline_address"])
     private = ipaddress.IPv4Network(peer_plan["private_subnet"])
-    if (baseline not in private or address not in reservation["addresses"]
+    if (baseline not in private or (plan["scenario"] != "ordinary-ca-rotation" and address not in reservation["addresses"])
             or urllib.parse.urlsplit(plan["url"]).hostname != str(baseline)
             or reservation.get("baseline_address") != str(baseline)):
         raise Refusal("peer_private_origin_mismatch")
@@ -731,9 +739,14 @@ def main():
     try:
         plan = json.loads(Path(args.plan).read_text())
         ordinary_rotation = plan.get("scenario") == "ordinary-ca-rotation"
+        try:
+            mode = baseline_mode(plan)
+        except ValueError:
+            raise Refusal("plan_contract") from None
         if (plan_pr(plan) != plan.get("pr") or not plan.get("source_commit")
                 or plan.get("scenario") not in ("static-success", "dhcp-reject", "ordinary-ca-rotation")
                 or (ordinary_rotation and (plan.get("trust_model") != "trusted-host"
+                    or plan.get("deployed_commit") != plan.get("source_commit")
                     or type(plan.get("expected_web_terminal")) is not bool
                     or type(plan.get("management_certificate_id")) is not int
                     or plan["management_certificate_id"] <= 0 or plan.get("interface") != "eth0"))):
@@ -766,17 +779,24 @@ def main():
             guard_topology()
         try:
             fixture, _ = admit_private_receipts(plan)
+            management_address = baseline_address(plan, fixture) if ordinary_rotation else peer_plan["baseline_address"]
             with PinnedApplianceSession(
-                peer_transport, peer_plan["baseline_address"], plan["appliance_user"],
+                peer_transport, management_address, plan["appliance_user"],
                 password, plan["appliance_ssh_host_key"],
             ) as appliance_session:
                 live_reservation = read_private_native(plan, fixture, peer_transport, appliance_session)
+                if "iso_wheel_deployment" in plan:
+                    from certificate_iso_bootstrap import guest_identity
+
+                    active_identity = guest_identity(appliance_session, plan, password)
+                    if any(active_identity[key] != plan[key] for key in ("wheel_sha256", "helper_sha256")):
+                        raise Refusal("active_deployed_payload_changed")
             if live_reservation != bound_json(plan["address_evidence"]):
                 raise Refusal("private_live_preflight_changed")
         except (PeerProofRefusal, PeerTransportRefusal, OSError, KeyError, ValueError, RuntimeError):
             raise Refusal("private_live_preflight_unproven") from None
         client = Client(plan["url"], plan["ca_path"], peer=peer_transport,
-                        connect_ip=peer_plan["baseline_address"])
+                        connect_ip=management_address)
         client.login(plan.get("username", "admin"), password)
         original, _ = client.interface(plan["interface"])
         fields = saved_fields(original)
@@ -820,12 +840,26 @@ def main():
                 )).hexdigest(),
                 expected_web_terminal=plan["expected_web_terminal"], username=plan.get("username", "admin"),
                 password=password, interface_name=plan["interface"], expected_mac=plan["mac"],
-                expected_address=plan["peer_transport"]["baseline_address"],
+                expected_address=management_address, management_mode=mode,
             )
+            evidence["ordinary_ca_rotation"] = result
+            task_terminal = True
             if hashlib.sha256(Path(plan["ca_path"]).read_bytes()).hexdigest() != evidence["ca_sha256"]:
                 raise Refusal("trusted_ca_changed")
-            evidence.update(ordinary_ca_rotation=result, success=True, stage="ordinary_ca_rotation_verified")
-            task_terminal = True
+            if mode == "dhcp" or "iso_wheel_deployment" in plan:
+                with PinnedApplianceSession(peer_transport, management_address, plan["appliance_user"],
+                                            password, plan["appliance_ssh_host_key"]) as appliance_session:
+                    if mode == "dhcp":
+                        final_native = read_private_native(plan, fixture, peer_transport, appliance_session)
+                        if final_native != live_reservation:
+                            raise Refusal("post_ca_dhcp_ownership_changed")
+                        evidence["post_ca_dhcp_observation"] = {
+                            "phase": "after-ca-rotation", "address": final_native["baseline_address"],
+                            "mac": final_native["appliance_mac"], "lease_state": "unexpired-original-mac-lease",
+                        }
+                    if "iso_wheel_deployment" in plan and guest_identity(appliance_session, plan, password) != active_identity:
+                        raise Refusal("post_ca_deployed_payload_changed")
+            evidence.update(success=True, stage="ordinary_ca_rotation_verified")
             return
         changed = dict(fields)
         clients = [client]

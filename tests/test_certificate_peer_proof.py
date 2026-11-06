@@ -157,6 +157,180 @@ def test_read_native_requires_exact_lease_and_management_route_before_tls(
     assert "do not prove exclusive LAN attachment" in result["candidate_observation_limit"]
 
 
+@pytest.mark.parametrize("route_fault", [None, "default", "extra", "ipv6_default", "extra_address"])
+def test_read_native_observes_dhcp_management_baseline_without_static_rewire(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route_fault: str | None,
+) -> None:
+    """Require a live fixed lease and its exact on-link route for DHCP mode.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory for the public CA fixture.
+        monkeypatch: Replace only the trusted topology and TLS observations.
+        route_fault: Optional route mutation to refuse.
+    """
+    ca = tmp_path / "ca.pem"
+    ca.write_bytes(b"-----BEGIN CERTIFICATE-----\npublic\n-----END CERTIFICATE-----\n")
+    plan = {
+        "scenario": "ordinary-ca-rotation", "ordinary_ca_baseline_mode": "dhcp",
+        "trust_model": "trusted-host", "current_address": "192.168.77.10",
+        "task_id": "task", "pr": 1118,
+        "source_commit": "1" * 40, "deployed_commit": "2" * 40,
+        "baseline_address": "192.168.77.30", "static_candidate_address": "192.168.77.40",
+        "ca_path": str(ca), "ca_sha256": hashlib.sha256(ca.read_bytes()).hexdigest(),
+        "peer_fixture": {"sha256": "a" * 64}, "rewired_runtime": {"sha256": "b" * 64},
+        "dhcp_baseline_observation": {"sha256": "c" * 64},
+    }
+    fixture = {
+        "peer_cidr": "192.168.77.1/24", "lease_address": "192.168.77.10",
+        "appliance_mac": "00:50:56:aa:bb:cc", "appliance_vmx": "owned.vmx",
+        "lan_segment_receipt_sha256": "d" * 64,
+    }
+
+    class Appliance(FakeAppliance):
+        """Expose the lease as the actual appliance management address."""
+
+        def command(self, command: str) -> bytes:
+            """Return the fixed DHCP interface, route, and public MAC observations.
+
+            Args:
+                command: Bounded public command issued to the appliance.
+            """
+            if command == "ip -j -4 addr show dev eth0":
+                addresses = [{"local": "192.168.77.10", "prefixlen": 24}]
+                if route_fault == "extra_address":
+                    addresses.append({"local": "192.168.77.11", "prefixlen": 24})
+                return json.dumps([{"addr_info": addresses}]).encode()
+            if command == "ip -j -4 route show table 100":
+                route = {"dst": "192.168.77.0/24", "dev": "eth0", "prefsrc": "192.168.77.10", "scope": "link"}
+                routes = [route, {"dst": "192.168.77.0/25", "dev": "eth0"}] if route_fault == "extra" else [route]
+                return json.dumps(routes).encode()
+            if command == "ip -j -4 route show default":
+                return json.dumps([{"dst": "default", "dev": "eth0"}] if route_fault == "default" else []).encode()
+            if command == "ip -j -6 route show default":
+                return json.dumps([{"dst": "default", "dev": "eth0"}] if route_fault == "ipv6_default" else []).encode()
+            return super().command(command)
+
+    class HTTPS:
+        """Accept only a strict connection to the receipt-selected DHCP lease."""
+
+        def __init__(self, host: str, **kwargs: object) -> None:
+            """Bind the fake TLS connection to the selected current lease.
+
+            Args:
+                host: HTTPS hostname selected by the native proof.
+                **kwargs: Pinned peer, target IP, and TLS context.
+            """
+            assert host == "192.168.77.10"
+            assert kwargs["target_ip"] == host
+
+        def request(self, method: str, path: str) -> None:
+            """Accept the read-only health request.
+
+            Args:
+                method: HTTP method used by the native proof.
+                path: Public path requested over strict TLS.
+            """
+            assert (method, path) == ("GET", "/openapi.json")
+
+        def getresponse(self):
+            """Return a bounded successful response."""
+            return type("Response", (), {"status": 200, "read": lambda _self, _size: b"{}"})()
+
+        def close(self) -> None:
+            """Close the fake TLS connection."""
+
+    monkeypatch.setattr(proof, "inspect_trusted_host", lambda _plan: {"topology": "same"})
+    monkeypatch.setattr(proof, "verify_peer_isolation", lambda _peer: {"isolated": True})
+    monkeypatch.setattr(proof, "verify_peer_tunnel_scope", lambda _peer, addresses: addresses)
+    monkeypatch.setattr(proof, "assert_same_topology", lambda _before, _after: None)
+    context = type("Context", (), {"minimum_version": None, "load_verify_locations": lambda _self, **_kwargs: None})()
+    monkeypatch.setattr(proof.ssl, "SSLContext", lambda _protocol: context)
+    monkeypatch.setattr(proof, "PeerHTTPSConnection", HTTPS)
+    if route_fault:
+        with pytest.raises(proof.Refusal, match="appliance_eth0_route_missing|appliance_dhcp_default_route_present|appliance_management_"):
+            proof.read_native(plan, fixture, FakePeer(), Appliance())
+        return
+
+    result = proof.read_native(plan, fixture, FakePeer(), Appliance())
+
+    assert result["phase"] == "dhcp-baseline-preflight"
+    assert result["ordinary_ca_baseline_mode"] == "dhcp"
+    assert result["baseline_address"] == fixture["lease_address"]
+    assert result["dhcp_baseline_observation_sha256"] == "c" * 64
+    assert result["address_ownership_state"] == "trusted-host-controlled"
+
+
+def test_dhcp_receipt_admission_requires_observation_not_rewire(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Admit DHCP only through its immutable no-mutation observation receipt.
+
+    Args:
+        monkeypatch: Replace receipt readers and trusted topology with fixed fixtures.
+    """
+    refs = {
+        "fixture": {"path": "fixture.json", "sha256": "a" * 64},
+        "bootstrap": {"path": "bootstrap.json", "sha256": "b" * 64},
+        "observation": {"path": "observation.json", "sha256": "c" * 64},
+        "identity": {"path": "identity.json", "sha256": "d" * 64},
+    }
+    fixture = {
+        "appliance_vmx": "appliance.vmx", "peer_vmx": "peer.vmx",
+        "appliance_ownership_sha256": "e" * 64, "appliance_mac": "00:50:56:aa:bb:cc",
+        "lease_address": "192.168.77.10", "lan_segment_id": "segment-id",
+        "peer_cidr": "192.168.77.1/24",
+        "lan_segment_receipt": "lan.json", "lan_segment_receipt_sha256": "f" * 64,
+    }
+    bootstrap = {
+        "schema": 1, "phase": "iso-dhcp-baseline-observed", "vmx_path": "appliance.vmx",
+        "vm_ownership_sha256": "e" * 64, "deployed_commit": "2" * 40,
+        "predeployment_sha256": "9" * 64,
+    }
+    observation = {
+        "kind": "certificate-dhcp-baseline-observation", "phase": "iso-dhcp-baseline-observed",
+        "ordinary_ca_baseline_mode": "dhcp", "apply_state": "clean-applied-baseline",
+        "mutation_state": "none", "bootstrap_runtime_sha256": refs["bootstrap"]["sha256"],
+        "predeployment_sha256": "9" * 64,
+        "task_id": "task", "repository": "mdaneri/Atlaso", "pr": 1118,
+        "source_commit": "1" * 40, "deployed_commit": "2" * 40,
+        "vmx_path": "appliance.vmx", "vm_ownership_sha256": "e" * 64,
+        "interface": "eth0", "mac": "00:50:56:aa:bb:cc", "observed_address": "192.168.77.10",
+        "original_fields": {"ipv4_method": "dhcp", "ipv6_enabled": False},
+        "native_observation": {
+            "interface": "eth0", "mac": "00:50:56:aa:bb:cc", "address": "192.168.77.10",
+            "prefixlen": 24, "lease_state": "unexpired_reserved_for_original_mac",
+            "connected_route": "management_table_on_link", "default_routes": 0,
+        },
+    }
+    values = {refs["fixture"]["path"]: fixture, refs["bootstrap"]["path"]: bootstrap,
+              refs["observation"]["path"]: observation}
+    monkeypatch.setattr(proof, "admit_fixture", lambda _plan: fixture)
+    monkeypatch.setattr(proof, "bound_json", lambda ref: values[ref["path"]])
+    monkeypatch.setattr(proof, "inspect_trusted_host", lambda _plan: {"topology": "same"})
+    plan = {
+        "ordinary_ca_baseline_mode": "dhcp", "scenario": "ordinary-ca-rotation",
+        "trust_model": "trusted-host", "task_id": "task", "pr": 1118,
+        "source_commit": "1" * 40, "deployed_commit": "2" * 40,
+        "current_address": "192.168.77.10", "baseline_address": "192.168.77.30",
+        "peer_fixture": refs["fixture"], "bootstrap_runtime": refs["bootstrap"],
+        "dhcp_baseline_observation": refs["observation"], "peer_identity": refs["identity"],
+        "trusted_host": {
+            "appliance_vmx": fixture["appliance_vmx"], "peer_vmx": fixture["peer_vmx"],
+            "segment_id": fixture["lan_segment_id"],
+            "segment_receipt": {"path": fixture["lan_segment_receipt"],
+                                "sha256": fixture["lan_segment_receipt_sha256"]},
+        },
+    }
+
+    admitted_fixture, admitted_observation = proof.admit_receipts(plan)
+
+    assert admitted_fixture is fixture
+    assert admitted_observation is observation
+    assert "rewire_intent" not in plan and "rewired_runtime" not in plan
+
+    observation["mutation_state"] = "static-rewire-applied"
+    with pytest.raises(proof.Refusal, match="dhcp_baseline_observation_invalid"):
+        proof.admit_receipts(plan)
+
+
 def test_original_peer_identity_rejects_changed_endpoint_before_network(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -219,6 +393,7 @@ def test_original_peer_identity_rejects_changed_endpoint_before_network(
         {"connectiontype": "custom", "vnet": "VMnet8"} if index == 0 and path == "peer.vmx"
         else {"connectiontype": "pvn", "pvnid": "owned-id", "address": "00:50:56:aa:bb:cc"}))
     plan = {"task_id": "task", "deployed_commit": "c" * 40,
+            "baseline_address": "192.168.77.30",
             "peer_fixture": refs["fixture"], "peer_identity": refs["identity"],
             "bootstrap_runtime": refs["bootstrap"], "rewire_intent": refs["intent"],
             "rewired_runtime": refs["rewire"],

@@ -15,6 +15,7 @@ import ssl
 from html.parser import HTMLParser
 from typing import Any, cast
 
+from certificate_ca_baseline import baseline_mode
 from certificate_handoff_native import (
     Page,
     Refusal,
@@ -39,6 +40,12 @@ class _SettingsProjection(HTMLParser):
         self.web_terminal_interfaces: list[str] = []
 
     def handle_starttag(self, tag: str, attributes: list[tuple[str, str | None]]) -> None:
+        """Capture the expected public form controls.
+
+        Args:
+            tag: HTML element name emitted by the form renderer.
+            attributes: Public attributes attached to the element.
+        """
         values = dict(attributes)
         if tag != "input":
             return
@@ -61,6 +68,12 @@ class _CertificateRequestsProjection(HTMLParser):
         self.csrf = ""
 
     def handle_starttag(self, tag: str, attributes: list[tuple[str, str | None]]) -> None:
+        """Capture certificate request rows and the public CSRF token.
+
+        Args:
+            tag: HTML element name emitted by the request renderer.
+            attributes: Public attributes attached to the element.
+        """
         values = dict(attributes)
         if values.get("id") == "ca-requests-table":
             raw_rows = values.get("data-rows")
@@ -78,7 +91,11 @@ class _CertificateRequestsProjection(HTMLParser):
 
 
 def _managed_certificate_rows(client: Any) -> list[dict[str, Any]]:
-    """Return only inventory rows owned by the dedicated management listener."""
+    """Return only inventory rows owned by the dedicated management listener.
+
+    Args:
+        client: Already admitted authenticated appliance client.
+    """
     _, body = client.request("/ui/management/certificate-authority")
     rows = cast(Any, Page)(body).certificates
     managed = [row for row in rows if isinstance(row, dict) and row.get("managed_owner") == "appliance:https"]
@@ -88,7 +105,12 @@ def _managed_certificate_rows(client: Any) -> list[dict[str, Any]]:
 
 
 def _public_pem_sha256(client: Any, path: str) -> str:
-    """Download one public PEM certificate and return its normalized DER digest."""
+    """Download one public PEM certificate and return its normalized DER digest.
+
+    Args:
+        client: Already admitted authenticated appliance client.
+        path: Fixed public certificate download route.
+    """
     _, pem = client.request(path)
     if (not pem.startswith("-----BEGIN CERTIFICATE-----")
             or "PRIVATE KEY" in pem
@@ -103,12 +125,22 @@ def _public_pem_sha256(client: Any, path: str) -> str:
 
 
 def _root_sha256(client: Any) -> str:
-    """Read the authenticated public root certificate identity."""
+    """Read the authenticated public root certificate identity.
+
+    Args:
+        client: Already admitted authenticated appliance client.
+    """
     return _public_pem_sha256(client, "/certificate-authority/downloads/root-ca.pem")
 
 
 def _settings_projection(client: Any, *, expected_web_terminal: bool, interface_name: str) -> list[str]:
-    """Require clean desired Web Terminal state to match the expected fixture."""
+    """Require clean desired Web Terminal state to match the expected fixture.
+
+    Args:
+        client: Already admitted authenticated appliance client.
+        expected_web_terminal: Expected public checkbox state from fixture admission.
+        interface_name: Sole appliance interface selected by the native fixture.
+    """
     _, body = client.request("/ui/management/settings")
     projection = _SettingsProjection()
     projection.feed(body)
@@ -132,8 +164,17 @@ def _management_identity(
     interface_name: str | None,
     expected_mac: str | None,
     expected_address: str | None,
+    management_mode: str,
 ) -> tuple[dict[str, Any], str, str]:
-    """Require the single static IPv4 management identity bound to this client."""
+    """Require the single static or receipt-pinned DHCP management identity.
+
+    Args:
+        client: Admitted authenticated appliance client.
+        interface_name: Optional expected management interface name.
+        expected_mac: Optional receipt-pinned management MAC address.
+        expected_address: Optional receipt-pinned live management address.
+        management_mode: Explicit static or DHCP baseline mode.
+    """
     _, body = client.request("/ui/management/physical-interfaces")
     page = cast(Any, Page)(body)
     management = [row for row in page.rows if isinstance(row, dict) and row.get("role") == "management"]
@@ -144,12 +185,25 @@ def _management_identity(
     if not name or (interface_name is not None and name != interface_name):
         raise Refusal("management_interface_identity_mismatch")
     fields = cast(Any, saved_fields)(row)
-    if fields.get("ipv4_method") != "static" or fields.get("ipv6_enabled") is not False:
-        raise Refusal("management_interface_static_ipv4_required")
-    try:
-        address = str(ipaddress.ip_interface(str(fields.get("ip_cidr") or "")).ip)
-    except ValueError:
-        raise Refusal("management_interface_address_invalid") from None
+    if fields.get("ipv6_enabled") is not False:
+        raise Refusal("management_interface_ipv6_must_be_disabled")
+    if management_mode == "static":
+        if fields.get("ipv4_method") != "static":
+            raise Refusal("management_interface_static_ipv4_required")
+        try:
+            address = str(ipaddress.ip_interface(str(fields.get("ip_cidr") or "")).ip)
+        except ValueError:
+            raise Refusal("management_interface_address_invalid") from None
+    elif management_mode == "dhcp":
+        if (fields.get("ipv4_method") != "dhcp" or fields.get("ip_cidr") not in ("", None)
+                or fields.get("gateway") not in ("", None) or expected_address is None):
+            raise Refusal("management_interface_dhcp_baseline_required")
+        try:
+            address = str(ipaddress.IPv4Address(client.connect_ip))
+        except (ipaddress.AddressValueError, TypeError):
+            raise Refusal("management_interface_address_invalid") from None
+    else:
+        raise Refusal("management_baseline_mode_invalid")
     connected_address = str(ipaddress.IPv4Address(client.connect_ip))
     if address != connected_address or (expected_address is not None and address != expected_address):
         raise Refusal("management_address_binding_mismatch")
@@ -160,7 +214,12 @@ def _management_identity(
 
 
 def _request_row(client: Any, certificate_id: int) -> tuple[dict[str, Any], str]:
-    """Read one certificate action row and its CSRF value."""
+    """Read one certificate action row and its CSRF value.
+
+    Args:
+        client: Already admitted authenticated appliance client.
+        certificate_id: Original management certificate ID.
+    """
     _, body = client.request("/ui/management/ca/requests")
     projection = _CertificateRequestsProjection()
     projection.feed(body)
@@ -171,7 +230,12 @@ def _request_row(client: Any, certificate_id: int) -> tuple[dict[str, Any], str]
 
 
 def _require_inventory_leaf(client: Any, certificate_id: int) -> dict[str, Any]:
-    """Require the sole active management row to be issued and exportable."""
+    """Require the sole active management row to be issued and exportable.
+
+    Args:
+        client: Already admitted authenticated appliance client.
+        certificate_id: Expected issued appliance:https row ID.
+    """
     cast(Any, selected_management_certificate)(client, certificate_id)
     row = _managed_certificate_rows(client)[0]
     fingerprint = str(row.get("fingerprint") or "").lower()
@@ -183,7 +247,13 @@ def _require_inventory_leaf(client: Any, certificate_id: int) -> dict[str, Any]:
 
 
 def _assert_served_matches_inventory(client: Any, certificate_id: int, address: str) -> str:
-    """Require strict peer TLS and the authenticated public PEM to match inventory."""
+    """Require strict peer TLS and the authenticated public PEM to match inventory.
+
+    Args:
+        client: Already admitted authenticated appliance client.
+        certificate_id: Expected issued appliance:https row ID.
+        address: Receipt-pinned IPv4 address included in the served certificate SAN.
+    """
     inventory = _require_inventory_leaf(client, certificate_id)
     pem_fingerprint = _public_pem_sha256(
         client, f"/certificate-authority/certificates/{certificate_id}/downloads/certificate.pem"
@@ -230,7 +300,11 @@ def _replacement_certificate(client: Any, original_id: int, original_fingerprint
 
 
 def _review_ca_only(client: Any) -> tuple[dict[str, Any], list[str]]:
-    """Admit only a clean CA change and its two already-applied consumers."""
+    """Admit only a clean CA change and its two already-applied consumers.
+
+    Args:
+        client: Already admitted authenticated appliance client.
+    """
     path = cast(Any, apply_review_path)("/ui/management/appliance-apply/review", ["ca"])
     _, review = client.json(path)
     rows = review.get("units")
@@ -275,6 +349,7 @@ def exercise_ca_rotation(
     interface_name: str | None = None,
     expected_mac: str | None = None,
     expected_address: str | None = None,
+    management_mode: str = "static",
 ) -> dict[str, Any]:
     """Replace and natively activate the managed management HTTPS leaf.
 
@@ -288,6 +363,7 @@ def exercise_ca_rotation(
         interface_name: Optional admitted management interface name.
         expected_mac: Optional admitted management MAC address.
         expected_address: Optional admitted management IPv4 address.
+        management_mode: Static by default; DHCP only for the receipt-pinned ordinary CA baseline.
 
     Returns:
         A bounded allowlisted public acceptance record.
@@ -296,12 +372,21 @@ def exercise_ca_rotation(
         Refusal: If admission, replacement, Apply review, or runtime verification fails.
     """
     try:
+        try:
+            management_mode = baseline_mode({
+                "ordinary_ca_baseline_mode": management_mode,
+                "trust_model": "trusted-host",
+                "scenario": "ordinary-ca-rotation",
+            })
+        except ValueError:
+            raise Refusal("management_baseline_mode_invalid") from None
         cast(Any, clean_baseline)(client)
         row, address, mac = _management_identity(
             client,
             interface_name=interface_name,
             expected_mac=expected_mac,
             expected_address=expected_address,
+            management_mode=management_mode,
         )
         interface = str(row.get("name") or "")
         web_terminal_interfaces = _settings_projection(
@@ -365,6 +450,7 @@ def exercise_ca_rotation(
             interface_name=interface,
             expected_mac=mac,
             expected_address=address,
+            management_mode=management_mode,
         )
         if cast(Any, saved_fields)(final_row) != cast(Any, saved_fields)(row) or final_mac != mac or final_address != address:
             raise Refusal("management_interface_changed_during_ca_apply")
@@ -394,6 +480,7 @@ def exercise_ca_rotation(
             "review_selected_units": selected_units,
             "task_id": job_id,
             "task_status": "succeeded",
+            "ordinary_ca_baseline_mode": management_mode,
         }
     except Refusal:
         raise

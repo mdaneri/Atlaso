@@ -50,12 +50,24 @@ _SPEC_KEYS = frozenset(
 
 
 def _require_string(value: Any, field: str) -> str:
+    """Require a non-empty string for one specification field.
+
+    Args:
+        value: Supplied field value to validate.
+        field: Specification field name used in refusal messages.
+    """
     if not isinstance(value, str) or not value:
         raise ValueError(f"{field} must be a non-empty string.")
     return value
 
 
 def _require_absolute_path(value: Any, field: str) -> str:
+    """Require a non-empty absolute path for one specification field.
+
+    Args:
+        value: Supplied path value to validate.
+        field: Specification field name used in refusal messages.
+    """
     path = _require_string(value, field)
     if not (Path(path).is_absolute() or PureWindowsPath(path).is_absolute()):
         raise ValueError(f"{field} must be an absolute path.")
@@ -63,7 +75,11 @@ def _require_absolute_path(value: Any, field: str) -> str:
 
 
 def _is_private_unicast(address: ipaddress.IPv4Address) -> bool:
-    """Accept RFC1918 unicast addresses, excluding special-purpose ranges."""
+    """Accept RFC1918 unicast addresses, excluding special-purpose ranges.
+
+    Args:
+        address: Parsed IPv4 address used for the peer or appliance network.
+    """
     return (
         any(
             address in ipaddress.IPv4Network(network)
@@ -78,6 +94,12 @@ def _is_private_unicast(address: ipaddress.IPv4Address) -> bool:
 
 
 def _parse_unicast_mac(value: Any, field: str) -> str:
+    """Normalize a six-octet unicast MAC address.
+
+    Args:
+        value: Supplied hardware address to validate.
+        field: Specification field name used in refusal messages.
+    """
     if not isinstance(value, str) or not _MAC.fullmatch(value):
         raise ValueError(f"{field} must be six exact hexadecimal MAC octets.")
     normalized = value.lower()
@@ -92,6 +114,9 @@ def validate_spec(spec: dict[str, Any]) -> dict[str, Any]:
     This validates value shape and cross-field consistency only. It does not
     read reference files or establish path, file, VM, or receipt ownership.
     Those checks belong to the factory orchestration layer.
+
+    Args:
+        spec: Untrusted peer-factory fields supplied by the caller.
     """
     if not isinstance(spec, dict):
         raise ValueError("The peer factory specification must be an object.")
@@ -203,7 +228,15 @@ def render_vmx(
     cleanup_identity: str,
     macs: tuple[str, str],
 ) -> str:
-    """Render an offline two-NIC Alpine peer VMX with only validated values."""
+    """Render an offline two-NIC Alpine peer VMX with only validated values.
+
+    Args:
+        spec: Peer-factory fields that pass the configuration validator.
+        name: Exact VM display name bound to the task and pull request.
+        segment_id: Provider LAN segment identity for the isolated peer.
+        cleanup_identity: Original durable identity used for ownership cleanup.
+        macs: Peer NIC identities for the management and isolated networks.
+    """
     validated = validate_spec(spec)
     suffix = validated.get("collision_suffix")
     expected_name = f"Atlaso-PR-{validated['pr']}-certificate-peer"

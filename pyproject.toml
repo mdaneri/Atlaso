@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.478"
+version = "0.9.480"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -35,7 +35,7 @@ atlaso-diagnostics = "atlaso.diagnostics:main"
 dev = [
   "httpx>=0.27.2",
   "httpx2>=2.5.0",
-  "markdown==3.11.1",
+  "markdown==3.11.2",
   "markdown-it-py==4.2.0",
   "pre-commit>=4.2.0",
   "pyyaml==6.0.3",
@@ -110,6 +110,9 @@ files = [
   "atlaso/app/services/dhcp_pool_verification.py",
   "scripts/interop/dedicated_host_contract.py",
   "scripts/interop/dedicated_host_proof.py",
+  "scripts/interop/certificate_ca_baseline.py",
+  "scripts/interop/certificate_iso_deployment.py",
+  "scripts/interop/certificate_iso_transport.py",
   "atlaso/app/services/routing_permissions.py",
   "atlaso/app/routers/api_v1/routing_permissions.py",
   "atlaso/app/routing_permission_schemas.py",

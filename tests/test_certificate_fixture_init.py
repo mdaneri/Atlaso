@@ -32,6 +32,8 @@ def page(
 
     Args:
         name: Settings page whose one target form should be parsed.
+        web_terminal_enabled: Optional current checkbox state returned by Settings.
+        web_terminal_interfaces: Interfaces currently allowed by the fake server.
     """
     action = {"dns": "dns/settings", "settings": "settings", "ntp": "ntp/settings"}[name]
     content = {
@@ -58,6 +60,12 @@ def page(
 
 class FormsClient:
     def __init__(self, *, web_terminal_enabled: bool | None = None, web_terminal_interfaces: list[str] | None = None):
+        """Initialize the fake client with the server's current terminal settings.
+
+        Args:
+            web_terminal_enabled: Optional current checkbox state returned by Settings.
+            web_terminal_interfaces: Interfaces currently allowed by the fake server.
+        """
         self.web_terminal_enabled = web_terminal_enabled
         self.web_terminal_interfaces = web_terminal_interfaces or []
 
@@ -95,7 +103,11 @@ def test_preparation_preserves_other_controls_and_records_no_tokens():
 
 @pytest.mark.parametrize("requested", [True, False])
 def test_preparation_applies_explicit_web_terminal_choice_and_binds_original_settings(requested):
-    """Set only the requested terminal state and preserve the prior public settings for inspection."""
+    """Set only the requested terminal state and preserve the prior public settings for inspection.
+
+    Args:
+        requested: Explicit terminal enablement choice sent to preparation.
+    """
     client = FormsClient(web_terminal_enabled=False, web_terminal_interfaces=["eth0"])
 
     forms, public = init.prepare_forms(client, PEER, web_terminal_enabled=requested)
@@ -181,7 +193,11 @@ def test_initialization_rejects_foreign_pending_work(review):
 
 
 def _admission_plan(web_terminal_value=...):
-    """Build a synthetic trusted-host fixture initialization plan for selector validation."""
+    """Build a synthetic trusted-host fixture initialization plan for selector validation.
+
+    Args:
+        web_terminal_value: Optional raw selector value to include in the plan.
+    """
     requested = {
         "peer_time_address": PEER, "resolver_address": PEER,
         "disable_dns_server": True, "disable_ntp_server": True,
@@ -202,7 +218,12 @@ def _admission_plan(web_terminal_value=...):
 
 
 def _stub_plan_admission(monkeypatch, fixture):
-    """Replace only receipt readers and helper source admission for plan validation tests."""
+    """Replace only receipt readers and helper source admission for plan validation tests.
+
+    Args:
+        monkeypatch: Pytest patch manager for the focused admission test.
+        fixture: Synthetic admitted fixture object returned by the stubs.
+    """
     monkeypatch.setattr(init, "admit_output", lambda *_args: None)
     monkeypatch.setattr(init, "admit_fixture", lambda _plan: fixture)
     monkeypatch.setattr(init, "reviewed_helper_identity", lambda _plan: {})
@@ -211,7 +232,13 @@ def _stub_plan_admission(monkeypatch, fixture):
 
 @pytest.mark.parametrize("choice", [None, True, False])
 def test_initialization_admission_accepts_legacy_or_exact_boolean_web_terminal(choice, tmp_path, monkeypatch):
-    """Retain legacy selector omission and admit only JSON booleans when the selector is present."""
+    """Retain legacy selector omission and admit only JSON booleans when the selector is present.
+
+    Args:
+        choice: Optional selector value being admitted.
+        tmp_path: Pytest-owned root for receipt-bound initialization inputs.
+        monkeypatch: Pytest patch manager for receipt-reader and helper stubs.
+    """
     plan, fixture = _admission_plan() if choice is None else _admission_plan(choice)
     _stub_plan_admission(monkeypatch, fixture)
 
@@ -224,7 +251,14 @@ def test_initialization_admission_accepts_legacy_or_exact_boolean_web_terminal(c
 def test_invalid_web_terminal_intent_refuses_before_credentials_or_peer_setup(
     choice, tmp_path, monkeypatch, capsys,
 ):
-    """Reject null, integer and string intent values before consuming credentials or opening transport."""
+    """Reject null, integer and string intent values before consuming credentials or opening transport.
+
+    Args:
+        choice: Invalid selector value supplied in the initialization plan.
+        tmp_path: Pytest-owned root for synthetic plan and receipt files.
+        monkeypatch: Pytest patch manager for boundary-call sentinels.
+        capsys: Pytest capture for checking that refusal output stays controlled.
+    """
     plan, fixture = _admission_plan(choice)
     _stub_plan_admission(monkeypatch, fixture)
     output = tmp_path / "output"
@@ -442,6 +476,13 @@ def test_initialization_transitions_are_journaled_and_never_resubmitted(tmp_path
         prepare_settings_form = init._prepare_settings_form
 
         def record_settings_preparation(form, peer_address, web_terminal_enabled):
+            """Record and delegate the Settings form used by the test client.
+
+            Args:
+                form: Parsed Settings form with submitted control fields.
+                peer_address: Admitted address used for peer services.
+                web_terminal_enabled: Explicit checkbox choice, if supplied.
+            """
             settings_helper_calls.append(web_terminal_enabled)
             return prepare_settings_form(form, peer_address, web_terminal_enabled)
 
@@ -452,6 +493,7 @@ def test_initialization_transitions_are_journaled_and_never_resubmitted(tmp_path
 
         Args:
             _client: Authenticated test-only client.
+            **_kwargs: Submission selectors passed to the uncertain transport.
         """
         calls.append("submit")
         if scenario == "unknown":
@@ -491,6 +533,11 @@ def test_initialization_transitions_are_journaled_and_never_resubmitted(tmp_path
     assert inspected["success"] is True and not calls
     settings_helper_calls.clear()
     def wait_task(*_args):
+        """Return the synthetic task result after any requested readback change.
+
+        Args:
+            *_args: Task endpoint and polling controls supplied by initialization.
+        """
         if scenario == "web_terminal_readback_mismatch":
             client_instances[-1].web_terminal_enabled = False
             client_instances[-1].web_terminal_interfaces = []
@@ -636,7 +683,13 @@ def test_fixture_forms_use_real_router_autosave_contract(client, monkeypatch, pa
 
 @pytest.mark.parametrize("enabled", [True, False])
 def test_explicit_web_terminal_choice_uses_real_settings_autosave_fields(client, monkeypatch, enabled):
-    """Send the explicit checkbox/interface shape through the existing Settings autosave route."""
+    """Send the explicit checkbox/interface shape through the existing Settings autosave route.
+
+    Args:
+        client: Isolated Atlaso application with the Settings route.
+        monkeypatch: Pytest patch manager for native capability discovery.
+        enabled: Explicit terminal state saved through the normal form handler.
+    """
     from atlaso.app.adapters.system import AdapterResult
     from atlaso.app.database import SessionLocal
     from atlaso.app.ui import get_appliance_settings_row
@@ -661,11 +714,22 @@ def test_explicit_web_terminal_choice_uses_real_settings_autosave_fields(client,
 
     class Response(io.BytesIO):
         def __init__(self, response):
+            """Wrap an in-process response as a bounded urllib stream.
+
+            Args:
+                response: HTTP response returned by the Atlaso test client.
+            """
             super().__init__(response.content)
             self.status = response.status_code
 
     class Opener:
         def open(self, request, *, timeout):
+            """Forward one urllib request through the in-process application.
+
+            Args:
+                request: Prepared request with method, URL, body, and headers.
+                timeout: Caller-supplied bound for the HTTP operation.
+            """
             assert timeout == 12
             return Response(client.request(request.get_method(), request.full_url,
                                            content=request.data, headers=dict(request.header_items())))

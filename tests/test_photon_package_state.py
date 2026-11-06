@@ -1096,7 +1096,11 @@ def test_installation_journal_metadata_rejects_unknown_systemd_before_reads(
 def test_installation_journal_metadata_rejects_superseded_systemd_before_runtime_reads(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Reject the superseded exact Photon RPM digest before policy or path reads."""
+    """Reject the superseded exact Photon RPM digest before policy or path reads.
+
+    Args:
+        monkeypatch: Replace policy and path reads with boundaries that must stay unused.
+    """
     verifier = load_verifier()
     superseded_sha256 = "2ef0275f25c9b782e7f3cbbaaa5bf0d9037149b5253630c6db27e155c461618f"
     admitted_sha256 = "54d0b99c3d18b45d88ef0f8358c4bb13187e6456df6d0f4f054901af8a864077"

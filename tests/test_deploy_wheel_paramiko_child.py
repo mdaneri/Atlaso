@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -53,6 +54,10 @@ class FakeKey:
 
     def get_name(self) -> str:
         return self.name
+
+    def asbytes(self) -> bytes:
+        """Return deterministic synthetic public key bytes for fingerprint tests."""
+        return self.value.encode()
 
     def __eq__(self, other: object) -> bool:
         """Compare fake key algorithm and material.
@@ -223,6 +228,33 @@ def test_mismatched_host_key_fails_before_authentication() -> None:
     assert not transport.auth_attempted
     assert client._transport is None
 
+
+@pytest.mark.parametrize("defect", (None, "wrong_original_pin", "known_hosts_conflict"))
+def test_original_iso_pin_is_checked_before_password_authentication(defect: str | None) -> None:
+    """Exercise the generated SSH connection against its original console identity.
+
+    Args:
+        defect: Independent original-pin or existing-known-host conflict to introduce.
+    """
+    from scripts.interop import certificate_iso_transport
+
+    server = FakeKey("ssh-ed25519", "original-console-key")
+    recorded = FakeKey("ssh-ed25519", "conflicting-known-host") if defect == "known_hosts_conflict" else None
+    connect, client, transport, _ = _run_connection(recorded, server)
+    connect.__globals__["fixture_transport"] = certificate_iso_transport
+    original = "different-original-console-key" if defect == "wrong_original_pin" else server.value
+    request = {"host_key_sha256": "SHA256:" + base64.b64encode(hashlib.sha256(original.encode()).digest()).decode().rstrip("=")}
+    if defect:
+        with pytest.raises((certificate_iso_transport.Refusal, FakeBadHostKey)):
+            connect(client, "192.0.2.10", "admin", "example-password", request)
+        assert not transport.auth_attempted
+        assert transport.closed
+        assert client._transport is None
+    else:
+        connect(client, "192.0.2.10", "admin", "example-password", request)
+        assert transport.auth_attempted
+        assert client._transport is transport
+    assert transport.security.key_types == ["ssh-ed25519"]
 
 def test_verified_guest_key_is_added_only_to_in_memory_host_keys() -> None:
     add_trusted_host_key = _generated_function("add_trusted_host_key")
