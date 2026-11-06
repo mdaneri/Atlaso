@@ -2680,6 +2680,10 @@ def appliance_settings_context(
         management_https_key_path=management_https_key_path,
         web_terminal_options=terminal_options,
     )
+    if settings.management_https_enabled:
+        appliance_settings_preview["management_https_ca_path"] = str(
+            PurePosixPath(ca_settings.storage_path) / "root-ca.pem"
+        )
     if appliance_settings_preview["resolver_mode"] != "dhcp":
         observed_dhcp_dns_servers = []
     return {
@@ -10476,24 +10480,25 @@ def rotated_ca_certificate_consumers(ca_unit: dict[str, Any], ca_baseline: dict[
         if isinstance(row, dict) and row.get("managed_owner")
     }
     owner_units = {
-        "appliance:https": "public_services",
-        "oidc:https": "public_services",
-        "ca_portal:https": "public_services",
-        "vcf_offline_depot:https": "public_services",
-        "kms:server": "kms",
-        "ldap:ldaps": "ldap",
-        "ntp:nts": "ntpd",
-        "vcf_private_registry:https": "vcf_private_registry",
+        "appliance:https": {"appliance_settings", "public_services"},
+        "oidc:https": {"public_services"},
+        "ca_portal:https": {"public_services"},
+        "vcf_offline_depot:https": {"public_services"},
+        "kms:server": {"kms"},
+        "ldap:ldaps": {"ldap"},
+        "ntp:nts": {"ntpd"},
+        "vcf_private_registry:https": {"vcf_private_registry"},
     }
-    owner_units.update({row["managed_owner"]: "public_services" for row in current.get("certificates", [])
+    owner_units.update({row["managed_owner"]: {"public_services"} for row in current.get("certificates", [])
                         if isinstance(row, dict) and str(row.get("managed_owner") or "").startswith("reverse_proxy:")})
     return {
-        owner_units[row["managed_owner"]]
+        unit_id
         for row in current.get("certificates", [])
         if isinstance(row, dict)
         and row.get("managed_owner") in owner_units
         and row.get("fingerprint")
         and row["fingerprint"] != previous_fingerprints.get(row["managed_owner"])
+        for unit_id in owner_units[row["managed_owner"]]
     }
 
 
@@ -18241,6 +18246,19 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         "A rotated CA certificate has an applied listener missing from this task. "
                         "Submit the appliance changes again."
                     )
+                # A protected handoff publishes CA and its bundled consumers
+                # together at the group's first row, in the helper-owned order.
+                ca_publication_index = min(
+                    selected_order.index(unit_id) for unit_id in handoff_unit_ids
+                ) if "ca" in handoff_unit_ids else selected_order.index("ca")
+                if any(
+                    selected_order.index(unit_id) < ca_publication_index
+                    for unit_id in ca_reload_units - handoff_unit_ids
+                ):
+                    raise ApplianceApplyJobError(
+                        "CA publication must precede every rotated-certificate listener. "
+                        "Submit the appliance changes again."
+                    )
             for index, unit in enumerate(selected_units, start=1):
                 # A bundled transaction already completed these rows. A later request
                 # must not turn their successful final result into cancellation.
@@ -19317,6 +19335,7 @@ def appliance_apply_execution_plan(
     if https_ca_required:
         # The CA unit materializes newly issued management TLS files.
         selected_ids.add("ca")
+    ca_consumers: set[str] = set()
     if "ca" in selected_ids:
         ca_consumers = rotated_ca_certificate_consumers(
             unit_map["ca"], apply_baselines.get("ca")
@@ -19738,7 +19757,10 @@ def appliance_apply_execution_plan(
         group_ids = {*MANAGEMENT_HANDOFF_UNIT_IDS, "dnsmasq", "wan", "nat"}
         last_group = max(index for index, unit in enumerate(selected_ordered_units) if unit["id"] in group_ids)
         selected_ordered_units[last_group + 1:last_group + 1] = takers
-    if https_ca_required and not management_handoff:
+    if not management_handoff and (
+        https_ca_required
+        or ("appliance_settings" in selected_ids and "appliance_settings" in ca_consumers)
+    ):
         # Settings validates the management certificate files on disk; publish
         # the pending CA state before enabling HTTPS.
         selected_ordered_units = [unit for unit in selected_ordered_units if unit["id"] != "ca"]
@@ -19757,6 +19779,7 @@ def appliance_apply_execution_plan(
         "applied_baseline_fingerprint": appliance_snapshot_hash(apply_baselines),
         "skipped_changed_units": skipped_changed_units,
         "generated_dns_only": generated_dns_only,
+        "ca_certificate_consumers": sorted(ca_consumers & selected_ids),
         "dns_resolver_activation": dns_resolver_activation,
         "management_handoff": management_handoff,
         "traffic_publishing_pair": traffic_publishing_pair,
@@ -19827,6 +19850,8 @@ def appliance_apply_review_plan(db: Session, selected_units: list[str] | None = 
                 reason = "Establish the listener addresses and routing targets used by this task."
             elif unit_id == "ca":
                 reason = "Deploy the certificates required by the selected listeners."
+            elif unit_id in plan["ca_certificate_consumers"]:
+                reason = "Activate the rotated CA certificate on the applied listener."
             elif unit_id == "dnsmasq":
                 reason = "Publish dependent DNS records after listener readiness."
             elif unit_id == "appliance_settings":

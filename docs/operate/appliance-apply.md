@@ -139,6 +139,13 @@ If enabling Management HTTPS creates a pending CA-managed certificate, the revie
 installs its files before **Appliance Settings**. Changing the management HTTP/HTTPS mode or public listener port uses
 the protected handoff to recompute Network, Firewall, and Public Services listeners together. If Network has separate
 pending edits, select Network explicitly with Appliance Settings before submitting that change.
+
+Rotating the managed appliance HTTPS certificate also includes the applied **Appliance Settings** and **Public Services**
+consumers, even when no public service is enabled. CA publication runs before management activation. If either consumer
+has pending edits, review and select those edits explicitly; a CA-only submission cannot approve them. Ordinary Settings
+activation verifies the managed CA, the applied address and the exact new served leaf before reporting success. A failed
+or cancelled consumer leaves the previous CA baseline intact so the rotation remains pending for a reviewed retry.
+
 Examples include checking service health, resolving a managed DNS name, reaching the intended listener, or confirming
 installed configuration from the appliance console. Use the service-specific procedure; a green UI status is insufficient.
 
