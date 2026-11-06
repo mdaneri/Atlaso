@@ -106,6 +106,8 @@ Saving a different management NIC or static address keeps that desired identity 
 publication cannot replace it while its new address is pending.
 
 This path serves management UI/API and their static and CA-download dependencies only, to link-local source addresses.
+The Certificate Authority page's root, bundle, certificate, chain and private-key downloads retain their existing
+authenticated management routes on this listener.
 Existing authentication and management firewall source restrictions still apply. It does not enable public protocols,
 publish APIPA in DNS, invent a gateway or DNS server, or forward link-local traffic between interfaces. APIPA on other
 DHCP interfaces remains visible as acquisition status and is not a general service-listener address.
