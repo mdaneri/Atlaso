@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import sys
 from pathlib import Path
 
@@ -30,6 +31,65 @@ def _args(**overrides: object) -> argparse.Namespace:
     }
     values.update(overrides)
     return argparse.Namespace(**values)
+
+
+def test_seed_serializes_valid_nocloud_image_through_its_exclusive_output(monkeypatch, tmp_path):
+    """Read the generated ISO back instead of inferring success from its filename.
+
+    Args:
+        monkeypatch: Supply the public command-line inputs.
+        tmp_path: Originally owned pytest output directory.
+    """
+    import create_certificate_peer_seed_iso as seed
+    import pycdlib
+
+    target = tmp_path / "peer-seed.iso"
+    args = _args()
+    monkeypatch.setattr(sys, "argv", ["seed", "--output", str(target), "--hostname", args.hostname,
+                        "--server-cidr", args.server_cidr, "--lease-address", args.lease_address,
+                        "--client-mac", args.client_mac, "--public-key", args.public_key])
+    assert seed.main() == 0
+    iso = pycdlib.PyCdlib()
+    iso.open(str(target))
+    try:
+        contents = io.BytesIO()
+        iso.get_file_from_iso_fp(contents, joliet_path="/user-data")
+        assert contents.getvalue().decode() == peer_files(args)["user-data"]
+    finally:
+        iso.close()
+
+
+def test_seed_serialization_preserves_a_concurrent_output_insertion(monkeypatch, tmp_path):
+    """An output created after inspection is never overwritten by ISO serialization.
+
+    Args:
+        monkeypatch: Substitute the exact insertion boundary in the real ISO builder.
+        tmp_path: Originally owned pytest output directory.
+    """
+    import create_certificate_peer_seed_iso as seed
+    import pycdlib
+
+    target = tmp_path / "peer-seed.iso"
+    original_new = pycdlib.PyCdlib.new
+
+    def insert_before_serialization(iso, **kwargs):
+        """Create a competing file after the builder's initial absence check.
+
+        Args:
+            iso: Actual pycdlib image being prepared.
+            **kwargs: Normal new-image parameters.
+        """
+        original_new(iso, **kwargs)
+        target.write_bytes(b"preserve concurrent output")
+
+    monkeypatch.setattr(pycdlib.PyCdlib, "new", insert_before_serialization)
+    args = _args()
+    monkeypatch.setattr(sys, "argv", ["seed", "--output", str(target), "--hostname", args.hostname,
+                        "--server-cidr", args.server_cidr, "--lease-address", args.lease_address,
+                        "--client-mac", args.client_mac, "--public-key", args.public_key])
+    with pytest.raises(FileExistsError):
+        seed.main()
+    assert target.read_bytes() == b"preserve concurrent output"
 
 
 def test_peer_has_exact_mac_static_only_dhcp_on_private_interface() -> None:

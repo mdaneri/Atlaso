@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -249,11 +250,18 @@ def main() -> int:
         raise FileExistsError(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     iso = pycdlib.PyCdlib()
-    iso.new(interchange_level=3, joliet=3, vol_ident="cidata")
-    for name, iso_name in (("user-data", "USERDATA"), ("meta-data", "METADATA"), ("network-config", "NETCFG")):
-        add_file(iso, name, files[name], iso_name)
-    iso.write(str(output))
-    iso.close()
+    try:
+        iso.new(interchange_level=3, joliet=3, vol_ident="cidata")
+        for name, iso_name in (("user-data", "USERDATA"), ("meta-data", "METADATA"), ("network-config", "NETCFG")):
+            add_file(iso, name, files[name], iso_name)
+        # Retain exclusive creation through ISO serialization; a concurrent
+        # insertion after the preliminary existence check must be preserved.
+        with output.open("xb") as stream:
+            iso.write_fp(stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        iso.close()
     print(output)
     return 0
 

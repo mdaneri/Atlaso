@@ -18678,6 +18678,71 @@ def test_management_front_door_rejects_unhealthy_upstream_before_mutation(
     assert not nginx_paths["management_site"].exists()
 
 
+def test_management_front_door_authenticates_external_scope_and_retains_loopbacks(monkeypatch, tmp_path):
+    """Retained diagnostic sockets cannot add loopback SAN requirements to ordinary Apply.
+
+    Args:
+        monkeypatch: Replace native activation while recording its exact readiness scope.
+        tmp_path: Originally owned test root containing synthetic public TLS intent.
+    """
+    helper = load_helper_module()
+    paths = patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path)
+    managed = tmp_path / "managed"
+    managed.mkdir()
+    cert_path = managed / "leaf.pem"
+    cert_path.write_text("-----BEGIN CERTIFICATE-----\nbGVhZg==\n-----END CERTIFICATE-----\n", encoding="utf-8")
+    dropin = tmp_path / "systemd/atlaso.service.d/management-https.conf"
+    monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin.parent)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: False)
+    monkeypatch.setattr(helper, "_grant_atlaso_service_key_read", lambda *_args: None)
+    monkeypatch.setattr(helper, "_management_certificate_covers_scoped_addresses", lambda *_args: None)
+    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
+    upstream = []
+    monkeypatch.setattr(helper, "_management_handoff_upstream_readiness", lambda **kwargs: upstream.append(kwargs))
+
+    def install(path, text):
+        """Retain the complete scoped nginx configuration while avoiding a provider call.
+
+        Args:
+            path: Original task-owned management site.
+            text: Rendered scoped candidate, including diagnostic sockets.
+        """
+        helper._install_nginx_include()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return 0
+
+    checked = []
+
+    def ready(addresses, _https, _port, **kwargs):
+        """Record the independently authenticated external readiness targets.
+
+        Args:
+            addresses: Addresses whose served leaf must be authenticated.
+            _https: Enabled HTTPS mode.
+            _port: Configured public port.
+            **kwargs: Explicit CA and captured leaf intent.
+        """
+        checked.append((addresses, kwargs["tls_ca_paths"], kwargs["tls_expected_leaf"]))
+        return {"stable_samples": 3}
+
+    monkeypatch.setattr(helper, "_install_nginx_site", install)
+    monkeypatch.setattr(helper, "_management_handoff_readiness", ready)
+    payload = json.loads(appliance_settings_json(management_https_enabled=True,
+                        management_https_cert_path=str(cert_path), management_https_key_path=str(managed / "test.key")))
+    payload["management_https_ca_path"] = str(managed / "root.pem")
+    scope = ["127.0.0.1", "::1", "192.0.2.10", "2001:db8::10"]
+    assert helper._configure_atlaso_management_https(payload, listen_addresses=scope) == (0, None)
+    assert checked == [(["192.0.2.10", "2001:db8::10"],
+                        {address: managed / "root.pem" for address in scope[2:]}, b"leaf")]
+    assert upstream == [{"upstream_host": "127.0.0.1", "upstream_port": 8000}]
+    site = paths["management_site"].read_text(encoding="utf-8")
+    assert "listen 127.0.0.1:443 ssl" in site
+    assert "listen [::1]:443 ssl" in site
+
+
 @pytest.mark.parametrize("tls_rotation", [False, True])
 def test_management_front_door_rolls_back_failed_candidate_readiness(
     monkeypatch,

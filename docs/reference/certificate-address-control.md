@@ -151,6 +151,84 @@ and connected state, preserving its generated MAC and all original ownership rec
 
 ## Bootstrap the ISO static baseline
 
+### Create an offline peer for a fresh ISO fixture
+
+`scripts/windows/vmware/create-certificate-peer.ps1` prepares a new peer for this ISO workflow without entering the
+legacy PR-871 clone scenario. Complete its code review before VM use. It creates an offline peer and a new owned LAN;
+it never starts, rewires, or adopts the appliance. The original ISO intent, ownership and installed-boot receipts must
+already belong to the same task and PR. Keep that appliance stopped while its ordinary VMX is pinned for admission.
+
+Use an independently admitted Alpine source prepared with `prepare-tiny-linux-client.ps1` in a new originally receipted
+task root, without `-Force`. Preserve its original JSON result outside that root as `peer_source_preparation`. The factory
+authenticates the QCOW2 against the repository's pinned release digest, requires a standalone monolithic sparse VMDK,
+and uses `qemu-img compare` to prove the VMDK's logical contents match that QCOW2. The supplied VMDK SHA-256 and the
+public-key file SHA-256 are independent selectors; no existing disk becomes cleanup-owned. An ordinary file pin excludes
+writes and replacement through copying. Host disk admission reserves the full sparse-disk maximum plus 2 GiB, and
+creation requires 2 GiB free RAM.
+
+Prepare a public JSON plan under the task's originally receipted inputs root. Replace every example selector with the
+exact original value; the factory never discovers or relabels another task's receipts:
+
+```json
+{
+  "schema": 1,
+  "trust_model": "trusted-host",
+  "repository": "mdaneri/Atlaso",
+  "pr": 123,
+  "task_id": "exact-current-task-id",
+  "source_commit": "FULL_REVIEWED_HEAD_SHA",
+  "appliance_vmx": "ABSOLUTE_ORIGINAL_ISO_VMX",
+  "appliance_mac": "00:50:56:20:30:40",
+  "appliance_intent": {"path": "ABSOLUTE_ORIGINAL_INTENT", "sha256": "ORIGINAL_SHA256"},
+  "appliance_ownership": {"path": "ABSOLUTE_ORIGINAL_OWNERSHIP", "sha256": "ORIGINAL_SHA256"},
+  "appliance_installed_boot": {"path": "ABSOLUTE_ORIGINAL_BOOT", "sha256": "ORIGINAL_SHA256"},
+  "peer_source_preparation": {"path": "ABSOLUTE_ORIGINAL_SOURCE_RESULT", "sha256": "ORIGINAL_SHA256"},
+  "peer_vmdk_sha256": "INDEPENDENTLY_VERIFIED_SOURCE_DISK_SHA256",
+  "peer_public_key_path": "ABSOLUTE_EXISTING_ED25519_PUBLIC_KEY",
+  "peer_public_key_sha256": "INDEPENDENTLY_VERIFIED_PUBLIC_FILE_SHA256",
+  "server_cidr": "192.168.77.1/24",
+  "lease_address": "192.168.77.10",
+  "management_addresses": ["192.168.77.10", "192.168.77.30", "192.168.77.40"],
+  "management_vmnet": "vmnet3",
+  "peer_user": "alpine",
+  "peer_hostname": "atlaso-pr-123-certificate-peer"
+}
+```
+
+The three private addresses are the admitted DHCP, static baseline and static candidate. Select an existing separate
+management VMnet; no host network is created or changed. The existing selected public key must be available in the SSH
+agent before creation. No private key or password enters the plan, seed or factory process arguments.
+
+From the clean reviewed task checkout, first inspect without creating resources:
+
+```powershell
+& ./scripts/windows/vmware/create-certificate-peer.ps1 -Mode Plan -Plan $peerPlan -PythonPath $nativePython
+# After checking the projection, source and capacity, close the Workstation UI normally.
+& ./scripts/windows/vmware/create-certificate-peer.ps1 -Mode Create -Plan $peerPlan `
+    -PythonPath $nativePython -QemuImgPath $qemuImg -Confirm:$false
+```
+
+Create independently verifies the open same-repository PR head, source bytes, original ISO bindings, public key and
+source disks before mutation. Preserve the emitted original intent/directory/VM, LAN and prepared-fixture selectors in
+the task inventory. Records live outside the peer removal root. A failure preserves its original receipts and any
+partial output; an existing destination is refused, never adopted or replaced. The seed publishes the public SSH host
+key to the VMX-bound serial file, uses a task-unique NoCloud instance, constrains local SSH tunnels to the three addresses,
+and configures only the peer's genuinely synchronized Chrony service to serve time on its private interface.
+
+Creation is not readiness or native acceptance. Admit the original VMX and serial endpoint before starting the new peer,
+then capture and pin its actual public host key before SSH. Follow the existing two-member topology, seed retirement,
+clock, private-LAN rewire and bootstrap procedures above. Do not accept a network-discovered host key or infer appliance
+address control from the seed. The prepared fixture's state remains `offline-prepared-not-native-acceptance`.
+
+Use `-Mode Inspect` with `-OriginalReceiptPath` and `-OriginalReceiptSha256` for receipt-bound readback. Once the peer is
+no longer needed and its consumers are inactive, the same selectors with `-Mode Cleanup -VmrunPath $vmrun` invoke the
+existing checked VM remover for this exact peer only. Its source plan and original appliance/source references must
+remain available. If creation stopped before the VMX existed, `-Mode CleanupPrepared` uses the original preparation
+directory receipt selectors and the existing empty-directory remover. It refuses nonempty output; a VMX without its
+original VM receipt remains preserved for maintainer recovery. Keep the LAN receipt separately; remove that segment
+through its existing owning procedure only after
+every appliance/peer reference is absent. Never use peer cleanup to remove the appliance, source disk or evidence.
+
 Prepare the one task-owned Linux peer on the dedicated management VMnet and test LAN. Its test-LAN adapter runs DHCP
 only for the admitted appliance MAC; its control adapter remains on the separate management VMnet. When generating
 the peer's NoCloud seed with `scripts/interop/create_certificate_peer_seed_iso.py`, enable
