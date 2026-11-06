@@ -49,6 +49,12 @@ def _admission(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, failure: str 
     refresh.publish(child_path, child)
 
     def process_identity(process_id: int, job_name: str | None = None) -> dict:
+        """Return one synthetic kernel process observation.
+
+        Args:
+            process_id: Launcher or worker PID selected by admission.
+            job_name: Exact original job whose membership is required.
+        """
         if job_name != child["job_name"]:
             raise refresh.RefreshRefusal("outside job")
         if process_id == child["pid"]:
@@ -59,6 +65,11 @@ def _admission(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, failure: str 
                 "path": interpreter["worker"]["path"]}
 
     def executable_identity(path: str) -> dict:
+        """Return the fixture's original executable identity.
+
+        Args:
+            path: Launcher or worker image path selected for comparison.
+        """
         if path == interpreter["launcher"]["path"]:
             return interpreter["launcher"]
         return interpreter["worker"]
