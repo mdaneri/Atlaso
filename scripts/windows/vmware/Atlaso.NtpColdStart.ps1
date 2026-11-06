@@ -25,7 +25,9 @@ function Assert-NtpPeerSourceOwnership {
         @{ Path = $NtpPeerPreparedReceiptPath; Sha = $NtpPeerPreparedReceiptSha256 }
     )
     foreach ($reference in $references) {
-        $runtimeConsumerPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath((Split-Path -Parent $reference.Path)))
+        # Keep source leaves read-only and every ancestor pinned against replacement,
+        # while sibling roots can still publish original ownership receipts.
+        $runtimeConsumerPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath((Split-Path -Parent $reference.Path), $false, $true))
         $runtimeConsumerPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($reference.Path, $true))
         if ((Get-FileHash -LiteralPath $reference.Path -Algorithm SHA256).Hash -ine $reference.Sha) {
             throw 'NTP peer original source receipt digest mismatch.'
@@ -56,7 +58,7 @@ function Assert-NtpPeerSourceOwnership {
     }
     & git -C $repoRoot merge-base --is-ancestor $original.source_commit $sourceCommit
     if ($LASTEXITCODE -ne 0) { throw 'NTP peer creation source is not an ancestor of the reviewed harness.' }
-    $runtimeConsumerPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($original.path))
+    $runtimeConsumerPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($original.path, $false, $true))
     $identity = @($original.root_identity)
     if ($identity.Count -ne 3 -or (Get-AtlasoPathIdentity -Path $original.path -Description 'original NTP peer source') -cne
         ('{0:X8}:{1:X8}{2:X8}' -f [uint32]$identity[0], [uint32]$identity[1], [uint32]$identity[2])) {

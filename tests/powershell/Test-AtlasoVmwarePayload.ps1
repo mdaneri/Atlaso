@@ -429,7 +429,10 @@ if ($IsWindows) {
         catch { if ($_.Exception.Message -notlike '*Expected an ordinary directory path*') { throw } }
         if (-not (Test-Path -LiteralPath $lockPath)) { throw 'A redirected output root lost its lock directory.' }
     }
-    finally { Remove-Item -LiteralPath $redirectedOutput; Remove-Item -LiteralPath $lockPath }
+    finally {
+        if (Test-Path -LiteralPath $redirectedOutput) { Remove-Item -LiteralPath $redirectedOutput }
+        if (Test-Path -LiteralPath $lockPath) { Remove-Item -LiteralPath $lockPath }
+    }
     $aliasPath = Join-Path $releaseOutput 'unrelated.lckbackup'
     $replacedOutput = $releaseOutput + '-identity-test'
     $replacementProbe = {

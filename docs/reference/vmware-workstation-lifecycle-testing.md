@@ -59,14 +59,14 @@ For example, after independently admitting capacity, source and exclusive host s
 ```powershell
 $arguments = @{
     PullRequestNumber = $pr
-    Purpose = 'ntp-cold-start'
-    CollisionSuffix = 'native-01'
+    Purpose = 'ntp'
+    CollisionSuffix = 'n1'
     ApplianceVmxPath = $verifiedBuilderVmx
     ClientVmdkPath = $originalPeerSourceVmdk
     NtpColdStartOnly = $true
     KeepVms = $true
     SkipClientPrepare = $true
-    SiteANetwork = "lan:Atlaso-PR-$pr-NtpColdStart-native-01"
+    SiteANetwork = "lan:Atlaso-PR-$pr-NtpColdStart-n1"
     SiteInterface = 'eth0'
     ManagementNetwork = $existingManagementVmnet
     NtpPeerPublicKeyPath = $existingAgentPublicKey
@@ -86,7 +86,10 @@ consumer retains and uses the separate `RootPassword` for SSH and native readbac
 No development signing key or Windows trust-store change is part of this mode. The launcher refuses address/URL
 overrides, dry-run Apply, another focused mode, missing protected credentials and absent source provenance.
 Run only from the clean reviewed head. Inspect `-PlanOnly` first with the same public source selectors and a distinct
-collision suffix, omitting the Run-only credentials. A plan creates its own result namespace; a live run never reuses it.
+collision suffix, omitting Run-only credentials, `SkipClientPrepare`, `OwnershipRoot` and `OwnershipTaskId`.
+A plan creates its own result namespace; a live run never reuses it. Keep the purpose and suffix short: VMware's
+native clone can exceed its filename limit through internal lock-file paths even when the requested VMX path is
+shorter than the Windows path limit. Preserve a failed creation and use a new short suffix for a fresh fixture.
 
 Creation receipts and public identity evidence precede native mutations. Each new VM's serial endpoint is bound to
 its original VMX and ownership receipt before boot. The appliance publishes only its Ed25519 public host key through
@@ -258,6 +261,13 @@ Its certificate admission checks create an isolated synthetic repository under t
 and evidence paths beneath that repository's `test-results` tree. No pytest `--basetemp` override is needed. Both
 inspectors must reject mutable checkout invocation, out-of-root paths, missing Python, and existing evidence before
 any credential access. These admission fixtures do not create VMs or perform certificate handoffs.
+
+The no-VM payload regression is
+`python -m pytest tests/test_photon_image.py::test_vmware_payload_layout_and_provenance_fail_closed`.
+It uses bounded session directory names and checks both ordinary and long roots while retaining canonical builder,
+VMX, provenance, and junction identities. Keep the pytest output beneath an originally receipted permitted root.
+An environment that cannot admit the fixture must retain its original identity-admission diagnostic; a path failure
+does not substitute for the asserted junction rejection.
 
 ### Release task-owned LAN segments
 
@@ -1612,8 +1622,16 @@ encrypted-import proof, the
 guest publishes only bounded fixed first-boot stage identifiers. A timeout reports the last valid stage, or a fixed
 diagnostic that provider selection or customizer startup did not complete; it never includes command output or secret
 material.
-The wrapper injects the same complete DHCP-first OVF environment before power-on. Use `-FirstBootFqdn` for the test
-identity. The wrapper prefers the checkout-local current-user DPAPI service-account token and uses standard GIL-enabled
+The wrapper injects the same complete DHCP-first OVF environment before power-on. Generated FQDNs fit within the
+63-character complete guest hostname observed through VMware Tools, including `.atlaso.internal`. Short names stay
+unchanged; longer names use a readable prefix and a 12-hex SHA-256 suffix derived from the complete canonical identity,
+including its collision suffix. For example, `-PullRequestNumber 1083 -Purpose guest-tools-time-peer
+-CollisionSuffix offline20261101` retains its full canonical VM name and derives a bounded guest FQDN.
+Use `-FirstBootFqdn` for an explicit test identity of at most 63 characters in total. An oversized override fails before
+new source intent, credential access, redeploy cleanup, network preparation, or cloning. Original receipt-bound recovery
+still runs first. Readiness requires the complete expected hostname; truncated or prefix matches remain failures.
+Existing retained VMs keep their original identities.
+The wrapper prefers the checkout-local current-user DPAPI service-account token and uses standard GIL-enabled
 Windows x64 CPython 3.14 registered with the Windows launcher, including bracketed Python Install Manager architecture
 selectors. Use `-OnePasswordServiceAccountTokenFile`, `-OnePasswordAccount`, or `-OnePasswordPython` only when an
 explicit override is required. Without a token, zero or multiple desktop accounts fail closed; a missing compatible
