@@ -2083,7 +2083,10 @@ function Stop-WorkstationVmForSeedCleanup {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf) -or -not (Test-WorkstationVmRunning -Path $Path)) {
         return $false
     }
-    [void](Invoke-VmrunBounded -Arguments @('-T', 'ws', 'stop', $Path, 'soft') -TimeoutSeconds 45)
+    $softStop = Invoke-VmrunBounded -Arguments @('-T', 'ws', 'stop', $Path, 'soft') -TimeoutSeconds 45
+    if ($NtpColdStartOnly -and ($softStop.TimedOut -or $softStop.ExitCode -ne 0)) {
+        throw 'NTP peer soft-stop command failed; hard-stop fallback is not permitted.'
+    }
     if (Test-WorkstationVmRunning -Path $Path) {
         if ($NtpColdStartOnly) {
             throw 'NTP peer remained running after the bounded soft-stop attempt; hard-stop fallback is not permitted.'
@@ -3928,10 +3931,14 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
     if ($privatePeerFixture) {
         # The NoCloud seed contains only a public key. Pin the SSH host key
         # established on first boot across the required seed-removal restart.
-        if ($NtpColdStartOnly) { Initialize-NtpPeerConsolePin }
+        if ($NtpColdStartOnly) {
+            Initialize-NtpPeerConsolePin
+            $null = Invoke-NtpPeerPostToolsBootstrapRestart
+        }
         Assert-CertificatePeerBootReady -Path $certificatePeerVmx
         $initialPeerIdentity = Get-CertificatePeerOriginalIdentity -Path $certificatePeerVmx
         $certificateKnownHostsPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($certificatePeerKnownHostsPath, $true)
+        if ($NtpColdStartOnly) { Release-NtpPeerBootstrapSeedPin }
         Remove-ClientSeedArtifacts -VmxPaths @($certificatePeerVmx) -SeedPaths @($certificatePeerSeedIso) -Restart:(-not $CleanupCreatedLab)
         $seedArtifactsRetired = $true
         if (-not $CleanupCreatedLab) {
@@ -4057,6 +4064,9 @@ if ($overlapRecoveryUncertain) {
 # A failed boot still owns its copied disk; release admission handles before
 # the documented seed and task-owned VM cleanup paths inspect that VM.
 if ($scenarioFailure) {
+    if ($NtpColdStartOnly -and (Get-Command Release-NtpPeerBootstrapSeedPin -ErrorAction SilentlyContinue)) {
+        Release-NtpPeerBootstrapSeedPin
+    }
     if ($certificatePeerDiskPin) { $certificatePeerDiskPin.Dispose(); $certificatePeerDiskPin = $null }
     if ($certificateKnownHostsPin) { $certificateKnownHostsPin.Dispose(); $certificateKnownHostsPin = $null }
     if ($certificatePeerPublicKeyPin) { $certificatePeerPublicKeyPin.Dispose(); $certificatePeerPublicKeyPin = $null }
@@ -4125,6 +4135,9 @@ if ($cleanupFailure) {
     throw $cleanupFailure
 }
 } finally {
+    if ($NtpColdStartOnly -and (Get-Command Release-NtpPeerBootstrapSeedPin -ErrorAction SilentlyContinue)) {
+        Release-NtpPeerBootstrapSeedPin
+    }
     if ($certificatePeerDiskPin) { $certificatePeerDiskPin.Dispose() }
     if ($certificateKnownHostsPin) { $certificateKnownHostsPin.Dispose() }
     if ($certificatePeerPublicKeyPin) { $certificatePeerPublicKeyPin.Dispose() }

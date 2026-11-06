@@ -72,6 +72,190 @@ function Assert-NtpPeerSourceOwnership {
 
 <#
 .SYNOPSIS
+Verify the original peer receipts, directory identity and VMX bindings.
+#>
+function Assert-NtpPeerBootstrapOwnership {
+    $peerDirectoryPath = [IO.Path]::GetFullPath($certificatePeerDirectory)
+    $peerVmxPath = [IO.Path]::GetFullPath($certificatePeerVmx)
+    $ownerHashes = @{}
+    foreach ($entry in @(
+            @{ Path = $peerDirectoryPath; Kind = 'vm-directory' },
+            @{ Path = $peerVmxPath; Kind = 'vm' }
+        )) {
+        $ownershipMatches = @($originalOwnershipRecords | Where-Object {
+                $_.resource -and [IO.Path]::GetFullPath([string]$_.resource) -ieq $entry.Path
+            })
+        if ($ownershipMatches.Count -ne 1 -or -not $ownershipMatches[0].path -or
+            $ownershipMatches[0].sha256 -notmatch '^[0-9a-f]{64}$') {
+            throw 'NTP peer original lifecycle ownership record is missing or ambiguous.'
+        }
+        $recordPath = [IO.Path]::GetFullPath($ownershipMatches[0].path)
+        $recordItem = Get-Item -LiteralPath $recordPath -Force -ErrorAction Stop
+        if ($recordItem.PSIsContainer -or ($recordItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'NTP peer original lifecycle ownership receipt is not an ordinary file.'
+        }
+        $recordPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($recordPath, $true)
+        $runtimeConsumerPins.Add($recordPin)
+        if ((Get-FileHash -LiteralPath $recordPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne
+            $ownershipMatches[0].sha256.ToLowerInvariant()) {
+            throw 'NTP peer original lifecycle ownership receipt changed.'
+        }
+        $record = Get-Content -LiteralPath $recordPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        $resourceItem = Get-Item -LiteralPath $entry.Path -Force -ErrorAction Stop
+        if (($entry.Kind -eq 'vm-directory') -ne [bool]$resourceItem.PSIsContainer -or
+            ($resourceItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'NTP peer original VMX or root changed type.'
+        }
+        $identity = [Atlaso.WorkstationFileIdentity]::Get($entry.Path)
+        $identityMatch = [regex]::Match($identity, '^([0-9A-F]{8}):([0-9A-F]{8})([0-9A-F]{8})$')
+        if (-not $identityMatch.Success -or @($record.root_identity).Count -ne 3) {
+            throw 'NTP peer original VMX or root identity is invalid.'
+        }
+        $recordIdentity = '{0:X8}:{1:X8}{2:X8}' -f [uint32]$record.root_identity[0],
+            [uint32]$record.root_identity[1], [uint32]$record.root_identity[2]
+        # VMware rewrites VMX files during normal power transitions, so the VMX
+        # file ID in its immutable creation record is historical evidence. The
+        # containing VM directory ID remains the stable namespace authority.
+        $identityMismatch = $entry.Kind -eq 'vm-directory' -and $recordIdentity -cne $identity
+        if ($record.schema -ne 1 -or $record.kind -cne $entry.Kind -or
+            $record.task_id -cne $lifecycleTaskId -or $record.repository -cne 'mdaneri/Atlaso' -or
+            $record.pr -ne $PullRequestNumber -or $record.source_commit -cne $sourceCommit -or
+            [IO.Path]::GetFullPath([string]$record.path) -ine $entry.Path -or
+            [IO.Path]::GetFullPath([string]$record.worktree) -ine [IO.Path]::GetFullPath($repoRoot) -or
+            [IO.Path]::GetFullPath([string]$record.lab_root) -ine [IO.Path]::GetFullPath($resultRoot) -or
+            $identityMismatch) {
+            throw 'NTP peer original lifecycle ownership binding no longer matches its VMX or root.'
+        }
+        $ownerHashes[$entry.Kind] = $ownershipMatches[0].sha256.ToLowerInvariant()
+        if ($entry.Kind -eq 'vm') { $ownerHashes['vmx_birth_identity'] = $recordIdentity }
+    }
+
+    $owner = $ntpConsoleReceipts['peer'].Ownership
+    if (-not $owner -or -not $owner.Path -or $owner.Sha256 -notmatch '^[0-9a-f]{64}$') {
+        throw 'NTP peer original owner receipt binding is missing.'
+    }
+    $ownerPath = [IO.Path]::GetFullPath($owner.Path)
+    $ownerItem = Get-Item -LiteralPath $ownerPath -Force -ErrorAction Stop
+    if ($ownerItem.PSIsContainer -or ($ownerItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'NTP peer original owner receipt is not an ordinary file.'
+    }
+    $ownerPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($ownerPath, $true)
+    $runtimeConsumerPins.Add($ownerPin)
+    if ((Get-FileHash -LiteralPath $ownerPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne
+        $owner.Sha256.ToLowerInvariant()) {
+        throw 'NTP peer original owner receipt changed.'
+    }
+    $ownerRecord = Get-Content -LiteralPath $ownerPath -Raw | ConvertFrom-Json -ErrorAction Stop
+    $rootIdentity = [Atlaso.WorkstationFileIdentity]::Get($peerDirectoryPath)
+    $rootIdentityMatch = [regex]::Match($rootIdentity, '^([0-9A-F]{8}):([0-9A-F]{8})([0-9A-F]{8})$')
+    if (-not $rootIdentityMatch.Success -or @($ownerRecord.root_identity).Count -ne 3) {
+        throw 'NTP peer original owner directory identity is invalid.'
+    }
+    $ownerRootIdentity = '{0:X8}:{1:X8}{2:X8}' -f [uint32]$ownerRecord.root_identity[0],
+        [uint32]$ownerRecord.root_identity[1], [uint32]$ownerRecord.root_identity[2]
+    if ($ownerRecord.schema -ne 1 -or $ownerRecord.kind -cne 'vm' -or
+        $ownerRecord.task_id -cne $lifecycleTaskId -or $ownerRecord.repository -cne 'mdaneri/Atlaso' -or
+        $ownerRecord.pr -ne $PullRequestNumber -or $ownerRecord.source_commit -cne $sourceCommit -or
+        [IO.Path]::GetFullPath([string]$ownerRecord.path) -ine $peerVmxPath -or
+        [IO.Path]::GetFullPath([string]$ownerRecord.root_path) -ine $peerDirectoryPath -or
+        $ownerRootIdentity -cne $rootIdentity -or $ownerRecord.intent_sha256 -cne $peerIntent.Sha256 -or
+        [IO.Path]::GetFullPath([string]$ownerRecord.lab_root) -ine [IO.Path]::GetFullPath($resultRoot)) {
+        throw 'NTP peer original owner receipt no longer matches its VMX or directory.'
+    }
+    Assert-NtpPeerVmConfigBindings
+    return [ordered]@{
+        vm_directory_identity = $rootIdentity
+        vmx_birth_identity = $ownerHashes['vmx_birth_identity']
+        vmx_observed_identity = [Atlaso.WorkstationFileIdentity]::Get($peerVmxPath)
+        vm_directory_receipt_sha256 = $ownerHashes['vm-directory']
+        vmx_receipt_sha256 = $ownerHashes['vm']
+        owner_receipt_sha256 = $owner.Sha256.ToLowerInvariant()
+    }
+}
+
+<#
+.SYNOPSIS
+Validate the original peer disk, console, clock, display, and network bindings.
+#>
+function Assert-NtpPeerVmConfigBindings {
+    $peerVmxPath = [IO.Path]::GetFullPath($certificatePeerVmx)
+    $peerDiskPath = [IO.Path]::GetFullPath($certificatePeerDiskPath)
+    $expectedDiskPath = [IO.Path]::GetFullPath((Join-Path $certificatePeerDirectory "$clientAName.vmdk"))
+    if ($peerDiskPath -ine $expectedDiskPath -or -not (Test-Path -LiteralPath $peerDiskPath -PathType Leaf) -or
+        [Atlaso.WorkstationFileIdentity]::Get($peerDiskPath) -cne $certificatePeerDiskIdentity) {
+        throw 'NTP peer copied disk identity changed.'
+    }
+    $peerDiskName = Split-Path -Leaf $peerDiskPath
+    $managementNetwork = [string]$ManagementNetwork
+    if ($managementNetwork -match '^(?i)vmnet(\d+)$') { $managementNetwork = "VMnet$($Matches[1])" }
+    if ($managementNetwork -notmatch '^(?i)VMnet\d+$' -or $SiteANetwork -notlike 'lan:?*' -or
+        $ownedLanSegments.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$ownedLanSegments[0].Id)) {
+        throw 'NTP peer original private LAN binding is unavailable.'
+    }
+    $expected = @(
+        @('displayName', [string]$clientAName),
+        @('sata0:0.present', 'TRUE'), @('sata0:0.fileName', $peerDiskName), @('sata0:0.deviceType', 'disk'),
+        @('ethernet0.present', 'TRUE'), @('ethernet0.connectionType', 'custom'), @('ethernet0.vnet', $managementNetwork),
+        @('ethernet1.present', 'TRUE'), @('ethernet1.connectionType', 'pvn'), @('ethernet1.pvnID', [string]$ownedLanSegments[0].Id),
+        @('serial0.present', 'TRUE'), @('serial0.fileType', 'file'),
+        @('serial0.fileName', [string]$ntpConsoleReceipts['peer'].Path), @('serial0.startConnected', 'TRUE'),
+        @('serial0.yieldOnMsrRead', 'TRUE'), @('tools.syncTime', 'FALSE'),
+        @('time.synchronize.continue', 'FALSE'), @('time.synchronize.restore', 'FALSE'),
+        @('time.synchronize.resume.disk', 'FALSE'), @('time.synchronize.shrink', 'FALSE'),
+        @('time.synchronize.tools.startup', 'FALSE'), @('time.synchronize.tools.enable', 'FALSE'),
+        @('time.synchronize.resume.host', 'FALSE')
+    )
+    $vmxLines = @(Get-Content -LiteralPath $peerVmxPath -ErrorAction Stop)
+    foreach ($assignment in $expected) {
+        $key = [string]$assignment[0]
+        $expectedLine = "$key = $(ConvertTo-VmxString -Value ([string]$assignment[1]))"
+        $matchingLines = @($vmxLines | Where-Object { $_ -match ('^\s*' + [regex]::Escape($key) + '\s*=') })
+        if ($matchingLines.Count -ne 1 -or $matchingLines[0] -cne $expectedLine) {
+            throw 'NTP peer VMX no longer matches its admitted disk, console, time, or network bindings.'
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Validate the pinned peer seed and exact original VMX CD-ROM attachment.
+.PARAMETER SeedSnapshot
+The immutable path, hash, identity, and attachment captured before first boot.
+#>
+function Assert-NtpPeerSeedSnapshot {
+    param([Parameter(Mandatory)][object]$SeedSnapshot)
+
+    $seedPath = [IO.Path]::GetFullPath([string]$SeedSnapshot.path)
+    if ($seedPath -ine [IO.Path]::GetFullPath($certificatePeerSeedIso) -or
+        -not $SeedSnapshot.Pin -or $SeedSnapshot.Pin.IsClosed -or $SeedSnapshot.Pin.IsInvalid) {
+        throw 'NTP peer seed pin or original path is unavailable.'
+    }
+    $seedItem = Get-Item -LiteralPath $seedPath -Force -ErrorAction Stop
+    if ($seedItem.PSIsContainer -or ($seedItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'NTP peer seed is not the original ordinary file.'
+    }
+    if ((Get-FileHash -LiteralPath $seedPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne
+        $SeedSnapshot.sha256 -or [Atlaso.WorkstationFileIdentity]::Get($seedPath) -cne $SeedSnapshot.file_identity) {
+        throw 'NTP peer seed content or file identity changed.'
+    }
+    $expectedAttachment = @(
+        "sata0:1.present = $(ConvertTo-VmxString -Value 'TRUE')",
+        "sata0:1.fileName = $(ConvertTo-VmxString -Value $seedPath)",
+        "sata0:1.deviceType = $(ConvertTo-VmxString -Value 'cdrom-image')",
+        "sata0:1.startConnected = $(ConvertTo-VmxString -Value 'TRUE')"
+    )
+    $vmxLines = @(Get-Content -LiteralPath $certificatePeerVmx -ErrorAction Stop)
+    foreach ($expected in $expectedAttachment) {
+        $key = ($expected -split ' = ', 2)[0]
+        $attachmentLines = @($vmxLines | Where-Object { $_ -match ('^\s*' + [regex]::Escape($key) + '\s*=') })
+        if ($attachmentLines.Count -ne 1 -or $attachmentLines[0] -cne $expected) {
+            throw 'NTP peer original seed is no longer attached to the original VMX.'
+        }
+    }
+}
+
+<#
+.SYNOPSIS
 Bind a new VM's public-identity serial console before its first boot.
 .PARAMETER Vmx
 Exact original task-owned VMX.
@@ -84,20 +268,160 @@ function Initialize-NtpFixtureConsole {
     $serial = Join-Path (Split-Path -Parent $Vmx) 'ntp-public-identity.serial'
     if (Test-Path -LiteralPath $serial) { throw 'NTP public console path already exists; preserve original evidence.' }
     $owner = if ($Role -ceq 'appliance') { $certificateOwnership } else { $peerOwnership }
-    $intent = Write-CertificateLabReceipt -Name "$Role-console-intent.json" -Value ([ordered]@{
-        schema = 1; kind = 'ntp-public-console-intent'; task_id = $lifecycleTaskId; repository = 'mdaneri/Atlaso'
-        pr = $PullRequestNumber; source_commit = $sourceCommit; vmx = $Vmx; vm_ownership_sha256 = $owner.Sha256
-        serial_path = $serial; observation = 'original-vmx-bound-public-serial-console'
-    })
-    foreach ($entry in @(@('serial0.present', 'TRUE'), @('serial0.fileType', 'file'), @('serial0.fileName', $serial),
-            @('serial0.startConnected', 'TRUE'), @('serial0.yieldOnMsrRead', 'TRUE'), @('tools.syncTime', 'FALSE'),
-            @('time.synchronize.continue', 'FALSE'), @('time.synchronize.restore', 'FALSE'),
-            @('time.synchronize.resume.disk', 'FALSE'), @('time.synchronize.shrink', 'FALSE'),
-            @('time.synchronize.tools.startup', 'FALSE'), @('time.synchronize.tools.enable', 'FALSE'),
-            @('time.synchronize.resume.host', 'FALSE'))) {
-        Set-VmxValue -Path $Vmx -Key $entry[0] -Value $entry[1]
+    $seedSnapshot = $null
+    if ($Role -ceq 'peer') {
+        if ([IO.Path]::GetFullPath($Vmx) -ine [IO.Path]::GetFullPath($certificatePeerVmx)) {
+            throw 'NTP peer console must bind the original lifecycle VMX.'
+        }
+        $seedPath = [IO.Path]::GetFullPath($certificatePeerSeedIso)
+        $seedItem = Get-Item -LiteralPath $seedPath -Force -ErrorAction Stop
+        if ($seedItem.PSIsContainer -or ($seedItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'NTP peer seed must be an ordinary file before first boot.'
+        }
+        $seedPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($seedPath, $true)
+        try {
+            $seedHash = (Get-FileHash -LiteralPath $seedPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $seedIdentity = [Atlaso.WorkstationFileIdentity]::Get($seedPath)
+            $seedEvidence = [ordered]@{
+                path = $seedPath; sha256 = $seedHash; file_identity = $seedIdentity
+                attachment = [ordered]@{
+                    present = 'TRUE'; file_name = $seedPath; device_type = 'cdrom-image'; start_connected = 'TRUE'
+                }
+            }
+            $seedSnapshot = [pscustomobject]@{
+                path = $seedPath; sha256 = $seedHash; file_identity = $seedIdentity
+                attachment = $seedEvidence.attachment; Pin = $seedPin
+            }
+            Assert-NtpPeerSeedSnapshot -SeedSnapshot $seedSnapshot
+        } catch {
+            $seedPin.Dispose()
+            throw
+        }
     }
-    $ntpConsoleReceipts[$Role] = @{ Intent = $intent; Vmx = $Vmx; Path = $serial; Ownership = $owner }
+    try {
+        $intentValue = [ordered]@{
+            schema = 1; kind = 'ntp-public-console-intent'; task_id = $lifecycleTaskId; repository = 'mdaneri/Atlaso'
+            pr = $PullRequestNumber; source_commit = $sourceCommit; vmx = $Vmx; vm_ownership_sha256 = $owner.Sha256
+            serial_path = $serial; observation = 'original-vmx-bound-public-serial-console'
+        }
+        if ($Role -ceq 'peer') { $intentValue['seed'] = $seedEvidence }
+        $intent = Write-CertificateLabReceipt -Name "$Role-console-intent.json" -Value $intentValue
+        foreach ($entry in @(@('serial0.present', 'TRUE'), @('serial0.fileType', 'file'), @('serial0.fileName', $serial),
+                @('serial0.startConnected', 'TRUE'), @('serial0.yieldOnMsrRead', 'TRUE'), @('tools.syncTime', 'FALSE'),
+                @('time.synchronize.continue', 'FALSE'), @('time.synchronize.restore', 'FALSE'),
+                @('time.synchronize.resume.disk', 'FALSE'), @('time.synchronize.shrink', 'FALSE'),
+                @('time.synchronize.tools.startup', 'FALSE'), @('time.synchronize.tools.enable', 'FALSE'),
+                @('time.synchronize.resume.host', 'FALSE'))) {
+            Set-VmxValue -Path $Vmx -Key $entry[0] -Value $entry[1]
+        }
+        $ntpConsoleReceipts[$Role] = @{
+            Intent = $intent; Vmx = $Vmx; Path = $serial; Ownership = $owner
+            Seed = $seedSnapshot
+        }
+    } catch {
+        if ($seedSnapshot -and $seedSnapshot.Pin -and -not $seedSnapshot.Pin.IsClosed) { $seedSnapshot.Pin.Dispose() }
+        throw
+    }
+}
+
+<#
+.SYNOPSIS
+Release the peer seed identity pin after readiness or before failure cleanup.
+#>
+function Release-NtpPeerBootstrapSeedPin {
+    $consoleVariable = Get-Variable -Name ntpConsoleReceipts -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+    if (-not $consoleVariable) { return }
+    $peerConsole = $consoleVariable['peer']
+    if (-not $peerConsole) { return }
+    $seedSnapshot = $peerConsole.Seed
+    if ($seedSnapshot -and $seedSnapshot.Pin -and -not $seedSnapshot.Pin.IsClosed) {
+        $seedSnapshot.Pin.Dispose()
+    }
+}
+
+<#
+.SYNOPSIS
+Restart the NTP peer once after its first-boot VMware Tools installation.
+#>
+function Invoke-NtpPeerPostToolsBootstrapRestart {
+    if (-not $NtpColdStartOnly) { throw 'NTP peer bootstrap restart requires the NTP-only lifecycle mode.' }
+    $console = $ntpConsoleReceipts['peer']
+    if (-not $console -or -not $console.Observation -or -not $console.Seed) {
+        throw 'NTP peer serial identity and preboot seed evidence are required before bootstrap restart.'
+    }
+    $evidenceRoot = Join-Path $durableOwnershipRoot "$LabName-ntp-native"
+    $intentPath = Join-Path $evidenceRoot 'peer-tools-bootstrap-restart-intent.json'
+    $terminalPath = Join-Path $evidenceRoot 'peer-tools-bootstrap-restart-terminal.json'
+    if ((Test-Path -LiteralPath $intentPath) -or (Test-Path -LiteralPath $terminalPath)) {
+        throw 'NTP peer bootstrap restart journal already exists; retries are refused.'
+    }
+
+    $ownerEvidence = Assert-NtpPeerBootstrapOwnership
+    Assert-NtpPeerSeedSnapshot -SeedSnapshot $console.Seed
+    if (-not (Test-WorkstationVmRunning -Path $certificatePeerVmx)) {
+        throw 'NTP peer must be running after first-boot public identity capture.'
+    }
+    $intent = Write-CertificateLabReceipt -Name 'peer-tools-bootstrap-restart-intent.json' -Value ([ordered]@{
+        schema = 1; kind = 'ntp-peer-tools-bootstrap-restart-intent'; task_id = $lifecycleTaskId
+        repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber; source_commit = $sourceCommit
+        peer_vmx = $certificatePeerVmx; peer_owner_receipt_sha256 = $console.Ownership.Sha256
+        peer_directory_identity = $ownerEvidence.vm_directory_identity
+        peer_vmx_birth_identity = $ownerEvidence.vmx_birth_identity
+        peer_vmx_observed_identity = $ownerEvidence.vmx_observed_identity
+        lifecycle_directory_receipt_sha256 = $ownerEvidence.vm_directory_receipt_sha256
+        lifecycle_vmx_receipt_sha256 = $ownerEvidence.vmx_receipt_sha256
+        console_identity_receipt_sha256 = $console.Observation.Sha256
+        seed_path = $console.Seed.path; seed_sha256 = $console.Seed.sha256
+        seed_file_identity = $console.Seed.file_identity; seed_attachment = $console.Seed.attachment
+        action = 'one-soft-stop-verified-off-one-start'; cloud_init_state = 'not-observed-before-restart'
+    })
+    $stage = 'soft-stop'
+    try {
+        if (-not (Stop-WorkstationVmForSeedCleanup -Path $certificatePeerVmx)) {
+            throw 'NTP peer was not stopped by the required soft-stop operation.'
+        }
+        if (Test-WorkstationVmRunning -Path $certificatePeerVmx) {
+            throw 'NTP peer exact off-state proof failed after soft stop.'
+        }
+        $stage = 'post-stop-revalidation'
+        $ownerEvidence = Assert-NtpPeerBootstrapOwnership
+        Assert-NtpPeerSeedSnapshot -SeedSnapshot $console.Seed
+        $stage = 'single-start'
+        Start-WorkstationVm -Path $certificatePeerVmx
+        if (-not (Test-WorkstationVmRunning -Path $certificatePeerVmx)) {
+            throw 'NTP peer did not enter the running state after its single bootstrap restart.'
+        }
+        $stage = 'terminal-publication'
+        $terminal = Write-CertificateLabReceipt -Name 'peer-tools-bootstrap-restart-terminal.json' -Value ([ordered]@{
+            schema = 1; kind = 'ntp-peer-tools-bootstrap-restart-terminal'; task_id = $lifecycleTaskId
+            repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber; source_commit = $sourceCommit
+            restart_intent_sha256 = $intent.Sha256; peer_vmx = $certificatePeerVmx
+            peer_directory_identity = $ownerEvidence.vm_directory_identity
+            peer_vmx_birth_identity = $ownerEvidence.vmx_birth_identity
+            peer_vmx_observed_identity = $ownerEvidence.vmx_observed_identity
+            seed_path = $console.Seed.path; seed_sha256 = $console.Seed.sha256
+            seed_file_identity = $console.Seed.file_identity; seed_attached = $true
+            state = 'awaiting-tools-ssh'; cloud_init_state = 'not-observed'; ready = $false
+            next_required_gate = 'vmware-tools-address-strict-pinned-ssh-cloud-init-completion'
+        })
+        return $terminal
+    } catch {
+        $restartFailure = $_
+        if (-not (Test-Path -LiteralPath $terminalPath)) {
+            try {
+                $null = Write-CertificateLabReceipt -Name 'peer-tools-bootstrap-restart-terminal.json' -Value ([ordered]@{
+                    schema = 1; kind = 'ntp-peer-tools-bootstrap-restart-terminal'; task_id = $lifecycleTaskId
+                    repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber; source_commit = $sourceCommit
+                    restart_intent_sha256 = $intent.Sha256; peer_vmx = $certificatePeerVmx
+                    state = 'failed-no-retry'; failure_stage = $stage; ready = $false
+                    cloud_init_state = 'not-observed'
+                })
+            } catch {
+                Write-Warning 'NTP peer restart failure could not publish terminal evidence; its immutable intent remains and retry is refused.'
+            }
+        }
+        throw $restartFailure
+    }
 }
 
 <#

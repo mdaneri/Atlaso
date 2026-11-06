@@ -513,10 +513,21 @@ def execute(plan: dict, state: Path, phase: str) -> dict:
             if disposition != "reuse":
                 raise RefreshRefusal("current metadata or runtime profile changed; new reviewed operation required")
             check_capture(plan, state)
-            from scripts.installation.build import verify_rpms
+            from scripts.installation.build import verify_guest_tools, verify_rpms
+            from scripts.installation.guest_tools import source_requires_payload
             scratch = root / "admission"
             scratch.mkdir()
-            report["authenticated_rpm_inventory"] = verify_rpms(Path(plan["rpms"]), ROOT, scratch)
+            rpms = Path(plan["rpms"])
+            report["authenticated_rpm_inventory"] = verify_rpms(rpms, ROOT, scratch, allow_guest_tools=True)
+            # The companion is outside the installable Photon transaction. Its
+            # checksum inventory alone cannot authenticate each provider closure.
+            # Reuse the assembly boundary's full signatures/identity/transaction
+            # checks before this phase can publish authenticated success.
+            guest_tools = rpms / "guest-tools"
+            report["authenticated_guest_tools_validated"] = False
+            if guest_tools.exists() or source_requires_payload(ROOT):
+                verify_guest_tools(guest_tools, ROOT, scratch)
+                report["authenticated_guest_tools_validated"] = True
             report["authenticated_transaction_validated"] = True
         return {"disposition": disposition, "report": report}
     if phase == "capture":

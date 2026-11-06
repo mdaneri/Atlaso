@@ -142,20 +142,6 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
         )
         if vmware_vix:
             extra_packages += "  - open-vm-tools-vix\n"
-            extra_commands = (
-                # Alpine ships VMware's VIX command RPC plugin separately from
-                # the base and guestinfo packages. Package installation may
-                # start Tools before VIX is installed, so restart and verify
-                # the service only after both plugin files are present.
-                "  - |\n"
-                "    set -eu\n"
-                "    test -s /usr/lib/open-vm-tools/plugins/vmsvc/libguestInfo.so\n"
-                "    test -s /usr/lib/open-vm-tools/plugins/common/libvix.so\n"
-                "    rc-update add open-vm-tools default\n"
-                "    rc-service open-vm-tools restart\n"
-                "    rc-service open-vm-tools status\n"
-                "    /usr/local/sbin/atlaso-certificate-peer-publish-host-key\n"
-            )
         else:
             extra_commands = (
                 "  - rc-update add open-vm-tools default\n"
@@ -189,6 +175,48 @@ sshd -T | grep -Fx 'gatewayports no'
             extra_write_files += (f"  - path: {path}\n    permissions: '{permissions}'\n    content: |\n"
                                   + "".join(f"      {line}\n" for line in content.splitlines()))
         ntp_command = "  - /usr/local/sbin/atlaso-certificate-peer-chrony\n"
+    if vmware_vix:
+        # Keep every prerequisite for the VMware Tools identity and NTP seed
+        # in one fail-fast command. The marker is final so this block reaches
+        # it only after its configured setup commands return successfully.
+        setup_commands = []
+        if ssh_policy_command:
+            setup_commands.append(ssh_policy_command.strip()[2:])
+        setup_commands.extend((
+            "rc-update add sshd default",
+            "rc-service sshd restart",
+            "rc-service sshd status",
+            "mkdir -p /var/lib/misc",
+            "cp /usr/local/etc/atlaso-certificate-peer.conf /etc/dnsmasq.conf",
+            "dnsmasq --test --conf-file=/etc/dnsmasq.conf",
+            "rc-update add dnsmasq default",
+            "rc-service dnsmasq restart",
+            "rc-service dnsmasq status",
+            "test -s /usr/lib/open-vm-tools/plugins/vmsvc/libguestInfo.so",
+            "test -s /usr/lib/open-vm-tools/plugins/common/libvix.so",
+            "rc-update add open-vm-tools default",
+            "rc-service open-vm-tools restart",
+            "rc-service open-vm-tools status",
+        ))
+        if ntp_command:
+            setup_commands.append(ntp_command.strip()[2:])
+        setup_commands.append("/usr/local/sbin/atlaso-certificate-peer-publish-host-key")
+        extra_commands = "  - |\n    set -eu\n" + "".join(
+            f"    {command}\n" for command in setup_commands
+        )
+        peer_runcmd = ""
+        ntp_command = ""
+    else:
+        peer_runcmd = (
+            f"{ssh_policy_command}"
+            "  - rc-update add sshd default\n"
+            "  - rc-service sshd restart\n"
+            "  - mkdir -p /var/lib/misc\n"
+            "  - cp /usr/local/etc/atlaso-certificate-peer.conf /etc/dnsmasq.conf\n"
+            "  - dnsmasq --test --conf-file=/etc/dnsmasq.conf\n"
+            "  - rc-update add dnsmasq default\n"
+            "  - rc-service dnsmasq restart\n"
+        )
     host_key_policy = "ssh_deletekeys: false\n" if preserve_host_keys else ""
     user_data = f"""#cloud-config
 {host_key_policy}hostname: {args.hostname}
@@ -235,14 +263,7 @@ packages:
       network:
         config: disabled
 {extra_write_files}runcmd:
-{ssh_policy_command}  - rc-update add sshd default
-  - rc-service sshd restart
-  - mkdir -p /var/lib/misc
-  - cp /usr/local/etc/atlaso-certificate-peer.conf /etc/dnsmasq.conf
-  - dnsmasq --test --conf-file=/etc/dnsmasq.conf
-  - rc-update add dnsmasq default
-  - rc-service dnsmasq restart
-{extra_commands}{ntp_command}"""
+{peer_runcmd}{extra_commands}{ntp_command}"""
     network_config = f"""version: 2
 ethernets:
   eth0:

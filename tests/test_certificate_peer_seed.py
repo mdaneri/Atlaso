@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
 from pathlib import Path
 
@@ -76,6 +77,18 @@ def test_optional_bootstrap_installs_tools_and_publishes_only_public_host_key() 
     assert "open-vm-tools-vix" not in parsed["packages"]
     assert "open-vm-tools-timesync" not in parsed["packages"]
     commands = parsed["runcmd"]
+    assert commands == [
+        "rc-update add sshd default",
+        "rc-service sshd restart",
+        "mkdir -p /var/lib/misc",
+        "cp /usr/local/etc/atlaso-certificate-peer.conf /etc/dnsmasq.conf",
+        "dnsmasq --test --conf-file=/etc/dnsmasq.conf",
+        "rc-update add dnsmasq default",
+        "rc-service dnsmasq restart",
+        "rc-update add open-vm-tools default",
+        "rc-service open-vm-tools start",
+        "/usr/local/sbin/atlaso-certificate-peer-publish-host-key",
+    ]
     assert commands.index("rc-service sshd restart") < commands.index("rc-service dnsmasq restart")
     assert commands.index("rc-service dnsmasq restart") < commands.index("rc-service open-vm-tools start")
     assert commands.index("rc-update add open-vm-tools default") < commands.index(
@@ -96,6 +109,32 @@ def test_optional_bootstrap_installs_tools_and_publishes_only_public_host_key() 
     assert "/etc/ssh/ssh_host_ed25519_key \"" not in publisher
 
 
+@pytest.mark.parametrize(
+    ("overrides", "expected_digest"),
+    # Digests of peer_files outputs from the task's original HEAD a3165c1fa.
+    [
+        ({}, "0560c712955b1918616a1016802fb181847838e4f351131d3b1fae3e2a364667"),
+        ({"publish_host_key_to_serial": True}, "e1639ade3764d9ecf81d2eaf40c138c07b6b55bc5136aafffbbb737cd3b2d78d"),
+        ({"publish_host_key_to_serial": True,
+          "management_addresses": ["192.168.77.10", "192.168.77.30", "192.168.77.40"]},
+         "2093b390d7afb8785cf5e9ceb460d6343f4c7531cc2243647261ab1bf8c82b8b"),
+        ({"publish_host_key_to_serial": True, "serve_ntp": True,
+          "management_addresses": ["192.168.77.10", "192.168.77.30", "192.168.77.40"],
+          "ntp_probe_cidr": "192.168.78.1/24"},
+         "a3ab3f770b003638bcac842373a00908da6206632b508bf4d31646f98cac1fc2"),
+    ],
+    ids=["plain", "host-key", "private-ssh", "ntp-peer"],
+)
+def test_non_vix_modes_render_byte_for_byte_like_original_seed(
+    overrides: dict[str, object], expected_digest: str
+) -> None:
+    """Keep opt-in bootstrap changes out of existing seed modes from HEAD a3165c1fa."""
+    files = peer_files(_args(**overrides))
+    joined = b"\0".join(files[key].encode() for key in ("user-data", "meta-data", "network-config"))
+
+    assert hashlib.sha256(joined).hexdigest() == expected_digest
+
+
 def test_ntp_vmware_vix_mode_installs_and_verifies_tools_before_public_marker() -> None:
     args = _args(
         publish_host_key_to_serial=True,
@@ -114,19 +153,37 @@ def test_ntp_vmware_vix_mode_installs_and_verifies_tools_before_public_marker() 
     assert "open-vm-tools-guestinfo" in packages
     assert "open-vm-tools-timesync" not in packages
     assert "open-vm-tools-plugins-all" not in packages
-    vix_bootstrap = next(command for command in commands if "libguestInfo.so" in command)
+    assert len(commands) == 1
+    vix_bootstrap = commands[0]
     guestinfo_check = "test -s /usr/lib/open-vm-tools/plugins/vmsvc/libguestInfo.so"
     vix_check = "test -s /usr/lib/open-vm-tools/plugins/common/libvix.so"
     restart = "rc-service open-vm-tools restart"
-    status = "rc-service open-vm-tools status"
-    ordered_steps = [guestinfo_check, vix_check, "rc-update add open-vm-tools default", restart, status, marker]
+    ordered_steps = [
+        "/usr/local/sbin/atlaso-certificate-peer-sshd",
+        "rc-update add sshd default",
+        "rc-service sshd restart",
+        "rc-service sshd status",
+        "mkdir -p /var/lib/misc",
+        "cp /usr/local/etc/atlaso-certificate-peer.conf /etc/dnsmasq.conf",
+        "dnsmasq --test --conf-file=/etc/dnsmasq.conf",
+        "rc-update add dnsmasq default",
+        "rc-service dnsmasq restart",
+        "rc-service dnsmasq status",
+        guestinfo_check,
+        vix_check,
+        "rc-update add open-vm-tools default",
+        restart,
+        "rc-service open-vm-tools status",
+        "/usr/local/sbin/atlaso-certificate-peer-chrony",
+        marker,
+    ]
     assert vix_bootstrap.startswith("set -eu\n")
     assert [vix_bootstrap.index(step) for step in ordered_steps] == sorted(
         vix_bootstrap.index(step) for step in ordered_steps
     )
-    assert "rc-service open-vm-tools start" not in vix_bootstrap
+    assert vix_bootstrap.splitlines()[-1] == marker
     assert "||" not in vix_bootstrap
-    assert commands.index(vix_bootstrap) < commands.index("/usr/local/sbin/atlaso-certificate-peer-chrony")
+    assert vix_bootstrap.count("/usr/local/sbin/atlaso-certificate-peer-chrony") == 1
 
 
 def test_vmware_vix_option_requires_public_host_key_marker() -> None:
@@ -158,7 +215,8 @@ def test_vmware_vix_cli_flag_is_explicit_and_opt_in() -> None:
     assert parsed_args.vmware_vix is True
     rendered = yaml.safe_load(peer_files(parsed_args)["user-data"])
     assert "open-vm-tools-vix" in rendered["packages"]
-    vix_bootstrap = next(command for command in rendered["runcmd"] if "libguestInfo.so" in command)
+    assert len(rendered["runcmd"]) == 1
+    vix_bootstrap = rendered["runcmd"][0]
     assert "set -eu" in vix_bootstrap
     assert vix_bootstrap.index("rc-service open-vm-tools status") < vix_bootstrap.index(
         "/usr/local/sbin/atlaso-certificate-peer-publish-host-key"

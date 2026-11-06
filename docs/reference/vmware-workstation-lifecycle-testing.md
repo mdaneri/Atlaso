@@ -99,8 +99,12 @@ used with normal CA and hostname verification for HTTPS. Endpoint scans and trus
 Original console receipts and bounded topology observations retain explicit UTC observation times.
 Console admission accepts at most 1 MiB, accommodates ordinary boot output, and emits only the exact public identity
 marker. Oversized files, reparse paths and conflicting public keys remain admission failures.
-The NTP peer explicitly installs Alpine's GuestInfo and VIX plugins and restarts the Tools service before its public
-marker. Tools heartbeat alone does not establish VMware automation or IP readiness. A failed management-address wait
+The NTP peer explicitly installs Alpine's GuestInfo and VIX plugins. Its fail-fast bootstrap block verifies SSH,
+private DHCP, Tools and the real Chrony setup before publishing the public marker. The runner then records and performs
+one graceful bootstrap restart with the original seed still attached. This stage does not establish readiness:
+the restarted peer must pass the existing Tools-address, pinned SSH and completed cloud-init checks before the separate
+seed-retirement restart. Original seed identity, digest and attachment must survive the bootstrap restart unchanged.
+Tools heartbeat alone does not establish VMware automation or IP readiness. A failed management-address wait
 retains bounded provider categories; NTP fixture seed cleanup stops after a failed soft shutdown and requires explicit
 maintainer direction before a hard power action.
 The NTP mode has its own original clone admission; it never represents a clone as an ISO installation.
