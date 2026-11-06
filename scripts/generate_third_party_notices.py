@@ -113,7 +113,12 @@ def wheel_records(wheelhouse: Path, expected: dict[str, tuple[str, str]]) -> dic
     records: dict[str, dict[str, str]] = {}
     for wheel in sorted(wheelhouse.glob("*.whl")):
         with zipfile.ZipFile(wheel) as archive:
-            metadata_paths = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
+            # Vendored distributions may match other lock entries; only root metadata identifies this wheel.
+            metadata_paths = [
+                name
+                for name in archive.namelist()
+                if name.count("/") == 1 and name.endswith(".dist-info/METADATA")
+            ]
             candidates = []
             for metadata_path in metadata_paths:
                 metadata = Parser().parsestr(archive.read(metadata_path).decode("utf-8"))
