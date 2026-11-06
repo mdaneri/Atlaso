@@ -65,6 +65,12 @@ def write_wheel(
         duplicate_top_level: Whether to add a second matching top-level identity.
     """
     def metadata(name: str, version: str) -> str:
+        """Build distribution metadata for a synthetic wheel.
+
+        Args:
+            name: Distribution name declared by the fixture.
+            version: Distribution version declared by the fixture.
+        """
         return "\n".join(
             [
                 "Metadata-Version: 2.4",
