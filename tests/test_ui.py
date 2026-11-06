@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from starlette.staticfiles import StaticFiles
 
 from tests.routers.ui.helpers import (
     assert_apply_redirect,
@@ -1039,7 +1040,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}418`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}419`;' in service_worker.text
     assert "/static/settings-hardware.js?v=issue-1080-1" in service_worker.text
     assert "/static/vcf-certificate-renewal.js?v=issue-1052-4" in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
@@ -1744,11 +1745,15 @@ def test_reported_template_accessibility_contracts():
         assert form_marker in source
 
 
-def test_monitor_page_renders_template_and_browser_assets(client):
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_monitor_page_renders_template_and_browser_assets(client, tmp_path, monkeypatch, newline):
     """Verify that the Monitor template and browser assets retain their behavior.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        tmp_path: Temporary directory used to serve a newline-specific CSS fixture.
+        monkeypatch: Pytest fixture used to override the CSS asset search path.
+        newline: Line ending used by the HTTP-served CSS fixture.
     """
     login(client)
 
@@ -1792,8 +1797,22 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "/static/app.css?v=vcf-helper-tabs-1027-2" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-12" in page.text
     assert "/static/app.js?v=vault-credential-ranking-1110-2" in page.text
+    css_source = Path("atlaso/app/static/app.css").read_bytes().decode("utf-8")
+    normalized_css = css_source.replace("\r\n", "\n").replace("\r", "\n")
+    css_bytes = normalized_css.replace("\n", newline).encode("utf-8")
+    css_root = tmp_path / "static"
+    css_root.mkdir()
+    (css_root / "app.css").write_bytes(css_bytes)
+    static_mount = next(
+        route for route in client.app.routes
+        if getattr(route, "path", None) == "/static" and isinstance(getattr(route, "app", None), StaticFiles)
+    )
+    original_directories = static_mount.app.all_directories
+    monkeypatch.setattr(static_mount.app, "all_directories", [str(css_root), *original_directories])
+
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
+    assert app_css.content == css_bytes
     assert ".split-workspace > .wide-panel" in app_css.text
     assert "min-height: calc(100vh - 144px);" in app_css.text
     assert "padding: 22px 22px 41px;" in app_css.text
@@ -1802,7 +1821,10 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert ".validation-preview-source" in app_css.text
     assert ".monitor-chart-panel.has-monitor-table" in app_css.text
     assert "grid-template-rows: auto auto minmax(0, auto);" in app_css.text
-    assert ".monitor-network-panel,\n.monitor-disk-activity-panel" in app_css.text
+    assert re.search(
+        r"\.monitor-network-panel,\s+\.monitor-disk-activity-panel\s*\{",
+        app_css.text,
+    )
     assert "align-self: stretch;" in app_css.text
     assert ".monitor-disk-usage-panel" not in app_css.text
     assert ".monitor-chart-zoom-controls" in app_css.text
@@ -11375,7 +11397,7 @@ def test_vcf_backups_page_uses_local_user_for_sftp(client):
     assert 'id="vcf-backup-status-modal"' in page.text
     assert 'data-endpoint="/ui/management/vcf-helper/backups"' in page.text
     assert 'data-vcf-backup-form' not in page.text
-    assert '/static/vcf-backup.js?v=issue-1066-24' in page.text
+    assert '/static/vcf-backup.js?v=issue-1066-25' in page.text
     assert 'data-vcf-backup-load-operation' not in page.text
     assert 'name="recovery_operation_id"' not in page.text
     helper = client.get("/vcf-helper")

@@ -243,7 +243,10 @@
       ).forEach((secret) => {
         const reference = `${secret.vault_id}:${secret.entry_id}`;
         const entry = (vault.entries || []).find((item) => String(item.id) === String(secret.entry_id));
-        const label = `${vault.name} / ${entry?.display_name || secret.label}${order.has(String(secret.entry_id)) ? " · SSH/SFTP" : ""}`;
+        const readableName = String(entry?.display_name || secret.label || reference);
+        const stableKey = String(entry?.key || "");
+        const uniqueName = stableKey && stableKey !== readableName ? `${readableName} (${stableKey})` : readableName;
+        const label = `${vault.name} / ${uniqueName}${order.has(String(secret.entry_id)) ? " · SSH/SFTP" : ""}`;
         select.append(new Option(label, reference));
         remaining.delete(reference);
       });

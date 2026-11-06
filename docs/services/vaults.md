@@ -161,7 +161,9 @@ and [Get Credential API](https://developer.broadcom.com/xapis/vmware-cloud-found
 Within each vault, credential choices put matching service types and preferred protocols first, with the service and
 protocol shown in each label. API workflows prefer HTTPS; SSH lab maintenance prefers SDDC Manager SSH credentials.
 Backup discovery follows the current Operations or vCenter connection, and its SFTP destination selector puts SSH/SFTP
-references first. Other credentials that were already usable remain available, including entries marked Unknown.
+references first. SFTP destination labels retain the stable key alongside an imported readable name so entries with
+the same short host and account remain distinguishable. Other credentials that were already usable remain available,
+including entries marked Unknown.
 Changing a product reorders recommendations while retaining an explicitly selected endpoint. Recommendations do not
 verify account permissions or authenticate automatically; select the credential and complete the existing trust checks.
 

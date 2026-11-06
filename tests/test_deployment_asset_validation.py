@@ -13,6 +13,7 @@ from scripts.check_deployment_assets import (
     PACKER_CHECKSUM,
     PACKER_TEMPLATES,
     SYSTEMD_ASSETS,
+    find_visudo,
     inventory_assets,
     validate_manager_dropins,
     validate_packer,
@@ -22,7 +23,7 @@ from scripts.check_deployment_assets import (
 from scripts.check_packer_plugins import validate_packer_plugins
 
 SYSTEMD_ANALYZE = shutil.which("systemd-analyze")
-VISUDO = shutil.which("visudo")
+VISUDO = find_visudo()
 
 
 def write_inventory(root: Path) -> None:
@@ -620,3 +621,89 @@ def test_sudoers_validation_rejects_malformed_rule(tmp_path: Path) -> None:
 
     assert findings
     assert "visudo -cf failed" in findings[0].message
+
+
+@pytest.mark.parametrize("classic_packaged", [True, False])
+def test_linux_mode_uses_appliance_compatible_parser(tmp_path: Path, classic_packaged: bool) -> None:
+    """Prefer Ubuntu's upstream parser while retaining traditional Linux discovery.
+
+    Args:
+        tmp_path: Owned synthetic deployment inventory.
+        classic_packaged: Whether Ubuntu's explicitly named upstream parser exists.
+    """
+    from scripts import check_deployment_assets as assets
+
+    write_inventory(tmp_path)
+    paths = {"systemd-analyze": "/usr/bin/systemd-analyze", "visudo": "/usr/sbin/visudo"}
+    if classic_packaged:
+        paths["visudo.ws"] = "/usr/sbin/visudo.ws"
+    with (patch.object(assets, "ROOT", tmp_path),
+          patch.object(assets.shutil, "which", side_effect=paths.get),
+          patch.object(assets, "validate_systemd", return_value=[]),
+          patch.object(assets, "validate_sudoers", return_value=[]) as validate):
+        assert assets.main(["--mode", "linux"]) == 0
+    expected = paths["visudo.ws"] if classic_packaged else paths["visudo"]
+    assert validate.call_args.args[1] == expected
+
+
+@pytest.mark.parametrize(("version", "accepted"), [
+    ("visudo version 1.9.17p2\n", True),
+    ("visudo.ws version 1.9.17p2\nvisudo.ws grammar version 50\n", True),
+    ("visudo-rs 0.2.13\n", False),
+    ("visudo.ws version 1.9.17p2 unexpected suffix\n", False),
+    ("visudoXws version 1.9.17p2\n", False),
+])
+def test_sudoers_parser_identity_precedes_real_asset_validation(tmp_path: Path, version: str, accepted: bool) -> None:
+    """An incompatible default parser cannot stand in for native appliance syntax.
+
+    Args:
+        tmp_path: Owned input directory.
+        version: Upstream or incompatible native parser identity.
+        accepted: Whether the exact native version identity is supported.
+    """
+    asset = tmp_path / "sudoers"
+    asset.write_text("atlaso ALL=(root) NOPASSWD: /opt/atlaso/bin/atlaso-helper *\n")
+    responses = [Mock(returncode=0, stdout=version, stderr=""), Mock(returncode=0, stdout="", stderr="")]
+    with patch("scripts.check_deployment_assets.subprocess.run", side_effect=responses) as run:
+        findings = validate_sudoers((asset,), "/usr/sbin/visudo.ws", tmp_path)
+    assert run.call_args_list[0].args[0] == ["/usr/sbin/visudo.ws", "-V"]
+    if accepted:
+        assert not findings
+        assert run.call_args_list[1].args[0] == ["/usr/sbin/visudo.ws", "-cf", str(asset)]
+    else:
+        assert findings and "upstream visudo" in findings[0].message
+        assert run.call_count == 1
+
+
+@pytest.mark.parametrize("failure", ["nonzero", "missing", "timeout"])
+def test_sudoers_parser_identity_failure_is_bounded_and_does_not_echo_output(tmp_path: Path, failure: str) -> None:
+    """Failure to identify a native validator cannot skip validation or expose output.
+
+    Args:
+        tmp_path: Owned input directory.
+        failure: Version command failure that must remain inconclusive.
+    """
+    import subprocess
+
+    options = ({"side_effect": OSError("untrusted remote detail")} if failure == "missing" else
+               {"side_effect": subprocess.TimeoutExpired("untrusted remote detail", 10)} if failure == "timeout" else
+               {"return_value": Mock(returncode=1, stdout="", stderr="untrusted remote detail")})
+    with patch("scripts.check_deployment_assets.subprocess.run", **options) as run:
+        findings = validate_sudoers((tmp_path / "sudoers",), "/usr/sbin/visudo", tmp_path)
+    assert findings
+    assert "untrusted remote detail" not in findings[0].message
+    assert run.call_args.kwargs["timeout"] == 10
+
+
+def test_linux_mode_requires_native_sudoers_parser(tmp_path: Path) -> None:
+    """Missing native parsing cannot become an inventory-only CI success.
+
+    Args:
+        tmp_path: Owned synthetic deployment inventory.
+    """
+    from scripts import check_deployment_assets as assets
+
+    write_inventory(tmp_path)
+    with (patch.object(assets, "ROOT", tmp_path),
+          patch.object(assets.shutil, "which", return_value=None)):
+        assert assets.main(["--mode", "linux"]) == 1

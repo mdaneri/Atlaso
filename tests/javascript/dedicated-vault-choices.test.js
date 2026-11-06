@@ -66,6 +66,45 @@ test('SFTP destination references prefer SSH/SFTP per vault while retaining URI-
   assert.equal(select.value, '7:1', 'a selected passphrase reference is not silently substituted');
 });
 
+test('SFTP destination labels disambiguate entries by stable key and preserve selection safely', () => {
+  const select = new Select();
+  const secrets = [
+    {vault_id:7, entry_id:1, label:'Receiver'},
+    {vault_id:7, entry_id:2, label:'Receiver'},
+    {vault_id:7, entry_id:3, label:'<img src=x onerror=alert(1)>'},
+    {vault_id:7, entry_id:4, label:'Fallback without entry'},
+    {vault_id:7, entry_id:5, label:'Fallback without key'},
+    {vault_id:7, entry_id:6, label:'manual.key'},
+  ];
+  const entries = [
+    {id:1, key:'backup.receiver.root', display_name:'Receiver', uris:['sftp://site-a.example.test']},
+    {id:2, key:'backup.receiver.root.alt', display_name:'Receiver', uris:['sftp://site-b.example.test']},
+    {id:3, key:'backup.receiver.<img>', display_name:'<img src=x onerror=alert(1)>', uris:['sftp://site-c.example.test']},
+    {id:5, display_name:'Receiver without key', uris:['sftp://site-d.example.test']},
+    {id:6, key:'manual.key', uris:['sftp://site-e.example.test']},
+  ];
+  const context = runtime({window:{}, secrets, vaults:[{id:7,name:'Primary',entries}], field:() => select});
+  vm.runInContext(declaration(backup,'fillDestinationSecretChoices'),context);
+  context.fillDestinationSecretChoices();
+
+  const byReference = new Map(select.options.map((option) => [option.value, option]));
+  assert.equal(byReference.get('7:1').textContent, 'Primary / Receiver (backup.receiver.root) · SSH/SFTP');
+  assert.equal(byReference.get('7:2').textContent, 'Primary / Receiver (backup.receiver.root.alt) · SSH/SFTP');
+  assert.notEqual(byReference.get('7:1').textContent, byReference.get('7:2').textContent);
+  assert.equal(byReference.get('7:3').textContent, 'Primary / <img src=x onerror=alert(1)> (backup.receiver.<img>) · SSH/SFTP');
+  assert.equal(byReference.get('7:4').textContent, 'Primary / Fallback without entry');
+  assert.equal(byReference.get('7:5').textContent, 'Primary / Receiver without key · SSH/SFTP');
+  assert.equal(byReference.get('7:6').textContent, 'Primary / manual.key · SSH/SFTP', 'an existing label equal to the key is not duplicated');
+  assert.equal(select.options.some((option) => 'innerHTML' in option), false, 'labels are passed as text to Option');
+  assert.deepEqual(select.options.map((option) => option.value).sort(), ['', '7:1', '7:2', '7:3', '7:4', '7:5', '7:6']);
+  assert.equal(select.value, '');
+
+  select.value = '7:2';
+  context.fillDestinationSecretChoices();
+  assert.equal(select.value, '7:2', 'refresh keeps the exact selected credential reference');
+  assert.equal(select.selectedOptions[0].textContent, 'Primary / Receiver (backup.receiver.root.alt) · SSH/SFTP');
+});
+
 test('Lab choices rank SDDC Manager SSH first and preserve username and one-based URI bindings', () => {
   const selects = {ssh_credential:new Select(),root_credential:new Select()};
   const context = runtime({window:{}, field:(name) => selects[name]});
