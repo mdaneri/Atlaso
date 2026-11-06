@@ -4,7 +4,7 @@
 #
 #    pip-compile --allow-unsafe --build-deps-for=editable --extra=dev --generate-hashes --index-url=https://pypi.org/simple --no-emit-index-url --output-file=requirements-dev.lock --strip-extras --uploaded-prior-to=P7D pyproject.toml
 #
-# atlaso-declarations-sha256: 33dedb47a174a3776667d17244e675e4466debfe2fbe1436d58d3d9a44859fb3
+# atlaso-declarations-sha256: 7e6f6bcb49812888f6c6cdfbe98c9fd24ded8f95b9df9badead4408f1b4bfef5
 annotated-doc==0.0.5 \
     --hash=sha256:117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101 \
     --hash=sha256:c7e58ce09192557605d8bbd92836d7e1d520ac9580096042c0bfd197efacf1bb
@@ -701,9 +701,9 @@ joserfc==1.7.4 \
     # via
     #   atlaso (pyproject.toml)
     #   authlib
-markdown==3.11.1 \
-    --hash=sha256:496f4f80f9ebd3395a04c8ec9595c40bbe8ec19e9c67d21fe071a1643e876606 \
-    --hash=sha256:f1fa378ba5d682900c9ecb55ccceacca936016dda7c3b27097e8ae03ff78feb5
+markdown==3.11.2 \
+    --hash=sha256:87bf5d90f2d2882e2c02fcda182c2800456b985bff38913867c49706481514b0 \
+    --hash=sha256:f80390747a2a0ff2ba54da074ce4f862f72a6685f608cd2637b646a6d83993f5
     # via
     #   atlaso (pyproject.toml)
     #   pymdown-extensions
