@@ -588,6 +588,11 @@ def validate_systemd(systemd_analyze: str, repository: Path) -> list[Finding]:
     return findings
 
 
+def find_visudo() -> str | None:
+    """Prefer Ubuntu's explicitly named upstream parser over its sudo-rs alternative."""
+    return shutil.which("visudo.ws") or shutil.which("visudo")
+
+
 def validate_sudoers(assets: tuple[Path, ...], visudo: str, repository: Path) -> list[Finding]:
     """Validate every selected sudoers fragment independently.
 
@@ -596,6 +601,19 @@ def validate_sudoers(assets: tuple[Path, ...], visudo: str, repository: Path) ->
         visudo: Resolved visudo executable path.
         repository: Repository root used as the validator working directory.
     """
+    if not assets:
+        return []
+    try:
+        version = subprocess.run(
+            [visudo, "-V"], cwd=repository, capture_output=True, text=True, check=False, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return [Finding(assets[0], "upstream visudo identity could not be verified")]
+    lines = (version.stdout or "").strip().splitlines()
+    identity = lines[0] if lines else ""
+    if version.returncode or re.fullmatch(r"visudo(?:\.ws)? version [0-9]+(?:\.[0-9]+)+[A-Za-z0-9._+~-]*", identity) is None:
+        return [Finding(assets[0], "upstream visudo is required for appliance sudoers syntax; use visudo.ws where packaged")]
+    print(f"Sudoers validator: {Path(visudo).name}; {identity}")
     findings: list[Finding] = []
     for path in assets:
         finding = _run([visudo, "-cf", str(path)], repository, path, "visudo -cf")
@@ -633,7 +651,7 @@ def main(argv: list[str] | None = None) -> int:
         executed.append("packer")
 
     systemd_analyze = shutil.which("systemd-analyze")
-    visudo = shutil.which("visudo")
+    visudo = find_visudo()
     run_linux = args.mode in {"auto", "linux"} and bool(selected.systemd or selected.sudoers)
     if run_linux:
         if systemd_analyze is None and args.mode == "linux":

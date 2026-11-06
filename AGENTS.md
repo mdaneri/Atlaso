@@ -9,8 +9,8 @@ First progress update: confirm policies read, classify work as `bug`, `enhanceme
 and link the issue. Private remediation: confirm private tracking without advisory identifiers or findings.
 Read-only discovery may precede this update.
 
-Record repository, worktree, policy revision, and loaded routes. Re-evaluate routes on repository, worktree, directory,
-policy, or scope changes; read changed or newly applicable instructions. Reuse unchanged policy already read in this task.
+Record repository, worktree, policy revision, and loaded routes. On repository/worktree/directory/policy/scope changes,
+read new/changed instructions. Reuse unchanged policy already read in this task.
 If policy is missing, conflicting, or unclear, stop the affected operation for maintainer direction.
 
 ## Always applicable boundaries
@@ -35,8 +35,8 @@ If policy is missing, conflicting, or unclear, stop the affected operation for m
 - Before destructive actions, signing/publication, or external infrastructure mutation, load the exact procedure and
   prove authority and ownership. Preserve its fail-closed gates. Policy grants no authority; unavailable
   capabilities never justify substitutes.
-- VM receipts and proven certificate address control precede mutation; see the
-  [VMware procedure](docs/reference/vmware-workstation-lifecycle-testing.md).
+- VM receipts and [trusted-host certificate admission](docs/reference/certificate-address-control.md) precede mutation;
+  see the [VMware procedure](docs/reference/vmware-workstation-lifecycle-testing.md).
 
 ## Conditional policy routes
 

@@ -989,6 +989,52 @@ function Get-AtlasoOnePasswordDependencyFailure {
 
 <#
 .SYNOPSIS
+Classify a certificate proof refusal without exposing captured child streams.
+
+.PARAMETER ExitCode
+Nonzero exit code from the bounded certificate observation child.
+
+.PARAMETER StandardOutput
+Captured proof JSON inspected only for exact fixed refusal categories.
+#>
+function Get-AtlasoCertificateObservationFailure {
+    param(
+        [Parameter(Mandatory = $true)][int]$ExitCode,
+        [AllowEmptyString()][string]$StandardOutput = ''
+    )
+
+    $category = 'unclassified_proof_failure'
+    $allowed = @(
+        'peer_connection_failed', 'peer_authentication_failed', 'peer_agent_identity_unavailable',
+        'peer_host_key_changed', 'peer_private_channel_refused', 'peer_readback_failed',
+        'appliance_connection_failed', 'appliance_authentication_failed', 'appliance_host_key_changed',
+        'appliance_readback_failed', 'bounded_credential_bridge_required', 'proof_input_or_readback_invalid',
+        'peer_static_only_dhcp_changed', 'peer_dhcp_daemon_inactive', 'peer_private_address_changed',
+        'peer_original_mac_lease_expired_or_missing', 'appliance_live_eth0_mac_changed',
+        'appliance_static_baseline_missing', 'appliance_eth0_route_missing', 'public_ca_pin_invalid',
+        'peer_routed_baseline_https_failed', 'peer_forwarding_readback_failed', 'peer_forwarding_readback_invalid',
+        'peer_forwarding_enabled', 'peer_link_readback_invalid', 'peer_bridge_membership_detected',
+        'peer_tunnel_addresses_invalid', 'peer_tunnel_policy_readback_failed', 'peer_tunnel_policy_invalid',
+        'trusted_host_topology_unproven', 'trusted_host_topology_changed'
+    )
+    if ($ExitCode -eq 2 -and $StandardOutput.Length -le 1024) {
+        try {
+            $result = ConvertFrom-Json -InputObject $StandardOutput -Depth 4 -NoEnumerate -ErrorAction Stop
+            if ($result -is [pscustomobject] -and @($result.PSObject.Properties).Count -eq 2 -and
+                $result.success -is [bool] -and -not $result.success -and
+                $result.reason -is [string] -and $result.reason -cin $allowed) {
+                $category = $result.reason
+            }
+        } catch {
+            # Malformed or unexpected output remains private and unclassified.
+            $category = 'unclassified_proof_failure'
+        }
+    }
+    return "Certificate private address observations failed with exit code $ExitCode ($category)."
+}
+
+<#
+.SYNOPSIS
 Run one external process with a deadline and whole-tree termination.
 
 .PARAMETER FilePath
@@ -1010,9 +1056,8 @@ Optional child-only environment values applied without command-line exposure.
 Optional environment-variable prefixes removed from the child before overrides.
 
 .PARAMETER FailureClassification
-Fixed safe failure-classification policy. The onepassword_dependency policy
-inspects captured streams inside the runner and throws only its allowlisted
-sanitized message.
+Fixed safe failure-classification policy. Dependency and certificate policies
+inspect captured streams inside the runner and throw only allowlisted messages.
 
 .PARAMETER DiscardOutput
 Suppress successful standard output when the caller needs only completion.
@@ -1026,7 +1071,7 @@ function Invoke-AtlasoBoundedProcess {
         [Parameter(Mandatory = $true)][string]$Action,
         [hashtable]$EnvironmentVariables = @{},
         [string[]]$ClearEnvironmentVariablePrefixes = @(),
-        [ValidateSet('generic', 'onepassword_dependency')]
+        [ValidateSet('generic', 'onepassword_dependency', 'certificate_observation')]
         [string]$FailureClassification = 'generic',
         [switch]$DiscardOutput
     )
@@ -1119,6 +1164,9 @@ function Invoke-AtlasoBoundedProcess {
                     -StandardOutput $output `
                     -StandardError $errorOutput
                 throw $failure.Message
+            }
+            if ($FailureClassification -ceq 'certificate_observation') {
+                throw (Get-AtlasoCertificateObservationFailure -ExitCode $process.ExitCode -StandardOutput $output)
             }
             throw "$Action failed with exit code $($process.ExitCode)."
         }

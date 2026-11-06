@@ -443,6 +443,19 @@ Auto mode validates selected assets with locally available tools and is used by 
 Ubuntu requires `systemd-analyze` and `visudo` for the shared and VMware unit sets and every sudoers fragment, while the
 Windows Packer runner performs `packer init`, exact selected-plugin verification, formatting checks, and full
 `packer validate` for the canonical Photon template. VMware Workstation pins `github.com/vmware/vmware` to `2.1.5`.
+Both Linux CI jobs explicitly install Ubuntu's upstream `sudo` package before native checks or tests. Sudoers validation
+identifies upstream `visudo` before parsing every selected fragment. On Ubuntu releases that enable `sudo-rs` by default,
+it prefers the separately packaged `visudo.ws` and accepts that executable name in its upstream version banner.
+The alternate parser does not implement all
+Photon sudoers options, including `requiretty`. A missing or incompatible parser fails Linux validation. Keep the
+deployed rules intact and verify malformed fragments are still rejected by the selected native parser.
+The Windows deployment job also runs `python -m pytest tests/test_certificate_wrapper_credentials.py` with a contained
+temporary root. Its native credential-consumer cases require Windows process-tree containment and run there rather
+than on the Linux full-suite runner; portable checks in that file remain available on Linux. Keep this Windows CI
+coverage when changing the platform markers. Include `tests/test_python_documentation.py` in focused verification
+when adding or changing Python parameters, including nested test callbacks.
+Runtime-admission fixtures copy their base Python files into the owned test root, so runner-installed aliases do not
+obscure dependency checks; a deliberately linked code file must still fail the production single-identity guard.
 `scripts/check_packer_plugins.py` rejects a range constraint, missing selected
 binary, or selected filename that does not encode the exact required version. The supported Windows wrappers perform
 the same initialization and resolution check before validation or build, so warm and empty plugin caches select the
