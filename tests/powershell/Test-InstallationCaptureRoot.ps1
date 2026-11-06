@@ -116,8 +116,11 @@ catch {
     if ($_.Exception.Message -eq 'Fixture-root overlap admission unexpectedly succeeded.') { throw }
 }
 
+# The descendant conflict path stays uncreated: creating it would make the
+# capture root nonempty, so a descendant-overlap regression could pass via the
+# unrelated emptiness check. The overlap comparison is purely prefix-based and
+# must reject this call on its own.
 $innerConflictPath = Join-Path $captureRootPath 'inner-conflict'
-[void][IO.Directory]::CreateDirectory($innerConflictPath)
 try {
     $null = Open-AtlasoInstallationCaptureRoot `
         -DirectoryPath $captureRootPath `
