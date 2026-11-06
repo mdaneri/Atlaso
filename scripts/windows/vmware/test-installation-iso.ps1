@@ -91,6 +91,8 @@ Optional exact qemu-img executable path used for logical disk comparisons.
 .PARAMETER FixtureProfile
 Creation-time fixed disk recipe. MultiDisk adds an 8 GiB selected data disk while retaining the 4 GiB unselected disk.
 Existing operations derive this from original sealed receipts; an explicit value must agree.
+.PARAMETER OldLabelWslDistribution
+Exact existing WSL distribution required to create or admit an OldSystemLabel fixture.
 .PARAMETER ReceiptDirectory
 Optional existing durable workflow directory receiving original selectors before disk or boot mutations.
 #>
@@ -133,6 +135,7 @@ param(
     [switch]$NoStart,
     [switch]$VerifyTarget,
     [ValidateSet('SingleDisk', 'MultiDisk', 'OldSystemLabel')][string]$FixtureProfile = 'SingleDisk',
+    [string]$OldLabelWslDistribution = '',
     [string]$ReceiptDirectory = ''
 )
 
@@ -439,7 +442,13 @@ function Publish-InstallationVmOriginalReceipt {
         cleanup_tool = 'scripts/windows/vmware/test-installation-iso.ps1 -Mode Cleanup -OriginalReceiptPath <original-path> -OriginalReceiptSha256 <creation-digest>'
         created_utc = [DateTimeOffset]::UtcNow.ToString('o')
     }
-    if ($Context.FixtureProfile -ceq 'OldSystemLabel') { $record['old_label_seed_plan'] = Get-AtlasoInstallationOldLabelSpec }
+    if ($Context.FixtureProfile -ceq 'OldSystemLabel') {
+        $record['cleanup_tool'] = 'scripts/windows/vmware/test-installation-iso.ps1 -Mode Cleanup -OldLabelWslDistribution <original-recorded-name> -OriginalReceiptPath <original-path> -OriginalReceiptSha256 <creation-digest>'
+        $seedPlan = [ordered]@{}
+        foreach ($property in (Get-AtlasoInstallationOldLabelSpec).PSObject.Properties) { $seedPlan[$property.Name] = $property.Value }
+        $seedPlan['WslDistribution'] = $Context.OldLabelWslDistribution
+        $record['old_label_seed_plan'] = $seedPlan
+    }
     $published = Publish-AtlasoTestVmOwnershipRecord -Context $Context -Record $record -Kind original
     if ([Atlaso.WorkstationFileIdentity]::Get([string]$Context.OutputDirectory) -cne $directoryIdentity -or
         [Atlaso.WorkstationFileIdentity]::Get([string]$Context.VmxPath) -cne $vmxIdentity) {
@@ -526,7 +535,10 @@ function Publish-InstallationDiskBaseline {
         persistent_vm_identity_sha256 = [string]$Original.Record.persistent_vm_identity_sha256
         fixture_profile = $fixture.Profile; disks = $entries; created_utc = [DateTimeOffset]::UtcNow.ToString('o')
     }
-    if ($fixture.Profile -ceq 'OldSystemLabel') { $record['old_label_seed'] = $Context.OldLabelSeed }
+    if ($fixture.Profile -ceq 'OldSystemLabel') {
+        $record['old_label_seed'] = $Context.OldLabelSeed
+        $record['old_label_wsl_distribution'] = $Context.OldLabelWslDistribution
+    }
     $Context | Add-Member -NotePropertyName InvocationId -NotePropertyValue ([guid]::NewGuid().ToString('N')) -Force
     Publish-AtlasoTestVmOwnershipRecord -Context $Context -Record $record -Kind installation-baseline
 }
@@ -1350,6 +1362,12 @@ $receiptDirectoryContext = if ($ReceiptDirectory) {
     Assert-AtlasoInstallationRefreshReceiptDirectory -ReceiptDirectory $ReceiptDirectory `
         -Worktree $resolvedWorktree -OutputDirectory $resolvedOutput
 } else { $null }
+$selectedFixture = Get-AtlasoInstallationFixture -FixtureProfile $FixtureProfile
+if ($Mode -eq 'Create' -and $selectedFixture.Profile -ceq 'OldSystemLabel' -and
+    ([string]::IsNullOrWhiteSpace($OldLabelWslDistribution) -or $OldLabelWslDistribution.Length -gt 128 -or
+        $OldLabelWslDistribution -match '[\x00-\x1f\x7f]')) {
+    throw 'OldSystemLabel creation requires -OldLabelWslDistribution with an existing prepared WSL distribution.'
+}
 $name = if ($PullRequestNumber -gt 0) {
     (New-AtlasoVmwareTestIdentity -PullRequestNumber $PullRequestNumber -Purpose installation-iso -CollisionSuffix $CollisionSuffix).Name
 } else {
@@ -1360,7 +1378,8 @@ $name = if ($PullRequestNumber -gt 0) {
 }
 $context = New-InstallationVmContext -Root $resolvedWorktree -Destination $resolvedOutput -Name $name `
     -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256
-$context | Add-Member -NotePropertyName FixtureProfile -NotePropertyValue ((Get-AtlasoInstallationFixture -FixtureProfile $FixtureProfile).Profile) -Force
+$context | Add-Member -NotePropertyName FixtureProfile -NotePropertyValue $selectedFixture.Profile -Force
+$context | Add-Member -NotePropertyName OldLabelWslDistribution -NotePropertyValue $OldLabelWslDistribution -Force
 # The external-root lease must also close on early preflight failures and returns.
 try {
 
@@ -1417,8 +1436,17 @@ if ($Mode -in @('AdmitConsole', 'AdmitNetwork', 'RewirePrivateLan', 'Verify', 'B
             throw 'Explicit fixture profile differs from the original sealed receipts.'
         }
         $context.FixtureProfile = $fixture.Profile
+        if ($fixture.Profile -ceq 'OldSystemLabel' -and
+            ([string]::IsNullOrWhiteSpace($OldLabelWslDistribution) -or $OldLabelWslDistribution.Length -gt 128 -or
+                $OldLabelWslDistribution -match '[\x00-\x1f\x7f]' -or
+                -not $original.PSObject.Properties['old_label_seed_plan'] -or
+                $OldLabelWslDistribution -cne [string]$original.old_label_seed_plan.WslDistribution)) {
+            throw 'OldSystemLabel admission requires the exact WSL distribution sealed in the original receipt.'
+        }
         Assert-AtlasoInstallationBaselineDisks -Fixture $fixture -Baseline $baseline -OutputDirectory $context.OutputDirectory
-        if ($fixture.Profile -ceq 'OldSystemLabel') { Assert-AtlasoInstallationOldLabelRecords -Original $original -Baseline $baseline }
+        if ($fixture.Profile -ceq 'OldSystemLabel') {
+            Assert-AtlasoInstallationOldLabelRecords -Original $original -Baseline $baseline -WslDistribution $OldLabelWslDistribution
+        }
         if ($MarkInterrupted -and $fixture.Profile -cne 'OldSystemLabel') { throw 'Controlled interruption requires the original old-label fixture.' }
         if ($Mode -eq 'ResumeInstaller' -or $InterruptionReceiptPath -or $InterruptionReceiptSha256) {
             if ($fixture.Profile -cne 'OldSystemLabel' -or $BootReceiptPath -or $BootReceiptSha256 -or $InterruptionReceiptSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'Installer recovery requires original old-label interruption selectors and connected media.' }
@@ -1910,6 +1938,13 @@ if ($Mode -eq 'Cleanup') {
         }
         $recordProfile = if ($record.PSObject.Properties['fixture_profile']) { $record.fixture_profile } else { 'SingleDisk' }
         $context.FixtureProfile = $recordProfile
+        if ($recordProfile -ceq 'OldSystemLabel' -and
+            ([string]::IsNullOrWhiteSpace($OldLabelWslDistribution) -or $OldLabelWslDistribution.Length -gt 128 -or
+                $OldLabelWslDistribution -match '[\x00-\x1f\x7f]' -or
+                -not $record.PSObject.Properties['old_label_seed_plan'] -or
+                $OldLabelWslDistribution -cne [string]$record.old_label_seed_plan.WslDistribution)) {
+            throw 'OldSystemLabel cleanup requires the exact WSL distribution sealed in the original receipt.'
+        }
         if ($PSBoundParameters.ContainsKey('FixtureProfile') -and (Get-AtlasoInstallationFixture -FixtureProfile $FixtureProfile).Profile -cne $recordProfile) {
             throw 'Explicit cleanup profile differs from the original receipt.'
         }
@@ -1978,8 +2013,11 @@ try {
     $iso = [ordered]@{ path = $isoResolved; filesystem_identity = [Atlaso.WorkstationFileIdentity]::Get($isoResolved); size = $isoItem.Length; sha256 = $IsoSha256.ToLowerInvariant() }
     if (-not $PSCmdlet.ShouldProcess($resolvedOutput, 'Create isolated receipt-bound installation ISO test VM')) { return }
 
-    Assert-InstallationHostCapacity -OutputDirectory $resolvedOutput -FixtureProfile $context.FixtureProfile
     Assert-AtlasoTestVmCheckoutSource -Context $context
+    if ($context.FixtureProfile -ceq 'OldSystemLabel') {
+        $null = Get-AtlasoInstallationOldLabelToolchain -WslDistribution $OldLabelWslDistribution
+    }
+    Assert-InstallationHostCapacity -OutputDirectory $resolvedOutput -FixtureProfile $context.FixtureProfile
     $context | Add-Member -NotePropertyName InvocationId -NotePropertyValue ([guid]::NewGuid().ToString('N')) -Force
     $intent = [ordered]@{
         schema = 1; phase = 'installation-pending'; task_id = $context.TaskId; repository = $context.Repository
@@ -2024,7 +2062,8 @@ try {
         -TimeoutSeconds 300 -Action 'Create receipt-bound installation target disk' -DiscardOutput
     $qemuImg = Resolve-InstallationVmTool -Path $QemuImgPath -FileName 'qemu-img.exe'
     if ($context.FixtureProfile -ceq 'OldSystemLabel') {
-        $seed = New-AtlasoInstallationOldLabelDisk -OutputDirectory $resolvedOutput -QemuImg $qemuImg
+        $seed = New-AtlasoInstallationOldLabelDisk -OutputDirectory $resolvedOutput -QemuImg $qemuImg `
+            -WslDistribution $OldLabelWslDistribution
         $context | Add-Member -NotePropertyName OldLabelSeed -NotePropertyValue $seed
     } else {
         $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $diskTool -ArgumentList @('-c', '-s', '4GB', '-a', 'lsilogic', '-t', '0', $unselectedDisk) `
