@@ -524,6 +524,40 @@ def test_root_ssh_and_web_authentication_use_distinct_credentials(tmp_path, fake
     assert root not in json.dumps(result) and web not in json.dumps(result)
 
 
+def test_planned_web_identity_is_preserved_when_each_apply_session_expires(tmp_path, fake_run, monkeypatch):
+    """Real task reconciliation reauthenticates the selected user and keeps each terminal job."""
+    import certificate_handoff_native as handoff
+
+    plan = orchestration_plan()
+    plan["username"] = "ntp-operator"
+    password = "synthetic-web-credential"
+    logins = []
+    polls = {}
+
+    def poll(_client, path):
+        job = path.split("/")[-2]
+        polls[job] = polls.get(job, 0) + 1
+        if polls[job] == 1:
+            raise handoff.Refusal("session_expired")
+        return 200, {"task": {"id": job, "type": "appliance-apply",
+                              "status": fake_run["statuses"][int(job.split("-")[-1]) - 1]}}
+
+    monkeypatch.setattr(fixture, "wait_task", handoff.wait_task)
+    monkeypatch.setattr(handoff.time, "sleep", lambda _: None)
+    monkeypatch.setattr(FakeRunClient, "json", poll, raising=False)
+    monkeypatch.setattr(FakeRunClient, "login", lambda _, user, secret: logins.append((user, secret)))
+
+    result = fixture.run(plan, tmp_path, password)
+
+    assert result["success"] is True
+    assert logins == [(plan["username"], password)] * 4
+    assert polls == {"job-1": 2, "job-2": 2, "job-3": 2}
+    assert fake_run["submissions"] == ["job-1", "job-2", "job-3"]
+    for name, expected in (("cold", "succeeded"), ("server", "succeeded"), ("negative", "failed")):
+        assert json.loads((tmp_path / f"ntp-native-{name}-terminal.json").read_text())["status"] == expected
+    assert password not in json.dumps(result)
+
+
 def test_run_unknown_wait_preserves_submission_without_terminal_or_resubmission(
     tmp_path: Path, fake_run: dict[str, object], monkeypatch: pytest.MonkeyPatch,
 ) -> None:

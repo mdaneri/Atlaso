@@ -397,20 +397,21 @@ def acquisition_observation(session, password: str, before: dict) -> dict:
     return {"native_events": events, "real_clock_step_observed": any(row["kind"] == "step" for row in events)}
 
 
-def apply_once(client, output: Path, name: str, password: str) -> dict:
+def apply_once(client, output: Path, name: str, username: str, password: str) -> dict:
     """Journal one reviewed global Apply and reconcile only its exact task.
 
     Args:
         client: Authenticated original management origin.
         output: Originally owned append-only result namespace.
         name: Fixed case identifier.
+        username: Same admitted web identity used for the initial login.
         password: In-memory web credential used only if the session expires.
     """
     started = time.monotonic()
     publish(output / (name + "-submission-intent.json"), {"case": name, "no_resubmission": True})
     job, path = submit_initialization(client)
     publish(output / (name + "-submitted.json"), {"job_id": job, "status_path": path})
-    task, _ = wait_task([client], path, "admin", password)
+    task, _ = wait_task([client], path, username, password)
     public = {"job_id": job, "status": task.get("status"), "elapsed_seconds": round(time.monotonic() - started, 3)}
     publish(output / (name + "-terminal.json"), public)
     return public
@@ -536,7 +537,7 @@ def run(plan: dict, output: Path, password: str, *, appliance_password: str | No
                     original = prepare_baseline(client, plan)
                     result["stage"] = "cold_apply"
                     cold_checkpoint = journal_checkpoint(session, ssh_password)
-                    first = apply_once(client, output, "ntp-native-cold", password)
+                    first = apply_once(client, output, "ntp-native-cold", plan["username"], password)
                     if first["status"] != "succeeded":
                         raise Refusal("ntp_fixture_cold_apply_failed")
                     result["cold_apply"] = first
@@ -550,7 +551,7 @@ def run(plan: dict, output: Path, password: str, *, appliance_password: str | No
                     result["client_refusal"] = packet_probe(session, peer, ssh_password, plan["current_address"], plan["peer_address"], response_expected=False)
                     result["stage"] = "server_apply"
                     save_ntp(client, plan["peer_address"], "ntp_server")
-                    server = apply_once(client, output, "ntp-native-server", password)
+                    server = apply_once(client, output, "ntp-native-server", plan["username"], password)
                     if server["status"] != "succeeded":
                         raise Refusal("ntp_fixture_server_apply_failed")
                     result["server_clock"] = native_clock(session, ssh_password, plan["peer_address"], "ntp_server")
@@ -560,7 +561,7 @@ def run(plan: dict, output: Path, password: str, *, appliance_password: str | No
                     checkpoint = journal_checkpoint(session, ssh_password)
                     result["stage"] = "negative_candidate"
                     save_ntp(client, plan["negative_address"], "ntp_server")
-                    failed = apply_once(client, output, "ntp-native-negative", password)
+                    failed = apply_once(client, output, "ntp-native-negative", plan["username"], password)
                     if failed["status"] != "failed":
                         raise Refusal("ntp_fixture_negative_candidate_did_not_fail")
                     result["negative_acquisition"] = acquisition_failure(session, ssh_password, checkpoint)
