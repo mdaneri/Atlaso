@@ -1093,6 +1093,35 @@ def test_installation_journal_metadata_rejects_unknown_systemd_before_reads(
     assert reads == []
 
 
+def test_installation_journal_metadata_rejects_superseded_systemd_before_runtime_reads(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Reject the superseded exact Photon RPM digest before policy or path reads."""
+    verifier = load_verifier()
+    superseded_sha256 = "2ef0275f25c9b782e7f3cbbaaa5bf0d9037149b5253630c6db27e155c461618f"
+    admitted_sha256 = "54d0b99c3d18b45d88ef0f8358c4bb13187e6456df6d0f4f054901af8a864077"
+    assert verifier.INSTALLATION_SYSTEMD_SHA256 == admitted_sha256
+    reads: list[str] = []
+
+    def unexpected_policy_read() -> bytes:
+        """Fail if package identity admission reaches the installed policy."""
+        reads.append("policy")
+        raise AssertionError("superseded systemd package caused a policy read")
+
+    def unexpected_path_read():
+        """Fail if package identity admission reaches runtime path metadata."""
+        reads.append("path")
+        raise AssertionError("superseded systemd package caused a runtime path read")
+
+    monkeypatch.setattr(verifier, "_read_installation_systemd_tmpfiles", unexpected_policy_read)
+    monkeypatch.setattr(verifier, "INSTALLATION_SYSTEMD_JOURNAL_PATH", SimpleNamespace(lstat=unexpected_path_read))
+
+    with pytest.raises(ValueError, match="systemd runtime metadata profile is not admitted"):
+        verifier.verify_installation_journal_metadata(superseded_sha256)
+
+    assert reads == []
+
+
 def _audit_policy_fixture(verifier, monkeypatch, tmp_path: Path):
     """Prepare the pinned audit tmpfiles rule and runtime directory fixture.
 

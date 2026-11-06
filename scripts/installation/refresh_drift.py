@@ -12,6 +12,7 @@ from typing import Any
 
 from scripts.installation import content_inspection
 from scripts.installation.build import package_selection
+from scripts.installation.guest_tools import payload_inventory, source_requires_payload
 from scripts.installation.iso import _checked_path, _open_pinned, _verify_pinned
 from scripts.verify_virtualization_guest_wheel import _photon_repository_inventory
 
@@ -419,9 +420,12 @@ def inspect_capture(
     if package_names is not None and package_names != selected:
         raise ValueError("selected package inventory differs from admitted source")
     package_names = selected
+    guest_tools_required = source_requires_payload(repository)
     try:
         rpms.lstat()
     except FileNotFoundError:
+        # An absent capture remains a fresh-capture disposition; the required
+        # companion is enforced once a captured RPM root exists.
         current = [_current_record(item) for item in _photon_repository_inventory()
                    if item[4] in {"x86_64", "noarch"}]
         return capture_drift_report([], current, package_names)
@@ -431,9 +435,25 @@ def inspect_capture(
     entries = list(root.iterdir())
     packages = [item for item in entries if item.suffix == ".rpm"]
     repodata = [item for item in entries if item.name == "repodata"]
+    guest_tools = root / "guest-tools"
+    try:
+        guest_tools.lstat()
+    except FileNotFoundError:
+        guest_tools_present = False
+    else:
+        # This checks the exact optional companion layout and its own checksum
+        # manifest before any native Photon metadata or captured RPM is read.
+        # Full signatures, package identity and provider transactions remain an
+        # independent authenticated-admission requirement.
+        payload_inventory(guest_tools)
+        guest_tools_present = True
+    if guest_tools_required and not guest_tools_present:
+        raise ValueError("capture_inventory_incomplete")
     if len(packages) > MAX_CAPTURE_PACKAGES:
         raise ValueError("capture_inventory_incomplete")
-    allowed = {item.name for item in packages} | ({"repodata"} if repodata else set())
+    allowed = ({item.name for item in packages}
+               | ({"repodata"} if repodata else set())
+               | ({"guest-tools"} if guest_tools_present else set()))
     if {item.name for item in entries} != allowed or len(repodata) > 1:
         raise ValueError("capture_inventory_invalid")
     if repodata:
