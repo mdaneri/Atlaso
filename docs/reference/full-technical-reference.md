@@ -445,7 +445,8 @@ Windows Packer runner performs `packer init`, exact selected-plugin verification
 `packer validate` for the canonical Photon template. VMware Workstation pins `github.com/vmware/vmware` to `2.1.5`.
 Both Linux CI jobs explicitly install Ubuntu's upstream `sudo` package before native checks or tests. Sudoers validation
 identifies upstream `visudo` before parsing every selected fragment. On Ubuntu releases that enable `sudo-rs` by default,
-it prefers the separately packaged `visudo.ws`; the alternate parser does not implement all
+it prefers the separately packaged `visudo.ws` and accepts that executable name in its upstream version banner.
+The alternate parser does not implement all
 Photon sudoers options, including `requiretty`. A missing or incompatible parser fails Linux validation. Keep the
 deployed rules intact and verify malformed fragments are still rejected by the selected native parser.
 `scripts/check_packer_plugins.py` rejects a range constraint, missing selected

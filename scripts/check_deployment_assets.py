@@ -611,7 +611,7 @@ def validate_sudoers(assets: tuple[Path, ...], visudo: str, repository: Path) ->
         return [Finding(assets[0], "upstream visudo identity could not be verified")]
     lines = (version.stdout or "").strip().splitlines()
     identity = lines[0] if lines else ""
-    if version.returncode or re.fullmatch(r"visudo version [0-9]+(?:\.[0-9]+)+[A-Za-z0-9._+~-]*", identity) is None:
+    if version.returncode or re.fullmatch(r"visudo(?:\.ws)? version [0-9]+(?:\.[0-9]+)+[A-Za-z0-9._+~-]*", identity) is None:
         return [Finding(assets[0], "upstream visudo is required for appliance sudoers syntax; use visudo.ws where packaged")]
     print(f"Sudoers validator: {Path(visudo).name}; {identity}")
     findings: list[Finding] = []

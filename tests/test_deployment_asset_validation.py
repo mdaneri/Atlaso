@@ -646,13 +646,20 @@ def test_linux_mode_uses_appliance_compatible_parser(tmp_path: Path, classic_pac
     assert validate.call_args.args[1] == expected
 
 
-@pytest.mark.parametrize("version", ["visudo version 1.9.17p2\n", "visudo-rs 0.2.13\n"])
-def test_sudoers_parser_identity_precedes_real_asset_validation(tmp_path: Path, version: str) -> None:
+@pytest.mark.parametrize(("version", "accepted"), [
+    ("visudo version 1.9.17p2\n", True),
+    ("visudo.ws version 1.9.17p2\nvisudo.ws grammar version 50\n", True),
+    ("visudo-rs 0.2.13\n", False),
+    ("visudo.ws version 1.9.17p2 unexpected suffix\n", False),
+    ("visudoXws version 1.9.17p2\n", False),
+])
+def test_sudoers_parser_identity_precedes_real_asset_validation(tmp_path: Path, version: str, accepted: bool) -> None:
     """An incompatible default parser cannot stand in for native appliance syntax.
 
     Args:
         tmp_path: Owned input directory.
         version: Upstream or incompatible native parser identity.
+        accepted: Whether the exact native version identity is supported.
     """
     asset = tmp_path / "sudoers"
     asset.write_text("atlaso ALL=(root) NOPASSWD: /opt/atlaso/bin/atlaso-helper *\n")
@@ -660,7 +667,7 @@ def test_sudoers_parser_identity_precedes_real_asset_validation(tmp_path: Path, 
     with patch("scripts.check_deployment_assets.subprocess.run", side_effect=responses) as run:
         findings = validate_sudoers((asset,), "/usr/sbin/visudo.ws", tmp_path)
     assert run.call_args_list[0].args[0] == ["/usr/sbin/visudo.ws", "-V"]
-    if version.startswith("visudo version "):
+    if accepted:
         assert not findings
         assert run.call_args_list[1].args[0] == ["/usr/sbin/visudo.ws", "-cf", str(asset)]
     else:
