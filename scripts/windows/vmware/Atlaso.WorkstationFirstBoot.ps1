@@ -1918,7 +1918,7 @@ function Get-AtlasoWorkstationSshHostKey {
 
 <#
 .SYNOPSIS
-Derive a valid development FQDN from a Workstation VM name.
+Derive a collision-resistant development FQDN within the guest hostname limit.
 
 .PARAMETER Name
 The requested Workstation VM display name.
@@ -1933,10 +1933,19 @@ function New-AtlasoWorkstationFqdn {
     if (-not $label) {
         $label = 'appliance'
     }
-    if ($label.Length -gt 63) {
-        $label = $label.Substring(0, 63).TrimEnd('-')
+    # The normal guest hostname observed through Tools is limited to 63 characters
+    # overall, including this suffix. Hash the complete canonical identity so a
+    # collision suffix beyond the readable prefix still distinguishes the guest.
+    $domainSuffix = '.atlaso.internal'
+    $maximumLabelLength = 63 - $domainSuffix.Length
+    if ($label.Length -gt $maximumLabelLength) {
+        $digest = [Convert]::ToHexString(
+            [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($label))
+        ).ToLowerInvariant().Substring(0, 12)
+        $prefix = $label.Substring(0, $maximumLabelLength - $digest.Length - 1).TrimEnd('-')
+        $label = "$prefix-$digest"
     }
-    return "$label.atlaso.internal"
+    return "$label$domainSuffix"
 }
 
 <#

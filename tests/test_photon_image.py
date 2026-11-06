@@ -2514,16 +2514,30 @@ def test_vmware_packer_requires_proven_builder_identity() -> None:
     assert canonical in detailed_policy
 
 
-def test_vmware_payload_layout_and_provenance_fail_closed(tmp_path: Path) -> None:
+@pytest.mark.parametrize("long_root", [False, True], ids=["ordinary-root", "long-root"])
+def test_vmware_payload_layout_and_provenance_fail_closed(
+    tmp_path_factory: pytest.TempPathFactory, long_root: bool
+) -> None:
     """Verify canonical payload roles pass while reversed layouts and roles fail.
 
     Args:
-        tmp_path: Pytest-provided isolated output directory.
+        tmp_path_factory: Pytest factory that provides the bounded session output root.
+        long_root: Exercise the canonical junction probe near the Windows path limit.
     """
     pwsh = shutil.which("pwsh")
     if pwsh is None:
         pytest.skip("PowerShell 7 is required")
 
+    # The fixture repeats canonical builder names in directory and VMX leaves.
+    # A bounded session child leaves room for its junction path on Windows.
+    output_directory = tmp_path_factory.mktemp("p")
+    if long_root:
+        # The canonical release/junction/VMX tail is 136 characters. A 120-character
+        # output root exercises that guard at 256, without a long pytest node name.
+        padding = 120 - len(str(output_directory)) - 1
+        if padding > 0:
+            output_directory /= "x" * padding
+            output_directory.mkdir()
     result = subprocess.run(
         [
             pwsh,
@@ -2535,7 +2549,7 @@ def test_vmware_payload_layout_and_provenance_fail_closed(tmp_path: Path) -> Non
             "-RepositoryRoot",
             str(Path.cwd()),
             "-OutputDirectory",
-            str(tmp_path / "vmware-payload"),
+            str(output_directory),
         ],
         check=False,
         capture_output=True,

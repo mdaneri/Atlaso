@@ -146,7 +146,10 @@ Git-ignored .atlaso-local\onepassword-environment-id file is the default. The
 legacy OnePasswordEnvironmentIdFile name remains available as an alias.
 
 .PARAMETER FirstBootFqdn
-Optional first-boot appliance FQDN override.
+Optional first-boot appliance FQDN override, at most 63 characters in total for
+exact guest hostname observation through VMware Tools. Longer overrides fail
+before credential access or new VM mutation; generated names retain a hash of
+the complete canonical VM identity when shortening is needed.
 
 .PARAMETER AdminPassword
 Initial Atlaso and Photon bootstrap administrator password. When omitted, the
@@ -3304,6 +3307,15 @@ if ($ownershipContext.Enabled -and (Test-Path -LiteralPath $targetVmx) -and -not
     # recreation only after the receipt-bound pending work has completed.
     throw "VM already exists: $targetVmx. Pass -Redeploy to remove and recreate it, or choose a different -CollisionSuffix for another identically owned test VM."
 }
+# Recovery above must remain available for originally receipted VMs. For new
+# creation, refuse an unobservable identity before source intent, credentials,
+# redeploy cleanup, network preparation, or cloning can mutate anything.
+if (-not $FirstBootFqdn) {
+    $FirstBootFqdn = New-AtlasoWorkstationFqdn -Name $Name
+}
+if ($FirstBootFqdn.Length -gt 63) {
+    throw 'FirstBootFqdn exceeds the 63-character guest hostname limit observed through VMware Tools. Choose a shorter complete FQDN or omit -FirstBootFqdn to generate a bounded identity. No new VM was created.'
+}
 $resolvedSourceVmx = ''
 $sourceVmxIdentity = ''
 if ($ownershipContext.Enabled) {
@@ -3375,9 +3387,6 @@ if (-not $SkipSshKeyProvisioning) {
     $resolvedSshPublicKeyPath = $resolvedSshPublicKey.Path
 }
 
-if (-not $FirstBootFqdn) {
-    $FirstBootFqdn = New-AtlasoWorkstationFqdn -Name $Name
-}
 $credentialBridgeState = $null
 if (-not $WhatIfPreference) {
     # The parent converts explicit SecureStrings only to current-user DPAPI

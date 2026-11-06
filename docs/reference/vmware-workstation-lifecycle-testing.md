@@ -154,6 +154,13 @@ and evidence paths beneath that repository's `test-results` tree. No pytest `--b
 inspectors must reject mutable checkout invocation, out-of-root paths, missing Python, and existing evidence before
 any credential access. These admission fixtures do not create VMs or perform certificate handoffs.
 
+The no-VM payload regression is
+`python -m pytest tests/test_photon_image.py::test_vmware_payload_layout_and_provenance_fail_closed`.
+It uses bounded session directory names and checks both ordinary and long roots while retaining canonical builder,
+VMX, provenance, and junction identities. Keep the pytest output beneath an originally receipted permitted root.
+An environment that cannot admit the fixture must retain its original identity-admission diagnostic; a path failure
+does not substitute for the asserted junction rejection.
+
 ### Release task-owned LAN segments
 
 Lifecycle runs that request `lan:<name>` now create an immutable receipt before registering a new segment.
@@ -1546,8 +1553,16 @@ encrypted-import proof, the
 guest publishes only bounded fixed first-boot stage identifiers. A timeout reports the last valid stage, or a fixed
 diagnostic that provider selection or customizer startup did not complete; it never includes command output or secret
 material.
-The wrapper injects the same complete DHCP-first OVF environment before power-on. Use `-FirstBootFqdn` for the test
-identity. The wrapper prefers the checkout-local current-user DPAPI service-account token and uses standard GIL-enabled
+The wrapper injects the same complete DHCP-first OVF environment before power-on. Generated FQDNs fit within the
+63-character complete guest hostname observed through VMware Tools, including `.atlaso.internal`. Short names stay
+unchanged; longer names use a readable prefix and a 12-hex SHA-256 suffix derived from the complete canonical identity,
+including its collision suffix. For example, `-PullRequestNumber 1083 -Purpose guest-tools-time-peer
+-CollisionSuffix offline20261101` retains its full canonical VM name and derives a bounded guest FQDN.
+Use `-FirstBootFqdn` for an explicit test identity of at most 63 characters in total. An oversized override fails before
+new source intent, credential access, redeploy cleanup, network preparation, or cloning. Original receipt-bound recovery
+still runs first. Readiness requires the complete expected hostname; truncated or prefix matches remain failures.
+Existing retained VMs keep their original identities.
+The wrapper prefers the checkout-local current-user DPAPI service-account token and uses standard GIL-enabled
 Windows x64 CPython 3.14 registered with the Windows launcher, including bracketed Python Install Manager architecture
 selectors. Use `-OnePasswordServiceAccountTokenFile`, `-OnePasswordAccount`, or `-OnePasswordPython` only when an
 explicit override is required. Without a token, zero or multiple desktop accounts fail closed; a missing compatible
