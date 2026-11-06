@@ -197,13 +197,16 @@ class PinnedPeerTransport(AbstractContextManager["PinnedPeerTransport"]):
                 bridge.close()
                 local.close()
 
-    def tcp_reachable(self, target_ip: str, port: int = 443) -> bool:
+    def tcp_reachable(self, target_ip: str, port: int = 443, *, channel_timeout: int = 8) -> bool:
         """Check direct TCP acceptance independently of TLS and authentication.
 
         Args:
             target_ip: Exact private IPv4 address to probe.
             port: Admitted management service port.
+            channel_timeout: Normal wait or bounded retirement connect-failure wait.
         """
+        if type(channel_timeout) is not int or channel_timeout not in (8, 150):
+            raise PeerTransportRefusal("peer_tcp_probe_deadline_invalid")
         address = ipaddress.IPv4Address(target_ip)
         if address not in self.subnet or port != 443:
             raise PeerTransportRefusal("target_outside_owned_private_subnet")
@@ -211,7 +214,7 @@ class PinnedPeerTransport(AbstractContextManager["PinnedPeerTransport"]):
             raise PeerTransportRefusal("peer_transport_inactive")
         try:
             channel = self.transport.open_channel(
-                "direct-tcpip", (str(address), port), ("127.0.0.1", 0), timeout=8,
+                "direct-tcpip", (str(address), port), ("127.0.0.1", 0), timeout=channel_timeout,
             )
             if channel is None:
                 raise PeerTransportRefusal("peer_tcp_probe_unproven")

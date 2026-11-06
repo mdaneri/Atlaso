@@ -285,7 +285,7 @@ def verify_retired_address(
 
     Args:
         plan: Positive task, repository, PR, and source identity.
-        peer: Pinned peer exposing ``tcp_reachable(address, port)``.
+        peer: Pinned peer exposing bounded ``tcp_reachable(address, port, channel_timeout=...)``.
         appliance: Pinned appliance session exposing bounded ``command``.
         retired_address: IPv4 address expected to be retired.
         active_address: IPv4 address expected to remain reachable.
@@ -295,21 +295,27 @@ def verify_retired_address(
     active = _ipv4(active_address, "retirement_address_invalid")
     if retired == active:
         raise Refusal("retirement_addresses_must_differ")
-    deadline = time.monotonic() + 30
+    deadline = time.monotonic() + 200
     observations: list[dict[str, Any]] = []
-    for attempt in range(1, 4):
-        if deadline - time.monotonic() < 8:
+    # OpenSSH reports the peer kernel's connect outcome. Linux's normal SYN
+    # retry horizon can exceed 130 seconds; a short channel wait is not that
+    # outcome. Only one extended observation is permitted after a live pending
+    # result and positive active-path proof. Authentication remains unchanged.
+    for attempt, channel_timeout in enumerate((8, 150), start=1):
+        if deadline - time.monotonic() < channel_timeout + 8:
             raise Refusal("retirement_tcp_probe_failed", observations=observations)
         try:
             native = _retired_native_absence(appliance, retired)
         except Refusal as exc:
             exc.observations = observations.copy()
             raise
-        if deadline - time.monotonic() < 8:
+        if deadline - time.monotonic() < channel_timeout + 8:
             raise Refusal("retirement_tcp_probe_failed", observations=observations)
         pending = False
+        probe_started = time.monotonic()
         try:
-            retired_reachable = peer.tcp_reachable(retired, 443)
+            retired_reachable = (peer.tcp_reachable(retired, 443) if channel_timeout == 8 else
+                                 peer.tcp_reachable(retired, 443, channel_timeout=channel_timeout))
         except PeerTcpProbePending:
             # A channel-open deadline has no TCP outcome. Require positive
             # active-path proof before another read-only native observation.
@@ -320,10 +326,14 @@ def verify_retired_address(
             if category not in {"administrative_denial", "channel_failure", "ssh_failure", "transport_failure"}:
                 category = "unclassified"
             observations.append({"attempt": attempt, "retired_ipv4": retired,
-                                 "outcome": "tcp_probe_unproven", "failure_category": category})
+                                 "outcome": "tcp_probe_unproven", "failure_category": category,
+                                 "channel_timeout_seconds": channel_timeout,
+                                 "elapsed_seconds": round(time.monotonic() - probe_started, 3)})
             raise Refusal("retirement_tcp_probe_failed", observations=observations) from None
         observation: dict[str, Any] = {
             "attempt": attempt, "retired_ipv4": retired,
+            "channel_timeout_seconds": channel_timeout,
+            "elapsed_seconds": round(time.monotonic() - probe_started, 3),
             "outcome": "channel_open_pending" if pending else (
                 "tcp_acceptance" if retired_reachable is True else (
                     "explicit_tcp_nonacceptance" if retired_reachable is False else "invalid_tcp_result"
@@ -346,6 +356,13 @@ def verify_retired_address(
             raise Refusal("active_address_unreachable", observations=observations)
         if pending:
             continue
+        try:
+            native = _retired_native_absence(appliance, retired)
+        except Refusal as exc:
+            exc.observations = observations.copy()
+            raise
+        if time.monotonic() > deadline:
+            raise Refusal("retirement_tcp_probe_failed", observations=observations)
         return {
             "schema": 1,
             "kind": "certificate-address-retirement",

@@ -187,8 +187,9 @@ def test_protected_mode_never_falls_back_on_missing_key(monkeypatch: pytest.Monk
         (paramiko.OPEN_FAILED_CONNECT_FAILED, True, False, "refuse"),
     ],
 )
+@pytest.mark.parametrize("channel_timeout", [8, 150])
 def test_tcp_probe_counts_only_authenticated_live_connect_failure_as_closed(
-    failure_code: int, active_after: bool, authenticated_after: bool, expected: bool | str,
+    failure_code: int, active_after: bool, authenticated_after: bool, expected: bool | str, channel_timeout: int,
 ) -> None:
     """Do not treat administrative denial or loss of the authenticated peer as a closed port.
 
@@ -197,6 +198,7 @@ def test_tcp_probe_counts_only_authenticated_live_connect_failure_as_closed(
         active_after: Whether the peer transport remains active after refusal.
         authenticated_after: Whether the peer remains authenticated after refusal.
         expected: Closed-port observation or an explicit refusal expectation.
+        channel_timeout: Short or extended bounded channel-open wait.
     """
     peer = PinnedPeerTransport(
         "192.168.167.20", "alpine", "ssh-ed25519 " + "A" * 44,
@@ -220,6 +222,7 @@ def test_tcp_probe_counts_only_authenticated_live_connect_failure_as_closed(
                 *_args: Ignored requested channel endpoint arguments.
                 **_kwargs: Ignored channel timeout options.
             """
+            assert _kwargs["timeout"] == channel_timeout
             self.active = active_after
             self.authenticated = authenticated_after
             raise paramiko.ChannelException(failure_code, "test refusal")
@@ -227,9 +230,9 @@ def test_tcp_probe_counts_only_authenticated_live_connect_failure_as_closed(
     peer.transport = ProbeTransport()  # type: ignore[assignment]  # Fake exercises the probe's transport checks.
     if expected == "refuse":
         with pytest.raises(PeerTransportRefusal, match="peer_tcp_probe_unproven"):
-            peer.tcp_reachable("192.168.77.40")
+            peer.tcp_reachable("192.168.77.40", channel_timeout=channel_timeout)
     else:
-        assert peer.tcp_reachable("192.168.77.40") is expected
+        assert peer.tcp_reachable("192.168.77.40", channel_timeout=channel_timeout) is expected
 
 
 def test_tcp_probe_reports_open_and_requires_active_authenticated_ssh() -> None:
@@ -278,13 +281,15 @@ def test_tcp_probe_reports_open_and_requires_active_authenticated_ssh() -> None:
     [("Timeout opening channel.", True, True), ("other transport failure", True, True),
      ("Timeout opening channel.", False, True), ("Timeout opening channel.", True, False)],
 )
-def test_tcp_probe_identifies_only_live_channel_open_deadline(message: str, live: bool, authenticated: bool) -> None:
+@pytest.mark.parametrize("channel_timeout", [8, 150])
+def test_tcp_probe_identifies_only_live_channel_open_deadline(message: str, live: bool, authenticated: bool, channel_timeout: int) -> None:
     """A pending connection remains unknown instead of becoming a closed port.
 
     Args:
         message: Fixed Paramiko timeout or another SSH failure.
         live: Peer transport state after the channel failure.
         authenticated: Peer authentication state after the channel failure.
+        channel_timeout: Short or extended wait; neither timeout proves nonacceptance.
     """
     from certificate_peer_transport import PeerTcpProbePending
 
@@ -298,6 +303,7 @@ def test_tcp_probe_identifies_only_live_channel_open_deadline(message: str, live
             return authenticated if self.failed else True
 
         def open_channel(self, *_args, **_kwargs):
+            assert _kwargs["timeout"] == channel_timeout
             self.failed = True
             raise paramiko.SSHException(message)
 
@@ -309,5 +315,20 @@ def test_tcp_probe_identifies_only_live_channel_open_deadline(message: str, live
     pending = message == "Timeout opening channel." and live and authenticated
     expected = PeerTcpProbePending if pending else PeerTransportRefusal
     with pytest.raises(expected, match="peer_tcp_probe_unproven") as result:
-        peer.tcp_reachable("192.168.77.40")
+        peer.tcp_reachable("192.168.77.40", channel_timeout=channel_timeout)
     assert isinstance(result.value, PeerTcpProbePending) == pending
+
+
+@pytest.mark.parametrize("deadline", [0, 9, 151, True, 8.0, None])
+def test_tcp_probe_refuses_unbounded_or_unsupported_deadline(deadline) -> None:
+    """Only the two reviewed finite channel waits can reach the transport.
+
+    Args:
+        deadline: Unsupported or incorrectly typed channel deadline.
+    """
+    peer = PinnedPeerTransport(
+        "192.168.167.20", "alpine", "ssh-ed25519 " + "A" * 44,
+        "SHA256:" + "A" * 43, "192.168.77.0/24",
+    )
+    with pytest.raises(PeerTransportRefusal, match="peer_tcp_probe_deadline_invalid"):
+        peer.tcp_reachable("192.168.77.40", channel_timeout=deadline)

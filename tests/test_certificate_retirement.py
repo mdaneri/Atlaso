@@ -293,11 +293,13 @@ def test_retirement_reobserves_pending_connection_without_accepting_timeout(fina
     from certificate_peer_transport import PeerTcpProbePending
 
     class SettlingPeer(Peer):
-        def tcp_reachable(self, address, port):
+        def tcp_reachable(self, address, port, *, channel_timeout=8):
             self.probes.append((address, port))
             if address == ACTIVE:
+                assert channel_timeout == 8
                 return True
             count = self.probes.count((RETIRED, 443))
+            assert channel_timeout == (8 if count == 1 else 150)
             if count == 1 or final == "pending":
                 raise PeerTcpProbePending("peer_tcp_probe_unproven")
             return final
@@ -314,7 +316,79 @@ def test_retirement_reobserves_pending_connection_without_accepting_timeout(fina
             retirement.verify_retired_address(_plan(), peer, appliance, RETIRED, ACTIVE)
         assert result.value.observations[0]["outcome"] == "channel_open_pending"
     assert appliance.commands.count("ip -j -4 addr show") >= 2
-    assert peer.probes.count((RETIRED, 443)) <= 3
+    assert peer.probes.count((RETIRED, 443)) == 2
+
+
+def test_retirement_waits_for_explicit_slow_reply_and_rechecks_native_absence(monkeypatch) -> None:
+    """A native connect may fail explicitly after the short channel wait expires.
+
+    Args:
+        monkeypatch: Replace elapsed time without sleeping.
+    """
+    from certificate_peer_transport import PeerTcpProbePending
+
+    now = [0.0]
+    monkeypatch.setattr(retirement.time, "monotonic", lambda: now[0])
+    appliance = _appliance()
+
+    class SlowPeer(Peer):
+        def tcp_reachable(self, address, port, *, channel_timeout=8):
+            self.probes.append((address, port))
+            if address == ACTIVE:
+                assert channel_timeout == 8
+                return True
+            if channel_timeout == 8:
+                now[0] += 8
+                raise PeerTcpProbePending("peer_tcp_probe_unproven")
+            assert channel_timeout == 150
+            now[0] += 131
+            return False
+
+    result = retirement.verify_retired_address(_plan(), SlowPeer(), appliance, RETIRED, ACTIVE)
+    assert [v["channel_timeout_seconds"] for v in result["tcp_observations"]] == [8, 150]
+    assert [v["elapsed_seconds"] for v in result["tcp_observations"]] == [8, 131]
+    assert appliance.commands.count("ip -j -4 addr show") == 3
+
+
+def test_retirement_rechecks_native_ownership_after_slow_reply() -> None:
+    """A slow explicit refusal cannot hide ownership returning during the wait."""
+    from certificate_peer_transport import PeerTcpProbePending
+
+    appliance = _appliance()
+
+    class ChangedDuringWait(Peer):
+        def tcp_reachable(self, address, port, *, channel_timeout=8):
+            if address == ACTIVE:
+                return True
+            if channel_timeout == 8:
+                raise PeerTcpProbePending("peer_tcp_probe_unproven")
+            appliance.outputs["ip -j -4 addr show"] = _json([{"addr_info": [{"local": RETIRED}]}])
+            return False
+
+    with pytest.raises(retirement.Refusal, match="retired_address_still_owned"):
+        retirement.verify_retired_address(_plan(), ChangedDuringWait(), appliance, RETIRED, ACTIVE)
+
+
+def test_retirement_cannot_complete_after_final_readback_exhausts_budget(monkeypatch) -> None:
+    """An explicit refusal cannot renew the deadline for its final native proof.
+
+    Args:
+        monkeypatch: Replace the observation clock without waiting.
+    """
+    now = [0.0]
+    monkeypatch.setattr(retirement.time, "monotonic", lambda: now[0])
+    appliance = _appliance()
+    original_command = appliance.command
+
+    def command(value):
+        result = original_command(value)
+        if appliance.commands.count("ip -j -4 addr show") == 2:
+            now[0] = 201
+        return result
+
+    appliance.command = command
+    with pytest.raises(retirement.Refusal, match="retirement_tcp_probe_failed"):
+        retirement.verify_retired_address(_plan(), Peer(), appliance, RETIRED, ACTIVE)
 
 
 def test_retirement_pending_probe_rechecks_native_ownership() -> None:
@@ -343,7 +417,7 @@ def test_retirement_does_not_start_probe_outside_observation_budget(monkeypatch)
     Args:
         monkeypatch: Pytest clock replacement.
     """
-    ticks = iter([0, 0, 23])
+    ticks = iter([0, 0, 193])
     monkeypatch.setattr(retirement.time, "monotonic", lambda: next(ticks))
     peer = Peer()
     with pytest.raises(retirement.Refusal, match="retirement_tcp_probe_failed"):
@@ -399,7 +473,7 @@ def test_retirement_pending_observation_does_not_reset_deadline(monkeypatch) -> 
     """
     from certificate_peer_transport import PeerTcpProbePending
 
-    ticks = iter([0, 0, 0, 0, 23])
+    ticks = iter([0, 0, 0, 0, 8, 8, 50])
     monkeypatch.setattr(retirement.time, "monotonic", lambda: next(ticks))
 
     class WaitingPeer(Peer):

@@ -462,15 +462,19 @@ A TLS mismatch, HTTP denial, or failed ping alone is not evidence that the liste
 must agree with native address/listener absence; if peer routing, transport, or the host inventory check is uncertain,
 preserve the lab and report acceptance incomplete rather than treating a timeout as proof.
 
-When a live authenticated SSH peer has not returned its TCP channel-open outcome within the existing eight-second
-probe deadline, the retirement observer may make at most three read-only observations. A 30-second monotonic budget
-prevents starting another observation or TCP probe without the full eight-second probe allowance remaining;
-existing native-command timeouts and the bounded child still apply to readbacks.
-Before each new probe it repeats native address, listener, route and rule absence checks; a pending probe also requires
-positive TCP acceptance at the active address before another observation. Only a later explicit connect-failed reply
-can prove nonacceptance. Administrative denial, lost authentication, other transport errors, persistent pending outcomes,
-reappearing native ownership or an accepted retired connection still fail. Evidence retains every pending observation;
-this window does not replay Apply or change the 60-second NTP guard.
+When a live authenticated SSH peer has not returned its TCP channel-open outcome within the normal eight-second
+probe deadline, the retirement observer may make one further read-only observation with a 150-second channel wait.
+OpenSSH waits for the peer kernel's connect outcome; Linux's default SYN retry horizon can reach
+[131 seconds](https://docs.kernel.org/networking/ip-sysctl.html).
+A single 200-second monotonic budget reserves the full selected channel wait and eight seconds for the active-path
+probe before each observation and TCP attempt. Existing native-command deadlines and the bounded child still apply.
+Before the extended probe it repeats native address, listener, route and rule absence checks and requires positive
+TCP acceptance at the active address from the first observation. It checks the active address after each retired
+probe and repeats native absence after an explicit refusal before accepting retirement. Only an explicit connect-failed
+reply proves nonacceptance; expiry of either channel wait remains unknown. Administrative denial, lost authentication,
+other transport errors, persistent pending outcomes, budget exhaustion, reappearing native ownership or an accepted
+retired connection still fail. Evidence retains each outcome, selected wait and elapsed time. This window does not
+replay Apply or change the eight-second authentication deadline or the 60-second NTP guard.
 
 ## Hand off lab resources for cleanup
 
