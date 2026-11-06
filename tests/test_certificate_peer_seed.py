@@ -11,7 +11,8 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "interop"))
 from create_certificate_peer_seed_iso import (
-    peer_files,  # noqa: E402 - Local interop import after path setup.
+    build_argument_parser,  # noqa: E402 - Local interop import after path setup.
+    peer_files,
 )
 
 
@@ -58,6 +59,7 @@ def test_peer_has_exact_mac_static_only_dhcp_on_private_interface() -> None:
     )
     assert files["meta-data"] == "instance-id: certificate-peer\nlocal-hostname: certificate-peer\n"
     assert "open-vm-tools" not in config
+    assert "open-vm-tools-vix" not in config
     assert "publish-host-key" not in config
     assert "ATLASO_CERTIFICATE_PEER_ED25519_HOST_KEY_V1" not in config
 
@@ -71,6 +73,7 @@ def test_optional_bootstrap_installs_tools_and_publishes_only_public_host_key() 
     assert "open-vm-tools" in parsed["packages"]
     assert "open-vm-tools-openrc" in parsed["packages"]
     assert "open-vm-tools-guestinfo" in parsed["packages"]
+    assert "open-vm-tools-vix" not in parsed["packages"]
     assert "open-vm-tools-timesync" not in parsed["packages"]
     commands = parsed["runcmd"]
     assert commands.index("rc-service sshd restart") < commands.index("rc-service dnsmasq restart")
@@ -91,6 +94,75 @@ def test_optional_bootstrap_installs_tools_and_publishes_only_public_host_key() 
     assert "ssh-keygen -lf \"$key_file\"" in publisher
     assert args.public_key not in publisher
     assert "/etc/ssh/ssh_host_ed25519_key \"" not in publisher
+
+
+def test_ntp_vmware_vix_mode_installs_and_verifies_tools_before_public_marker() -> None:
+    args = _args(
+        publish_host_key_to_serial=True,
+        vmware_vix=True,
+        serve_ntp=True,
+        management_addresses=["192.168.77.10", "192.168.77.30", "192.168.77.40"],
+        ntp_probe_cidr="192.168.78.1/24",
+    )
+
+    parsed = yaml.safe_load(peer_files(args)["user-data"])
+    packages = parsed["packages"]
+    commands = parsed["runcmd"]
+    marker = "/usr/local/sbin/atlaso-certificate-peer-publish-host-key"
+
+    assert "open-vm-tools-vix" in packages
+    assert "open-vm-tools-guestinfo" in packages
+    assert "open-vm-tools-timesync" not in packages
+    assert "open-vm-tools-plugins-all" not in packages
+    vix_bootstrap = next(command for command in commands if "libguestInfo.so" in command)
+    guestinfo_check = "test -s /usr/lib/open-vm-tools/plugins/vmsvc/libguestInfo.so"
+    vix_check = "test -s /usr/lib/open-vm-tools/plugins/common/libvix.so"
+    restart = "rc-service open-vm-tools restart"
+    status = "rc-service open-vm-tools status"
+    ordered_steps = [guestinfo_check, vix_check, "rc-update add open-vm-tools default", restart, status, marker]
+    assert vix_bootstrap.startswith("set -eu\n")
+    assert [vix_bootstrap.index(step) for step in ordered_steps] == sorted(
+        vix_bootstrap.index(step) for step in ordered_steps
+    )
+    assert "rc-service open-vm-tools start" not in vix_bootstrap
+    assert "||" not in vix_bootstrap
+    assert commands.index(vix_bootstrap) < commands.index("/usr/local/sbin/atlaso-certificate-peer-chrony")
+
+
+def test_vmware_vix_option_requires_public_host_key_marker() -> None:
+    with pytest.raises(ValueError, match="serial host-key publication"):
+        peer_files(_args(vmware_vix=True))
+
+
+def test_vmware_vix_cli_flag_is_explicit_and_opt_in() -> None:
+    parser = build_argument_parser()
+    base = [
+        "--output", "peer.iso", "--hostname", "peer", "--public-key", "ssh-ed25519 key",
+        "--server-cidr", "192.168.77.1/24", "--lease-address", "192.168.77.10",
+        "--client-mac", "00:50:56:2a:11:22",
+    ]
+
+    assert parser.parse_args(base).vmware_vix is False
+    parsed_args = parser.parse_args(
+        [
+            *base,
+            "--publish-host-key-to-serial",
+            "--vmware-vix",
+            "--serve-ntp",
+            "--management-address", "192.168.77.10",
+            "--management-address", "192.168.77.30",
+            "--management-address", "192.168.77.40",
+            "--ntp-probe-cidr", "192.168.78.1/24",
+        ]
+    )
+    assert parsed_args.vmware_vix is True
+    rendered = yaml.safe_load(peer_files(parsed_args)["user-data"])
+    assert "open-vm-tools-vix" in rendered["packages"]
+    vix_bootstrap = next(command for command in rendered["runcmd"] if "libguestInfo.so" in command)
+    assert "set -eu" in vix_bootstrap
+    assert vix_bootstrap.index("rc-service open-vm-tools status") < vix_bootstrap.index(
+        "/usr/local/sbin/atlaso-certificate-peer-publish-host-key"
+    )
 
 
 def test_seed_removal_preserves_provisioned_host_keys_and_network_without_optional_console_helper() -> None:

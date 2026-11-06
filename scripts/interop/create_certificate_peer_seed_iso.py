@@ -70,11 +70,14 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
     if not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/]+={0,2}(?: [^\r\n]{1,128})?", args.public_key):
         raise ValueError("An exact Ed25519 peer SSH public key is required.")
     publish_host_key = getattr(args, "publish_host_key_to_serial", False)
+    vmware_vix = getattr(args, "vmware_vix", False)
     preserve_host_keys = getattr(args, "preserve_host_keys", False)
     if not isinstance(preserve_host_keys, bool):
         raise ValueError("The host-key preservation option must be boolean.")
     if not isinstance(publish_host_key, bool):
         raise ValueError("The serial host-key publication option must be boolean.")
+    if not isinstance(vmware_vix, bool) or (vmware_vix and not publish_host_key):
+        raise ValueError("VMware VIX support requires serial host-key publication.")
     instance_id = getattr(args, "instance_id", None)
     if instance_id is None:
         metadata_instance_id = args.hostname
@@ -137,11 +140,28 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
             "    content: |\n"
             + "".join(f"      {line}\n" for line in publisher.splitlines())
         )
-        extra_commands = (
-            "  - rc-update add open-vm-tools default\n"
-            "  - rc-service open-vm-tools start\n"
-            "  - /usr/local/sbin/atlaso-certificate-peer-publish-host-key\n"
-        )
+        if vmware_vix:
+            extra_packages += "  - open-vm-tools-vix\n"
+            extra_commands = (
+                # Alpine ships VMware's VIX command RPC plugin separately from
+                # the base and guestinfo packages. Package installation may
+                # start Tools before VIX is installed, so restart and verify
+                # the service only after both plugin files are present.
+                "  - |\n"
+                "    set -eu\n"
+                "    test -s /usr/lib/open-vm-tools/plugins/vmsvc/libguestInfo.so\n"
+                "    test -s /usr/lib/open-vm-tools/plugins/common/libvix.so\n"
+                "    rc-update add open-vm-tools default\n"
+                "    rc-service open-vm-tools restart\n"
+                "    rc-service open-vm-tools status\n"
+                "    /usr/local/sbin/atlaso-certificate-peer-publish-host-key\n"
+            )
+        else:
+            extra_commands = (
+                "  - rc-update add open-vm-tools default\n"
+                "  - rc-service open-vm-tools start\n"
+                "  - /usr/local/sbin/atlaso-certificate-peer-publish-host-key\n"
+            )
     if tunnel_addresses:
         permitted = " ".join(f"{address}:{port}" for address in sorted(tunnel_addresses) for port in (22, 443))
         policy = ("DisableForwarding no\nAllowTcpForwarding local\nGatewayPorts no\n"
@@ -239,8 +259,8 @@ ethernets:
     }
 
 
-def main() -> int:
-    """Create a NoCloud seed ISO; the password is accepted on stdin only."""
+def build_argument_parser() -> argparse.ArgumentParser:
+    """Build the bounded command-line interface for peer seed creation."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True)
     parser.add_argument("--hostname", required=True)
@@ -250,12 +270,18 @@ def main() -> int:
     parser.add_argument("--lease-address", required=True)
     parser.add_argument("--client-mac", required=True)
     parser.add_argument("--publish-host-key-to-serial", action="store_true")
+    parser.add_argument("--vmware-vix", action="store_true")
     parser.add_argument("--preserve-host-keys", action="store_true")
     parser.add_argument("--management-address", dest="management_addresses", action="append", default=[])
     parser.add_argument("--serve-ntp", action="store_true")
     parser.add_argument("--ntp-probe-cidr")
     parser.add_argument("--instance-id")
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    """Create a NoCloud seed ISO; the password is accepted on stdin only."""
+    args = build_argument_parser().parse_args()
     files = peer_files(args)
     try:
         import pycdlib

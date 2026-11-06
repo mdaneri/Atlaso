@@ -99,6 +99,10 @@ used with normal CA and hostname verification for HTTPS. Endpoint scans and trus
 Original console receipts and bounded topology observations retain explicit UTC observation times.
 Console admission accepts at most 1 MiB, accommodates ordinary boot output, and emits only the exact public identity
 marker. Oversized files, reparse paths and conflicting public keys remain admission failures.
+The NTP peer explicitly installs Alpine's GuestInfo and VIX plugins and restarts the Tools service before its public
+marker. Tools heartbeat alone does not establish VMware automation or IP readiness. A failed management-address wait
+retains bounded provider categories; NTP fixture seed cleanup stops after a failed soft shutdown and requires explicit
+maintainer direction before a hard power action.
 The NTP mode has its own original clone admission; it never represents a clone as an ISO installation.
 Before wheel deployment, it waits at most 120 seconds for first boot to publish the complete source database schema,
 then requires the unchanged read-only routing-absence proof. A missing schema never counts as empty routing intent.

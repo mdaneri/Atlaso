@@ -1829,7 +1829,7 @@ function New-CertificatePeerSeedIso {
         if ($LASTEXITCODE -ne 0) { throw 'pycdlib must be installed before creating the certificate peer seed.' }
         $helper = Join-Path $runtimeSourceRoot 'scripts\interop\create_certificate_peer_seed_iso.py'
         $ntpOptions = if ($NtpColdStartOnly) {
-            @('--publish-host-key-to-serial', '--instance-id', "$LabName-peer", '--serve-ntp',
+            @('--publish-host-key-to-serial', '--instance-id', "$LabName-peer", '--serve-ntp', '--vmware-vix',
               '--management-address', $CertificateLeaseAddress,
               '--management-address', $ntpBaselineAddress, '--management-address', $ntpCandidateAddress,
               '--ntp-probe-cidr', '192.168.78.1/24')
@@ -1866,13 +1866,34 @@ Owned peer VMX path.
 function Wait-CertificatePeerManagementAddress {
     param([Parameter(Mandatory)][string]$Path)
     $deadline = (Get-Date).AddSeconds(300)
+    $pollCount = 0
+    $lastCategory = 'empty'
     while ((Get-Date) -lt $deadline) {
+        $pollCount++
         $reported = Invoke-VmrunBounded -Arguments @('-T', 'ws', 'getGuestIPAddress', $Path) -TimeoutSeconds 10
-        if (-not $reported.TimedOut -and $reported.ExitCode -eq 0) {
+        if ($reported.TimedOut) {
+            $lastCategory = 'timeout'
+        } elseif ($reported.ExitCode -ne 0) {
+            $lastCategory = 'nonzero'
+        } elseif ([string]::IsNullOrWhiteSpace([string]$reported.StdOut)) {
+            $lastCategory = 'empty'
+        } else {
             $address = Get-GuestIPv4FromAddressText -Lines @($reported.StdOut -split "`r?`n")
             if ($address) { return $address }
+            $lastCategory = 'unparseable'
         }
         Start-Sleep -Seconds 5
+    }
+    if ($NtpColdStartOnly) {
+        $peerOwnershipSha256 = if ($peerOwnership -and $peerOwnership.Sha256 -match '^[0-9a-fA-F]{64}$') {
+            $peerOwnership.Sha256.ToLowerInvariant()
+        } else { $null }
+        $null = Write-CertificateLabReceipt -Name 'peer-management-timeout.json' -Value ([ordered]@{
+            schema = 1; kind = 'ntp-cold-start-peer-management-timeout'; task_id = $lifecycleTaskId
+            repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber
+            peer_ownership_sha256 = $peerOwnershipSha256
+            poll_count = $pollCount; last_category = $lastCategory
+        })
     }
     throw 'Certificate peer management address was unavailable from owned VMware Tools.'
 }
@@ -2064,6 +2085,9 @@ function Stop-WorkstationVmForSeedCleanup {
     }
     [void](Invoke-VmrunBounded -Arguments @('-T', 'ws', 'stop', $Path, 'soft') -TimeoutSeconds 45)
     if (Test-WorkstationVmRunning -Path $Path) {
+        if ($NtpColdStartOnly) {
+            throw 'NTP peer remained running after the bounded soft-stop attempt; hard-stop fallback is not permitted.'
+        }
         [void](Invoke-VmrunBounded -Arguments @('-T', 'ws', 'stop', $Path, 'hard') -TimeoutSeconds 30)
     }
     if (Test-WorkstationVmRunning -Path $Path) {
