@@ -5304,6 +5304,19 @@ explicit-path checks so a supported deployment file never reports success for ze
 Ubuntu requires <code>systemd-analyze</code> and <code>visudo</code> for the shared and VMware unit sets and every sudoers fragment, while the
 Windows Packer runner performs <code>packer init</code>, exact selected-plugin verification, formatting checks, and full
 <code>packer validate</code> for the canonical Photon template. VMware Workstation pins <code>github.com/vmware/vmware</code> to <code>2.1.5</code>.
+Both Linux CI jobs explicitly install Ubuntu's upstream <code>sudo</code> package before native checks or tests. Sudoers validation
+identifies upstream <code>visudo</code> before parsing every selected fragment. On Ubuntu releases that enable <code>sudo-rs</code> by default,
+it prefers the separately packaged <code>visudo.ws</code> and accepts that executable name in its upstream version banner.
+The alternate parser does not implement all
+Photon sudoers options, including <code>requiretty</code>. A missing or incompatible parser fails Linux validation. Keep the
+deployed rules intact and verify malformed fragments are still rejected by the selected native parser.
+The Windows deployment job also runs <code>python -m pytest tests/test_certificate_wrapper_credentials.py</code> with a contained
+temporary root. Its native credential-consumer cases require Windows process-tree containment and run there rather
+than on the Linux full-suite runner; portable checks in that file remain available on Linux. Keep this Windows CI
+coverage when changing the platform markers. Include <code>tests/test_python_documentation.py</code> in focused verification
+when adding or changing Python parameters, including nested test callbacks.
+Runtime-admission fixtures copy their base Python files into the owned test root, so runner-installed aliases do not
+obscure dependency checks; a deliberately linked code file must still fail the production single-identity guard.
 <code>scripts/check_packer_plugins.py</code> rejects a range constraint, missing selected
 binary, or selected filename that does not encode the exact required version. The supported Windows wrappers perform
 the same initialization and resolution check before validation or build, so warm and empty plugin caches select the

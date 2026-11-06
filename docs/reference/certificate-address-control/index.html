@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Human-maintainer acceptance procedure for certificate handoff when native address proof is unavailable.">
+        <meta name="description" content="Trusted-host VMware procedure for certificate address handoff acceptance.">
       
       
         <meta name="author" content="Atlaso contributors">
@@ -3008,10 +3008,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#authority-and-admission" class="md-nav__link">
+  <a href="#trusted-host-and-admission" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Authority and admission
+        Trusted host and admission
       </span>
     </span>
   </a>
@@ -3026,6 +3026,56 @@
       </span>
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prepare-the-iso-appliance-adapter" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Prepare the ISO appliance adapter
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bootstrap-the-iso-static-baseline" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Bootstrap the ISO static baseline
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Bootstrap the ISO static baseline">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#initialize-a-fresh-appliance-fixture" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Initialize a fresh appliance fixture
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recover-a-terminal-initial-ntp-synchronization-timeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Recover a terminal initial NTP synchronization timeout
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -4240,10 +4290,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#authority-and-admission" class="md-nav__link">
+  <a href="#trusted-host-and-admission" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Authority and admission
+        Trusted host and admission
       </span>
     </span>
   </a>
@@ -4258,6 +4308,56 @@
       </span>
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prepare-the-iso-appliance-adapter" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Prepare the ISO appliance adapter
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#bootstrap-the-iso-static-baseline" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Bootstrap the ISO static baseline
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Bootstrap the ISO static baseline">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#initialize-a-fresh-appliance-fixture" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Initialize a fresh appliance fixture
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#recover-a-terminal-initial-ntp-synchronization-timeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Recover a terminal initial NTP synchronization timeout
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -4435,44 +4535,33 @@
 
 
 <h1 id="certificate-handoff-address-control-procedure">Certificate handoff address-control procedure<a class="headerlink" href="#certificate-handoff-address-control-procedure" title="Permanent link">&para;</a></h1>
-<p>This procedure defines a human-maintainer acceptance path for a certificate handoff lab while the current Atlaso
-VMware Workstation producer cannot produce machine-admissible proof that a candidate management address is exclusively
-controlled. It permits a
-maintainer to collect reviewable lab evidence through Atlaso's supported interface and Appliance Apply workflow. It
-does not make that evidence admissible to <code>certificate_handoff_native.py</code> or unlock either credentialed wrapper.</p>
+<p>This procedure defines a trusted-host acceptance path for certificate address handoff on an ISO-installed appliance.
+It uses one task-owned Workstation appliance and one task-owned Linux peer attached to the same dedicated private LAN
+segment. The maintainer trusts the Windows Workstation host administrator to account for that host's VMs and to avoid
+changing the test topology during acceptance. The evidence supports a controlled lab result; it is not proof against
+the trusted host administrator or another administrator able to reconfigure Workstation.</p>
+<p>The appliance's test interface has no adapter outside this segment, and the segment has no bridge, NAT, host adapter,
+or routed connection to another network. The peer's other adapter, when used to reach the appliance through pinned SSH,
+stays on a separate management network; do not bridge or route it into the test segment. Only the appliance and peer
+may have adapters on the test segment. A different LAN member, VMX binding, source, certificate pin, receipt, or
+reservation invalidates the run.</p>
 <p>The acceptance cases below cover the existing fixture: one dedicated IPv4 management interface, <code>eth0</code>, with IPv6
 disabled and an explicitly configured static baseline. They do not establish Access-management acceptance for #852 or
 support for other interface roles or address families.</p>
-<h2 id="authority-and-admission">Authority and admission<a class="headerlink" href="#authority-and-admission" title="Permanent link">&para;</a></h2>
-<p>The maintainer directing the lab must independently establish and enforce exclusive admission to the private LAN for
-the full interval from the first ownership observation through the final rollback verification. The maintainer must
-have authority over both the candidate address and the LAN admission boundary. A second qualified operator or an
-authoritative system outside the test VM and its peer must attest the observations and enforcement. Select a control
-that actually fences membership and prevents conflicting use of the candidate address, then record its configured
-rule and independent readback for the exact VM, peer, LAN, and address. An operator statement, signed or otherwise,
-without observable enforcement and readback is not proof. A receipt written by the test runner, an agent, or the VM
-owner alone is not independent proof.</p>
+<h2 id="trusted-host-and-admission">Trusted host and admission<a class="headerlink" href="#trusted-host-and-admission" title="Permanent link">&para;</a></h2>
+<p>The trusted-host boundary is the human maintainer with authority over the Workstation host, its VM inventory, VMX
+files, LAN segment registration, and test task. That maintainer can authorize the test, observe the host state, and
+keep other host operators from changing the topology during the run. Acceptance assumes this administrator follows
+the recorded procedure. It does not claim an independent hypervisor control plane or protection from that administrator.</p>
 <p>This procedure covers the current native scenario only: one IPv4 dedicated-management interface named eth0, with IPv6
 disabled. It does not establish acceptance for another interface, role, address family, or access-management
 configuration.</p>
-<p>Before any appliance configuration change, establish all of the following:</p>
+<p>Before the first appliance configuration change, establish all of the following:</p>
 <ul>
-<li>The applied baseline is complete and clean: the initial Apply has completed, there are no pending desired-state
-  units, and no Appliance Apply task is pending, running, or otherwise active. The original source probe proves
-  routing intent absent with the required route, rule, NAT, port-forward, WAN-policy, and route-role interface counts
-  at zero and routing/WAN settings disabled. Bind that original source receipt by digest to the exact task, appliance
-  VM, and source commit.</li>
-<li>
-<p>The deployed runtime is bound to that same source and VM. Bind the exact helper and wheel SHA-256 values from the
-  runtime receipt to the plan and deployed source commit. Independently verify the helper digest against the reviewed
-  source; retain the verified built-wheel digest from the admitted runtime record.</p>
-</li>
-<li>
-<p>The lab is authorized, isolated, and tied to the exact repository, issue, pull request, reviewed source commit, and
-  original task identity. Bind the exact appliance VMX and VM root identity to its immutable original creation-intent
-  and ownership receipts. Record the original receipt paths and SHA-256 digests in durable evidence outside any
-  disposable VM directory.</p>
-</li>
+<li>The lab is authorized, isolated, and tied to the exact repository, issue, pull request, reviewed source commit, and
+  original task identity. Bind the exact ISO appliance VMX and root identity to immutable original creation-intent
+  and ownership receipts. Preserve original appliance receipts, paths, and SHA-256 digests in durable evidence
+  outside every disposable VM directory.</li>
 <li>Before any appliance SSH readback or mutation, capture its public SSH host-key fingerprint through the authorized
   console of the exact admitted VM, independently matched to its original VMX, root identity, and ownership receipt.
   Record that fingerprint, its observation source/time, and receipt binding in the durable evidence. Require strict
@@ -4483,60 +4572,276 @@ configuration.</p>
 <li>The appliance adapter and candidate interface are the intended ones. Record the VMX adapter-to-LAN mapping, the
   observed appliance MAC and interface, the candidate IPv4 address and prefix, gateway, and the prior static
   management configuration.</li>
-<li>The peer is independently admitted as a task-owned resource. Bind its original creation and source-disk identity,
+<li>The Linux peer is a task-owned resource. Bind its original creation and source-disk identity,
   private-LAN adapter, address, and pinned SSH host-key fingerprint. Record the original peer creation-receipt path
 and digest, selected source-disk path and digest, and public SSH key fingerprint used for admission. Never put a
 private key, password, token, authenticated URL, or other secret in evidence.</li>
-<li>The private LAN identity is bound to its original creation or authoritative inventory record and original digest.
-  Record its provider identity and the enforcing attachment boundary. Prove that every attached endpoint is accounted
-  for and that no other endpoint can join or claim the candidate address during the operation.</li>
-<li>An authoritative reservation or equivalent enforcement prevents other claimants from using the candidate address.
-  The source must be independent of the guest's address report and peer configuration. Retain the source record,
-  operator identity, observation time, and a digest or verifiable reference.</li>
+<li>The test LAN is a newly created, task-owned Workstation LAN segment. Bind its ID and name to its original creation
+  receipt and SHA-256. Read back both appliance and peer VMX adapter assignments, including the segment ID and MAC.
+  Inventory Workstation VMs and task VM roots known to the host; verify that exactly these two VM identities reference
+  the segment. Check the appliance and peer adapters are connected, and verify the appliance has no other connected
+  adapter. Record the inventory and adapter readbacks with observation time. The host administrator attests that this
+  inventory covers the host's VM locations and prevents untracked host operators from adding a member during the run.
+  Vacant inventory slots and stale missing VMX paths are counted separately; every existing registration and running
+  VM is still checked. A vacant slot must contain an exactly empty path, and duplicate slot indexes are refused.</li>
+<li>Select and record an unused private candidate address and a distinct peer address. Reserve the candidate for the
+  admitted appliance MAC in the peer's bounded DHCP configuration, or record the equivalent fixed-address plan. The
+  peer's DHCP service binds only to its test-segment adapter and leases only the admitted appliance MAC. Verify the
+  running configuration and current lease from the pinned peer. Do not treat an unresponsive address, VMware Tools
+  address, or a lease alone as proof that a machine is attached to the segment.</li>
 <li>The appliance's original HTTPS certificate identity, trusted public CA digest, interface fields, route, and DNS
   baseline are captured through the normal authenticated Atlaso interface. Keep only public certificate material and
   sanitized observations.</li>
+<li>Capture the source and installed-runtime facts described in the
+  <a href="#bootstrap-the-iso-static-baseline">ISO bootstrap procedure</a> before changing desired state. The original route
+  probe must prove routing intent absent, with the required route,
+  rule, NAT, port-forward, WAN-policy, and route-role interface counts at zero and routing/WAN settings disabled.
+  The installed helper, wheel, appliance SSH host key, ISO VM ownership, and source commits must match their pinned
+  inspection receipts. The initial static Apply must complete successfully before running either address scenario.</li>
 </ul>
-<p>An address that does not answer ARP or ICMP is not thereby unused. A quiet DHCP lease table, MAC-derived address,
-VMware Tools address, guest route, or vmrun inventory does not prove exclusive current LAN membership or exclude
-another claimant. Do not proceed if the independent source cannot account for all attachments, enforce admission,
-reserve the address, or observe those facts continuously. The <a href="https://developer.broadcom.com/xapis/vmware-workstation-pro-api/latest/">VMware Workstation
-API</a>
-documents per-VM adapters and IP information, networks, DHCP MAC settings, and VM identities and paths; those
-observations alone do not establish an enforced exclusive attachment or exclude a static-address claimant. Any
-platform mechanism used must be demonstrated on the actual lab. A switch port fence, controlled virtual-switch
-membership, or authoritative reservation service are examples of required capabilities, not claims that a
-particular installation provides them.</p>
-<p>Keep the independent admission control active from the initial observation through both the test and restoration.
-Recheck the attachment inventory, reservation, and claimant state before each Apply and after each address transition.
-Stop before another change if any check is unavailable or differs. Any membership, reservation, appliance or peer
-trust, VM,
-source,
-route, or candidate-address drift invalidates the evidence. If the control boundary is interrupted, the VM reboots,
-the relevant task/source binding changes, or a verification interval is missed, treat the proof as stale and do not
-resume from the old receipt. Re-admit from original evidence before any new mutation.</p>
+<p>This procedure records the host administrator's bounded inventory and topology checks under an explicit trusted-host
+assumption. It does not infer an adversarial guarantee from VMware Tools or DHCP. Keep the test segment free of
+bridges, NAT, host adapters, and routes to other networks. Recheck the VM inventory, each adapter's LAN assignment,
+the address reservation, and current lease before and after every Apply transition. Watch for host and guest power,
+VMX, adapter, segment, route, or source changes throughout the run. If any check fails, changes, or cannot be repeated,
+stop before another Apply, preserve state, and invalidate the run; re-admit from the original receipts before retry.</p>
 <h2 id="maintainer-evidence-record">Maintainer evidence record<a class="headerlink" href="#maintainer-evidence-record" title="Permanent link">&para;</a></h2>
 <p>Keep one append-only lab record in the maintainer-approved durable evidence location, outside the removable lab root.
 Record the task, issue, PR, repository, source commit, appliance and peer identities, LAN identity, address plan,
 original receipt digests, public CA digest, appliance and peer SSH host-key fingerprints or the verified appliance
-console binding, independent authority and source, and each
-observation and action in order. Preserve the original bytes of creation receipts; calculate and independently record
-their SHA-256 digests before use. Do not edit, relabel, or recreate them to match a later task or pull request.</p>
-<p>The record is manually collected maintainer acceptance evidence. It is not a controlled native receipt, regardless of
-whether it is structured as JSON or signed. Current native admission binds VM ownership to PR #871 and requires an
-original address-proof receipt with exact task, VM, peer, LAN, CA, and runtime bindings. A manually authored record,
-an old PR #871 receipt, or a receipt with its PR/task fields rewritten cannot satisfy those checks. A future native
-producer must obtain each new task and PR identity from its owning admission path, bind the original receipts and
-independent address authority itself, and enforce the required live checks through rollback. Do not use the current
-credentialed wrappers for a new task until that producer is implemented and admitted by the native path.</p>
+console binding, trusted-host inventory source, and each observation and action in order. Preserve the original
+bytes of creation receipts; calculate and record their SHA-256 digests before use. Do not edit, relabel, or recreate
+receipts from another task.</p>
+<p>The trusted-host address-proof producer binds each run to its current task and PR, ISO appliance, peer, LAN creation
+receipt, source/runtime digests, public CA, SSH pins, address plan, and time-stamped topology observations. Receipts
+from the earlier PR #871 independent-control path remain bound to that task. The trusted-host mode is explicit and
+must not weaken legacy independent-control admission.</p>
+<p>When the reviewed harness advances after lab creation, retain the original receipt bytes and creation source in
+<code>resource_source_commit</code>; <code>source_commit</code> identifies the currently reviewed harness. Admission requires the creation
+source to remain an ancestor of that harness. Never change a receipt's source to match a later head.</p>
+<h2 id="prepare-the-iso-appliance-adapter">Prepare the ISO appliance adapter<a class="headerlink" href="#prepare-the-iso-appliance-adapter" title="Permanent link">&para;</a></h2>
+<p>For a new fixture, create and install the appliance through <code>invoke-installation-iso-test.ps1</code> with
+<code>-Scenario AutoReboot</code> and <code>-InspectInstalled</code>. For the existing manually installed ISO appliance, verify its
+installation with <code>-Scenario BootInstalled -InspectInstalled</code> and the original creation and disk-baseline selectors.
+Preserve the original creation, disk-baseline, installed-boot, and public identity evidence. The installed inspection
+binds the image's software/source identity and the appliance SSH host-key pin to that original VM. Do not substitute
+the ordinary lifecycle <code>-CertificateOnly</code> clone.</p>
+<p>The installed inspection must be complete before the native plan is prepared. It identifies the ISO's original
+resource source, the installed software source and wheel, and the appliance SSH host-key fingerprint. Preserve these
+values separately from the current reviewed harness commit. The original resource source commit remains the immutable
+source recorded when the VM was created; the current harness source identifies the later reviewed code and must
+descend from that resource source. Never rewrite original ISO receipts to make their source match a newer harness.</p>
+<p>A development ISO can contain a newer installer source and an older signed application wheel. The helper comes from
+the installer source, while <code>deployed_commit</code> continues to identify the signed wheel. Before credential access, admission
+reads the original checksum-pinned ISO, verifies its helper against the media inventory and exact installer Git source,
+and binds the software source and wheel digest to the installed inspection. Native readback must match that helper;
+bootstrap runtime evidence records <code>helper_source_commit</code> separately. Neither source is relabelled to satisfy admission.</p>
+<p>The certificate peer seed suppresses cloud-init's optional SSH-key console helper; its explicit public-key marker remains
+available for console pinning. It persists the provisioned network and host keys before seed removal, restricts later
+datasource discovery to NoCloud and None, and preserves the peer's original instance history. Recheck the original SSH
+pin and native readiness after the seed-removal restart; never reseed to clear a provisioning failure.</p>
+<p>After creating the task-owned peer and LAN through their admitted owning paths, stop the ISO appliance gracefully.
+Use its exact preserved selectors to attach its existing adapter to that segment; the command refuses an active VM,
+extra adapters, an unknown MAC, or mismatched original evidence:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">&amp;</span> <span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">test-installation</span><span class="n">-iso</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Mode</span> <span class="n">RewirePrivateLan</span> <span class="p">`</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  <span class="n">-Worktree</span> <span class="nv">$worktree</span> <span class="n">-OutputDirectory</span> <span class="nv">$applianceRoot</span> <span class="n">-PullRequestNumber</span> <span class="nv">$pr</span> <span class="p">`</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  <span class="n">-OriginalReceiptPath</span> <span class="nv">$originalPath</span> <span class="n">-OriginalReceiptSha256</span> <span class="nv">$originalSha256</span> <span class="p">`</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>  <span class="n">-BaselineReceiptPath</span> <span class="nv">$baselinePath</span> <span class="n">-BaselineReceiptSha256</span> <span class="nv">$baselineSha256</span> <span class="p">`</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>  <span class="n">-BootReceiptPath</span> <span class="nv">$bootPath</span> <span class="n">-BootReceiptSha256</span> <span class="nv">$bootSha256</span> <span class="p">`</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>  <span class="n">-PrivateLanSegmentName</span> <span class="nv">$segmentName</span> <span class="n">-PrivateLanSegmentId</span> <span class="nv">$segmentId</span> <span class="p">`</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>  <span class="n">-PrivateLanSegmentReceiptPath</span> <span class="nv">$segmentReceiptPath</span> <span class="p">`</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>  <span class="n">-PrivateLanSegmentReceiptSha256</span> <span class="nv">$segmentReceiptSha256</span> <span class="n">-Confirm</span><span class="p">:</span><span class="nv">$false</span>
+</span></code></pre></div>
+<p>Retain the returned <code>PrivateLanRewireReceiptPath</code> and <code>PrivateLanRewireReceiptSha256</code>. Subsequent <code>AdmitConsole</code>,
+<code>ResumeInstalled</code>, and <code>Cleanup</code> operations take those values as <code>-RewireReceiptPath</code> and <code>-RewireReceiptSha256</code>,
+together with the original boot and segment selectors. This transition changes only the original adapter's attachment
+and connected state, preserving its generated MAC and all original ownership records.</p>
+<h2 id="bootstrap-the-iso-static-baseline">Bootstrap the ISO static baseline<a class="headerlink" href="#bootstrap-the-iso-static-baseline" title="Permanent link">&para;</a></h2>
+<p>Prepare the one task-owned Linux peer on the dedicated management VMnet and test LAN. Its test-LAN adapter runs DHCP
+only for the admitted appliance MAC; its control adapter remains on the separate management VMnet. When generating
+the peer's NoCloud seed with <code>scripts/interop/create_certificate_peer_seed_iso.py</code>, enable
+<code>--publish-host-key-to-serial</code> and supply a task-unique <code>--instance-id</code>. This option enables VMware Tools on the peer
+and publishes a fixed public Ed25519 host-key marker to its VMX-bound serial file. Read and record that exact marker
+from the admitted peer VMX/serial endpoint, bind the instance ID and observation to the original peer receipt, and
+pin the host key before any SSH connection. Do not establish peer SSH trust from a network scan, DNS, or an
+unverified first connection. The seed's <code>--public-key</code> is the public key selected for this task's peer SSH identity;
+never stage its private half in the seed or receipts.</p>
+<p>For the trusted-host verifier, supply <code>--management-address</code> once for each admitted appliance address: the DHCP lease,
+static baseline, and static candidate. The seed then permits local SSH channels only to those addresses on ports 22
+and 443, verifies the effective SSH policy, and keeps remote forwarding and gateway listeners disabled. For the
+example plan these addresses are <code>192.168.77.10</code>, <code>192.168.77.30</code>, and <code>192.168.77.40</code>. This SSH byte transport does not
+enable kernel IP forwarding or bridging. Before the first address-changing Apply, the verifier evaluates the effective
+SSH policy for its authenticated user and source and refuses missing destinations, unrestricted forwarding, or extra
+destinations.</p>
+<p>For the normal <code>peer_transport.authentication_mode: "agent"</code> selection, or when that selection is omitted, unlock the
+SSH agent and approve the selected key for the task's Python runtime before starting unattended inspection. The key
+must match the public key admitted for this peer. The bounded child receives no peer private-key value in agent mode;
+the bridge clears inherited native credential values before supplying the selected credentials.</p>
+<p>Install the task's isolated Python runtime from <code>requirements-onepassword-deploy.lock</code>, which includes both the SSH
+transport (<code>paramiko</code>) and ISO reader (<code>pycdlib</code>). Both certificate inspectors refuse a runtime missing either package
+before retrieving credentials or creating their source snapshot. Development dependencies are not required.
+If a read-only address observation exits with code 2, the wrapper reports a fixed allowlisted failure category when
+available, such as <code>peer_connection_failed</code> or <code>appliance_authentication_failed</code>. Unexpected output remains
+<code>unclassified_proof_failure</code>; child stdout, stderr and remote error text are never included in the diagnostic.
+Preserve the failed run and diagnose that boundary before retrying; an authentication preflight does not prove the
+later observation succeeded or authorize replaying Apply.</p>
+<p>The ordinary credential policy remains the default. A task-only peer SSH key protected with current-user Windows
+DPAPI is an optional exception only when the maintainer has explicitly approved that key and its lab lifetime. Before
+creating it, preserve the original approval receipt and bind it to this task, repository, PR, exact peer ownership, and
+the peer SSH purpose. Create a dedicated Ed25519 key through the approved credential workflow; preserve the original
+key-creation receipt and digest, and bind its public key and fingerprint to the same peer identity and seed. Keep the
+private key available to the bounded host-side credential bridge only as DPAPI ciphertext. Do not place ciphertext
+or plaintext private-key material in the seed, guest, VM directory, receipts, logs, or public evidence reports. Keep
+ciphertext in its separately restricted host credential artifact; plans contain only its path and digest. The explicit
+<code>peer_transport.authentication_mode</code> is <code>dpapi-task-key</code>, with pinned <code>peer_key</code>, <code>peer_key_authorization</code>, and
+<code>peer_key_creation</code> references. Admission checks the approval and creation bindings before credential access.
+Do not substitute an agent's personal key or fall back to another SSH identity if the approved task key is unavailable
+or rejected; stop and reconcile the approved key and its receipts.</p>
+<h3 id="initialize-a-fresh-appliance-fixture">Initialize a fresh appliance fixture<a class="headerlink" href="#initialize-a-fresh-appliance-fixture" title="Permanent link">&para;</a></h3>
+<p>A manual ISO installation can still have pending first-run DNS/DHCP and NTP settings. Establish the fixture baseline
+before the certificate bootstrap; its protected handoff bundle must not absorb those independent changes.
+This preparation reuses the existing non-grid <strong>Appliance Settings</strong>, <strong>DNS</strong>, and <strong>NTP and NTS</strong> forms and normal
+<strong>Appliance Apply</strong> review.
+The initializer follows the Settings form's original ID across tabs, including external controls, so changing the
+fixture resolver preserves the existing HTTPS, SSH, terminal, and service DNS settings. Ambiguous form IDs or selected
+password controls stop preparation before submission.</p>
+<p>Keep one real clock authority on the peer. For an Alpine peer already synchronized by Chrony, the seed's optional
+<code>--serve-ntp</code> uses its existing upstream configuration and admits only the private peer and the three appliance
+addresses on UDP 123. The IPv4 server binds to the peer's private address; IPv6 serving is confined to loopback.
+It refuses competing time controllers, synthetic local-clock sources, or an unsynchronized peer. It does not select
+new upstream sources. For an existing admitted peer, stage the same public configuration and installer returned by
+<code>certificate_peer_time.peer_time_files</code> over its pinned SSH session; preserve the original config and task-bound
+before/after records. Keep the original VM, host keys, interfaces and DHCP configuration. Do not reseed or create a
+second peer for this step. The verifier requires both recent genuine synchronization and a real, nonce-matched NTP reply.
+Chrony's <a href="https://chrony-project.org/doc/4.8/chrony.conf.html"><code>bindaddress</code> and <code>allow</code> directives</a>
+define this serving scope.</p>
+<p>Add this explicit initialization intent to the existing receipt-bound plan, using its admitted peer address:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">&quot;fixture_initialization&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">&quot;peer_time_address&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;192.168.77.1&quot;</span><span class="p">,</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">&quot;resolver_address&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;192.168.77.1&quot;</span><span class="p">,</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">&quot;disable_dns_server&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="nt">&quot;disable_ntp_server&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>Using the reviewed Git-blob entrypoint and the same original resource references, run <code>-InitializeFixture</code> first.
+Review <code>fixture-initialization-inspection.json</code>, which contains public form fingerprints, original interface and TLS
+facts, and genuine peer-time observations. Tokens and private-material selectors remain in memory. Bind that immutable
+inspection's path and SHA-256 in a new plan reference named <code>fixture_initialization_inspection</code>, then run the entrypoint
+with <code>-InitializeFixture -ExecuteInitialization</code> and that execution plan.</p>
+<p>The explicit execution disables the fixture's DNS and NTP server roles, sets stable resolver/upstream values to the
+peer, and selects an NTP client with only the real private peer enabled as its time source. Other successful form
+controls and the factory upstream rows are preserved. It submits only the reviewed initialization roots: Appliance
+Settings, Network, CA, Firewall, Public Services, DNS/DHCP and NTP. A required disabled WAN/NAT replay is allowed only
+with the original routing-absence proof; independent pending work is refused.</p>
+<p>Require a successful task, clean Apply state, unchanged DHCP management interface, original CA and payload pins,
+continued routing absence, a synchronized NTP client with no competing controller, and the private peer selected in
+native <code>ntpq</code> readback. This preparation does not establish certificate acceptance. DNS verification records the
+configured resolver and upstream values through the later address transitions.
+The initialization journals precede desired edits and Apply submission. An unknown task outcome requires reconciliation
+from those records; never rerun it or overwrite the evidence. Then continue with the static bootstrap below.</p>
+<h3 id="recover-a-terminal-initial-ntp-synchronization-timeout">Recover a terminal initial NTP synchronization timeout<a class="headerlink" href="#recover-a-terminal-initial-ntp-synchronization-timeout" title="Permanent link">&para;</a></h3>
+<p>If the initializer failed only because the selected NTP client did not synchronize within its 60-second guard,
+preserve its result and task ID. Read the existing task and native clock/routing observations first. An active or
+unknown task, another failed component, changed management interface or TLS identity, unrelated pending work, or
+different DNS/NTP desired settings prevents this recovery. The NTP synchronization guard and safe rollback remain
+unchanged; a listening service or a small measured clock offset does not establish a healthy controller.</p>
+<p>Create a fresh, originally receipted output namespace and retain the original failed result as the plan reference
+<code>fixture_initialization_failure</code> with its original path and SHA-256. Using the same reviewed Git-blob wrapper, run
+<code>-RecoverFixture</code> without execution. Review <code>fixture-recovery-inspection.json</code>: only NTP may be pending, the other
+initializer components must have succeeded, and Public Services must have been skipped. Desired state must already
+select only the admitted private peer as an NTP client, with DNS and NTP/NTS server roles disabled. Normal Apply review
+must select exactly NTP and Public Services for this new task.</p>
+<p>Bind that inspection as <code>fixture_recovery_inspection</code>, then use <code>-RecoverFixture -ExecuteRecovery</code>. This submits a
+distinct two-unit recovery through normal Appliance Apply, without saving forms or replaying the initializer's other
+components. Before submission, an immutable <code>fixture-ntp-recovery-claim.json</code> beside the original failure claims its
+single recovery attempt across output namespaces. An existing claim requires reconciliation; a new output directory
+cannot authorize another submission. The original failed result remains unchanged. Require task success, clean Apply
+state, the original interface/CA/payload/routing identities, and genuine exclusive NTP-client synchronization with the
+private peer selected in native <code>ntpq</code> readback. Preserve the new task's journals and <code>fixture-recovery-result.json</code>
+alongside the original failure. A failed or unknown recovery blocks bootstrap.</p>
+<p>After the original ISO adapter is rewired and the trusted-host topology is admitted, use the reviewed Git-blob
+<code>scripts/windows/vmware/inspect-certificate-peer.ps1</code> entrypoint described in the
+<a href="../vmware-workstation-lifecycle-testing/#single-command-run">VMware lifecycle certificate workflow</a>. Do not invoke
+the mutable checkout copy directly. The plan uses the original ISO intent, ownership, boot, and private-LAN
+transition references, the installed inspection, and the original peer/LAN receipts. Keep its public CA certificate
+file separately pinned to the public CA read through the appliance's pinned SSH session. The bootstrap rejects a
+private key or CA digest mismatch. It first obtains a CA-validated TLS handshake through the peer and then uses the
+observed certificate name with the normal full CA and hostname validation for UI requests.</p>
+<p>Run the wrapper with <code>-Bootstrap</code> first to inspect the source route snapshot, active <code>atlaso.service</code>, installed
+helper and wheel, original desired fields, served TLS identity, DNS, and topology without editing the UI. Review
+<code>inspection-result.json</code> in the existing task-owned evidence directory. Confirm the current-address value is the peer's
+admitted lease, and the selected interface, original MAC, public CA, resource source ancestry, installed inspection,
+and two-member topology all match the original receipts.</p>
+<p>The bootstrap sends its reviewed Python probes as encoded, single-line commands to the installed application
+interpreter, matching the ISO inspector. It does not rely on the guest login shell to preserve multiline Python quoting.</p>
+<p>With the same reviewed entrypoint and plan, invoke it with <code>-Bootstrap -ExecuteBootstrap</code> to establish the first
+static baseline.
+This explicit option edits Physical Interfaces through the existing authenticated UI, preserving unrelated
+desired fields while setting eth0 to static 192.168.77.30/24, no gateway, and IPv6 disabled with blank IPv6
+fields. It submits only the validated protected Apply bundle selected by the server review, then waits for the
+terminal task and verifies the desired fields, TLS identity, <code>/openapi.json</code>, clean Apply state, route snapshot,
+installed wheel/helper identity, and trusted-host topology. Use the addresses from the admitted plan when the lab
+uses a different approved baseline subnet; do not copy the example address into another lab.</p>
+<p>Bootstrap inspection and execution require a clean applied baseline before editing the interface. The controlled
+interface edit can also change Atlaso-owned DNS records while local DNS is disabled. In that case the trusted-host
+harness explicitly includes the changed <strong>DNS/DHCP (dnsmasq)</strong> unit in the same reviewed handoff; disabled DNS does
+not receive the server's automatic generated-record dependency. It saves no DNS forms and preserves the admitted
+DNS settings. Pre-existing DNS changes and unrelated pending components still stop admission. Address restoration
+uses the same reviewed scope and must leave no pending units.</p>
+<p>Task polling and restoration try only the predeclared original and candidate origins. A private-channel refusal at
+the retired origin permits trying the other admitted origin while following the same submitted task and deadline;
+it never submits again. Inactive peer transport, changed SSH trust, out-of-scope destinations, and topology failures
+still stop the run. A failed observer result stays preserved even if later read-only reconciliation finds a successful
+task; reconcile the recorded state before planning another attempt.</p>
+<p>Using the verified in-memory <code>$entrypoint</code> and receipt-bound paths from the linked workflow:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">&amp;</span> <span class="nv">$entrypoint</span> <span class="n">-RepositoryRoot</span> <span class="nv">$repoRoot</span> <span class="n">-ReviewedSourceCommit</span> <span class="nv">$reviewedCommit</span> <span class="p">`</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">-Plan</span> <span class="nv">$plan</span> <span class="n">-AddressEvidence</span> <span class="nv">$addressEvidence</span> <span class="n">-RuntimeEvidence</span> <span class="nv">$runtimeEvidence</span> <span class="p">`</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">-EnvironmentId</span> <span class="nv">$environmentId</span> <span class="n">-PythonPath</span> <span class="nv">$pythonPath</span> <span class="n">-Bootstrap</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c"># Review inspection-result.json before this explicit configuration transition.</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="p">&amp;</span> <span class="nv">$entrypoint</span> <span class="n">-RepositoryRoot</span> <span class="nv">$repoRoot</span> <span class="n">-ReviewedSourceCommit</span> <span class="nv">$reviewedCommit</span> <span class="p">`</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">-Plan</span> <span class="nv">$plan</span> <span class="n">-AddressEvidence</span> <span class="nv">$addressEvidence</span> <span class="n">-RuntimeEvidence</span> <span class="nv">$runtimeEvidence</span> <span class="p">`</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">-EnvironmentId</span> <span class="nv">$environmentId</span> <span class="n">-PythonPath</span> <span class="nv">$pythonPath</span> <span class="n">-Bootstrap</span> <span class="n">-ExecuteBootstrap</span>
+</span></code></pre></div>
+<p>The wrapper uses the existing bounded 1Password credential bridge; it does not put plaintext passwords on the
+command line or in evidence. Select a task-owned native-test Python environment with the locked credential and SSH
+dependencies. A larger development environment can exceed the protected code-inventory bound; use the smaller admitted
+environment rather than increasing or bypassing that bound. Execute mode re-admits the original inputs and writes
+source, bootstrap-runtime, original-state, management-rewire-intent, mutation-started, apply-submitted, rewired-runtime,
+proof-plan, and
+bootstrap-result records in the task-owned evidence directory. It does not overwrite inspection-result.json. A sticky
+topology failure, including failure to stop the watcher, prevents a successful terminal result or a usable proof plan.
+The source phase is <code>before-certificate-validation</code>; do not label it as <code>before-lifecycle-deployment</code> or synthesize
+missing route evidence. Do not retry an execution in a directory with execution records. If an Apply result is unknown,
+preserve the journal and lab and do not resubmit. Reconcile through the supported UI recovery workflow, then plan a
+separately named attempt with new evidence paths. A failed or incomplete bootstrap cannot authorize either address
+scenario.</p>
+<p>The native plan explicitly selects <code>trust_model: "trusted-host"</code> and <code>trusted_host.host_administrator_trusted: true</code>.
+Its <code>trusted_host</code> block records the exact <code>vmrun_path</code>, <code>inventory_path</code>, <code>preferences_path</code>, <code>segment_name</code>,
+<code>segment_id</code>, original <code>segment_receipt</code> path/hash, appliance and peer VMX paths, private adapter indices/MACs, and
+the peer control adapter's index, connection type, VMnet, and MAC. The producer inspects the union of registered and
+running VMs; a running VM omitted from the saved inventory still enters membership checks. Both admitted lab VMs must
+be running. The scenario samples host topology in the background and rechecks it around authenticated HTTP operations.
+Any observed drift remains a failure even if the original topology is later restored.</p>
+<p>For the dedicated-management baseline route, the producer reads <code>ip -j -4 route show table 100</code> and requires the
+exact connected prefix, <code>eth0</code>, preferred source, and on-link scope without a gateway. Keep this query unfiltered by
+device: iproute2 can omit <code>dev</code> when <code>dev eth0</code> is already a query filter. A main-table route alone does not prove the
+management routing-domain baseline.</p>
 <h2 id="run-and-accept-the-static-address-case">Run and accept the static-address case<a class="headerlink" href="#run-and-accept-the-static-address-case" title="Permanent link">&para;</a></h2>
+<p>Protected handoff validation checks the staged candidate certificate's format, configured paths, and key pair without
+requiring it to authenticate the old listener addresses. The transaction preserves and verifies the old TLS path with
+its snapshotted certificate, then validates the candidate leaf against every actual candidate address before publishing
+that listener. An ordinary Appliance Settings certificate change still requires coverage of its retained listeners.
+This separation also applies to DHCP: an unknown lease does not waive certificate validation after acquisition.</p>
 <p>Use the standard Atlaso <a href="../../operate/networking/">Network configuration</a> pages and <a href="../../operate/appliance-apply/">Appliance
 Apply</a> workflow for the admitted source. Match the reviewed native submission boundary:
 submit only units selected and validated by Apply review from the protected Network, CA, Firewall, Appliance Settings,
-and Public Services set. Do not include unrelated pending units. Do not use a local helper, direct database edit, ad
-hoc API caller, or a script that bypasses that workflow. Keep the appliance on its
-recorded static management baseline while establishing the peer control path and independent address fence.</p>
-<p>After admission is rechecked, open <strong>Physical Interfaces</strong> and set the selected management interface to the approved
+and Public Services set, plus the generated DNS changes described above. Do not include unrelated pending units.
+Do not use a local helper, direct database edit, ad
+hoc API caller, or a script that bypasses that workflow. Keep the appliance on its recorded static management
+baseline while establishing the peer control path. Before changing it, record the host inventory, exact appliance
+and peer LAN membership, adapter bindings, addresses, peer reservation, CA, and trust pins.</p>
+<p>After the ISO bootstrap completed successfully and admission is rechecked, open <strong>Physical Interfaces</strong> and set the
+selected management interface to the approved
 candidate static IPv4 address, prefix, and gateway. Review pending changes and submit the protected <strong>Network</strong> Apply
 bundle with <strong>Submit appliance changes</strong>. Include every dependency selected by the review; do not submit Network alone
 when the review requires a protected bundle. Record the Apply
@@ -4552,8 +4857,8 @@ task identity, status, and sanitized failure details if any. Acceptance requires
 <li>The served public TLS identity is captured before and after the handoff. Report the actual certificate fingerprint
   and address coverage; do not claim observation of transient nginx certificate generations that were not directly
   observed.</li>
-<li>The independent authority rechecks exclusive LAN membership, claimant absence, and reservation enforcement at the
-  candidate address after the transition.</li>
+<li>The trusted-host administrator rechecks the two-member segment inventory, appliance adapter, peer reservation, and
+  active lease after the transition. Record the observation time; changed membership invalidates the run.</li>
 </ul>
 <p>Then restore the exact original static desired fields using the same editor and Apply review. Require the previous
 task to be terminal. If review returns units, submit its valid protected bundle, record the restoration task, and
@@ -4562,20 +4867,24 @@ ID. In either case, verify a clean applied baseline, the original address and ro
 HTTPS /openapi.json at the original address. The restoration may reissue the management certificate:
 validate its chain against the admitted public CA and confirm its IP subject alternative name covers the original
 address. Record the actual restored fingerprint and whether it differs from the original; exact fingerprint equality
-is not a static-restoration requirement. Recheck both SSH trust pins (or the admitted appliance console binding) and
-the independent LAN fence. Acceptance is
+is not a static-restoration requirement. Recheck both SSH trust pins (or the admitted appliance console binding),
+the two-member LAN inventory, peer reservation, and active lease. Acceptance is
 incomplete until both candidate and restored state are observed and the candidate address is retired using the
 native checks below.</p>
 <h2 id="run-and-accept-the-dhcp-rejection-case">Run and accept the DHCP-rejection case<a class="headerlink" href="#run-and-accept-the-dhcp-rejection-case" title="Permanent link">&para;</a></h2>
 <p>Run this case only from a proven static management baseline and only when the authoritative DHCP plan identifies a
 candidate lease that is not covered by the selected management certificate. Before mutation, record the exact
-expected DHCP IPv4 address and bind it to the original appliance MAC, peer reservation, independent address-control
-evidence, and task/VM/LAN identities. Recheck that same reservation before Apply; do not infer the expected address
+expected DHCP IPv4 address and bind it to the original appliance MAC, peer reservation, trusted-host address evidence,
+and task/VM/LAN identities. Recheck that same reservation before Apply; do not infer the expected address
 from a later acquired lease. Verify certificate selection and its fingerprint against the live appliance:https
 certificate before the test. After saving the DHCP desired state but
 before submitting Apply, verify again that the enabled appliance:https inventory row has the same ID and fingerprint
 captured at admission. Validate its public chain with the admitted CA and confirm that it does not cover the expected
-acquired address. The independent reservation and LAN admission controls remain active throughout.</p>
+acquired address. The trusted host keeps the LAN inventory stable and rechecks the peer reservation throughout.</p>
+<p>Download the desired public leaf from the certificate's authenticated <code>certificate.pem</code> protocol download endpoint.
+This download remains outside <code>/ui/management</code>;
+the certificate inventory page stays under the management UI. Export no private key. Verify the downloaded public
+certificate's actual chain and IP coverage with OpenSSL before accepting the negative-case prerequisite.</p>
 <p>On <strong>Physical Interfaces</strong>, request DHCP for the selected management interface. Review pending changes and submit the
 protected <strong>Network</strong> Apply bundle with <strong>Submit appliance changes</strong>, including every dependency selected by review.
 The expected outcome is rejection at the certificate prerequisite after the acquired address is known, with
@@ -4591,8 +4900,8 @@ the management handoff rolled back. A failed task by itself is not acceptance. R
 <li>Readback confirms that no partial candidate management state remains applied. The original interface, route, DNS,
   and certificate baselines remain intact, and the certificate inventory still identifies the same selected public
   leaf. Verify that the acquired DHCP candidate is retired using the native checks below.</li>
-<li>The independent authority confirms the address reservation and exclusive LAN membership remained enforced through
-  acquisition and rollback.</li>
+<li>The trusted-host administrator records that the admitted appliance and peer remained the only LAN members and that
+  the expected-address reservation stayed unchanged through acquisition and rollback.</li>
 </ul>
 <p>Finally, restore the saved original static desired fields through <strong>Physical Interfaces</strong>, then open Apply review
 with the failed handoff task terminal. If review returns units, submit its valid protected bundle, record this
@@ -4605,26 +4914,42 @@ original address. Record the actual restored fingerprint, including any change f
 Recheck that the DHCP candidate remains retired after this restoration.
 The expected certificate rejection and the successful restoration are distinct acceptance observations.</p>
 <h2 id="verify-retired-addresses-natively">Verify retired addresses natively<a class="headerlink" href="#verify-retired-addresses-natively" title="Permanent link">&para;</a></h2>
-<p>For each retirement check, retain time-stamped guest and private-peer observations under the same independent LAN
-fence. Before each SSH readback, recheck the appliance host-key fingerprint against its pre-mutation, VM-bound pin;
+<p>For each retirement check, retain time-stamped guest and private-peer observations under the same task-owned segment
+and trusted-host inventory. Before each SSH readback, recheck the appliance host-key fingerprint against its
+pre-mutation, VM-bound pin;
 refuse a missing or changed pin without collecting acceptance observations or accepting replacement trust. For the
 console alternative, recheck the console's binding to the original VMX and VM root identity. Use only the admitted
 transport for read-only <code>ip -j -4 addr show</code> and route/listener inspection. Verify the retired address is absent from
 every guest interface, not merely from saved desired state,
-and that no active management listener or owned handoff route still binds that address. Record the actual native
+and that no active management listener or owned handoff route still binds that address. Native <code>ss</code> endpoints can
+include an interface suffix such as <code>%lo</code>; compare the address itself so that suffix neither invalidates an unrelated
+loopback listener nor conceals a binding to the retired address. Record the actual native
 observations after the terminal Apply result; a pending task or unavailable observation cannot establish retirement.</p>
 <p>From the admitted private peer, attempt a direct TCP connection to the retired IPv4 address on the configured
 management HTTPS port with a bounded timeout, while verifying that the active address remains reachable over the
 same path. Do not use DNS, proxy fallback, or a hostname that could select another address. Any accepted connection
 at the retired address fails retirement, even when TLS certificate validation or authentication subsequently fails.
 A TLS mismatch, HTTP denial, or failed ping alone is not evidence that the listener is gone. Peer connection failure
-must agree with native address/listener absence; if peer routing, transport, or the independent fence is uncertain,
+must agree with native address/listener absence; if peer routing, transport, or the host inventory check is uncertain,
 preserve the lab and report acceptance incomplete rather than treating a timeout as proof.</p>
+<p>When a live authenticated SSH peer has not returned its TCP channel-open outcome within the normal eight-second
+probe deadline, the retirement observer may make one further read-only observation with a 150-second channel wait.
+OpenSSH waits for the peer kernel's connect outcome; Linux's default SYN retry horizon can reach
+<a href="https://docs.kernel.org/networking/ip-sysctl.html">131 seconds</a>.
+A single 200-second monotonic budget reserves the full selected channel wait and eight seconds for the active-path
+probe before each observation and TCP attempt. Existing native-command deadlines and the bounded child still apply.
+Before the extended probe it repeats native address, listener, route and rule absence checks and requires positive
+TCP acceptance at the active address from the first observation. It checks the active address after each retired
+probe and repeats native absence after an explicit refusal before accepting retirement. Only an explicit connect-failed
+reply proves nonacceptance; expiry of either channel wait remains unknown. Administrative denial, lost authentication,
+other transport errors, persistent pending outcomes, budget exhaustion, reappearing native ownership or an accepted
+retired connection still fail. Evidence retains each outcome, selected wait and elapsed time. This window does not
+replay Apply or change the eight-second authentication deadline or the 60-second NTP guard.</p>
 <h2 id="hand-off-lab-resources-for-cleanup">Hand off lab resources for cleanup<a class="headerlink" href="#hand-off-lab-resources-for-cleanup" title="Permanent link">&para;</a></h2>
 <p>After successful acceptance or a recorded terminal failure disposition, preserve the acceptance or failure record,
 original ownership receipts and their independently
 recorded digests outside every removable VM, lab, and result root. Hand off a bounded inventory of the appliance VM,
-peer VM, private LAN segment, DHCP/address reservations, independent admission controls, lifecycle result and other
+peer VM, private LAN segment, DHCP/address reservations, lifecycle result and other
 artifact roots, helper processes, and recovery state. Bind each exact path or provider identity to its original
 ownership manifest, task, repository, source, and PR; record the verified restoration result or explicitly record
 that restoration was not verified and the disposable lab was abandoned. Never report an abandoned run as acceptance.
@@ -4638,7 +4963,13 @@ Use the exact owned lifecycle VM cleanup path; release each owned LAN segment th
 <a href="../vmware-workstation-lifecycle-testing/#release-task-owned-lan-segments">LAN-segment procedure</a>. VM removal alone
 neither releases reservations and controls nor removes the result root. Release each associated resource through its
 supported owning tool, then release the exact quiescent artifact root only after preserving evidence and verifying
-its ownership and containment. Record independent absence/readback evidence for every released resource.</p>
+its ownership and containment. Record host readback that the two VMs no longer reference the LAN segment and that the
+owned reservation, segment registration, and other task resources are absent.</p>
+<p>If the approved task-only DPAPI peer key was used, include its exact host-side ciphertext artifact and any bounded
+credential staging state in the same task cleanup handoff. After no diagnosis, retry, or recovery needs the key, remove
+only those receipt-bound artifacts through their supported owner and verify that they are absent. Preserve the public
+approval and key-creation receipts with the lab evidence; they contain no private-key material. Do not delete or alter
+shared 1Password items, other keys, or unreceipted host credentials as part of lab cleanup.</p>
 <p>Retained, shared, differently owned, unsupported, or ambiguously owned resources must be preserved and reported with
 the blocking condition. Do not substitute broad provider cleanup or recursive deletion, and do not mark the lab
 cleanup complete while retention or release gates remain unresolved. Branch/worktree completion separately follows
@@ -4649,8 +4980,8 @@ receipts, and evidence for maintainer review. If an Apply result or rollback is 
 operation or clean up the lab while diagnosis,
 recovery, or retry still needs its state. Preserve the state, task output, original rollback inputs, and sanitized
 observations; reconcile
-using the supported Atlaso workflow under the same independent address fence. If the original state cannot be
-verified, stop and escalate to the maintainer who controls the lab.</p>
+using the supported Atlaso workflow under the same trusted-host inventory and address plan. If the original state
+cannot be verified, stop and escalate to the maintainer who controls the lab.</p>
 <p>Failed or interrupted admission and acceptance may retain resources only while diagnosis, recovery, or retry needs
 them. Once maintainer review ends, record the disposition: a controlled retry, explicit resource retention, or
 abandonment of the disposable lab. For abandonment, preserve failure and recovery evidence outside removal roots,
@@ -4660,12 +4991,11 @@ gates pass. Do not restart Apply just to make an abandoned lab eligible for tear
 a supported cleanup capability, or another release gate remains uncertain, record the exact blocked resource, owner,
 reason, and retry condition and preserve it; uncertainty is neither cleanup authorization nor indefinite unrecorded
 retention. A terminal failed run does not waive any branch/worktree completion gate.</p>
-<p>Manual acceptance is useful for a maintainer-directed lab decision only. It does not authorize automated certificate
-handoff, replace machine-admissible address proof, or permit broader infrastructure mutation. Existing
-inspect-certificate-peer.ps1 and inspect-certificate-handoff.ps1 wrappers remain usable only after a supported
-producer supplies receipts that pass the native admission checks for the exact task and PR. See the
-<a href="../vmware-workstation-lifecycle-testing/#single-command-run">VMware lifecycle certificate section</a>
-for the current producer and wrapper limitations.</p>
+<p>The trusted-host bootstrap and proof wrappers admit the original ISO and peer receipt kinds for the current task and
+PR, then repeat inventory, reservation, identity, and trust checks before obtaining guest credentials. Receipts from
+the older PR #871 independent-control path remain bound to that task and cannot be relabeled. Use the
+<a href="../vmware-workstation-lifecycle-testing/#single-command-run">VMware lifecycle certificate section</a> for the reviewed
+Git-blob entrypoint and bounded credential wrapper workflow.</p>
 
 
 
