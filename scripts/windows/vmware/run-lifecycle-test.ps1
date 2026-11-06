@@ -3200,6 +3200,12 @@ function Get-CertificateSourceRoutingSnapshot {
     if (Test-Path -LiteralPath $hostOutput) { throw 'Certificate source routing output already exists.' }
     $sourceProbeCredential = if ($NtpColdStartOnly) { $rootPasswordSecure } else { $adminPasswordSecure }
     $password = ConvertFrom-SecureString -SecureString $sourceProbeCredential -AsPlainText
+    $probeInvocation = "python3 '$guestProbe'"
+    $probeTimeoutSeconds = 20
+    if ($NtpColdStartOnly) {
+        $probeInvocation += ' --wait-for-schema-seconds 120'
+        $probeTimeoutSeconds = 130
+    }
     try {
         $copy = Invoke-VmrunBounded -Arguments @(
             '-T', 'ws', '-gu', 'root', '-gp', $password,
@@ -3207,11 +3213,11 @@ function Get-CertificateSourceRoutingSnapshot {
         ) -TimeoutSeconds 20
         if ($copy.TimedOut -or $copy.ExitCode -ne 0) { throw 'Certificate source routing probe copy failed.' }
         Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
-        $script = "printf '%s  %s\n' '$probeSha256' '$guestProbe' | sha256sum -c - >/dev/null && python3 '$guestProbe' > '$guestOutput'"
+        $script = "printf '%s  %s\n' '$probeSha256' '$guestProbe' | sha256sum -c - >/dev/null && $probeInvocation > '$guestOutput'"
         $query = Invoke-VmrunBounded -Arguments @(
             '-T', 'ws', '-gu', 'root', '-gp', $password,
             'runScriptInGuest', $ApplianceVmx, '/bin/sh', $script
-        ) -TimeoutSeconds 20
+        ) -TimeoutSeconds $probeTimeoutSeconds
         if ($query.TimedOut -or $query.ExitCode -ne 0) { throw 'Certificate source routing probe failed.' }
         Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
         $readback = Invoke-VmrunBounded -Arguments @(

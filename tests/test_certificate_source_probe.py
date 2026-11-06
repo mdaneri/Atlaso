@@ -1,9 +1,11 @@
 """Fail-closed checks for the predeployment certificate routing-intent evidence."""
 
+import json
 import sqlite3
 
 import pytest
 
+from scripts.interop import certificate_source_probe as probe
 from scripts.interop.certificate_source_probe import snapshot
 
 
@@ -95,3 +97,88 @@ def test_missing_schema_and_unknown_setting_fail_closed(source_database):
         connection.execute("INSERT INTO settings VALUES ('routes_wan.routing_enabled', 'maybe')")
     with pytest.raises(ValueError, match="setting"):
         snapshot(str(source_database))
+
+
+@pytest.mark.parametrize("partial", [False, True], ids=["database-not-created", "schema-not-complete"])
+def test_explicit_bootstrap_wait_requires_complete_schema_before_intent_snapshot(
+    tmp_path, source_database, monkeypatch, capsys, partial,
+):
+    """Readiness waits for application-created state and retains any existing intent."""
+    target = tmp_path / "starting.db"
+    if partial:
+        with sqlite3.connect(target) as connection:
+            connection.execute("CREATE TABLE routes (id INTEGER PRIMARY KEY)")
+            connection.execute("INSERT INTO routes VALUES (1)")
+    monkeypatch.setattr(probe, "DATABASE", str(target))
+    waits = []
+
+    def application_finishes_schema(_delay):
+        waits.append(True)
+        with sqlite3.connect(source_database) as source, sqlite3.connect(target) as destination:
+            for statement in source.iterdump():
+                destination.execute(statement.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS "))
+
+    monkeypatch.setattr(probe.time, "sleep", application_finishes_schema)
+    assert probe.main(["--wait-for-schema-seconds", "2"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert waits == [True]
+    assert result["state"] == ("present" if partial else "proven-absent")
+    assert result["counts"]["routes"] == (1 if partial else 0)
+
+
+@pytest.mark.parametrize("partial", [False, True], ids=["missing-database", "missing-tables"])
+def test_schema_timeout_never_creates_state_or_reports_zero_counts(tmp_path, monkeypatch, capsys, partial):
+    """Absent readiness remains an unproven source, without a synthesized absence result."""
+    target = tmp_path / "not-ready.db"
+    if partial:
+        with sqlite3.connect(target) as connection:
+            connection.execute("CREATE TABLE routes (id INTEGER PRIMARY KEY)")
+    before = target.read_bytes() if partial else None
+    monkeypatch.setattr(probe, "DATABASE", str(target))
+    clock = {"now": 0.0}
+    monkeypatch.setattr(probe.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(probe.time, "sleep", lambda delay: clock.update(now=clock["now"] + delay))
+    assert probe.main(["--wait-for-schema-seconds", "1"]) == 2
+    assert capsys.readouterr().out == ""
+    if partial:
+        assert target.read_bytes() == before
+    else:
+        assert not target.exists()
+
+
+def test_ordinary_probe_does_not_wait_or_create_missing_database(tmp_path, monkeypatch, capsys):
+    """Historical certificate inspection remains immediate and strict by default."""
+    target = tmp_path / "missing.db"
+    monkeypatch.setattr(probe, "DATABASE", str(target))
+    monkeypatch.setattr(probe.time, "sleep", lambda _: pytest.fail("default probe waited"))
+    assert probe.main() == 2
+    assert capsys.readouterr().out == "" and not target.exists()
+
+
+def test_readiness_does_not_retry_or_repair_invalid_routing_settings(source_database, monkeypatch, capsys):
+    """A complete schema still receives the unchanged strict semantic validation."""
+    with sqlite3.connect(source_database) as connection:
+        connection.execute("INSERT INTO settings VALUES ('routes_wan.routing_enabled', 'maybe')")
+    before = source_database.read_bytes()
+    monkeypatch.setattr(probe, "DATABASE", str(source_database))
+    monkeypatch.setattr(probe.time, "sleep", lambda _: pytest.fail("invalid intent was retried"))
+    assert probe.main(["--wait-for-schema-seconds", "1"]) == 2
+    assert capsys.readouterr().out == "" and source_database.read_bytes() == before
+
+
+@pytest.mark.parametrize("budget", ["0", "-1", "121"])
+def test_schema_wait_refuses_out_of_bounds_budgets(budget, monkeypatch, capsys):
+    """Bootstrap cannot turn into an unbounded guest operation."""
+    monkeypatch.setattr(probe, "snapshot", lambda _: pytest.fail("invalid budget reached source inspection"))
+    assert probe.main(["--wait-for-schema-seconds", budget]) == 2
+    assert capsys.readouterr().out == ""
+
+
+def test_schema_wait_does_not_retry_a_corrupt_database(tmp_path, monkeypatch, capsys):
+    """Invalid storage is a source failure rather than missing first-boot schema."""
+    target = tmp_path / "corrupt.db"
+    target.write_bytes(b"not a SQLite database")
+    monkeypatch.setattr(probe, "DATABASE", str(target))
+    monkeypatch.setattr(probe.time, "sleep", lambda _: pytest.fail("corruption was retried"))
+    assert probe.main(["--wait-for-schema-seconds", "1"]) == 2
+    assert capsys.readouterr().out == "" and target.read_bytes() == b"not a SQLite database"

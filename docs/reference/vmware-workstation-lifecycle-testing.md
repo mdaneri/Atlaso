@@ -98,6 +98,8 @@ retirement. Public CA bytes are read through the original appliance VM channel, 
 used with normal CA and hostname verification for HTTPS. Endpoint scans and trust-on-first-use are not admission.
 Original console receipts and bounded topology observations retain explicit UTC observation times.
 The NTP mode has its own original clone admission; it never represents a clone as an ISO installation.
+Before wheel deployment, it waits at most 120 seconds for first boot to publish the complete source database schema,
+then requires the unchanged read-only routing-absence proof. A missing schema never counts as empty routing intent.
 
 The consumer requires an unmanaged appliance with every clock controller inactive, then uses the existing settings
 forms and global Apply review for the initial resolver/DNS/access-interface/NTP baseline. A successful cold Apply
