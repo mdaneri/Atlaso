@@ -482,8 +482,8 @@ function Scenario {
 def test_ntp_post_tools_restart_is_seed_bound_single_use_and_precedes_existing_readiness(tmp_path: Path):
     """Execute the real NTP restart path and ownership/seed validators without vmrun."""
     pwsh = shutil.which("pwsh")
-    if not pwsh:
-        pytest.skip("PowerShell is required for the executable runner guard check")
+    if os.name != "nt" or not pwsh:
+        pytest.skip("Windows ownership primitives and PowerShell are required for the bootstrap receipt check")
     program = r"""
 $ErrorActionPreference='Stop'
 $scenario=$env:ATLASO_NTP_RESTART_SCENARIO
