@@ -199,6 +199,36 @@ def _assert_served_matches_inventory(client: Any, certificate_id: int, address: 
     return str(inventory["fingerprint"])
 
 
+def _replacement_certificate(client: Any, original_id: int, original_fingerprint: str) -> tuple[int, str]:
+    """Admit the successor issued by the ordinary inventory reconciliation.
+
+    Args:
+        client: Already admitted authenticated appliance client.
+        original_id: Revoked management certificate retained in history.
+        original_fingerprint: Served management leaf observed before revocation.
+    """
+    _, body = client.request("/ui/management/certificate-authority")
+    inventory = cast(Any, Page)(body).certificates
+    historical = [row for row in inventory if row.get("id") == original_id]
+    if (len(historical) != 1 or historical[0].get("status") != "revoked"
+            or historical[0].get("managed_owner") != f"retired-revoked:{original_id}"):
+        raise Refusal("revoked_certificate_history_unverified")
+    successors = [row for row in inventory if row.get("managed_owner") == "appliance:https"]
+    if len(successors) != 1:
+        raise Refusal("replacement_certificate_ambiguous")
+    replacement_id = successors[0].get("id")
+    if (type(replacement_id) is not int or replacement_id <= 0 or replacement_id == original_id
+            or successors[0].get("status") != "issued"):
+        raise Refusal("replacement_certificate_invalid")
+    fingerprint = _require_inventory_leaf(client, replacement_id)["fingerprint"]
+    public_fingerprint = _public_pem_sha256(
+        client, f"/certificate-authority/certificates/{replacement_id}/downloads/certificate.pem",
+    )
+    if fingerprint == original_fingerprint or fingerprint != public_fingerprint:
+        raise Refusal("replacement_certificate_identity_mismatch")
+    return replacement_id, fingerprint
+
+
 def _review_ca_only(client: Any) -> tuple[dict[str, Any], list[str]]:
     """Admit only a clean CA change and its two already-applied consumers."""
     path = cast(Any, apply_review_path)("/ui/management/appliance-apply/review", ["ca"])
@@ -300,20 +330,7 @@ def exercise_ca_rotation(
             {"csrf": csrf},
         )
 
-        staged_rows = []
-        _, inventory_body = client.request("/ui/management/certificate-authority")
-        inventory = cast(Any, Page)(inventory_body).certificates
-        historical = [row for row in inventory if row.get("id") == certificate_id]
-        if (len(historical) != 1 or historical[0].get("status") != "revoked"
-                or not str(historical[0].get("managed_owner") or "").startswith("retired-revoked:")):
-            raise Refusal("revoked_certificate_history_unverified")
-        staged_rows = [row for row in inventory if row.get("managed_owner") == "appliance:https"]
-        if len(staged_rows) != 1:
-            raise Refusal("replacement_certificate_ambiguous")
-        replacement_id = staged_rows[0].get("id")
-        if (not isinstance(replacement_id, int) or replacement_id == certificate_id
-                or staged_rows[0].get("status") != "planned"):
-            raise Refusal("replacement_certificate_invalid")
+        replacement_id, staged_leaf_sha256 = _replacement_certificate(client, certificate_id, original_leaf_sha256)
         if _root_sha256(client) != root_sha256:
             raise Refusal("root_ca_changed_before_apply")
 
@@ -359,8 +376,8 @@ def exercise_ca_rotation(
         if _root_sha256(client) != root_sha256:
             raise Refusal("root_ca_changed_during_apply")
         replacement_leaf_sha256 = _assert_served_matches_inventory(client, int(replacement_id), address)
-        if replacement_leaf_sha256 == original_leaf_sha256:
-            raise Refusal("management_leaf_did_not_rotate")
+        if replacement_leaf_sha256 != staged_leaf_sha256:
+            raise Refusal("replacement_certificate_changed_during_apply")
         return {
             "schema": 1,
             "interface": interface,

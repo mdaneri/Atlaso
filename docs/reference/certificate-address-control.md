@@ -445,6 +445,9 @@ using **Certificate requests → Revoke certificate → Replace** for this dispo
 appliance's `appliance:https` certificate. It then reviews only CA changes and
 requires unchanged Appliance Settings and Public Services to replay after CA.
 Unrelated pending edits or missing dependencies refuse submission.
+The inventory read reconciles the replacement to `issued` before Apply. The runner
+pins that successor's inventory/public-PEM fingerprint and requires the same leaf
+after activation.
 
 Acceptance requires the same admitted task to succeed without dry-run results,
 a clean applied baseline, unchanged management address/MAC/configuration and Web

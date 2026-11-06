@@ -216,6 +216,10 @@ class RotationClient:
         if path == "/ui/management/settings":
             return 200, self._settings_html()
         if path == "/ui/management/certificate-authority":
+            # The production inventory GET reconciles and issues planned rows
+            # before serializing them, independently of global Apply.
+            if self.new_status == "planned":
+                self.new_status = "issued"
             return 200, self._certificate_authority_html()
         if path == "/certificate-authority/downloads/root-ca.pem":
             return 200, self.changed_root_pem if self.task_completed and self.change_root_after_task else self.root_pem
@@ -495,3 +499,62 @@ def test_post_submit_failure_preserves_task_evidence_without_retry_or_rollback(
     assert client.mutations.count("submit") == 1
     assert client.mutations.count("revoke") == 1
     assert client.mutations.count("replace") == 1
+
+
+def test_replacement_admission_uses_real_inventory_issuance(client) -> None:
+    """Reconcile a real supported replacement before the native runner reviews Apply.
+
+    Args:
+        client: Isolated appliance HTTP application and database fixture.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import CaCertificate
+    from tests.routers.ui.helpers import login
+
+    with SessionLocal() as db:
+        ui.get_ca_settings_row(db).enabled = True
+        db.commit()
+        assert ui.ensure_ca_state(db) == []
+        original = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        original_id, original_fingerprint = original.id, original.fingerprint
+        assert original.status == "issued" and original_fingerprint
+
+    login(client)
+    requests = client.get("/ui/management/ca/requests")
+    assert requests.status_code == 200
+    projection = rotation._CertificateRequestsProjection()
+    projection.feed(requests.text)
+    assert projection.csrf
+    for action in ("revoke", "replace"):
+        response = client.post(
+            f"/ui/management/ca/certificates/{original_id}/{action}",
+            data={"csrf": projection.csrf, "reason": "operator requested"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+    with SessionLocal() as db:
+        successor = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        successor_id = successor.id
+        assert successor_id != original_id and successor.status == "planned"
+
+    class InventoryClient:
+        """Use actual inventory and certificate routes without native transport."""
+
+        def request(self, path):
+            """Read one public projection through the authenticated application.
+
+            Args:
+                path: Inventory or public leaf path selected by the production runner.
+            """
+            response = client.get(path)
+            assert response.status_code == 200
+            return response.status_code, response.text
+
+    observed_id, fingerprint = rotation._replacement_certificate(InventoryClient(), original_id, original_fingerprint)
+    assert observed_id == successor_id and fingerprint != original_fingerprint
+    with SessionLocal() as db:
+        successor = db.get(CaCertificate, successor_id)
+        assert successor.status == "issued" and successor.fingerprint == fingerprint
