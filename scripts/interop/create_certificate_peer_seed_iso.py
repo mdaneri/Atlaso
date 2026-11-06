@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the isolated, MAC-bound DHCP peer for certificate lifecycle acceptance."""
+"""Build the isolated, MAC-bound DHCP peer for certificate and NTP lifecycle acceptance."""
 
 from __future__ import annotations
 
@@ -96,6 +96,23 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
     serve_ntp = getattr(args, "serve_ntp", False)
     if not isinstance(serve_ntp, bool) or (serve_ntp and len(tunnel_addresses) != 3):
         raise ValueError("Private NTP serving requires the three exact management addresses.")
+    ntp_probe_cidr = getattr(args, "ntp_probe_cidr", None)
+    ntp_probe_address = ""
+    if ntp_probe_cidr is not None:
+        if not serve_ntp or not publish_host_key:
+            raise ValueError("An NTP probe address requires NTP serving and public host-key admission.")
+        try:
+            probe = ipaddress.IPv4Interface(ntp_probe_cidr)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("The NTP probe address must be a private IPv4 /24 interface.") from exc
+        probe_network = probe.network
+        if (probe_network.prefixlen != 24 or not probe_network.is_private or
+                probe.ip.is_loopback or probe.ip.is_link_local or probe.ip.is_multicast or
+                probe.ip.is_unspecified or probe.ip.is_reserved or
+                probe.ip in (probe_network.network_address, probe_network.broadcast_address) or
+                probe_network.overlaps(network.network)):
+            raise ValueError("The NTP probe address must be a usable private IPv4 /24 disjoint from the DHCP subnet.")
+        ntp_probe_address = f"      - {probe}\n"
 
     # dnsmasq's static range has no dynamic pool: only this exact MAC receives
     # the reservation. eth0 stays on the management network for SSH control.
@@ -214,7 +231,7 @@ ethernets:
     dhcp4: false
     addresses:
       - {network}
-"""
+{ntp_probe_address}"""
     return {
         "user-data": user_data,
         "meta-data": f"instance-id: {metadata_instance_id}\nlocal-hostname: {args.hostname}\n",
@@ -236,6 +253,7 @@ def main() -> int:
     parser.add_argument("--preserve-host-keys", action="store_true")
     parser.add_argument("--management-address", dest="management_addresses", action="append", default=[])
     parser.add_argument("--serve-ntp", action="store_true")
+    parser.add_argument("--ntp-probe-cidr")
     parser.add_argument("--instance-id")
     args = parser.parse_args()
     files = peer_files(args)

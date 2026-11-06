@@ -52,6 +52,10 @@ def test_peer_has_exact_mac_static_only_dhcp_on_private_interface() -> None:
     assert "--insecure" not in probe and " -k" not in probe
     assert "dhcp4: true" in files["network-config"].split("  eth1:")[0]
     assert "dhcp4: false" in files["network-config"].split("  eth1:")[1]
+    assert files["network-config"] == (
+        "version: 2\nethernets:\n  eth0:\n    dhcp4: true\n"
+        "  eth1:\n    dhcp4: false\n    addresses:\n      - 192.168.77.1/24\n"
+    )
     assert files["meta-data"] == "instance-id: certificate-peer\nlocal-hostname: certificate-peer\n"
     assert "open-vm-tools" not in config
     assert "publish-host-key" not in config
@@ -152,6 +156,74 @@ def test_optional_ntp_uses_the_same_peer_after_public_ssh_admission():
     assert "local stratum" not in config and "server " not in config
     with pytest.raises(ValueError):
         peer_files(_args(serve_ntp=True))
+
+
+def test_ntp_probe_adds_only_a_disjoint_private_address_to_eth1():
+    args = _args(
+        serve_ntp=True,
+        publish_host_key_to_serial=True,
+        management_addresses=["192.168.77.10", "192.168.77.30", "192.168.77.40"],
+        ntp_probe_cidr="192.168.78.1/24",
+    )
+
+    files = peer_files(args)
+    network = yaml.safe_load(files["network-config"])["ethernets"]
+    assert set(network) == {"eth0", "eth1"}
+    assert network["eth0"] == {"dhcp4": True}
+    assert network["eth1"] == {"dhcp4": False, "addresses": ["192.168.77.1/24", "192.168.78.1/24"]}
+    assert files["user-data"].count("interface=eth1") == 1
+
+    parsed = yaml.safe_load(files["user-data"])
+    chrony = next(
+        row["content"] for row in parsed["write_files"] if row["path"].endswith("peer-chrony.conf")
+    )
+    assert "bindaddress 192.168.77.1" in chrony
+    assert "bindaddress 192.168.78.1" not in chrony
+    assert "allow 192.168.78.1/32" not in chrony
+    assert "local stratum" not in chrony and "server " not in chrony
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"serve_ntp": False, "publish_host_key_to_serial": True},
+        {"serve_ntp": True, "publish_host_key_to_serial": False},
+    ],
+)
+def test_ntp_probe_requires_ntp_and_public_host_key_admission(overrides: dict[str, bool]) -> None:
+    with pytest.raises(ValueError, match="NTP serving and public host-key admission"):
+        peer_files(
+            _args(
+                management_addresses=["192.168.77.10", "192.168.77.30", "192.168.77.40"],
+                ntp_probe_cidr="192.168.78.1/24",
+                **overrides,
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "probe_cidr",
+    [
+        "192.168.77.50/24",  # overlaps the DHCP network
+        "fd12:3456::1/24",  # IPv6 is outside this appliance fixture
+        "8.8.8.1/24",  # public
+        "192.168.78.1/25",  # not a /24
+        "192.168.78.0/24",  # network address
+        "192.168.78.255/24",  # broadcast address
+        "127.0.0.1/24",  # loopback
+        "169.254.0.1/24",  # link-local
+    ],
+)
+def test_ntp_probe_rejects_non_private_or_unusable_interfaces(probe_cidr: str) -> None:
+    with pytest.raises(ValueError):
+        peer_files(
+            _args(
+                serve_ntp=True,
+                publish_host_key_to_serial=True,
+                management_addresses=["192.168.77.10", "192.168.77.30", "192.168.77.40"],
+                ntp_probe_cidr=probe_cidr,
+            )
+        )
 
 
 @pytest.mark.parametrize("addresses", [

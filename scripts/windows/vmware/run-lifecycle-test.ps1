@@ -60,6 +60,16 @@ Skip backup/restore validation pass.
 Run only OIDC scenario path.
 .PARAMETER TimeSourceOnly
 Run only NTP clock-source Apply and host/client UDP acceptance on a two-interface appliance.
+.PARAMETER NtpColdStartOnly
+Create a fresh private real-clock peer and verify bounded cold NTP Apply and rollback without competing controllers.
+.PARAMETER NtpPeerSourceReceiptPath
+Original peer source-directory creation receipt, outside all disposable roots.
+.PARAMETER NtpPeerSourceReceiptSha256
+SHA-256 of that immutable creation receipt.
+.PARAMETER NtpPeerPreparedReceiptPath
+Prepared peer VMDK source receipt, bound to the original creation receipt.
+.PARAMETER NtpPeerPreparedReceiptSha256
+SHA-256 of that immutable prepared-source receipt.
 .PARAMETER ReverseProxyOnly
 Run only the public reverse-proxy appliance scenario on management and host-reachable Site A interfaces.
 .PARAMETER ReverseProxyUpstreamHost
@@ -138,6 +148,11 @@ param(
     [switch]$SkipBackupRestoreTest,
     [switch]$OidcOnly,
     [switch]$TimeSourceOnly,
+    [switch]$NtpColdStartOnly,
+    [string]$NtpPeerSourceReceiptPath = '',
+    [string]$NtpPeerSourceReceiptSha256 = '',
+    [string]$NtpPeerPreparedReceiptPath = '',
+    [string]$NtpPeerPreparedReceiptSha256 = '',
     [switch]$ReverseProxyOnly,
     [string]$ReverseProxyUpstreamHost = '',
     [string]$ReverseProxyTlsFixtureDirectory = '',
@@ -162,6 +177,22 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$singleApplianceFixture = $CertificateOnly -or $NtpColdStartOnly
+$privatePeerFixture = $CertificateDhcpPeer -or $NtpColdStartOnly
+
+if ($NtpColdStartOnly) {
+    if ($CertificateOnly -or $CertificateDhcpPeer -or $OidcOnly -or $TimeSourceOnly -or $ReverseProxyOnly -or
+        $RoutingWanOnly -or $RoutingOverlapOnly -or $FullEsxiPxeInstall -or $CleanupCreatedLab -or
+        $AllowDryRunApply -or $ApplianceIPAddress -or $ApplianceUrl -or $SignedReleaseRepositoryUrl -or
+        $SiteInterface -cne 'eth0' -or $SiteANetwork -notmatch '^lan:.+' -or $ManagementNetwork -notmatch '^VMnet\d+$') {
+        throw 'NTP cold-start acceptance requires its separate private, retained, real-Apply fixture mode.'
+    }
+    if (-not $PlanOnly -and (-not $ClientVmdkPath -or -not $CertificatePeerPublicKeyPath -or
+        -not $NtpPeerSourceReceiptPath -or $NtpPeerSourceReceiptSha256 -notmatch '^[0-9a-fA-F]{64}$' -or
+        -not $NtpPeerPreparedReceiptPath -or $NtpPeerPreparedReceiptSha256 -notmatch '^[0-9a-fA-F]{64}$')) {
+        throw 'NTP cold-start acceptance requires explicit peer source, public key and original provenance selectors.'
+    }
+}
 
 if ($ReverseProxyOnly -and -not $PlanOnly) {
     if (-not $ReverseProxyTlsFixtureDirectory -or
@@ -1090,7 +1121,7 @@ if (-not $PlanOnly) {
             throw "Lifecycle secret bundle property is missing or invalid: $propertyName"
         }
     }
-    $focusedRun = $OidcOnly -or $TimeSourceOnly -or $ReverseProxyOnly -or $RoutingWanOnly -or $CertificateOnly -or $RoutingOverlapOnly
+    $focusedRun = $OidcOnly -or $TimeSourceOnly -or $ReverseProxyOnly -or $RoutingWanOnly -or $singleApplianceFixture -or $RoutingOverlapOnly
     if (-not $focusedRun -and $secretBundle.VcfBackupPassword -isnot [SecureString]) {
         throw 'Lifecycle secret bundle property is missing or invalid: VcfBackupPassword'
     }
@@ -1101,7 +1132,7 @@ if (-not $PlanOnly) {
         throw 'Lifecycle secret bundle property is missing or invalid: EsxiPassword'
     }
     $adminPasswordSecure = $secretBundle.AdminPassword
-    $rootPasswordSecure = Get-LifecycleRootCredential -Bundle $secretBundle -AdminPassword $adminPasswordSecure -RequireRoot:$RoutingOverlapOnly
+    $rootPasswordSecure = Get-LifecycleRootCredential -Bundle $secretBundle -AdminPassword $adminPasswordSecure -RequireRoot:($RoutingOverlapOnly -or $NtpColdStartOnly)
     $sshPasswordSecure = $secretBundle.SshPassword
     $vcfBackupPasswordSecure = $secretBundle.VcfBackupPassword
     $esxiPasswordSecure = $secretBundle.EsxiPassword
@@ -1132,7 +1163,7 @@ if ($TimeSourceOnly) {
 if ($ReverseProxyOnly) {
     $SkipBackupRestoreTest = $true
 }
-if ($CertificateOnly) {
+if ($singleApplianceFixture) {
     $SkipBackupRestoreTest = $true
     if (-not $PlanOnly) {
         if ($CleanupCreatedLab) { throw 'Certificate preparation must retain its appliance until native acceptance and owned cleanup.' }
@@ -1612,6 +1643,8 @@ Base client VMDK path.
 NoCloud seed ISO path.
 .PARAMETER Networks
 VM adapter target networks by index.
+.PARAMETER PreparedDirectoryIdentity
+Original empty NTP peer directory identity published before disk creation.
 #>
 function New-ClientVm {
     param(
@@ -1619,11 +1652,15 @@ function New-ClientVm {
         [string]$Directory,
         [string]$DiskPath,
         [string]$SeedIso,
-        [string[]]$Networks
+        [string[]]$Networks,
+        [string]$PreparedDirectoryIdentity = ''
     )
 
     Assert-SafeLifecycleName -Name $Name
-    New-Item -ItemType Directory -Path $Directory -ErrorAction Stop | Out-Null
+    if ($PreparedDirectoryIdentity) {
+        if ((Get-AtlasoPathIdentity -Path $Directory -Description 'original NTP peer directory') -cne $PreparedDirectoryIdentity -or
+            @(Get-ChildItem -LiteralPath $Directory -Force).Count) { throw 'Prepared NTP peer directory changed before creation.' }
+    } else { New-Item -ItemType Directory -Path $Directory -ErrorAction Stop | Out-Null }
     Publish-LifecycleOriginalVmIdentity -Directory $Directory -RequireEmpty
     $diskTarget = Join-Path $Directory "$Name.vmdk"
     if ($PSCmdlet.ShouldProcess($diskTarget, "Copy client VMDK for $Name")) {
@@ -1791,9 +1828,15 @@ function New-CertificatePeerSeedIso {
         python -c 'import pycdlib' 2>$null
         if ($LASTEXITCODE -ne 0) { throw 'pycdlib must be installed before creating the certificate peer seed.' }
         $helper = Join-Path $runtimeSourceRoot 'scripts\interop\create_certificate_peer_seed_iso.py'
+        $ntpOptions = if ($NtpColdStartOnly) {
+            @('--publish-host-key-to-serial', '--instance-id', "$LabName-peer", '--serve-ntp',
+              '--management-address', $CertificateLeaseAddress,
+              '--management-address', $ntpBaselineAddress, '--management-address', $ntpCandidateAddress,
+              '--ntp-probe-cidr', '192.168.78.1/24')
+        } else { @() }
         & python $helper --output $Path --hostname $HostName --user $ClientSshUser `
             --public-key $certificatePeerPublicKey --server-cidr $CertificatePeerCidr --lease-address $CertificateLeaseAddress `
-            --client-mac $ClientMac | Out-Host
+            --client-mac $ClientMac @ntpOptions | Out-Host
         if ($LASTEXITCODE -ne 0) { throw "Certificate peer seed creation failed for $HostName." }
     }
 }
@@ -1862,7 +1905,7 @@ function Invoke-CertificatePeerSsh {
             '-o', 'PasswordAuthentication=no', '-o', 'KbdInteractiveAuthentication=no',
             '-o', 'IdentitiesOnly=yes',
             '-o', 'HostKeyAlgorithms=ssh-ed25519',
-            '-o', 'StrictHostKeyChecking=accept-new', '-o', 'HashKnownHosts=no',
+            '-o', $(if ($NtpColdStartOnly) { 'StrictHostKeyChecking=yes' } else { 'StrictHostKeyChecking=accept-new' }), '-o', 'HashKnownHosts=no',
             '-o', 'UpdateHostKeys=no', '-o', "HostKeyAlias=$clientAName",
             '-o', "UserKnownHostsFile=$certificatePeerKnownHostsPath", '-o', 'ConnectTimeout=10',
             '-i', $certificatePeerPublicKeySnapshot,
@@ -2866,7 +2909,7 @@ function Add-LifecycleResultStep {
 }
 
 $resolvedVmrun = Resolve-VmrunPath
-if (@(@($OidcOnly, $TimeSourceOnly, $RoutingWanOnly, $CertificateOnly, $RoutingOverlapOnly, $FullEsxiPxeInstall, $ReverseProxyOnly) | Where-Object { $_ }).Count -gt 1) {
+if (@(@($OidcOnly, $TimeSourceOnly, $NtpColdStartOnly, $RoutingWanOnly, $CertificateOnly, $RoutingOverlapOnly, $FullEsxiPxeInstall, $ReverseProxyOnly) | Where-Object { $_ }).Count -gt 1) {
     throw "-OidcOnly, -TimeSourceOnly, -RoutingWanOnly, -CertificateOnly, -RoutingOverlapOnly, -FullEsxiPxeInstall, and -ReverseProxyOnly are mutually exclusive."
 }
 if ($RoutingOverlapOnly -and -not $PlanOnly -and (-not $externalOwnershipEnabled -or $ApplianceSshUser -cne 'root' -or
@@ -2887,7 +2930,8 @@ $clientAName = "$LabName-ClientA"
 $clientBName = "$LabName-ClientB"
 $esxiName = "$LabName-ESXiPXE"
 $esxiMacAddress = if ($FullEsxiPxeInstall) { New-StaticVmwareMac } else { '' }
-$certificateAppliancePeerMac = if ($CertificateDhcpPeer) { New-StaticVmwareMac } else { '' }
+$certificateAppliancePeerMac = if ($privatePeerFixture) { New-StaticVmwareMac } else { '' }
+if ($NtpColdStartOnly) { . (Join-Path $runtimeVmwareRoot 'Atlaso.NtpColdStart.ps1') }
 $planApplianceVmx = if (Test-Path -LiteralPath $ApplianceVmxPath) { (Resolve-Path -LiteralPath $ApplianceVmxPath).Path } else { $ApplianceVmxPath }
 $planClientVmdk = if ($TimeSourceOnly) { '' } elseif ($ClientVmdkPath -and (Test-Path -LiteralPath $ClientVmdkPath)) { (Resolve-Path -LiteralPath $ClientVmdkPath).Path } else { $ClientVmdkPath }
 if ($ReverseProxyOnly) { $planClientVmdk = '' }
@@ -2934,6 +2978,21 @@ $plan = [ordered]@{
     reverse_proxy_only    = [bool]$ReverseProxyOnly
     time_source_interfaces = if ($TimeSourceOnly) { @('eth0: management', "eth1: $SiteANetwork ($SiteCidr)") } else { @() }
     certificate_only      = [bool]$CertificateOnly
+    ntp_cold_start_only   = [bool]$NtpColdStartOnly
+    ntp_cold_start_fixture = if ($NtpColdStartOnly) {
+        [ordered]@{
+            required_vms = @('appliance', 'real-clock-peer')
+            private_network = $SiteANetwork; bootstrap_control_network = $ManagementNetwork
+            appliance_management = 'eth0: 192.168.77.10/24 (reserved DHCP)'
+            appliance_service = 'eth1: 192.168.78.10/24 (access, configured by global Apply)'
+            peer_private = 'eth1: 192.168.77.1/24 and 192.168.78.1/24'
+            authority = 'existing real synchronized Chrony upstream; no forwarding or competing controller'
+            source_creation = @{ path = $NtpPeerSourceReceiptPath; sha256 = $NtpPeerSourceReceiptSha256 }
+            source_prepared = @{ path = $NtpPeerPreparedReceiptPath; sha256 = $NtpPeerPreparedReceiptSha256 }
+            negative_candidate = '192.168.77.11; failed task and verified applied-state rollback required'
+            public_pins = 'original VMX-bound serial consoles, strict SSH, original CA and hostname-verified HTTPS'
+        }
+    } else { $null }
     certificate_dhcp_peer = [bool]$CertificateDhcpPeer
     certificate_peer_cidr = if ($CertificateDhcpPeer) { $CertificatePeerCidr } else { '' }
     certificate_lease_address = if ($CertificateDhcpPeer) { $CertificateLeaseAddress } else { '' }
@@ -3058,10 +3117,11 @@ Non-secret structured evidence to serialize and flush.
 function Write-CertificateLabReceipt {
     param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)]$Value)
 
-    if (-not $CertificateOnly -or $Name -notmatch '^[a-z][a-z0-9-]*\.json$') {
+    if (-not $singleApplianceFixture -or $Name -notmatch '^[a-z][a-z0-9-]*\.json$') {
         throw 'Certificate evidence publication was requested outside its supported mode.'
     }
-    $evidenceRoot = Join-Path $repoRoot "test-results/certificate-native-evidence/$LabName"
+    $evidenceRoot = if ($NtpColdStartOnly) { Join-Path $durableOwnershipRoot "$LabName-ntp-native" }
+        else { Join-Path $repoRoot "test-results/certificate-native-evidence/$LabName" }
     [IO.Directory]::CreateDirectory($evidenceRoot) | Out-Null
     $target = Join-Path $evidenceRoot $Name
     if (Test-Path -LiteralPath $target) { throw "Certificate evidence already exists: $target" }
@@ -3137,7 +3197,8 @@ function Get-CertificateSourceRoutingSnapshot {
     $guestOutput = "/root/atlaso-certificate-source-$probeToken.json"
     $hostOutput = Join-Path $resultRoot "source-routing-$probeToken.json"
     if (Test-Path -LiteralPath $hostOutput) { throw 'Certificate source routing output already exists.' }
-    $password = ConvertFrom-SecureString -SecureString $adminPasswordSecure -AsPlainText
+    $sourceProbeCredential = if ($NtpColdStartOnly) { $rootPasswordSecure } else { $adminPasswordSecure }
+    $password = ConvertFrom-SecureString -SecureString $sourceProbeCredential -AsPlainText
     try {
         $copy = Invoke-VmrunBounded -Arguments @(
             '-T', 'ws', '-gu', 'root', '-gp', $password,
@@ -3338,7 +3399,7 @@ $overlapTrust = ''
 $overlapStarted = $false
 $overlapRecoveryUncertain = $false
 try {
-    if ($CertificateDhcpPeer -and -not $PlanOnly) {
+    if ($privatePeerFixture -and -not $PlanOnly) {
         $keyFile = Get-Item -LiteralPath $CertificatePeerPublicKeyPath -Force -ErrorAction Stop
         if ($keyFile.PSIsContainer -or ($keyFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $keyFile.Length -gt 1024) {
             throw 'Certificate peer public key must be one ordinary bounded file.'
@@ -3366,21 +3427,22 @@ try {
         }
     }
     if (-not $ReverseProxyOnly) {
-        if (-not ($OidcOnly -or $TimeSourceOnly -or $CertificateOnly)) {
+        if (-not ($OidcOnly -or $TimeSourceOnly -or $singleApplianceFixture)) {
             $clientASeedIso = Join-Path $seedRoot "$clientAName-seed.iso"
             $clientBSeedIso = Join-Path $seedRoot "$clientBName-seed.iso"
             New-CloudInitSeedIso -Path $clientASeedIso -HostName ($clientAName.ToLowerInvariant())
             New-CloudInitSeedIso -Path $clientBSeedIso -HostName ($clientBName.ToLowerInvariant())
         }
     }
-    if ($CertificateDhcpPeer) {
+    if ($privatePeerFixture) {
+        if ($NtpColdStartOnly) { Assert-NtpPeerSourceOwnership }
         $certificateClientVmdkSha256 = (Get-FileHash -LiteralPath $ClientVmdkPath -Algorithm SHA256).Hash.ToLowerInvariant()
         $certificatePeerSeedIso = Join-Path $seedRoot "$clientAName-seed.iso"
         New-CertificatePeerSeedIso -Path $certificatePeerSeedIso -HostName ($clientAName.ToLowerInvariant()) -ClientMac $certificateAppliancePeerMac
     }
     $applianceDirectory = Join-Path $vmRoot $applianceName
     $preparedApplianceDirectoryIdentity = ''
-    if ($CertificateOnly) {
+    if ($singleApplianceFixture) {
         # The immutable intent precedes directory creation. The second receipt
         # captures the directory's original identity before vmrun can populate it.
         $certificateIntent = Write-CertificateLabReceipt -Name 'vm-creation-intent.json' -Value ([ordered]@{
@@ -3425,7 +3487,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
                 -PreparedDirectoryIdentity $preparedApplianceDirectoryIdentity
         }
     if (-not $ReverseProxyOnly) {
-        if ($OidcOnly -or $TimeSourceOnly -or $CertificateOnly) {
+        if ($OidcOnly -or $TimeSourceOnly -or $singleApplianceFixture) {
             Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork
         }
         else {
@@ -3433,13 +3495,14 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             # enumerates as eth0 instead of the management NIC.
             Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork -PciSlotNumber 1184
         }
-        if ($CertificateDhcpPeer) {
+        if ($privatePeerFixture) {
             # Pin eth0's final MAC before first boot, while the bootstrap adapter
             # remains host-reachable on VMnet8 for the supported deploy workflow.
             Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork -StaticMac $certificateAppliancePeerMac
         }
     }
     Set-AtlasoWorkstationOvfEnvironment -VmxPath $applianceVmx -OvfEnvironment $firstBootOvfEnvironment
+    if ($NtpColdStartOnly) { Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork }
     if ($ReverseProxyOnly) {
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 0 -Vmnet $ManagementNetwork
         Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork
@@ -3447,7 +3510,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         if ($OidcOnly -or $TimeSourceOnly) {
             Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork
         }
-        if (-not ($OidcOnly -or $TimeSourceOnly -or $CertificateOnly)) {
+        if (-not ($OidcOnly -or $TimeSourceOnly -or $singleApplianceFixture)) {
             Set-VmxNetworkAdapter -Path $applianceVmx -Index 1 -Vmnet $SiteANetwork -PciSlotNumber 192
             if (-not $RoutingOverlapOnly) {
                 Set-VmxNetworkAdapter -Path $applianceVmx -Index 2 -Vmnet $TrunkNetwork -PciSlotNumber 224
@@ -3481,7 +3544,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
                 }
         }
     }
-    if ($CertificateDhcpPeer) {
+    if ($privatePeerFixture) {
         $certificateDiskSourcePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($ClientVmdkPath, $true)
         if ((Get-FileHash -LiteralPath $ClientVmdkPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $certificateClientVmdkSha256) {
             throw 'Certificate peer client disk source changed during fixture preparation.'
@@ -3513,7 +3576,10 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             -Action {
                 New-ClientVm -Name $clientAName -Directory $certificatePeerDirectory `
                     -DiskPath $ClientVmdkPath -SeedIso $certificatePeerSeedIso `
-                    -Networks @($ManagementNetwork, $SiteANetwork)
+                    -Networks @($ManagementNetwork, $SiteANetwork) `
+                    -PreparedDirectoryIdentity $(if ($NtpColdStartOnly) {
+                        '{0:X8}:{1:X8}{2:X8}' -f [uint32]$peerDirectoryIdentity[0], [uint32]$peerDirectoryIdentity[1], [uint32]$peerDirectoryIdentity[2]
+                    } else { '' })
             }
         $certificatePeerDiskPath = Join-Path $certificatePeerDirectory "$clientAName.vmdk"
         $certificatePeerDiskPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryMutableFile($certificatePeerDiskPath)
@@ -3526,7 +3592,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             throw 'Certificate DHCP peer requires a newly created, receipt-bound private LAN segment.'
         }
         $peerFixture = Write-CertificateLabReceipt -Name 'peer-fixture.json' -Value ([ordered]@{
-            schema = 1; kind = 'certificate-dhcp-peer-fixture'; task_id = $env:CODEX_THREAD_ID
+            schema = 1; kind = $(if ($NtpColdStartOnly) { 'ntp-cold-start-peer-fixture' } else { 'certificate-dhcp-peer-fixture' }); task_id = $env:CODEX_THREAD_ID
             repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber; source_commit = $sourceCommit
             peer_vmx = $certificatePeerVmx; peer_ownership_sha256 = $peerOwnership.Sha256
             appliance_vmx = $applianceVmx; appliance_ownership_sha256 = $certificateOwnership.Sha256
@@ -3580,9 +3646,13 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
     }
 
     $vmxsToStart = @($applianceVmx)
-    if ($CertificateDhcpPeer) { $vmxsToStart += $certificatePeerVmx }
+    if ($privatePeerFixture) { $vmxsToStart += $certificatePeerVmx }
+    if ($NtpColdStartOnly) {
+        Initialize-NtpFixtureConsole -Vmx $applianceVmx -Role appliance
+        Initialize-NtpFixtureConsole -Vmx $certificatePeerVmx -Role peer
+    }
     if (-not $ReverseProxyOnly) {
-        if (-not ($OidcOnly -or $TimeSourceOnly -or $CertificateOnly)) {
+        if (-not ($OidcOnly -or $TimeSourceOnly -or $singleApplianceFixture)) {
             $vmxsToStart += @($clientAVmx, $clientBVmx)
         }
     }
@@ -3621,7 +3691,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         appliance_ip  = $ApplianceIPAddress
         appliance_url = $ApplianceUrl
     } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $resultRoot 'discovered-appliance.json') -Encoding UTF8
-    if ($CertificateOnly) {
+    if ($singleApplianceFixture) {
         $sourceGuestState = Get-CertificateSourceGuestState -ApplianceVmx $applianceVmx
         $sourceRoutingSnapshot = Get-CertificateSourceRoutingSnapshot -ApplianceVmx $applianceVmx
         $certificateSource = Write-CertificateLabReceipt -Name 'predeployment-network.json' -Value ([ordered]@{
@@ -3635,7 +3705,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         Save-ApplianceSourceNetworkEvidence -ApplianceVmx $applianceVmx
         Sync-ApplianceHelperScript -ApplianceVmx $applianceVmx
         $applianceWheel = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
-        if ($RoutingOverlapOnly) {
+        if ($RoutingOverlapOnly -or $NtpColdStartOnly) {
             Save-ApplianceDeploymentIdentity -ApplianceVmx $applianceVmx -Wheel $applianceWheel
         }
     }
@@ -3655,7 +3725,13 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         # enrollment through stop. Release only before owned seed retirement/reboot.
         foreach ($pin in $routingOverlapVmxPins) { $pin.Dispose() }
         $routingOverlapVmxPins.Clear()
-    } elseif ($CertificateOnly) {
+    } elseif ($singleApplianceFixture) {
+        if ($NtpColdStartOnly) {
+            $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
+                '-T', 'ws', '-gu', 'root', '-gp', $RootGuestPassword, 'runScriptInGuest', $applianceVmx, '/bin/sh',
+                'command -v tcpdump >/dev/null 2>&1 || tdnf install -y tcpdump'
+            ) -TimeoutSeconds 120 -Action 'Prepare bounded NTP fixture ingress capture tool'
+        }
         $sourceHelperSha256 = (Get-FileHash -LiteralPath (Join-Path $runtimeSourceRoot 'scripts/appliance/atlaso-helper') -Algorithm SHA256).Hash.ToLowerInvariant()
         $installedHelperSha256 = Get-CertificateInstalledHelperSha256 -ApplianceVmx $applianceVmx
         if ($installedHelperSha256 -cne $sourceHelperSha256) {
@@ -3686,7 +3762,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
     $clientAHostKey = ''
     $clientBHostKey = ''
     if (-not $ReverseProxyOnly) {
-        if (-not ($OidcOnly -or $TimeSourceOnly -or $CertificateOnly)) {
+        if (-not ($OidcOnly -or $TimeSourceOnly -or $singleApplianceFixture)) {
             $clientAHost = Wait-GuestIPv4 -Path $clientAVmx -GuestUser $ClientSshUser -GuestPassword $sshPasswordSecure -Name $clientAName
             $clientBHost = Wait-GuestIPv4 -Path $clientBVmx -GuestUser $ClientSshUser -GuestPassword $sshPasswordSecure -Name $clientBName
             if (-not $clientAHost -or -not $clientBHost) {
@@ -3818,9 +3894,10 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         }
     }
     }
-    if ($CertificateDhcpPeer) {
+    if ($privatePeerFixture) {
         # The NoCloud seed contains only a public key. Pin the SSH host key
         # established on first boot across the required seed-removal restart.
+        if ($NtpColdStartOnly) { Initialize-NtpPeerConsolePin }
         Assert-CertificatePeerBootReady -Path $certificatePeerVmx
         $initialPeerIdentity = Get-CertificatePeerOriginalIdentity -Path $certificatePeerVmx
         $certificateKnownHostsPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($certificatePeerKnownHostsPath, $true)
@@ -3847,7 +3924,8 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             management_network = $ManagementNetwork; management_address = $peerIdentityReadback.management_address
             ssh_user = $ClientSshUser; ssh_host_key = $peerIdentityReadback.ssh_host_key
             ssh_public_key = $certificatePeerPublicKey
-            observation = 'owned-vmware-tools-and-agent-ssh-after-management-restart'
+            observation = $(if ($NtpColdStartOnly) { 'original-vmx-serial-console-and-strict-agent-ssh-after-restart' }
+                else { 'owned-vmware-tools-and-agent-ssh-after-management-restart' })
         })
         $certificatePeerDiskPin.Dispose()
         $certificatePeerDiskPin = $null
@@ -3909,9 +3987,10 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             observed_address = $privateAddress; address_ownership_state = 'unproven'
         })
         Write-Host "Certificate private handoff evidence: $($rewiredRuntime.Path)"
+        if ($NtpColdStartOnly) { Invoke-NtpColdStartAcceptance }
     }
     if (-not $ReverseProxyOnly) {
-        if (-not ($OidcOnly -or $TimeSourceOnly -or $CertificateOnly)) {
+        if (-not ($OidcOnly -or $TimeSourceOnly -or $singleApplianceFixture)) {
             # Successful lifecycle client access proves cloud-init consumed both
             # seeds. Leave retained labs running only after verified deletion.
             Remove-ClientSeedArtifacts `
