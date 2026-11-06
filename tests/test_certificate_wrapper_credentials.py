@@ -56,6 +56,31 @@ def test_certificate_lock_includes_iso_reader():
         )
 
 
+def _isolated_runtime_fixture(tmp_path: Path) -> Path:
+    """Copy a real base runtime without inheriting runner-owned aliases.
+
+    Args:
+        tmp_path: Creation-bound pytest root containing every copied file.
+    """
+    base = tmp_path / "base"
+    source = Path(sys.base_prefix)
+    shutil.copytree(
+        source / "Lib", base / "Lib",
+        ignore=shutil.ignore_patterns("site-packages", "__pycache__"),
+    )
+    for file in source.iterdir():
+        if file.is_file() and file.suffix.lower() in {".exe", ".dll", ".zip"}:
+            # copy2 materializes python-versions' python3.exe symlink as a
+            # regular fixture file; production admission still refuses links.
+            shutil.copy2(file, base / file.name)
+    runtime = tmp_path / "runtime"
+    venv.EnvBuilder(with_pip=False).create(runtime)
+    config = runtime / "pyvenv.cfg"
+    text = config.read_text(encoding="utf-8")
+    config.write_text(re.sub(r"(?m)^home = .+$", lambda _: f"home = {base}", text), encoding="utf-8")
+    return runtime
+
+
 @pytest.mark.skipif(
     sys.platform != "win32" or shutil.which("pwsh") is None,
     reason="Windows runtime pins required",
@@ -64,17 +89,20 @@ def test_certificate_lock_includes_iso_reader():
     "wrapper", ["inspect-certificate-peer.ps1", "inspect-certificate-handoff.ps1"]
 )
 @pytest.mark.parametrize("iso_reader", [False, True])
-def test_inspector_admits_iso_reader_before_credentials(tmp_path, wrapper, iso_reader):
+@pytest.mark.parametrize("linked_base", [False, True])
+def test_inspector_admits_iso_reader_before_credentials(tmp_path, wrapper, iso_reader, linked_base):
     """Execute actual wrapper admission against an isolated synthetic runtime.
 
     Args:
         tmp_path: Task-owned pytest temporary directory.
         wrapper: Certificate entrypoint whose admission command is executed.
         iso_reader: Whether the required ISO reader is present alongside SSH.
+        linked_base: Whether to introduce a forbidden hard link after copying.
     """
     root = Path(__file__).resolve().parents[1]
-    runtime = tmp_path / "runtime"
-    venv.EnvBuilder(with_pip=False).create(runtime)
+    runtime = _isolated_runtime_fixture(tmp_path)
+    if linked_base:
+        os.link(tmp_path / "base/Lib/abc.py", tmp_path / "base/linked-code.py")
     for name in ["paramiko", "pycdlib"] if iso_reader else ["paramiko"]:
         package = runtime / "Lib/site-packages" / name
         package.mkdir(parents=True)
@@ -92,7 +120,10 @@ def test_inspector_admits_iso_reader_before_credentials(tmp_path, wrapper, iso_r
             "ATLASO_TEST_TEMP": str(tmp_path),
         },
     )
-    if iso_reader:
+    if linked_base:
+        assert result.returncode != 0
+        assert "Expected an ordinary single-identity file" in result.stderr
+    elif iso_reader:
         assert result.returncode == 0, result.stdout + result.stderr
         assert "runtime-admitted" in result.stdout
     else:
@@ -203,3 +234,77 @@ def test_native_consumer_forwards_only_selected_credentials(tmp_path, wrapper, m
     else:
         assert result.returncode == 0, result.stdout + result.stderr
         assert "credential-consumer-verified" in result.stdout
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is unavailable")
+@pytest.mark.parametrize(
+    ("payload", "exit_code", "category"),
+    [
+        ('{"success":false,"reason":"peer_connection_failed"}', 2, "peer_connection_failed"),
+        ('{"success":false,"reason":"appliance_authentication_failed"}', 2, "appliance_authentication_failed"),
+        ('{"success":false,"reason":"peer_original_mac_lease_expired_or_missing"}', 2, "peer_original_mac_lease_expired_or_missing"),
+        ('{"success":false,"reason":"token=synthetic-private-value"}', 2, "unclassified_proof_failure"),
+        ('{"success":true,"reason":"peer_connection_failed"}', 2, "unclassified_proof_failure"),
+        ('{"success":"false","reason":"peer_connection_failed"}', 2, "unclassified_proof_failure"),
+        ('{"success":false,"reason":"PEER_CONNECTION_FAILED"}', 2, "unclassified_proof_failure"),
+        ('{"success":false,"reason":"peer_connection_failed","extra":"synthetic-private-value"}', 2, "unclassified_proof_failure"),
+        ('[{"success":false,"reason":"peer_connection_failed"}]', 2, "unclassified_proof_failure"),
+        ('synthetic-private-value', 2, "unclassified_proof_failure"),
+        ('{"success":false,"reason":"peer_connection_failed"}', 1, "unclassified_proof_failure"),
+        (' ' * 1025, 2, "unclassified_proof_failure"),
+    ],
+)
+def test_observation_classifier_emits_only_fixed_categories(payload, exit_code, category):
+    """Reject malformed, unexpected or secret-bearing diagnostic output.
+
+    Args:
+        payload: Synthetic child stdout, never actual credential material.
+        exit_code: Selected child exit status.
+        category: Exact permitted public diagnostic category.
+    """
+    root = Path(__file__).resolve().parents[1]
+    command = r"""
+. (Join-Path $env:ATLASO_TEST_REPOSITORY 'scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1')
+Get-AtlasoCertificateObservationFailure -ExitCode ([int]$env:ATLASO_TEST_EXIT) -StandardOutput $env:ATLASO_TEST_PAYLOAD
+"""
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-NonInteractive", "-Command", command],
+        capture_output=True, text=True, timeout=20,
+        env={**os.environ, "ATLASO_TEST_REPOSITORY": str(root),
+             "ATLASO_TEST_PAYLOAD": payload, "ATLASO_TEST_EXIT": str(exit_code)},
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == (
+        f"Certificate private address observations failed with exit code {exit_code} ({category})."
+    )
+    assert "synthetic-private-value" not in result.stdout + result.stderr
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32" or shutil.which("pwsh") is None,
+    reason="Native Windows bounded process containment required",
+)
+def test_bounded_observation_classifier_discards_raw_streams():
+    """Exercise the real bounded runner with synthetic refusal and stderr."""
+    root = Path(__file__).resolve().parents[1]
+    command = r"""
+$ErrorActionPreference='Stop'
+. (Join-Path $env:ATLASO_TEST_REPOSITORY 'scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1')
+$child='[Console]::Out.Write(''{"success":false,"reason":"peer_connection_failed"}''); [Console]::Error.Write(''synthetic-private-value''); exit 2'
+try {
+    Invoke-AtlasoBoundedProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoProfile','-Command',$child) -TimeoutSeconds 20 -Action 'Certificate observation fixture' -FailureClassification certificate_observation -DiscardOutput
+    throw 'Expected refusal'
+} catch {
+    Write-Output $_.Exception.Message
+}
+"""
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-NonInteractive", "-Command", command],
+        capture_output=True, text=True, timeout=30,
+        env={**os.environ, "ATLASO_TEST_REPOSITORY": str(root)},
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip() == (
+        "Certificate private address observations failed with exit code 2 (peer_connection_failed)."
+    )
+    assert "synthetic-private-value" not in result.stdout + result.stderr

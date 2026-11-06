@@ -197,7 +197,8 @@ try {
         }
         Invoke-AtlasoBoundedProcess -FilePath $PythonPath -ArgumentList $arguments `
             -ClearEnvironmentVariablePrefixes @('ATLASO_NATIVE_') -EnvironmentVariables $consumerEnvironment `
-            -TimeoutSeconds 900 -Action 'Certificate private address observations' -DiscardOutput | Out-Null
+            -TimeoutSeconds 900 -Action 'Certificate private address observations' `
+            -FailureClassification certificate_observation -DiscardOutput | Out-Null
     } finally {
         if ($consumerEnvironment) { $consumerEnvironment.Clear() }
         $plain = $null

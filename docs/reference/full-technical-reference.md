@@ -454,6 +454,8 @@ temporary root. Its native credential-consumer cases require Windows process-tre
 than on the Linux full-suite runner; portable checks in that file remain available on Linux. Keep this Windows CI
 coverage when changing the platform markers. Include `tests/test_python_documentation.py` in focused verification
 when adding or changing Python parameters, including nested test callbacks.
+Runtime-admission fixtures copy their base Python files into the owned test root, so runner-installed aliases do not
+obscure dependency checks; a deliberately linked code file must still fail the production single-identity guard.
 `scripts/check_packer_plugins.py` rejects a range constraint, missing selected
 binary, or selected filename that does not encode the exact required version. The supported Windows wrappers perform
 the same initialization and resolution check before validation or build, so warm and empty plugin caches select the
