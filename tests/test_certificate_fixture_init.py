@@ -6,6 +6,7 @@ import hashlib
 import html
 import io
 import json
+import os
 import sys
 import time
 from contextlib import contextmanager
@@ -23,7 +24,10 @@ CA = b"public-test-certificate"
 TOKEN = "synthetic-csrf-token-must-not-be-recorded"
 
 
-def page(name: str) -> str:
+def page(
+    name: str, *, web_terminal_enabled: bool | None = None,
+    web_terminal_interfaces: list[str] | None = None,
+) -> str:
     """Create ordinary server-form fixtures, including unrelated controls.
 
     Args:
@@ -37,18 +41,36 @@ def page(name: str) -> str:
             {"source": "time.example.test", "enabled": True, "use_nts": True, "description": "original"},
         ]), quote=True) + '">',
     }[name]
+    if name == "settings" and web_terminal_enabled is not None:
+        checked = " checked" if web_terminal_enabled else ""
+        interfaces = "".join(
+            f'<input type="hidden" name="web_terminal_interfaces" value="{html.escape(value, quote=True)}">'
+            for value in web_terminal_interfaces or []
+        )
+        content += (
+            f'<input type="checkbox" name="web_terminal_enabled"{checked}>'
+            '<input type="hidden" name="web_terminal_interfaces_present" value="1">'
+            + interfaces
+        )
     return ('<form action="/unrelated" method="post"><input name="other" value="ignored"></form>'
             f'<form id="ntp-settings-form" action="/ui/management/{action}" method="post"><input name="csrf" value="{TOKEN}">{content}</form>')
 
 
 class FormsClient:
+    def __init__(self, *, web_terminal_enabled: bool | None = None, web_terminal_interfaces: list[str] | None = None):
+        self.web_terminal_enabled = web_terminal_enabled
+        self.web_terminal_interfaces = web_terminal_interfaces or []
+
     def request(self, path: str):
         """Return only the requested synthetic server page.
 
         Args:
             path: Normal management page path.
         """
-        return 200, page(path.rsplit("/", 1)[-1])
+        return 200, page(
+            path.rsplit("/", 1)[-1], web_terminal_enabled=self.web_terminal_enabled,
+            web_terminal_interfaces=self.web_terminal_interfaces,
+        )
 
 
 def test_preparation_preserves_other_controls_and_records_no_tokens():
@@ -68,6 +90,23 @@ def test_preparation_preserves_other_controls_and_records_no_tokens():
     assert sources[-1]["use_nts"] is False
     assert TOKEN not in json.dumps(public) and "opaque-private-selector" not in json.dumps(public)
     assert ntp["nts_server_key_path"] == "opaque-private-selector"
+    assert public["settings"]["web_terminal_enabled_requested"] is None
+
+
+@pytest.mark.parametrize("requested", [True, False])
+def test_preparation_applies_explicit_web_terminal_choice_and_binds_original_settings(requested):
+    """Set only the requested terminal state and preserve the prior public settings for inspection."""
+    client = FormsClient(web_terminal_enabled=False, web_terminal_interfaces=["eth0"])
+
+    forms, public = init.prepare_forms(client, PEER, web_terminal_enabled=requested)
+
+    fields = forms["settings"][1]
+    assert [value for key, value in fields if key == "web_terminal_enabled"] == (["on"] if requested else [])
+    assert dict(fields)["web_terminal_interfaces_present"] == "1"
+    assert [value for key, value in fields if key == "web_terminal_interfaces"] == (["eth0"] if requested else [])
+    assert public["settings"]["web_terminal_enabled_requested"] is requested
+    assert public["settings"]["web_terminal_enabled_original"] is False
+    assert public["settings"]["web_terminal_interfaces_original"] == ["eth0"]
 
 
 @pytest.mark.parametrize("body", [
@@ -141,6 +180,70 @@ def test_initialization_rejects_foreign_pending_work(review):
         init.validate_review(review)
 
 
+def _admission_plan(web_terminal_value=...):
+    """Build a synthetic trusted-host fixture initialization plan for selector validation."""
+    requested = {
+        "peer_time_address": PEER, "resolver_address": PEER,
+        "disable_dns_server": True, "disable_ntp_server": True,
+    }
+    if web_terminal_value is not ...:
+        requested["web_terminal_enabled"] = web_terminal_value
+    plan = {
+        "trust_model": "trusted-host", "interface": "eth0", "vmx_path": "owned-fixture.vmx",
+        "mac": MAC, "appliance_ownership": {"path": "ownership.json"},
+        "current_address": "192.168.77.10", "baseline_address": "192.168.77.30",
+        "static_candidate_address": "192.168.77.40", "fixture_initialization": requested,
+    }
+    fixture = {
+        "peer_cidr": "192.168.77.1/24", "appliance_vmx": "owned-fixture.vmx",
+        "appliance_mac": MAC, "lease_address": "192.168.77.10",
+    }
+    return plan, fixture
+
+
+def _stub_plan_admission(monkeypatch, fixture):
+    """Replace only receipt readers and helper source admission for plan validation tests."""
+    monkeypatch.setattr(init, "admit_output", lambda *_args: None)
+    monkeypatch.setattr(init, "admit_fixture", lambda _plan: fixture)
+    monkeypatch.setattr(init, "reviewed_helper_identity", lambda _plan: {})
+    monkeypatch.setattr(init, "bound_json", lambda _reference: {"phase": "original-installation-vm-created"})
+
+
+@pytest.mark.parametrize("choice", [None, True, False])
+def test_initialization_admission_accepts_legacy_or_exact_boolean_web_terminal(choice, tmp_path, monkeypatch):
+    """Retain legacy selector omission and admit only JSON booleans when the selector is present."""
+    plan, fixture = _admission_plan() if choice is None else _admission_plan(choice)
+    _stub_plan_admission(monkeypatch, fixture)
+
+    admitted, peer_address = init.admit_initialization(plan, tmp_path)
+
+    assert admitted == fixture and peer_address == PEER
+
+
+@pytest.mark.parametrize("choice", [None, 0, 1, "false"])
+def test_invalid_web_terminal_intent_refuses_before_credentials_or_peer_setup(
+    choice, tmp_path, monkeypatch, capsys,
+):
+    """Reject null, integer and string intent values before consuming credentials or opening transport."""
+    plan, fixture = _admission_plan(choice)
+    _stub_plan_admission(monkeypatch, fixture)
+    output = tmp_path / "output"
+    output.mkdir()
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    secret = "synthetic-admin-secret"
+    monkeypatch.setenv("ATLASO_NATIVE_ADMIN", secret)
+    monkeypatch.setattr(sys, "argv", [
+        "fixture-init", "--plan", str(plan_path), "--output-directory", str(output), "--execute",
+    ])
+    monkeypatch.setattr(init, "PinnedPeerTransport", lambda *_args, **_kwargs: pytest.fail("peer setup preceded strict intent admission"))
+    monkeypatch.setattr(init, "initialize", lambda *_args, **_kwargs: pytest.fail("initialization continued after invalid intent"))
+
+    assert init.main() == 2
+    assert os.environ.get("ATLASO_NATIVE_ADMIN") == secret
+    assert secret not in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("extra", [None, "wan", "ldap"])
 def test_apply_uses_only_the_reviewed_roots_and_safe_required_closure(extra):
     """Respect server-owned selection while refusing an unexpected dependency.
@@ -184,7 +287,11 @@ def test_apply_uses_only_the_reviewed_roots_and_safe_required_closure(extra):
         assert submissions[0]["reviewed_plan"] == "test-token"
 
 
-@pytest.mark.parametrize("scenario", ["unknown", "success", "late_monitor_failure", "state_changed"])
+@pytest.mark.parametrize("scenario", [
+    "unknown", "success", "late_monitor_failure", "state_changed",
+    "web_terminal_true", "web_terminal_false", "web_terminal_intent_changed", "web_terminal_readback_mismatch",
+    "recovery", "recovery_intent_changed",
+])
 def test_initialization_transitions_are_journaled_and_never_resubmitted(tmp_path, monkeypatch, scenario):
     """Complete initialization or retain a truthful failure without another Apply.
 
@@ -193,10 +300,19 @@ def test_initialization_transitions_are_journaled_and_never_resubmitted(tmp_path
         monkeypatch: Fake pinned transports and native observations.
         scenario: Successful or failed transition to exercise.
     """
+    terminal_choice = True if scenario in {
+        "web_terminal_true", "web_terminal_intent_changed", "web_terminal_readback_mismatch",
+        "recovery", "recovery_intent_changed",
+    } else False if scenario == "web_terminal_false" else None
+    requested_initialization = {"peer_time_address": PEER, "resolver_address": PEER,
+                                "disable_dns_server": True, "disable_ntp_server": True}
+    if terminal_choice is not None:
+        requested_initialization["web_terminal_enabled"] = terminal_choice
     plan = {"task_id": "task", "source_commit": "a" * 40, "appliance_user": "admin",
             "current_address": "192.168.77.10", "baseline_address": "192.168.77.30", "static_candidate_address": "192.168.77.40",
             "appliance_ssh_host_key": "original-pin", "ca_path": "public-ca", "ca_sha256": hashlib.sha256(CA).hexdigest(),
-            "fixture_initialization": {"peer_time_address": PEER},
+            "fixture_initialization": requested_initialization,
+            "fixture_initialization_failure": {"sha256": "d" * 64},
             "peer_transport": {"host": "192.0.2.1", "user": "alpine", "ssh_public_key": "public-key",
                                "ssh_host_key": "peer-pin", "private_subnet": "192.168.77.0/24"}}
     fixture = {"appliance_mac": MAC}
@@ -249,6 +365,8 @@ def test_initialization_transitions_are_journaled_and_never_resubmitted(tmp_path
             return MAC.encode() if command.endswith("/eth0/address") else CA
 
     calls = []
+    settings_submissions = []
+    client_instances = []
     original = {key: "" for key in init.saved_fields.__globals__["FIELDS"]}
     original.update(role="management", ipv4_method="dhcp", ipv6_enabled=False)
 
@@ -260,7 +378,12 @@ def test_initialization_transitions_are_journaled_and_never_resubmitted(tmp_path
                 *args: Positional HTTPS origin and CA arguments.
                 **kwargs: Peer transport and exact target address.
             """
-            pass
+            initial_terminal = True if scenario in {"recovery", "recovery_intent_changed"} else (
+                False if terminal_choice is not None else None
+            )
+            super().__init__(web_terminal_enabled=initial_terminal,
+                             web_terminal_interfaces=["eth0"] if initial_terminal else [])
+            client_instances.append(self)
 
         def login(self, *args):
             """Accept the synthetic test-only login.
@@ -281,6 +404,15 @@ def test_initialization_transitions_are_journaled_and_never_resubmitted(tmp_path
             if form is not None:
                 assert autosave is True
                 calls.append(path)
+                if path == "/ui/management/settings":
+                    fields = list(form)
+                    settings_submissions.append(fields)
+                    values = dict(fields)
+                    if "web_terminal_interfaces_present" in values:
+                        self.web_terminal_enabled = values.get("web_terminal_enabled") in {"on", "true", "1"}
+                        self.web_terminal_interfaces = [
+                            value for key, value in fields if key == "web_terminal_interfaces"
+                        ]
                 return 200, {"valid": True}
             return 200, {"units": [{"id": "ntpd", "changed": True}]}
 
@@ -305,7 +437,17 @@ def test_initialization_transitions_are_journaled_and_never_resubmitted(tmp_path
     monkeypatch.setattr(init, "tls_name", lambda *args: "core.example.test")
     monkeypatch.setattr(init, "Client", Client)
 
-    def uncertain(_client):
+    settings_helper_calls = []
+    if terminal_choice is not None:
+        prepare_settings_form = init._prepare_settings_form
+
+        def record_settings_preparation(form, peer_address, web_terminal_enabled):
+            settings_helper_calls.append(web_terminal_enabled)
+            return prepare_settings_form(form, peer_address, web_terminal_enabled)
+
+        monkeypatch.setattr(init, "_prepare_settings_form", record_settings_preparation)
+
+    def uncertain(_client, **_kwargs):
         """Model loss of the response after a possible Apply submission.
 
         Args:
@@ -318,11 +460,43 @@ def test_initialization_transitions_are_journaled_and_never_resubmitted(tmp_path
 
     monkeypatch.setattr(init, "submit_initialization", uncertain)
     secret = "synthetic-admin-secret"
-    inspected = init.initialize(plan, tmp_path, secret, execute=False)
+    recovery_mode = scenario in {"recovery", "recovery_intent_changed"}
+    recovery_failure = {
+        "job_id": "job_0123456789ab",
+        "original_forms": {"settings": {"web_terminal_enabled_requested": True}},
+    }
+    if recovery_mode:
+        monkeypatch.setattr(init, "admit_recovery_failure", lambda _plan: (recovery_failure, tmp_path / "recovery-claim.json"))
+        monkeypatch.setattr(init, "inspect_recovery", lambda *_args: {"selected_units": ["ntpd"]})
+        if scenario == "recovery_intent_changed":
+            plan["fixture_initialization"]["web_terminal_enabled"] = False
+        if scenario == "recovery_intent_changed":
+            with pytest.raises(init.Refusal, match="fixture_recovery_web_terminal_intent_changed"):
+                init.initialize(plan, tmp_path, secret, execute=False, recovery=True)
+            assert calls == [] and not (tmp_path / "fixture-recovery-started.json").exists()
+            inspection = json.loads((tmp_path / "fixture-recovery-inspection.json").read_text())
+            assert inspection["success"] is False and inspection["recovery"] == "no_desired_mutation_started"
+            return
+        inspected = init.initialize(plan, tmp_path, secret, execute=False, recovery=True)
+        receipt = tmp_path / "fixture-recovery-inspection.json"
+        plan["fixture_recovery_inspection"] = {
+            "path": str(receipt), "sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
+        }
+    else:
+        inspected = init.initialize(plan, tmp_path, secret, execute=False)
+        receipt = tmp_path / "fixture-initialization-inspection.json"
+        plan["fixture_initialization_inspection"] = {
+            "path": str(receipt), "sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
+        }
     assert inspected["success"] is True and not calls
-    receipt = tmp_path / "fixture-initialization-inspection.json"
-    plan["fixture_initialization_inspection"] = {"path": str(receipt), "sha256": hashlib.sha256(receipt.read_bytes()).hexdigest()}
-    monkeypatch.setattr(init, "wait_task", lambda *args: ({"status": "succeeded"}, None))
+    settings_helper_calls.clear()
+    def wait_task(*_args):
+        if scenario == "web_terminal_readback_mismatch":
+            client_instances[-1].web_terminal_enabled = False
+            client_instances[-1].web_terminal_interfaces = []
+        return {"status": "succeeded"}, None
+
+    monkeypatch.setattr(init, "wait_task", wait_task)
     monkeypatch.setattr(init, "clean_baseline", lambda *args: None)
     monkeypatch.setattr(init, "dns_baseline", lambda *args: {"external_dns_servers": [PEER], "upstream_servers": [PEER]})
     monkeypatch.setattr(init, "wait_clock", lambda *args: {"mode": "ntp_client", "healthy": True})
@@ -330,23 +504,60 @@ def test_initialization_transitions_are_journaled_and_never_resubmitted(tmp_path
     executing = True
     if scenario == "state_changed":
         monkeypatch.setattr(init, "guest_identity", lambda *args: {"source": "different"})
+    if scenario == "web_terminal_intent_changed":
+        plan["fixture_initialization"]["web_terminal_enabled"] = False
     if scenario == "success":
-        assert init.initialize(plan, tmp_path, secret, execute=True)["success"] is True
+        initialized = init.initialize(plan, tmp_path, secret, execute=True)
+        assert initialized["success"] is True
+        assert initialized["web_terminal_readback"] == {"enabled": False, "interfaces": []}
+    elif scenario == "recovery":
+        recovered = init.initialize(plan, tmp_path, secret, execute=True, recovery=True)
+        assert recovered["success"] is True
+        assert recovered["web_terminal_readback"] == {"enabled": True, "interfaces": ["eth0"]}
+        assert calls == ["submit"]
+        assert settings_submissions == []
+    elif scenario in {"web_terminal_true", "web_terminal_false"}:
+        result = init.initialize(plan, tmp_path, secret, execute=True)
+        assert result["success"] is True
+        assert result["web_terminal_readback"] == {
+            "enabled": terminal_choice, "interfaces": ["eth0"] if terminal_choice else [],
+        }
+        assert settings_helper_calls == [terminal_choice, terminal_choice]
+        submitted_settings = dict(settings_submissions[-1])
+        assert [value for key, value in settings_submissions[-1] if key == "web_terminal_enabled"] == (
+            ["on"] if terminal_choice else []
+        )
+        assert [value for key, value in settings_submissions[-1] if key == "web_terminal_interfaces"] == (
+            ["eth0"] if terminal_choice else []
+        )
+        assert submitted_settings["web_terminal_interfaces_present"] == "1"
     else:
-        expected = {"unknown": OSError, "late_monitor_failure": RuntimeError, "state_changed": init.Refusal}[scenario]
+        expected = {
+            "unknown": OSError, "late_monitor_failure": RuntimeError, "state_changed": init.Refusal,
+            "web_terminal_intent_changed": init.Refusal,
+            "web_terminal_readback_mismatch": init.Refusal,
+        }[scenario]
         with pytest.raises(expected):
             init.initialize(plan, tmp_path, secret, execute=True)
-    result = json.loads((tmp_path / "fixture-initialization-result.json").read_text())
-    if scenario == "state_changed":
+    result_name = "fixture-recovery-result.json" if recovery_mode else "fixture-initialization-result.json"
+    result = json.loads((tmp_path / result_name).read_text()) if (tmp_path / result_name).exists() else None
+    if scenario in {"state_changed", "web_terminal_intent_changed"}:
         assert calls == [] and not (tmp_path / "fixture-mutation-started.json").exists()
         assert result["success"] is False and result["recovery"] == "no_desired_mutation_started"
         return
+    if scenario == "recovery":
+        with pytest.raises(init.Refusal, match="prior_execution_requires_reconciliation"):
+            init.initialize(plan, tmp_path, secret, execute=True, recovery=True)
+        assert calls.count("submit") == 1
+        return
     assert calls == ["/ui/management/dns/settings", "/ui/management/settings", "/ui/management/ntp/settings", "submit"]
-    assert result["success"] is (scenario == "success")
+    assert result["success"] is (scenario in {"success", "web_terminal_true", "web_terminal_false"})
     if scenario == "unknown":
         assert result["recovery"] == "preserve_unknown_apply_do_not_resubmit"
     elif scenario == "late_monitor_failure":
         assert result["recovery"] == "preserve_and_reconcile"
+    elif scenario == "web_terminal_readback_mismatch":
+        assert result["success"] is False and result["recovery"] == "preserve_and_reconcile"
     assert (tmp_path / "fixture-mutation-started.json").is_file()
     with pytest.raises(init.Refusal, match="prior_execution_requires_reconciliation"):
         init.initialize(plan, tmp_path, secret, execute=True)
@@ -421,3 +632,52 @@ def test_fixture_forms_use_real_router_autosave_contract(client, monkeypatch, pa
         settings = get_appliance_settings_row(db)
         assert settings.management_https_enabled and settings.root_ssh_enabled
         assert settings.service_dns_target_naming == "interface"
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_explicit_web_terminal_choice_uses_real_settings_autosave_fields(client, monkeypatch, enabled):
+    """Send the explicit checkbox/interface shape through the existing Settings autosave route."""
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.ui import get_appliance_settings_row
+    from tests.routers.ui.helpers import login
+
+    monkeypatch.setattr("atlaso.app.ui.SystemAdapter.read_ntpd_capabilities", lambda _self: AdapterResult(
+        command=["atlaso-helper", "ntpd", "capabilities"], dry_run=False,
+        stdout=json.dumps({"nts": True, "vmware_tools": False}),
+    ))
+    login(client)
+    with SessionLocal() as db:
+        settings = get_appliance_settings_row(db)
+        settings.management_https_enabled = True
+        settings.root_ssh_enabled = True
+        settings.web_terminal_enabled = not enabled
+        settings.web_terminal_interfaces_json = json.dumps(["eth0"] if not enabled else [])
+        db.commit()
+
+    native = init.Client.__new__(init.Client)
+    native.url = "http://testserver"
+    native.peer = SimpleNamespace(topology_guard=None)
+
+    class Response(io.BytesIO):
+        def __init__(self, response):
+            super().__init__(response.content)
+            self.status = response.status_code
+
+    class Opener:
+        def open(self, request, *, timeout):
+            assert timeout == 12
+            return Response(client.request(request.get_method(), request.full_url,
+                                           content=request.data, headers=dict(request.header_items())))
+
+    native.opener = Opener()
+    forms, _ = init.prepare_forms(native, PEER, web_terminal_enabled=enabled)
+    path, fields = forms["settings"]
+    status, payload = native.json(path, fields, autosave=True)
+    assert status == 200 and payload["status"] == "saved", payload
+
+    with SessionLocal() as db:
+        settings = get_appliance_settings_row(db)
+        assert settings.web_terminal_enabled is enabled
+        assert json.loads(settings.web_terminal_interfaces_json) == (["eth0"] if enabled else [])
+        assert settings.root_ssh_enabled is True

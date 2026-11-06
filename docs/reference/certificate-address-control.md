@@ -318,6 +318,13 @@ controls and the factory upstream rows are preserved. It submits only the review
 Settings, Network, CA, Firewall, Public Services, DNS/DHCP and NTP. A required disabled WAN/NAT replay is allowed only
 with the original routing-absence proof; independent pending work is refused.
 
+For the ordinary CA rotation cases, optionally add `"web_terminal_enabled": false` or
+`"web_terminal_enabled": true` to `fixture_initialization`. The value must be a JSON Boolean.
+This explicit choice uses the existing Settings form and initial Apply to prepare either no Web Terminal
+listener or only the mandatory `eth0` management listener. The inspection binds the choice, and execution
+verifies its applied readback. Omitting the field preserves the existing terminal settings. Use a fresh,
+originally receipted fixture for each selected baseline; never rerun initialization to change a completed case.
+
 Require a successful task, clean Apply state, unchanged DHCP management interface, original CA and payload pins,
 continued routing absence, a synchronized NTP client with no competing controller, and the private peer selected in
 native `ntpq` readback. This preparation does not establish certificate acceptance. DNS verification records the
