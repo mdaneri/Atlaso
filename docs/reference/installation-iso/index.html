@@ -5155,15 +5155,23 @@ the owning creator builds a real <code>ext4</code> filesystem labelled <code>ATL
 sentinel. Its original VM receipt seals the seed plan; the baseline records the verified filesystem identity, sentinel
 and raw-image digests. Cancellation and installation retain their original comparison rules. A stopped logical
 comparison against that baseline also proves that the old filesystem, UUID and sentinel survived unchanged.</p>
-<p>This optional Windows fixture requires an existing WSL distribution with Python 3, <code>mke2fs</code>, <code>debugfs</code>, <code>e2fsck</code>, and
-<code>blkid</code>, plus the existing native <code>qemu-img</code> dependency. It records the actual filesystem-tool paths and binary hashes.
+<p>This optional Windows fixture requires <code>-OldLabelWslDistribution &lt;EXISTING-DISTRIBUTION&gt;</code> naming one existing WSL
+distribution, plus the existing native <code>qemu-img</code> dependency. Before it creates the seed directory or 4-GiB raw image,
+the harness checks that exact distribution for <code>/usr/bin/python3</code>, <code>mke2fs</code>, <code>debugfs</code>, <code>e2fsck</code>, and <code>blkid</code>. Missing
+distributions or tools stop creation before the old-label image is made. The selected distribution is passed
+explicitly to WSL for preflight and seeding, and its name is sealed into the original and baseline receipts. Supply the
+same selector for later Verify or Cleanup admission; an old-label receipt without that original selection is refused.
+There is no implicit distribution default: do not change the host's global WSL default or install a distribution to
+make this fixture pass. Select and prepare an existing compatible distribution separately.
+The fixture records the actual filesystem-tool paths and binary hashes.
 It formats only a newly created regular image inside the original owned VM directory; it uses no host block devices,
 loop mounts or host-network changes. The raw seed and sentinel are retained there for the normal receipt-bound owning
 cleanup. Creation reserves <strong>78 GiB</strong>, including the additional 4-GiB raw image; ordinary two-disk and MultiDisk gates
 remain 74 and 82 GiB. Existing-VM recovery retains its separate 6-GiB allowance.</p>
 <p>Use the ordinary ISO/root inputs shown above with one absent VM directory and:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>  <span class="n">-Scenario</span> <span class="n">OldLabelReboot</span> <span class="n">-TimeoutSeconds</span> <span class="n">3600</span> <span class="p">`</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>  <span class="n">-InspectInstalled</span> <span class="n">-InspectContent</span> <span class="n">-InspectionPythonPath</span> <span class="p">&lt;</span><span class="n">ABSOLUTE-PREPARED-PYTHON-EXECUTABLE</span><span class="p">&gt;</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>  <span class="n">-OldLabelWslDistribution</span> <span class="n">Atlaso-Build</span> <span class="p">`</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>  <span class="n">-InspectInstalled</span> <span class="n">-InspectContent</span> <span class="n">-InspectionPythonPath</span> <span class="p">&lt;</span><span class="n">ABSOLUTE-PREPARED-PYTHON-EXECUTABLE</span><span class="p">&gt;</span>
 </span></code></pre></div>
 <p>For a controlled recovery test, create a separate fresh fixture with <code>-Scenario OldLabelInterrupted</code>. The canonical
 console driver selects the target, confirms replacement and supplies the ordinary concealed account fields. It stops
@@ -5177,10 +5185,11 @@ explicit supported checkpoint without rewriting old receipts or extending their 
 <p>Retain the original VM, baseline and interruption receipt paths and their emitted digests outside the VM root. Use the
 same output directory and collision suffix for a distinct recovery invocation:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>  <span class="n">-Scenario</span> <span class="n">RecoverOldLabelReboot</span> <span class="n">-TimeoutSeconds</span> <span class="n">3600</span> <span class="p">`</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>  <span class="n">-OriginalReceiptPath</span> <span class="p">&lt;</span><span class="n">ORIGINAL-VM-RECEIPT</span><span class="p">&gt;</span> <span class="n">-OriginalReceiptSha256</span> <span class="p">&lt;</span><span class="n">ORIGINAL-DIGEST</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>  <span class="n">-BaselineReceiptPath</span> <span class="p">&lt;</span><span class="n">ORIGINAL-BASELINE</span><span class="p">&gt;</span> <span class="n">-BaselineReceiptSha256</span> <span class="p">&lt;</span><span class="n">ORIGINAL-BASELINE-DIGEST</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>  <span class="n">-InterruptionReceiptPath</span> <span class="p">&lt;</span><span class="n">ORIGINAL-INTERRUPTION-RECEIPT</span><span class="p">&gt;</span> <span class="n">-InterruptionReceiptSha256</span> <span class="p">&lt;</span><span class="n">EMITTED-DIGEST</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>  <span class="n">-InspectInstalled</span> <span class="n">-InspectContent</span> <span class="n">-InspectionPythonPath</span> <span class="p">&lt;</span><span class="n">ABSOLUTE-PREPARED-PYTHON-EXECUTABLE</span><span class="p">&gt;</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>  <span class="n">-OldLabelWslDistribution</span> <span class="n">Atlaso-Build</span> <span class="p">`</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>  <span class="n">-OriginalReceiptPath</span> <span class="p">&lt;</span><span class="n">ORIGINAL-VM-RECEIPT</span><span class="p">&gt;</span> <span class="n">-OriginalReceiptSha256</span> <span class="p">&lt;</span><span class="n">ORIGINAL-DIGEST</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>  <span class="n">-BaselineReceiptPath</span> <span class="p">&lt;</span><span class="n">ORIGINAL-BASELINE</span><span class="p">&gt;</span> <span class="n">-BaselineReceiptSha256</span> <span class="p">&lt;</span><span class="n">ORIGINAL-BASELINE-DIGEST</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>  <span class="n">-InterruptionReceiptPath</span> <span class="p">&lt;</span><span class="n">ORIGINAL-INTERRUPTION-RECEIPT</span><span class="p">&gt;</span> <span class="n">-InterruptionReceiptSha256</span> <span class="p">&lt;</span><span class="n">EMITTED-DIGEST</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>  <span class="n">-InspectInstalled</span> <span class="n">-InspectContent</span> <span class="n">-InspectionPythonPath</span> <span class="p">&lt;</span><span class="n">ABSOLUTE-PREPARED-PYTHON-EXECUTABLE</span><span class="p">&gt;</span>
 </span></code></pre></div>
 <p>Recovery admits the original interruption, filesystem seed and stopped unselected comparison before obtaining
 credentials. It starts the original connected ISO and requires a fresh target selection and erase confirmation before

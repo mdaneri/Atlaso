@@ -4433,6 +4433,16 @@ Use the phase's recorded result and evidence to assess each actual run.</p>
 <code>build</code>, <code>readback</code>, <code>install</code>, <code>verify</code>, <code>cleanup</code>, and <code>protected</code>. Run one phase at a time and wait for
 its recorded terminal result before requesting another. <code>Status</code> reads the current operation; pending means
 the consumer has not reached a proven terminal state.</p>
+<p>Invoke the launcher with <code>-File</code> as shown; dot-sourcing is not required. <code>-PythonPath</code> accepts a prepared Windows
+CPython 3.14 virtualenv as well as the base interpreter. The owner pins both the selected launcher and the actual
+interpreter executable for the child lifetime. A virtualenv worker must be the original launcher's direct child,
+with the expected executable, a later kernel birth time, and membership in the same non-breakaway Windows job.
+The suspended launcher's original receipt is preserved; a separate <code>*-worker-original.json</code> records the admitted
+worker before phase work starts. Another descendant, changed executable, reused PID, or process outside that job
+is refused. Success and failure still require whole-job quiescence.</p>
+<p>A failed operation remains terminal. Preserve its original receipts and output, including records from earlier
+callback or worker-admission failures; prepare a new plan and absent output for a retry. These launcher tests do
+not establish complete ISO, USB, or physical-installation acceptance for issue #542.</p>
 <h2 id="plan-identity-and-paths">Plan identity and paths<a class="headerlink" href="#plan-identity-and-paths" title="Permanent link">&para;</a></h2>
 <p><code>Initialize</code> admits the exact plan once and binds it to the current caller's task identity. Do not type,
 replace, or override <code>task_id</code>; do not reuse another task's plan. The generated plan follows this schema:</p>
