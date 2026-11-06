@@ -1,5 +1,15 @@
 # Browser regression fixtures
 
+## Monitor rendering and assets
+
+The TestClient rendering contract serves isolated LF and CRLF copies of `app.css` over HTTP. It verifies the grouped
+Network Throughput and Disk Activity selectors independently of newline convention, while retaining the page,
+script, and asset URL/cache assertions. It does not rewrite the checked-in stylesheet or require a browser:
+
+```powershell
+python -B -m pytest -q tests/test_ui.py::test_monitor_page_renders_template_and_browser_assets
+```
+
 ## Certificate grid tab resizing
 
 Start the isolated loopback fixture described under **Network Boot host reference**, then run
