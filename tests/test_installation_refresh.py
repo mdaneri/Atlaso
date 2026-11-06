@@ -6,10 +6,11 @@ import io
 import json
 import os
 import tarfile
+from pathlib import Path
 
 import pytest
 
-from scripts.installation import refresh
+from scripts.installation import build, guest_tools, refresh, refresh_drift
 from scripts.installation.manifest import digest
 
 
@@ -250,3 +251,107 @@ def test_immutable_publication_refuses_overwrite_and_duplicate_json_keys(tmp_pat
     duplicate.write_text('{"phase":"build","phase":"install"}')
     with pytest.raises(ValueError, match="duplicate keys"):
         refresh.read(duplicate)
+
+
+def _admit_fixture(tmp_path: Path, *, include_guest_tools: bool) -> tuple[dict, Path, Path]:
+    """Create the minimal output and captured RPM roots consumed by admission."""
+    root, state, rpms = tmp_path / "output", tmp_path / "evidence", tmp_path / "rpms"
+    root.mkdir()
+    state.mkdir()
+    rpms.mkdir()
+    if include_guest_tools:
+        (rpms / "guest-tools").mkdir()
+    plan = {"output_root": str(root), "rpms": str(rpms), "capture_receipt": None}
+    return plan, state, rpms
+
+
+def _admit_stubs(monkeypatch, calls: list[str], *, source_has_payload: bool, fail_at: str | None = None) -> None:
+    """Record the ordered admission boundary while leaving phase orchestration real."""
+    monkeypatch.setattr(refresh.shutil, "which", lambda _name: "synthetic-rpm-tool")
+
+    def inspect_capture(_source, _rpms):
+        calls.append("inspect_capture")
+        return {"status": "current", "diagnostic_only": True}
+
+    def check_capture(_plan, _state):
+        calls.append("check_capture")
+
+    def verify_rpms(root, _source, scratch, *, allow_guest_tools=False):
+        calls.append("verify_rpms")
+        assert root.name == "rpms"
+        assert scratch.is_dir()
+        assert allow_guest_tools is True
+        if fail_at == "rpm":
+            raise ValueError("synthetic RPM authentication refusal")
+        return [{"name": "python3", "sha256": "a" * 64}]
+
+    def requires_payload(_source):
+        calls.append("source_requires_payload")
+        return source_has_payload
+
+    def verify_guest_tools(root, _source, scratch):
+        calls.append("verify_guest_tools")
+        assert root.name == "guest-tools"
+        assert scratch.is_dir()
+        if fail_at == "guest-tools":
+            raise ValueError("synthetic guest-tools authentication refusal")
+
+    monkeypatch.setattr(refresh, "check_capture", check_capture)
+    monkeypatch.setattr(refresh_drift, "inspect_capture", inspect_capture)
+    monkeypatch.setattr(build, "verify_rpms", verify_rpms)
+    monkeypatch.setattr(guest_tools, "source_requires_payload", requires_payload)
+    monkeypatch.setattr(build, "verify_guest_tools", verify_guest_tools)
+
+
+def test_admit_authenticates_rpms_then_retained_guest_tools_before_success_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Require both independent verifiers before reporting guest-tools admission."""
+    plan, state, rpms = _admit_fixture(tmp_path, include_guest_tools=True)
+    calls: list[str] = []
+    _admit_stubs(monkeypatch, calls, source_has_payload=True)
+
+    result = refresh.execute(plan, state, "admit")
+
+    assert calls == [
+        "inspect_capture", "check_capture", "verify_rpms", "verify_guest_tools",
+    ]
+    assert result["disposition"] == "reuse"
+    assert result["report"]["authenticated_guest_tools_validated"] is True
+    assert result["report"]["authenticated_transaction_validated"] is True
+    assert (rpms / "guest-tools").is_dir()
+
+
+@pytest.mark.parametrize("failure", ["rpm", "guest-tools"])
+def test_admit_authentication_failure_never_returns_successful_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str,
+) -> None:
+    """Propagate either authenticated inventory failure before a success report exists."""
+    plan, state, _rpms = _admit_fixture(tmp_path, include_guest_tools=True)
+    calls: list[str] = []
+    _admit_stubs(monkeypatch, calls, source_has_payload=True, fail_at=failure)
+
+    with pytest.raises(ValueError, match="synthetic .* authentication refusal"):
+        refresh.execute(plan, state, "admit")
+
+    expected = ["inspect_capture", "check_capture", "verify_rpms"]
+    if failure == "guest-tools":
+        expected += ["verify_guest_tools"]
+    assert calls == expected
+
+
+def test_legacy_source_without_companion_does_not_claim_guest_tools_authentication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep old captures usable without claiming authentication for absent guest-tools bytes."""
+    plan, state, rpms = _admit_fixture(tmp_path, include_guest_tools=False)
+    calls: list[str] = []
+    _admit_stubs(monkeypatch, calls, source_has_payload=False)
+
+    result = refresh.execute(plan, state, "admit")
+
+    assert calls == ["inspect_capture", "check_capture", "verify_rpms", "source_requires_payload"]
+    assert not (rpms / "guest-tools").exists()
+    assert result["disposition"] == "reuse"
+    assert result["report"]["authenticated_guest_tools_validated"] is False
+    assert result["report"]["authenticated_transaction_validated"] is True
