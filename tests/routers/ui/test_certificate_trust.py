@@ -11,6 +11,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+from sqlalchemy import select
 
 from atlaso.app.adapters.system import AdapterResult
 from atlaso.app.database import SessionLocal
@@ -723,6 +724,50 @@ def test_manual_vcenter_create_returns_current_provider_and_certificate_rows(cli
     assert payload["provider"]["id"] == provider_id
     assert payload["provider"]["name"] == "Manual provider response"
     assert payload["certificates"] == []
+
+
+def test_enrollment_choices_prefer_vcenter_within_each_vault_without_decryption(client, monkeypatch) -> None:
+    """Rank matching metadata without changing credential eligibility or wire identities.
+
+    Args:
+        client: Isolated authenticated HTTP client.
+        monkeypatch: Fixture blocking password use during choice rendering.
+    """
+    import re
+
+    from atlaso.app.routers.ui import certificate_trust as transport
+
+    _login(client)
+    expected = []
+    with SessionLocal() as db:
+        for name in ("Ranking A", "Ranking B"):
+            vault = Vault(name=name, created_by="admin")
+            db.add(vault)
+            db.flush()
+            entries = [VaultEntry(vault_id=vault.id, key=key, service_type=service, secret_type="vcf_password",
+                                  username="admin", encrypted_value="fixture-ciphertext", created_by="admin",
+                                  uris_json=json.dumps(["ssh://node.example.test", "https://node.example.test:8443"]))
+                       for key, service in (("a.operations", "operations"), ("z.vcenter", "vcenter"))]
+            db.add_all(entries)
+            db.flush()
+            expected.extend(f"{vault.id}|{entry.id}|1" for entry in reversed(entries))
+        db.commit()
+
+    def reject_secret(*_args):
+        """Fail if rendering attempts to decrypt a stored secret.
+
+        Args:
+            *_args: Arguments supplied to the decryption function being guarded.
+        """
+        raise AssertionError("Sorting credential metadata must not decrypt or authenticate")
+
+    monkeypatch.setattr(transport, "decrypt_secret", reject_secret)
+    page = client.get("/vsphere-key-providers")
+    assert page.status_code == 200
+    assert re.findall(r'value="(\d+\|\d+\|\d+)"', page.text) == expected
+    assert "Recommended · z.vcenter" in page.text
+    with SessionLocal() as db:
+        assert all(entry.encrypted_value == "fixture-ciphertext" for entry in db.scalars(select(VaultEntry)))
 
 
 def test_enrollment_saved_endpoint_binding_and_choices(client, monkeypatch) -> None:

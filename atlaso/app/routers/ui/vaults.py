@@ -161,6 +161,7 @@ def build_router(dependencies: VaultsUiDependencies) -> VaultsUiRouter:
         description: str = Form(""),
         username: str = Form(""),
         resource_name: str = Form(""),
+        service_type: str | None = Form(None),
         uris_json: str = Form("[]"),
         copy_entry_id: str = Form(""),
         csrf: str = Form(...),
@@ -177,6 +178,7 @@ def build_router(dependencies: VaultsUiDependencies) -> VaultsUiRouter:
             description: Human-readable description of the resource.
             username: Account name used for authentication or lookup.
             resource_name: Resource name supplied by the caller.
+            service_type: Optional service choice; copies retain the source when omitted.
             uris_json: Uris json supplied by the caller.
             copy_entry_id: Identifier of the copy entry.
             csrf: Validated CSRF token authorizing the request.
@@ -248,6 +250,8 @@ def build_router(dependencies: VaultsUiDependencies) -> VaultsUiRouter:
                     imported_at=(
                         source_entry.imported_at if source_entry is not None else None
                     ),
+                    service_type=(service_type if service_type is not None else
+                                  source_entry.service_type if source_entry is not None else "unknown"),
                 ),
                 actor=identity.username,
             )
@@ -302,6 +306,7 @@ def build_router(dependencies: VaultsUiDependencies) -> VaultsUiRouter:
         description: str = Form(""),
         username: str = Form(""),
         resource_name: str | None = Form(None),
+        service_type: str | None = Form(None),
         uris_json: str = Form("[]"),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
@@ -318,6 +323,7 @@ def build_router(dependencies: VaultsUiDependencies) -> VaultsUiRouter:
             description: Human-readable description of the resource.
             username: Account name used for authentication or lookup.
             resource_name: Resource name supplied by the caller.
+            service_type: Optional service correction; omitted fields retain the stored value.
             uris_json: Uris json supplied by the caller.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
@@ -346,6 +352,7 @@ def build_router(dependencies: VaultsUiDependencies) -> VaultsUiRouter:
                     entry.resource_name if resource_name is None else resource_name
                 ),
                 uris=parse_vault_uris_json(uris_json),
+                service_type=service_type,
             )
             db.add(entry)
             db.commit()

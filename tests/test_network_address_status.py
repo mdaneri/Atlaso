@@ -563,6 +563,7 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch, b
     monkeypatch.setattr(database, "inspect", lambda _connection: SimpleNamespace(get_columns=columns.__getitem__))
     monkeypatch.setattr(database.Base.metadata, "create_all", lambda **_kwargs: None)
     monkeypatch.setattr(database, "_reconcile_nat_ingress_column", lambda _connection: None)
+    monkeypatch.setattr(database, "_reconcile_vault_service_type_column", lambda _connection: None)
     database._create_database_schema(engine)
     database._create_database_schema(engine)
     assert len([sql for sql in calls if sql.startswith("ALTER TABLE")]) == (7 if backup_probe_column_exists else 8)

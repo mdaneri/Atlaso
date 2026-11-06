@@ -637,6 +637,7 @@ from atlaso.app.services.upload_publication import (
     UploadPublication,
     cleanup_private_upload,
 )
+from atlaso.app.services.vault_service_types import VAULT_SERVICE_TYPE_LABELS
 from atlaso.app.services.vaults import (
     VaultEntryInput,
     create_vault,
@@ -14139,6 +14140,7 @@ def vaults_context(db: Session) -> dict[str, Any]:
         db: Active database session.
     """
     return {
+        "vault_service_types": VAULT_SERVICE_TYPE_LABELS,
         "vaults": [
             {
                 "id": vault.id,
