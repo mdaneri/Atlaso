@@ -91,6 +91,28 @@ def test_python_ci_uses_the_hash_locked_development_environment() -> None:
         assert 'pip install -e ".[dev]"' not in job
 
 
+def test_linux_ci_installs_upstream_sudo_before_native_validation() -> None:
+    """Both Linux jobs need the parser for positive and malformed sudoers checks."""
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    for job_name, next_job, validation in (
+        ("repository-checks", "deployment-packer", "python scripts/check_deployment_assets.py --mode linux"),
+        ("python-tests", "trusted-contexts-finish", "python -m pytest"),
+    ):
+        job = workflow.split(f"  {job_name}:", maxsplit=1)[1].split(
+            f"  {next_job}:", maxsplit=1
+        )[0]
+        install_step = job.split("      - name: Install upstream sudoers validator\n", maxsplit=1)[1].split(
+            "      - ", maxsplit=1
+        )[0]
+        assert "if:" not in install_step
+        assert install_step.index("sudo apt-get update") < install_step.index(
+            "sudo apt-get install --yes --no-install-recommends sudo"
+        )
+        assert job.index("Install upstream sudoers validator") < job.index(validation)
+
+
 def test_packer_ci_authenticates_plugins_without_exposing_fork_tokens() -> None:
     """Verify scoped Packer authentication and the tokenless fork fallback."""
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(

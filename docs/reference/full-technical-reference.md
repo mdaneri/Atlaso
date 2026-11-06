@@ -443,8 +443,9 @@ Auto mode validates selected assets with locally available tools and is used by 
 Ubuntu requires `systemd-analyze` and `visudo` for the shared and VMware unit sets and every sudoers fragment, while the
 Windows Packer runner performs `packer init`, exact selected-plugin verification, formatting checks, and full
 `packer validate` for the canonical Photon template. VMware Workstation pins `github.com/vmware/vmware` to `2.1.5`.
-Sudoers validation identifies upstream `visudo` before parsing every selected fragment. On Ubuntu releases that enable
-`sudo-rs` by default, it prefers the separately packaged `visudo.ws`; the alternate parser does not implement all
+Both Linux CI jobs explicitly install Ubuntu's upstream `sudo` package before native checks or tests. Sudoers validation
+identifies upstream `visudo` before parsing every selected fragment. On Ubuntu releases that enable `sudo-rs` by default,
+it prefers the separately packaged `visudo.ws`; the alternate parser does not implement all
 Photon sudoers options, including `requiretty`. A missing or incompatible parser fails Linux validation. Keep the
 deployed rules intact and verify malformed fragments are still rejected by the selected native parser.
 `scripts/check_packer_plugins.py` rejects a range constraint, missing selected
