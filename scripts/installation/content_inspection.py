@@ -16,7 +16,7 @@ from scripts.installation.layout import PROFILE
 
 KINDS = ("assets", "python", "powercli", "rpm", "notices")
 PHOTON_FILESYSTEM_SHA256 = "7f5bba3e84f6eb50f6e5e311325089bc642549469d83793e0ba5f40d74ec6024"
-PHOTON_SYSTEMD_SHA256 = "2ef0275f25c9b782e7f3cbbaaa5bf0d9037149b5253630c6db27e155c461618f"
+PHOTON_SYSTEMD_SHA256 = "54d0b99c3d18b45d88ef0f8358c4bb13187e6456df6d0f4f054901af8a864077"
 PHOTON_LAYOUT_HELPER_SHA256 = "1feb571697f3a1e592e3839bc303cd4c20cd8d40f7acd4e3d7df93449de99608"
 PHOTON_GRUB_EFI_SHA256 = "516e63a3c609abecf4a4bf3ef2661d4f1bed26729a612f73e0bfcb530727e91f"
 PHOTON_SHIM_SHA256 = "e41e6109d7be89ae83da63ef8021ef9a0e053ecd4fe1f47ae73dd79270d688c7"
@@ -40,8 +40,8 @@ PHOTON_MODULE_RPMS = {
 # Public-name diagnostics only, never RPM acceptance exceptions. These names
 # come from filesystem-1.1-11.ph5.x86_64.rpm, SHA-256
 # 7f5bba3e84f6eb50f6e5e311325089bc642549469d83793e0ba5f40d74ec6024.
-# The journal directories are from systemd-257.13-5.ph5,
-# SHA-256 2ef0275f25c9b782e7f3cbbaaa5bf0d9037149b5253630c6db27e155c461618f.
+# The journal directories are from systemd-257.13-6.ph5,
+# SHA-256 54d0b99c3d18b45d88ef0f8358c4bb13187e6456df6d0f4f054901af8a864077.
 # The audit log directory is from audit-4.1.3-3.ph5, SHA-256
 # e55fac7b24b2f7546485f0b8b37fb7b105be764436dd4b139ccaa88e6c3e374f.
 # The rpcbind state directory is from rpcbind-1.2.6-6.ph5, SHA-256
