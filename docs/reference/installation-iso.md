@@ -544,6 +544,15 @@ mode `0644`. Before and after package verification, `/var/log/journal` must be a
 `systemd-journal`, with mode `2755`, exactly as the native tmpfiles rule specifies. Only mode and group discrepancies
 for that directory are reconciled after this proof. Missing entries, owner or digest changes, descendants, other
 verification flags and different policy bytes still fail. Journal contents remain private and are not inspected.
+The current profile admits Photon `systemd-257.13-6.ph5` (SHA-256
+`54d0b99c3d18b45d88ef0f8358c4bb13187e6456df6d0f4f054901af8a864077`). Its journal policy bytes and packaged
+directory ownership match the previously reviewed `257.13-5.ph5`; the native policy checksum remains
+`68e4c097e33b30c731a359cb3af86693e5f854c53d3d6bb5ec9eb7d17f04e585`.
+The [upstream package change](https://github.com/vmware/photon/commit/682001eb08d91802bfdda61fcef5b7cc0a89576b)
+adds transaction file triggers for native service reload/restart and system metadata maintenance. An ordinary
+`rpm --scripts` comparison does not include those triggers; inspect them with `rpm -qp --filetriggers` during review.
+The exact package pin establishes this journal metadata profile. A new complete capture, signature and transaction
+admission, ISO readback and installed-content verification still establish acceptance for each refreshed image.
 The audit-directory profile similarly requires the exact admitted audit RPM and its native
 `/usr/lib/tmpfiles.d/audit.conf` checksum. The policy must be an ordinary single-link root:root file with mode `0640`.
 Before and after package verification, `/var/log/audit` must be a root:root directory with mode `0700`, as its
