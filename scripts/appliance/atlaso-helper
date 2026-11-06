@@ -7860,10 +7860,60 @@ def _ntpd_start_service(unit: str, *, restart: bool = False) -> None:
             _ntpd_write_transaction(transaction)
     _ntpd_run_checked(["systemctl", "enable", unit], f"Enable {unit}")
     operation = "restart" if restart else "start"
-    _ntpd_run_checked(["systemctl", operation, unit], f"{operation.title()} {unit}")
+    # NTPsec's foreground initialization is an ExecStartPre in this same
+    # service cgroup. Let systemd finish (or kill) it before inspecting health;
+    # rollback's stop also owns it after an interrupted helper invocation.
+    _ntpd_run_checked(
+        ["systemctl", operation, unit], f"{operation.title()} {unit}",
+        timeout=35 if unit == "ntpd.service" else 5,
+    )
     service_state = _ntpd_service_state(unit)
     if service_state.get("active") is not True or service_state.get("enabled") is not True:
         raise RuntimeError(f"Could not verify {unit} is active and enabled.")
+
+
+def _ntpd_initialize_clock() -> int:
+    """Initialize once inside systemd's selected service, never as another daemon."""
+    try:
+        control = _ntpd_run_checked(
+            ["systemctl", "show", "ntpd.service", "--property=ControlPID", "--value"],
+            "Verify NTPsec initializer ownership", timeout=2,
+        )
+        if control.stdout.strip() != str(os.getpid()):
+            raise RuntimeError("NTPsec initialization requires its own systemd pre-start process.")
+        if (
+            not NTP_CONFIG_PATH.is_file() or not _ntpd_config_managed(NTP_CONFIG_PATH)
+            or _ntpd_applied_time_mode(NTP_CONFIG_PATH) not in {"ntp_client", "ntp_server"}
+        ):
+            raise RuntimeError("NTPsec initialization requires the guarded applied NTP configuration.")
+        transaction = _ntpd_read_transaction()
+        applying = transaction is not None and transaction.get("phase") == "prepared"
+        if applying and not _release_transaction_owner_alive(transaction.get("owner")):
+            raise RuntimeError("The clock Apply owner is no longer active; recovery is required.")
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"NTPsec initialization refused: {exc}", file=sys.stderr)
+        return 1
+    try:
+        # -q never daemonizes. subprocess.run kills and reaps it on timeout;
+        # systemd owns this helper and its child across parent interruption.
+        result = _run(["/usr/sbin/ntpd", "-gq", "-u", "ntp:ntp", "-c", "/etc/ntp.conf"], timeout=20)
+        if result.returncode == 0:
+            if applying and not _release_transaction_owner_alive(transaction.get("owner")):
+                print("Clock Apply ended during initialization; refusing candidate daemon start.", file=sys.stderr)
+                return 1
+            # Even zero can mean no servers were found. Only the subsequent
+            # persistent-daemon selected-peer check may commit an Apply.
+            return 0
+        failure = f"exit code {result.returncode}"
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        failure = type(exc).__name__
+    if applying:
+        print(f"NTPsec initial clock acquisition failed ({failure}); Apply must roll back.", file=sys.stderr)
+        return 1
+    # Boot/service restarts must still leave the applied controller polling
+    # during an upstream outage. This makes no synchronization health claim.
+    print(f"NTPsec initialization unavailable ({failure}); starting the persistent daemon for recovery.", file=sys.stderr)
+    return 0
 
 
 def _ntpd_wait_synchronized(timeout_seconds: float = 60) -> None:
@@ -7876,21 +7926,105 @@ def _ntpd_wait_synchronized(timeout_seconds: float = 60) -> None:
     if ntpq is None:
         raise RuntimeError("ntpq is unavailable; ntpd is active but synchronization could not be verified.")
     deadline = time.monotonic() + timeout_seconds
-    last_state = "ntpq has not reported synchronization state"
+    observations: list[dict[str, object]] = []
     while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         try:
-            result = _run([ntpq, "-c", "rv"], timeout=2)
-        except (OSError, subprocess.TimeoutExpired):
-            last_state = "ntpq synchronization probe failed"
+            # Pin the local endpoint and suppress peer reverse lookups. One
+            # bounded invocation observes both current system and peer state.
+            result = _run(
+                [ntpq, "-n", "-w", "-c", "rv", "-c", "peers", "127.0.0.1"],
+                timeout=min(2, remaining),
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            evidence = {"healthy": False, "query": type(exc).__name__}
         else:
-            variables = result.stdout.lower()
-            if result.returncode == 0 and "leap_none" in variables and "sync_ntp" in variables:
+            probe = {"returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr}
+            evidence = _ntpd_synchronization_evidence(probe, probe)
+            if evidence["healthy"] is True:
                 return
-            last_state = "NTPsec has not reported leap_none and sync_ntp"
+        # Retain changes, not arbitrary native output. A small fixed inventory
+        # distinguishes query failures, post-step alarm, and missing selection.
+        if not observations or evidence != observations[-1]:
+            observations.append(evidence)
+            observations = observations[-4:]
         time.sleep(min(2, max(0, deadline - time.monotonic())))
     raise RuntimeError(
-        f"ntpd is active as the only selected clock source, but did not synchronize within {timeout_seconds:g} seconds: {last_state}."
+        f"NTPsec did not verify leap_none, sync_ntp and a reachable selected upstream within {timeout_seconds:g} seconds. "
+        f"Bounded synchronization evidence: {json.dumps(observations, sort_keys=True)}"
     )
+
+
+def _ntpd_synchronization_evidence(variables: dict, peers: dict) -> dict[str, object]:
+    """Extract only bounded native health fields; never echo probe errors or variables.
+
+    Args:
+        variables: Result of the system read-variables query.
+        peers: Result of the numeric peers query, possibly in the same invocation.
+    """
+    query = "ok"
+    for probe in (variables, peers):
+        if probe.get("returncode") != 0 or str(probe.get("stderr") or "").strip():
+            error = str(probe.get("stderr") or "").lower()[:4096]
+            query = next((name for name, markers in (
+                ("lookup", ("name or service", "name resolution", "getaddrinfo")),
+                ("socket", ("socket", "connection refused")),
+                ("timeout", ("timed out", "timeout")),
+            ) if any(marker in error for marker in markers)), "failed")
+            break
+    text = str(variables.get("stdout") or "")[:8192]
+    status = re.search(r"(?m)^associd=0 status=([0-9a-fA-F]{4})\b", text)
+    stratum_match = re.search(r"(?:^|[,\s])stratum=(\d{1,2})(?=[,\s]|$)", text)
+    stratum = int(stratum_match[1]) if stratum_match else None
+    status_word = int(status[1], 16) if status else None
+    selected: dict[str, object] | None = None
+    peer_count = 0
+    # Wide ntpq wraps a long numeric address onto its own line. Joining only
+    # that address to the next row preserves IPv6 without accepting arbitrary text.
+    pending = ""
+    for line in str(peers.get("stdout") or "")[:8192].splitlines():
+        fields = (pending + line).split()
+        pending = ""
+        if len(fields) == 1 and fields[0].startswith("*"):
+            pending = fields[0] + " "
+            continue
+        # NTPsec prints an authenticated unicast peer's cookie count in the
+        # type column (normally 8), rather than the ordinary unicast 'u'.
+        if len(fields) != 10 or re.fullmatch(r"[u0-9]", fields[3]) is None:
+            continue
+        peer_count += 1
+        if not fields[0].startswith("*") or not re.fullmatch(r"[0-7]{1,3}", fields[6]):
+            continue
+        if not fields[2].isdigit() or not 1 <= int(fields[2]) <= 14 or int(fields[6], 8) == 0:
+            continue
+        try:
+            address = ip_address(fields[0][1:])
+        except ValueError:
+            continue
+        if address.is_loopback or address.is_unspecified or address.is_multicast or "%" in str(address):
+            continue
+        if selected is None:
+            selected = {"address": str(address), "stratum": fields[2], "reach": fields[6]}
+    synchronized = (
+        query == "ok" and status_word is not None and status_word & 0xff00 == 0x0600
+        and stratum is not None and 1 <= stratum <= 15 and selected is not None
+    )
+    return {
+        "healthy": synchronized, "query": query,
+        "variables_returncode": variables.get("returncode") if type(variables.get("returncode")) is int
+        and -255 <= variables["returncode"] <= 255 else None,
+        "peers_returncode": peers.get("returncode") if type(peers.get("returncode")) is int
+        and -255 <= peers["returncode"] <= 255 else None,
+        "status": f"{status_word:04x}" if status_word is not None else None,
+        "leap": ("leap_none", "leap_add_sec", "leap_del_sec", "leap_alarm")[status_word >> 14]
+        if status_word is not None else None,
+        "source": ("sync_ntp" if status_word & 0x3f00 == 0x0600 else
+                   "sync_unspec" if status_word & 0x3f00 == 0 else "other")
+        if status_word is not None else None,
+        "stratum": stratum, "selected": selected, "peer_count": peer_count,
+    }
 
 
 def _ntpd_vmware_clock_state() -> dict[str, object]:
@@ -7996,6 +8130,15 @@ def _ntpd_install_guards() -> None:
             "After=atlaso-firewall.service",
             "[Service]",
             "ExecStartPre=/opt/atlaso/bin/atlaso-helper ntpd guard pre-ntpd --real",
+            # -q uses the exact managed upstreams once, in the foreground, and
+            # exits before persistent ntpd starts. A real initial step otherwise
+            # clears filters and can defer their refill beyond the Apply guard.
+            # Both phases remain in ntpd.service: stop/timeout/reboot cannot
+            # leave an independent clock setter behind.
+            "ExecStartPre=/opt/atlaso/bin/atlaso-helper ntpd guard initialize-ntpd --real",
+            "TimeoutStartSec=30",
+            "KillMode=control-group",
+            "Restart=no",
             "",
         ]),
     )
@@ -8055,8 +8198,9 @@ def _ntpd_transition(mode: str, config_path: Path | None = None, *, restart: boo
         _ntpd_client_packet_guard(mode)
         if mode == "ntp_server" and _ntpd_nts_server_enabled(config_path):
             _grant_ntpd_nts_server_key_read(config_path)
+        deadline = time.monotonic() + 60
         _ntpd_start_service("ntpd.service", restart=restart)
-        _ntpd_wait_synchronized()
+        _ntpd_wait_synchronized(max(0, deadline - time.monotonic()))
         _ntpd_checkpoint_verified()
         # Retain the previously applied NTS server material until the new NTP
         # controller has passed its synchronization check. A failed transition
@@ -8714,8 +8858,10 @@ def _ntpd_guard(phase: str) -> int:
     Args:
         phase: Boot, VMware Tools or NTPsec lifecycle boundary being guarded.
     """
+    if phase == "initialize-ntpd":
+        return _ntpd_initialize_clock()
     if phase not in {"boot", "pre-vmtoolsd", "post-vmtoolsd", "pre-ntpd"}:
-        print("ntpd guard requires boot, pre-vmtoolsd, post-vmtoolsd, or pre-ntpd", file=sys.stderr)
+        print("ntpd guard requires boot, pre-vmtoolsd, post-vmtoolsd, pre-ntpd, or initialize-ntpd", file=sys.stderr)
         return 2
     if phase in {"boot", "pre-ntpd"} and ATLASO_GUEST_TOOLS_CLOCK_GUARD_UNIT_PATH.exists():
         # A legitimate NTP Apply is prepared while its candidate starts. Inhibit
@@ -8894,7 +9040,7 @@ def _ntpd_status() -> int:
     ntpq = shutil.which("ntpq")
     payload: dict[str, object] = {}
     for key, command in {
-        "peers": [ntpq or "ntpq", "-pn"],
+        "peers": [ntpq or "ntpq", "-pnw"],
         "variables": [ntpq or "ntpq", "-c", "rv"],
         "nts": [ntpq or "ntpq", "-c", "ntsinfo"],
     }.items():
@@ -8946,13 +9092,13 @@ def _ntpd_status() -> int:
     variable_text = ""
     if isinstance(variables, dict):
         variable_text = f"{variables.get('stdout', '')} {variables.get('stderr', '')}".lower()
-    ntpd_reports_sync = (
-        isinstance(variables, dict)
-        and variables.get("returncode") == 0
-        and "leap_none" in variable_text
-        and "sync_ntp" in variable_text
-    )
     peers_payload = payload["peers"]
+    sync_evidence = _ntpd_synchronization_evidence(
+        variables if isinstance(variables, dict) else {},
+        peers_payload if isinstance(peers_payload, dict) else {},
+    )
+    ntpd_reports_sync = sync_evidence["healthy"] is True
+    payload["synchronization_evidence"] = sync_evidence
     peer_rows: list[list[str]] = []
     if isinstance(peers_payload, dict) and peers_payload.get("returncode") == 0:
         peer_rows = [
@@ -8960,11 +9106,7 @@ def _ntpd_status() -> int:
             for fields in (line.split() for line in str(peers_payload.get("stdout") or "").splitlines())
             if len(fields) >= 10 and fields[0] != "remote"
         ]
-    selected_peer: dict[str, object] | None = None
-    for fields in peer_rows:
-        if len(fields) >= 7 and "*" in fields[0]:
-            selected_peer = {"address": fields[0].lstrip("*+-#ox."), "stratum": fields[2], "reach": fields[6]}
-            break
+    selected_peer = sync_evidence["selected"]
     payload["upstream"] = {
         "selected": selected_peer,
         "reach_zero": bool(peer_rows) and all(len(fields) >= 7 and fields[6] == "0" for fields in peer_rows),
@@ -8998,7 +9140,7 @@ def _ntpd_status() -> int:
         elif conflict_unknown or selected_controller["active"] is None or selected_controller["enabled"] is None:
             ntpd_healthy = None
             detail = "A clock-controller service state could not be proven."
-        elif not isinstance(variables, dict) or variables.get("returncode") != 0:
+        elif sync_evidence["query"] != "ok":
             ntpd_healthy = None
             detail = "NTPsec synchronization state is unavailable; check the ntpq status probe."
         elif "leap_alarm" in variable_text:
@@ -9010,14 +9152,17 @@ def _ntpd_status() -> int:
         elif "no_sys_peer" in variable_text and not ntpd_reports_sync:
             ntpd_healthy = False
             detail = "NTPsec has no selected system peer. Check configured upstreams and NTS-KE diagnostics when NTS is enabled."
+        elif selected_peer is None:
+            ntpd_healthy = False
+            detail = "NTPsec has no reachable selected upstream peer. Check configured sources and UDP replies."
         elif not ntpd_reports_sync:
             ntpd_healthy = False
             detail = "NTPsec has not reported leap_none and sync_ntp. Check the selected upstream and service log."
         else:
             ntpd_healthy = True
-            detail = "NTPsec reports leap_none and sync_ntp with no enabled competing clock source."
+            detail = "NTPsec reports leap_none and sync_ntp with a reachable selected upstream and no enabled competing clock source."
         if ntpd_healthy is True and mode == "ntp_client":
-            detail = "NTPsec reports leap_none and sync_ntp, the client packet guard is active, and no competing clock source is enabled."
+            detail = "NTPsec reports leap_none and sync_ntp with a reachable selected upstream, the client packet guard is active, and no competing clock source is enabled."
         payload["synchronization"] = {
             "state": "synchronized" if ntpd_healthy is True else "unsynchronized" if ntpd_healthy is False else "unavailable",
             "healthy": ntpd_healthy,
@@ -9086,6 +9231,7 @@ def _ntpd_status() -> int:
         mode = "unverified"
         detail = "Clock Apply has not committed a verified configuration. Complete Apply or recovery before relying on this clock source."
         payload["synchronization"] = {"state": "unavailable", "healthy": None, "detail": detail}
+        sync_evidence["healthy"] = None
         selected_controller = {"name": None, "active": None, "enabled": None, "detail": detail}
         daemon_conflicts = all_sources
     payload["mode"] = mode
