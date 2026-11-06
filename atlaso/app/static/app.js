@@ -25572,6 +25572,7 @@ function initializeVcfVaultImport() {
   const discoverySummary = form.querySelector("[data-vcf-vault-discovery-summary]");
   const fingerprintHelp = form.querySelector("[data-vcf-vault-fingerprint]");
   const fingerprintConfirm = form.querySelector("[data-vcf-vault-fingerprint-confirm]");
+  const reviewPolicy = form.querySelector("[data-vcf-vault-review-policy]");
   let candidates = [];
   let observedFingerprint = "";
   const requestPayload = () => ({
@@ -25698,8 +25699,14 @@ function initializeVcfVaultImport() {
     prepareReview: () => {
       const source = form.querySelector("[data-vcf-vault-review-source]");
       const count = form.querySelector("[data-vcf-vault-review-count]");
+      const deploymentSource = form.elements.source_type.value === "vcf_installer";
       if (source) source.textContent = `${form.elements.source_type.selectedOptions[0]?.textContent || ""} · ${form.elements.address.value}`;
       if (count) count.textContent = String(form.querySelectorAll('input[name="candidate_ids"]:checked').length);
+      if (reviewPolicy) {
+        reviewPolicy.textContent = deploymentSource
+          ? "Deployment-spec imports preserve the destination: existing keys are skipped, never rotated."
+          : "Live inventory imports may rotate matching existing keys; operator URIs are preserved only when source type, endpoint, resource, account, and secret type match. Other imports replace URIs with discovered endpoints, or clear them when none are known.";
+      }
     },
     onSubmit: async () => {
       const payload = {
