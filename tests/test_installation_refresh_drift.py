@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
+import os
+import shutil
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from scripts.installation import content_inspection, refresh_drift
+from scripts.installation import content_inspection, guest_tools, refresh_drift
 
 
 def _record(name: str, version: str, digest: str) -> dict[str, Any]:
@@ -219,3 +222,187 @@ def test_native_reader_parses_tab_delimited_metadata_with_spaces(monkeypatch, tm
     assert record["files"][0]["isconfig"] is False
     assert record["files"][0]["isdoc"] is False
     assert record["scriptlets"] == "%post\nmkdir /usr/share/empty.sshd\n"
+
+
+def _guest_tools_payload(root: Path) -> dict[str, str]:
+    """Create the exact public closure layout accepted by payload_inventory.
+
+    Args:
+        root: Absent companion directory receiving all three provider closures.
+    """
+    root.mkdir(parents=True)
+    inventory = {}
+    for profile, package in guest_tools.PROFILES.items():
+        path = root / profile / f"{package}.rpm"
+        path.parent.mkdir()
+        path.write_bytes(f"synthetic {profile} closure".encode())
+        inventory[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    (root / "compatibility.json").write_text(json.dumps(guest_tools.COMPATIBILITY), encoding="utf-8")
+    sums = "".join(f"{checksum}  {name}\n" for name, checksum in sorted(inventory.items()))
+    (root / "SHA256SUMS").write_text(sums, encoding="ascii")
+    return inventory
+
+
+def _inspect_fixture(tmp_path: Path, *, modern_source: bool = True) -> tuple[Path, Path, Path]:
+    """Prepare one tiny source tree and captured top-level RPM for drift inspection.
+
+    Args:
+        tmp_path: Isolated directory owning the synthetic source and capture.
+        modern_source: Whether the source declares retained guest-tools support.
+    """
+    source = tmp_path / "source"
+    if modern_source:
+        marker = source / "scripts/installation/guest_tools.py"
+        marker.parent.mkdir(parents=True)
+        marker.write_text("# retained guest-tools payload contract\n", encoding="utf-8")
+    else:
+        source.mkdir()
+    rpms = tmp_path / "rpms"
+    rpms.mkdir()
+    package = rpms / "python3-3.14.0-1.ph5.x86_64.rpm"
+    package.write_bytes(b"synthetic authenticated package bytes")
+    return source, rpms, package
+
+
+def _stub_capture_metadata(monkeypatch: pytest.MonkeyPatch, package: Path) -> None:
+    """Provide one matching Photon record while leaving payload validation real.
+
+    Args:
+        monkeypatch: Replace repository and native metadata queries.
+        package: Captured top-level RPM whose identity the metadata must match.
+    """
+    sha256 = hashlib.sha256(package.read_bytes()).hexdigest()
+    monkeypatch.setattr(refresh_drift, "package_selection", lambda _source: ["python3"])
+    monkeypatch.setattr(
+        refresh_drift,
+        "_photon_repository_inventory",
+        lambda: [("python3", "0", "3.14.0", "1.ph5", "x86_64", sha256)],
+    )
+    monkeypatch.setattr(refresh_drift, "_inspect_package_identity", lambda path: {
+        "file": path.name, "name": "python3", "epoch": "0", "version": "3.14.0",
+        "release": "1.ph5", "architecture": "x86_64", "sha256": sha256,
+    })
+    monkeypatch.setattr(refresh_drift, "capture_drift_report", lambda *_args: {"status": "current"})
+
+
+def test_inspect_capture_validates_real_guest_tools_inventory_before_native_rpm_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Validate canonical companion bytes while keeping drift inspection non-authenticating.
+
+    Args:
+        tmp_path: Isolated directory owning the source and retained payload fixtures.
+        monkeypatch: Replace metadata reads while retaining real payload validation.
+    """
+    source, rpms, package = _inspect_fixture(tmp_path)
+    expected = _guest_tools_payload(rpms / "guest-tools")
+    _stub_capture_metadata(monkeypatch, package)
+
+    report = refresh_drift.inspect_capture(source, rpms)
+
+    assert report["status"] == "current"
+    assert report["authenticated_transaction_validated"] is False
+    assert report["requires_full_transaction_validation"] is True
+    assert [item["file"] for item in report["native_inventory"]] == [package.name]
+    assert guest_tools.payload_inventory(rpms / "guest-tools") == expected
+
+
+@pytest.mark.parametrize("defect", [
+    "unexpected_entry", "missing_profile", "empty_profile", "checksum_mismatch",
+])
+def test_inspect_capture_rejects_invalid_guest_tools_before_official_or_native_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str,
+) -> None:
+    """Refuse malformed retained closures before consulting package metadata or RPM tools.
+
+    Args:
+        tmp_path: Isolated directory owning the source and malformed capture.
+        monkeypatch: Replace metadata reads with boundaries that must stay unused.
+        defect: Independent payload layout or checksum violation to introduce.
+    """
+    source, rpms, _package = _inspect_fixture(tmp_path)
+    payload = rpms / "guest-tools"
+    _guest_tools_payload(payload)
+    if defect == "unexpected_entry":
+        (payload / "unexpected.txt").write_text("extra", encoding="utf-8")
+    elif defect == "missing_profile":
+        shutil.rmtree(payload / "hyperv")
+    elif defect == "empty_profile":
+        (payload / "qemu" / f"{guest_tools.PROFILES['qemu']}.rpm").unlink()
+    elif defect == "checksum_mismatch":
+        (payload / "SHA256SUMS").write_text("0" * 64 + "  vmware/open-vm-tools.rpm\n", encoding="ascii")
+
+    calls = []
+
+    def should_not_read_metadata(*_args, **_kwargs):
+        """Fail if malformed companion admission reaches external metadata.
+
+        Args:
+            *_args: Positional metadata-query arguments that must remain unused.
+            **_kwargs: Keyword metadata-query arguments that must remain unused.
+        """
+        calls.append("metadata-or-rpm")
+        raise AssertionError("guest-tools admission ran after native metadata")
+
+    monkeypatch.setattr(refresh_drift, "package_selection", lambda _source: ["python3"])
+    monkeypatch.setattr(refresh_drift, "_photon_repository_inventory", should_not_read_metadata)
+    monkeypatch.setattr(refresh_drift, "_inspect_package_identity", should_not_read_metadata)
+
+    with pytest.raises((ValueError, OSError)):
+        refresh_drift.inspect_capture(source, rpms)
+
+    assert calls == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Reparse admission requires Windows filesystem semantics")
+def test_inspect_capture_rejects_reparse_guest_tools_before_metadata(tmp_path, monkeypatch):
+    """Refuse a directory-link substitution before any metadata or native RPM read.
+
+    Args:
+        tmp_path: Isolated directory owning the source and linked capture.
+        monkeypatch: Replace metadata reads with boundaries that must stay unused.
+    """
+    source, rpms, _package = _inspect_fixture(tmp_path)
+    target = tmp_path / "payload-target"
+    _guest_tools_payload(target)
+    try:
+        os.symlink(target, rpms / "guest-tools", target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"directory symlink creation unavailable: {type(error).__name__}")
+
+    def should_not_read_metadata(*_args, **_kwargs):
+        """Fail if linked companion admission reaches external metadata.
+
+        Args:
+            *_args: Positional metadata-query arguments that must remain unused.
+            **_kwargs: Keyword metadata-query arguments that must remain unused.
+        """
+        raise AssertionError("guest-tools reparse admission ran after native metadata")
+
+    monkeypatch.setattr(refresh_drift, "package_selection", lambda _source: ["python3"])
+    monkeypatch.setattr(refresh_drift, "_photon_repository_inventory", should_not_read_metadata)
+    monkeypatch.setattr(refresh_drift, "_inspect_package_identity", should_not_read_metadata)
+    with pytest.raises((ValueError, OSError)):
+        refresh_drift.inspect_capture(source, rpms)
+
+
+def test_inspect_capture_requires_new_payload_but_keeps_legacy_source_optional(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Require the companion for current source while allowing old source captures without it.
+
+    Args:
+        tmp_path: Isolated directory owning modern and legacy capture fixtures.
+        monkeypatch: Replace metadata reads while retaining payload-contract selection.
+    """
+    source, rpms, package = _inspect_fixture(tmp_path)
+    _stub_capture_metadata(monkeypatch, package)
+
+    with pytest.raises(ValueError, match="capture_inventory_incomplete"):
+        refresh_drift.inspect_capture(source, rpms)
+
+    legacy_source = tmp_path / "legacy-source"
+    legacy_source.mkdir()
+    report = refresh_drift.inspect_capture(legacy_source, rpms)
+    assert report["status"] == "current"
+    assert report["authenticated_transaction_validated"] is False
