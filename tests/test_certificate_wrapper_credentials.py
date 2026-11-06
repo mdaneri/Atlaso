@@ -163,7 +163,10 @@ finally{$pair.AdminPassword.Dispose()}
 """
 
 
-@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is unavailable")
+@pytest.mark.skipif(
+    sys.platform != "win32" or shutil.which("pwsh") is None,
+    reason="Native Windows bounded process-tree containment and PowerShell are required",
+)
 @pytest.mark.parametrize(
     "wrapper", ["inspect-certificate-peer.ps1", "inspect-certificate-handoff.ps1"]
 )

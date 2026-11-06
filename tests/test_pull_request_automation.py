@@ -113,6 +113,24 @@ def test_linux_ci_installs_upstream_sudo_before_native_validation() -> None:
         assert job.index("Install upstream sudoers validator") < job.index(validation)
 
 
+def test_ci_runs_native_certificate_credentials_on_windows() -> None:
+    """Retain real Windows credential-consumer coverage when Linux skips it."""
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    job = workflow.split("  deployment-packer:", maxsplit=1)[1].split("  python-tests:", maxsplit=1)[0]
+    assert "runs-on: windows-latest" in job
+    step = job.split("      - name: Verify native certificate credential isolation\n", maxsplit=1)[1].split(
+        "      - ", maxsplit=1
+    )[0]
+    assert "if:" not in step
+    assert "python -B -m pytest tests/test_certificate_wrapper_credentials.py" in step
+    assert "Join-Path $env:GITHUB_WORKSPACE 'test-results/certificate-credentials'" in step
+    assert '$env:TEMP = $stateRoot' in step and '$env:TMP = $stateRoot' in step
+    assert '--basetemp "$stateRoot/pytest"' in step
+    assert job.index("pip install --require-hashes -r requirements-dev.lock") < job.index(
+        "Verify native certificate credential isolation"
+    )
+
+
 def test_packer_ci_authenticates_plugins_without_exposing_fork_tokens() -> None:
     """Verify scoped Packer authentication and the tokenless fork fallback."""
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(

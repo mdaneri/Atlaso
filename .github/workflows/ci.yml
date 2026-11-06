@@ -194,6 +194,15 @@ jobs:
           ./tests/powershell/Test-AtlasoVmrunConsoleIsolation.ps1 -StateRoot $stateRoot
       - name: Install locked source-verification test dependencies
         run: python -m pip install --require-hashes -r requirements-dev.lock
+      - name: Verify native certificate credential isolation
+        shell: pwsh
+        run: |
+          $stateRoot = Join-Path $env:GITHUB_WORKSPACE 'test-results/certificate-credentials'
+          New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
+          $env:TEMP = $stateRoot
+          $env:TMP = $stateRoot
+          $env:PYTEST_DEBUG_TEMPROOT = $stateRoot
+          python -B -m pytest tests/test_certificate_wrapper_credentials.py --basetemp "$stateRoot/pytest"
       - name: Verify creation-bound Windows pytest Git fixture cleanup
         shell: pwsh
         run: |

@@ -294,6 +294,13 @@ def test_retirement_reobserves_pending_connection_without_accepting_timeout(fina
 
     class SettlingPeer(Peer):
         def tcp_reachable(self, address, port, *, channel_timeout=8):
+            """Model a pending channel followed by its configured outcome.
+
+            Args:
+                address: Retired or active address being observed.
+                port: Admitted management port.
+                channel_timeout: Short or extended channel allowance.
+            """
             self.probes.append((address, port))
             if address == ACTIVE:
                 assert channel_timeout == 8
@@ -333,6 +340,13 @@ def test_retirement_waits_for_explicit_slow_reply_and_rechecks_native_absence(mo
 
     class SlowPeer(Peer):
         def tcp_reachable(self, address, port, *, channel_timeout=8):
+            """Advance the clock through a slow explicit connect refusal.
+
+            Args:
+                address: Retired or active address being observed.
+                port: Admitted management port.
+                channel_timeout: Short or extended channel allowance.
+            """
             self.probes.append((address, port))
             if address == ACTIVE:
                 assert channel_timeout == 8
@@ -358,6 +372,13 @@ def test_retirement_rechecks_native_ownership_after_slow_reply() -> None:
 
     class ChangedDuringWait(Peer):
         def tcp_reachable(self, address, port, *, channel_timeout=8):
+            """Return a refusal after native ownership has reappeared.
+
+            Args:
+                address: Retired or active address being observed.
+                port: Admitted management port.
+                channel_timeout: Short or extended channel allowance.
+            """
             if address == ACTIVE:
                 return True
             if channel_timeout == 8:
@@ -381,6 +402,11 @@ def test_retirement_cannot_complete_after_final_readback_exhausts_budget(monkeyp
     original_command = appliance.command
 
     def command(value):
+        """Consume the remaining budget during the final native readback.
+
+        Args:
+            value: Read-only native command to execute against the fixture.
+        """
         result = original_command(value)
         if appliance.commands.count("ip -j -4 addr show") == 2:
             now[0] = 201
@@ -399,6 +425,12 @@ def test_retirement_pending_probe_rechecks_native_ownership() -> None:
 
     class ChangingPeer(Peer):
         def tcp_reachable(self, address, port):
+            """Restore native ownership while leaving the channel pending.
+
+            Args:
+                address: Retired or active address being observed.
+                port: Admitted management port.
+            """
             self.probes.append((address, port))
             if address == ACTIVE:
                 return True
@@ -431,6 +463,12 @@ def test_retirement_pending_probe_requires_positive_active_path() -> None:
 
     class LostActivePeer(Peer):
         def tcp_reachable(self, address, port):
+            """Keep the retired result unknown while losing the active path.
+
+            Args:
+                address: Retired or active address being observed.
+                port: Admitted management port.
+            """
             self.probes.append((address, port))
             if address == RETIRED:
                 raise PeerTcpProbePending("peer_tcp_probe_unproven")
@@ -453,6 +491,12 @@ def test_retirement_does_not_retry_other_failures_or_publish_remote_details(cate
 
     class RefusedPeer(Peer):
         def tcp_reachable(self, address, port):
+            """Raise the selected transport refusal without returning TCP state.
+
+            Args:
+                address: Retired or active address being observed.
+                port: Admitted management port.
+            """
             self.probes.append((address, port))
             raise PeerTransportRefusal("peer_tcp_probe_unproven", probe_failure=category)
 
@@ -478,6 +522,12 @@ def test_retirement_pending_observation_does_not_reset_deadline(monkeypatch) -> 
 
     class WaitingPeer(Peer):
         def tcp_reachable(self, address, port):
+            """Leave the retired channel pending while preserving active TCP.
+
+            Args:
+                address: Retired or active address being observed.
+                port: Admitted management port.
+            """
             self.probes.append((address, port))
             if address == RETIRED:
                 raise PeerTcpProbePending("peer_tcp_probe_unproven")

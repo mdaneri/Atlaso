@@ -303,6 +303,12 @@ def test_tcp_probe_identifies_only_live_channel_open_deadline(message: str, live
             return authenticated if self.failed else True
 
         def open_channel(self, *_args, **_kwargs):
+            """Raise the configured channel failure at the selected deadline.
+
+            Args:
+                *_args: Requested channel endpoints.
+                **_kwargs: Channel options containing the bounded timeout.
+            """
             assert _kwargs["timeout"] == channel_timeout
             self.failed = True
             raise paramiko.SSHException(message)
