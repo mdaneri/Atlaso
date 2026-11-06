@@ -275,6 +275,7 @@ def upsert_vault_entry(
     vault: Vault,
     entry: VaultEntryInput,
     actor: str,
+    overwrite_existing: bool = True,
 ) -> tuple[VaultEntry, bool]:
     """Return upsert vault entry.
 
@@ -283,6 +284,7 @@ def upsert_vault_entry(
         vault: Vault supplied by the caller.
         entry: Vault, configuration, or collection entry to process.
         actor: Authenticated identity attributed to the audit record.
+        overwrite_existing: Whether an entry found during the final write lookup may be changed.
     """
     normalized = validate_entry_input(entry)
     current = db.execute(
@@ -292,6 +294,8 @@ def upsert_vault_entry(
         )
     ).scalar_one_or_none()
     created = current is None
+    if current is not None and not overwrite_existing:
+        return current, False
     if current is None:
         current = VaultEntry(
             vault_id=vault.id,

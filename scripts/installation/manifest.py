@@ -167,6 +167,12 @@ def verify_media(root: Path, trust_key: Path, *, scratch: Path, expected_key_id:
     }
     if not required <= names or not any(name.startswith("rpms/") and name.endswith(".rpm") for name in names) or not any(name.startswith("powercli/") for name in names):
         raise ValueError("installation media is incomplete")
+    if "source/scripts/installation/guest_tools.py" in names:
+        if not {"guest-tools/compatibility.json", "guest-tools/SHA256SUMS"} <= names or any(
+            not any(name.startswith("guest-tools/" + profile + "/") and name.endswith(".rpm") for name in names)
+            for profile in ("vmware", "hyperv", "qemu")
+        ):
+            raise ValueError("installation guest-tools payload is incomplete")
     if files != inventory(root):
         raise ValueError("installation media differs from its signed file inventory")
     rpms = value.get("rpm_inventory")

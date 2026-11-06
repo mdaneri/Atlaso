@@ -50,6 +50,9 @@ from atlaso.app.models import (
 )
 from atlaso.app.operational_logging import log_audit_event
 from atlaso.app.routers.chunk_uploads import ChunkedUploadRoute
+from atlaso.app.routers.ui.vcf_backup_workflows import (
+    register_routes as register_backup_routes,
+)
 from atlaso.app.routers.ui.vcf_certificates import (
     register_routes as register_certificate_routes,
 )
@@ -62,6 +65,8 @@ from atlaso.app.routers.ui.vcf_renewals import (
 from atlaso.app.secrets import decrypt_secret
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services import log_viewer
+from atlaso.app.services import vcf_backup_receiver as vcf_backup_receiver_service
+from atlaso.app.services import vcf_backup_workflow as vcf_backup_workflow_service
 from atlaso.app.services.dnsmasq import split_addresses, split_interfaces
 from atlaso.app.services.local_users import has_pending_os_password
 from atlaso.app.services.vaults import (
@@ -75,6 +80,7 @@ from atlaso.app.services.vcf_backups import (
     VCF_BACKUP_DEFAULT_USERNAME,
     VCF_BACKUP_DEFAULT_VOLUME_MOUNT,
     VCF_BACKUP_EFFECTIVE_CONFIG_PATH,
+    normalize_trusted_backup_sources,
     vcf_backup_remote_directory,
 )
 from atlaso.app.services.vcf_depot_downloads import (
@@ -469,6 +475,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
     verify_csrf = dependencies.verify_csrf
     register_lab_routes(router, verify_csrf)
     register_certificate_routes(router, verify_csrf)
+    register_backup_routes(router, verify_csrf)
     register_renewal_routes(router, verify_csrf)
 
     @router.get("/https-repository", response_model=None)
@@ -575,6 +582,16 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             }
         return {
             "identity": identity,
+            "vcf_backup_wizard": (
+                vcf_backup_receiver_service.receiver_state(db)
+                if identity.has_role("admin")
+                else {"ready": False, "reason": "Administrator access is required."}
+            ),
+            "vcf_backup_secret_options": (
+                vcf_backup_workflow_service.secret_options(db)
+                if identity.has_role("admin")
+                else []
+            ),
             **vcf_helper_context(db),
             **vcf_trust_context(db),
             **ldap_context_data,
@@ -977,6 +994,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 )
             imported: list[str] = []
             created_count = 0
+            skipped_existing = 0
             legacy_identity_counts = Counter(
                 (candidate.natural_key, candidate.resource_name.strip(), candidate.username.strip(), candidate.secret_type.strip().lower())
                 for candidate in candidates if candidate.natural_key
@@ -999,6 +1017,11 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                         and legacy.secret_type == candidate.secret_type.strip().lower()
                     ):
                         existing = legacy
+                # Retained deployment values may predate a password rotation. Never replace
+                # an existing destination entry (including a matching legacy import).
+                if source_type == "vcf_installer" and existing is not None:
+                    skipped_existing += 1
+                    continue
                 # Preserve operator URI positions only for the same source and account.
                 same_source = existing is not None and (
                     existing.source_type == source_type
@@ -1024,7 +1047,11 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                         uris=uris or candidate.uris,
                     ),
                     actor=identity.username,
+                    overwrite_existing=source_type != "vcf_installer",
                 )
+                if source_type == "vcf_installer" and not created:
+                    skipped_existing += 1
+                    continue
                 imported.append(entry.key)
                 created_count += int(created)
             db.commit()
@@ -1040,7 +1067,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             action="import_vcf_vault_entries",
             resource_type="vault",
             resource_id=str(vault.id),
-            detail=f"source_type={source_type}; imported={len(imported)}; created={created_count}; rotated={len(imported) - created_count}",
+            detail=f"source_type={source_type}; imported={len(imported)}; created={created_count}; rotated={len(imported) - created_count}; skipped_existing={skipped_existing}",
         )
         return JSONResponse(
             {
@@ -1049,6 +1076,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 "imported_keys": imported,
                 "created": created_count,
                 "rotated": len(imported) - created_count,
+                "skipped_existing": skipped_existing,
             },
             headers={"Cache-Control": "no-store, private", "Pragma": "no-cache"},
         )
@@ -4212,6 +4240,8 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         allow_password_auth: str | None = Form(None),
         allow_public_key_auth: str | None = Form(None),
         max_sessions: int = Form(4),
+        trusted_backup_sources: list[str] = Form(default_factory=list),
+        trusted_backup_sources_present: str | None = Form(None),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
@@ -4233,6 +4263,8 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             allow_password_auth: Allow password auth supplied by the caller.
             allow_public_key_auth: Allow public key auth supplied by the caller.
             max_sessions: Max sessions supplied by the caller.
+            trusted_backup_sources: Explicit single-host IP exemptions from SSH connection penalties.
+            trusted_backup_sources_present: Whether the caller supplied the complete trusted-host selection.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
@@ -4256,6 +4288,14 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         # Default-row readers may commit; reacquire before editing their result.
         acquire_network_objects_write_lock(db)
         db.refresh(settings)
+        if trusted_backup_sources or trusted_backup_sources_present == "1":
+            try:
+                normalized_sources = normalize_trusted_backup_sources(",".join(trusted_backup_sources))
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail=str(error)) from None
+            if normalized_sources != (settings.trusted_backup_sources or "") and not identity.has_role("admin"):
+                raise HTTPException(status_code=403, detail="An administrator must approve SSH penalty exemptions for trusted backup sources.")
+            settings.trusted_backup_sources = normalized_sources
         user_id = int(sftp_user_id) if str(sftp_user_id).strip() else None
         if user_id and not db.get(User, user_id):
             raise HTTPException(

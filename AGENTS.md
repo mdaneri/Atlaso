@@ -9,8 +9,8 @@ First progress update: confirm policies read, classify work as `bug`, `enhanceme
 and link the issue. Private remediation: confirm private tracking without advisory identifiers or findings.
 Read-only discovery may precede this update.
 
-Record repository, worktree, policy revision, and loaded routes. Re-evaluate routes on repository, worktree, directory,
-policy, or scope changes; read changed or newly applicable instructions. Reuse unchanged policy already read in this task.
+Record repository, worktree, policy revision, and loaded routes. On repository/worktree/directory/policy/scope changes,
+read new/changed instructions. Reuse unchanged policy already read in this task.
 If policy is missing, conflicting, or unclear, stop the affected operation for maintainer direction.
 
 ## Always applicable boundaries
@@ -35,8 +35,8 @@ If policy is missing, conflicting, or unclear, stop the affected operation for m
 - Before destructive actions, signing/publication, or external infrastructure mutation, load the exact procedure and
   prove authority and ownership. Preserve its fail-closed gates. Policy grants no authority; unavailable
   capabilities never justify substitutes.
-- VM receipts and proven certificate address control precede mutation; see the
-  [VMware procedure](docs/reference/vmware-workstation-lifecycle-testing.md).
+- VM receipts and [trusted-host certificate admission](docs/reference/certificate-address-control.md) precede mutation;
+  see the [VMware procedure](docs/reference/vmware-workstation-lifecycle-testing.md).
 
 ## Conditional policy routes
 
@@ -49,7 +49,7 @@ sections. Resolve unknown applicability before mutation rather than treating it 
 | review | Reviewing a diff/PR, opening, following, or merging a PR | [PR workflow](docs/contribute/pr-workflow.md) |
 | security | Sensitive material, suspected vulnerability, private remediation | [Security policy](SECURITY.md) |
 | credentials | Obtaining, storing, copying, or using passwords, tokens, keys, or 1Password configuration | [Credential policy](docs/contribute/credential-policy.md) |
-| ui | Templates, authored CSS/JS, controls, layouts, grids, dialogs, wizards, copy, Apply plans | [UI guide](docs/contribute/ui-design-guide.md) |
+| ui | Templates, CSS/JS, controls, tabs, layouts, grids, dialogs, wizards, copy, Apply plans | [UI guide](docs/contribute/ui-design-guide.md) |
 | api | API operations, route ownership, compatibility | [API authoring](docs/contribute/api-authoring.md), [router architecture](docs/contribute/router-architecture.md) |
 | python | Python source or tests | [Static analysis](docs/contribute/python-static-analysis.md) |
 | powershell | PowerShell source or modules | [PowerShell authoring](docs/contribute/powershell-authoring.md) |

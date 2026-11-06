@@ -126,13 +126,15 @@ def _iso_member(iso: pycdlib.PyCdlib, path: str) -> bytes:
     return stream.getvalue()
 
 
-def _admitted_inputs(iso_path: Path, iso_sha256: str, *, content: bool = False) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _admitted_inputs(iso_path: Path, iso_sha256: str, *, content: bool = False,
+                     helper: bool = False) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Bind base and optional content expectations to the original installer.
 
     Args:
         iso_path: Original development ISO selected by the VM receipt.
         iso_sha256: Independently preserved digest of that ISO.
         content: Also prepare the fixed existing-validator content checks.
+        helper: Include the separately sourced appliance helper identity.
     """
     if not _DIGEST.fullmatch(iso_sha256):
         raise ValueError("installation ISO digest is invalid")
@@ -215,6 +217,16 @@ def _admitted_inputs(iso_path: Path, iso_sha256: str, *, content: bool = False) 
                 "payload_inspector_sha256": inventory["source/scripts/interop/routing_deployment_inspection.py"],
                 "wheel_sha256": wheel_digest,
             }
+            if helper:
+                installer_commit = manifest.get("source_commit")
+                helper_path = "source/scripts/appliance/atlaso-helper"
+                helper_raw = _iso_member(iso, "/atlaso/" + helper_path)
+                if (not isinstance(installer_commit, str) or not _COMMIT.fullmatch(installer_commit)
+                        or _sha256(helper_raw) != inventory.get(helper_path)):
+                    raise ValueError("installation helper differs from admitted media inventory")
+                # Provisioning removes CRLF from the installed executable.
+                expected.update(installer_source_commit=installer_commit,
+                                helper_sha256=_sha256(helper_raw.replace(b"\r\n", b"\n")))
             checks = []
             if content:
                 from scripts.installation.content_inspection import (
@@ -224,7 +236,7 @@ def _admitted_inputs(iso_path: Path, iso_sha256: str, *, content: bool = False) 
 
                 sources = {name: _iso_member(iso, "/atlaso/" + name) for name in SOURCE_MEMBERS}
                 checks = prepare_content_inputs(expected, manifest, sources)
-                installation_iso._verify_pinned(pinned)
+            installation_iso._verify_pinned(pinned)
             return expected, checks
         finally:
             if opened:
@@ -239,6 +251,16 @@ def expected_inputs(iso_path: Path, iso_sha256: str) -> dict[str, Any]:
         iso_sha256: Independently preserved digest of that ISO.
     """
     return _admitted_inputs(iso_path, iso_sha256)[0]
+
+
+def helper_inputs(iso_path: Path, iso_sha256: str) -> dict[str, Any]:
+    """Bind the installed helper and signed wheel to their distinct ISO sources.
+
+    Args:
+        iso_path: Original development ISO from the VM creation receipt.
+        iso_sha256: Independently preserved digest of that original ISO.
+    """
+    return _admitted_inputs(iso_path, iso_sha256, helper=True)[0]
 
 
 def guest_program(

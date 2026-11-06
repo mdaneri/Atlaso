@@ -87,17 +87,64 @@ def test_offline_tdnf_uses_only_explicit_media_configuration() -> None:
     assert 'if [ -z "$ATLASO_INSTALLATION_MEDIA" ]; then\n  run_tdnf "Final Photon OS update verification" update' in source
 
 
-def test_physical_installation_skips_virtual_agent_build_and_staging() -> None:
-    """Do not fetch/build virtual guest agents for bare-metal installation."""
+def test_offline_installation_skips_virtual_agent_build_and_staging() -> None:
+    """Do not fetch/build virtual guest agents during disconnected installation."""
     source = _provisioner()
 
-    assert 'if [ "$ATLASO_GUEST_PLATFORM" = "none" ]; then\n  log_step "skipping virtual guest-agent build' in source
-    assert 'if [ "$ATLASO_GUEST_PLATFORM" = "none" ]; then\n    log_step "staging empty guest-agent inventory' in source
+    assert 'if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then\n  log_step "skipping virtual guest-agent build' in source
+    assert 'log_step "staging empty guest-agent inventory for physical installation"' in source
+    assert '--source "$ATLASO_INSTALLATION_MEDIA/guest-tools"' in source
     assert 'install -d -o root -g root -m 0700 "$GUEST_AGENT_STAGING"' in source
     assert ': >"$GUEST_AGENT_STAGING/SHA256SUMS"' in source
     assert 'ATLASO_POWERCLI_MODULE_SOURCE="$ATLASO_INSTALLATION_MEDIA/powercli"' in source
     assert ' -Mode Validate -ModuleRoot "$ATLASO_POWERCLI_MODULE_SOURCE"' in source
     assert ' -Mode Install' in source
+
+
+def test_offline_guest_agent_paths_never_invoke_builder_or_package_resolution(tmp_path):
+    """Execute both staging passes with hard failures for builder/package commands.
+
+    Args:
+        tmp_path: Receipt-bound destination for isolated staging output.
+    """
+    shell = shutil.which("sh") or "C:/Program Files/Git/usr/bin/sh.exe"
+    if not Path(shell).is_file():
+        pytest.skip("POSIX shell is unavailable")
+    (tmp_path / "first-boot-packages").mkdir()
+    source = _provisioner()
+    function = "stage_guest_agent_packages() {" + source.split("stage_guest_agent_packages() {", 1)[1].split(
+        "\n}\n\nwrite_third_party_notices()", 1,
+    )[0] + "\n}\n"
+    builder = source.split('if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then\n  log_step "skipping virtual guest-agent build', 1)[1]
+    builder = 'if [ -n "$ATLASO_INSTALLATION_MEDIA" ]; then\n  log_step "skipping virtual guest-agent build' + builder.split(
+        "\nstage_guest_agent_packages", 1,
+    )[0] + "\n"
+    prelude = '''set -eu
+ATLASO_INSTALLATION_MEDIA=/authenticated-local-media
+ATLASO_SRC=/authenticated-source
+ATLASO_GUEST_PLATFORM=none
+ATLASO_PRIVILEGED_STATE=privileged
+GUEST_AGENT_STAGING=first-boot-packages
+QEMU_GUEST_AGENT_BUILDER=network-dependent-builder
+QEMU_GUEST_AGENT_OUTPUT=
+QEMU_GUEST_AGENT_RPM=
+log_step() { :; }
+sh() { echo 'Unexpected QEMU builder invocation' >&2; exit 90; }
+run_tdnf() { echo 'Unexpected guest package resolution' >&2; exit 91; }
+rm() { echo 'Unexpected guest staging removal' >&2; exit 92; }
+install() { :; }
+chown() { :; }
+chmod() { :; }
+python3() {
+  [ "$1" = /authenticated-source/scripts/installation/guest_tools.py ] && [ "$2" = stage ] || exit 93
+  printf '%s\n' staged >>stage-calls
+}
+'''
+    subprocess.run([shell], input=prelude + function + builder + "stage_guest_agent_packages\nstage_guest_agent_packages\n",
+                   text=True, check=True, cwd=tmp_path)
+    assert (tmp_path / "first-boot-packages/SHA256SUMS").read_bytes() == b""
+    assert not (tmp_path / "privileged").exists()
+    assert (tmp_path / "stage-calls").read_text().splitlines() == ["staged", "staged"]
 
 
 def test_offline_install_requires_signed_software_without_pip_fallback() -> None:

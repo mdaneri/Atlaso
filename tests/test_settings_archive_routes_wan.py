@@ -3,10 +3,10 @@
 from copy import deepcopy
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from atlaso.app.database import SessionLocal
-from atlaso.app.models import NatRule, Route
+from atlaso.app.models import NatRule, Route, Setting
 from atlaso.app.services.routes_wan import (
     ROUTING_ENABLED_SETTING_KEY,
     WAN_SIMULATION_ENABLED_SETTING_KEY,
@@ -18,6 +18,35 @@ from atlaso.app.services.settings_archive import (
     restore_settings_archive,
 )
 from atlaso.app.services.traffic_publishing import NAT_ENABLED_SETTING_KEY
+
+
+def test_settings_archive_preserves_native_vcf_backup_runtime_state(client):
+    """Keep native backup recovery and reservation state local across restore.
+
+    Args:
+        client: HTTP fixture initializing the archive database.
+    """
+    runtime_values = {
+        "vcf_backup_op:operation-test": "needs_recovery",
+        "vcf_backup_lock:asset-test": "operation-test",
+    }
+    with SessionLocal() as db:
+        db.add_all(Setting(key=key, value=value) for key, value in runtime_values.items())
+        db.commit()
+        archive = export_settings_archive(db, actor="test")
+        archived_keys = {row["key"] for row in archive["data"]["settings"]}
+        assert archived_keys.isdisjoint(runtime_values)
+
+        restore_settings_archive(db, archive)
+        try:
+            retained = {
+                row.key: row.value
+                for row in db.scalars(select(Setting).where(Setting.key.in_(runtime_values)))
+            }
+            assert retained == runtime_values
+        finally:
+            db.execute(delete(Setting).where(Setting.key.in_(runtime_values)))
+            db.commit()
 
 
 def test_nat_ingress_archive_round_trip_and_legacy_review(client):

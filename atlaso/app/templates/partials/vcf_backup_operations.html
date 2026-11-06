@@ -1,0 +1,12 @@
+<section data-vcf-backup-operations-section aria-labelledby="vcf-backup-operations-title">
+  <div class="panel-head compact">
+    <div><h3 id="vcf-backup-operations-title">Backup Operations</h3><p class="muted">Review and reconcile previous backup operations. Opening an operation does not repeat native writes. Column filters apply to loaded operations; use Load more operations to search earlier history.</p><p class="muted">Date and time use your browser time zone. Elapsed is recorded task runtime, including verification and recovery; running values update on Refresh.</p></div>
+    <div class="toolbar">
+      <button class="button secondary" type="button" data-vcf-backup-operations-refresh>Refresh</button>
+    </div>
+  </div>
+  <p class="muted" data-vcf-backup-operations-status role="status" aria-live="polite">Loading recent operations.</p>
+  <div class="hidden" data-vcf-backup-operations-grid aria-label="VCF backup operations"></div>
+  <div data-vcf-backup-operations-fallback><div class="table-scroll"><table class="data-table fallback-table"><thead><tr><th>Date</th><th>Time (local)</th><th>Elapsed</th><th>Operation</th><th>Status</th><th>Components</th><th>Sources</th></tr></thead><tbody><tr><td colspan="7">Enable JavaScript to load backup operations.</td></tr></tbody></table></div></div>
+  <button class="button ghost hidden" type="button" data-vcf-backup-operations-more>Load more operations</button>
+</section>

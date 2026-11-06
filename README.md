@@ -23,6 +23,12 @@ DHCP writers can verify and cancel, and unresolved findings retain identity evid
 NTP client, or the managed NTP/NTS server. Server mode takes precedence over the remembered client choice. Appliance
 Apply and startup enforce mutual exclusion; health requires actual synchronization, not merely listening sockets.
 
+[Settings](docs/operate/appliance-settings.md) separates General, Access & Security, Hardware, and Logging. Hardware
+summarizes the appliance and shows read-only disk and network inventories alongside an explicitly reviewed, audited
+guest-tools maintenance workflow. VMware, Hyper-V, and KVM/QEMU use the provider-compatible integration and verified
+offline payload from the root-only protected guest-tools staging directory. Guest-agent maintenance preserves the
+selected appliance clock authority.
+
 ## What Atlaso brings together
 
 [Managed reverse proxies](docs/services/reverse-proxies.md) are planned under issue #723 for **Traffic Publishing**.
@@ -92,6 +98,8 @@ operations.
 
 For native same-address static-to-DHCP management acceptance, use the
 [same-address lifecycle mode](docs/reference/vmware-workstation-lifecycle-testing.md#same-address-acceptance).
+For ISO appliance address changes, use the explicit
+[trusted-host certificate lab procedure](docs/reference/certificate-address-control.md).
 
 - [Documentation](https://mdaneri.github.io/Atlaso/docs/) — browse the published Atlaso documentation.
 - [Getting started](docs/getting-started/index.md) — choose an appliance path and complete initial configuration.

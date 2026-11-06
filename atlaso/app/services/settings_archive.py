@@ -1792,6 +1792,8 @@ def _clear_desired_state(db: Session) -> None:
                 ~Setting.key.startswith("vcf_cert_op:", autoescape=True),
                 ~Setting.key.startswith("vcf_cert_lock:", autoescape=True),
                 ~Setting.key.startswith("vcf_renewal:", autoescape=True),
+                ~Setting.key.startswith("vcf_backup_op:", autoescape=True),
+                ~Setting.key.startswith("vcf_backup_lock:", autoescape=True),
             )
         db.execute(statement)
     db.flush()
