@@ -102,14 +102,9 @@ If another session starts an Apply after the current one, the monitor finishes t
 
 Components run sequentially. On failure, Atlaso marks the rest **skipped**. Writes are locked while a master task
 is pending or running; read-only pages, task inspection, authentication, and safe cancellation remain available.
-Management-path changes bundle Certificate Authority, Network, Firewall, Appliance Settings, and Public Services after
-all dependencies expand. This recoverable handoff retains the previous addresses, listener, firewall and TLS identity
-until bounded Atlaso loopback, candidate nginx, dynamic-address and host-facing `/openapi.json` checks prove readiness.
-It validates bundled TLS, persists the resolver and source-restricted firewall, then retires the old path. Before the
-Network baseline commits, helper-confirmed DHCP/SLAAC addresses enter observed state, keeping the listener eligible.
-Failure restores all previous state and reports the same actionable failing layer and rollback result on each component.
-Baselines use submitted snapshots, including resolver values; unrelated edits remain pending. Missing known-good Network
-baselines block mutation. Durable state and backups remain until database commit is proven and acknowledged. See the
+Management-path changes bundle **Certificate Authority**, **Network**, **Firewall**, **Appliance Settings**, and
+**Public Services** after dependencies expand. Atlaso keeps the previous access path until readiness checks pass, then
+retires it; failure restores the previous state. See the
 [technical reference](../reference/appliance-apply-technical.md) for the complete handoff and recovery contract.
 
 Safe cancellation lets the running component finish. Every helper or adapter command in that component
@@ -140,11 +135,10 @@ installs its files before **Appliance Settings**. Changing the management HTTP/H
 the protected handoff to recompute Network, Firewall, and Public Services listeners together. If Network has separate
 pending edits, select Network explicitly with Appliance Settings before submitting that change.
 
-Rotating the managed appliance HTTPS certificate also includes the applied **Appliance Settings** and **Public Services**
-consumers, even when no public service is enabled. CA publication runs before management activation. If either consumer
-has pending edits, review and select those edits explicitly; a CA-only submission cannot approve them. Ordinary Settings
-activation verifies the managed CA, the applied address and the exact new served leaf before reporting success. A failed
-or cancelled consumer leaves the previous CA baseline intact so the rotation remains pending for a reviewed retry.
+Rotating the managed appliance HTTPS certificate includes **Appliance Settings** and **Public Services** consumers.
+Select them if they have pending edits; a CA-only submission cannot approve those changes. If activation fails or is
+cancelled, the previous CA baseline remains and the rotation stays pending for a reviewed retry.
+Management-address changes included in the protected Network handoff need no separate Settings selection.
 
 Examples include checking service health, resolving a managed DNS name, reaching the intended listener, or confirming
 installed configuration from the appliance console. Use the service-specific procedure; a green UI status is insufficient.

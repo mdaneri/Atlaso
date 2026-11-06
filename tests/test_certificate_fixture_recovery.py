@@ -270,13 +270,21 @@ def test_recovery_never_saves_forms_and_claims_only_one_apply_across_namespaces(
             return dict(tls)
 
         def request(self, path):
-            """Expose only the normal Apply CSRF control in memory.
+            """Expose the existing interface or read-only Settings page in memory.
 
             Args:
-                path: Fixed existing Physical Interfaces page.
+                path: Existing interface or Settings page requested for readback.
             """
-            assert path == "/ui/management/physical-interfaces"
-            return 200, f'<input name="csrf" value="{TOKEN}">'
+            if path == "/ui/management/physical-interfaces":
+                return 200, f'<input name="csrf" value="{TOKEN}">'
+            assert path == "/ui/management/settings"
+            return 200, (
+                '<form method="post" action="/ui/management/settings">'
+                f'<input name="csrf" value="{TOKEN}">'
+                '<input name="management_https_enabled" value="on">'
+                f'<textarea name="external_dns_servers">{PEER}</textarea>'
+                '</form>'
+            )
 
         def json(self, path, form=None, *, autosave=False):
             """Model the real task/review contract and prohibit every form save.
@@ -311,14 +319,22 @@ def test_recovery_never_saves_forms_and_claims_only_one_apply_across_namespaces(
             return 200, {"active_task": None, "units": rows, "initial_apply_required": True, "pending_count": 1,
                          "requested_units": sorted(init.RECOVERY_ROOTS), "plan_token": TOKEN}
 
-    def public_forms(*args):
+    terminal_choices = []
+
+    def public_forms(client, peer_address, web_terminal_enabled=None):
         """Return current prerequisite facts without any serializable secret controls.
 
         Args:
-            *args: Synthetic client and original private peer address.
+            client: Synthetic authenticated client for prerequisite reads.
+            peer_address: Original private peer address used for baseline checks.
+            web_terminal_enabled: Optional requested fixture setting, absent for legacy recovery.
         """
+        assert client is not None and peer_address == PEER
+        assert web_terminal_enabled is None
+        terminal_choices.append(web_terminal_enabled)
         public = {"dns": {"enabled": False, "upstream_servers": [PEER]},
-                  "settings": {"external_dns_servers": [PEER]},
+                  "settings": {"external_dns_servers": [PEER], "web_terminal_enabled_original": False,
+                               "web_terminal_interfaces_original": []},
                   "ntp": {"enabled": False, "nts_server_enabled": False, "time_source": "ntp_client",
                           "peer_only": not state["drift"]}}
         return {"dns": ("must-not-save", [("csrf", TOKEN)])}, public
@@ -365,6 +381,7 @@ def test_recovery_never_saves_forms_and_claims_only_one_apply_across_namespaces(
             init.initialize(plan, output, secret, execute=True, recovery=True)
     result = json.loads((output / "fixture-recovery-result.json").read_text())
     assert result["success"] is (scenario == "success")
+    assert terminal_choices and all(choice is None for choice in terminal_choices)
     assert Path(reference["path"]).read_bytes() == original_bytes
     assert calls == ([] if scenario == "drift" else ["submit"])
     assert claim.exists() is (scenario != "drift")

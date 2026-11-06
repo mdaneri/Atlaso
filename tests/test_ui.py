@@ -18346,6 +18346,7 @@ def test_ca_live_apply_stages_decrypted_private_keys_without_leaking_job_output(
 
     staged_path = tmp_path / "atlaso-ca.json"
     captured: dict[str, str] = {}
+    settings_calls: list[str] = []
 
     with SessionLocal() as db:
         units = ui.appliance_apply_units(db)
@@ -18370,11 +18371,25 @@ def test_ca_live_apply_stages_decrypted_private_keys_without_leaking_job_output(
         captured["apply_payload"] = Path(config_path).read_text(encoding="utf-8")
         return AdapterResult(command=["atlaso-helper", "ca", "apply", config_path], dry_run=False, stdout="applied")
 
+    def fake_settings_consumer(self, config_path: str):
+        """Model the newly required management listener without touching the host.
+
+        Args:
+            config_path: Task-local staged Settings configuration after CA publication.
+        """
+        assert Path(config_path).parent == tmp_path
+        assert "apply_payload" in captured
+        settings_calls.append(config_path)
+        return AdapterResult(command=["atlaso-helper", "appliance-settings"], dry_run=False, stdout="ready")
+
     monkeypatch.setenv("ATLASO_DRY_RUN_SYSTEM_ADAPTERS", "false")
     get_settings.cache_clear()
     monkeypatch.setattr("atlaso.app.ui.CA_STAGED_CONFIG_PATH", str(staged_path))
+    monkeypatch.setattr("atlaso.app.ui.APPLIANCE_SETTINGS_STAGED_CONFIG_PATH", str(tmp_path / "atlaso-settings.json"))
     monkeypatch.setattr("atlaso.app.ui.SystemAdapter.validate_ca_config", fake_validate_ca_config)
     monkeypatch.setattr("atlaso.app.ui.SystemAdapter.apply_ca_config", fake_apply_ca_config)
+    monkeypatch.setattr("atlaso.app.ui.SystemAdapter.validate_appliance_settings_config", fake_settings_consumer)
+    monkeypatch.setattr("atlaso.app.ui.SystemAdapter.apply_appliance_settings_config", fake_settings_consumer)
     monkeypatch.setattr("atlaso.app.ui.SystemAdapter.port_forward_status", lambda self: AdapterResult(
         command=["atlaso-helper", "nat", "status"], dry_run=False,
         stdout='{"runtime_has_port_forwards":false}',
@@ -18397,6 +18412,7 @@ def test_ca_live_apply_stages_decrypted_private_keys_without_leaking_job_output(
     assert "BEGIN PRIVATE KEY" in captured["apply_payload"]
     assert "[redacted]" not in captured["apply_payload"]
     assert not staged_path.exists()
+    assert len(settings_calls) == 2
 
     with SessionLocal() as db:
         job = db.execute(select(Job).where(Job.type == "appliance-apply")).scalar_one()

@@ -11171,6 +11171,23 @@ def management_handoff_completes_appliance_settings(
     return previous == current
 
 
+def management_address_only_appliance_settings_change(
+    current_preview: str, baseline: dict[str, Any] | None,
+) -> bool:
+    """Identify Settings differences derived entirely from the Network address.
+
+    Args:
+        current_preview: Current redacted Appliance Settings preview.
+        baseline: Last successful Appliance Settings baseline.
+    """
+    previous = json_config_object(str((baseline or {}).get("config_preview") or ""))
+    current = json_config_object(current_preview)
+    if not previous or not current:
+        return False
+    changed_keys = {key for key in previous.keys() | current.keys() if previous.get(key) != current.get(key)}
+    return bool(changed_keys) and changed_keys <= {"management_interface", "management_ip", "management_ip_cidr"}
+
+
 def management_address_label(signature: dict[str, str]) -> str:
     """Return management address label.
 
@@ -19345,6 +19362,17 @@ def appliance_apply_execution_plan(
             if unit_id in unit_map and unit_map[unit_id]["has_baseline"]
             and unit_map[unit_id]["changed"] and unit_id not in selected_ids
         }
+        if (
+            "appliance_settings" in pending_ca_consumers
+            and unit_map.get("network", {}).get("management_handoff_required")
+            and management_address_only_appliance_settings_change(
+                str(unit_map["appliance_settings"].get("config_preview") or ""),
+                apply_baselines.get("appliance_settings"),
+            )
+        ):
+            # The CA-bearing protected handoff below already carries Network's
+            # address into Settings. Independent Settings edits still need consent.
+            pending_ca_consumers.remove("appliance_settings")
         selected_ids.update(pending_ca_consumers if not enforce_consent else pending_ca_consumers & approved_ids)
         if enforce_consent and pending_ca_consumers - approved_ids:
             detail = "Select the changed listener units before applying rotated CA certificates."
