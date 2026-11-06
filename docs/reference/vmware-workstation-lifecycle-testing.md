@@ -97,6 +97,8 @@ that authorized console; the peer seed publishes its public-key marker. SSH requ
 retirement. Public CA bytes are read through the original appliance VM channel, matched again over pinned SSH, and
 used with normal CA and hostname verification for HTTPS. Endpoint scans and trust-on-first-use are not admission.
 Original console receipts and bounded topology observations retain explicit UTC observation times.
+Console admission accepts at most 1 MiB, accommodates ordinary boot output, and emits only the exact public identity
+marker. Oversized files, reparse paths and conflicting public keys remain admission failures.
 The NTP mode has its own original clone admission; it never represents a clone as an ISO installation.
 Before wheel deployment, it waits at most 120 seconds for first boot to publish the complete source database schema,
 then requires the unchanged read-only routing-absence proof. A missing schema never counts as empty routing intent.

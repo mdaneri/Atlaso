@@ -114,10 +114,36 @@ function Get-NtpConsolePublicKey {
     do {
         if (Test-Path -LiteralPath $console.Path -PathType Leaf) {
             $file = Get-Item -LiteralPath $console.Path -Force
-            if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $file.Length -gt 8192) {
-                throw 'NTP public console is replaced or exceeds its public-only bound.'
+            $maximumConsoleBytes = 1MB
+            if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw 'NTP public console is a reparse point.'
             }
-            $bytes = [IO.File]::ReadAllText($console.Path)
+            if ($file.Length -gt $maximumConsoleBytes) {
+                throw 'NTP public console exceeds its 1 MiB bound.'
+            }
+            # The serial console can keep growing while the guest boots. Read at
+            # most one byte beyond the cap and share writes, but never deletion.
+            $buffer = [byte[]]::new($maximumConsoleBytes + 1)
+            $stream = [IO.FileStream]::new(
+                $console.Path,
+                [IO.FileMode]::Open,
+                [IO.FileAccess]::Read,
+                [IO.FileShare]::ReadWrite
+            )
+            try {
+                $bytesRead = 0
+                while ($bytesRead -lt $buffer.Length) {
+                    $readCount = $stream.Read($buffer, $bytesRead, $buffer.Length - $bytesRead)
+                    if ($readCount -eq 0) { break }
+                    $bytesRead += $readCount
+                }
+            } finally {
+                $stream.Dispose()
+            }
+            if ($bytesRead -gt $maximumConsoleBytes) {
+                throw 'NTP public console exceeds its 1 MiB bound.'
+            }
+            $bytes = [Text.Encoding]::UTF8.GetString($buffer, 0, $bytesRead)
             $marker = if ($Role -ceq 'appliance') { 'NTP_APPLIANCE' } else { 'CERTIFICATE_PEER' }
             $keyMatches = [regex]::Matches($bytes, "(?m)^ATLASO_$($marker)_ED25519_HOST_KEY_V1 (ssh-ed25519 [A-Za-z0-9+/]+={0,2})\r?`$")
             if ($keyMatches.Count -gt 0) {
