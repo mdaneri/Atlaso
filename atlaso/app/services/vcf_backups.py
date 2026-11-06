@@ -1,6 +1,7 @@
 """Implement vcf backups service behavior."""
 
-from ipaddress import ip_address
+import re
+from ipaddress import ip_address, ip_network
 
 from atlaso.app.models import User, VcfBackupSettings
 from atlaso.app.services.dnsmasq import split_addresses, split_interfaces
@@ -10,6 +11,43 @@ VCF_BACKUP_REMOTE_DIRECTORY = "/backups"
 VCF_BACKUP_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/vcf-backups/atlaso-vcf-backups-sshd.conf"
 VCF_BACKUP_EFFECTIVE_CONFIG_PATH = "/etc/ssh/sshd_config.d/atlaso-vcf-backups.conf"
 VCF_BACKUP_DEFAULT_USERNAME = "vcf-backup"
+VCF_BACKUP_PROBE_CONFIG_PATH = "/etc/ssh/sshd_config.d/00-atlaso-vcf-backup-probes.conf"
+
+
+def normalize_trusted_backup_sources(value: str) -> str:
+    """Accept explicit single-host IPs only, without wildcard or subnet exemptions.
+
+    Args:
+        value: Operator-entered comma or whitespace separated trusted source hosts.
+    """
+    if not isinstance(value, str) or len(value) > 1024 or "%" in value:
+        raise ValueError("Enter at most sixteen trusted backup source IP addresses.")
+    hosts = set()
+    for item in re.split(r"[\s,]+", value.strip()):
+        if not item:
+            continue
+        try:
+            network = ip_network(item, strict=True)
+            if network.prefixlen != network.max_prefixlen or network.network_address.is_unspecified or network.network_address.is_multicast:
+                raise ValueError
+        except ValueError:
+            raise ValueError("Trusted backup sources must be individual IPv4 or IPv6 hosts (/32 or /128), not networks or wildcards.") from None
+        hosts.add(network.with_prefixlen)
+    if len(hosts) > 16:
+        raise ValueError("Enter at most sixteen trusted backup source IP addresses.")
+    return ",".join(sorted(hosts))
+
+
+def render_vcf_backup_probe_config(settings: VcfBackupSettings) -> str:
+    """Render an optional global SSH penalty exemption for explicitly trusted hosts.
+
+    Args:
+        settings: Saved VCF receiver state admitted by Appliance Apply.
+    """
+    sources = normalize_trusted_backup_sources(settings.trusted_backup_sources or "")
+    if not settings.enabled or not sources:
+        return ""
+    return "# Managed by Atlaso VCF Backups.\nPerSourcePenaltyExemptList " + sources + "\n"
 
 
 def vcf_backup_remote_directory(settings: VcfBackupSettings) -> str:
@@ -43,6 +81,7 @@ def vcf_backup_settings_to_dict(settings: VcfBackupSettings) -> dict:
         "allow_password_auth": settings.allow_password_auth,
         "allow_public_key_auth": settings.allow_public_key_auth,
         "max_sessions": settings.max_sessions,
+        "trusted_backup_sources": settings.trusted_backup_sources or "",
         "config_path": settings.config_path,
         "updated_at": settings.updated_at.isoformat() if settings.updated_at else "",
     }
@@ -127,6 +166,10 @@ def validate_vcf_backup_state(settings: VcfBackupSettings, users: list[User], in
         errors.append("Max sessions must be between 1 and 64.")
     if not settings.allow_password_auth and not settings.allow_public_key_auth:
         errors.append("Enable password authentication, public key authentication, or both.")
+    try:
+        normalize_trusted_backup_sources(settings.trusted_backup_sources or "")
+    except ValueError as error:
+        errors.append(str(error))
     return errors
 
 
@@ -142,6 +185,7 @@ def render_vcf_backup_config(settings: VcfBackupSettings) -> str:
     """
     username = settings.sftp_user.username if settings.sftp_user else "select-a-atlaso-user"
     remote_directory = vcf_backup_remote_directory(settings)
+    trusted_sources = normalize_trusted_backup_sources(settings.trusted_backup_sources or "")
     common_header = [
         "# Managed by Atlaso. Local changes may be overwritten.",
         f"# Atlaso VCF Backups enabled: {'true' if settings.enabled else 'false'}",
@@ -150,6 +194,8 @@ def render_vcf_backup_config(settings: VcfBackupSettings) -> str:
         f"# VCF remote directory: {remote_directory}",
         f"# Listen interfaces: {', '.join(split_interfaces(settings.listen_interface)) or 'none'}",
         f"# Listen addresses: {', '.join(split_addresses(settings.listen_address)) or 'none'}",
+        *([f"# Trusted backup probe sources: {trusted_sources}",
+           "# Trusted sources bypass SSH connection penalties; authentication remains required."] if trusted_sources else []),
         "# The selected listen target is enforced by the Atlaso firewall apply unit.",
         "",
     ]

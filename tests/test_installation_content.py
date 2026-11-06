@@ -147,6 +147,7 @@ def _report(kind, **changes):
             "runtime_rpcbind_metadata_verified": True,
             "runtime_efi_metadata_verified": True,
             "runtime_module_indexes_verified": True,
+            "runtime_network_databases_verified": True,
             "runtime_media_directories_absent": 0,
         },
         "notices": {"notices_sha256": "a" * 64, "notice_inputs_verified": True},
@@ -172,13 +173,30 @@ def _runtime_fixture_helper():
                            INSTALLATION_OPENLDAP_SHA256=content_inspection.PHOTON_OPENLDAP_SHA256,
                            INSTALLATION_SHIM_SHA256=content_inspection.PHOTON_SHIM_SHA256,
                            INSTALLATION_GRUB_EFI_SHA256=content_inspection.PHOTON_GRUB_EFI_SHA256,
-                           INSTALLATION_MODULE_GENERATED_PATHS=frozenset({"/lib/modules/6.12.114-1.ph5/modules.alias"}),
+                           INSTALLATION_MODULE_GENERATED_PATHS=frozenset({"/lib/modules/6.12.115-1.ph5/modules.alias"}),
                            verify_installation_module_indexes=lambda: {"runtime_module_indexes_verified": True},
+                           verify_installation_network_databases=lambda: {"runtime_network_databases_verified": True},
                            verify_installation_metadata=lambda *_checksums: {**fields, "runtime_journal_metadata_verified": True,
                                                                             "runtime_audit_metadata_verified": True,
                                                                             "runtime_openssh_metadata_verified": True,
                                                                             "runtime_openldap_metadata_verified": True,
                                                                             "runtime_rpcbind_metadata_verified": True, "runtime_efi_metadata_verified": True})
+
+
+@pytest.mark.parametrize("proof", [None, 1, "true"])
+def test_rpm_content_requires_strict_network_database_proof(proof):
+    """Refuse a missing native service/protocol lookup proof or a truthy scalar.
+
+    Args:
+        proof: Invalid value replacing the native boolean proof.
+    """
+    expected = _expectation("rpm")
+    report = _report("rpm", runtime_network_databases_verified=proof)
+    with pytest.raises(ValueError, match="native verification is incomplete"):
+        content_inspection.validate_content_report(json.dumps(report).encode(), expected)
+    report.pop("runtime_network_databases_verified")
+    with pytest.raises(ValueError, match="schema"):
+        content_inspection.validate_content_report(json.dumps(report).encode(), expected)
 
 
 def _decode_guest_program(command):
@@ -256,7 +274,7 @@ def _prepare_fixture():
     records.append({"path": "rpms/grub_efi.rpm", "sha256": content_inspection.PHOTON_GRUB_EFI_SHA256})
     rpms.append({"file": "grub_efi.rpm", "name": "grub2-efi-image", "version": "2.12-2.ph5", "architecture": "x86_64",
                  "sha256": content_inspection.PHOTON_GRUB_EFI_SHA256})
-    for name, version in (("linux", "6.12.114-1.ph5"), ("kmod", "34.1-3.ph5"), ("kmod-binary", "34.1-3.ph5")):
+    for name, version in (("linux", "6.12.115-1.ph5"), ("kmod", "34.1-3.ph5"), ("kmod-binary", "34.1-3.ph5")):
         checksum = content_inspection.PHOTON_MODULE_RPMS[name]
         if name == "linux":
             next(item for item in records if item["path"] == "rpms/linux.rpm")["sha256"] = checksum
@@ -451,7 +469,7 @@ def test_prepare_content_inputs_binds_expectations_to_admitted_files():
         "audit": ["4.1.3-3.ph5", "x86_64"],
         "filesystem": ["1.1-11.ph5", "x86_64"],
         "grub2-efi-image": ["2.12-2.ph5", "x86_64"],
-        "linux": ["6.12.114-1.ph5", "x86_64"],
+        "linux": ["6.12.115-1.ph5", "x86_64"],
         "kmod": ["34.1-3.ph5", "x86_64"],
         "kmod-binary": ["34.1-3.ph5", "x86_64"],
         "python3": ["3.14-2.ph5", "x86_64"],
@@ -731,6 +749,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"runtime_openldap_metadata_verified": False},
         {"runtime_efi_metadata_verified": False},
         {"runtime_module_indexes_verified": False},
+        {"runtime_network_databases_verified": False},
         {"runtime_media_directories_absent": True},
         {"runtime_media_directories_absent": 3},
         {"installed_inventory": _inventory({"linux": ["wrong", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"]})},
@@ -739,7 +758,7 @@ def test_validate_content_report_rejects_unbound_or_unknown_fields(kind, defect)
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"], "python3": ["3.14-2.ph5", "x86_64"], "rogue": ["1.0", "noarch"]})},
         {"installed_inventory": _inventory({"linux": ["6.1-1.ph5", "x86_64"]})},
     ],
-    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "runtime-mail-spool", "runtime-journal-metadata", "runtime-audit-metadata", "runtime-rpcbind-metadata", "runtime-openssh-metadata", "runtime-openldap-metadata", "runtime-efi-metadata", "native-module-indexes", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
+    ids=["firmware", "rpm-files", "package-state", "runtime-proc", "runtime-run", "runtime-login-metadata", "runtime-mail-spool", "runtime-journal-metadata", "runtime-audit-metadata", "runtime-rpcbind-metadata", "runtime-openssh-metadata", "runtime-openldap-metadata", "runtime-efi-metadata", "native-module-indexes", "network-databases", "boolean-missing-directories", "too-many-missing-directories", "changed-identity", "wrong-architecture", "malformed-identity", "extra-package", "missing-package"],
 )
 def test_validate_content_report_rejects_unverified_rpm_closure(changes):
     """The installed RPM identities must satisfy the signed allowed closure.
@@ -906,7 +925,7 @@ def test_guest_content_program_uses_bounded_ascii_console_command(kind, tmp_path
 
     assert command.isascii()
     assert len(command) <= 3500
-    assert "/opt/atlaso/.venv/bin/python -B -I -c 'exec(" in command
+    assert "/opt/atlaso/.venv/bin/python -B -I -c 'import base64,zlib;exec(zlib.decompress(base64." in command
     program = _decode_guest_program(command)
     argv = shlex.split(command)
     assert argv[:4] == ["/opt/atlaso/.venv/bin/python", "-B", "-I", "-c"]
@@ -933,6 +952,23 @@ def test_guest_content_program_uses_bounded_ascii_console_command(kind, tmp_path
         ]
         assert "%{NAME}\\t%{VERSION}-%{RELEASE}\\t%{ARCH}\\n" in constants
         assert "\t" in constants
+
+
+def test_rpm_console_transport_fits_for_high_entropy_hash_bindings():
+    """Keep the native RPM command within its limit for changing signed hashes."""
+    for seed in range(33):
+        expected = _expectation("rpm")
+        expected["iso_sha256"] = hashlib.sha256(f"iso-{seed}".encode()).hexdigest()
+        expected["package_state_sha256"] = hashlib.sha256(f"helper-{seed}".encode()).hexdigest()
+        command = content_inspection.guest_content_program(expected)
+
+        assert command.isascii()
+        assert len(command) <= 3500
+        assert shlex.split(command)[1:4] == ["-B", "-I", "-c"]
+        program = _decode_guest_program(command)
+        assert expected["iso_sha256"] in program
+        assert expected["package_state_sha256"] in program
+        compile(program, "<rpm-console-transport>", "exec")
 
 
 @pytest.mark.parametrize(
@@ -1242,23 +1278,23 @@ def test_generated_rpm_program_reports_only_fixed_phase_on_failure(
         (
             b"linux\n",
             "linux",
-            "/boot/linux-6.12.114-1.ph5.cfg",
+            "/boot/linux-6.12.115-1.ph5.cfg",
             stat.S_IFREG | 0o644,
             "system-rpm-files-package-" + hashlib.sha256(b"linux").hexdigest()
-            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/boot/linux-6.12.114-1.ph5.cfg')}-f0644-v.......T.",
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/boot/linux-6.12.115-1.ph5.cfg')}-f0644-v.......T.",
         ),
         (
             b"linux\n", "linux", "/boot/linux-unknown.cfg", None,
             "system-rpm-files-package-" + hashlib.sha256(b"linux").hexdigest(),
         ),
         (
-            b"linux\n", "linux", "/lib/modules/6.12.114-1.ph5/modules.alias",
+            b"linux\n", "linux", "/lib/modules/6.12.115-1.ph5/modules.alias",
             stat.S_IFREG | 0o644,
             "system-rpm-files-package-" + hashlib.sha256(b"linux").hexdigest()
-            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/lib/modules/6.12.114-1.ph5/modules.alias')}-f0644-v.......T.",
+            + f"-entry{content_inspection.RPM_DIAGNOSTIC_PATHS.index('/lib/modules/6.12.115-1.ph5/modules.alias')}-f0644-v.......T.",
         ),
         (
-            b"linux\n", "linux", "/lib/modules/6.12.114-1.ph5/private-state", None,
+            b"linux\n", "linux", "/lib/modules/6.12.115-1.ph5/private-state", None,
             "system-rpm-files-package-" + hashlib.sha256(b"linux").hexdigest(),
         ),
     ],
@@ -1408,15 +1444,16 @@ def test_generated_rpm_file_diagnostic_keeps_owner_candidates_private(
         ("missing /var/log/journal\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         (".M....G.. /var/log/journal\n", 1, b"private-error", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         ("", 0, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
-        ("S.5....T. /lib/modules/6.12.114-1.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
-        ("S.5....T. /lib/modules/6.12.114-1.ph5/modules.alias\n", 1, b"", "modulefail", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
-        ("S.5....T. /lib/modules/6.12.114-1.ph5/modules.alias\n", 1, b"", "modulerace", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
-        (".M....... /lib/modules/6.12.114-1.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
-        ("......G.. /lib/modules/6.12.114-1.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
-        ("S.5....T. /lib/modules/6.12.114-1.ph5/kernel/private.ko.xz\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
-        ("missing /lib/modules/6.12.114-1.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
-        ("S.5....T. /lib/modules/6.12.114-1.ph5/modules.alias\n", 1, b"private-error", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
-        ("S.5....T. /lib/modules/6.12.114-1.ph5/modules.alias\n", 2, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("S.5....T. /lib/modules/6.12.115-1.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
+        ("S.5....T. /lib/modules/6.12.115-1.ph5/modules.alias\n", 1, b"", "modulefail", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        ("S.5....T. /lib/modules/6.12.115-1.ph5/modules.alias\n", 1, b"", "modulerace", stat.S_IFDIR | 0o555, 0, 0, "runtime"),
+        ("", 0, b"", "networkdbfail", stat.S_IFDIR | 0o555, 0, 0, "network-databases"),
+        (".M....... /lib/modules/6.12.115-1.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("......G.. /lib/modules/6.12.115-1.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("S.5....T. /lib/modules/6.12.115-1.ph5/kernel/private.ko.xz\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("missing /lib/modules/6.12.115-1.ph5/modules.alias\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("S.5....T. /lib/modules/6.12.115-1.ph5/modules.alias\n", 1, b"private-error", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
+        ("S.5....T. /lib/modules/6.12.115-1.ph5/modules.alias\n", 2, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         ("SM5...GT. /var/log/btmp\nSM5...GT. /var/log/wtmp\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, None),
         ("SM5..UGT. /var/log/btmp\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
         ("SM5...GTP /var/log/btmp\n", 1, b"", "proc", stat.S_IFDIR | 0o555, 0, 0, "files"),
@@ -1658,6 +1695,16 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         return {"runtime_module_indexes_verified": True}
 
     monkeypatch.setattr(helper, "verify_installation_module_indexes", verify_modules)
+    network_database_checks = []
+
+    def verify_network_databases():
+        """Retain the final native database proof inside its fixed public phase."""
+        network_database_checks.append(firmware_checked)
+        if mount == "networkdbfail":
+            raise ValueError("private network database drift")
+        return {"runtime_network_databases_verified": True}
+
+    monkeypatch.setattr(helper, "verify_installation_network_databases", verify_network_databases)
     monkeypatch.setattr(helper, "verify_installation_rpcbind_metadata", verify_rpc)
     monkeypatch.setattr(helper, "verify_installation_audit_metadata", verify_audit)
     monkeypatch.setattr(helper, "verify_installation_journal_metadata", verify_journal)
@@ -1682,6 +1729,8 @@ def test_rpm_runtime_proc_check_retains_package_failures(
         assert report["runtime_journal_metadata_verified"] is True
         assert report["runtime_efi_metadata_verified"] is True
         assert report["runtime_module_indexes_verified"] is True
+        assert report["runtime_network_databases_verified"] is True
+        assert network_database_checks == [True]
         assert module_checks == [False, True]
         assert len(efi_checks) == 2
         assert len(journal_checks) == 2

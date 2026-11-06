@@ -507,6 +507,59 @@ For diagnostics, capture and retain:
 At final import time or release troubleshooting, use PowerShell 7.4+ (`pwsh`) and `Expand-Archive` for zip inspection;
 raw extraction and import paths may need more temporary space than the downloaded ZIP size.
 
+## Operator-managed guest tools
+
+After installation, open **Settings → Hardware** to inspect detected platform and capabilities, then check the matching
+guest integration. Checks never change the appliance. An administrator must review the exact package, service, clock
+safety, and reboot plan and explicitly submit installation or repair. The operation uses the serialized Appliance
+Update maintenance task and records progress and its final verified service state in Tasks. Concurrent package
+maintenance is rejected with retry guidance.
+
+Appliance image builds and new ISO installations retain complete verified offline RPM closures for VMware `open-vm-tools`,
+Photon Hyper-V
+integration, and the Atlaso-built QEMU guest agent plus its verified dependencies under the root-only protected
+`/var/lib/atlaso-privileged/guest-tools` directory. Its `compatibility.json` binds the closure to Photon 5.0 and x86-64;
+Atlaso checks the exact `SHA256SUMS` inventory and Photon RPM signatures before use. The provider is selected
+from live virtualization and DMI evidence, including ISO-installed virtual machines. Settings does not invoke the
+one-shot first-boot selector: that service publishes machine identity and temporary access, removes foreign providers,
+and securely erases its own temporary package cache.
+
+New ISO preparation captures the prebuilt closures from the admitted online image build and includes every byte in
+the authenticated media inventory. Offline installation copies them into protected appliance storage, independently
+of the first-boot inventory, without compiling QEMU, resolving dependencies, installing RPMs, or enabling agents.
+The retained payload remains available for later administrator-approved installation and repair in Hardware.
+An older appliance may also have no compatible verified payload. The check reports this prerequisite and a
+supported-source recovery path; it does not
+silently use configured repositories, arbitrary package uploads, or an unverified download. The ordinary signed
+software update does not retroactively add these image-built RPM closures. Use an appliance image with the required
+closure or the supported verified package-source preparation when available.
+
+Provider support is intentionally bounded:
+
+- **VMware:** `open-vm-tools` and `vmtoolsd.service` provide guest integration. Clock synchronization is governed by
+  the existing Appliance time source in [NTP and NTS](../services/ntp.md#appliance-clock-source); it is never enabled
+  as a side effect of installing or starting the tools.
+- **Hyper-V:** the supported Linux `hyper-v` package supplies KVP and VSS integration services. Atlaso disables the
+  legacy `hv_fcopy_daemon`; its file-copy transport is unavailable in the supported Linux 6.12 kernel. Time
+  synchronization is inhibited on only the Hyper-V time-sync VMBus device when NTP owns the appliance clock. A
+  missing KVP/VSS kernel channel blocks installation with a reason instead of weakening clock authority. Keep the
+  host Time Synchronization integration disabled when NTP owns the clock; enable Data Exchange and backup integration
+  for the KVP/VSS capabilities. Atlaso's persistent guest guard isolates only the time-sync class.
+- **KVM/QEMU and compatible Proxmox:** the offline closure includes Atlaso's pinned QEMU guest-agent RPM because
+  Photon disables the agent in its general emulator package. The `qemu-guest-agent.service` communicates over the
+  standard virtio guest-agent channel exposed by the host. Atlaso blocks the agent's `guest-set-time` RPC so the agent
+  cannot override the appliance clock.
+- **Bare metal:** guest tools are optional and are not required for ordinary Atlaso operation. Unknown or contradictory
+  provider evidence remains unknown/unsupported and cannot authorize a provider install.
+
+A guest-local **Healthy** result verifies the observed package, service, and guest channel. It does not prove every
+hypervisor-side capability or replace native validation on each supported hypervisor.
+
+The operator action never removes or enables a competing provider stack automatically. Resolve conflicting installed
+providers with the maintainer through their supported owner and check again; Hardware does not offer arbitrary package
+removal. Interrupted or partial package work is
+reported as such; repeat the check before retrying.
+
 ## First boot guest-agent selection
 
 Atlaso retains its checksum-pinned QEMU guest-agent build. Photon 5.0's published `qemu` build disables the guest

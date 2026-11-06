@@ -511,13 +511,45 @@ Figure: Services in the verified clean-appliance responsive state.
 
 Route: `/ui/management/settings`
 
-![Atlaso Settings page in the clean-appliance desktop viewport.](../assets/screenshots/settings-clean-desktop.webp)
+![Atlaso Settings Access & Security tab in the desktop layout.](../assets/screenshots/settings-access-security-desktop.webp)
 
-Figure: Settings in the verified clean-appliance desktop state.
+Figure: Access & Security tab in the dedicated documentation appliance at the desktop viewport.
 
-![Atlaso Settings page in the clean-appliance responsive viewport.](../assets/screenshots/settings-clean-responsive.webp)
+![Atlaso Settings Access & Security tab in the responsive layout.](../assets/screenshots/settings-access-security-responsive.webp)
 
-Figure: Settings in the verified clean-appliance responsive state.
+Figure: Access & Security tab in the dedicated documentation appliance at the responsive viewport.
+
+![Atlaso Settings General tab in the desktop layout.](../assets/screenshots/settings-clean-desktop.webp)
+
+Figure: General tab in the dedicated documentation appliance at the desktop viewport.
+
+![Atlaso Settings General tab in the responsive layout.](../assets/screenshots/settings-clean-responsive.webp)
+
+Figure: General tab in the dedicated documentation appliance at the responsive viewport.
+
+![Atlaso Hardware guest-tools details showing VMware Tools 13.1.0 installed and available, with a healthy protected clock.](../assets/screenshots/settings-guest-tools-ready-desktop.webp)
+
+Figure: VMware Tools are installed and healthy; maintenance is disabled because no package or service change is needed.
+
+![Atlaso Hardware tab showing detected VMware hardware, installed and available tool versions, and healthy clock protection in the desktop layout.](../assets/screenshots/settings-hardware-desktop.webp)
+
+Figure: Hardware summary with healthy VMware Tools and a protected synchronized NTP clock in the desktop layout.
+
+![Atlaso Hardware inventories showing four disks and two network adapters with their observed details.](../assets/screenshots/settings-hardware-inventories-desktop.webp)
+
+Figure: Read-only inventories show the documentation appliance disks and network adapters.
+
+![Atlaso Hardware tab showing detected VMware hardware, installed and available tool versions, and healthy clock protection in the responsive layout.](../assets/screenshots/settings-hardware-responsive.webp)
+
+Figure: Hardware summary with healthy VMware Tools and a protected synchronized NTP clock in the responsive layout.
+
+![Atlaso Settings Logging tab in the desktop layout.](../assets/screenshots/settings-logging-desktop.webp)
+
+Figure: Logging tab in the dedicated documentation appliance at the desktop viewport.
+
+![Atlaso Settings Logging tab in the responsive layout.](../assets/screenshots/settings-logging-responsive.webp)
+
+Figure: Logging tab in the dedicated documentation appliance at the responsive viewport.
 
 ![Atlaso Settings page with valid pending appliance identity changes.](../assets/screenshots/settings-pending-desktop.webp)
 

@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import socket
 import stat
 import subprocess
 from collections.abc import Callable, Sequence
@@ -40,10 +41,10 @@ INSTALLATION_OPENLDAP_UNIT_PATH = Path("/usr/lib/systemd/system/slapd.service")
 INSTALLATION_OPENLDAP_UNIT_SHA256 = "203aafa5cb6c16defe0fae0100bc89b9cbf65d666e7d73a9b510f8fb8b94c8cf"
 INSTALLATION_SHIM_SHA256 = "e41e6109d7be89ae83da63ef8021ef9a0e053ecd4fe1f47ae73dd79270d688c7"
 INSTALLATION_GRUB_EFI_SHA256 = "516e63a3c609abecf4a4bf3ef2661d4f1bed26729a612f73e0bfcb530727e91f"
-INSTALLATION_LINUX_SHA256 = "e9fce63202ba573679b5c450a320d7cb6ad1d38ccb5d64ceceb917616a9a7191"
+INSTALLATION_LINUX_SHA256 = "20887136c79b2327361d3e6a11cf4d4c983437acc31c740b592c11f4af396cdd"
 INSTALLATION_KMOD_SHA256 = "b7614a76f7a17b832e2158fe90413cf2af719b1d1e9d85bfae7195e4905a7850"
 INSTALLATION_KMOD_BINARY_SHA256 = "ee872a0ddff939b69e87beec32090dc98d1882e9028f4bd5729b9a2b858aaaeb"
-INSTALLATION_MODULE_ROOT = Path("/usr/lib/modules/6.12.114-1.ph5")
+INSTALLATION_MODULE_ROOT = Path("/usr/lib/modules/6.12.115-1.ph5")
 INSTALLATION_MODULE_RUN_ROOT = Path("/run")
 INSTALLATION_KMOD_FILES = (
     ("/usr/bin/kmod", 171272, "954714d5862c7081a266babeac7d5dd859e7b0812224dad9a7b81957bf93c629"),
@@ -52,9 +53,9 @@ INSTALLATION_KMOD_FILES = (
 # Canonical original RPM header records across the complete admitted closure.
 # Directory sizes normalize to zero; filesystem allocation sizes are not inputs.
 INSTALLATION_MODULE_INPUT_COUNT = 1235
-INSTALLATION_MODULE_INPUT_BYTES = 37958620
-INSTALLATION_MODULE_INPUT_SHA256 = "27c70106fd4ae16b0de330b4200254c545f4991559815e64fdecf957bf6ca927"
-INSTALLATION_MODULE_NAMESPACE_SHA256 = "4ac74c113a8e332683882d31856cc2b4799eb6f1f20f40fc45a23b52398b3ded"
+INSTALLATION_MODULE_INPUT_BYTES = 37960648
+INSTALLATION_MODULE_INPUT_SHA256 = "638aa49e49f3d2a8931230b4659c9e12e867695c30eb94a347e8a1bff46efea6"
+INSTALLATION_MODULE_NAMESPACE_SHA256 = "1096e6bdfd25b7cbf8647594c1259f0924ec7c55af063b084cbedb612e329204"
 INSTALLATION_MODULE_GENERATED = frozenset({
     "modules.dep", "modules.dep.bin", "modules.alias", "modules.alias.bin",
     "modules.softdep", "modules.weakdep", "modules.symbols", "modules.symbols.bin",
@@ -65,11 +66,13 @@ _INSTALLATION_STABLE_FIELDS = (
     "st_size", "st_mtime_ns", "st_ctime_ns",
 )
 INSTALLATION_MODULE_GENERATED_PATHS = frozenset(
-    "/lib/modules/6.12.114-1.ph5/" + name for name in INSTALLATION_MODULE_GENERATED
+    "/lib/modules/6.12.115-1.ph5/" + name for name in INSTALLATION_MODULE_GENERATED
 )
 INSTALLATION_LAYOUT_HELPER_PATH = Path(__file__).resolve().parents[3] / "scripts/installation/layout.py"
 INSTALLATION_LAYOUT_HELPER_SHA256 = "1feb571697f3a1e592e3839bc303cd4c20cd8d40f7acd4e3d7df93449de99608"
 INSTALLATION_EFI_PATH = Path("/boot/efi")
+INSTALLATION_NETWORK_DATABASE_MAX_BYTES = 1024 * 1024
+INSTALLATION_NETWORK_DATABASES = (Path("/etc/services"), Path("/etc/protocols"))
 # Public sizes, hashes and modification times from the admitted shim/GRUB RPMs.
 INSTALLATION_EFI_FILES = (
     ("EFI/BOOT/bootx64.efi", 1018992, "0b9a7492dcb168b00033d4ccc1edda816c9da3822fcb7e901cce72a017cf08fa", 1781509843),
@@ -1076,6 +1079,63 @@ def verify_installation_efi_metadata(shim_sha256: str, grub_efi_sha256: str) -> 
                 or metadata.st_mtime_ns != (modified // 2 * 2) * 1_000_000_000):
             raise ValueError("installation EFI bytes or native timestamp differ")
     return {"runtime_efi_metadata_verified": True}
+
+
+def verify_installation_network_databases(
+    *,
+    image_root: Path = Path("/"),
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> dict[str, bool]:
+    """Verify the signed Photon service and protocol databases used by libc lookups.
+
+    Args:
+        image_root: Root beneath which the bounded native database files are read.
+        runner: Subprocess-compatible command runner for read-only RPM queries.
+    """
+    for path in INSTALLATION_NETWORK_DATABASES:
+        owner = runner(
+            ["rpm", "--noplugins", "-qf", "--qf", "%{NAME}\\n", "--", str(path)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if owner.returncode != 0 or owner.stdout.splitlines() != ["iana-etc"] or owner.stderr:
+            raise ValueError("installation network database RPM owner differs")
+
+    # No --noconfig: RPM must verify the installed %config files as well as
+    # every other file in the admitted iana-etc package.
+    def verify_iana_etc() -> None:
+        """Verify the complete installed package without executing scripts."""
+        verified = runner(
+            ["rpm", "--noplugins", "--noscripts", "--nodeps", "-V", "iana-etc"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if verified.returncode != 0 or verified.stdout or verified.stderr:
+            raise ValueError("installation network database RPM verification differs")
+
+    verify_iana_etc()
+
+    for path in INSTALLATION_NETWORK_DATABASES:
+        _read_installation_tmpfiles(
+            image_root / path.relative_to("/"),
+            0o644,
+            INSTALLATION_NETWORK_DATABASE_MAX_BYTES,
+            "network database",
+        )
+
+    try:
+        if socket.getservbyname("ntp", "udp") != 123:
+            raise ValueError("installation NTP service lookup differs")
+        if socket.getprotobyname("udp") != 17 or socket.getprotobyname("tcp") != 6:
+            raise ValueError("installation IP protocol lookup differs")
+    except OSError as exc:
+        raise ValueError("installation network database lookup failed") from exc
+    verify_iana_etc()
+    return {"runtime_network_databases_verified": True}
 
 
 def verify_installation_metadata(

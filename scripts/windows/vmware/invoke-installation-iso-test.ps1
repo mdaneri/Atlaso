@@ -37,6 +37,10 @@ VncCredential submits one SDK account value at an operator-observed concealed in
 Original VM creation receipt for LoginInstalled.
 .PARAMETER OriginalReceiptSha256
 Independently preserved original receipt digest.
+.PARAMETER ContinuationReceiptPath
+Immutable successor authorization for an existing LoginInstalled VM.
+.PARAMETER ContinuationReceiptSha256
+Independently preserved continuation receipt digest.
 .PARAMETER BaselineReceiptPath
 Original disk-baseline receipt for LoginInstalled.
 .PARAMETER BaselineReceiptSha256
@@ -93,6 +97,8 @@ param(
     [ValidateSet('Probe', 'RecoverOldLabelReboot', 'OldLabelReboot', 'MultiProbe', 'Cancel', 'CancelReview', 'Insufficient', 'Auto', 'AutoReboot', 'OldLabelInterrupted', 'CustomCancel', 'CustomAliasProbe', 'CustomReboot', 'CustomMultiReboot', 'BootInstalled', 'LoginInstalled', 'VncCredential')][string]$Scenario = 'Probe',
     [string]$OriginalReceiptPath = '',
     [string]$OriginalReceiptSha256 = '',
+    [string]$ContinuationReceiptPath = '',
+    [string]$ContinuationReceiptSha256 = '',
     [string]$BaselineReceiptPath = '',
     [string]$BaselineReceiptSha256 = '',
     [string]$BootReceiptPath = '',
@@ -135,6 +141,7 @@ if (-not $Child) {
         '-ValidationRootReceiptPath', $ValidationRootReceiptPath, '-ValidationRootReceiptSha256', $ValidationRootReceiptSha256,
         '-TimeoutSeconds', [string]$TimeoutSeconds,
         '-OriginalReceiptPath', $OriginalReceiptPath, '-OriginalReceiptSha256', $OriginalReceiptSha256,
+        '-ContinuationReceiptPath', $ContinuationReceiptPath, '-ContinuationReceiptSha256', $ContinuationReceiptSha256,
         '-BaselineReceiptPath', $BaselineReceiptPath, '-BaselineReceiptSha256', $BaselineReceiptSha256,
         '-BootReceiptPath', $BootReceiptPath, '-BootReceiptSha256', $BootReceiptSha256,
         '-InterruptionReceiptPath', $InterruptionReceiptPath, '-InterruptionReceiptSha256', $InterruptionReceiptSha256,
@@ -1500,7 +1507,10 @@ function Invoke-InstallationVncCredential {
         # only the explicitly required optional client packages differ.
         $runtime = Protect-AtlasoCertificatePythonRuntime -PythonPath $Options.PythonPath `
             -EvidenceRoot ([IO.Path]::GetDirectoryName($venv)) -RequiredModules @('vncdotool', 'twisted', 'PIL')
-        Assert-AtlasoCertificatePythonImportPaths -Runtime $runtime
+        $importPaths = Invoke-AtlasoBoundedProcess -FilePath $runtime.Executable `
+            -ArgumentList @('-I', '-S', '-B', '-c', 'import json,sys;print(json.dumps(sys.path))') `
+            -TimeoutSeconds 15 -Action 'Certificate Python import-path verification'
+        Assert-AtlasoCertificatePythonImportPaths -Runtime $runtime -ImportPathJson $importPaths
         $null = Assert-AtlasoSourceSnapshot -Root (Join-Path $venv 'Lib/site-packages') `
             -ExpectedSha256 $Options.RuntimeSha256 -ExpectedFileCount $Options.RuntimeFileCount
         $frameDirectoryPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath(
@@ -1585,6 +1595,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not admit the installer console source b
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
 $vmName = (New-AtlasoVmwareTestIdentity -PullRequestNumber $PullRequestNumber -Purpose installation-iso -CollisionSuffix $CollisionSuffix).Name
 $sourceContext = New-AtlasoTestVmOwnershipContext -Worktree $worktree -OutputDirectory $OutputDirectory `
+    -OwnershipReceiptPath $OriginalReceiptPath -OwnershipReceiptSha256 $OriginalReceiptSha256 `
+    -ContinuationReceiptPath $ContinuationReceiptPath -ContinuationReceiptSha256 $ContinuationReceiptSha256 `
     -VmxPath (Join-Path $OutputDirectory "$vmName.vmx") -Name $vmName -SourceCommit $commit `
     -SourceBranch $branch -PullRequestNumber $PullRequestNumber `
     -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256
@@ -1620,6 +1632,9 @@ $knownProvisioningStages = @(Get-InstallationProvisioningStages -Text (Get-Conte
 $credentials = $null
 $creationFixture = Get-AtlasoInstallationFixture -FixtureProfile $(if ($Scenario -in @('MultiProbe', 'CustomMultiReboot')) { 'MultiDisk' } elseif ($Scenario -in @('OldLabelReboot', 'OldLabelInterrupted', 'RecoverOldLabelReboot')) { 'OldSystemLabel' } else { 'SingleDisk' })
 $resumeSelectors = @{}
+if (($ContinuationReceiptPath -or $ContinuationReceiptSha256) -and $Scenario -ne 'LoginInstalled') {
+    throw 'Continuation permits only retained LoginInstalled validation.'
+}
 if ($Scenario -in @('LoginInstalled', 'BootInstalled', 'RecoverOldLabelReboot')) {
     $requiredReceiptPairs = @(
         @($OriginalReceiptPath, $OriginalReceiptSha256),
@@ -1636,6 +1651,10 @@ if ($Scenario -in @('LoginInstalled', 'BootInstalled', 'RecoverOldLabelReboot'))
     $resumeSelectors = @{
         OriginalReceiptPath = $OriginalReceiptPath; OriginalReceiptSha256 = $OriginalReceiptSha256
         BaselineReceiptPath = $BaselineReceiptPath; BaselineReceiptSha256 = $BaselineReceiptSha256
+    }
+    if ($ContinuationReceiptPath -or $ContinuationReceiptSha256) {
+        $resumeSelectors.ContinuationReceiptPath = $ContinuationReceiptPath
+        $resumeSelectors.ContinuationReceiptSha256 = $ContinuationReceiptSha256
     }
     if ($Scenario -eq 'LoginInstalled') {
         $resumeSelectors.BootReceiptPath = $BootReceiptPath
@@ -1802,6 +1821,7 @@ try {
         $networkAdmission = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
             -Mode AdmitNetwork -NetworkVmnet $InspectionVmnet -Worktree $worktree `
+            -ContinuationReceiptPath $ContinuationReceiptPath -ContinuationReceiptSha256 $ContinuationReceiptSha256 `
             -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix `
             -OriginalReceiptPath $vm.ReceiptPath -OriginalReceiptSha256 $vm.ReceiptSha256 `
             -BaselineReceiptPath $vm.BaselineReceiptPath -BaselineReceiptSha256 $vm.BaselineReceiptSha256 `
@@ -1880,6 +1900,7 @@ try {
         $verification = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
             -Mode Verify -Worktree $worktree `
+            -ContinuationReceiptPath $ContinuationReceiptPath -ContinuationReceiptSha256 $ContinuationReceiptSha256 `
             -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix `
             -OriginalReceiptPath $vm.ReceiptPath -OriginalReceiptSha256 $vm.ReceiptSha256 `
             -BaselineReceiptPath $vm.BaselineReceiptPath -BaselineReceiptSha256 $vm.BaselineReceiptSha256 `
@@ -2014,6 +2035,7 @@ try {
         $verification = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
             -Mode Verify -Worktree $worktree `
+            -ContinuationReceiptPath $ContinuationReceiptPath -ContinuationReceiptSha256 $ContinuationReceiptSha256 `
             -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix `
             -OriginalReceiptPath $vm.ReceiptPath -OriginalReceiptSha256 $vm.ReceiptSha256 `
             -BaselineReceiptPath $vm.BaselineReceiptPath -BaselineReceiptSha256 $vm.BaselineReceiptSha256 `

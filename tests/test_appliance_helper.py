@@ -16204,6 +16204,8 @@ def test_vcf_backups_helper_apply_installs_sshd_dropin_and_storage(monkeypatch, 
     monkeypatch.setattr(helper, "VCF_BACKUPS_CONFIG_DIR", config_dir)
     monkeypatch.setattr(helper, "VCF_BACKUPS_CONFIG_PATH", config_dir / "atlaso-vcf-backups.conf")
     monkeypatch.setattr(helper, "VCF_BACKUPS_AUTHORIZED_KEYS_DIR", atlaso_ssh_dir)
+    monkeypatch.setattr(helper, "_validate_sshd_dropin_candidates", lambda candidates: subprocess.CompletedProcess(["sshd", "-t"], 0, "", ""))
+    monkeypatch.setattr(helper, "_fsync_directory", lambda path: None)
     def fake_path(value):
         """Return fake path.
 
@@ -16234,6 +16236,108 @@ def test_vcf_backups_helper_apply_installs_sshd_dropin_and_storage(monkeypatch, 
     assert ["systemctl", "restart", "sshd"] in commands
 
 
+@pytest.mark.parametrize("sources", ["192.168.1.0/24", "*", "192.0.2.1/32,192.0.2.1/32", "192.0.2.1/32\nPerSourcePenalties no"])
+def test_vcf_backups_helper_refuses_broad_or_injected_probe_exemptions(tmp_path, sources):
+    """The privileged boundary independently rejects expanded exemption scope.
+
+    Args:
+        tmp_path: Isolated staged configuration directory.
+        sources: Non-canonical or injected trusted-host metadata.
+    """
+    helper = load_helper_module()
+    staged = tmp_path / "vcf.conf"
+    staged.write_text(vcf_backups_config_text() + "\n# Trusted backup probe sources: " + sources + "\n")
+    assert helper._vcf_backups_config_errors(staged)
+
+
+@pytest.mark.parametrize("failure", ["syntax", "effective-policy", "restart"])
+def test_vcf_backups_helper_restores_both_files_after_probe_apply_failure(monkeypatch, tmp_path, failure):
+    """Keep the last working receiver and security policy after a failed Apply.
+
+    Args:
+        monkeypatch: Fixture replacing native SSH operations.
+        tmp_path: Isolated helper-owned installed configuration tree.
+        failure: Native failure at syntax, effective-policy, or restart boundary.
+    """
+    helper = load_helper_module()
+    main = tmp_path / "atlaso-vcf-backups.conf"
+    probe = tmp_path / "00-atlaso-vcf-backup-probes.conf"
+    old_main = "# Managed by Atlaso.\nMatch User backup-old\n"
+    old_probe = "# Managed by Atlaso VCF Backups.\nPerSourcePenaltyExemptList 192.0.2.10/32\n"
+    main.write_text(old_main)
+    probe.write_text(old_probe)
+    monkeypatch.setattr(helper, "VCF_BACKUPS_CONFIG_PATH", main)
+    monkeypatch.setattr(helper, "_fsync_directory", lambda path: None)
+    validations = iter([1 if failure == "syntax" else 0, 0])
+    monkeypatch.setattr(helper, "_validate_sshd_config", lambda: subprocess.CompletedProcess(["sshd", "-t"], next(validations), "", ""))
+    restarts = []
+
+    def run(command):
+        """Model an overridden exemption or failing first restart.
+
+        Args:
+            command: Native SSH check or restart operation.
+        """
+        if command[-1] == "-T":
+            host = "192.0.2.99/32" if failure == "effective-policy" else "192.0.2.41/32"
+            return subprocess.CompletedProcess(command, 0, "persourcepenaltyexemptlist " + host + "\n", "")
+        restarts.append(command)
+        return subprocess.CompletedProcess(command, 1 if failure == "restart" and len(restarts) == 1 else 0, "", "")
+
+    monkeypatch.setattr(helper, "_run", run)
+    result = helper._apply_vcf_backups_dropins({main: "# Managed by Atlaso.\nMatch User backup-new\n",
+        probe: "# Managed by Atlaso VCF Backups.\nPerSourcePenaltyExemptList 192.0.2.41/32\n"})
+    assert result != 0
+    assert main.read_text() == old_main
+    assert probe.read_text() == old_probe
+    assert restarts[-1] == ["systemctl", "restart", "sshd"]
+
+
+def test_vcf_backups_status_is_bounded_read_only_and_rejects_arguments(monkeypatch, capsys):
+    """Permit only the effective exemption observation from the privileged boundary.
+
+    Args:
+        monkeypatch: Fixture replacing native SSH reads.
+        capsys: Captured allowlisted helper output.
+    """
+    helper = load_helper_module()
+    calls = []
+
+    def run(command, *, timeout):
+        """Simulate root-only SSH configuration inspection with a bounded deadline.
+
+        Args:
+            command: Fixed native observation command.
+            timeout: Maximum native read duration.
+        """
+        calls.append((command, timeout))
+        return subprocess.CompletedProcess(command, 0,
+            "persourcepenaltyexemptlist 192.0.2.41/32\nother-setting private-data\n", "")
+
+    monkeypatch.setattr(helper, "_run", run)
+    assert helper._handle_vcf_backups("status", ["unexpected"]) == 2
+    assert not calls
+    assert helper.main(["atlaso-helper", "vcf-backups", "status", "--real"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"trusted_backup_sources": "192.0.2.41/32"}
+    assert calls[0][0][-1] == "-T" and calls[0][1] == 5
+
+
+def test_vcf_backups_helper_owns_a_separate_global_probe_dropin(tmp_path):
+    """Global SSH settings must be ordered before existing Match User files.
+
+    Args:
+        tmp_path: Isolated staged receiver config.
+    """
+    helper = load_helper_module()
+    staged = tmp_path / "vcf.conf"
+    staged.write_text(vcf_backups_config_text() + "\n# Trusted backup probe sources: 192.0.2.41/32\n")
+    assert helper._vcf_backups_config_errors(staged) == []
+    candidates = helper._vcf_backups_dropin_candidates(staged, helper._vcf_backups_config_values(staged))
+    global_path = helper.VCF_BACKUPS_CONFIG_PATH.with_name("00-atlaso-vcf-backup-probes.conf")
+    assert candidates[global_path] == "# Managed by Atlaso VCF Backups.\nPerSourcePenaltyExemptList 192.0.2.41/32\n"
+    assert "PerSourcePenaltyExemptList" not in candidates[helper.VCF_BACKUPS_CONFIG_PATH]
+
+
 def test_vcf_backups_helper_apply_requires_existing_os_user(monkeypatch, tmp_path, capsys):
     """Verify that vcf backups helper apply requires existing os user.
 
@@ -16260,6 +16364,7 @@ def test_vcf_backups_helper_apply_requires_existing_os_user(monkeypatch, tmp_pat
 
     monkeypatch.setattr(helper, "VCF_BACKUPS_APPLY_DIR", apply_dir)
     monkeypatch.setattr(helper.shutil, "which", lambda command: "id" if command == "id" else None)
+    monkeypatch.setattr(helper, "_validate_sshd_dropin_candidates", lambda candidates: subprocess.CompletedProcess(["sshd", "-t"], 0, "", ""))
     monkeypatch.setattr(helper, "_run", fake_run)
 
     assert helper._handle_vcf_backups("apply", [str(config_path)]) == 2

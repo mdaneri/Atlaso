@@ -443,6 +443,19 @@ Auto mode validates selected assets with locally available tools and is used by 
 Ubuntu requires `systemd-analyze` and `visudo` for the shared and VMware unit sets and every sudoers fragment, while the
 Windows Packer runner performs `packer init`, exact selected-plugin verification, formatting checks, and full
 `packer validate` for the canonical Photon template. VMware Workstation pins `github.com/vmware/vmware` to `2.1.5`.
+Both Linux CI jobs explicitly install Ubuntu's upstream `sudo` package before native checks or tests. Sudoers validation
+identifies upstream `visudo` before parsing every selected fragment. On Ubuntu releases that enable `sudo-rs` by default,
+it prefers the separately packaged `visudo.ws` and accepts that executable name in its upstream version banner.
+The alternate parser does not implement all
+Photon sudoers options, including `requiretty`. A missing or incompatible parser fails Linux validation. Keep the
+deployed rules intact and verify malformed fragments are still rejected by the selected native parser.
+The Windows deployment job also runs `python -m pytest tests/test_certificate_wrapper_credentials.py` with a contained
+temporary root. Its native credential-consumer cases require Windows process-tree containment and run there rather
+than on the Linux full-suite runner; portable checks in that file remain available on Linux. Keep this Windows CI
+coverage when changing the platform markers. Include `tests/test_python_documentation.py` in focused verification
+when adding or changing Python parameters, including nested test callbacks.
+Runtime-admission fixtures copy their base Python files into the owned test root, so runner-installed aliases do not
+obscure dependency checks; a deliberately linked code file must still fail the production single-identity guard.
 `scripts/check_packer_plugins.py` rejects a range constraint, missing selected
 binary, or selected filename that does not encode the exact required version. The supported Windows wrappers perform
 the same initialization and resolution check before validation or build, so warm and empty plugin caches select the
@@ -601,6 +614,43 @@ configures an existing VCF Installer or SDDC Manager to use the applied local VC
 remote depot configuration are monitored background jobs; target and depot credentials remain transient. DNS creation
 remains desired-state only and is enforced through global `Appliance Apply`. See [VCF Helper](../services/vcf-helper.md)
 and [VCF Certificate Trust](../services/vcf-trust.md).
+
+### Native VCF backup wizard
+
+The VCF Helper **Backup → Configure VCF Backup** wizard targets native VCF 9.1.x backup APIs for Fleet LCM,
+SDDC Manager, vCenter, and NSX. VCF Operations is the primary connection for Fleet discovery. After confirming the
+Operations TLS certificate, Atlaso reads `GET /suite-api/api/integrations/services`, requires a unique
+`VCF_FLEET_LCM` descriptor, displays its FQDN, port, base path, certificate, version, and key for review, then uses
+the advertised Fleet service through Operations with a service JWT and pinned certificate. Operators do not enter a
+separate Fleet endpoint or fingerprint. Descriptor or certificate drift invalidates the inspection. SDDC Manager,
+vCenter, and NSX may be added as optional direct connections. Fleet schedules are shared by a complete eligible
+SDDC-LCM group. The workflow requires the already enabled and applied Atlaso VCF Backup SFTP receiver, its fixed
+volume, synchronized local SFTP user, mounted filesystem, current rendered apply baseline, live `sshd` listener, and
+required ECDSA/RSA-SHA2 host keys.
+
+Backup-encryption passphrases must contain 12–20 visible ASCII characters, uppercase and lowercase letters, at least
+two digits, and a symbol. This wizard policy is stricter than vCenter's eight-character minimum. The passphrase is
+entered through a Vault reference and is never printed or stored in task state.
+
+Review state is short-lived, administrator-bound, and single-use. It binds the inspected source revisions and identities,
+the receiver and host key, Vault secret revisions, component selection, and proposed schedule. Native schedules own
+their recurrence; Atlaso configures them and launches only the one reviewed initial backup. Durable task records keep
+Vault references rather than plaintext passwords or passphrases. Uncertain or interrupted native work retains its
+scheduler reservation and requires read-only reconciliation; startup recovery never replays a configuration or backup.
+An unresolved `dispatch_pending` operation without a native task reference cannot be explicitly closed or release its
+reservation until a verifiable native outcome is available. Reconciliation can adopt success only when native
+completion and fresh matching receiver files are both observed.
+
+Native API gaps remain explicit in discovery and review. SDDC Manager backup settings may also change the backup target
+and cadence for co-managed NSX; configure SDDC Manager first, then inspect NSX in a separate fresh operation. The NSX
+native API exposes no retention configuration in the documented VCF 9.0/9.1 behavior. The vCenter Recovery API has no
+SSH fingerprint field for the destination. Only fresh receiver files matched to the recorded native result for each
+selected component count as verified initial-backup evidence. VCF Operations Fleet daily full-backup schedules run at
+02:00 UTC; direct appliance schedules use the appliance's configured timezone. See the
+[VCF Backups operator guide](../services/vcf-backups.md), the
+[pinned Fleet LCM API specification](https://github.com/vmware/vcf-api-specs/blob/98086628de07a7480141873ea5b8a53bb113e98f/specifications/fleet-lcm/fleet-lcm-openapi.yaml),
+and Broadcom [KB 438943](https://knowledge.broadcom.com/external/article/438943) and
+[KB 442696](https://knowledge.broadcom.com/external/article/442696/nsx-backup-retention-settings-in-sddc-ma.html).
 
 Default local VCF Offline Depot HTTP user:
 
