@@ -24,6 +24,11 @@ CA = b"public-test-ca"
 TOKEN = "synthetic-concealed-token"
 ERROR = ("ntpd clock-source transition failed: ntpd is active as the only selected clock source, "
          "but did not synchronize within 60 seconds: synchronization not reported. Previous config is restored;")
+NTPSEC_TIMEOUT = (
+    "ntpd clock-source transition failed: NTPsec did not verify leap_none, sync_ntp and a reachable selected upstream "
+    "within {seconds} seconds. Bounded synchronization evidence: [{{\"status\": \"sanitized\"}}]. "
+    "Previous config is restored;"
+)
 
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is unavailable")
@@ -161,6 +166,80 @@ def test_recovery_requires_current_terminal_ntp_failure_and_unchanged_baseline(c
     client = SimpleNamespace(json=lambda _path: (200, {"task": task}))
     with pytest.raises(init.Refusal, match="fixture_recovery_"):
         init.inspect_recovery(client, failure, review, public, original, tls, PEER)
+
+
+def inspect_with_ntp_error(error: str) -> dict:
+    """Run inspect_recovery against an otherwise-valid terminal initializer failure.
+
+    Args:
+        error: Exact NTP component error text under test.
+    """
+    original = {"ipv4_method": "dhcp"}
+    tls = {"sha256": "a" * 64}
+    failure = {"job_id": "job_0123456789ab", "original_interface": original, "original_tls": dict(tls)}
+    public = {"dns": {"enabled": False, "upstream_servers": [PEER]},
+              "settings": {"external_dns_servers": [PEER]},
+              "ntp": {"enabled": False, "nts_server_enabled": False, "time_source": "ntp_client", "peer_only": True}}
+    requested = sorted(init.RECOVERY_ROOTS)
+    review = {"active_task": None, "initial_apply_required": True, "pending_count": 1,
+              "requested_units": requested, "units": [
+                  {"id": "ntpd", "selected": True, "valid": True, "changed": True},
+                  {"id": "public_services", "selected": True, "valid": True, "changed": False},
+              ]}
+    children = [{"component_key": unit, "status": "succeeded"}
+                for unit in sorted(init.ROOTS - init.RECOVERY_ROOTS)]
+    children.extend([{"component_key": "ntpd", "status": "failed", "error": error},
+                     {"component_key": "public_services", "status": "skipped"}])
+    task = {"id": failure["job_id"], "type": "appliance-apply", "status": "failed", "_children": children}
+    selected = {"active_task": None, "requested_units": requested, "units": [
+        {"id": "ntpd", "selected": True, "valid": True, "changed": True},
+        {"id": "public_services", "selected": True, "valid": True, "changed": False},
+    ]}
+
+    def respond(path: str) -> tuple[int, dict]:
+        return (200, {"task": task}) if path.startswith("/tasks/") else (200, selected)
+
+    return init.inspect_recovery(SimpleNamespace(json=respond), failure, review, public, original, tls, PEER)
+
+
+@pytest.mark.parametrize("seconds", ["0", "60", "1.5", "6e+01", "1e-3"])
+def test_recovery_accepts_historical_and_bounded_ntpsec_timeout_shapes(seconds: str) -> None:
+    """Keep the historical literal and admit only bounded NTPsec evidence timeout messages."""
+    historical = inspect_with_ntp_error(ERROR)
+    current = inspect_with_ntp_error(NTPSEC_TIMEOUT.format(seconds=seconds))
+
+    assert historical["reason"] == "terminal_initial_ntp_synchronization_timeout"
+    assert current["reason"] == "terminal_initial_ntp_synchronization_timeout"
+    assert current["selected_units"] == sorted(init.RECOVERY_ROOTS)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        "ntpd clock-source transition failed: generic timeout after 60 seconds. Previous config is restored;",
+        NTPSEC_TIMEOUT.format(seconds="NaN"),
+        NTPSEC_TIMEOUT.format(seconds="inf"),
+        NTPSEC_TIMEOUT.format(seconds="-0.1"),
+        NTPSEC_TIMEOUT.format(seconds="+1"),
+        NTPSEC_TIMEOUT.format(seconds=".5"),
+        NTPSEC_TIMEOUT.format(seconds="5."),
+        NTPSEC_TIMEOUT.format(seconds="60.001"),
+        NTPSEC_TIMEOUT.format(seconds="1e999"),
+        NTPSEC_TIMEOUT.format(seconds="60s"),
+        NTPSEC_TIMEOUT.format(seconds="٦٠"),
+        NTPSEC_TIMEOUT.format(seconds="60").replace("Bounded synchronization evidence:", "Synchronization evidence:"),
+        NTPSEC_TIMEOUT.format(seconds="60").replace('[{"status": "sanitized"}]. ', ""),
+        NTPSEC_TIMEOUT.format(seconds="60").replace("Previous config is restored;", "Previous config restoration failed;"),
+        NTPSEC_TIMEOUT.format(seconds="60").replace("NTPsec did not verify", "NTPsec maybe did not verify"),
+    ],
+    ids=["generic-timeout", "nan", "infinity", "negative", "positive-sign", "leading-decimal", "trailing-decimal",
+         "over-budget", "overflow", "malformed", "non-ascii-budget",
+         "missing-bounded-marker", "missing-evidence", "missing-rollback", "near-match-prefix"],
+)
+def test_recovery_refuses_generic_malformed_or_unsafe_ntp_timeout_shapes(error: str) -> None:
+    """Do not widen recovery admission to generic errors or unsafe timeout values."""
+    with pytest.raises(init.Refusal, match="fixture_recovery_failure_not_admitted"):
+        inspect_with_ntp_error(error)
 
 
 @pytest.mark.parametrize("scenario", ["success", "lost_submit", "unknown_task", "failed_task", "late_monitor", "drift"])
