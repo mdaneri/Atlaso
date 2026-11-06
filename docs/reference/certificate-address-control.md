@@ -428,6 +428,37 @@ exact connected prefix, `eth0`, preferred source, and on-link scope without a ga
 device: iproute2 can omit `dev` when `dev eth0` is already a query filter. A main-table route alone does not prove the
 management routing-domain baseline.
 
+## Run and accept ordinary CA rotation
+
+For a CA-only management certificate change, use the same reviewed
+`inspect-certificate-handoff.ps1` entrypoint and full trusted-host admission with
+`scenario: "ordinary-ca-rotation"`. The immutable plan must name the original
+issued `management_certificate_id`, set `expected_web_terminal` to an explicit
+Boolean, and bind `interface: "eth0"` and its original MAC. Its peer baseline
+address must match the appliance's clean applied static IPv4 configuration.
+This case does not establish DHCP-address acceptance.
+
+Run inspection before execution. Keep the original ISO, appliance, peer, LAN,
+installed source/helper, address evidence, public CA and SSH trust receipts.
+The runner records original public certificate and configuration evidence before
+using **Certificate requests → Revoke certificate → Replace** for this disposable
+appliance's `appliance:https` certificate. It then reviews only CA changes and
+requires unchanged Appliance Settings and Public Services to replay after CA.
+Unrelated pending edits or missing dependencies refuse submission.
+
+Acceptance requires the same admitted task to succeed without dry-run results,
+a clean applied baseline, unchanged management address/MAC/configuration and Web
+Terminal state, and an unchanged root certificate matching the receipt-pinned
+CA. The replacement inventory fingerprint, authenticated public certificate PEM
+and strictly verified peer TLS leaf must all match and differ from the original
+leaf. Run separate cases with Web Terminal disabled and enabled on the sole
+management interface; apply each intended baseline before preparing its plan.
+
+Revocation retains certificate history and cannot be undone. On failure, retain
+the fixture and original evidence for diagnosis; never automatically restore,
+retry or resubmit this scenario. The existing static-address and DHCP-rejection
+scenarios keep their separate restoration requirements.
+
 ## Run and accept the static-address case
 
 Protected handoff validation checks the staged candidate certificate's format, configured paths, and key pair without

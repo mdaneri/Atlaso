@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Inspect or execute the receipt-bound native certificate handoff for the admitted task.
+Inspect or execute receipt-bound native certificate acceptance for the admitted task.
 .PARAMETER Plan
 Existing nonsecret plan within the original task-owned test-results tree.
 .PARAMETER RepositoryRoot
@@ -14,7 +14,8 @@ Explicit pinned 1Password Environment selector.
 .PARAMETER PythonPath
 Task-owned isolated Python virtual environment with locked native dependencies.
 .PARAMETER Execute
-Run the guarded native mutation and restoration; default inspects only.
+Run the guarded native mutation; default inspects only. Address cases restore through their original path.
+Ordinary CA rotation preserves revocation history and leaves a failed fixture for reconciliation.
 #>
 [CmdletBinding()]
 param(

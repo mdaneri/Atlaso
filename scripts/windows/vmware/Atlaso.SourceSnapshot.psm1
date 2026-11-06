@@ -596,6 +596,7 @@ function New-AtlasoCertificateInspectorSnapshot {
         $inspectorFiles = if ($Purpose -eq 'certificate') { @(
                 'scripts/__init__.py',
                 'scripts/interop/certificate_handoff_native.py',
+                'scripts/interop/certificate_ca_rotation.py',
                 'scripts/interop/certificate_peer_proof.py',
                 'scripts/interop/certificate_peer_transport.py',
                 'scripts/interop/certificate_trusted_host.py',

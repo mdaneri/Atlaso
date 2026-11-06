@@ -1,4 +1,4 @@
-"""Focused PR871 HTTP validation; only run beneath the supported bounded child.
+"""Receipt-bound certificate HTTP validation beneath the supported bounded child.
 
 Credentials and cookies stay in memory. Public evidence contains allowlisted fields.
 The default mode inspects only. Mutation requires --execute and a reviewed plan.
@@ -676,7 +676,12 @@ def admit_execution(plan):
         actual_helper = hashlib.sha256(helper_bytes).hexdigest()
     if actual_helper != runtime["helper_sha256"]:
         raise Refusal("reviewed_helper_digest_mismatch")
-    address = str(ipaddress.ip_interface(plan["candidate_cidr"]).ip) if plan["scenario"] == "static-success" else str(ipaddress.IPv4Address(plan["expected_dhcp_address"]))
+    if plan["scenario"] == "ordinary-ca-rotation":
+        address = str(ipaddress.IPv4Address(plan["peer_transport"]["baseline_address"]))
+    elif plan["scenario"] == "static-success":
+        address = str(ipaddress.ip_interface(plan["candidate_cidr"]).ip)
+    else:
+        address = str(ipaddress.IPv4Address(plan["expected_dhcp_address"]))
     reservation = bound_json(plan["address_evidence"])
     if trusted:
         if (reservation.get("trust_model") != "trusted-host"
@@ -725,14 +730,21 @@ def main():
     task_terminal = False
     try:
         plan = json.loads(Path(args.plan).read_text())
-        if plan_pr(plan) != plan.get("pr") or not plan.get("source_commit") or plan.get("scenario") not in ("static-success", "dhcp-reject"):
+        ordinary_rotation = plan.get("scenario") == "ordinary-ca-rotation"
+        if (plan_pr(plan) != plan.get("pr") or not plan.get("source_commit")
+                or plan.get("scenario") not in ("static-success", "dhcp-reject", "ordinary-ca-rotation")
+                or (ordinary_rotation and (plan.get("trust_model") != "trusted-host"
+                    or type(plan.get("expected_web_terminal")) is not bool
+                    or type(plan.get("management_certificate_id")) is not int
+                    or plan["management_certificate_id"] <= 0 or plan.get("interface") != "eth0"))):
             raise Refusal("plan_contract")
         evidence["pr"] = plan["pr"]
         evidence["trust_model"] = plan.get("trust_model", "independent")
         if Path(args.evidence).exists() or Path(args.evidence + ".original.json").exists():
             raise Refusal("evidence_destination_exists")
         evidence["admission"] = admit_execution(plan)
-        evidence["no_publication_evidence_basis"] = "reviewed exact helper ordering and unit assertions plus native prerequisite failure and rollback"
+        if plan["scenario"] == "dhcp-reject":
+            evidence["no_publication_evidence_basis"] = "reviewed exact helper ordering and unit assertions plus native prerequisite failure and rollback"
         evidence["native_observation_limit"] = "TLS before and after; individual transient nginx generations are not directly observed"
         if args.preflight_only:
             evidence.update(success=True, stage="admitted_no_credentials_or_network")
@@ -774,7 +786,7 @@ def main():
         original_dns = dns_baseline(client)
         before = client.tls_identity()
         selected_certificate = None
-        if plan["scenario"] == "dhcp-reject":
+        if plan["scenario"] in ("dhcp-reject", "ordinary-ca-rotation"):
             selected_certificate = selected_management_certificate(
                 client, int(plan["management_certificate_id"]),
             )
@@ -787,11 +799,34 @@ def main():
         # Commit rollback inputs before the first production mutation, not only
         # in the terminal evidence writer (the process may be interrupted).
         with Path(args.evidence + ".original.json").open("x", encoding="utf-8") as stream:
-            json.dump({"schema": 1, "pr": plan["pr"], "source_commit": plan["source_commit"],
+            original_evidence = {"schema": 1, "pr": plan["pr"], "source_commit": plan["source_commit"],
                        "url": plan["url"], "interface": plan["interface"], "mac": plan["mac"],
-                       "original_fields": fields, "original_tls": before, "original_dns": original_dns}, stream, indent=2)
+                       "original_fields": fields, "original_tls": before, "original_dns": original_dns}
+            if ordinary_rotation:
+                original_evidence["original_certificate"] = selected_certificate
+                original_evidence["ca_sha256"] = evidence["ca_sha256"]
+            json.dump(original_evidence, stream, indent=2)
             stream.flush()
             os.fsync(stream.fileno())
+        if ordinary_rotation:
+            from certificate_ca_rotation import exercise_ca_rotation
+
+            evidence["stage"] = "ordinary_ca_rotation"
+            mutation_started = True
+            result = exercise_ca_rotation(
+                client, certificate_id=plan["management_certificate_id"],
+                expected_root_sha256=hashlib.sha256(ssl.PEM_cert_to_DER_cert(
+                    Path(plan["ca_path"]).read_text(encoding="ascii"),
+                )).hexdigest(),
+                expected_web_terminal=plan["expected_web_terminal"], username=plan.get("username", "admin"),
+                password=password, interface_name=plan["interface"], expected_mac=plan["mac"],
+                expected_address=plan["peer_transport"]["baseline_address"],
+            )
+            if hashlib.sha256(Path(plan["ca_path"]).read_bytes()).hexdigest() != evidence["ca_sha256"]:
+                raise Refusal("trusted_ca_changed")
+            evidence.update(ordinary_ca_rotation=result, success=True, stage="ordinary_ca_rotation_verified")
+            task_terminal = True
+            return
         changed = dict(fields)
         clients = [client]
         if plan["scenario"] == "static-success":
@@ -892,7 +927,11 @@ def main():
         evidence["failure"] = str(exc) if isinstance(exc, (Refusal, PeerProofRefusal, HostRefusal, RetirementRefusal, PeerTransportRefusal)) else type(exc).__name__
         if isinstance(exc, RetirementRefusal) and exc.observations:
             evidence["retirement_tcp_observations"] = exc.observations
-        if mutation_started and isinstance(exc, HostRefusal):
+        if mutation_started and plan.get("scenario") == "ordinary-ca-rotation":
+            # Revocation is irreversible. Preserve this disposable fixture and
+            # its original inputs; never replay or automatically undo the action.
+            evidence["recovery"] = "preserve_fixture_and_original_inputs_do_not_resubmit"
+        elif mutation_started and isinstance(exc, HostRefusal):
             evidence["recovery"] = "topology_changed_preserve_lab_and_original_rollback_inputs"
         elif mutation_started:
             if not task_terminal:
@@ -909,6 +948,8 @@ def main():
             evidence["trusted_host_observations"] = topology_monitor.observations
             if topology_monitor.failed.is_set():
                 evidence.update(success=False, failure="trusted_host_topology_changed")
+                if mutation_started and plan.get("scenario") == "ordinary-ca-rotation":
+                    evidence["recovery"] = "preserve_fixture_and_original_inputs_do_not_resubmit"
         if peer_transport is not None:
             peer_transport.__exit__(None, None, None)
         password = None
@@ -921,9 +962,12 @@ def main():
             stream.flush()
             os.fsync(stream.fileno())
         print(json.dumps({"success": evidence["success"], "stage": evidence["stage"], "evidence": str(path)}))
-    if not evidence["success"]:
-        raise SystemExit(1)
+        if not evidence["success"]:
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":
+    # The CA exercise imports these shared client primitives. Preserve one
+    # Refusal identity when the reviewed wrapper launches this file via runpy.
+    sys.modules["certificate_handoff_native"] = sys.modules[__name__]
     main()

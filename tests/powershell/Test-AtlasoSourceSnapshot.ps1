@@ -345,6 +345,7 @@ New-Item -ItemType Directory -Path $inspectorRepository | Out-Null
 $inspectorFiles = @(
     'scripts/__init__.py', 'scripts/completed_task_files.py',
     'scripts/interop/certificate_handoff_native.py', 'scripts/interop/certificate_peer_proof.py',
+    'scripts/interop/certificate_ca_rotation.py',
     'scripts/interop/certificate_peer_transport.py', 'scripts/installation/__init__.py',
     'scripts/interop/certificate_trusted_host.py', 'scripts/interop/certificate_retirement.py',
     'scripts/interop/certificate_iso_bootstrap.py', 'scripts/interop/certificate_source_probe.py',
@@ -378,7 +379,7 @@ try {
                 throw 'Code namespace pins blocked sibling credential-recovery marker publication.'
             }
             $relative = if ($purpose -eq 'certificate') {
-                'scripts/interop/certificate_peer_proof.py'
+                'scripts/interop/certificate_ca_rotation.py'
             } else { 'scripts/installation/vnc_console.py' }
             $blocked = $false
             try { [IO.File]::WriteAllText((Join-Path $inspector.Root $relative), 'replacement') }
