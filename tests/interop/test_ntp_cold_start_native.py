@@ -113,14 +113,79 @@ def test_save_ntp_adds_one_explicit_unreachable_private_test_candidate() -> None
 
     fields = dict(client.submissions[0][1])
     rows = json.loads(fields["upstream_sources_json"])
+    assert rows[1]["id"].startswith("ntp-cold-start-")
     assert rows == [
         {"id": "factory-source", "source": "time.example.test", "enabled": False,
          "use_nts": True, "description": "existing factory row"},
-        {"id": "ntp-cold-start-peer", "source": TEST_CANDIDATE, "enabled": True,
+        {"id": rows[1]["id"], "source": TEST_CANDIDATE, "enabled": True,
          "use_nts": False, "description": "Isolated real NTP acceptance peer"},
     ]
     assert fields["upstream_servers"] == TEST_CANDIDATE
     assert result == {"mode": "ntp_client", "source": TEST_CANDIDATE}
+
+
+class StatefulClient(Client):
+    """Update the server-rendered source form after every accepted autosave."""
+
+    def json(self, path: str, fields: list[tuple[str, str]], *, autosave: bool) -> tuple[int, dict[str, bool]]:
+        response = super().json(path, fields, autosave=autosave)
+        saved = dict(fields)
+        self.body = ntp_page(json.loads(saved["upstream_sources_json"]))
+        return response
+
+
+def test_save_ntp_real_then_negative_source_keeps_unique_stable_row_ids() -> None:
+    client = StatefulClient(ntp_page([
+        {"id": "ntp-cold-start-retained", "source": "time.example.test", "enabled": True,
+         "use_nts": True, "description": "preserve this source"},
+    ]))
+
+    fixture.save_ntp(client, PEER)
+    after_real = json.loads(dict(client.submissions[-1][1])["upstream_sources_json"])
+    real_row = next(row for row in after_real if row["source"] == PEER)
+    real_id = real_row["id"]
+
+    fixture.save_ntp(client, TEST_CANDIDATE)
+    after_negative = json.loads(dict(client.submissions[-1][1])["upstream_sources_json"])
+    retained_real = next(row for row in after_negative if row["source"] == PEER)
+    negative_row = next(row for row in after_negative if row["source"] == TEST_CANDIDATE)
+    ids = [row["id"] for row in after_negative]
+    negative_id = negative_row["id"]
+
+    assert retained_real["id"] == real_id
+    assert retained_real["enabled"] is False
+    assert negative_row["enabled"] is True and negative_row["use_nts"] is False
+    assert len(ids) == len(set(ids))
+    assert after_negative[0] == {
+        "id": "ntp-cold-start-retained", "source": "time.example.test", "enabled": False,
+        "use_nts": True, "description": "preserve this source",
+    }
+
+    fixture.save_ntp(client, TEST_CANDIDATE)
+    after_resave = json.loads(dict(client.submissions[-1][1])["upstream_sources_json"])
+    retained_again = next(row for row in after_resave if row["source"] == PEER)
+    negative_again = next(row for row in after_resave if row["source"] == TEST_CANDIDATE)
+    assert retained_again["id"] == real_id and retained_again["enabled"] is False
+    assert negative_again["id"] == negative_id and negative_again["enabled"] is True
+    assert len({row["id"] for row in after_resave}) == len(after_resave)
+
+
+def test_save_ntp_retries_generated_id_when_it_matches_a_retained_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = iter(("collision", "fresh"))
+    monkeypatch.setattr(fixture.secrets, "token_hex", lambda _size: next(values))
+    client = Client(ntp_page([
+        {"id": "ntp-cold-start-collision", "source": "time.example.test", "enabled": False,
+         "use_nts": False, "description": "retained"},
+    ]))
+
+    fixture.save_ntp(client, TEST_CANDIDATE)
+    rows = json.loads(dict(client.submissions[-1][1])["upstream_sources_json"])
+
+    assert rows[0]["id"] == "ntp-cold-start-collision"
+    assert rows[1]["id"] == "ntp-cold-start-fresh"
+    assert len({row["id"] for row in rows}) == len(rows)
 
 
 @pytest.mark.parametrize(

@@ -38,6 +38,19 @@ class Refusal(Exception):
     """Fixed public refusal; never include native output or credentials."""
 
 
+def _new_source_id(used_ids: set[str]) -> str:
+    """Allocate a new NTP source row id without colliding with retained rows.
+
+    Args:
+        used_ids: Existing source row ids that must remain unchanged.
+    """
+    for _ in range(8):
+        source_id = f"ntp-cold-start-{secrets.token_hex(8)}"
+        if source_id not in used_ids:
+            return source_id
+    raise Refusal("ntp_fixture_source_ids_invalid")
+
+
 def _address(value: str) -> str:
     """Require an ordinary numeric unicast IPv4 fixture endpoint.
 
@@ -72,9 +85,17 @@ def save_ntp(client, address: str, mode: str = "ntp_client") -> dict:
             raise ValueError
     except (KeyError, ValueError, TypeError):
         raise Refusal("ntp_fixture_sources_invalid") from None
+    matching = [row for row in sources if row.get("source") == address]
+    if len(matching) > 1:
+        raise Refusal("ntp_fixture_sources_invalid")
     rows = [dict(row, enabled=False) for row in sources if row.get("source") != address]
-    existing = next((row for row in sources if row.get("source") == address), {})
-    rows.append({**existing, "id": existing.get("id", "ntp-cold-start-peer"), "source": address,
+    existing = matching[0] if matching else {}
+    used_ids = {str(row["id"]) for row in rows if row.get("id")}
+    existing_id = existing.get("id")
+    source_id = str(existing_id) if existing_id else _new_source_id(used_ids)
+    if source_id in used_ids:
+        raise Refusal("ntp_fixture_source_ids_invalid")
+    rows.append({**existing, "id": source_id, "source": address,
                  "enabled": True, "use_nts": False,
                  "description": existing.get("description", "Isolated real NTP acceptance peer")})
     changes = {"enabled": "on" if mode == "ntp_server" else "", "nts_server_enabled": "",
