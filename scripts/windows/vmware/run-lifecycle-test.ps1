@@ -182,7 +182,7 @@ $privatePeerFixture = $CertificateDhcpPeer -or $NtpColdStartOnly
 
 if ($NtpColdStartOnly) {
     if ($CertificateOnly -or $CertificateDhcpPeer -or $OidcOnly -or $TimeSourceOnly -or $ReverseProxyOnly -or
-        $RoutingWanOnly -or $RoutingOverlapOnly -or $FullEsxiPxeInstall -or $CleanupCreatedLab -or
+        $RoutingWanOnly -or $RoutingOverlapOnly -or $FullEsxiPxeInstall -or ($CleanupCreatedLab -and -not $PlanOnly) -or
         $AllowDryRunApply -or $ApplianceIPAddress -or $ApplianceUrl -or $SignedReleaseRepositoryUrl -or
         $SiteInterface -cne 'eth0' -or $SiteANetwork -notmatch '^lan:.+' -or $ManagementNetwork -notmatch '^VMnet\d+$') {
         throw 'NTP cold-start acceptance requires its separate private, retained, real-Apply fixture mode.'

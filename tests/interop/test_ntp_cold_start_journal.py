@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts/interop"))
-import ntp_cold_start_native as fixture  # noqa: E402
+import ntp_cold_start_native as fixture  # noqa: E402 - Local interop entrypoint.
 
 BOOT = "a" * 32
 FAILURE = "NTPsec initial clock acquisition failed (TimeoutExpired); Apply must roll back."

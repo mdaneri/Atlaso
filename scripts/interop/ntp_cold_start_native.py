@@ -104,7 +104,7 @@ def native_clock(session, password: str, peer_address: str, mode: str = "ntp_cli
     if mode not in {"ntp_client", "ntp_server"}:
         raise Refusal("ntp_fixture_mode_invalid")
     try:
-        raw = json.loads(sudo_read(session, "/opt/atlaso/bin/atlaso-helper ntpd status", password))
+        raw = json.loads(sudo_read(session, "/opt/atlaso/bin/atlaso-helper ntpd status --real", password))
         evidence = raw["synchronization_evidence"]
         selected = evidence["selected"]
         controller = raw["selected_controller"]
@@ -504,7 +504,7 @@ def run(plan: dict, output: Path, password: str) -> dict:
                     ca = session.command("cat /etc/atlaso/ca/root.crt")
                     if hashlib.sha256(ca).hexdigest() != plan["ca_sha256"]:
                         raise Refusal("ntp_fixture_original_ca_changed")
-                    initial = json.loads(sudo_read(session, "/opt/atlaso/bin/atlaso-helper ntpd status", password))
+                    initial = json.loads(sudo_read(session, "/opt/atlaso/bin/atlaso-helper ntpd status --real", password))
                     initial_controllers = initial.get("daemon_conflicts", {})
                     if (initial.get("mode") != "unmanaged" or initial.get("selected_controller", {}).get("active") is True
                             or set(initial_controllers) != {"ntpd", "chronyd", "systemd_timesyncd", "vmware_tools"}

@@ -199,7 +199,7 @@ def test_native_clock_requires_matching_synchronized_ntpd_and_returns_only_bound
 
     result = fixture.native_clock(session, password, PEER, mode=mode)
 
-    assert calls == [(session, "/opt/atlaso/bin/atlaso-helper ntpd status", password)]
+    assert calls == [(session, "/opt/atlaso/bin/atlaso-helper ntpd status --real", password)]
     assert result == {
         "mode": mode, "healthy": True, "leap": "leap_none", "source": "sync_ntp",
         "stratum": 3, "selected": {"address": PEER, "stratum": 2, "reach": "377"},
@@ -381,6 +381,7 @@ def fake_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, objec
 
     def sudo_read(_session: object, command: str, _password: str) -> str:
         if "ntpd status" in command:
+            assert command == "/opt/atlaso/bin/atlaso-helper ntpd status --real"
             conflicts = {
                 name: {"active": False, "enabled": False}
                 for name in ("ntpd", "chronyd", "systemd_timesyncd", "vmware_tools")
