@@ -611,3 +611,312 @@ def test_topology_drift_blocks_desired_http_edit_before_request() -> None:
     with pytest.raises(handoff.HostRefusal, match="trusted_host_topology_changed"):
         client.request("/ui/management/settings", {"hostname": "changed"})
     assert checked == ["drift"]
+
+
+def _write_admission_receipt(root: Path, name: str, value: dict) -> dict[str, str]:
+    """Write a real bounded receipt and return its independent digest reference.
+
+    Args:
+        root: Pytest-owned ordinary-file directory for the receipt.
+        name: Receipt filename within the temporary directory.
+        value: Public receipt fields to serialize.
+    """
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    path = root / name
+    path.write_bytes(payload)
+    return {"path": str(path), "sha256": handoff.hashlib.sha256(payload).hexdigest()}
+
+
+def _ordinary_admission_fixture(tmp_path: Path, mode: str = "static") -> tuple[dict, dict, dict]:
+    """Create real receipt files for the ordinary-CA admission contract.
+
+    Args:
+        tmp_path: Pytest-owned directory for exact digest-bound receipt files.
+        mode: Static legacy baseline or explicit ordinary-CA DHCP mode.
+    """
+    task_id, commit, deployed = "task-ordinary-ca", "a" * 40, "a" * 40
+    mac = "00:50:56:aa:bb:cc"
+    lease, baseline, candidate = "192.168.77.10", "192.168.77.30", "192.168.77.40"
+    selected_address = lease if mode == "dhcp" else baseline
+    ca_path = tmp_path / "public-ca.pem"
+    ca_path.write_bytes(b"public pinned CA bytes")
+    ca_sha = handoff.hashlib.sha256(ca_path.read_bytes()).hexdigest()
+    intent = {"schema": 1, "kind": "vm-creation-intent", "task_id": task_id}
+    intent_ref = _write_admission_receipt(tmp_path, "original-intent.json", intent)
+    ownership = {
+        "schema": 1, "kind": "vm", "task_id": task_id, "repository": "mdaneri/Atlaso",
+        "pr": 1118, "path": str(tmp_path / "appliance.vmx"), "root_path": str(tmp_path),
+        "root_identity": ["directory-file-id"], "intent_sha256": intent_ref["sha256"],
+        "source_commit": commit,
+    }
+    ownership_ref = _write_admission_receipt(tmp_path, "original-ownership.json", ownership)
+    source = {
+        "schema": 1, "phase": "before-certificate-validation", "task_id": task_id,
+        "vmx_path": ownership["path"], "source_commit": commit,
+        "routing_intent_state": "proven-absent", "routing_intent": None,
+        "app_service": {"LoadState": "loaded", "ActiveState": "active"},
+        "route_snapshot": {
+            "schema": 1, "database": "/var/lib/atlaso/atlaso.db", "state": "proven-absent",
+            "counts": {name: 0 for name in (
+                "routes", "routing_rules", "nat_rules", "port_forwards", "wan_policies",
+                "route_physical_interfaces", "route_vlan_interfaces",
+            )},
+            "settings": {name: False for name in (
+                "routes_wan.routing_enabled", "routes_wan.wan_simulation_enabled",
+                "routes_wan.nat_enabled", "traffic_publishing.nat_enabled",
+            )},
+            "routing_service": None, "probe_sha256": "b" * 64,
+        },
+    }
+    source_ref = _write_admission_receipt(tmp_path, "predeployment.json", source)
+    helper_sha = "c" * 64
+    wheel_sha = "d" * 64
+    runtime = {
+        "schema": 1, "kind": "certificate-controlled-runtime", "vmx_path": ownership["path"],
+        "vm_ownership_sha256": ownership_ref["sha256"], "deployed_commit": deployed,
+        "url": f"https://{selected_address}", "interface": "eth0", "mac": mac,
+        "wheel_sha256": wheel_sha, "helper_sha256": helper_sha, "helper_source_commit": commit,
+        "address_ownership_state": "trusted-host-controlled",
+        "predeployment_sha256": source_ref["sha256"],
+        "address_proof_sha256": "e" * 64,
+    }
+    baseline_reference: dict[str, str]
+    if mode == "dhcp":
+        observation = {"kind": "certificate-dhcp-baseline-observation", "phase": "iso-dhcp-baseline-observed"}
+        baseline_reference = _write_admission_receipt(tmp_path, "dhcp-observation.json", observation)
+        runtime["dhcp_baseline_observation_sha256"] = baseline_reference["sha256"]
+    else:
+        baseline_reference = _write_admission_receipt(
+            tmp_path, "rewired-runtime.json", {"kind": "certificate-rewired-runtime"},
+        )
+        runtime["rewired_runtime_sha256"] = baseline_reference["sha256"]
+    fixture = {
+        "appliance_vmx": ownership["path"], "peer_vmx": str(tmp_path / "peer.vmx"),
+        "appliance_mac": mac, "appliance_ownership_sha256": ownership_ref["sha256"],
+        "lease_address": lease, "lan_segment_receipt_sha256": "f" * 64,
+    }
+    reservation = {
+        "schema": 1, "kind": "certificate-private-address-proof",
+        "phase": "dhcp-baseline-preflight" if mode == "dhcp" else "static-baseline-preflight",
+        "task_id": task_id, "vmx_path": ownership["path"], "peer_fixture_sha256": "9" * 64,
+        "dhcp_baseline_observation_sha256" if mode == "dhcp" else "rewired_runtime_sha256": baseline_reference["sha256"],
+        "lan_segment_receipt_sha256": fixture["lan_segment_receipt_sha256"], "ca_sha256": ca_sha,
+        "peer_routed_baseline_https": "explicit-ca-and-ip-hostname-verified",
+        "trust_model": "trusted-host", "address_ownership_state": "trusted-host-controlled",
+        "trusted_host_topology": {"interfaces": []},
+        "baseline_address": selected_address, "addresses": [candidate, lease],
+        "dhcp_reservation": lease, "ordinary_ca_baseline_mode": "dhcp" if mode == "dhcp" else "static",
+    }
+    address_ref = _write_admission_receipt(tmp_path, "address-proof.json", reservation)
+    runtime["address_proof_sha256"] = address_ref["sha256"]
+    runtime_ref = _write_admission_receipt(tmp_path, "controlled-runtime.json", runtime)
+    plan = {
+        "trust_model": "trusted-host", "task_id": task_id, "pr": 1118,
+        "source_commit": commit, "resource_source_commit": commit, "deployed_commit": deployed,
+        "scenario": "ordinary-ca-rotation", "ordinary_ca_baseline_mode": mode,
+        "vmx_path": ownership["path"], "vm_root_path": str(tmp_path),
+        "vm_creation_intent": intent_ref, "vm_ownership": ownership_ref,
+        "appliance_intent": intent_ref, "appliance_ownership": ownership_ref,
+        "predeployment_evidence": source_ref, "runtime_evidence": runtime_ref,
+        "address_evidence": address_ref, "peer_fixture": {"sha256": "9" * 64},
+        "interface": "eth0", "mac": mac, "url": f"https://{selected_address}",
+        "baseline_address": baseline, "current_address": lease, "expected_dhcp_address": lease,
+        "static_candidate_address": candidate, "wheel_sha256": wheel_sha, "helper_sha256": helper_sha,
+        "ca_path": str(ca_path),
+        "peer_transport": {"private_subnet": "192.168.77.0/24", "baseline_address": baseline},
+        "dhcp_baseline_observation": baseline_reference if mode == "dhcp" else None,
+        "rewired_runtime": baseline_reference if mode == "static" else None,
+    }
+    return plan, fixture, reservation
+
+
+def _admit_ordinary_plan(plan: dict, fixture: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub Git and independently admitted original resource/provider boundaries.
+
+    Args:
+        plan: Real receipt-bound ordinary CA plan passed to production admission.
+        fixture: Original peer fixture returned by the private receipt producer.
+        monkeypatch: Replace only the Git, VM, private-provider and topology boundaries.
+    """
+    head = plan["source_commit"]
+    monkeypatch.setattr(handoff.subprocess, "run", lambda *_args, **_kwargs: SimpleNamespace(stdout=head + "\n"))
+    monkeypatch.setattr(handoff, "original_vm", lambda *_args: {
+        "source_commit": plan["source_commit"], "path": plan["vmx_path"],
+    })
+    monkeypatch.setattr(handoff, "admit_private_receipts", lambda _plan: (fixture, {}))
+    monkeypatch.setattr(handoff, "reviewed_helper_identity", lambda _plan: {
+        "helper_sha256": plan["helper_sha256"], "helper_source_commit": plan["source_commit"],
+    })
+    monkeypatch.setattr(handoff, "inspect_trusted_host", lambda _plan: {"interfaces": []})
+    monkeypatch.setattr(handoff, "assert_same_topology", lambda *_args: None)
+
+
+@pytest.mark.parametrize("mode", ["static", "dhcp"])
+def test_ordinary_ca_admission_uses_mode_bound_baseline_and_candidate_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str,
+) -> None:
+    """Admit static and DHCP baseline receipts without requiring baseline in proof addresses.
+
+    Args:
+        tmp_path: Pytest-owned directory for real digest-bound evidence receipts.
+        monkeypatch: Replace only external Git, VM, private-provider and topology boundaries.
+        mode: Static legacy or explicit DHCP ordinary-CA mode.
+    """
+    plan, fixture, reservation = _ordinary_admission_fixture(tmp_path, mode)
+    _admit_ordinary_plan(plan, fixture, monkeypatch)
+
+    result = handoff.admit_execution(plan)
+
+    assert result["deployed_commit"] == plan["source_commit"]
+    assert reservation["addresses"] == [plan["static_candidate_address"], fixture["lease_address"]]
+    assert plan["baseline_address"] not in reservation["addresses"]
+
+
+@pytest.mark.parametrize("web_terminal", [False, True])
+@pytest.mark.parametrize("missing", [
+    None, "predeployment_sha256", "vm_ownership_sha256", "wheel_sha256",
+    "helper_sha256", "helper_source_commit",
+])
+def test_dhcp_producer_runtime_reaches_real_execution_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, web_terminal: bool, missing: str | None,
+) -> None:
+    """Carry original bootstrap identities through native proof into execution admission.
+
+    Args:
+        tmp_path: Pytest-owned root for real digest-bound producer and admission receipts.
+        monkeypatch: Replace external Git, VM ownership, private transport and native readbacks.
+        web_terminal: Original Web Terminal state for the ordinary DHCP acceptance case.
+        missing: Identity removed from the produced receipt to verify fail-closed admission.
+    """
+    from contextlib import nullcontext
+
+    import certificate_peer_proof as proof
+
+    plan, fixture, reservation = _ordinary_admission_fixture(tmp_path, "dhcp")
+    identities = (
+        "predeployment_sha256", "vm_ownership_sha256", "wheel_sha256",
+        "helper_sha256", "helper_source_commit",
+    )
+    bootstrap = handoff.bound_json(plan["runtime_evidence"])
+    bootstrap.pop("kind")
+    bootstrap.update(phase="iso-dhcp-baseline-observed", address_ownership_state="unproven")
+    plan["bootstrap_runtime"] = _write_admission_receipt(tmp_path, "bootstrap-runtime.json", bootstrap)
+    fixture.update(peer_cidr="192.168.77.1/24", lan_segment_id="owned-segment",
+                   lan_segment_receipt=str(tmp_path / "original-lan.json"))
+    observation = {
+        "schema": 1, "kind": "certificate-dhcp-baseline-observation",
+        "phase": "iso-dhcp-baseline-observed", "ordinary_ca_baseline_mode": "dhcp",
+        "apply_state": "clean-applied-baseline", "mutation_state": "none",
+        "bootstrap_runtime_sha256": plan["bootstrap_runtime"]["sha256"],
+        "predeployment_sha256": bootstrap["predeployment_sha256"],
+        "task_id": plan["task_id"], "repository": "mdaneri/Atlaso", "pr": plan["pr"],
+        "source_commit": plan["source_commit"], "deployed_commit": plan["deployed_commit"],
+        "vmx_path": fixture["appliance_vmx"], "vm_ownership_sha256": fixture["appliance_ownership_sha256"],
+        "interface": "eth0", "mac": fixture["appliance_mac"], "observed_address": fixture["lease_address"],
+        "original_fields": {"ipv4_method": "dhcp", "ipv6_enabled": False},
+        "native_observation": {
+            "interface": "eth0", "mac": fixture["appliance_mac"], "address": fixture["lease_address"],
+            "prefixlen": 24, "lease_state": "unexpired_reserved_for_original_mac",
+            "connected_route": "management_table_on_link", "default_routes": 0,
+        },
+    }
+    plan.update(
+        schema=1, expected_web_terminal=web_terminal, appliance_user="admin",
+        appliance_ssh_host_key="SHA256:" + "A" * 43,
+        peer_identity={"path": str(tmp_path / "peer-identity.json"), "sha256": "8" * 64},
+        dhcp_baseline_observation=_write_admission_receipt(tmp_path, "producer-dhcp-observation.json", observation),
+        trusted_host={
+            "appliance_vmx": fixture["appliance_vmx"], "peer_vmx": fixture["peer_vmx"],
+            "segment_id": fixture["lan_segment_id"],
+            "segment_receipt": {"path": fixture["lan_segment_receipt"], "sha256": fixture["lan_segment_receipt_sha256"]},
+        },
+    )
+    plan["peer_transport"].update(host="192.168.167.2", user="alpine", ssh_public_key="ssh-ed25519 fixture",
+                                  ssh_host_key="SHA256:" + "B" * 43)
+    reservation["dhcp_baseline_observation_sha256"] = plan["dhcp_baseline_observation"]["sha256"]
+    plan_path = tmp_path / "producer-plan.json"
+    _write_admission_receipt(tmp_path, plan_path.name, plan)
+    address_path, runtime_path = tmp_path / "produced-address.json", tmp_path / "produced-runtime.json"
+    _admit_ordinary_plan(plan, fixture, monkeypatch)
+    monkeypatch.setattr(proof, "admit_fixture", lambda _plan: fixture)
+    monkeypatch.setattr(proof, "inspect_trusted_host", lambda _plan: {"interfaces": []})
+    monkeypatch.setattr(proof, "admit_output", lambda *_args: None)
+    monkeypatch.setattr(proof, "PinnedPeerTransport", lambda *_args, **_kwargs: nullcontext(object()))
+    monkeypatch.setattr(proof, "PinnedApplianceSession", lambda *_args: nullcontext(object()))
+    monkeypatch.setattr(proof, "read_native", lambda *_args: reservation)
+    monkeypatch.setenv("ATLASO_NATIVE_ADMIN", "synthetic-fixture-credential")
+    monkeypatch.setattr(sys, "argv", ["proof", "--plan", str(plan_path), "--address-output", str(address_path),
+                                    "--runtime-output", str(runtime_path)])
+    assert proof.main() == 0
+    produced = json.loads(runtime_path.read_bytes())
+    assert {key: produced[key] for key in identities} == {key: bootstrap[key] for key in identities}
+    plan["address_evidence"] = {"path": str(address_path), "sha256": handoff.hashlib.sha256(address_path.read_bytes()).hexdigest()}
+    plan["runtime_evidence"] = {"path": str(runtime_path), "sha256": handoff.hashlib.sha256(runtime_path.read_bytes()).hexdigest()}
+    monkeypatch.setattr(handoff, "admit_private_receipts", proof.admit_receipts)
+    if missing:
+        del produced[missing]
+        plan["runtime_evidence"] = _write_admission_receipt(tmp_path, "missing-identity.json", produced)
+        reason = {
+            "predeployment_sha256": "predeployment_runtime_binding_mismatch",
+            "vm_ownership_sha256": "installed_runtime_binding_mismatch",
+            "wheel_sha256": "installed_runtime_digest_mismatch",
+            "helper_sha256": "installed_runtime_digest_mismatch",
+            "helper_source_commit": "installed_helper_source_mismatch",
+        }[missing]
+        with pytest.raises(handoff.Refusal, match=reason):
+            handoff.admit_execution(plan)
+    else:
+        admitted = handoff.admit_execution(plan)
+        assert admitted["runtime_sha256"] == plan["runtime_evidence"]["sha256"]
+
+
+@pytest.mark.parametrize(
+    ("fault", "reason"),
+    [
+        ("observation_hash", "controlled_runtime_proof_binding_mismatch"),
+        ("phase", "task_address_ownership_unproven"),
+        ("url", "peer_private_origin_mismatch"),
+        ("lease", "task_address_ownership_unproven"),
+    ],
+)
+def test_dhcp_ordinary_admission_refuses_observation_url_or_lease_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str, reason: str,
+) -> None:
+    """Refuse an observation ref, phase, origin URL, or lease that differs from admission.
+
+    Args:
+        tmp_path: Pytest-owned directory for real digest-bound evidence receipts.
+        monkeypatch: Replace only external Git, VM, private-provider and topology boundaries.
+        fault: Independent mismatch introduced into a copied receipt-bound plan.
+        reason: Expected fixed production refusal marker.
+    """
+    plan, fixture, reservation = _ordinary_admission_fixture(tmp_path, "dhcp")
+    if fault == "observation_hash":
+        path = Path(plan["runtime_evidence"]["path"])
+        runtime = json.loads(path.read_text())
+        runtime["dhcp_baseline_observation_sha256"] = "1" * 64
+        plan["runtime_evidence"] = _write_admission_receipt(tmp_path, "controlled-runtime.json", runtime)
+    elif fault == "phase":
+        reservation["phase"] = "static-baseline-preflight"
+        plan["address_evidence"] = _write_admission_receipt(tmp_path, "address-proof.json", reservation)
+        runtime_path = Path(plan["runtime_evidence"]["path"])
+        runtime = json.loads(runtime_path.read_text())
+        runtime["address_proof_sha256"] = plan["address_evidence"]["sha256"]
+        plan["runtime_evidence"] = _write_admission_receipt(tmp_path, "controlled-runtime.json", runtime)
+    elif fault == "url":
+        plan["url"] = "https://192.168.77.30"
+        runtime_path = Path(plan["runtime_evidence"]["path"])
+        runtime = json.loads(runtime_path.read_text())
+        runtime["url"] = plan["url"]
+        plan["runtime_evidence"] = _write_admission_receipt(tmp_path, "controlled-runtime.json", runtime)
+    elif fault == "lease":
+        reservation["dhcp_reservation"] = "192.168.77.11"
+        plan["address_evidence"] = _write_admission_receipt(tmp_path, "address-proof.json", reservation)
+        runtime_path = Path(plan["runtime_evidence"]["path"])
+        runtime = json.loads(runtime_path.read_text())
+        runtime["address_proof_sha256"] = plan["address_evidence"]["sha256"]
+        plan["runtime_evidence"] = _write_admission_receipt(tmp_path, "controlled-runtime.json", runtime)
+    _admit_ordinary_plan(plan, fixture, monkeypatch)
+
+    with pytest.raises(handoff.Refusal, match=reason):
+        handoff.admit_execution(plan)

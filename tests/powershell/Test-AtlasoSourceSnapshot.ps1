@@ -345,11 +345,17 @@ New-Item -ItemType Directory -Path $inspectorRepository | Out-Null
 $inspectorFiles = @(
     'scripts/__init__.py', 'scripts/completed_task_files.py',
     'scripts/interop/certificate_handoff_native.py', 'scripts/interop/certificate_peer_proof.py',
+    'scripts/interop/certificate_ca_rotation.py',
+    'scripts/interop/certificate_ca_baseline.py', 'scripts/interop/certificate_iso_deployment.py',
+    'scripts/interop/certificate_iso_transport.py',
     'scripts/interop/certificate_peer_transport.py', 'scripts/installation/__init__.py',
     'scripts/interop/certificate_trusted_host.py', 'scripts/interop/certificate_retirement.py',
     'scripts/interop/certificate_iso_bootstrap.py', 'scripts/interop/certificate_source_probe.py',
     'scripts/interop/certificate_iso_identity.py', 'scripts/installation/inspection.py',
     'scripts/installation/iso.py', 'scripts/installation/manifest.py',
+    'scripts/installation/content_inspection.py', 'scripts/installation/network_inspection.py',
+    'scripts/installation/layout.py', 'scripts/verify_virtualization_guest_wheel.py',
+    'image/common/scripts/verify-photon-package-state.py',
     'scripts/interop/create_photon_kickstart_iso.py',
     'scripts/installation/vnc_console.py', 'scripts/installation/vnc_frame.py',
     'scripts/interop/certificate_fixture_init.py', 'scripts/interop/certificate_peer_time.py',
@@ -360,7 +366,7 @@ foreach ($relative in $inspectorFiles) {
     New-Item -ItemType Directory -Path (Split-Path $path) -Force | Out-Null
     [IO.File]::WriteAllText($path, '# synthetic inspector source')
 }
-& git -C $inspectorRepository add scripts
+& git -C $inspectorRepository add scripts image/common/scripts
 & git -C $inspectorRepository commit -m 'inspector fixture' | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Could not commit inspector source fixture.' }
 $inspectorCommit = (& git -C $inspectorRepository rev-parse HEAD).Trim()
@@ -378,7 +384,7 @@ try {
                 throw 'Code namespace pins blocked sibling credential-recovery marker publication.'
             }
             $relative = if ($purpose -eq 'certificate') {
-                'scripts/interop/certificate_peer_proof.py'
+                'scripts/interop/certificate_ca_rotation.py'
             } else { 'scripts/installation/vnc_console.py' }
             $blocked = $false
             try { [IO.File]::WriteAllText((Join-Path $inspector.Root $relative), 'replacement') }

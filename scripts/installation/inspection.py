@@ -263,6 +263,24 @@ def helper_inputs(iso_path: Path, iso_sha256: str) -> dict[str, Any]:
     return _admitted_inputs(iso_path, iso_sha256, helper=True)[0]
 
 
+def deployment_inputs(iso_path: Path, iso_sha256: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Bind original software, helper and unchanged assets for a fixture wheel deployment.
+
+    Args:
+        iso_path: Original development ISO retained by the VM creation receipt.
+        iso_sha256: Independently preserved digest of that original media.
+
+    Returns:
+        The original identity expectation and its existing strict asset expectation.
+        A later application wheel does not replace either original media identity.
+    """
+    expected, checks = _admitted_inputs(iso_path, iso_sha256, content=True, helper=True)
+    assets = [check for check in checks if check["kind"] == "assets"]
+    if len(assets) != 1:
+        raise ValueError("original ISO does not select one asset inspection")
+    return expected, assets[0]
+
+
 def guest_program(
     expected: dict[str, Any], *, atlaso_root: str | Path = "/opt/atlaso",
     software_root: str | Path = "/var/lib/atlaso/installation-inspection/software", identity_root: str | Path = "/"

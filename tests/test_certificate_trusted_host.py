@@ -554,6 +554,65 @@ def test_trusted_host_refuses_segment_receipt_from_another_source(
         trusted.inspect_trusted_host(plan)
 
 
+@pytest.mark.parametrize("fault,reason", [
+    (None, None),
+    ("digest", "trusted_host_fixture_digest_mismatch"),
+    ("task_id", "trusted_host_fixture_binding_mismatch"),
+    ("pr", "trusted_host_fixture_binding_mismatch"),
+    ("appliance_vmx", "trusted_host_fixture_binding_mismatch"),
+    ("peer_vmx", "trusted_host_fixture_binding_mismatch"),
+    ("private_network", "trusted_host_fixture_binding_mismatch"),
+    ("lan_segment_id", "trusted_host_fixture_binding_mismatch"),
+    ("lan_segment_receipt_sha256", "trusted_host_fixture_binding_mismatch"),
+    ("source_commit", "trusted_host_fixture_binding_mismatch"),
+    ("kind", "trusted_host_fixture_binding_mismatch"),
+    ("unrelated_source", "trusted_host_fixture_source_not_ancestor"),
+    ("missing_fixture", "trusted_host_segment_receipt_binding_mismatch"),
+])
+def test_trusted_host_binds_separate_lan_creation_source_to_original_peer_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str | None, reason: str | None,
+) -> None:
+    """Admit an older ISO and later peer/LAN through the real host predicate.
+
+    Args:
+        tmp_path: Isolated ordinary VMX, host inventory and immutable receipt files.
+        monkeypatch: Replace only host process observations and Git ancestry results.
+        fault: Independent original-fixture binding or ancestry mismatch.
+        reason: Exact refusal expected for the selected mismatch.
+    """
+    plan = _lab(tmp_path, monkeypatch)
+    host = plan["trusted_host"]
+    # Appliance A, peer/LAN B, reviewed harness C stay separate. The existing
+    # proof regression admits both original VM receipt chains before this gate.
+    plan.update(resource_source_commit="b" * 40, source_commit="c" * 40)
+    fixture = _identity(plan["task_id"], "certificate-dhcp-peer-fixture",
+                        appliance_vmx=host["appliance_vmx"], peer_vmx=host["peer_vmx"],
+                        private_network="lan:" + host["segment_name"], lan_segment_id=host["segment_id"],
+                        lan_segment_receipt=host["segment_receipt"]["path"],
+                        lan_segment_receipt_sha256=host["segment_receipt"]["sha256"])
+    if fault in fixture:
+        fixture[fault] = "altered"
+    path = _write(tmp_path / "evidence" / "fixture.json", json.dumps(fixture))
+    plan["peer_fixture"] = {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    if fault == "digest":
+        plan["peer_fixture"]["sha256"] = "0" * 64
+    elif fault == "missing_fixture":
+        del plan["peer_fixture"]
+    elif fault == "unrelated_source":
+        run = trusted.subprocess.run
+        monkeypatch.setattr(trusted.subprocess, "run", lambda args, **kwargs: (
+            type("Unrelated", (), {"returncode": 1})() if args[0] == "git" else run(args, **kwargs)))
+    if reason is not None:
+        with pytest.raises(trusted.Refusal, match=reason):
+            trusted.inspect_trusted_host(plan)
+        return
+    observed = trusted.inspect_trusted_host(plan)
+    assert observed["source_commit"] == "c" * 40
+    assert observed["segment_receipt_sha256"] == host["segment_receipt"]["sha256"]
+    assert plan["resource_source_commit"] == "b" * 40
+    assert json.loads(path.read_bytes())["source_commit"] == SOURCE
+
+
 def _resign_snapshot(snapshot: dict[str, object]) -> dict[str, object]:
     """Recompute the topology digest after changing a snapshot fixture.
 

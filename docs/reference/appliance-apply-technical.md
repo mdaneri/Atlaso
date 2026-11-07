@@ -104,6 +104,17 @@ preference, passwordless web-terminal preference, and root SSH login preference.
 behavior. The app-owned appliance DNS record is derived from that identity, but DNS/DHCP still owns the rendered dnsmasq
 record and service reload boundary.
 
+An `appliance:https` leaf rotation has two nginx consumers: Appliance Settings owns the dedicated management site,
+and Public Services owns its enabled public and flagged-management listeners. The ordinary Apply plan replays both
+applied consumers after CA publication, including an absent Public Services site. Pending consumer edits require
+explicit review consent. The worker rejects a missing or incorrectly ordered consumer before execution and defers
+the CA baseline until all consumers succeed. Ordinary Settings readiness captures the deployed leaf before activation,
+checks every external scoped management address with the configured managed CA, and requires fresh TLS 1.2-or-newer
+connections to serve that exact leaf. Retained nginx loopback sockets stay outside certificate identity checks; the
+separate Atlaso loopback upstream health check remains required. A previous but still trusted leaf cannot satisfy
+readiness; the existing front-door rollback path
+handles activation or readiness failure.
+
 The web terminal is disabled globally by default. Enabling it requires management HTTPS and always includes the
 management interface; administrators may also select addressed access/route physical interfaces or enabled VLANs.
 Appliance Settings creates a dedicated Ed25519 OpenSSH user CA under `/etc/atlaso/ssh`, installs `TrustedUserCAKeys`
