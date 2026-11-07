@@ -124,6 +124,10 @@ Before the private-network reboot, NTP-only acceptance preserves the measured wh
 Original intent and result receipts bind its digest to the exact appliance, deployment and source commit.
 Existing paths are refused. After reboot, pinned SSH rechecks ownership and permissions and compares the complete
 wheel payload against the installed files; clearing `/tmp` cannot remove the verification artifact.
+After the private-network reboot, NTP acceptance waits at most 120 seconds for management HTTPS and a valid login
+page before sending credentials. Only explicit TCP non-acceptance and HTTP 502/503/504 startup responses retry;
+the original peer, topology, CA and hostname checks remain mandatory. This readiness wait precedes Apply and does
+not extend the helper's 60-second NTP startup/synchronization budget or retry an Apply submission.
 
 The consumer requires an unmanaged appliance with every clock controller inactive, then uses the existing settings
 forms and global Apply review for the initial resolver/DNS/access-interface/NTP baseline. A successful cold Apply

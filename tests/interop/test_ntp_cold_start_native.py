@@ -547,6 +547,7 @@ def fake_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, objec
     monkeypatch.setattr(fixture, "payload_identity", lambda *_args: {"payload_verified": True})
     monkeypatch.setattr(fixture, "tls_name", lambda *_args: "appliance.fixture.test")
     monkeypatch.setattr(fixture, "Client", FakeRunClient)
+    monkeypatch.setattr(fixture, "wait_management_client", lambda *_args: (FakeRunClient(), {"login_page_ready": True}))
     baseline = {"role": "management", "ipv4_method": "dhcp", "mac": "00:50:56:00:00:01"}
     def prepare(_client: object, _plan: object) -> dict[str, str]:
         """Return baseline interface fields after simulating peer selection.
@@ -736,6 +737,31 @@ def test_first_global_apply_can_publish_its_applied_tls_leaf(tmp_path, fake_run,
     result = fixture.run(orchestration_plan(), tmp_path, "synthetic-test-credential")
     assert result["success"] is True
     assert result["original_tls"] != result["baseline_tls"] == result["final_tls"]
+
+
+def test_management_startup_timeout_precedes_login_and_any_apply(tmp_path, fake_run, monkeypatch):
+    """An unavailable rebooted front door leaves no Apply submission to replay.
+
+    Args:
+        tmp_path: Original synthetic output root.
+        fake_run: No-network orchestration seams and submission records.
+        monkeypatch: Injects a failed first-login readiness gate.
+    """
+    def unavailable(*_args):
+        """Fail the pre-authentication readiness gate.
+
+        Args:
+            *_args: Original peer and plan deliberately unused by this failure.
+        """
+        raise fixture.Refusal("ntp_fixture_management_readiness_timeout")
+
+    monkeypatch.setattr(fixture, "wait_management_client", unavailable)
+    with pytest.raises(fixture.Refusal, match="preserve_and_reconcile"):
+        fixture.run(orchestration_plan(), tmp_path, "synthetic-test-credential")
+    assert fake_run["submissions"] == []
+    result = json.loads((tmp_path / "ntp-native-result.json").read_text())
+    assert result["stage"] == "management_https_readiness" and result["success"] is False
+    assert not list(tmp_path.glob("*submission-intent.json"))
 
 
 def test_ntp_only_tls_identity_drift_refuses_acceptance(tmp_path, fake_run, monkeypatch):

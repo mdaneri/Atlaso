@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -21,11 +22,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from certificate_fixture_init import FixtureForm, replace_fields, submit_initialization
 from certificate_handoff_native import (
     Client,
+    Page,
     clean_baseline,
     edit,
     saved_fields,
     wait_task,
 )
+from certificate_handoff_native import Refusal as ClientRefusal
 from certificate_iso_bootstrap import guest_python_command, sudo_read, tls_name
 from certificate_peer_proof import bound_json, original_vm, publish
 from certificate_peer_time import verify_peer_time
@@ -334,6 +337,67 @@ def payload_identity(session, plan: dict, password: str) -> dict:
     return {key: facts[key] for key in keys}
 
 
+def wait_management_client(peer, plan: dict) -> tuple[Client, dict]:
+    """Wait for the rebooted HTTPS login page before sending any credential.
+
+    Only explicit TCP non-acceptance and HTTP gateway startup failures retry.
+    CA, hostname, transport and topology failures remain immediate refusals.
+
+    Args:
+        peer: Original pinned and authenticated private-LAN transport.
+        plan: Admitted private address and independently pinned public CA.
+    """
+    started = time.monotonic()
+    deadline = started + 120
+    attempts = 0
+    client = None
+    while True:
+        guard = getattr(peer, "topology_guard", None)
+        if guard is not None:
+            guard()
+        if client is None:
+            if deadline - time.monotonic() < 24:
+                raise Refusal("ntp_fixture_management_readiness_timeout")
+            attempts += 1
+            if not peer.tcp_reachable(plan["current_address"], 443):
+                time.sleep(min(2, max(0, deadline - time.monotonic())))
+                continue
+
+            def bootstrap_socket(address: str):
+                """Bound the existing CA-validated SAN discovery handshake.
+
+                Args:
+                    address: Exact already admitted management address.
+                """
+                raw = peer.open_socket(address)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raw.close()
+                    raise Refusal("ntp_fixture_management_readiness_timeout")
+                raw.settimeout(min(8, remaining))
+                return raw
+
+            name = tls_name(SimpleNamespace(open_socket=bootstrap_socket), plan["current_address"], plan["ca_path"])
+            client = Client("https://" + name, plan["ca_path"], peer=peer, connect_ip=plan["current_address"])
+        # Preserve Client.request's twelve-second request timeout and reserve
+        # that budget rather than renewing the overall readiness deadline.
+        if deadline - time.monotonic() < 12:
+            raise Refusal("ntp_fixture_management_readiness_timeout")
+        try:
+            status, body = client.request("/ui/management/login")
+        except ClientRefusal as exc:
+            if str(exc) not in {"http_502", "http_503", "http_504"}:
+                raise
+        else:
+            if status != 200 or not Page(body).csrf:
+                raise Refusal("ntp_fixture_management_login_page_invalid")
+            if time.monotonic() > deadline:
+                raise Refusal("ntp_fixture_management_readiness_timeout")
+            return client, {"tcp_attempts": attempts, "elapsed_seconds": round(time.monotonic() - started, 3),
+                            "ca_and_hostname_verified": True, "login_page_ready": True}
+        time.sleep(min(2, max(0, deadline - time.monotonic())))
+
+
 def prepare_baseline(client, plan: dict) -> dict:
     """Prepare first-run DNS/resolver and one unused access interface via UI.
 
@@ -582,8 +646,8 @@ def run(plan: dict, output: Path, password: str, *, appliance_password: str | No
                     routing = json.loads(sudo_read(session, guest_python_command(probe), ssh_password))
                     if routing.get("state") != "proven-absent":
                         raise Refusal("ntp_fixture_routing_intent_present")
-                    client = Client("https://" + tls_name(peer, plan["current_address"], plan["ca_path"]), plan["ca_path"],
-                                    peer=peer, connect_ip=plan["current_address"])
+                    result["stage"] = "management_https_readiness"
+                    client, result["management_readiness"] = wait_management_client(peer, plan)
                     client.login(plan["username"], password)
                     result["original_tls"] = client.tls_identity()
                     result["stage"] = "first_run_desired_state"
