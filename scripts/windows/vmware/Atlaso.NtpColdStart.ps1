@@ -14,6 +14,7 @@ $ntpBaselineAddress = '192.168.77.30'
 $ntpCandidateAddress = '192.168.77.40'
 $ntpNegativeAddress = '192.168.77.11'
 $ntpConsoleReceipts = @{}
+$ntpRetainedWheel = $null
 
 <#
 .SYNOPSIS
@@ -519,6 +520,71 @@ function Save-NtpApplianceConsoleIdentity {
 
 <#
 .SYNOPSIS
+Retain the measured public wheel before the required NTP appliance reboot.
+#>
+function Save-NtpRetainedWheel {
+    if (-not $NtpColdStartOnly -or $applianceWheel.Name -notmatch '^atlaso-[A-Za-z0-9_.+-]+\.whl$' -or
+        $applianceWheel.Sha256 -notmatch '^[a-fA-F0-9]{64}$') {
+        throw 'Retained wheel creation requires the admitted NTP fixture build.'
+    }
+    Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
+    if ((Get-FileHash -LiteralPath $certificateOwnership.Path -Algorithm SHA256).Hash -ine $certificateOwnership.Sha256) {
+        throw 'Original NTP appliance ownership receipt changed.'
+    }
+    $owner = Get-Content -LiteralPath $certificateOwnership.Path -Raw | ConvertFrom-Json
+    $identity = @($owner.root_identity)
+    if ($owner.task_id -cne $lifecycleTaskId -or $owner.repository -cne 'mdaneri/Atlaso' -or
+        $owner.pr -ne $PullRequestNumber -or $owner.source_commit -cne $sourceCommit -or
+        $owner.path -cne $applianceVmx -or $identity.Count -ne 3 -or
+        (Get-AtlasoPathIdentity -Path $owner.root_path -Description 'original NTP appliance directory') -cne
+            ('{0:X8}:{1:X8}{2:X8}' -f [uint32]$identity[0], [uint32]$identity[1], [uint32]$identity[2])) {
+        throw 'Retained wheel creation lost original NTP appliance ownership.'
+    }
+    $sourcePath = "/tmp/$($applianceWheel.Name)"
+    $guestPath = "/var/lib/atlaso/ntp-acceptance/$($applianceWheel.Name)"
+    $digest = $applianceWheel.Sha256.ToLowerInvariant()
+    $intent = Write-CertificateLabReceipt -Name 'ntp-wheel-retention-intent.json' -Value ([ordered]@{
+        schema = 1; kind = 'ntp-wheel-retention-intent'; task_id = $lifecycleTaskId; repository = 'mdaneri/Atlaso'
+        pr = $PullRequestNumber; source_commit = $sourceCommit; appliance_vmx = $applianceVmx
+        appliance_ownership_sha256 = $certificateOwnership.Sha256.ToLowerInvariant()
+        deployed_runtime_sha256 = $certificateRuntime.Sha256.ToLowerInvariant()
+        source_path = $sourcePath; guest_path = $guestPath; wheel_name = $applianceWheel.Name; wheel_sha256 = $digest
+    })
+    # /tmp is cleared by the required appliance reboot. Preserve only the measured
+    # public wheel in a new root-only directory; never repair or adopt an old path.
+    $script = @'
+set -eu
+source_wheel=__SOURCE__
+retained_wheel=__TARGET__
+retained_dir=/var/lib/atlaso/ntp-acceptance
+test -d /var/lib/atlaso && test ! -L /var/lib/atlaso
+test ! -e "$retained_dir" && test ! -L "$retained_dir"
+test -f "$source_wheel" && test ! -L "$source_wheel"
+printf '%s  %s\n' '__DIGEST__' "$source_wheel" | sha256sum --check --status
+install -d -o 0 -g 0 -m 0700 -- "$retained_dir"
+install -o 0 -g 0 -m 0600 -- "$source_wheel" "$retained_wheel"
+test ! -L "$retained_wheel"
+test "$(stat -c '%u:%g:%a:%h' "$retained_wheel")" = '0:0:600:1'
+printf '%s  %s\n' '__DIGEST__' "$retained_wheel" | sha256sum --check --status
+'@
+    $script = $script.Replace('__SOURCE__', (ConvertTo-GuestShellSingleQuote -Value $sourcePath)).
+        Replace('__TARGET__', (ConvertTo-GuestShellSingleQuote -Value $guestPath)).Replace('__DIGEST__', $digest)
+    $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
+        '-T', 'ws', '-gu', 'root', '-gp', $RootGuestPassword, 'runScriptInGuest', $applianceVmx, '/bin/sh', $script
+    ) -TimeoutSeconds 30 -Action 'Retain original NTP wheel before appliance reboot'
+    Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
+    return Write-CertificateLabReceipt -Name 'ntp-retained-wheel.json' -Value ([ordered]@{
+        schema = 1; kind = 'ntp-retained-wheel'; task_id = $lifecycleTaskId; repository = 'mdaneri/Atlaso'
+        pr = $PullRequestNumber; source_commit = $sourceCommit; appliance_vmx = $applianceVmx
+        appliance_ownership_sha256 = $certificateOwnership.Sha256.ToLowerInvariant()
+        deployed_runtime_sha256 = $certificateRuntime.Sha256.ToLowerInvariant(); retention_intent_sha256 = $intent.Sha256
+        guest_path = $guestPath; wheel_name = $applianceWheel.Name; wheel_sha256 = $digest
+        owner_uid = 0; owner_gid = 0; mode = '0600'; links = 1; verified_before_reboot = $true
+    })
+}
+
+<#
+.SYNOPSIS
 Capture public CA bytes from the original VM channel, then launch the pinned consumer.
 #>
 function Invoke-NtpColdStartAcceptance {
@@ -547,6 +613,7 @@ function Invoke-NtpColdStartAcceptance {
         appliance_console = (& $reference $ntpConsoleReceipts['appliance'].Observation)
         peer_console = (& $reference $ntpConsoleReceipts['peer'].Observation)
         deployed_runtime = (& $reference $certificateRuntime); rewired_runtime = (& $reference $rewiredRuntime)
+        retained_wheel = (& $reference $ntpRetainedWheel)
         source_creation = @{ path = $NtpPeerSourceReceiptPath; sha256 = $NtpPeerSourceReceiptSha256.ToLowerInvariant() }
         source_prepared = @{ path = $NtpPeerPreparedReceiptPath; sha256 = $NtpPeerPreparedReceiptSha256.ToLowerInvariant() }
         current_address = $CertificateLeaseAddress; baseline_address = $ntpBaselineAddress; static_candidate_address = $ntpCandidateAddress

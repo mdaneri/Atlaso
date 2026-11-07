@@ -247,6 +247,7 @@ def admit_plan(plan: dict) -> dict:
             or measurement.get("installed_payload_sha256") != measurement.get("wheel_payload_sha256")
             or hashlib.sha256(Path(plan["ca_path"]).read_bytes()).hexdigest() != plan["ca_sha256"]):
         raise Refusal("ntp_fixture_payload_or_ca_changed")
+    retained_wheel_path(plan)
     return fixture
 
 
@@ -280,6 +281,36 @@ def source_digest(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def retained_wheel_path(plan: dict) -> str:
+    """Admit the original pre-reboot wheel retention intent and measured result.
+
+    Args:
+        plan: Source-pinned plan with original appliance and deployment receipts.
+    """
+    wheel = plan["wheel_name"]
+    if re.fullmatch(r"atlaso-[A-Za-z0-9_.+-]+\.whl", wheel) is None:
+        raise Refusal("ntp_fixture_wheel_name_invalid")
+    path = "/var/lib/atlaso/ntp-acceptance/" + wheel
+    retained = bound_json(plan["retained_wheel"])
+    intent = bound_json({
+        "path": str(Path(plan["retained_wheel"]["path"]).with_name("ntp-wheel-retention-intent.json")),
+        "sha256": retained["retention_intent_sha256"],
+    })
+    common = {key: plan[key] for key in ("task_id", "repository", "pr", "source_commit", "wheel_name", "wheel_sha256")}
+    common.update(schema=1, appliance_vmx=plan["trusted_host"]["appliance_vmx"],
+                  appliance_ownership_sha256=plan["appliance_ownership"]["sha256"],
+                  deployed_runtime_sha256=plan["deployed_runtime"]["sha256"], guest_path=path)
+    if (any(receipt.get(key) != value for receipt in (intent, retained) for key, value in common.items())
+            or intent.get("kind") != "ntp-wheel-retention-intent"
+            or intent.get("source_path") != "/tmp/" + wheel
+            or retained.get("kind") != "ntp-retained-wheel"
+            or retained.get("verified_before_reboot") is not True
+            or any(retained.get(key) != value for key, value in {"owner_uid": 0, "owner_gid": 0,
+                                                               "mode": "0600", "links": 1}.items())):
+        raise Refusal("ntp_fixture_retained_wheel_binding_invalid")
+    return path
+
+
 def payload_identity(session, plan: dict, password: str) -> dict:
     """Re-measure the installed wheel payload and helper through pinned SSH.
 
@@ -289,11 +320,12 @@ def payload_identity(session, plan: dict, password: str) -> dict:
         password: Sudo credential confined to stdin.
     """
     source = Path(__file__).with_name("routing_deployment_inspection.py").read_text(encoding="utf-8")
-    wheel = plan["wheel_name"]
-    if re.fullmatch(r"atlaso-[A-Za-z0-9_.+-]+\.whl", wheel) is None:
-        raise Refusal("ntp_fixture_wheel_name_invalid")
-    program = ("import json,pathlib\nn={'__name__':'ntp_read_only_inspection'}\nexec(" + repr(source) + ",n)\n"
-               + "print(json.dumps(n['deployment_evidence'](pathlib.Path(" + repr("/tmp/" + wheel) + "),'192.168.77.10')))\n")
+    wheel_path = retained_wheel_path(plan)
+    program = ("import json,pathlib,stat\np=pathlib.Path(" + repr(wheel_path) + ")\ns=p.lstat()\nd=p.parent.lstat()\n"
+               + "assert stat.S_ISDIR(d.st_mode) and stat.S_IMODE(d.st_mode)==0o700 and d.st_uid==d.st_gid==0\n"
+               + "assert stat.S_ISREG(s.st_mode) and stat.S_IMODE(s.st_mode)==0o600 and s.st_uid==s.st_gid==0 and s.st_nlink==1\n"
+               + "n={'__name__':'ntp_read_only_inspection'}\nexec(" + repr(source) + ",n)\n"
+               + "print(json.dumps(n['deployment_evidence'](p,'192.168.77.10')))\n")
     facts = json.loads(sudo_read(session, guest_python_command(program), password))
     expected = bound_json(plan["deployment_measurement"])
     keys = ("helper_sha256", "wheel_sha256", "wheel_payload_sha256", "installed_payload_sha256", "verified_payload_files")

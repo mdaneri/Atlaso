@@ -4064,6 +4064,7 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
             (Get-VmxEthernetMacAddress -Path $applianceVmx -Index 0) -cne (ConvertTo-HyphenMac -MacAddress $certificateAppliancePeerMac)) {
             throw 'Certificate appliance bootstrap MAC or running state changed before private handoff.'
         }
+        if ($NtpColdStartOnly) { $ntpRetainedWheel = Save-NtpRetainedWheel }
         $rewireIntent = Write-CertificateLabReceipt -Name 'management-rewire-intent.json' -Value ([ordered]@{
             schema = 1; kind = 'certificate-management-rewire-intent'; task_id = $env:CODEX_THREAD_ID
             repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber; source_commit = $sourceCommit

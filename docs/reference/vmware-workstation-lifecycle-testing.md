@@ -119,6 +119,11 @@ maintainer direction before a hard power action.
 The NTP mode has its own original clone admission; it never represents a clone as an ISO installation.
 Before wheel deployment, it waits at most 120 seconds for first boot to publish the complete source database schema,
 then requires the unchanged read-only routing-absence proof. A missing schema never counts as empty routing intent.
+Before the private-network reboot, NTP-only acceptance preserves the measured wheel in a new root-owned
+`/var/lib/atlaso/ntp-acceptance` directory with mode `0700` and a single-link wheel with mode `0600`.
+Original intent and result receipts bind its digest to the exact appliance, deployment and source commit.
+Existing paths are refused. After reboot, pinned SSH rechecks ownership and permissions and compares the complete
+wheel payload against the installed files; clearing `/tmp` cannot remove the verification artifact.
 
 The consumer requires an unmanaged appliance with every clock controller inactive, then uses the existing settings
 forms and global Apply review for the initial resolver/DNS/access-interface/NTP baseline. A successful cold Apply

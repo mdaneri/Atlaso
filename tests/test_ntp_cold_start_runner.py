@@ -11,6 +11,72 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.parametrize("fail_copy", [False, True])
+def test_ntp_retained_wheel_is_receipted_before_copy_and_never_published_on_failure(tmp_path, fail_copy):
+    """A bounded guest copy cannot publish verified custody after a failed mutation.
+
+    Args:
+        tmp_path: Isolated synthetic original receipt root.
+        fail_copy: Whether the bounded guest copy fails.
+    """
+    pwsh = shutil.which("pwsh")
+    if not pwsh:
+        pytest.skip("PowerShell is required for the executable artifact custody check")
+    owner = {"task_id": "task", "repository": "mdaneri/Atlaso", "pr": 1121,
+             "source_commit": "a" * 40, "path": "original.vmx", "root_path": str(tmp_path),
+             "root_identity": [1, 2, 3]}
+    receipt = tmp_path / "original.json"
+    receipt.write_text(json.dumps(owner), encoding="utf-8")
+    program = r"""
+$ErrorActionPreference='Stop'
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile(
+ (Join-Path (Get-Location) 'scripts/windows/vmware/Atlaso.NtpColdStart.ps1'),[ref]$tokens,[ref]$errors)
+if($errors.Count){throw 'NTP helpers parse failed.'}
+$definition=$ast.Find({param($node)
+ $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Save-NtpRetainedWheel'
+},$true)
+. ([scriptblock]::Create($definition.Extent.Text))
+$NtpColdStartOnly=$true; $PullRequestNumber=1121; $lifecycleTaskId='task'; $sourceCommit='a'*40
+$applianceVmx='original.vmx'; $resolvedVmrun='synthetic-vmrun'; $RootGuestPassword='synthetic'
+$runtimeConsumerPins=@{}; $applianceWheel=@{Name='atlaso-0.9.485-py3-none-any.whl';Sha256='b'*64}
+$certificateOwnership=@{Path=$env:ATLASO_NTP_TEST_OWNER;Sha256=(Get-FileHash $env:ATLASO_NTP_TEST_OWNER).Hash}
+$certificateRuntime=@{Sha256='d'*64}; $script:events=[Collections.Generic.List[string]]::new()
+function Assert-LifecycleSourcePins {param($Pins) $script:events.Add('pins')}
+function Get-AtlasoPathIdentity {param($Path,$Description) return '00000001:0000000200000003'}
+function ConvertTo-GuestShellSingleQuote {param($Value) return "'$Value'"}
+function Write-CertificateLabReceipt {
+ param($Name,$Value)
+ $script:events.Add($Name)
+ if($Name -eq 'ntp-retained-wheel.json' -and ($Value.mode -cne '0600' -or $Value.links -ne 1)){
+  throw 'Unsafe retained artifact receipt.'
+ }
+ return @{Path=$Name;Sha256='e'*64}
+}
+function Invoke-AtlasoBoundedStreamingProcess {
+ param($FilePath,$ArgumentList,$TimeoutSeconds,$Action,[switch]$DiscardOutput)
+ $script:events.Add('copy')
+ if($TimeoutSeconds -ne 30 -or -not $DiscardOutput){throw 'Unbounded or output-bearing copy.'}
+ $guest=$ArgumentList[-1]
+ foreach($guard in @('test ! -e "$retained_dir"','test ! -L "$source_wheel"',
+  'sha256sum --check --status','install -o 0 -g 0 -m 0600','0:0:600:1')){
+  if(-not $guest.Contains($guard)){throw 'Missing artifact refusal or integrity check.'}
+ }
+ if($env:ATLASO_NTP_TEST_FAIL -eq 'true'){throw 'Synthetic guest copy failure.'}
+}
+$failed=$false
+try {$null=Save-NtpRetainedWheel} catch {$failed=$true}
+@{events=@($script:events);failed=$failed}|ConvertTo-Json -Compress
+"""
+    environment = dict(os.environ, ATLASO_NTP_TEST_OWNER=str(receipt), ATLASO_NTP_TEST_FAIL=str(fail_copy).lower())
+    result = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", program], cwd=ROOT,
+                            env=environment, capture_output=True, text=True, timeout=30, check=True)
+    observed = json.loads(result.stdout)
+    assert observed["failed"] is fail_copy
+    events = ["pins", "ntp-wheel-retention-intent.json", "copy"]
+    assert observed["events"] == events if fail_copy else observed["events"] == [*events, "pins", "ntp-retained-wheel.json"]
+
+
 @pytest.mark.parametrize(("plan_only", "cleanup", "admitted"), [(True, True, True), (False, True, False), (False, False, True)])
 def test_ntp_cleanup_gate_distinguishes_plan_only_from_a_live_retained_lab(plan_only, cleanup, admitted):
     """A default wrapper cleanup flag must not block a resource-free plan.
