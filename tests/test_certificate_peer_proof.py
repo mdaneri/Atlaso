@@ -402,6 +402,12 @@ def test_original_peer_identity_rejects_changed_endpoint_before_network(
                                "ssh_public_key": fixture["ssh_public_key"]}}
     with pytest.raises(proof.Refusal, match="exclusive_private_lan_and_candidate_ownership_unproven"):
         proof.admit_receipts(plan)
+    monkeypatch.setattr(proof, "original_vm", lambda plan, role, vmx: {
+        "source_commit": ("b" if role == "appliance" else "a") * 40})
+    for mode in (plan, dict(plan, trust_model="trusted-host")):
+        with pytest.raises(proof.Refusal, match="fixture_original_vm_mismatch"):
+            proof.admit_fixture(mode)
+    monkeypatch.setattr(proof, "original_vm", lambda plan, role, vmx: {"source_commit": "a" * 40})
     monkeypatch.setattr(WindowsFiles, "mutable_file_identity", lambda self, path: "replaced")
     with pytest.raises(proof.Refusal, match="fixture_original_vm_mismatch"):
         proof.admit_receipts(plan)
@@ -739,6 +745,70 @@ def test_original_iso_receipt_accepts_distinct_plan_and_installed_source_commits
     monkeypatch.setattr(proof, "bound_json", lambda ref: values[id(ref)])
     monkeypatch.setattr(WindowsFiles, "opened", opened)
     assert proof.original_iso_vm(plan, intent, ownership, reference, Path(root), vmx) is ownership
+    # Exercise the outer fixture gate too: its peer and LAN were created after
+    # the original ISO appliance. Do not stub either VM's receipt admission.
+    peer_vmx = str(tmp_path / "peer.vmx")
+    plan["appliance_intent"]["path"] = "staged/appliance-intent.json"
+    plan["appliance_ownership"] = reference
+    peer_intent_ref = {"path": "staged/peer-intent.json", "sha256": "1" * 64}
+    peer_owner_ref = {"path": "staged/peer-owner.json", "sha256": "2" * 64}
+    fixture_ref = {"path": str(tmp_path / "fixture.json"), "sha256": "3" * 64}
+    identity_ref = {"path": str(tmp_path / "peer-identity.json"), "sha256": "4" * 64}
+    segment_ref = {"path": "staged/segment.json", "sha256": "5" * 64}
+    peer_intent = {"schema": 1, "kind": "vm-creation-intent", "task_id": "task",
+                   "repository": "mdaneri/Atlaso", "pr": 1074, "path": peer_vmx,
+                   "root_path": root, "source_commit": plan["source_commit"]}
+    peer_owner = {**peer_intent, "kind": "vm", "intent_sha256": peer_intent_ref["sha256"],
+                  "root_identity": [1, 2, 3]}
+    fixture = {
+        "schema": 1, "kind": "certificate-dhcp-peer-fixture", "task_id": "task",
+        "repository": "mdaneri/Atlaso", "pr": 1074, "address_ownership_state": "awaiting-live-readback",
+        "source_commit": plan["source_commit"], "private_network": "lan:private",
+        "appliance_vmx": vmx, "peer_vmx": peer_vmx, "appliance_mac": plan["mac"],
+        "appliance_ownership_sha256": reference["sha256"], "peer_ownership_sha256": peer_owner_ref["sha256"],
+        "client_vmdk_copy": str(Path(peer_vmx).with_suffix(".vmdk")), "client_vmdk_copy_identity": "disk-id",
+        "client_vmdk_source": "source.vmdk", "client_vmdk_sha256": "6" * 64,
+        "client_vmdk_copy_preboot_sha256": "6" * 64, "ssh_public_key": "ssh-ed25519 " + "A" * 44,
+        "lan_segment_receipt": segment_ref["path"], "lan_segment_receipt_sha256": segment_ref["sha256"],
+        "lan_segment_id": "segment-1", "management_network": "vmnet8",
+    }
+    segment = {"schema": 1, "task_id": "task", "repository": "mdaneri/Atlaso", "pr": 1074,
+               "source_commit": plan["source_commit"], "name": "private", "pvn_id": "segment-1"}
+    identity = {
+        "schema": 1, "kind": "certificate-peer-original-identity", "task_id": "task",
+        "repository": "mdaneri/Atlaso", "pr": 1074, "peer_vmx": peer_vmx,
+        "peer_ownership_sha256": peer_owner_ref["sha256"], "peer_fixture_sha256": fixture_ref["sha256"],
+        "client_vmdk_copy_identity": "disk-id", "ssh_public_key": fixture["ssh_public_key"],
+        "management_network": "vmnet8", "management_address": "192.168.167.42",
+        "ssh_host_key": "SHA256:" + "A" * 43, "ssh_user": "alpine",
+        "observation": "owned-vmware-tools-and-agent-ssh-after-management-restart",
+    }
+    plan.update(peer_intent=peer_intent_ref, peer_ownership=peer_owner_ref, peer_fixture=fixture_ref,
+                peer_identity=identity_ref, resource_source_commit=ownership["source_commit"],
+                peer_transport={"host": identity["management_address"], "ssh_host_key": identity["ssh_host_key"],
+                                "user": "alpine", "ssh_public_key": fixture["ssh_public_key"]})
+    receipts = {plan["appliance_intent"]["path"]: intent, reference["path"]: ownership,
+                peer_intent_ref["path"]: peer_intent, peer_owner_ref["path"]: peer_owner,
+                fixture_ref["path"]: fixture, identity_ref["path"]: identity, segment_ref["path"]: segment,
+                boot_ref["path"]: boot, transition_ref["path"]: transition, pending_ref["path"]: pending}
+    monkeypatch.setattr(proof, "bound_json", lambda ref: receipts[ref["path"]])
+    monkeypatch.setattr(proof, "file_digest", lambda path: "6" * 64)
+    monkeypatch.setattr(WindowsFiles, "mutable_file_identity", lambda self, path: "disk-id")
+    monkeypatch.setattr(proof, "vmx_adapter", lambda path, index: (
+        {"connectiontype": "custom", "vnet": "vmnet8"} if path == peer_vmx and index == 0
+        else {"connectiontype": "pvn", "pvnid": "segment-1", "address": plan["mac"]}))
+    assert proof.admit_fixture(plan) is fixture
+    assert ownership["source_commit"] == "a" * 40
+    for record in (peer_intent, peer_owner, fixture, segment):
+        assert record["source_commit"] == "e" * 40
+    plan["resource_source_commit"] = "f" * 40
+    with pytest.raises(proof.Refusal, match="original_iso_creation_source_mismatch"):
+        proof.admit_fixture(plan)
+    plan["resource_source_commit"] = ownership["source_commit"]
+    peer_intent["source_commit"] = peer_owner["source_commit"] = "f" * 40
+    with pytest.raises(proof.Refusal, match="fixture_original_vm_mismatch"):
+        proof.admit_fixture(plan)
+    peer_intent["source_commit"] = peer_owner["source_commit"] = plan["source_commit"]
     # Installation can finish after the harness advances; preserve both original
     # resource and later boot receipt source identities without relabelling either.
     boot["source_commit"] = plan["source_commit"]
@@ -764,7 +834,7 @@ def test_original_iso_receipt_accepts_distinct_plan_and_installed_source_commits
     monkeypatch.setattr(proof.subprocess, "run", unrelated_source)
     monkeypatch.setattr(WindowsFiles, "opened", lambda *args, **kwargs: pytest.fail("unrelated source reached live VM admission"))
     with pytest.raises(proof.Refusal, match="original_iso_source_not_reviewed_ancestor"):
-        proof.original_iso_vm(plan, intent, ownership, reference, Path(root), vmx)
+        proof.admit_fixture(plan)
     assert calls[0][-4:] == ["merge-base", "--is-ancestor", ownership["source_commit"], plan["source_commit"]]
 
 

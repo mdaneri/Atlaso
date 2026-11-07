@@ -262,6 +262,10 @@ def admit_fixture(plan: dict) -> dict:
         raise Refusal("peer_fixture_invalid")
     appliance = original_vm(plan, "appliance", fixture["appliance_vmx"])
     peer = original_vm(plan, "peer", fixture["peer_vmx"])
+    # original_iso_vm already binds the appliance's immutable creation source
+    # to the reviewed harness. A subsequently created peer keeps its own source.
+    original_iso = (plan.get("trust_model") == "trusted-host"
+                    and appliance.get("phase") == "original-installation-vm-created")
     from scripts.completed_task_files import FileRefusal, WindowsFiles
 
     copy_path = Path(str(fixture.get("client_vmdk_copy") or ""))
@@ -272,7 +276,7 @@ def admit_fixture(plan: dict) -> dict:
     except (FileRefusal, OSError) as exc:
         raise Refusal("fixture_copied_disk_identity_unavailable") from exc
     if (
-        appliance.get("source_commit") != fixture["source_commit"]
+        (not original_iso and appliance.get("source_commit") != fixture["source_commit"])
         or peer.get("source_commit") != fixture["source_commit"]
         or plan["appliance_ownership"]["sha256"] != fixture["appliance_ownership_sha256"]
         or plan["peer_ownership"]["sha256"] != fixture["peer_ownership_sha256"]

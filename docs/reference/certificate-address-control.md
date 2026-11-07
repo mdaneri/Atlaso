@@ -102,6 +102,8 @@ must not weaken legacy independent-control admission.
 When the reviewed harness advances after lab creation, retain the original receipt bytes and creation source in
 `resource_source_commit`; `source_commit` identifies the currently reviewed harness. Admission requires the creation
 source to remain an ancestor of that harness. Never change a receipt's source to match a later head.
+The peer fixture and LAN retain their own creation source; their source need not equal the original ISO appliance's
+independently admitted creation source. Legacy independent-control admission still requires matching VM sources.
 
 ## Prepare the ISO appliance adapter
 
