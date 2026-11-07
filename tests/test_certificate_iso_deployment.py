@@ -31,7 +31,7 @@ _PAYLOAD_SHA256 = "e" * 64
 _MACHINE_ID_SHA256 = "f" * 64
 _DEPLOYMENT_DIR = "atlaso-certificate-deploy-0123456789abcdef0123456789abcdef"
 _WHEEL_FILENAME = "atlaso-1.2.4.whl"
-_REMOTE_WHEEL = f"/tmp/{_DEPLOYMENT_DIR}/{_WHEEL_FILENAME}"
+_REMOTE_WHEEL = f"/var/tmp/{_DEPLOYMENT_DIR}/{_WHEEL_FILENAME}"
 
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is unavailable")
@@ -283,7 +283,7 @@ def _receipt_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, defect:
     elif defect == "wheel_path":
         deployment_receipt["remote_wheel"] = "/tmp/../etc/atlaso.whl"
     elif defect == "wheel_filename":
-        deployment_receipt["remote_wheel"] = f"/tmp/{_DEPLOYMENT_DIR}/atlaso-9.9.9.whl"
+        deployment_receipt["remote_wheel"] = f"/var/tmp/{_DEPLOYMENT_DIR}/atlaso-9.9.9.whl"
     elif defect == "assets":
         deployment_receipt["assets_report"]["deployed_files"] += 1
     if defect == "network_binding":
@@ -375,6 +375,21 @@ def test_admit_deployment_refuses_independent_receipt_and_measurement_defects(
 
     with pytest.raises(deployment.Refusal, match=reason):
         deployment.admit_deployment(plan, context=context)
+
+
+@pytest.mark.parametrize("remote", [
+    f"/tmp/{_DEPLOYMENT_DIR}/{_WHEEL_FILENAME}",
+    f"/var/tmp/../{_DEPLOYMENT_DIR}/{_WHEEL_FILENAME}",
+    f"/var/tmp/other/{_WHEEL_FILENAME}",
+])
+def test_payload_measurement_refuses_ephemeral_or_unbound_archive_paths(remote: str) -> None:
+    """Require the original persistent namespace for post-reboot payload checks.
+
+    Args:
+        remote: Nonpersistent, traversing or foreign wheel path to reject.
+    """
+    with pytest.raises(deployment.Refusal, match="iso_deployment_remote_wheel_path_invalid"):
+        deployment.payload_program({"payload_inspector_sha256": "a" * 64}, remote, "192.168.77.30")
 
 
 def test_optional_deployment_absence_keeps_the_legacy_iso_path() -> None:

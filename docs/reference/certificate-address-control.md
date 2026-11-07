@@ -104,6 +104,8 @@ When the reviewed harness advances after lab creation, retain the original recei
 source to remain an ancestor of that harness. Never change a receipt's source to match a later head.
 The peer fixture and LAN retain their own creation source; their source need not equal the original ISO appliance's
 independently admitted creation source. Legacy independent-control admission still requires matching VM sources.
+Trusted-host inventory admission verifies the original peer fixture's digest, task, VM and LAN selectors before using
+its LAN creation source, and requires that source to remain an ancestor of the reviewed harness.
 
 ## Prepare the ISO appliance adapter
 
@@ -384,6 +386,8 @@ requires its dependency declarations to match the original signed app. The compl
 match the original ISO's release inventory. The existing direct deployer keeps its bootstrap, deployment-lock and
 Appliance Update guards. It verifies the original console-observed SSH key before authentication, uses one private
 remote staging directory, verifies every uploaded file, and retains the original helper and console/boot assets.
+This exclusive mode-0700 staging directory lives under `/var/tmp`, preserving the same verified wheel archive across
+the private-LAN handoff reboot for subsequent payload measurements. `/tmp` staging is refused for this workflow.
 
 The original-fixture claim is exclusive across output directories. Process ownership is published while the child
 is suspended, before credential access or guest mutation. Success requires a quiescent process job, unchanged source

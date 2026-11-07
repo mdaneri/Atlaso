@@ -70,7 +70,7 @@ def _valid_transport_request(tmp_path: Path) -> tuple[dict[str, object], SimpleN
         "verified_payload_files": 25,
     }
     assets_expected, _ = _asset_reports()
-    remote_directory = "/tmp/atlaso-certificate-deploy-" + "7" * 32
+    remote_directory = "/var/tmp/atlaso-certificate-deploy-" + "7" * 32
     request: dict[str, object] = {
         "schema": 1, "kind": "certificate-iso-wheel-deployment-request",
         "repository": "mdaneri/Atlaso", "task_id": "task-transport-test",
@@ -123,6 +123,7 @@ def test_admit_request_accepts_exact_digest_bound_original_identity(
         ("output_exists", "iso_transport_output_not_fresh"),
         ("output_parent", "iso_transport_output_not_fresh"),
         ("host", "iso_transport_request_binding_mismatch"),
+        ("ephemeral_upload", "iso_transport_request_binding_mismatch"),
     ],
 )
 def test_admit_request_refuses_changed_pins_before_ssh(
@@ -150,7 +151,10 @@ def test_admit_request_refuses_changed_pins_before_ssh(
         request["inspection_output"] = str(Path(str(request["output_root"])).parent / "outside.json")
     elif defect == "host":
         args.host = "192.168.77.31"
-    if defect == "host_key" or defect == "output_parent":
+    elif defect == "ephemeral_upload":
+        request["remote_directory"] = args.remote_dir = args.remote_dir.replace("/var/tmp/", "/tmp/", 1)
+        request["remote_wheel"] = args.remote_wheel = args.remote_wheel.replace("/var/tmp/", "/tmp/", 1)
+    if defect in {"host_key", "output_parent", "ephemeral_upload"}:
         raw = json.dumps(request, sort_keys=True, separators=(",", ":")).encode()
         path.write_bytes(raw)
         digest = hashlib.sha256(raw).hexdigest()
@@ -411,7 +415,7 @@ def test_verify_uploads_binds_exact_hashes_destinations_and_duplicate_rejection(
     wheel, script = tmp_path / "wheel.whl", tmp_path / "deploy.sh"
     wheel.write_bytes(b"wheel contents")
     script.write_bytes(b"script contents")
-    remote = "/tmp/atlaso-certificate-deploy-" + "a" * 32
+    remote = "/var/tmp/atlaso-certificate-deploy-" + "a" * 32
     request = {"remote_directory": remote}
     commands: list[str] = []
 

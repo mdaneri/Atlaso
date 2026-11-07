@@ -120,9 +120,9 @@ def payload_program(expected: dict[str, Any], wheel: str, address: str) -> str:
     """
     target = str(ipaddress.IPv4Address(address))
     path = PurePosixPath(wheel)
-    if (not path.is_absolute() or ".." in path.parts or len(path.parts) != 4
-            or not re.fullmatch(r"atlaso-certificate-deploy-[0-9a-f]{32}", path.parts[2])
-            or path.parts[1] != "tmp" or not _WHEEL.fullmatch(path.name)):
+    if (not path.is_absolute() or ".." in path.parts or len(path.parts) != 5
+            or not re.fullmatch(r"atlaso-certificate-deploy-[0-9a-f]{32}", path.parts[3])
+            or path.parts[1:3] != ("var", "tmp") or not _WHEEL.fullmatch(path.name)):
         raise Refusal("iso_deployment_remote_wheel_path_invalid")
     checksum = expected.get("payload_inspector_sha256", "")
     if not isinstance(checksum, str) or not _DIGEST.fullmatch(checksum):
@@ -444,7 +444,8 @@ def prepare(args: argparse.Namespace) -> None:
              "wheel_sha256": hashlib.sha256(candidate).hexdigest(), "wheel_size": len(candidate), "version": version,
              "offline_wheels": offline}
     publish(output / "build.json", build)
-    remote = "/tmp/atlaso-certificate-deploy-" + uuid.uuid4().hex
+    # The same archive is measured after the private-LAN handoff reboot.
+    remote = "/var/tmp/atlaso-certificate-deploy-" + uuid.uuid4().hex
     intent = {**common, "kind": "certificate-iso-pr-wheel-deployment-intent",
               "vmx_path": context["ownership"]["vmx_path"], "mac": plan["mac"],
               "host_key_sha256": context["installed"]["host_key_sha256"],

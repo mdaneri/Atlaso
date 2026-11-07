@@ -278,6 +278,14 @@ The TLS trust bundle contains the internal CA public root plus imported public l
 TLS 1.2 or newer, permits X.509 partial-chain verification for explicitly imported leaf trust, and still authorizes the
 connection only when the peer's exact fingerprint maps to one provider UUID.
 
+## Contributor regression checks
+
+Run `python -m pytest tests/test_kmip_server.py` from the source checkout for the KMIP TLS rejection regression and
+mapped-client success checks. An unmapped client must produce the rejection warning without dispatching a request.
+The client may observe clean EOF, a broken pipe, a connection reset, or a TLS close; the test accepts only those
+explicit close outcomes. Application response bytes, timeouts, and unrelated errors must still fail. Deterministic
+cases exercise close exceptions during both sending and receiving, independent of the host's TLS teardown timing.
+
 ## API access
 
 For separate passphrase-encrypted operational backups, empty-target import, pending public-trust review, interruption

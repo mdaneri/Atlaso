@@ -55,7 +55,7 @@ def admit_request(path: Path, checksum: str, args: Any) -> dict[str, Any]:
             or value.get("host_address") != args.host or args.user != "admin"
             or value.get("remote_directory") != args.remote_dir
             or value.get("remote_wheel") != args.remote_wheel
-            or not re.fullmatch(r"/tmp/atlaso-certificate-deploy-[0-9a-f]{32}", args.remote_dir)
+            or not re.fullmatch(r"/var/tmp/atlaso-certificate-deploy-[0-9a-f]{32}", args.remote_dir)
             or PurePosixPath(args.remote_wheel).parent != PurePosixPath(args.remote_dir)
             or Path(value.get("wheel_path", "")).resolve() != Path(args.local_wheel).resolve()
             or Path(value.get("source_root", "")).resolve() != Path(args.fixture_source_root).resolve()

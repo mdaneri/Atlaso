@@ -16,6 +16,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/interop"))
 import certificate_iso_deployment as deployment  # noqa: E402 - Interop module uses sibling imports.
+import certificate_iso_transport as transport  # noqa: E402 - Exercise the producer's actual child admission.
 
 from scripts.interop.certificate_peer_proof import bound_json, publish  # noqa: E402 - Real public receipt helpers.
 from tests.test_certificate_iso_deployment import (  # noqa: E402 - Reuse the existing admitted receipt fixture.
@@ -491,6 +492,15 @@ def test_prepare_publishes_bound_build_intent_and_deployer_request(
     assert request["wheel_sha256"] == hashlib.sha256(candidate).hexdigest()
     assert request["host_address"] == "192.168.77.30"
     assert request["remote_wheel"] == intent["remote_wheel"]
+    assert Path(request["remote_directory"]).as_posix().startswith("/var/tmp/atlaso-certificate-deploy-")
+    child_args = argparse.Namespace(
+        host=request["host_address"], user="admin", remote_dir=request["remote_directory"],
+        remote_wheel=request["remote_wheel"], local_wheel=str(args.wheel),
+        fixture_source_root=str(args.source_root), trusted_host_key="", reset_vault_entries=False,
+        local_helper="", local_console_manager="", local_boot_installer="",
+    )
+    assert transport.admit_request(output / "request.json", deployment._reference(output / "request.json")["sha256"],
+                                   child_args) == request
     assert request["original_inspection"]["source_commit"] == _ORIGINAL_COMMIT
     assert request["source_snapshot_sha256"] == "9" * 64
     assert request["output_root_identity"] == "00000001:0000000200000003"
@@ -554,7 +564,7 @@ def _finish_files(output: Path, plan: dict[str, Any], context: dict[str, Any],
     references = {key: deployment.reference_binding(plan[key]) for key in (
         "appliance_intent", "appliance_ownership", "appliance_installed_boot", "installed_inspection",
     )}
-    remote = f"/tmp/{_DEPLOYMENT_DIR}/{_WHEEL_FILENAME}"
+    remote = f"/var/tmp/{_DEPLOYMENT_DIR}/{_WHEEL_FILENAME}"
     intent = {
         "schema": 1, "kind": "certificate-iso-pr-wheel-deployment-intent", "repository": "mdaneri/Atlaso",
         "pr": 1118, "task_id": "task", "source_commit": _DEPLOYED_COMMIT,

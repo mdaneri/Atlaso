@@ -355,6 +355,52 @@ def _validate_plan(plan: Any) -> dict[str, Any]:
     return host
 
 
+def _segment_creation_source(plan: dict[str, Any], host: dict[str, Any]) -> str:
+    """Bind a separately created LAN to the original digest-pinned peer fixture.
+
+    Args:
+        plan: Current reviewed harness plan and original resource references.
+        host: Validated trusted-host selectors for the same appliance, peer and LAN.
+    """
+    reference = plan.get("peer_fixture")
+    if reference is None:
+        return plan.get("resource_source_commit", plan["source_commit"])
+    if not isinstance(reference, dict):
+        raise Refusal("trusted_host_fixture_invalid")
+    _, data = _ordinary_file(reference.get("path"), "trusted_host_fixture_invalid", limit=262144)
+    if _sha256(data) != reference.get("sha256"):
+        raise Refusal("trusted_host_fixture_digest_mismatch")
+    try:
+        fixture = json.loads(data)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise Refusal("trusted_host_fixture_invalid") from None
+    if (not isinstance(fixture, dict) or fixture.get("schema") != 1
+            or fixture.get("kind") != "certificate-dhcp-peer-fixture"
+            or any(fixture.get(key) != plan[key] for key in ("task_id", "repository", "pr"))
+            or not isinstance(fixture.get("source_commit"), str)
+            or _COMMIT.fullmatch(fixture["source_commit"]) is None
+            or any(fixture.get(key) != host[key] for key in ("appliance_vmx", "peer_vmx"))
+            or fixture.get("private_network") != "lan:" + host["segment_name"]
+            or fixture.get("lan_segment_id") != host["segment_id"]
+            or {"path": fixture.get("lan_segment_receipt"), "sha256": fixture.get("lan_segment_receipt_sha256")}
+            != host["segment_receipt"]):
+        raise Refusal("trusted_host_fixture_binding_mismatch")
+    source = fixture["source_commit"]
+    if source != plan["source_commit"]:
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("ATLASO_NATIVE_")}
+        try:
+            ancestry = subprocess.run(
+                ["git", "--no-replace-objects", "-C", str(Path(__file__).resolve().parents[2]),
+                 "merge-base", "--is-ancestor", source, plan["source_commit"]],
+                capture_output=True, env=environment, timeout=15, check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            raise Refusal("trusted_host_fixture_source_unavailable") from None
+        if ancestry.returncode:
+            raise Refusal("trusted_host_fixture_source_not_ancestor")
+    return source
+
+
 def inspect_trusted_host(plan: dict[str, Any]) -> dict[str, Any]:
     """Collect one bounded, allowlisted readback of the trusted VMware host.
 
@@ -383,6 +429,7 @@ def inspect_trusted_host(plan: dict[str, Any]) -> dict[str, Any]:
     receipt = host.get("segment_receipt")
     if not isinstance(receipt, dict):
         raise Refusal("trusted_host_segment_receipt_missing")
+    segment_source = _segment_creation_source(plan, host)
     receipt_path, receipt_bytes = _ordinary_file(receipt.get("path"), "trusted_host_segment_receipt_invalid", limit=262144)
     expected_receipt_sha = receipt.get("sha256")
     if not isinstance(expected_receipt_sha, str) or _sha256(receipt_bytes) != expected_receipt_sha:
@@ -395,7 +442,7 @@ def inspect_trusted_host(plan: dict[str, Any]) -> dict[str, Any]:
             or receipt_value.get("task_id") != plan["task_id"]
             or receipt_value.get("repository") != plan["repository"]
             or receipt_value.get("pr") != plan["pr"]
-            or receipt_value.get("source_commit") != plan.get("resource_source_commit", plan["source_commit"])
+            or receipt_value.get("source_commit") != segment_source
             or receipt_value.get("name") != host["segment_name"]
             or receipt_value.get("pvn_id") != host["segment_id"]):
         raise Refusal("trusted_host_segment_receipt_binding_mismatch")
