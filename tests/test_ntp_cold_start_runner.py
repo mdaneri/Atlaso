@@ -340,7 +340,11 @@ $legacyArgs=@($ntpOptions)
 
 
 def test_peer_management_waiter_records_only_bounded_sanitized_ntp_timeout_categories():
-    """Execute the actual waiter with a fake clock and bounded vmrun responses."""
+    """Exercise bounded native diagnostics, the final Tools cross-check, and legacy behavior.
+
+    Args:
+        None.
+    """
     pwsh = shutil.which("pwsh")
     if not pwsh:
         pytest.skip("PowerShell is required for the executable runner guard check")
@@ -355,6 +359,12 @@ $definition=$ast.Find({param($node)
  $node.Name -eq 'Wait-CertificatePeerManagementAddress'
 },$true)
 if(-not $definition){throw 'Peer management waiter is missing.'}
+$classifier=$ast.Find({param($node)
+ $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+ $node.Name -eq 'Get-CertificatePeerNativeFailureCategory'
+},$true)
+if(-not $classifier){throw 'Peer native failure categorizer is missing.'}
+. ([scriptblock]::Create($classifier.Extent.Text))
 . ([scriptblock]::Create($definition.Extent.Text))
 $script:NtpColdStartOnly=$true
 $script:lifecycleTaskId='synthetic-task-id'
@@ -363,30 +373,56 @@ $script:peerOwnership=[pscustomobject]@{Sha256=('d'*64)}
 $script:clock=[datetime]'2026-01-01T00:00:00Z'
 $script:polls=0
 $script:category=$env:ATLASO_NTP_WAITER_CATEGORY
+$script:mode=$env:ATLASO_NTP_WAITER_MODE
 $script:commands=[Collections.Generic.List[object]]::new()
 $script:receipts=[Collections.Generic.List[object]]::new()
+$script:toolsStateCalls=0
 function Get-Date { $script:clock }
 function Start-Sleep { param([int]$Seconds) $script:clock=$script:clock.AddSeconds($Seconds) }
 function Invoke-VmrunBounded {
  param([string[]]$Arguments,[int]$TimeoutSeconds)
- $script:polls++
  $script:commands.Add([pscustomobject]@{Arguments=$Arguments;Timeout=$TimeoutSeconds})
+ if($Arguments[2] -ceq 'checkToolsState'){
+  $script:toolsStateCalls++
+  if($env:ATLASO_NTP_WAITER_TOOLS_STATE -ceq 'timeout'){
+   return [pscustomobject]@{TimedOut=$true;ExitCode=-1;StdOut='canary-tools-timeout-stdout';StdErr='canary-tools-timeout-stderr'}
+  }
+  return [pscustomobject]@{TimedOut=$false;ExitCode=0;StdOut=$env:ATLASO_NTP_WAITER_TOOLS_STATE;StdErr='canary-tools-state-stderr'}
+ }
+ $script:polls++
+ if($script:category -ceq 'mixed-success'){
+  if($script:polls -eq 1){return [pscustomobject]@{TimedOut=$false;ExitCode=1;StdOut='canary-mixed-stdout';StdErr='canary-mixed-stderr'}}
+  return [pscustomobject]@{TimedOut=$false;ExitCode=0;StdOut='192.168.77.176';StdErr='canary-success-stderr'}
+ }
  switch($script:category){
-  timeout {return [pscustomobject]@{TimedOut=$true;ExitCode=-1;StdOut='synthetic-secret-output'}}
-  nonzero {return [pscustomobject]@{TimedOut=$false;ExitCode=1;StdOut='synthetic-secret-output'}}
-  empty {return [pscustomobject]@{TimedOut=$false;ExitCode=0;StdOut=''}}
-  unparseable {return [pscustomobject]@{TimedOut=$false;ExitCode=0;StdOut='boot diagnostic noise'}}
+  timeout {return [pscustomobject]@{TimedOut=$true;ExitCode=-1;StdOut='canary-timeout-stdout';StdErr='canary-timeout-stderr'}}
+  nonzero {
+   $messages=@('The VMware Tools are not running in the virtual machine','VM is not running','Guest authentication unavailable',
+    'Permission denied','Guest IP address unavailable','Usage: vmrun')
+   $message=$messages[($script:polls-1) % $messages.Count]
+   return [pscustomobject]@{TimedOut=$false;ExitCode=1;StdOut='canary-native-stdout';StdErr="$message canary-native-stderr"}
+  }
+  empty {return [pscustomobject]@{TimedOut=$false;ExitCode=0;StdOut='';StdErr='canary-empty-stderr'}}
+  unparseable {return [pscustomobject]@{TimedOut=$false;ExitCode=0;StdOut='boot diagnostic noise';StdErr='canary-unparseable-stderr'}}
  }
 }
-function Get-GuestIPv4FromAddressText { param([string[]]$Lines) return '' }
-function Write-CertificateLabReceipt { param([string]$Name,$Value) $script:receipts.Add([pscustomobject]@{Name=$Name;Value=$Value}); return [pscustomobject]@{Path='synthetic';Sha256=('e'*64)} }
-$accepted=$false
-try { $null=Wait-CertificatePeerManagementAddress -Path 'synthetic-peer.vmx'; $accepted=$true } catch {}
+function Get-GuestIPv4FromAddressText { param([string[]]$Lines) foreach($line in $Lines){if($line -match '\b192\.168\.77\.\d{1,3}\b'){return $Matches[0]}} return '' }
+function Write-CertificateLabReceipt { param([string]$Name,$Value) $script:receipts.Add([pscustomobject]@{Name=$Name;Value=$Value;Json=($Value|ConvertTo-Json -Depth 8 -Compress)}); return [pscustomobject]@{Path='synthetic';Sha256=('e'*64)} }
+$script:NtpColdStartOnly=($script:mode -cne 'legacy')
+$accepted=$false;$address=''
+try { $address=Wait-CertificatePeerManagementAddress -Path 'synthetic-peer.vmx'; $accepted=$true } catch {}
 $commandScope=$true
 foreach($call in $script:commands){
- if($call.Arguments.Count -ne 4 -or $call.Arguments[0] -cne '-T' -or
-    $call.Arguments[1] -cne 'ws' -or $call.Arguments[2] -cne 'getGuestIPAddress' -or
-    $call.Arguments[3] -cne 'synthetic-peer.vmx' -or $call.Timeout -ne 10){$commandScope=$false}
+ if($call.Arguments[2] -ceq 'getGuestIPAddress'){
+  $expectedCount=if($script:mode -ceq 'legacy'){4}else{5}
+  if($call.Arguments.Count -ne $expectedCount -or $call.Arguments[0] -cne '-T' -or
+     $call.Arguments[1] -cne 'ws' -or $call.Arguments[3] -cne 'synthetic-peer.vmx' -or $call.Timeout -ne 10){$commandScope=$false}
+  if($script:mode -ceq 'legacy' -and $call.Arguments.Count -eq 4 -and $call.Arguments[3] -ceq '-wait'){$commandScope=$false}
+  if($script:mode -cne 'legacy' -and $call.Arguments.Count -eq 5 -and $call.Arguments[4] -cne '-wait'){$commandScope=$false}
+ } elseif($call.Arguments[2] -ceq 'checkToolsState'){
+  if($call.Arguments.Count -ne 4 -or $call.Arguments[0] -cne '-T' -or
+     $call.Arguments[1] -cne 'ws' -or $call.Arguments[3] -cne 'synthetic-peer.vmx' -or $call.Timeout -ne 5){$commandScope=$false}
+ } else {$commandScope=$false}
 }
 $receipt=$script:receipts | Select-Object -First 1
 $receiptSafe=$false
@@ -396,30 +432,112 @@ if($receipt){
    $receipt.Value.poll_count -eq $script:polls -and $receipt.Value.last_category -ceq $script:category -and
    $receipt.Value.peer_ownership_sha256 -ceq ('d'*64) -and
    $receipt.Value.task_id -ceq 'synthetic-task-id' -and
-   $keys -notcontains 'address' -and $keys -notcontains 'stdout' -and $keys -notcontains 'stderr')
+    $keys -notcontains 'address' -and $keys -notcontains 'stdout' -and $keys -notcontains 'stderr' -and
+    $keys -notcontains 'arguments' -and $keys -notcontains 'raw_output' -and
+    @($receipt.Value.observations).Count -le 4 -and
+    (($receipt.Value.category_counts.Values | Measure-Object -Sum).Sum -eq $script:polls) -and
+    $receipt.Json -notmatch 'canary-')
 }
-@{accepted=$accepted;polls=$script:polls;commands=$script:commands.Count;command_scope=$commandScope;
- receipt_safe=$receiptSafe;receipt_count=$script:receipts.Count} | ConvertTo-Json -Compress
+@{accepted=$accepted;address=$address;polls=$script:polls;commands=$script:commands.Count;command_scope=$commandScope;
+ tools_state_calls=$script:toolsStateCalls;receipt_safe=$receiptSafe;receipt_count=$script:receipts.Count;
+ receipt=$(if($receipt){$receipt.Value}else{$null})} | ConvertTo-Json -Compress -Depth 8
 """
     for outcome in ("timeout", "nonzero", "empty", "unparseable"):
         result = subprocess.run(
             [pwsh, "-NoProfile", "-NonInteractive", "-Command", program],
             cwd=ROOT,
-            env=dict(os.environ, ATLASO_NTP_WAITER_CATEGORY=outcome),
+            env=dict(os.environ, ATLASO_NTP_WAITER_CATEGORY=outcome, ATLASO_NTP_WAITER_TOOLS_STATE="running"),
             capture_output=True,
             text=True,
             timeout=30,
             check=True,
         )
         observed = json.loads(result.stdout)
+        receipt = observed.pop("receipt")
         assert observed == {
             "accepted": False,
+            "address": "",
             "polls": 60,
-            "commands": 60,
+            "commands": 61,
             "command_scope": True,
+            "tools_state_calls": 1,
             "receipt_safe": True,
             "receipt_count": 1,
         }
+        assert receipt["tools_state"] == "running"
+        assert receipt["tools_state_exit_code"] == 0
+        assert receipt["tools_state_timed_out"] is False
+        assert len(receipt["observations"]) <= 4
+        assert sum(receipt["category_counts"].values()) == 60
+        assert sum(receipt["failure_category_counts"].values()) == 60
+        if outcome == "nonzero":
+            assert {entry["failure_category"] for entry in receipt["observations"]} == {
+                "guest-authentication-unavailable", "permission-denied", "address-unavailable", "argument/usage-failure"
+            }
+            assert all(receipt["failure_category_counts"][name] > 0 for name in (
+                "tools-not-running", "vm-not-running", "guest-authentication-unavailable", "permission-denied",
+                "address-unavailable", "argument/usage-failure",
+            ))
+            assert receipt["observations"][-1]["native_exit_code"] == 1
+            assert receipt["observations"][-1]["native_timed_out"] is False
+            assert "canary-" not in result.stdout
+
+    mixed_result = subprocess.run(
+        [pwsh, "-NoProfile", "-NonInteractive", "-Command", program],
+        cwd=ROOT,
+        env=dict(os.environ, ATLASO_NTP_WAITER_CATEGORY="mixed-success", ATLASO_NTP_WAITER_TOOLS_STATE="running"),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    mixed = json.loads(mixed_result.stdout)
+    assert mixed["accepted"] is True
+    assert mixed["address"] == "192.168.77.176"
+    assert mixed["polls"] == 2 and mixed["commands"] == 2
+    assert mixed["command_scope"] is True
+    assert mixed["tools_state_calls"] == 0 and mixed["receipt_count"] == 0
+
+    legacy_result = subprocess.run(
+        [pwsh, "-NoProfile", "-NonInteractive", "-Command", program],
+        cwd=ROOT,
+        env=dict(os.environ, ATLASO_NTP_WAITER_CATEGORY="nonzero", ATLASO_NTP_WAITER_MODE="legacy"),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    legacy = json.loads(legacy_result.stdout)
+    assert legacy["accepted"] is False
+    assert legacy["polls"] == 60 and legacy["commands"] == 60
+    assert legacy["command_scope"] is True
+    assert legacy["tools_state_calls"] == 0 and legacy["receipt_count"] == 0
+
+    for tools_state, expected_state, timed_out in (
+        ("running", "running", False),
+        ("installed", "installed", False),
+        ("canary-unexpected-tools-state", "unknown", False),
+        ("timeout", "unknown", True),
+    ):
+        state_result = subprocess.run(
+            [pwsh, "-NoProfile", "-NonInteractive", "-Command", program],
+            cwd=ROOT,
+            env=dict(
+                os.environ,
+                ATLASO_NTP_WAITER_CATEGORY="timeout",
+                ATLASO_NTP_WAITER_TOOLS_STATE=tools_state,
+            ),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        state_observed = json.loads(state_result.stdout)
+        state_receipt = state_observed["receipt"]
+        assert state_receipt["tools_state"] == expected_state
+        assert state_receipt["tools_state_timed_out"] is timed_out
+        assert state_receipt["tools_state_exit_code"] == (-1 if timed_out else 0)
+        assert "canary-" not in state_result.stdout
 
 
 def test_ntp_seed_cleanup_never_hard_stops_and_legacy_fallback_is_retained():

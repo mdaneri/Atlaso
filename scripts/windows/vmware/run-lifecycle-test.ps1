@@ -1859,6 +1859,36 @@ function Assert-CertificatePeerBootReady {
 
 <#
 .SYNOPSIS
+Classify native VMware Tools failures without preserving native diagnostic text.
+.PARAMETER Text
+Bounded stdout and stderr from one native VMware query.
+#>
+function Get-CertificatePeerNativeFailureCategory {
+    param([AllowNull()][string]$Text)
+
+    if ($Text -match '(?i)\b(?:VMware\s+)?Tools\s+(?:(?:is|are)\s+)?not\s+running\b') {
+        return 'tools-not-running'
+    }
+    if ($Text -match '(?i)\bVM\s+(?:is\s+)?not\s+(?:powered\s+on|running)\b|\bvirtual\s+machine\s+(?:is\s+)?not\s+(?:powered\s+on|running)\b') {
+        return 'vm-not-running'
+    }
+    if ($Text -match '(?i)\bguest\s+authentication\b|\bauthentication\s+(?:with|to)\s+(?:the\s+)?guest\b|\bauthenticat(?:e|ion)\b.*\bguest\b') {
+        return 'guest-authentication-unavailable'
+    }
+    if ($Text -match '(?i)\bpermission\s+denied\b|\baccess\s+denied\b') {
+        return 'permission-denied'
+    }
+    if ($Text -match '(?i)\b(?:guest\s+)?(?:IP|network)\s+address\b.*\b(?:unavailable|not\s+available|unknown)\b|\bno\s+(?:guest\s+)?IP\s+address\b|\bunable\s+to\s+(?:get|obtain|query)\s+(?:the\s+)?(?:guest\s+)?IP\s+address\b') {
+        return 'address-unavailable'
+    }
+    if ($Text -match '(?i)\busage\s*:|\b(?:invalid|unknown)\s+(?:argument|option|parameter)\b') {
+        return 'argument/usage-failure'
+    }
+    return 'unclassified'
+}
+
+<#
+.SYNOPSIS
 Wait for VMware Tools to report the peer management address without guest credentials.
 .PARAMETER Path
 Owned peer VMX path.
@@ -1868,9 +1898,22 @@ function Wait-CertificatePeerManagementAddress {
     $deadline = (Get-Date).AddSeconds(300)
     $pollCount = 0
     $lastCategory = 'empty'
+    $ntpOnly = [bool]$NtpColdStartOnly
+    $categoryCounts = @{ timeout = 0; nonzero = 0; empty = 0; unparseable = 0 }
+    $failureCategoryCounts = @{
+        'tools-not-running' = 0; 'vm-not-running' = 0; 'guest-authentication-unavailable' = 0
+        'permission-denied' = 0; 'address-unavailable' = 0; 'argument/usage-failure' = 0; unclassified = 0
+    }
+    $observations = [System.Collections.Generic.List[object]]::new()
+    $lastObservationSignature = ''
     while ((Get-Date) -lt $deadline) {
         $pollCount++
-        $reported = Invoke-VmrunBounded -Arguments @('-T', 'ws', 'getGuestIPAddress', $Path) -TimeoutSeconds 10
+        $attemptTimer = [System.Diagnostics.Stopwatch]::StartNew()
+        $getAddressArguments = @('-T', 'ws', 'getGuestIPAddress', $Path)
+        if ($ntpOnly) { $getAddressArguments += '-wait' }
+        $reported = Invoke-VmrunBounded -Arguments $getAddressArguments -TimeoutSeconds 10
+        $attemptTimer.Stop()
+        $attemptObservedUtc = [DateTime]::UtcNow
         if ($reported.TimedOut) {
             $lastCategory = 'timeout'
         } elseif ($reported.ExitCode -ne 0) {
@@ -1882,9 +1925,51 @@ function Wait-CertificatePeerManagementAddress {
             if ($address) { return $address }
             $lastCategory = 'unparseable'
         }
+        if ($ntpOnly -and $lastCategory -ne 'valid') {
+            $categoryCounts[$lastCategory]++
+            $nativeErrorCategory = if ($reported.TimedOut) {
+                'unclassified'
+            } else {
+                Get-CertificatePeerNativeFailureCategory -Text ([string]$reported.StdOut + "`n" + [string]$reported.StdErr)
+            }
+            $failureCategoryCounts[$nativeErrorCategory]++
+            $exitCode = if ($null -eq $reported.ExitCode) { $null } else { [int]$reported.ExitCode }
+            $signature = '{0}|{1}|{2}|{3}' -f $lastCategory, $exitCode, [bool]$reported.TimedOut, $nativeErrorCategory
+            if ($signature -cne $lastObservationSignature) {
+                if ($observations.Count -ge 4) { $observations.RemoveAt(0) }
+                $observations.Add([ordered]@{
+                    poll = $pollCount
+                    observed_utc = $attemptObservedUtc.ToString('o')
+                    elapsed_ms = [long]$attemptTimer.ElapsedMilliseconds
+                    result = $lastCategory
+                    native_exit_code = $exitCode
+                    native_timed_out = [bool]$reported.TimedOut
+                    failure_category = $nativeErrorCategory
+                })
+            }
+            $lastObservationSignature = $signature
+        }
         Start-Sleep -Seconds 5
     }
-    if ($NtpColdStartOnly) {
+    if ($ntpOnly) {
+        $toolsState = 'unknown'
+        $toolsStateResult = $null
+        try {
+            $toolsStateResult = Invoke-VmrunBounded -Arguments @('-T', 'ws', 'checkToolsState', $Path) -TimeoutSeconds 5
+        } catch {
+            # This diagnostic must not replace the already determined readiness failure.
+            $toolsStateResult = $null
+        }
+        if ($toolsStateResult -and -not $toolsStateResult.TimedOut -and $toolsStateResult.ExitCode -eq 0) {
+            $toolsStateText = ([string]$toolsStateResult.StdOut).Trim()
+            if ($toolsStateText -ieq 'running') {
+                $toolsState = 'running'
+            } elseif ($toolsStateText -ieq 'not running') {
+                $toolsState = 'not-running'
+            } elseif ($toolsStateText -ieq 'installed') {
+                $toolsState = 'installed'
+            }
+        }
         $peerOwnershipSha256 = if ($peerOwnership -and $peerOwnership.Sha256 -match '^[0-9a-fA-F]{64}$') {
             $peerOwnership.Sha256.ToLowerInvariant()
         } else { $null }
@@ -1893,6 +1978,11 @@ function Wait-CertificatePeerManagementAddress {
             repository = 'mdaneri/Atlaso'; pr = $PullRequestNumber
             peer_ownership_sha256 = $peerOwnershipSha256
             poll_count = $pollCount; last_category = $lastCategory
+            category_counts = $categoryCounts; failure_category_counts = $failureCategoryCounts
+            observations = @($observations.ToArray())
+            tools_state = $toolsState
+            tools_state_exit_code = if ($toolsStateResult -and $null -ne $toolsStateResult.ExitCode) { [int]$toolsStateResult.ExitCode } else { $null }
+            tools_state_timed_out = if ($toolsStateResult) { [bool]$toolsStateResult.TimedOut } else { $null }
         })
     }
     throw 'Certificate peer management address was unavailable from owned VMware Tools.'

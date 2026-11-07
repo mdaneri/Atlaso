@@ -104,8 +104,13 @@ private DHCP, Tools and the real Chrony setup before publishing the public marke
 one graceful bootstrap restart with the original seed still attached. This stage does not establish readiness:
 the restarted peer must pass the existing Tools-address, pinned SSH and completed cloud-init checks before the separate
 seed-retirement restart. Original seed identity, digest and attachment must survive the bootstrap restart unchanged.
-Tools heartbeat alone does not establish VMware automation or IP readiness. A failed management-address wait
-retains bounded provider categories; NTP fixture seed cleanup stops after a failed soft shutdown and requires explicit
+The NTP address lookup uses VMware's `getGuestIPAddress -wait` with the existing ten-second child timeout inside
+the 300-second readiness deadline. Tools heartbeat alone does not establish VMware automation or IP readiness.
+A failed management-address wait
+retains category counts and at most four changed, timestamped observations with elapsed time and native exit/timeout
+status. Only fixed failure categories are retained; raw output, arguments and addresses are excluded. After the
+300-second address deadline, one separate read-only Tools-state diagnostic is bounded to five seconds and cannot
+admit readiness or retry the failed lookup. NTP fixture seed cleanup stops after a failed soft shutdown and requires explicit
 maintainer direction before a hard power action.
 The NTP mode has its own original clone admission; it never represents a clone as an ISO installation.
 Before wheel deployment, it waits at most 120 seconds for first boot to publish the complete source database schema,
