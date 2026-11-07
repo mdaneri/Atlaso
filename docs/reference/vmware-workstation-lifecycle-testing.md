@@ -160,8 +160,10 @@ candidate points only at the deliberately unused private address `192.168.77.11`
 one new native initializer-acquisition failure after the recorded monotonic journal checkpoint, the exact prior
 applied configuration digest, a verified checkpoint and healthy original selected peer after rollback.
 The original pre-candidate configuration digest and journal cursor are retained in the result. Negative journal
-inspection stays inside the pinned guest: at most 256 complete post-cursor records and 2 MiB are admitted, and only
-fixed failure categories cross the existing 64 KiB SSH readback boundary. Truncated windows are refused.
+inspection and cold step/slew observation stay inside the pinned guest: at most 256 complete records and 2 MiB are
+admitted, and only fixed categories and bounded numeric offsets cross the existing 64 KiB SSH readback boundary.
+The original cursor selects new records; a genuinely empty cold journal instead binds the original boot and monotonic
+checkpoint. Truncated windows are refused.
 
 `ntp-native-*-submission-intent.json`, submitted-task and terminal journals, and `ntp-native-result.json` are immutable.
 An existing attempt is refused. An unknown task outcome requires read-only reconciliation of its original ID; never

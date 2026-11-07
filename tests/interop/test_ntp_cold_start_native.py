@@ -573,6 +573,8 @@ def fake_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, objec
                         {"target": target, "response_received": response_expected})
     monkeypatch.setattr(fixture, "journal_checkpoint", lambda *_args: {"checkpoint": "before-negative"})
     monkeypatch.setattr(fixture, "acquisition_failure", lambda *_args: {"failed": True, "recovered": True})
+    monkeypatch.setattr(fixture, "acquisition_observation", lambda *_args:
+                        {"native_events": [], "real_clock_step_observed": False})
     prior = {"sha256": "4" * 64, "transaction_phase": "verified"}
     restored = {"sha256": "4" * 64, "transaction_phase": "verified"}
     calls["applied_values"] = [prior, restored]

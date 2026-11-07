@@ -37,7 +37,10 @@ def journal(monkeypatch):
             args: Exact bounded post-cursor query arguments.
             **kwargs: Existing subprocess output and timeout controls.
         """
-        assert args[-1] == "--after-cursor=original-cursor"
+        if state.before["cursor"] is None:
+            assert "_BOOT_ID=" + BOOT in args and not any(arg.startswith("--after-cursor=") for arg in args)
+        else:
+            assert args[-1] == "--after-cursor=original-cursor"
         assert args[args.index("-n") + 1] == "257" and kwargs["timeout"] == 8
         data = b"\n".join(json.dumps(row).encode() for row in state.rows)
         return SimpleNamespace(returncode=state.returncode, stdout=data)
@@ -120,3 +123,54 @@ def test_missing_or_unsafe_original_cursor_stops_before_guest_read(journal, curs
     with pytest.raises(fixture.Refusal, match="negative_checkpoint_missing"):
         fixture.acquisition_failure(None, "synthetic", journal.before)
     assert journal.calls == 0
+
+
+@pytest.mark.parametrize("cursor", [None, "original-cursor"])
+def test_cold_observations_filter_oversized_metadata_in_guest(journal, cursor):
+    """Both an empty original journal and a recorded cursor keep raw metadata off SSH.
+
+    Args:
+        journal: Actual guest program and bounded SSH boundary.
+        cursor: Empty-journal fallback or original post-cursor selector.
+    """
+    journal.before["cursor"] = cursor
+    journal.rows[50]["MESSAGE"] = "CLOCK: time set +1.553679 s"
+    result = fixture.acquisition_observation(None, "synthetic", journal.before)
+    assert result["native_events"] == [{"kind": "step", "seconds": 1.553679}]
+    assert result["real_clock_step_observed"] and result["journal_bytes_filtered_in_guest"] > 65536
+    assert len(journal.output) < 1024 and b"private-journal-canary" not in journal.output
+
+
+@pytest.mark.parametrize("mutation", ["old-time", "wrong-boot", "prefix", "out-of-range", "too-many", "truncated", "oversized", "command-failed"])
+def test_cold_observations_reject_unsafe_or_incomplete_evidence(journal, mutation):
+    """Only bounded exact fresh native events become observations.
+
+    Args:
+        journal: Actual cold observation filter with synthetic journal records.
+        mutation: Stale, malformed or excessive evidence to exercise.
+    """
+    marker = journal.rows[50]
+    marker["MESSAGE"] = "CLOCK: time set +1.553679 s"
+    if mutation == "old-time":
+        marker["__MONOTONIC_TIMESTAMP"] = "100"
+    elif mutation == "wrong-boot":
+        marker["_BOOT_ID"] = "b" * 32
+    elif mutation == "prefix":
+        marker["MESSAGE"] = "prefix " + marker["MESSAGE"]
+    elif mutation == "out-of-range":
+        marker["MESSAGE"] = "CLOCK: time set +86401.0 s"
+    elif mutation == "too-many":
+        for row in journal.rows[51:55]:
+            row["MESSAGE"] = marker["MESSAGE"]
+    elif mutation == "truncated":
+        journal.rows.extend(dict(journal.rows[0]) for _ in range(157))
+    elif mutation == "oversized":
+        marker["UNRELATED_METADATA"] = "x" * (2 * 1024**2)
+    else:
+        journal.returncode = 1
+    if mutation in {"old-time", "wrong-boot", "prefix"}:
+        result = fixture.acquisition_observation(None, "synthetic", journal.before)
+        assert result["native_events"] == [] and not result["real_clock_step_observed"]
+    else:
+        with pytest.raises(fixture.Refusal):
+            fixture.acquisition_observation(None, "synthetic", journal.before)

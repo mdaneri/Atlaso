@@ -589,19 +589,40 @@ def acquisition_observation(session, password: str, before: dict) -> dict:
         password: Sudo credential confined to stdin.
         before: Native monotonic checkpoint preceding the first cold Apply.
     """
-    events = []
-    lines = sudo_read(session, "journalctl -u ntpd.service -n 100 -o json --no-pager", password).splitlines()
-    for line in lines:
-        row = json.loads(line)
-        if row.get("_BOOT_ID") != before.get("boot") or int(row.get("__MONOTONIC_TIMESTAMP", 0)) <= before.get("monotonic", 0):
-            continue
-        match = re.fullmatch(r"CLOCK: time (set|slew) ([+-]\d{1,6}\.\d{1,9}) s", str(row.get("MESSAGE", "")))
-        if match:
-            offset = float(match[2])
-            if not math.isfinite(offset) or abs(offset) > 86400 or len(events) >= 4:
-                raise Refusal("ntp_fixture_native_acquisition_observation_invalid")
-            events.append({"kind": "step" if match[1] == "set" else "slew", "seconds": offset})
-    return {"native_events": events, "real_clock_step_observed": any(row["kind"] == "step" for row in events)}
+    cursor = before.get("cursor")
+    if (re.fullmatch(r"[0-9a-f]{32}", str(before.get("boot", ""))) is None
+            or type(before.get("monotonic")) is not int or before["monotonic"] < 0
+            or (cursor is not None and (not isinstance(cursor, str) or not 1 <= len(cursor) <= 2048
+                                       or any(char in cursor for char in "\x00\r\n")))):
+        raise Refusal("ntp_fixture_native_acquisition_checkpoint_invalid")
+    program = f"""import json,math,re,subprocess
+before={before!r}
+command=['journalctl','-u','ntpd.service','-n','257','-o','json','--no-pager','_BOOT_ID='+before['boot']]
+if before.get('cursor') is not None:command.append('--after-cursor='+before['cursor'])
+p=subprocess.run(command,capture_output=True,timeout=8)
+assert p.returncode==0 and len(p.stdout)<=2*1024**2
+lines=p.stdout.splitlines();assert len(lines)<257
+events=[]
+for line in lines:
+ row=json.loads(line)
+ if row.get('_BOOT_ID')!=before['boot'] or int(row.get('__MONOTONIC_TIMESTAMP',0))<=before['monotonic']:continue
+ match=re.fullmatch(r'CLOCK: time (set|slew) ([+-]\\d{{1,6}}\\.\\d{{1,9}}) s',str(row.get('MESSAGE','')))
+ if match:
+  offset=float(match[2]);assert math.isfinite(offset) and abs(offset)<=86400 and len(events)<4
+  events.append({{'kind':'step' if match[1]=='set' else 'slew','seconds':offset}})
+print(json.dumps({{'complete':True,'records':len(lines),'raw_bytes':len(p.stdout),'events':events}}))
+"""
+    facts = json.loads(sudo_read(session, guest_python_command(program), password))
+    events = facts.get("events")
+    if (facts.get("complete") is not True or type(facts.get("records")) is not int
+            or not 0 <= facts["records"] <= 256 or type(facts.get("raw_bytes")) is not int
+            or not 0 <= facts["raw_bytes"] <= 2 * 1024**2 or not isinstance(events, list) or len(events) > 4
+            or any(not isinstance(row, dict) or row.get("kind") not in {"step", "slew"}
+                   or type(row.get("seconds")) not in {int, float} or not math.isfinite(row["seconds"])
+                   or abs(row["seconds"]) > 86400 for row in events)):
+        raise Refusal("ntp_fixture_native_acquisition_observation_invalid")
+    return {"native_events": events, "real_clock_step_observed": any(row["kind"] == "step" for row in events),
+            "journal_records": facts["records"], "journal_bytes_filtered_in_guest": facts["raw_bytes"]}
 
 
 def submit_initialization(client, *, cold_start: bool = True) -> tuple[str, str]:
