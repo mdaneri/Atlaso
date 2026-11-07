@@ -82,8 +82,24 @@ restarting and leaves recovery pending.
 Missing, replaced, and legacy configurations require Apply before startup can establish their clock authority;
 startup and service guards stop uncertain controllers until then without adopting vendor configuration.
 If old NTS material cleanup fails after controller verification, Atlaso retains the
-verified new mode and leaves Apply pending for a cleanup retry. NTP synchronization verification allows up to 60 seconds,
-including recovery after a clock step when switching from VMware Tools.
+verified new mode and leaves Apply pending for a cleanup retry. NTP startup and synchronization verification share a
+60-second budget. After stopping competing controllers and installing the exact candidate and packet guard, Atlaso
+runs NTPsec's [foreground `-gq` initialization](https://docs.ntpsec.org/latest/ntpd.html) inside `ntpd.service`, then
+starts the persistent daemon. The initializer uses the same configured real upstreams and must finish before the daemon
+starts. Its helper verifies that systemd owns the pre-start process and bounds acquisition to 20 seconds. Systemd also
+bounds each startup command to 30 seconds and stops all service processes on failure or rollback. Initialization is a
+separate startup stage, not an
+Apply retry; it does not complete verification.
+An acquisition error fails a live Apply and invokes rollback. During ordinary boot or service restart, an upstream
+outage still permits the persistent applied daemon to start polling for recovery; it does not report healthy until
+actual synchronization and selected-peer state are observed.
+
+This startup sequence avoids leaving the persistent daemon in its initial post-step filter reset. NTPsec 1.2.3
+[clears](https://github.com/ntpsec/ntpsec/blob/NTPsec_1_2_3/ntpd/ntp_proto.c)
+peer filters after a step and can defer the next poll for the default 64-second minimum poll interval, beyond the Apply
+budget. A clock step, successful initializer exit, listener, or small offset is never accepted as synchronization.
+The persistent daemon must report a current normal-leap NTP system status, a valid system stratum, and a selected,
+reachable numeric upstream peer within the remaining budget. Upstream policy and polling intervals are preserved.
 Apply also allows a full synchronization wait during rollback. Recovery evidence remains available for a later retry
 if neither restoring the prior controller nor safely stopping the unverified candidate can be verified.
 VMware Tools Apply enables and starts the Tools service so the selected controller survives reboot. It also waits up
@@ -109,9 +125,16 @@ not mean the appliance clock is synchronized. Use the status details, correct up
 service through the supported appliance workflow, and apply again. If helper status is unavailable, Atlaso reports the
 effective state as unknown instead of claiming the clock is healthy.
 
-NTP health uses the current synchronization state. NTPsec's last event can still show
+On a synchronization timeout, the failed task retains at most four changed, sanitized observations of the local query
+result, system status word and stratum, and selected peer address, stratum, and reach. Query lookup, socket, and timeout
+failures are distinct from an unsynchronized daemon. Arbitrary native output and error text are excluded. A zero
+`ntpq` exit status with socket errors is a failed observation. Correct the recorded prerequisite or source problem
+before submitting another reviewed Apply; the failed task and its rollback result remain unchanged.
+
+NTP health uses the current synchronization state and a reachable selected upstream. NTPsec's last event can still show
 `no_sys_peer` after synchronization recovers; that historical event does not override
-current `leap_none` and `sync_ntp` state. If every actual upstream peer has zero reach, health reports missing replies
+current `leap_none` and `sync_ntp` state with a selected peer. If every actual upstream peer has zero reach, health reports
+missing replies
 even while those synchronization flags remain set. Firewall Apply and service activation replay
 the client-only ingress guard in the same nftables transaction as the firewall rules.
 

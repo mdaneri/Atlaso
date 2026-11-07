@@ -13,6 +13,165 @@ The shared lifecycle host-state checks verify that first-boot appliances retain 
 `VCF.PowerCLI==9.1.1.25718932`, and `Connect-VIServer` after the wheel-only test deployment. The PowerCLI import and
 command check run directly as the unprivileged appliance SSH user rather than through sudo.
 
+## Focused NTP cold-start acceptance
+
+Use `invoke-lifecycle-test.ps1 -NtpColdStartOnly` for a fresh NTP acquisition and rollback fixture. This is a separate
+mode from `-TimeSourceOnly`, which deliberately tests competing clock controllers. The cold-start mode never enables
+a competing controller, adjusts a clock manually, selects a synthetic local clock, or retries a failed Apply.
+The existing `-CertificateDhcpPeer` admission remains restricted to its original PR; it is not an NTP fixture shortcut.
+
+The mode uses a provenance-verified, powered-off builder and creates a new appliance, Alpine peer and named private
+LAN segment. Both appliance NICs attach only to that segment. The peer's separate control NIC reaches the existing
+management VMnet for SSH and its real upstreams; forwarding and bridging must remain disabled. The private segment
+has exactly these two VM identities. Two appliance interfaces use distinct subnets on the same isolated layer-2
+segment; the test verifies listener **addresses**, not an adversarial guarantee about which NIC receives a frame.
+Unrelated VMs may run or change registration while this fixture runs. Provider counts are observational metadata;
+the sticky comparison binds the original fixture adapters and LAN receipt. Every observed registered or running VM
+is still inspected for competing membership of the private segment. Shared provider catalog changes use the existing
+transaction guards; source and namespace admission concern this task's original resources.
+
+| Interface | Address | Purpose |
+| --- | --- | --- |
+| Appliance `eth0` | `192.168.77.10/24` | MAC-reserved DHCP management; refused as a time-service listener. |
+| Appliance `eth1` | `192.168.78.10/24` | Initially unused; ordinary UI and Network Apply establish the access interface. |
+| Peer `eth1` | `192.168.77.1/24`, `192.168.78.1/24` | The first address serves real Chrony time; the second sends service probes. |
+| Peer `eth0` | Existing management VMnet DHCP | Control and real upstream acquisition only. |
+
+This initial mode admits these fixed IPv4 addresses only. `SiteInterface` is `eth0`, the private management interface;
+the generic lifecycle `SiteCidr` setting does not select this mode's fixed service address. Source policy and polling
+intervals remain unchanged. The peer retains its existing Chrony upstreams and must prove a current selected real
+upstream, normal leap, fresh reference, low measured offset and a nonce-matched UDP reply before appliance edits.
+VMware periodic and one-shot synchronization are disabled in both new VM configurations before their first boot.
+
+Before invoking the mode, follow the ownership section of [completed-task cleanup](../contribute/completed-task-cleanup.md#prepare-durable-ownership-evidence).
+Prepare a new source directory beneath the task's originally receipted `test-results` root and record its original
+`WindowsFiles` directory identity at creation, outside the worktree and all disposable roots. Then run
+`prepare-tiny-linux-client.ps1 -OutputDirectory <that-new-directory>` once. Preserve the immutable original and prepared
+receipts; hashing an existing disk later does not establish original creation. The launcher requires both receipt paths
+and original SHA-256 digests. The source directory, source disk, copied disk, task, repository, PR and creation source
+are independently bound; the creation source must be an ancestor of the reviewed harness. The source is never booted.
+
+The original source receipt is schema 1 with `task_id`, `repository`, `pr`, `source_commit`, directory `path` and its
+three-part `root_identity`. The prepared receipt is schema 1 with matching `task_id`, `pr`, `source_commit`, VMDK `path`
+and `sha256`, `original_root_receipt` naming the original receipt, `prepared_before_use: true`, `consumer_vms: []`,
+`format: "monolithicSparse"`, `parent_cid: 4294967295`, and `virtual_size_bytes: 2147483648`.
+Keep source media and its pinned download digest with that evidence. Use the existing Ed25519 public-key file whose
+exact private half is loaded in the SSH agent; do not create or stage a private key for this fixture.
+
+For example, after independently admitting capacity, source and the task-owned resource namespace:
+
+```powershell
+$arguments = @{
+    PullRequestNumber = $pr
+    Purpose = 'ntp'
+    CollisionSuffix = 'n1'
+    ApplianceVmxPath = $verifiedBuilderVmx
+    ClientVmdkPath = $originalPeerSourceVmdk
+    NtpColdStartOnly = $true
+    KeepVms = $true
+    SkipClientPrepare = $true
+    SiteANetwork = "lan:Atlaso-PR-$pr-NtpColdStart-n1"
+    SiteInterface = 'eth0'
+    ManagementNetwork = $existingManagementVmnet
+    NtpPeerPublicKeyPath = $existingAgentPublicKey
+    NtpPeerSourceReceiptPath = $originalSourceReceipt
+    NtpPeerSourceReceiptSha256 = $originalSourceReceiptSha256
+    NtpPeerPreparedReceiptPath = $preparedSourceReceipt
+    NtpPeerPreparedReceiptSha256 = $preparedSourceReceiptSha256
+    AdminPassword = $protectedCredentials.AdminPassword
+    RootPassword = $protectedCredentials.RootPassword
+}
+& ./scripts/windows/vmware/invoke-lifecycle-test.ps1 @arguments
+```
+
+Retrieve the protected credential pair only through the bounded exact-Atlaso-Environment bridge described above.
+Web authentication always uses `AdminPassword`. When `-ApplianceSshUser root` is explicitly selected, the bounded
+consumer retains and uses the separate `RootPassword` for SSH and native readbacks; it never substitutes the web password.
+No development signing key or Windows trust-store change is part of this mode. The launcher refuses address/URL
+overrides, dry-run Apply, another focused mode, missing protected credentials and absent source provenance.
+Run only from the clean reviewed head. Inspect `-PlanOnly` first with the same public source selectors and a distinct
+collision suffix, omitting Run-only credentials, `SkipClientPrepare`, `OwnershipRoot` and `OwnershipTaskId`.
+A plan creates its own result namespace; a live run never reuses it. Keep the purpose and suffix short: VMware's
+native clone can exceed its filename limit through internal lock-file paths even when the requested VMX path is
+shorter than the Windows path limit. Preserve a failed creation and use a new short suffix for a fresh fixture.
+
+Creation receipts and public identity evidence precede native mutations. Each new VM's serial endpoint is bound to
+its original VMX and ownership receipt before boot. The appliance publishes only its Ed25519 public host key through
+that authorized console; the peer seed publishes its public-key marker. SSH requires those pins, including after seed
+retirement. Public CA bytes are read through the original appliance VM channel, matched again over pinned SSH, and
+used with normal CA and hostname verification for HTTPS. Endpoint scans and trust-on-first-use are not admission.
+Original console receipts and bounded topology observations retain explicit UTC observation times.
+Console admission accepts at most 1 MiB, accommodates ordinary boot output, and emits only the exact public identity
+marker. Oversized files, reparse paths and conflicting public keys remain admission failures.
+The NTP peer explicitly installs Alpine's GuestInfo and VIX plugins. Its fail-fast bootstrap block verifies SSH,
+private DHCP, Tools and the real Chrony setup before publishing the public marker. The runner then records and performs
+one graceful bootstrap restart with the original seed still attached. This stage does not establish readiness:
+the restarted peer must pass the existing Tools-address, pinned SSH and completed cloud-init checks before the separate
+seed-retirement restart. Original seed identity, digest and attachment must survive the bootstrap restart unchanged.
+Only the NTP mode opts into retaining its original cloud-init instance cache (`manual_cache_clean: true`) across
+seed retirement. Its explicit unique instance ID and pristine, never-booted source are mandatory: this peer is never
+cloned or reused after initialization. Retaining the admitted NoCloud instance avoids a fallback-datasource warning
+after the public-only seed is removed; both readiness checks still require successful cloud-init completion.
+The NTP address lookup uses VMware's `getGuestIPAddress -wait` with the existing ten-second child timeout inside
+the 300-second readiness deadline. Tools heartbeat alone does not establish VMware automation or IP readiness.
+A failed management-address wait
+retains category counts and at most four changed, timestamped observations with elapsed time and native exit/timeout
+status. Only fixed failure categories are retained; raw output, arguments and addresses are excluded. After the
+300-second address deadline, one separate read-only Tools-state diagnostic is bounded to five seconds and cannot
+admit readiness or retry the failed lookup. NTP fixture seed cleanup stops after a failed soft shutdown and requires explicit
+maintainer direction before a hard power action.
+The NTP mode has its own original clone admission; it never represents a clone as an ISO installation.
+Before wheel deployment, it waits at most 120 seconds for first boot to publish the complete source database schema,
+then requires the unchanged read-only routing-absence proof. A missing schema never counts as empty routing intent.
+Before the private-network reboot, NTP-only acceptance preserves the measured wheel in a new root-owned
+`/var/lib/atlaso/ntp-acceptance` directory with mode `0700` and a single-link wheel with mode `0600`.
+Original intent and result receipts bind its digest to the exact appliance, deployment and source commit.
+Existing paths are refused. After reboot, pinned SSH rechecks ownership and permissions and compares the complete
+wheel payload against the installed files; clearing `/tmp` cannot remove the verification artifact.
+After the private-network reboot, NTP acceptance waits at most 120 seconds for management HTTPS and a valid login
+page before sending credentials. Only explicit TCP non-acceptance and HTTP 502/503/504 startup responses retry;
+the original peer, topology, CA and hostname checks remain mandatory. This readiness wait precedes Apply and does
+not extend the helper's 60-second NTP startup/synchronization budget or retry an Apply submission.
+NTP uses its own fixed-root Apply admission after the original routing/NAT-absence proof. Changed WAN/NAT units
+are admitted only when the server's selection-specific review requires them as network dependencies inside the fixed
+closure. Unrelated pending units, extra roots and unrequired dependencies are refused before POST. The existing
+certificate initializer's stricter root-only preflight is unchanged.
+If the first cold Network/CA review still contained the bootstrap DHCP address, the runner permits one separately
+reviewed and journaled baseline-convergence Apply after that cold task succeeded. It then requires two equal,
+CA/hostname-verified leaf samples containing the actual private management address. Failed tasks are never replayed.
+Later server and negative-candidate cases request only firewall, NTP and public services, preserving that applied leaf;
+WAN/NAT enforcement and NTP-owned DNS publication are admitted only when the server requires them as dependencies.
+
+The consumer requires an unmanaged appliance with every clock controller inactive, then uses the existing settings
+forms and global Apply review for the initial resolver/DNS/access-interface/NTP baseline. A successful cold Apply
+requires actual persistent-daemon normal-leap state, valid stratum and the selected reachable private peer. The
+helper's existing 60-second startup/synchronization budget remains authoritative; a master task also includes its
+other reviewed initialization units. A clock step, successful initializer exit or listener alone cannot pass.
+The result separately records NTPsec's native
+[`time set` and `time slew` events](https://github.com/ntpsec/ntpsec/blob/NTPsec_1_2_3/ntpd/ntp_loopfilter.c), when present
+after the original monotonic checkpoint. These are observations of real acquisition, not health assertions or clock edits.
+
+Native packet capture proves arrival of each unique query. It uses Python's passive Linux `AF_PACKET` interface
+without an added capture package, transmit socket, promiscuous membership or firewall change. Only local unicast
+ingress with the exact peer, destination and unique UDP source port can pass. Capture stops within eight seconds,
+4096 packets or 4 MiB; raw packets are never published. Client mode must refuse the query; server mode must return a
+normal-leap nonce-matched response at the access address and refuse the unselected management address. A final
+candidate points only at the deliberately unused private address `192.168.77.11`. Acceptance requires a failed task,
+one new native initializer-acquisition failure after the recorded monotonic journal checkpoint, the exact prior
+applied configuration digest, a verified checkpoint and healthy original selected peer after rollback.
+The original pre-candidate configuration digest and journal cursor are retained in the result. Negative journal
+inspection and cold step/slew observation stay inside the pinned guest: at most 256 complete records and 2 MiB are
+admitted, and only fixed categories and bounded numeric offsets cross the existing 64 KiB SSH readback boundary.
+The original cursor selects new records; a genuinely empty cold journal instead binds the original boot and monotonic
+checkpoint. Truncated windows are refused.
+
+`ntp-native-*-submission-intent.json`, submitted-task and terminal journals, and `ntp-native-result.json` are immutable.
+An existing attempt is refused. An unknown task outcome requires read-only reconciliation of its original ID; never
+resubmit it. A failed acquisition stays failed. The negative candidate remains desired and pending for inspection;
+the successfully restored applied server remains authoritative. This is acceptance evidence, not a clean desired-state
+handoff. Retain the lab until its task and process state are reconciled, then use the ordinary receipt-bound lifecycle
+VM and LAN cleanup. Durable original receipts remain outside every removal root.
+
 ## Focused reverse-proxy acceptance
 
 `invoke-lifecycle-test.ps1 -ReverseProxyOnly -PullRequestNumber <number>` uses a two-interface appliance and a

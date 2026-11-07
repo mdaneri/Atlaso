@@ -19464,7 +19464,7 @@ def test_ntpd_helper_apply_installs_config_and_switches_from_timesyncd(monkeypat
     monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda mode: commands.append(["nft", "guard", mode]))
     monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda enabled: commands.append(["vmware-timesync", str(enabled)]))
     monkeypatch.setattr(helper, "_ntpd_start_service", lambda unit, restart=False: commands.extend([["systemctl", "enable", unit], ["systemctl", "restart" if restart else "start", unit]]))
-    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda: None)
+    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda _timeout=60: None)
     monkeypatch.setattr(helper.pwd, "getpwnam", lambda name: type("NtpUser", (), {"pw_uid": 123})())
     monkeypatch.setattr(helper.grp, "getgrnam", lambda name: type("NtpGroup", (), {"gr_gid": 44})())
     monkeypatch.setattr(helper.os, "chown", lambda *args: None, raising=False)
@@ -19550,7 +19550,7 @@ def test_ntpd_helper_apply_grants_ntp_group_read_to_nts_key(monkeypatch, tmp_pat
     monkeypatch.setattr(helper, "_ntpd_client_packet_guard", lambda mode: commands.append(["nft", "guard", mode]))
     monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda enabled: commands.append(["vmware-timesync", str(enabled)]))
     monkeypatch.setattr(helper, "_ntpd_start_service", lambda unit, restart=False: commands.extend([["systemctl", "enable", unit], ["systemctl", "restart" if restart else "start", unit]]))
-    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda: None)
+    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda _timeout=60: None)
     monkeypatch.setattr(helper, "_run", fake_run)
     (state_dir / "nts-keys").mkdir(parents=True)
     (state_dir / "nts-keys" / "cookie.key").write_text("cookie", encoding="utf-8")
@@ -20075,7 +20075,7 @@ def test_ntpd_helper_status_reads_peers_variables_and_nts(monkeypatch, capsys):
     assert payload["variables"]["stdout"] == "rv ok\n"
     assert payload["nts"]["stdout"] == "ntsinfo ok\n"
     assert commands == [
-        (["/usr/bin/ntpq", "-pn"], 1.5),
+        (["/usr/bin/ntpq", "-pnw"], 1.5),
         (["/usr/bin/ntpq", "-c", "rv"], 1.5),
         (["/usr/bin/ntpq", "-c", "ntsinfo"], 1.5),
     ]
@@ -20172,7 +20172,7 @@ def test_ntpd_client_transition_installs_guard_before_start_and_checks_sync(monk
     monkeypatch.setattr(helper, "_install_ntpd_config", lambda _path: operations.append("install-config"))
     monkeypatch.setattr(helper, "_remove_ntpd_nts_server_material", lambda: [])
     monkeypatch.setattr(helper, "_ntpd_start_service", lambda unit, restart=False: operations.append(f"start:{unit}:{restart}"))
-    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda: operations.append("wait-synchronized"))
+    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda _timeout=60: operations.append("wait-synchronized"))
     monkeypatch.setattr(helper, "_ntpd_nts_server_enabled", lambda _path: False)
 
     helper._ntpd_transition("ntp_client", tmp_path / "staged.conf")
@@ -20290,7 +20290,7 @@ def test_ntpd_transition_covers_each_clock_source_change(monkeypatch, tmp_path, 
         "_ntpd_start_service",
         lambda unit, restart=False: operations.append(f"start:{unit}:{restart}"),
     )
-    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda: operations.append("wait-synchronized"))
+    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda _timeout=60: operations.append("wait-synchronized"))
     monkeypatch.setattr(helper, "_ntpd_wait_vmware_synchronized", lambda: operations.append("wait-vmware-synchronized"))
     monkeypatch.setattr(helper, "_ntpd_checkpoint_verified", lambda: operations.append("checkpoint-verified"))
 
@@ -20861,7 +20861,7 @@ def test_ntpd_apply_restores_previous_mode_after_vmware_verification_failure(mon
     monkeypatch.setattr(helper, "_ntpd_stop_service", lambda _unit: None)
     starts: list[str] = []
     monkeypatch.setattr(helper, "_ntpd_start_service", lambda unit, restart=False: starts.append(unit))
-    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda: None)
+    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda _timeout=60: None)
     vmware_changes: list[bool] = []
 
     def set_vmware(enabled: bool) -> None:
@@ -20913,11 +20913,11 @@ def test_ntpd_wait_synchronized_accepts_sync_after_thirty_seconds(monkeypatch):
             command: Command and arguments supplied to the mocked process runner.
             timeout: Maximum duration supplied to the mocked process runner.
         """
-        assert command == ["/usr/bin/ntpq", "-c", "rv"]
+        assert command == ["/usr/bin/ntpq", "-n", "-w", "-c", "rv", "-c", "peers", "127.0.0.1"]
         assert timeout == 2
         probes.append(elapsed[0])
         if elapsed[0] >= 34:
-            return subprocess.CompletedProcess(command, 0, "leap_none, sync_ntp", "")
+            return subprocess.CompletedProcess(command, 0, "associd=0 status=0615 leap_none, sync_ntp\nstratum=2\n*192.0.2.1 .GPS. 1 u 10 64 377 1.0 0.0 0.0\n", "")
         return subprocess.CompletedProcess(command, 0, "leap_alarm, no_sys_peer", "")
 
     monkeypatch.setattr(helper, "_run", probe)
@@ -21031,7 +21031,12 @@ def test_ntpd_apply_wait_failure_restores_nts_server_assets_before_rollback(
     monkeypatch.setattr(helper, "_ntpd_start_service", start_service)
     wait_count = 0
 
-    def wait_for_sync() -> None:
+    def wait_for_sync(_timeout=60) -> None:
+        """Record the candidate synchronization wait before simulating rollback.
+
+        Args:
+            _timeout: Synchronization deadline passed to the mocked candidate wait.
+        """
         nonlocal wait_count, candidate_wait_failed
         wait_count += 1
         if wait_count == 1:
@@ -21256,7 +21261,12 @@ def test_ntpd_first_nts_server_apply_failure_restores_captured_roots_before_prio
     monkeypatch.setattr(helper, "_ntpd_start_service", start_service)
     wait_count = 0
 
-    def fail_candidate_after_material_creation() -> None:
+    def fail_candidate_after_material_creation(_timeout=60) -> None:
+        """Create candidate-only NTS assets, then fail synchronization.
+
+        Args:
+            _timeout: Synchronization deadline passed to the mocked candidate wait.
+        """
         nonlocal wait_count, candidate_wait_failed
         wait_count += 1
         if wait_count == 1:
@@ -21391,7 +21401,12 @@ def test_ntpd_interrupted_first_nts_server_apply_retains_nonsecret_rollback_barr
 
     monkeypatch.setattr(helper, "_ntpd_begin_transaction", inspect_pre_mutation_barrier)
 
-    def simulate_process_death() -> None:
+    def simulate_process_death(_timeout=60) -> None:
+        """Leave candidate mutation evidence and simulate helper termination.
+
+        Args:
+            _timeout: Synchronization deadline passed to the mocked candidate wait.
+        """
         assert transaction_created_before_candidate
         candidate_cookie = cookie_dir / "candidate" / "cookie.key"
         candidate_cookie.parent.mkdir(parents=True)
@@ -21495,7 +21510,7 @@ def test_ntpd_apply_partial_nts_cleanup_failure_keeps_verified_candidate_after_r
     monkeypatch.setattr(helper, "_remove_ntpd_nts_server_material", partially_remove_assets)
     starts: list[str] = []
     monkeypatch.setattr(helper, "_ntpd_start_service", lambda unit, **_kwargs: starts.append(unit))
-    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda: None)
+    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda _timeout=60: None)
 
     assert helper._handle_ntpd("apply", [str(staged)]) == 1
     assert cleanup_calls == 1
@@ -21551,7 +21566,7 @@ def test_ntpd_first_apply_failure_restores_absence_or_unmanaged_config(
     monkeypatch.setattr(helper, "_ntpd_stop_service", lambda _unit: None)
     starts: list[str] = []
     monkeypatch.setattr(helper, "_ntpd_start_service", lambda unit, **_kwargs: starts.append(unit))
-    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda: None)
+    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda _timeout=60: None)
     vmware_changes: list[bool] = []
 
     def fail_enable(enabled: bool) -> None:
@@ -21615,7 +21630,7 @@ def test_ntpd_vmware_sync_failure_rolls_back_previous_controller(monkeypatch, tm
     monkeypatch.setattr(helper, "_ntpd_nts_server_enabled", lambda _path: False)
     monkeypatch.setattr(helper, "_remove_ntpd_nts_server_material", lambda: [])
     monkeypatch.setattr(helper, "_ntpd_start_service", lambda _unit, **_kwargs: None)
-    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda: None)
+    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda _timeout=60: None)
     monkeypatch.setattr(
         helper,
         "_ntpd_wait_vmware_synchronized",
@@ -21687,7 +21702,7 @@ def test_ntpd_apply_reports_rollback_sync_failure_but_keeps_previous_config(
     monkeypatch.setattr(helper, "_ntpd_stop_service", stop_service)
     monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda _enabled: None)
     monkeypatch.setattr(helper, "_ntpd_start_service", lambda _unit, restart=False: None)
-    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda: (_ for _ in ()).throw(RuntimeError("no sync")))
+    monkeypatch.setattr(helper, "_ntpd_wait_synchronized", lambda _timeout=60: (_ for _ in ()).throw(RuntimeError("no sync")))
 
     assert helper._handle_ntpd("apply", [str(staged)]) == 1
     assert applied.read_bytes() == previous.encode()
@@ -22514,7 +22529,7 @@ def test_ntpd_status_reports_selected_controller_conflicts_and_guard(
             timeout: Maximum duration supplied to the mocked process runner.
         """
         if command[0] == "/usr/bin/ntpq":
-            output = "leap_none, sync_ntp\n" if command[1:3] == ["-c", "rv"] else "peer data\n"
+            output = "associd=0 status=0615 leap_none, sync_ntp\nstratum=2\n" if command[1:3] == ["-c", "rv"] else "*192.0.2.1 .GPS. 1 u 10 64 377 1.0 0.0 0.0\n"
             return subprocess.CompletedProcess(command, 0, output, "")
         if command[1] == "is-active":
             active = command[2] == "ntpd.service"
@@ -22625,7 +22640,7 @@ def test_ntpd_status_does_not_claim_health_for_unverified_transaction(
             timeout: Maximum duration supplied to the mocked process runner.
         """
         if command[1:3] == ["-c", "rv"]:
-            output = "leap_none, sync_ntp\n"
+            output = "associd=0 status=0615 leap_none, sync_ntp\nstratum=2\n"
         elif command[1:3] == ["-c", "ntsinfo"]:
             output = "NTS status available\n"
         else:
@@ -22735,8 +22750,8 @@ def test_ntpd_status_reports_runtime_drift_and_sync_failures(
                 values = {
                     "leap-alarm": "leap_alarm",
                     "no-system-peer": "leap_alarm, no_sys_peer",
-                    "stale-no-system-peer-event": "leap_none, sync_ntp, no_sys_peer",
-                }.get(scenario, "leap_none, sync_ntp")
+                    "stale-no-system-peer-event": "associd=0 status=0615 leap_none, sync_ntp, no_sys_peer\nstratum=2\n",
+                }.get(scenario, "associd=0 status=0615 leap_none, sync_ntp\nstratum=2\n*192.0.2.1 .GPS. 1 u 10 64 377 1.0 0.0 0.0\n")
                 return subprocess.CompletedProcess(command, 0, values, "")
             peer_outputs = {
                 "reach-zero": (
