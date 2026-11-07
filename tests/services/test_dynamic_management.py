@@ -466,6 +466,7 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
     """
     import hashlib
     import json
+    import runpy
     import stat
     import subprocess
     from contextlib import contextmanager
@@ -527,7 +528,8 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
                     "management_https_enabled": True, "management_https_cert_path": str(cert_path),
                     "management_https_key_path": str(key_path), "web_terminal_enabled": False, "web_terminal_addresses": []}
         baseline = {"network": {"config_preview": render_network_config(interfaces=[interface], vlans=[])},
-                    "ca": {"config_preview": render_ca_apply_payload(ca, [leaf], include_private_keys=False, profiles=profiles)}}
+                    "ca": {"config_preview": render_ca_apply_payload(ca, [leaf], include_private_keys=False, profiles=profiles),
+                           "summary": []}}
         if not first_boot:
             baseline["appliance_settings"] = {"config_preview": json.dumps(settings)}
         else:
@@ -597,7 +599,7 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
         if writer is not None:
             writer()
         publications.append((dict(payload), kwargs))
-        site.write_text(helper_module._management_nginx_config(payload, cert_path, key_path, **kwargs))
+        site.write_text(helper_module._management_nginx_config(payload, cert_path, key_path, **kwargs).rstrip() + "\n", newline="\n")
         return 0, None
 
     helper["_configure_atlaso_management_https"] = publish_config
@@ -649,7 +651,7 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
                  "read_regular_text": lambda *_args, **_kwargs: "complete",
                  "write_secret_text_atomic": lambda path, text: path.write_text(text),
                  "write_text_atomic": lambda path, text, **_kwargs: path.write_text(text),
-                 "record_ca_publication_baseline": lambda *args, **kwargs: receipts.append(kwargs)}
+                 "record_ca_publication_baseline": runpy.run_path("scripts/appliance/atlaso-bootstrap-https")["record_ca_publication_baseline"]}
     publication_path = tmp_path / "publication.json"
     original_lstat, original_fstat = Path.lstat, admission.os.fstat
     monkeypatch.setattr(admission, "PUBLICATION_PATH", publication_path)
@@ -710,14 +712,15 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
         ca = db.scalar(select(CaSettings))
         profiles = list(db.scalars(select(CaProfile)))
         pending = ManagedCertificateSpec(
-            "appliance:https", "applied.atlaso.internal", ["applied.atlaso.internal"],
+            "appliance:https", "pending.atlaso.internal", ["pending.atlaso.internal"],
             ["169.254.20.10", "192.0.2.20", "fd00:1084:1077::20"],
-            CA_SERVER_PROFILE_NAME, leaf.description, str(cert_path), str(key_path), leaf.chain_path,
+            CA_SERVER_PROFILE_NAME, leaf.description, str(tmp_path / "pending.pem"), str(tmp_path / "pending.key"), leaf.chain_path,
         )
         ensure_managed_certificate_rows(db, settings=ca, profiles=profiles, specs=[pending])
         assert issue_certificate(ca, profiles, leaf)
         db.commit()
         pending_fingerprint = leaf.fingerprint
+        pending_certificate_pem = leaf.certificate_pem
         pending_addresses = leaf.ip_addresses
         pending_key_digest = hashlib.sha256(leaf.private_key_encrypted.encode()).hexdigest()
     installed_before = [hashlib.sha256(path.read_bytes()).hexdigest() for path in (cert_path, key_path)]
@@ -751,8 +754,80 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
     assert len(publications) == publications_before
     assert len(upstream_checks) == checks_before_fast_path
     assert [hashlib.sha256(path.read_bytes()).hexdigest() for path in (cert_path, key_path)] == installed_before
+    # Reboot removes /run, but the actual acknowledged CA baseline, installed
+    # pair and applied native listener survive. Reconstruct only after proving
+    # those independently; never use the pending desired leaf as applied proof.
+    publication_path.unlink()
+    with SessionLocal() as db:
+        assert admission.read_publication(db) == {}
+    publisher.reconcile(helper, bootstrap)
     with SessionLocal() as db:
         leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        assert leaf.common_name == "pending.atlaso.internal"
+        assert leaf.cert_path == str(tmp_path / "pending.pem")
+        assert leaf.key_path == str(tmp_path / "pending.key")
+        assert leaf.fingerprint == pending_fingerprint
+        assert leaf.ip_addresses == pending_addresses
+        assert hashlib.sha256(leaf.private_key_encrypted.encode()).hexdigest() == pending_key_digest
+        assert admission.read_publication(db)["leaf_fingerprint"] == first.fingerprint(hashes.SHA256()).hex()
+    assert len(publications) == publications_before
+    assert len(upstream_checks) == checks_before_fast_path
+    assert [hashlib.sha256(path.read_bytes()).hexdigest() for path in (cert_path, key_path)] == installed_before
+    if not first_boot and not renamed:
+        # Missing checkpoints cannot promote a mismatched baseline, a drifted
+        # site or an inactive/different served leaf. Refuse normal repair here
+        # through its existing pending-root guard, proving recovery cannot skip it.
+        with SessionLocal() as db:
+            baseline_text = db.scalar(select(Setting).where(Setting.key == BASELINES_KEY)).value
+        site_bytes = site.read_bytes()
+        for mismatch in ("fingerprint", "hostname", "cert_path", "key_path", "duplicate", "missing", "site", "inactive", "served"):
+            publication_path.unlink(missing_ok=True)
+            mismatched = json.loads(baseline_text)
+            ca_payload = json.loads(mismatched["ca"]["config_preview"])
+            applied_leaf = next(item for item in ca_payload["certificates"] if item["managed_owner"] == "appliance:https")
+            if mismatch in {"fingerprint", "hostname", "cert_path", "key_path"}:
+                applied_leaf["common_name" if mismatch == "hostname" else mismatch] = "mismatched"
+            elif mismatch == "duplicate":
+                ca_payload["certificates"].append(dict(applied_leaf))
+            elif mismatch == "missing":
+                ca_payload["certificates"] = []
+            mismatched["ca"]["config_preview"] = json.dumps(ca_payload)
+            with SessionLocal() as db:
+                db.scalar(select(Setting).where(Setting.key == BASELINES_KEY)).value = json.dumps(mismatched)
+                db.commit()
+            if mismatch == "site":
+                site.write_text("drifted site")
+            with monkeypatch.context() as guards:
+                guards.setitem(bootstrap, "recovery_root_matches_baseline", lambda _db: False)
+                if mismatch == "inactive":
+                    guards.setitem(helper, "_run", lambda *_args, **_kwargs: subprocess.CompletedProcess([], 1))
+                elif mismatch == "served":
+                    guards.setattr(publisher.ssl, "get_server_certificate", lambda *_args, **_kwargs: pending_certificate_pem)
+                with pytest.raises(ValueError, match="pending CA root|active management TLS identity"):
+                    publisher.reconcile(helper, bootstrap)
+            with SessionLocal() as db:
+                assert admission.read_publication(db) == {}
+                leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+                assert leaf.common_name == "pending.atlaso.internal"
+                assert leaf.fingerprint == pending_fingerprint
+                assert hashlib.sha256(leaf.private_key_encrypted.encode()).hexdigest() == pending_key_digest
+                db.scalar(select(Setting).where(Setting.key == BASELINES_KEY)).value = baseline_text
+                db.commit()
+            site.write_bytes(site_bytes)
+        # Successful recovery must not import cold UI helpers under either lock.
+        with monkeypatch.context() as guards:
+            def refuse_cold_import():
+                """Fail if unchanged recovery attempts a slow locked import."""
+                raise AssertionError("unchanged reboot recovery imported UI")
+
+            guards.setitem(bootstrap, "_ui_functions", refuse_cold_import)
+            guards.setitem(bootstrap, "recovery_root_matches_baseline", lambda _db: refuse_cold_import())
+            publisher.reconcile(helper, bootstrap)
+        assert len(publications) == publications_before
+        assert [hashlib.sha256(path.read_bytes()).hexdigest() for path in (cert_path, key_path)] == installed_before
+    with SessionLocal() as db:
+        leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        publication_path.unlink()
         leaf.status = "revoked"
         db.commit()
     with pytest.raises(ValueError, match="unavailable or revoked"):

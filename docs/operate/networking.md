@@ -78,6 +78,10 @@ Public receipt readers still reject expired observations. The observer can use i
 applied-identity-bound checkpoint only to repeat native ownership, installed certificate/key, site and live TLS
 verification before publishing a fresh observation. A delay in observer execution cannot by itself overwrite a
 pending certificate, and the stale checkpoint never grants public listener admission.
+After reboot removes the runtime checkpoint, the observer can recover the applied certificate identity from its
+durable CA baseline. It requires matching applied hostname and certificate destinations, the exact expected nginx
+configuration, fresh native ownership, the installed pair and the active served fingerprint before publishing a new
+receipt. Pending certificate edits remain pending during this recovery too.
 An interrupted management certificate/key replacement restores the previous pair before retrying listener activation.
 Cold publication helpers load and the initial application-upstream readiness wait runs outside the database writer
 and Network Apply locks, so application startup can commit state and acquire its own native admission. The observer

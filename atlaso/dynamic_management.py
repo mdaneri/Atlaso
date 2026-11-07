@@ -272,6 +272,27 @@ def _reconcile_once(
             previous = read_observer_checkpoint(db, include_withdrawn=True)
             site_path = helper["NGINX_MANAGEMENT_SITE_PATH"]
             current_leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+            if not previous and native["addresses"] and settings.get("management_https_enabled") and site_path.is_file():
+                # /run is volatile. Recover only the durable, acknowledged
+                # applied identity, never the possibly pending desired row.
+                ca_baseline = json.loads(str((baselines.get("ca") or {}).get("config_preview") or "{}"))
+                applied_leaves = [item for item in ca_baseline.get("certificates", []) if item.get("managed_owner") == "appliance:https"]
+                if (len(applied_leaves) == 1 and applied_leaves[0].get("common_name") == settings["fqdn"]
+                        and applied_leaves[0].get("cert_path") == settings["management_https_cert_path"]
+                        and applied_leaves[0].get("key_path") == settings["management_https_key_path"]):
+                    expected_site = helper["_management_nginx_config"](
+                        settings, listen_addresses=addresses, http_listen_addresses=addresses, https_listen_addresses=https_addresses,
+                        cert_path=helper["_ca_managed_path"](settings["management_https_cert_path"], "management_https_cert_path"),
+                        key_path=helper["_ca_managed_path"](settings["management_https_key_path"], "management_https_key_path"),
+                    ).rstrip() + "\n"
+                    if site_path.read_bytes() == expected_site.encode("utf-8"):
+                        port = int(settings.get("management_public_https_port") or 443)
+                        previous = {**published, "phase": "ready", "leaf_fingerprint": applied_leaves[0].get("fingerprint"),
+                                    "site_digest": hashlib.sha256(expected_site.encode("utf-8")).hexdigest(),
+                                    "urls": [f"https://{'[' + address + ']' if ':' in address else address}:{port}/ui/management/"
+                                             for address in native["addresses"]]}
+                # This is only a candidate for the same live verification below;
+                # no durable baseline or stale observation grants public access.
             if (previous.get("phase") == "ready" and previous.get("addresses") == native["addresses"]
                     and previous.get("apipa_addresses") == native["apipa_addresses"]
                     and (not settings.get("management_https_enabled") or current_leaf is not None
