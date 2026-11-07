@@ -160,7 +160,8 @@ try {
         'scripts/windows/vmware/Atlaso.LifecycleOwnership.ps1',
         'scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1',
         'scripts/windows/vmware/Atlaso.VmwareTestIdentity.psm1',
-        'scripts/windows/vmware/Atlaso.FixtureWheel.psm1'
+        'scripts/windows/vmware/Atlaso.FixtureWheel.psm1',
+        'scripts/windows/vmware/test-installation-iso.ps1'
     )) {
         $path = Join-Path $repo $relative
         $pins.Add([IO.FileStream]::new($path, 'Open', 'Read', 'Read'))
@@ -253,9 +254,12 @@ try {
     if ($archive.Count -ne 1) { throw 'The exact source archive is unavailable.' }
     $buildArguments = New-AtlasoCertificatePythonArguments -Runtime $runtime `
         -ScriptPath (Join-Path $source 'scripts/interop/certificate_iso_deployment.py')
-    # Run the canonical owner and all of its transitive imports from this same
-    # retained immutable archive, never from a checkout that can change meanwhile.
-    $nativeBefore = & (Join-Path $source 'scripts/windows/vmware/test-installation-iso.ps1') @nativeArguments
+    # The canonical owner pins and validates the complete checkout, including
+    # already parsed code. Loading its archive copy beneath that checkout would
+    # correctly fail its untracked-code guard. Keep its pinned canonical entrypoint;
+    # the wheel builder and deployment child still use the exact immutable archive.
+    $nativeOwner = Join-Path $repo 'scripts/windows/vmware/test-installation-iso.ps1'
+    $nativeBefore = & $nativeOwner @nativeArguments
     $nativeBeforePath = Join-Path $output 'native-before.json'
     $recordsToPublish = @{
         'native-before.json' = $nativeBefore
@@ -344,7 +348,7 @@ try {
         throw 'Original-ISO deployment failed or its outcome is unknown; retain the fixture, claim and process records for reconciliation.'
     }
     Assert-LifecycleSourcePins -Pins $sourcePins
-    $nativeAfter = & (Join-Path $source 'scripts/windows/vmware/test-installation-iso.ps1') @nativeArguments
+    $nativeAfter = & $nativeOwner @nativeArguments
     $terminalRecords = @{
         'native-after.json' = $nativeAfter
         'deployer-exited.json' = @{ schema = 1; exit_code = 0; whole_job_quiescent = $true; source_guards_verified = $true }

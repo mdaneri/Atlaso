@@ -383,7 +383,9 @@ Use a prepared, originally owned isolated Python environment beneath this worktr
 native inspector and wheel-build dependencies. The runtime and immutable Git archive stay pinned through every
 consumer. The owner creates and receipts a fresh artifact root before use, builds one wheel from that archive, and
 requires its dependency declarations to match the original signed app. The complete offline cp314 wheelhouse must
-match the original ISO's release inventory. The existing direct deployer keeps its bootstrap, deployment-lock and
+match the original ISO's release inventory. Native VM admission uses the separately pinned canonical checkout owner
+and its complete checkout/parsed-code validation; the wheel builder and deployment child use the immutable archive
+from that same reviewed commit. The existing direct deployer keeps its bootstrap, deployment-lock and
 Appliance Update guards. It verifies the original console-observed SSH key before authentication, uses one private
 remote staging directory, verifies every uploaded file, and retains the original helper and console/boot assets.
 This exclusive mode-0700 staging directory lives under `/var/tmp`, preserving the same verified wheel archive across
