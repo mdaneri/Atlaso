@@ -30,6 +30,9 @@ The pure `scripts/interop/certificate_dual_stack_contract.py` helpers describe e
 transitions and validate normalized fixture inputs. They reject duplicate or out-of-prefix addresses, uncertain
 interface/MAC ownership, unusable links, tentative or DAD-failed IPv6 state, and unusable address lifetimes. The inputs
 are not raw native observations: a `source=static` field does not authenticate its producer or establish provenance.
+Numeric TLS endpoint planning keeps IPv6 URI brackets separate from the IP-SAN verification name. Bounded listener
+endpoint parsing preserves wildcard, mapped-IPv4, and link-local scope facts; it does not establish native absence,
+TCP nonacceptance, TLS verification, or complete inventory coverage.
 
 These helpers perform no transport, Apply, restoration, or VM operation and emit no execution or acceptance receipt.
 They do not extend the admitted IPv4 procedure below. A dual-stack native procedure still needs original source/boot

@@ -28,6 +28,30 @@ class PlannedStep:
     ipv6_cidr: str | None
 
 
+@dataclass(frozen=True)
+class PlannedTLSNumericEndpoint:
+    """Numeric HTTPS formatting only; no TLS connection or certificate proof."""
+
+    family: int
+    address: str
+    port: int
+    origin: str
+    host_header: str
+    server_hostname: str
+
+
+@dataclass(frozen=True)
+class ListenerEndpoint:
+    """One parsed numeric ss endpoint, without producer or liveness authority."""
+
+    family: int | None
+    address: str | None
+    port: int
+    scope: str | None
+    wildcard: bool
+    mapped_ipv4: str | None
+
+
 _INTERFACE = re.compile(r"[A-Za-z0-9_.-]{1,15}\Z")
 _MAC = re.compile(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\Z")
 _ALLOWED_FLAGS = frozenset({"permanent", "noprefixroute"})
@@ -35,6 +59,79 @@ _OBSERVATION_FIELDS = frozenset({
     "schema", "kind", "interface", "mac", "operstate", "carrier", "family", "address",
     "prefixlen", "source", "flags", "dad_state", "valid_lifetime", "preferred_lifetime",
 })
+
+
+def plan_tls_numeric_endpoint(address: str, *, family: int, port: int = 443) -> PlannedTLSNumericEndpoint:
+    """Format a strict numeric IP origin for a future verified TLS caller.
+
+    This neither opens a socket nor authenticates a certificate or destination.
+    The caller still needs admitted source/topology bindings, CA verification,
+    numeric IP-SAN verification and the actually viewed console leaf.
+
+    Args:
+        address: Bare unscoped usable numeric host address, without brackets/CIDR.
+        family: Exact numeric family 4 or 6, excluding boolean aliases.
+        port: Explicit TCP port, excluding boolean aliases.
+    """
+    reason = "tls_endpoint_invalid"
+    if (type(family) is not int or family not in (4, 6)
+            or type(port) is not int or not 1 <= port <= 65_535
+            or not isinstance(address, str) or "%" in address):
+        raise ContractRefusal(reason)
+    try:
+        numeric = ipaddress.ip_address(address)
+    except ValueError:
+        raise ContractRefusal(reason) from None
+    if numeric.version != family or not _usable(numeric):
+        raise ContractRefusal(reason)
+    canonical = str(numeric)
+    host = f"[{canonical}]" if family == 6 else canonical
+    authority = host if port == 443 else f"{host}:{port}"
+    return PlannedTLSNumericEndpoint(family, canonical, port, f"https://{authority}", authority, canonical)
+
+
+def parse_listener_endpoint(value: str) -> ListenerEndpoint:
+    """Parse one bounded numeric local endpoint from ss -H -ltn output.
+
+    IPv6 requires brackets; only link-local IPv6 may carry an interface scope.
+    Mapped IPv4 remains explicit so a future retirement caller cannot silently
+    discard an IPv6 socket that names an IPv4 host. Wildcards remain unresolved
+    diagnostic facts, never evidence of retired-address nonacceptance.
+
+    Args:
+        value: One local endpoint, without a row, whitespace or service names.
+    """
+    reason = "listener_endpoint_invalid"
+    if (not isinstance(value, str) or not 1 <= len(value) <= 128
+            or not value.isascii() or any(char.isspace() for char in value)):
+        raise ContractRefusal(reason)
+    host, separator, port_text = value.rpartition(":")
+    if (not separator or re.fullmatch(r"[1-9][0-9]{0,4}", port_text) is None
+            or int(port_text) > 65_535):
+        raise ContractRefusal(reason)
+    port = int(port_text)
+    if host == "*":
+        return ListenerEndpoint(None, None, port, None, True, None)
+    bracketed = host.startswith("[") and host.endswith("]")
+    address_text = host[1:-1] if bracketed else host
+    scope = None
+    if "%" in address_text:
+        address_text, scope = address_text.split("%", 1)
+        if _INTERFACE.fullmatch(scope) is None:
+            raise ContractRefusal(reason)
+    try:
+        address = ipaddress.ip_address(address_text)
+    except ValueError:
+        raise ContractRefusal(reason) from None
+    if (bracketed != (address.version == 6)
+            or scope is not None and (address.version != 6 or not address.is_link_local)
+            or address.is_multicast):
+        raise ContractRefusal(reason)
+    mapped = address.ipv4_mapped if isinstance(address, ipaddress.IPv6Address) else None
+    return ListenerEndpoint(
+        address.version, str(address), port, scope, address.is_unspecified,
+        str(mapped) if mapped is not None else None,
+    )
 
 
 def _network(value: Any, family: int) -> ipaddress.IPv4Network | ipaddress.IPv6Network:

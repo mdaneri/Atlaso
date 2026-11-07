@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import sys
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -239,3 +240,96 @@ def test_invalid_expected_binding_has_a_fixed_refusal(key: str, value: str) -> N
     """
     with pytest.raises(contract.ContractRefusal, match="^static_observation_invalid$"):
         validate(observation(), **{key: value})
+
+
+@pytest.mark.parametrize(("address", "family", "port", "origin", "host"), [
+    ("192.0.2.10", 4, 443, "https://192.0.2.10", "192.0.2.10"),
+    ("192.0.2.10", 4, 8443, "https://192.0.2.10:8443", "192.0.2.10:8443"),
+    ("fd00:1084:1077:0:0:0:0:10", 6, 443, "https://[fd00:1084:1077::10]", "[fd00:1084:1077::10]"),
+    ("fd00:1084:1077::10", 6, 8443, "https://[fd00:1084:1077::10]:8443", "[fd00:1084:1077::10]:8443"),
+])
+def test_tls_numeric_plan_separates_http_authority_from_ip_san_name(
+    address: str, family: int, port: int, origin: str, host: str,
+) -> None:
+    """Keep URI brackets out of the numeric TLS verification name.
+
+    Args:
+        address: Synthetic numeric destination.
+        family: Declared family.
+        port: Explicit TCP port.
+        origin: Expected HTTPS origin.
+        host: Expected HTTP authority.
+    """
+    endpoint = contract.plan_tls_numeric_endpoint(address, family=family, port=port)
+    assert endpoint.origin == origin
+    assert endpoint.host_header == host
+    assert endpoint.server_hostname == endpoint.address
+    assert endpoint.family == family
+    assert endpoint.port == port
+
+
+@pytest.mark.parametrize(("address", "family", "port"), [
+    ("192.0.2.10", True, 443), ("192.0.2.10", 4, True),
+    ("192.0.2.10", 4, 0), ("192.0.2.10", 4, 65_536),
+    ("192.0.2.10", 4, "443"), ("192.0.2.10", 6, 443),
+    ("fd00:1084:1077::10", 4, 443), ("::ffff:192.0.2.10", 6, 443),
+    ("fe80::10%eth0", 6, 443), ("fe80::10", 6, 443), ("::", 6, 443),
+    ("::1", 6, 443), ("ff02::1", 6, 443), ("0.0.0.0", 4, 443),
+    ("[fd00:1084:1077::10]", 6, 443), ("192.0.2.10/24", 4, 443),
+    ("https://user:private@192.0.2.10", 4, 443), ("host.example", 4, 443),
+])
+def test_tls_numeric_plan_refuses_ambiguous_destinations(address: str, family: Any, port: Any) -> None:
+    """Never echo invalid destination input or coerce family/port types.
+
+    Args:
+        address: Invalid synthetic destination.
+        family: Declared family under test.
+        port: Declared TCP port under test.
+    """
+    with pytest.raises(contract.ContractRefusal, match="^tls_endpoint_invalid$"):
+        contract.plan_tls_numeric_endpoint(address, family=family, port=port)
+
+
+@pytest.mark.parametrize(("raw", "family", "address", "scope", "wildcard", "mapped"), [
+    ("192.0.2.10:443", 4, "192.0.2.10", None, False, None),
+    ("[fd00:1084:1077::10]:443", 6, "fd00:1084:1077::10", None, False, None),
+    ("[fe80::10%eth0]:443", 6, "fe80::10", "eth0", False, None),
+    ("[::ffff:192.0.2.10]:443", 6, str(ipaddress.IPv6Address("::ffff:192.0.2.10")), None, False, "192.0.2.10"),
+    ("0.0.0.0:443", 4, "0.0.0.0", None, True, None),
+    ("[::]:443", 6, "::", None, True, None),
+    ("*:443", None, None, None, True, None),
+])
+def test_listener_endpoint_preserves_wildcard_scope_and_mapped_facts(
+    raw: str, family: int | None, address: str | None,
+    scope: str | None, wildcard: bool, mapped: str | None,
+) -> None:
+    """Parse diagnostic endpoint facts without claiming retirement or reachability.
+
+    Args:
+        raw: Synthetic native endpoint.
+        family: Expected family, unknown for a wildcard.
+        address: Canonical numeric host.
+        scope: Explicit link-local interface scope.
+        wildcard: Whether the binding is unspecified.
+        mapped: Explicit mapped IPv4 host.
+    """
+    assert contract.parse_listener_endpoint(raw) == contract.ListenerEndpoint(
+        family, address, 443, scope, wildcard, mapped,
+    )
+
+
+@pytest.mark.parametrize("raw", [
+    "", "x" * 129, "192.0.2.10:https", "192.0.2.10:0", "192.0.2.10:65536",
+    "192.0.2.10:0443", "192.0.2.10:+443", "192.0.2.10:443\n", " 192.0.2.10:443",
+    "192.0.2.10:４４３", "fd00:1084:1077::10:443", "[192.0.2.10]:443",
+    "[fd00:1084:1077::10%eth0]:443", "[fe80::10%]:443", "[fe80::10%eth0%eth1]:443",
+    "[ff02::1]:443", "[::]:*", "host.example:443", "private@192.0.2.10:443",
+])
+def test_listener_endpoint_refuses_unknown_or_unbounded_forms(raw: str) -> None:
+    """Unknown native syntax cannot silently become an absent-listener fact.
+
+    Args:
+        raw: Malformed synthetic endpoint.
+    """
+    with pytest.raises(contract.ContractRefusal, match="^listener_endpoint_invalid$"):
+        contract.parse_listener_endpoint(raw)
