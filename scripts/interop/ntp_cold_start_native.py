@@ -39,6 +39,7 @@ from time_source_guest import apply_review_fields, apply_review_path
 
 _NTP_APPLY_ROOTS = frozenset({"appliance_settings", "network", "ca", "firewall", "public_services", "dnsmasq", "ntpd"})
 _NTP_NETWORK_DEPENDENCIES = frozenset({"wan", "nat"})
+_NTP_TRANSITION_ROOTS = frozenset({"firewall", "ntpd", "public_services"})
 
 
 class Refusal(Exception):
@@ -433,6 +434,69 @@ def prepare_baseline(client, plan: dict) -> dict:
     return saved_fields(original)
 
 
+def initial_tls_baseline(client, plan: dict, output: Path, username: str, password: str) -> dict:
+    """Settle the first Network/CA baseline before later NTP-only transitions.
+
+    A cold review can still contain the bootstrap DHCP address. When needed,
+    one separately journaled successful-baseline replay converges that review;
+    it never retries a failed task. All subsequent TLS checks retain the same CA
+    and hostname verification and require two equal applied-address leaf samples.
+
+    Args:
+        client: Original authenticated management client.
+        plan: Admitted original CA and management address.
+        output: Original append-only task journal directory.
+        username: Original web identity for exact-task reconciliation.
+        password: Web credential confined to authenticated channels.
+    """
+    deadline = time.monotonic() + 16
+
+    def open_socket(address: str, port: int = 443):
+        """Bound only the existing verified management TLS transport.
+
+        Args:
+            address: Original private management destination.
+            port: Management HTTPS port.
+        """
+        if address != plan["current_address"] or port != 443:
+            raise Refusal("ntp_fixture_tls_baseline_destination_changed")
+        raw = client.peer.open_socket(address, port)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raw.close()
+            raise Refusal("ntp_fixture_tls_baseline_timeout")
+        raw.settimeout(min(8, remaining))
+        return raw
+
+    probe = Client(client.url, plan["ca_path"], peer=SimpleNamespace(open_socket=open_socket),
+                   connect_ip=plan["current_address"])
+    original = probe.tls_identity()
+    convergence = None
+    if plan["current_address"] not in original.get("ip_sans", []):
+        convergence = apply_once(client, output, "ntp-native-baseline", username, password)
+        if convergence["status"] != "succeeded":
+            raise Refusal("ntp_fixture_initial_baseline_convergence_failed")
+    started = time.monotonic()
+    deadline = started + 120
+    previous = None
+    equal_samples = 0
+    while deadline - time.monotonic() >= 16:
+        guard = getattr(client.peer, "topology_guard", None)
+        if guard is not None:
+            guard()
+        leaf = probe.tls_identity()
+        if plan["current_address"] in leaf.get("ip_sans", []):
+            equal_samples = equal_samples + 1 if leaf == previous else 1
+            if equal_samples >= 2:
+                return {"tls": leaf, "convergence_task": convergence, "equal_applied_leaf_samples": equal_samples,
+                        "elapsed_seconds": round(time.monotonic() - started, 3)}
+        else:
+            equal_samples = 0
+        previous = leaf
+        time.sleep(min(2, max(0, deadline - time.monotonic())))
+    raise Refusal("ntp_fixture_tls_baseline_timeout")
+
+
 def applied_config(session, password: str) -> dict:
     """Record only applied configuration digest and verified transaction state.
 
@@ -464,13 +528,15 @@ def journal_checkpoint(session, password: str) -> dict:
         boot = session.command("cat /proc/sys/kernel/random/boot_id").decode().strip().replace("-", "")
         if re.fullmatch(r"[0-9a-f]{32}", boot) is None:
             raise Refusal("ntp_fixture_journal_checkpoint_invalid")
-        return {"boot": boot, "monotonic": 0}
+        return {"boot": boot, "monotonic": 0, "cursor": None}
     row = json.loads(lines[-1])
     boot = row["_BOOT_ID"]
     stamp = int(row["__MONOTONIC_TIMESTAMP"])
-    if re.fullmatch(r"[0-9a-f]{32}", boot) is None or stamp < 0:
+    cursor = row.get("__CURSOR")
+    if (re.fullmatch(r"[0-9a-f]{32}", boot) is None or stamp < 0 or not isinstance(cursor, str)
+            or not 1 <= len(cursor) <= 2048 or any(char in cursor for char in "\x00\r\n")):
         raise Refusal("ntp_fixture_journal_checkpoint_invalid")
-    return {"boot": boot, "monotonic": stamp}
+    return {"boot": boot, "monotonic": stamp, "cursor": cursor}
 
 
 def acquisition_failure(session, password: str, before: dict) -> dict:
@@ -481,18 +547,38 @@ def acquisition_failure(session, password: str, before: dict) -> dict:
         password: Sudo credential confined to stdin.
         before: Monotonic checkpoint captured before the unreachable candidate.
     """
-    lines = sudo_read(session, "journalctl -u ntpd.service -n 100 -o json --no-pager", password).splitlines()
-    failures = []
-    for line in lines:
-        row = json.loads(line)
-        if row.get("_BOOT_ID") != before["boot"] or int(row.get("__MONOTONIC_TIMESTAMP", 0)) <= before["monotonic"]:
-            continue
-        match = re.fullmatch(r"NTPsec initial clock acquisition failed \((TimeoutExpired|OSError|exit code -?\d{1,3})\); Apply must roll back\.", str(row.get("MESSAGE", "")))
-        if match:
-            failures.append(match[1])
-    if len(failures) != 1:
+    if (re.fullmatch(r"[0-9a-f]{32}", str(before.get("boot", ""))) is None
+            or type(before.get("monotonic")) is not int or before["monotonic"] < 0
+            or not isinstance(before.get("cursor"), str) or not 1 <= len(before["cursor"]) <= 2048
+            or any(char in before["cursor"] for char in "\x00\r\n")):
+        raise Refusal("ntp_fixture_negative_checkpoint_missing")
+    # Filter inside the pinned guest. Full journal metadata can exceed the SSH
+    # readback cap even for 100 ordinary entries; only fixed failure categories
+    # cross that boundary. A 257th row refuses any possibly truncated window.
+    program = f"""import json,re,subprocess
+before={before!r}
+p=subprocess.run(['journalctl','-u','ntpd.service','-n','257','-o','json','--no-pager',
+ '--after-cursor='+before['cursor']],capture_output=True,timeout=8)
+assert p.returncode==0 and len(p.stdout)<=2*1024**2
+lines=p.stdout.splitlines();assert len(lines)<257
+failures=[]
+for line in lines:
+ row=json.loads(line)
+ if row.get('_BOOT_ID')!=before['boot'] or int(row.get('__MONOTONIC_TIMESTAMP',0))<=before['monotonic']:continue
+ match=re.fullmatch(r'NTPsec initial clock acquisition failed \\((TimeoutExpired|OSError|exit code -?\\d{{1,3}})\\); Apply must roll back\\.',str(row.get('MESSAGE','')))
+ if match:failures.append(match[1])
+print(json.dumps({{'complete':True,'records':len(lines),'raw_bytes':len(p.stdout),'failures':failures}}))
+"""
+    facts = json.loads(sudo_read(session, guest_python_command(program), password))
+    failures = facts.get("failures")
+    if (facts.get("complete") is not True or type(facts.get("records")) is not int
+            or not 0 <= facts["records"] <= 256 or type(facts.get("raw_bytes")) is not int
+            or not 0 <= facts["raw_bytes"] <= 2 * 1024**2 or not isinstance(failures, list)
+            or len(failures) != 1 or not isinstance(failures[0], str)
+            or re.fullmatch(r"TimeoutExpired|OSError|exit code -?\d{1,3}", failures[0]) is None):
         raise Refusal("ntp_fixture_negative_acquisition_failure_unproven")
-    return {"initializer_failed": True, "reason": failures[0], "after_original_checkpoint": True}
+    return {"initializer_failed": True, "reason": failures[0], "after_original_checkpoint": True,
+            "journal_records": facts["records"], "journal_bytes_filtered_in_guest": facts["raw_bytes"]}
 
 
 def acquisition_observation(session, password: str, before: dict) -> dict:
@@ -518,7 +604,7 @@ def acquisition_observation(session, password: str, before: dict) -> dict:
     return {"native_events": events, "real_clock_step_observed": any(row["kind"] == "step" for row in events)}
 
 
-def submit_initialization(client) -> tuple[str, str]:
+def submit_initialization(client, *, cold_start: bool = True) -> tuple[str, str]:
     """Submit fixed NTP roots and only server-required network dependencies.
 
     The caller has already proved routing/NAT intent absent. A first network
@@ -527,16 +613,19 @@ def submit_initialization(client) -> tuple[str, str]:
 
     Args:
         client: Original CA/hostname-validated authenticated management client.
+        cold_start: Initial Network/CA setup or its single baseline convergence; false selects NTP-only roots.
     """
+    roots = _NTP_APPLY_ROOTS if cold_start else _NTP_TRANSITION_ROOTS
+    dependencies = _NTP_NETWORK_DEPENDENCIES
     _, original = client.json("/ui/management/appliance-apply/review")
     rows = original.get("units")
     if (original.get("active_task") or not isinstance(rows, list) or not rows
             or any(not isinstance(row, dict) or not isinstance(row.get("id"), str) for row in rows)):
         raise Refusal("ntp_fixture_apply_review_invalid")
     changed = {row["id"] for row in rows if row.get("changed", True)}
-    if changed - _NTP_APPLY_ROOTS - _NTP_NETWORK_DEPENDENCIES:
+    if changed - roots - dependencies:
         raise Refusal("ntp_fixture_unrelated_pending_units")
-    _, review = client.json(apply_review_path("/ui/management/appliance-apply/review", sorted(_NTP_APPLY_ROOTS)))
+    _, review = client.json(apply_review_path("/ui/management/appliance-apply/review", sorted(roots)))
     try:
         fields = apply_review_fields(review)
     except ValueError:
@@ -548,12 +637,12 @@ def submit_initialization(client) -> tuple[str, str]:
                    for row in reviewed_rows if row.get("selected"))):
         raise Refusal("ntp_fixture_apply_review_invalid")
     selected = {row["id"]: row for row in reviewed_rows if row.get("selected")}
-    if (set(review["requested_units"]) != _NTP_APPLY_ROOTS
-            or not _NTP_APPLY_ROOTS.issubset(selected)
-            or set(selected) - _NTP_APPLY_ROOTS - _NTP_NETWORK_DEPENDENCIES
+    if (set(review["requested_units"]) != roots
+            or not roots.issubset(selected)
+            or set(selected) - roots - dependencies
             or any(row.get("required_dependency") is not True
-                   for key, row in selected.items() if key in _NTP_NETWORK_DEPENDENCIES)
-            or not (changed - _NTP_APPLY_ROOTS).issubset(selected)):
+                   for key, row in selected.items() if key in dependencies)
+            or not (changed - roots).issubset(selected)):
         raise Refusal("ntp_fixture_apply_scope_changed")
     _, body = client.request("/ui/management/physical-interfaces")
     csrf = Page(body).csrf
@@ -581,7 +670,7 @@ def apply_once(client, output: Path, name: str, username: str, password: str) ->
     """
     started = time.monotonic()
     publish(output / (name + "-submission-intent.json"), {"case": name, "no_resubmission": True})
-    job, path = submit_initialization(client)
+    job, path = submit_initialization(client, cold_start=name in {"ntp-native-cold", "ntp-native-baseline"})
     publish(output / (name + "-submitted.json"), {"job_id": job, "status_path": path})
     task, _ = wait_task([client], path, username, password)
     public = {"job_id": job, "status": task.get("status"), "elapsed_seconds": round(time.monotonic() - started, 3)}
@@ -706,10 +795,12 @@ def run(plan: dict, output: Path, password: str, *, appliance_password: str | No
                     result["cold_clock"] = native_clock(session, ssh_password, plan["peer_address"])
                     result["cold_acquisition"] = acquisition_observation(session, ssh_password, cold_checkpoint)
                     clean_baseline(client)
-                    # Initial Network/CA Apply may publish the first applied leaf.
-                    # Keep the independently pinned CA and hostname verification;
-                    # bind subsequent NTP-only transitions to this applied leaf.
-                    result["baseline_tls"] = client.tls_identity()
+                    baseline = initial_tls_baseline(client, plan, output, plan["username"], password)
+                    result["initial_tls_baseline"] = baseline
+                    result["baseline_tls"] = baseline["tls"]
+                    clean_baseline(client)
+                    if baseline["convergence_task"] is not None:
+                        result["baseline_clock"] = native_clock(session, ssh_password, plan["peer_address"])
                     result["client_refusal"] = packet_probe(session, peer, ssh_password, plan["current_address"], plan["peer_address"], response_expected=False)
                     result["stage"] = "server_apply"
                     save_ntp(client, plan["peer_address"], "ntp_server")
@@ -721,6 +812,8 @@ def run(plan: dict, output: Path, password: str, *, appliance_password: str | No
                     result["server_unselected_refusal"] = packet_probe(session, peer, ssh_password, plan["current_address"], plan["peer_address"], response_expected=False)
                     prior = applied_config(session, ssh_password)
                     checkpoint = journal_checkpoint(session, ssh_password)
+                    result["prior_applied_config"] = prior
+                    result["negative_checkpoint"] = checkpoint
                     result["stage"] = "negative_candidate"
                     save_ntp(client, plan["negative_address"], "ntp_server")
                     failed = apply_once(client, output, "ntp-native-negative", plan["username"], password)

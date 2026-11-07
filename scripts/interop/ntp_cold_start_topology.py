@@ -34,7 +34,9 @@ def _stable_projection(topology: dict) -> dict:
     Args:
         topology: Public topology snapshot.
     """
-    return {key: value for key, value in topology.items() if key not in {"observed_utc", "observations"}}
+    metadata = {"observed_utc", "observations", "registered_vm_count", "running_vm_count",
+                "stale_registration_count", "vacant_registration_count"}
+    return {key: value for key, value in topology.items() if key not in metadata}
 
 
 def inspect_topology(plan: dict) -> dict:
@@ -103,7 +105,7 @@ def inspect_topology(plan: dict) -> dict:
               "segment_receipt_sha256": host["segment_receipt"]["sha256"], "lab_adapters": facts,
               "registered_vm_count": len(registered), "running_vm_count": len(running),
               "stale_registration_count": stale, "vacant_registration_count": vacant}
-    public["sha256"] = hashlib.sha256(json.dumps(public, sort_keys=True).encode()).hexdigest()
+    public["sha256"] = hashlib.sha256(json.dumps(_stable_projection(public), sort_keys=True).encode()).hexdigest()
     public["observed_utc"] = datetime.now(UTC).isoformat()
     return public
 

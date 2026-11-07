@@ -32,7 +32,8 @@ def apply_client():
         original={"active_task": None, "units": copy.deepcopy(root_rows + dependencies)},
         filtered={"active_task": None, "plan_error": "", "plan_token": "synthetic-reviewed-token",
                   "requested_units": roots, "units": copy.deepcopy(root_rows + dependencies)},
-        posts=[], response=(202, {"job_id": "original-job", "status_url": "/tasks/original-job/status"}),
+        posts=[], expected_query_roots=roots,
+        response=(202, {"job_id": "original-job", "status_url": "/tasks/original-job/status"}),
     )
 
     def json_request(path, form=None):
@@ -47,7 +48,7 @@ def apply_client():
             return 200, state.original
         if path.startswith("/ui/management/appliance-apply/review?"):
             assert form is None
-            assert parse_qs(urlsplit(path).query) == {"selected_units": roots}
+            assert parse_qs(urlsplit(path).query) == {"selected_units": state.expected_query_roots}
             return 200, state.filtered
         assert path == "/ui/management/appliance-apply"
         state.posts.append(form)
@@ -82,6 +83,31 @@ def test_certificate_root_only_preflight_still_refuses_the_same_changed_nat(appl
     with pytest.raises(certificate.Refusal, match="fixture_unrelated_pending_units"):
         certificate.validate_review(apply_client.original)
     assert apply_client.posts == []
+
+
+@pytest.mark.parametrize("unrelated_pending", [False, True])
+def test_later_transitions_select_only_firewall_ntp_and_public_services(apply_client, unrelated_pending):
+    """Later NTP cases cannot replay initial Network/CA or accept their pending changes.
+
+    Args:
+        apply_client: Synthetic server-side selection reviews.
+        unrelated_pending: Whether a later unrelated CA edit must stop submission.
+    """
+    roots = {"firewall", "ntpd", "public_services"}
+    apply_client.expected_query_roots = sorted(roots)
+    apply_client.filtered["requested_units"] = sorted(roots)
+    rows = [row for row in apply_client.filtered["units"] if row["id"] in roots]
+    apply_client.filtered["units"] = rows
+    apply_client.original["units"] = copy.deepcopy(rows)
+    if unrelated_pending:
+        apply_client.original["units"].append({"id": "ca", "changed": True})
+        with pytest.raises(fixture.Refusal, match="unrelated_pending_units"):
+            fixture.submit_initialization(apply_client.client, cold_start=False)
+        assert apply_client.posts == []
+    else:
+        fixture.submit_initialization(apply_client.client, cold_start=False)
+        assert set(apply_client.posts[0]["requested_units"]) == roots
+        assert set(apply_client.posts[0]["selected_units"]) == roots
 
 
 @pytest.mark.parametrize("mutation", [

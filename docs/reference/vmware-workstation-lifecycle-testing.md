@@ -25,6 +25,10 @@ LAN segment. Both appliance NICs attach only to that segment. The peer's separat
 management VMnet for SSH and its real upstreams; forwarding and bridging must remain disabled. The private segment
 has exactly these two VM identities. Two appliance interfaces use distinct subnets on the same isolated layer-2
 segment; the test verifies listener **addresses**, not an adversarial guarantee about which NIC receives a frame.
+Unrelated VMs may run or change registration while this fixture runs. Provider counts are observational metadata;
+the sticky comparison binds the original fixture adapters and LAN receipt. Every observed registered or running VM
+is still inspected for competing membership of the private segment. Shared provider catalog changes use the existing
+transaction guards; source and namespace admission concern this task's original resources.
 
 | Interface | Address | Purpose |
 | --- | --- | --- |
@@ -54,7 +58,7 @@ and `sha256`, `original_root_receipt` naming the original receipt, `prepared_bef
 Keep source media and its pinned download digest with that evidence. Use the existing Ed25519 public-key file whose
 exact private half is loaded in the SSH agent; do not create or stage a private key for this fixture.
 
-For example, after independently admitting capacity, source and exclusive host scheduling:
+For example, after independently admitting capacity, source and the task-owned resource namespace:
 
 ```powershell
 $arguments = @{
@@ -132,6 +136,11 @@ NTP uses its own fixed-root Apply admission after the original routing/NAT-absen
 are admitted only when the server's selection-specific review requires them as network dependencies inside the fixed
 closure. Unrelated pending units, extra roots and unrequired dependencies are refused before POST. The existing
 certificate initializer's stricter root-only preflight is unchanged.
+If the first cold Network/CA review still contained the bootstrap DHCP address, the runner permits one separately
+reviewed and journaled baseline-convergence Apply after that cold task succeeded. It then requires two equal,
+CA/hostname-verified leaf samples containing the actual private management address. Failed tasks are never replayed.
+Later server and negative-candidate cases request only firewall, NTP and public services, preserving that applied leaf;
+WAN/NAT enforcement is admitted only when the server requires it as a dependency.
 
 The consumer requires an unmanaged appliance with every clock controller inactive, then uses the existing settings
 forms and global Apply review for the initial resolver/DNS/access-interface/NTP baseline. A successful cold Apply
@@ -150,6 +159,9 @@ normal-leap nonce-matched response at the access address and refuse the unselect
 candidate points only at the deliberately unused private address `192.168.77.11`. Acceptance requires a failed task,
 one new native initializer-acquisition failure after the recorded monotonic journal checkpoint, the exact prior
 applied configuration digest, a verified checkpoint and healthy original selected peer after rollback.
+The original pre-candidate configuration digest and journal cursor are retained in the result. Negative journal
+inspection stays inside the pinned guest: at most 256 complete post-cursor records and 2 MiB are admitted, and only
+fixed failure categories cross the existing 64 KiB SSH readback boundary. Truncated windows are refused.
 
 `ntp-native-*-submission-intent.json`, submitted-task and terminal journals, and `ntp-native-result.json` are immutable.
 An existing attempt is refused. An unknown task outcome requires read-only reconciliation of its original ID; never

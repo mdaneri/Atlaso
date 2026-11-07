@@ -548,6 +548,8 @@ def fake_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, objec
     monkeypatch.setattr(fixture, "tls_name", lambda *_args: "appliance.fixture.test")
     monkeypatch.setattr(fixture, "Client", FakeRunClient)
     monkeypatch.setattr(fixture, "wait_management_client", lambda *_args: (FakeRunClient(), {"login_page_ready": True}))
+    monkeypatch.setattr(fixture, "initial_tls_baseline", lambda client, *_args:
+                        {"tls": client.tls_identity(), "convergence_task": None})
     baseline = {"role": "management", "ipv4_method": "dhcp", "mac": "00:50:56:00:00:01"}
     def prepare(_client: object, _plan: object) -> dict[str, str]:
         """Return baseline interface fields after simulating peer selection.
@@ -602,11 +604,12 @@ def fake_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, objec
     monkeypatch.setattr(fixture, "sudo_read", sudo_read)
     calls.setdefault("statuses", ["succeeded", "succeeded", "failed"])
 
-    def submit(_client: object) -> tuple[str, str]:
+    def submit(_client: object, *, cold_start: bool = True) -> tuple[str, str]:
         """Record one initialization submission and return its task reference.
 
         Args:
             _client: Fake authenticated client submitting the operation.
+            cold_start: Whether this submission selects initial setup roots.
         """
         submissions = calls["submissions"]
         index = len(submissions) + 1

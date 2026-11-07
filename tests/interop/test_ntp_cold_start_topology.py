@@ -240,6 +240,34 @@ def test_watched_topology_records_utc_samples_without_treating_time_as_drift(
     assert len({row["observed_utc"] for row in snapshot["observations"]}) == 3
 
 
+def test_watched_topology_accepts_unrelated_vm_power_and_registration_changes(
+    admitted_topology: dict, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep private membership checks while unrelated VM counts change.
+
+    Args:
+        admitted_topology: Synthetic receipt-bound host and VMX state fixture.
+        monkeypatch: Patcher for unrelated provider registration and power state.
+    """
+    appliance = admitted_topology["appliance"]
+    peer = admitted_topology["peer"]
+    unrelated = appliance.parent / "unrelated.vmx"
+    unrelated.touch()
+    admitted_topology["vmx"][str(unrelated)] = [
+        {"index": 0, "present": "true", "startconnected": "true", "connectiontype": "custom",
+         "vnet": "VMnet2", "address": "00:50:56:ff:00:01"},
+    ]
+    with topology.watched_topology(admitted_topology["plan"]) as (snapshot, check):
+        monkeypatch.setattr(topology, "_parse_inventory", lambda _payload: ([appliance, peer, unrelated], 1, 2))
+        monkeypatch.setattr(topology, "_run_vmrun", lambda _exe: ([appliance, peer, unrelated], ""))
+        check()
+        current = topology.inspect_topology(admitted_topology["plan"])
+        assert current["running_vm_count"] == 3
+        assert current["sha256"] == snapshot["sha256"]
+        monkeypatch.setattr(topology, "_run_vmrun", lambda _exe: ([appliance, peer], ""))
+        check()
+
+
 def test_watched_topology_fails_closed_when_observation_bound_is_exceeded(
     admitted_topology: dict, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
