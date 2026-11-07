@@ -3851,12 +3851,6 @@ with WindowsFiles().opened(Path(sys.argv[1]), directory=True) as (_, identity, _
         foreach ($pin in $routingOverlapVmxPins) { $pin.Dispose() }
         $routingOverlapVmxPins.Clear()
     } elseif ($singleApplianceFixture) {
-        if ($NtpColdStartOnly) {
-            $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
-                '-T', 'ws', '-gu', 'root', '-gp', $RootGuestPassword, 'runScriptInGuest', $applianceVmx, '/bin/sh',
-                'command -v tcpdump >/dev/null 2>&1 || tdnf install -y tcpdump'
-            ) -TimeoutSeconds 120 -Action 'Prepare bounded NTP fixture ingress capture tool'
-        }
         $sourceHelperSha256 = (Get-FileHash -LiteralPath (Join-Path $runtimeSourceRoot 'scripts/appliance/atlaso-helper') -Algorithm SHA256).Hash.ToLowerInvariant()
         $installedHelperSha256 = Get-CertificateInstalledHelperSha256 -ApplianceVmx $applianceVmx
         if ($installedHelperSha256 -cne $sourceHelperSha256) {

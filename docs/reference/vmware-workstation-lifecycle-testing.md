@@ -140,7 +140,7 @@ If the first cold Network/CA review still contained the bootstrap DHCP address, 
 reviewed and journaled baseline-convergence Apply after that cold task succeeded. It then requires two equal,
 CA/hostname-verified leaf samples containing the actual private management address. Failed tasks are never replayed.
 Later server and negative-candidate cases request only firewall, NTP and public services, preserving that applied leaf;
-WAN/NAT enforcement is admitted only when the server requires it as a dependency.
+WAN/NAT enforcement and NTP-owned DNS publication are admitted only when the server requires them as dependencies.
 
 The consumer requires an unmanaged appliance with every clock controller inactive, then uses the existing settings
 forms and global Apply review for the initial resolver/DNS/access-interface/NTP baseline. A successful cold Apply

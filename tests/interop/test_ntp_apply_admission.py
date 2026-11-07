@@ -110,6 +110,31 @@ def test_later_transitions_select_only_firewall_ntp_and_public_services(apply_cl
         assert set(apply_client.posts[0]["selected_units"]) == roots
 
 
+@pytest.mark.parametrize("required", [True, False])
+def test_later_ntp_owned_dns_is_admitted_only_as_a_required_dependency(apply_client, required):
+    """Server mode may publish its generated DNS record without replaying Network/CA.
+
+    Args:
+        apply_client: Synthetic original and selection-specific reviews.
+        required: Whether the server proves the DNS change is an NTP dependency.
+    """
+    roots = {"firewall", "ntpd", "public_services"}
+    apply_client.expected_query_roots = sorted(roots)
+    apply_client.filtered["requested_units"] = sorted(roots)
+    dns = {"id": "dnsmasq", "changed": True, "selected": True, "valid": True, "required_dependency": required}
+    rows = [row for row in apply_client.filtered["units"] if row["id"] in roots] + [dns]
+    apply_client.filtered["units"] = rows
+    apply_client.original["units"] = copy.deepcopy(rows)
+    if required:
+        fixture.submit_initialization(apply_client.client, cold_start=False)
+        assert set(apply_client.posts[0]["requested_units"]) == roots
+        assert set(apply_client.posts[0]["selected_units"]) == roots | {"dnsmasq"}
+    else:
+        with pytest.raises(fixture.Refusal, match="apply_scope_changed"):
+            fixture.submit_initialization(apply_client.client, cold_start=False)
+        assert apply_client.posts == []
+
+
 @pytest.mark.parametrize("mutation", [
     "unrelated-pending", "extra-root", "extra-selected", "missing-root", "unrequired-nat", "unrequired-wan",
     "missing-dependency", "duplicate-row", "invalid-unit", "missing-token", "missing-csrf", "plan-error", "active-original", "active-filtered",

@@ -40,6 +40,7 @@ from time_source_guest import apply_review_fields, apply_review_path
 _NTP_APPLY_ROOTS = frozenset({"appliance_settings", "network", "ca", "firewall", "public_services", "dnsmasq", "ntpd"})
 _NTP_NETWORK_DEPENDENCIES = frozenset({"wan", "nat"})
 _NTP_TRANSITION_ROOTS = frozenset({"firewall", "ntpd", "public_services"})
+_NTP_TRANSITION_DEPENDENCIES = _NTP_NETWORK_DEPENDENCIES | {"dnsmasq"}
 
 
 class Refusal(Exception):
@@ -626,7 +627,7 @@ print(json.dumps({{'complete':True,'records':len(lines),'raw_bytes':len(p.stdout
 
 
 def submit_initialization(client, *, cold_start: bool = True) -> tuple[str, str]:
-    """Submit fixed NTP roots and only server-required network dependencies.
+    """Submit fixed NTP roots and only reviewed required dependencies.
 
     The caller has already proved routing/NAT intent absent. A first network
     baseline can still require disabled WAN/NAT enforcement. Keep this NTP
@@ -637,7 +638,7 @@ def submit_initialization(client, *, cold_start: bool = True) -> tuple[str, str]
         cold_start: Initial Network/CA setup or its single baseline convergence; false selects NTP-only roots.
     """
     roots = _NTP_APPLY_ROOTS if cold_start else _NTP_TRANSITION_ROOTS
-    dependencies = _NTP_NETWORK_DEPENDENCIES
+    dependencies = _NTP_NETWORK_DEPENDENCIES if cold_start else _NTP_TRANSITION_DEPENDENCIES
     _, original = client.json("/ui/management/appliance-apply/review")
     rows = original.get("units")
     if (original.get("active_task") or not isinstance(rows, list) or not rows
