@@ -4369,6 +4369,10 @@ not implicitly advance an older release; use the exact-SHA software-release disp
 software Release already exists, that workflow verifies and reuses its signed
 assets only after the replay wheel matches the bundled wheel byte for byte, preserving the original signed provenance
 for channel recovery. Never rebuild or rename a wheel locally.</p>
+<p>Release notice generation identifies each wheel from its top-level <code>.dist-info/METADATA</code> file. Nested metadata for
+vendored distributions, such as Packaging bundled inside setuptools, cannot establish the wheel's identity even when
+the vendored version also appears in the release lock. Missing or ambiguous top-level locked metadata, missing locked
+packages, and missing license or source information still stop publication.</p>
 <p>OVA and Hyper-V images use the separate manual lifecycle documented in the
 <a href="../../reference/virtualization-artifacts/">virtualization artifact guide</a>. A maintainer workstation creates and
 smokes <code>virtualization-vX.Y.Z-rc.N</code>; protected hosted jobs sign it, and the exact bytes may become
