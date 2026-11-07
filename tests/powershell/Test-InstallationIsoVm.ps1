@@ -3,9 +3,11 @@
 Run source and in-process console regressions for the isolated installation ISO VM.
 .DESCRIPTION
 Parses the VMX and console driver without executing their script mains, then exercises local named-pipe behavior.
+.PARAMETER StateRoot
+Existing originally receipted root for generated test fixture files. Defaults to the normal test-results directory.
 #>
 [CmdletBinding()]
-param()
+param([string]$StateRoot = '')
 
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -13,6 +15,8 @@ $harnessPath = Join-Path $repositoryRoot 'scripts\windows\vmware\test-installati
 $ownershipPath = Join-Path $repositoryRoot 'scripts\windows\vmware\Atlaso.TestVmOwnership.ps1'
 $cleanupPath = Join-Path $repositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationCleanup.psm1'
 $consoleDriverPath = Join-Path $repositoryRoot 'scripts\windows\vmware\invoke-installation-iso-test.ps1'
+$testStateRoot = if ([string]::IsNullOrWhiteSpace($StateRoot)) { Join-Path $repositoryRoot 'test-results' } else { [IO.Path]::GetFullPath($StateRoot) }
+if (-not (Test-Path -LiteralPath $testStateRoot -PathType Container)) { throw 'The originally receipted test state root must already exist.' }
 $tokens = $null
 $parseErrors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($harnessPath, [ref]$tokens, [ref]$parseErrors)
@@ -337,15 +341,23 @@ $oldFixture = Get-AtlasoInstallationFixture -FixtureProfile OldSystemLabel
 Assert-InstallationVmCondition ($oldFixture.Disks.Count -eq 2 -and $oldFixture.Disks[0].SizeGiB -eq 64 -and $oldFixture.Disks[1].SizeGiB -eq 4 -and -not $oldFixture.Disks[1].Selected) 'Old-label coverage must preserve the original64/4GiB roles.'
 $oldSpec = Get-AtlasoInstallationOldLabelSpec
 $sentinelSha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($oldSpec.Sentinel))).ToLowerInvariant()
-$oldOriginal = [pscustomobject]@{ old_label_seed_plan = $oldSpec }
-$oldBaseline = [pscustomobject]@{ old_label_seed = [pscustomobject]@{ schema = 1; label = $oldSpec.Label; uuid = $oldSpec.Uuid; filesystem = 'ext4'; virtual_size_bytes = [long]4GB; raw_sha256 = ('a' * 64); sentinel_sha256 = $sentinelSha } }
-Assert-AtlasoInstallationOldLabelRecords -Original $oldOriginal -Baseline $oldBaseline
-foreach ($mutation in @('missing-plan', 'missing-seed', 'label', 'uuid', 'filesystem', 'size', 'sentinel', 'raw-digest')) {
+$oldDistribution = 'Atlaso-Build'
+$oldPlan = [pscustomobject]@{ Label = $oldSpec.Label; Uuid = $oldSpec.Uuid; Sentinel = $oldSpec.Sentinel; WslDistribution = $oldDistribution }
+$oldOriginal = [pscustomobject]@{ old_label_seed_plan = $oldPlan }
+$oldSeed = [pscustomobject]@{ schema = 1; label = $oldSpec.Label; uuid = $oldSpec.Uuid; filesystem = 'ext4'; virtual_size_bytes = [long]4GB; raw_sha256 = ('a' * 64); sentinel_sha256 = $sentinelSha; wsl_distribution = $oldDistribution }
+$oldBaseline = [pscustomobject]@{ old_label_seed = $oldSeed; old_label_wsl_distribution = $oldDistribution }
+Assert-AtlasoInstallationOldLabelRecords -Original $oldOriginal -Baseline $oldBaseline -WslDistribution $oldDistribution
+foreach ($mutation in @('missing-plan', 'missing-seed', 'missing-distribution', 'plan-distribution', 'baseline-distribution', 'seed-distribution', 'selected-distribution', 'label', 'uuid', 'filesystem', 'size', 'sentinel', 'raw-digest')) {
     $o = $oldOriginal | ConvertTo-Json -Depth 5 | ConvertFrom-Json
     $b = $oldBaseline | ConvertTo-Json -Depth 5 | ConvertFrom-Json
     switch ($mutation) {
         'missing-plan' { $o = [pscustomobject]@{} }
         'missing-seed' { $b = [pscustomobject]@{} }
+        'missing-distribution' { $o.old_label_seed_plan.PSObject.Properties.Remove('WslDistribution'); $b.PSObject.Properties.Remove('old_label_wsl_distribution') }
+        'plan-distribution' { $o.old_label_seed_plan.WslDistribution = 'Other-Distro' }
+        'baseline-distribution' { $b.old_label_wsl_distribution = 'Other-Distro' }
+        'seed-distribution' { $b.old_label_seed.wsl_distribution = 'Other-Distro' }
+        'selected-distribution' { }
         'label' { $b.old_label_seed.label = 'OTHER' }
         'uuid' { $b.old_label_seed.uuid = '00000000-0000-4000-8000-000000000000' }
         'filesystem' { $b.old_label_seed.filesystem = 'xfs' }
@@ -354,9 +366,113 @@ foreach ($mutation in @('missing-plan', 'missing-seed', 'label', 'uuid', 'filesy
         'raw-digest' { $b.old_label_seed.raw_sha256 = 'invalid' }
     }
     $refused = $false
-    try { Assert-AtlasoInstallationOldLabelRecords -Original $o -Baseline $b } catch { $refused = $true }
+    $selectedDistribution = if ($mutation -eq 'selected-distribution') { 'Other-Distro' } else { $oldDistribution }
+    try { Assert-AtlasoInstallationOldLabelRecords -Original $o -Baseline $b -WslDistribution $selectedDistribution } catch { $refused = $true }
     Assert-InstallationVmCondition $refused 'Missing or changed original seed identity must refuse without provider activity.'
 }
+$oldValidationRoot = $testStateRoot
+$oldPreflightModule = Get-Module Atlaso.InstallationOldLabel
+$oldPreflightResult = & $oldPreflightModule {
+    param($OutputDirectory)
+    $script:capturedOldLabelArguments = @()
+    <#
+    .SYNOPSIS
+    Capture the old-label preflight command and refuse before fixture writes.
+    .PARAMETER FilePath
+    Expected WSL executable selected by the module.
+    .PARAMETER ArgumentList
+    Exact selected distribution and preflight program.
+    .PARAMETER TimeoutSeconds
+    Bounded mock execution limit.
+    .PARAMETER Action
+    Fixed preflight operation label.
+    #>
+    function Invoke-AtlasoBoundedProcess {
+        param([string]$FilePath, [string[]]$ArgumentList, [int]$TimeoutSeconds, [string]$Action)
+        $script:capturedOldLabelArguments = $ArgumentList
+        return '{"python3":"/usr/bin/python3","tools":{}}'
+    }
+    $refused = $false
+    try {
+        New-AtlasoInstallationOldLabelDisk -OutputDirectory $OutputDirectory -QemuImg 'unused-qemu-img' `
+            -WslDistribution 'Atlaso-Build'
+    } catch { $refused = $_.Exception.Message.Contains('No seed disk was created') }
+    [pscustomobject]@{ Refused = $refused; Arguments = $script:capturedOldLabelArguments }
+} $oldValidationRoot
+Assert-InstallationVmCondition ($oldPreflightResult.Refused -and $oldPreflightResult.Arguments[0] -ceq '--distribution' -and
+    $oldPreflightResult.Arguments[1] -ceq 'Atlaso-Build' -and $oldPreflightResult.Arguments[2] -ceq '--exec' -and
+    -not (Test-Path (Join-Path $oldValidationRoot 'old-system-label-content')) -and
+    -not (Test-Path (Join-Path $oldValidationRoot 'old-system-label.raw'))) `
+    'An incompatible selected WSL distribution must be invoked explicitly and refused before creating seed files.'
+$oldSeedArguments = & $oldPreflightModule {
+    param($OutputDirectory)
+    $script:mockOldLabelCalls = 0
+    $script:mockOldLabelWslArguments = @()
+    $script:mockOldLabelPreflightArguments = @()
+    <#
+    .SYNOPSIS
+    Simulate the old-label native boundary without formatting a disk.
+    .PARAMETER FilePath
+    WSL executable or native qemu-img executable selected by the module.
+    .PARAMETER ArgumentList
+    Exact command arguments, captured at each WSL boundary.
+    .PARAMETER TimeoutSeconds
+    Bounded mock execution limit.
+    .PARAMETER Action
+    Fixed operation label.
+    #>
+    function Invoke-AtlasoBoundedProcess {
+        param([string]$FilePath, [string[]]$ArgumentList, [int]$TimeoutSeconds, [string]$Action)
+        $script:mockOldLabelCalls++
+        if ($FilePath -ceq 'wsl.exe' -and $script:mockOldLabelCalls -eq 1) {
+            $script:mockOldLabelPreflightArguments = $ArgumentList
+            $tools = @{}
+            foreach ($name in @('mke2fs', 'debugfs', 'e2fsck', 'blkid')) {
+                $tools[$name] = @{ path = "/usr/sbin/$name"; sha256 = ('a' * 64); version_sha256 = ('b' * 64) }
+            }
+            return (@{ distribution = 'Atlaso-Build'; python3 = '/usr/bin/python3'; tools = $tools } | ConvertTo-Json -Compress -Depth 4)
+        }
+        if ($FilePath -ceq 'unused-qemu-img') {
+            $null = New-Item -ItemType File -Path $ArgumentList[4] -ErrorAction Stop
+            return ''
+        }
+        $script:mockOldLabelWslArguments = $ArgumentList
+        throw 'mock seed boundary reached before image formatting'
+    }
+    try {
+        New-AtlasoInstallationOldLabelDisk -OutputDirectory $OutputDirectory -QemuImg 'unused-qemu-img' `
+            -WslDistribution 'Atlaso-Build'
+    } catch {
+        if (-not $_.Exception.Message.Contains('mock seed boundary')) { throw }
+    }
+    [pscustomobject]@{ Preflight = $script:mockOldLabelPreflightArguments; Seed = $script:mockOldLabelWslArguments }
+} $oldValidationRoot
+$oldSeedDirectory = Join-Path $oldValidationRoot 'old-system-label-content'
+$oldSeedRawPath = Join-Path $oldValidationRoot 'old-system-label.raw'
+$oldSeedArgumentsVerified = $oldSeedArguments.Preflight[0] -ceq '--distribution' -and
+    $oldSeedArguments.Preflight[1] -ceq 'Atlaso-Build' -and $oldSeedArguments.Preflight[2] -ceq '--exec' -and
+    $oldSeedArguments.Seed[0] -ceq '--distribution' -and $oldSeedArguments.Seed[1] -ceq 'Atlaso-Build' -and
+    $oldSeedArguments.Seed[2] -ceq '--exec' -and $oldSeedArguments.Seed[3] -ceq '/usr/bin/python3'
+if (Test-Path -LiteralPath (Join-Path $oldSeedDirectory 'sentinel.txt')) { [IO.File]::Delete((Join-Path $oldSeedDirectory 'sentinel.txt')) }
+if (Test-Path -LiteralPath $oldSeedDirectory) { [IO.Directory]::Delete($oldSeedDirectory) }
+if (Test-Path -LiteralPath $oldSeedRawPath) { [IO.File]::Delete($oldSeedRawPath) }
+Assert-InstallationVmCondition $oldSeedArgumentsVerified `
+    'Both the WSL preflight and seed command must select the same distribution explicitly.'
+$oldPreflightSource = Get-Content -LiteralPath (Join-Path $repositoryRoot 'scripts/windows/vmware/Atlaso.InstallationOldLabel.psm1') -Raw
+Assert-InstallationVmCondition ($oldPreflightSource.IndexOf("'--distribution', `$WslDistribution, '--exec'", [StringComparison]::Ordinal) -ge 0 -and
+    $oldPreflightSource.IndexOf('Get-AtlasoInstallationOldLabelToolchain -WslDistribution $WslDistribution', [StringComparison]::Ordinal) -lt
+    $oldPreflightSource.IndexOf("New-Item -ItemType Directory -Path `$seed", [StringComparison]::Ordinal)) `
+    'Both WSL calls must select the distribution explicitly, and preflight must precede seed-directory creation.'
+$oldHarnessSource = Get-Content -LiteralPath (Join-Path $repositoryRoot 'scripts/windows/vmware/test-installation-iso.ps1') -Raw
+$oldToolchainIndex = $oldHarnessSource.IndexOf('Get-AtlasoInstallationOldLabelToolchain -WslDistribution $OldLabelWslDistribution', [StringComparison]::Ordinal)
+Assert-InstallationVmCondition ($oldHarnessSource.LastIndexOf('Assert-AtlasoTestVmCheckoutSource -Context $context', $oldToolchainIndex, [StringComparison]::Ordinal) -lt
+    $oldToolchainIndex -and $oldToolchainIndex -lt
+    $oldHarnessSource.IndexOf('$intentPublication = Publish-AtlasoTestVmOwnershipRecord -Context $context -Record $intent', $oldToolchainIndex, [StringComparison]::Ordinal)) `
+    'The selected toolchain must be checked after source admission and before publishing the VM intent.'
+$oldDriverSource = Get-Content -LiteralPath (Join-Path $repositoryRoot 'scripts/windows/vmware/invoke-installation-iso-test.ps1') -Raw
+Assert-InstallationVmCondition ($oldDriverSource.IndexOf('Get-AtlasoInstallationOldLabelToolchain -WslDistribution $OldLabelWslDistribution', [StringComparison]::Ordinal) -lt
+    $oldDriverSource.IndexOf('$credentials = Get-AtlasoOnePasswordCredentialPair', [StringComparison]::Ordinal)) `
+    'Old-label WSL preflight must refuse before credential retrieval.'
 $interruptionOriginal = [pscustomobject]@{ original_identities = @{ directory = 'ABCD1234:0000000000000001' }; persistent_vm_identity_sha256 = ('a' * 64) }
 $interruptionSelectors = @{ OriginalReceiptPath = 'original'; OriginalReceiptSha256 = ('b' * 64); BaselineReceiptPath = 'baseline'; BaselineReceiptSha256 = ('c' * 64) }
 $interruption = [pscustomobject]@{ phase = 'installation-controlled-interruption'; original_receipt_path = 'original'; original_receipt_sha256 = ('b' * 64); baseline_receipt_path = 'baseline'; baseline_receipt_sha256 = ('c' * 64); original_directory_identity = 'ABCD1234:0000000000000001'; persistent_vm_identity_sha256 = ('a' * 64); stage = 'installing Photon appliance packages'; unselected_logical_contents_unchanged = $true; selected_disks_may_have_been_written = $true }
@@ -1097,9 +1213,9 @@ Assert-InstallationVmCondition ($privateLanWriterBranch.Count -eq 1 -and
     'The second rewire race check must refuse active VMs before opening the VMX writer.'
 
 & {
-    $testVmDirectory = Join-Path $repositoryRoot 'test-results'
+    $testVmDirectory = $testStateRoot
     if (-not (Test-Path -LiteralPath $testVmDirectory -PathType Container)) {
-        throw 'The receipted test-results root is required for stopped-VM inventory fixtures.'
+        throw 'The originally receipted test state root is required for stopped-VM inventory fixtures.'
     }
     $fixtureSuffix = [guid]::NewGuid().ToString('N')
     $TargetPath = Join-Path $testVmDirectory ('stopped-admission-target-' + $fixtureSuffix + '.vmx')

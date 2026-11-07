@@ -772,6 +772,104 @@ def test_ordinary_ca_admission_uses_mode_bound_baseline_and_candidate_scope(
     assert plan["baseline_address"] not in reservation["addresses"]
 
 
+@pytest.mark.parametrize("web_terminal", [False, True])
+@pytest.mark.parametrize("missing", [
+    None, "predeployment_sha256", "vm_ownership_sha256", "wheel_sha256",
+    "helper_sha256", "helper_source_commit",
+])
+def test_dhcp_producer_runtime_reaches_real_execution_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, web_terminal: bool, missing: str | None,
+) -> None:
+    """Carry original bootstrap identities through native proof into execution admission.
+
+    Args:
+        tmp_path: Pytest-owned root for real digest-bound producer and admission receipts.
+        monkeypatch: Replace external Git, VM ownership, private transport and native readbacks.
+        web_terminal: Original Web Terminal state for the ordinary DHCP acceptance case.
+        missing: Identity removed from the produced receipt to verify fail-closed admission.
+    """
+    from contextlib import nullcontext
+
+    import certificate_peer_proof as proof
+
+    plan, fixture, reservation = _ordinary_admission_fixture(tmp_path, "dhcp")
+    identities = (
+        "predeployment_sha256", "vm_ownership_sha256", "wheel_sha256",
+        "helper_sha256", "helper_source_commit",
+    )
+    bootstrap = handoff.bound_json(plan["runtime_evidence"])
+    bootstrap.pop("kind")
+    bootstrap.update(phase="iso-dhcp-baseline-observed", address_ownership_state="unproven")
+    plan["bootstrap_runtime"] = _write_admission_receipt(tmp_path, "bootstrap-runtime.json", bootstrap)
+    fixture.update(peer_cidr="192.168.77.1/24", lan_segment_id="owned-segment",
+                   lan_segment_receipt=str(tmp_path / "original-lan.json"))
+    observation = {
+        "schema": 1, "kind": "certificate-dhcp-baseline-observation",
+        "phase": "iso-dhcp-baseline-observed", "ordinary_ca_baseline_mode": "dhcp",
+        "apply_state": "clean-applied-baseline", "mutation_state": "none",
+        "bootstrap_runtime_sha256": plan["bootstrap_runtime"]["sha256"],
+        "predeployment_sha256": bootstrap["predeployment_sha256"],
+        "task_id": plan["task_id"], "repository": "mdaneri/Atlaso", "pr": plan["pr"],
+        "source_commit": plan["source_commit"], "deployed_commit": plan["deployed_commit"],
+        "vmx_path": fixture["appliance_vmx"], "vm_ownership_sha256": fixture["appliance_ownership_sha256"],
+        "interface": "eth0", "mac": fixture["appliance_mac"], "observed_address": fixture["lease_address"],
+        "original_fields": {"ipv4_method": "dhcp", "ipv6_enabled": False},
+        "native_observation": {
+            "interface": "eth0", "mac": fixture["appliance_mac"], "address": fixture["lease_address"],
+            "prefixlen": 24, "lease_state": "unexpired_reserved_for_original_mac",
+            "connected_route": "management_table_on_link", "default_routes": 0,
+        },
+    }
+    plan.update(
+        schema=1, expected_web_terminal=web_terminal, appliance_user="admin",
+        appliance_ssh_host_key="SHA256:" + "A" * 43,
+        peer_identity={"path": str(tmp_path / "peer-identity.json"), "sha256": "8" * 64},
+        dhcp_baseline_observation=_write_admission_receipt(tmp_path, "producer-dhcp-observation.json", observation),
+        trusted_host={
+            "appliance_vmx": fixture["appliance_vmx"], "peer_vmx": fixture["peer_vmx"],
+            "segment_id": fixture["lan_segment_id"],
+            "segment_receipt": {"path": fixture["lan_segment_receipt"], "sha256": fixture["lan_segment_receipt_sha256"]},
+        },
+    )
+    plan["peer_transport"].update(host="192.168.167.2", user="alpine", ssh_public_key="ssh-ed25519 fixture",
+                                  ssh_host_key="SHA256:" + "B" * 43)
+    reservation["dhcp_baseline_observation_sha256"] = plan["dhcp_baseline_observation"]["sha256"]
+    plan_path = tmp_path / "producer-plan.json"
+    _write_admission_receipt(tmp_path, plan_path.name, plan)
+    address_path, runtime_path = tmp_path / "produced-address.json", tmp_path / "produced-runtime.json"
+    _admit_ordinary_plan(plan, fixture, monkeypatch)
+    monkeypatch.setattr(proof, "admit_fixture", lambda _plan: fixture)
+    monkeypatch.setattr(proof, "inspect_trusted_host", lambda _plan: {"interfaces": []})
+    monkeypatch.setattr(proof, "admit_output", lambda *_args: None)
+    monkeypatch.setattr(proof, "PinnedPeerTransport", lambda *_args, **_kwargs: nullcontext(object()))
+    monkeypatch.setattr(proof, "PinnedApplianceSession", lambda *_args: nullcontext(object()))
+    monkeypatch.setattr(proof, "read_native", lambda *_args: reservation)
+    monkeypatch.setenv("ATLASO_NATIVE_ADMIN", "synthetic-fixture-credential")
+    monkeypatch.setattr(sys, "argv", ["proof", "--plan", str(plan_path), "--address-output", str(address_path),
+                                    "--runtime-output", str(runtime_path)])
+    assert proof.main() == 0
+    produced = json.loads(runtime_path.read_bytes())
+    assert {key: produced[key] for key in identities} == {key: bootstrap[key] for key in identities}
+    plan["address_evidence"] = {"path": str(address_path), "sha256": handoff.hashlib.sha256(address_path.read_bytes()).hexdigest()}
+    plan["runtime_evidence"] = {"path": str(runtime_path), "sha256": handoff.hashlib.sha256(runtime_path.read_bytes()).hexdigest()}
+    monkeypatch.setattr(handoff, "admit_private_receipts", proof.admit_receipts)
+    if missing:
+        del produced[missing]
+        plan["runtime_evidence"] = _write_admission_receipt(tmp_path, "missing-identity.json", produced)
+        reason = {
+            "predeployment_sha256": "predeployment_runtime_binding_mismatch",
+            "vm_ownership_sha256": "installed_runtime_binding_mismatch",
+            "wheel_sha256": "installed_runtime_digest_mismatch",
+            "helper_sha256": "installed_runtime_digest_mismatch",
+            "helper_source_commit": "installed_helper_source_mismatch",
+        }[missing]
+        with pytest.raises(handoff.Refusal, match=reason):
+            handoff.admit_execution(plan)
+    else:
+        admitted = handoff.admit_execution(plan)
+        assert admitted["runtime_sha256"] == plan["runtime_evidence"]["sha256"]
+
+
 @pytest.mark.parametrize(
     ("fault", "reason"),
     [

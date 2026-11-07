@@ -75,6 +75,11 @@ software Release already exists, that workflow verifies and reuses its signed
 assets only after the replay wheel matches the bundled wheel byte for byte, preserving the original signed provenance
 for channel recovery. Never rebuild or rename a wheel locally.
 
+Release notice generation identifies each wheel from its top-level `.dist-info/METADATA` file. Nested metadata for
+vendored distributions, such as Packaging bundled inside setuptools, cannot establish the wheel's identity even when
+the vendored version also appears in the release lock. Missing or ambiguous top-level locked metadata, missing locked
+packages, and missing license or source information still stop publication.
+
 OVA and Hyper-V images use the separate manual lifecycle documented in the
 [virtualization artifact guide](../reference/virtualization-artifacts.md). A maintainer workstation creates and
 smokes `virtualization-vX.Y.Z-rc.N`; protected hosted jobs sign it, and the exact bytes may become

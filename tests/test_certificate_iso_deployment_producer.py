@@ -457,6 +457,26 @@ def test_prepare_publishes_bound_build_intent_and_deployer_request(
     )
     args = _prepare_args(tmp_path, plan, native, candidate, archive, directory)
 
+    from scripts.completed_task_files import WindowsFiles
+
+    @contextmanager
+    def admit_test_directory(_self: WindowsFiles, _path: Path, *, directory: bool = False):
+        """Supply the Win32 identity shape while exercising real producer publishing.
+
+        Args:
+            _path: Producer output directory whose platform identity is observed.
+            directory: Whether the producer expects a directory identity.
+            _self: Windows identity adapter used by the producer.
+        """
+        assert _path == args.output_root
+        assert directory is True
+        yield None, (1, 2, 3), None
+
+    # The producer's ownership serialization is portable; its native directory
+    # handle is exercised by the separate Windows deployment-output tests.
+    monkeypatch.setattr(WindowsFiles, "__init__", lambda _self: None)
+    monkeypatch.setattr(WindowsFiles, "opened", admit_test_directory)
+
     deployment.prepare(args)
 
     output = args.output_root
@@ -473,6 +493,7 @@ def test_prepare_publishes_bound_build_intent_and_deployer_request(
     assert request["remote_wheel"] == intent["remote_wheel"]
     assert request["original_inspection"]["source_commit"] == _ORIGINAL_COMMIT
     assert request["source_snapshot_sha256"] == "9" * 64
+    assert request["output_root_identity"] == "00000001:0000000200000003"
     assert request["preflight_command"].startswith("/opt/atlaso/.venv/bin/python")
 
 

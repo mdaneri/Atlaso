@@ -605,6 +605,107 @@ def execute(plan: dict, state: Path, phase: str) -> dict:
     raise RefreshRefusal("unsupported refresh phase")
 
 
+def _windows_process_identity(process_id: int, job_name: str | None = None) -> dict:
+    """Read kernel birth, image, parent and optional exact-job membership.
+
+    Args:
+        process_id: Exact process to inspect without PID-only authorization.
+        job_name: Original named job, when membership must also be established.
+    """
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    pointer = ctypes.c_void_p
+    word = ctypes.c_uint32
+    kernel.OpenProcess.argtypes = [word, ctypes.c_int, word]
+    kernel.OpenProcess.restype = pointer
+    kernel.CloseHandle.argtypes = [pointer]
+    kernel.GetProcessTimes.argtypes = [pointer, pointer, pointer, pointer, pointer]
+    kernel.QueryFullProcessImageNameW.argtypes = [pointer, word, ctypes.c_wchar_p, ctypes.POINTER(word)]
+    kernel.WaitForSingleObject.argtypes = [pointer, word]
+    kernel.WaitForSingleObject.restype = word
+    kernel.CreateToolhelp32Snapshot.argtypes = [word, word]
+    kernel.CreateToolhelp32Snapshot.restype = pointer
+    kernel.Process32FirstW.argtypes = [pointer, pointer]
+    kernel.Process32NextW.argtypes = [pointer, pointer]
+    kernel.OpenJobObjectW.argtypes = [word, ctypes.c_int, ctypes.c_wchar_p]
+    kernel.OpenJobObjectW.restype = pointer
+    kernel.IsProcessInJob.argtypes = [pointer, pointer, ctypes.POINTER(ctypes.c_int)]
+
+    class Entry(ctypes.Structure):
+        """Windows PROCESSENTRY32W with pointer-width heap identity."""
+
+        _fields_ = [("size", word), ("usage", word), ("pid", word), ("heap", ctypes.c_size_t),
+                    ("module", word), ("threads", word), ("parent", word),
+                    ("priority", ctypes.c_int32), ("flags", word), ("image", ctypes.c_wchar * 260)]
+
+    handle = kernel.OpenProcess(0x1000 | 0x100000, False, process_id)
+    if not handle:
+        raise RefreshRefusal("original refresh process identity is unavailable")
+    try:
+        times = [ctypes.c_uint64() for _ in range(4)]
+        image = ctypes.create_unicode_buffer(32768)
+        size = word(len(image))
+        if (not kernel.GetProcessTimes(handle, *(ctypes.byref(value) for value in times))
+                or not kernel.QueryFullProcessImageNameW(handle, 0, image, ctypes.byref(size))
+                or kernel.WaitForSingleObject(handle, 0) != 258):
+            raise RefreshRefusal("refresh process birth or executable is unavailable")
+        snapshot = kernel.CreateToolhelp32Snapshot(2, 0)
+        if snapshot == pointer(-1).value:
+            raise RefreshRefusal("refresh process parent is unavailable")
+        parent = None
+        try:
+            entry = Entry()
+            entry.size = ctypes.sizeof(entry)
+            found = kernel.Process32FirstW(snapshot, ctypes.byref(entry))
+            for _ in range(65536):
+                if not found:
+                    break
+                if entry.pid == process_id:
+                    parent = int(entry.parent)
+                    break
+                found = kernel.Process32NextW(snapshot, ctypes.byref(entry))
+        finally:
+            kernel.CloseHandle(snapshot)
+        if parent is None:
+            raise RefreshRefusal("refresh process parent is unavailable")
+        if job_name is not None:
+            job = kernel.OpenJobObjectW(4, False, job_name)
+            if not job:
+                raise RefreshRefusal("original refresh process job is unavailable")
+            try:
+                member = ctypes.c_int()
+                if not kernel.IsProcessInJob(handle, job, ctypes.byref(member)) or not member.value:
+                    raise RefreshRefusal("refresh worker is outside its originally published process job")
+            finally:
+                kernel.CloseHandle(job)
+        return {"pid": process_id, "parent_pid": parent, "start_filetime_utc": times[0].value,
+                "path": image.value}
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def _executable_identity(path: str) -> dict:
+    """Identify one interpreter file; the native owner pins it for the child lifetime.
+
+    Args:
+        path: Absolute executable selected by the interpreter probe or kernel.
+    """
+    # Windows command lookup can spell the suffix .EXE while the kernel reports
+    # .exe. Resolve the real file spelling; identity and content remain mandatory.
+    image = Path(path).resolve(strict=True)
+    return {"path": str(image), "native_identity": WindowsFiles().mutable_file_identity(image), "sha256": digest(image)}
+
+
+def interpreter_identity() -> dict:
+    """Probe supported CPython and its actual Windows image without losing venv paths."""
+    if os.name != "nt" or sys.implementation.name != "cpython" or sys.version_info[:2] != (3, 14):
+        raise RefreshRefusal("refresh requires supported Windows CPython 3.14")
+    process = _windows_process_identity(os.getpid())
+    if Path(process["path"]) != Path(sys._base_executable):
+        raise RefreshRefusal("interpreter process differs from its CPython base executable")
+    return {"kind": "venv" if sys.prefix != sys.base_prefix else "direct",
+            "launcher": _executable_identity(sys.executable), "worker": _executable_identity(process["path"])}
+
+
 def assert_native_child(path: Path, plan: dict, plan_sha256: str, phase: str, state: Path) -> None:
     """Require the exact suspended child and named Windows job, never a raw replay.
 
@@ -618,24 +719,40 @@ def assert_native_child(path: Path, plan: dict, plan_sha256: str, phase: str, st
     if os.name != "nt" or path != state / f"{phase}-child.json":
         raise RefreshRefusal("refresh consumers require the native Windows job owner")
     record = read(path)
-    if (record.get("pid") != os.getpid() or record.get("task_id") != plan["task_id"]
+    if (record.get("schema") != 2 or record.get("task_id") != plan["task_id"]
             or record.get("phase") != phase or record.get("plan_sha256") != plan_sha256):
         raise RefreshRefusal("refresh worker differs from its original native child")
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel.OpenJobObjectW.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_wchar_p]
-    kernel.OpenJobObjectW.restype = ctypes.c_void_p
-    kernel.GetCurrentProcess.restype = ctypes.c_void_p
-    kernel.IsProcessInJob.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
-    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
-    handle = kernel.OpenJobObjectW(4, False, record["job_name"])
-    if not handle:
-        raise RefreshRefusal("original refresh process job is unavailable")
+    intent = read(state / f"{phase}-intent.json")
+    # ConvertFrom-Json may retain the same instant using the host's local offset.
+    # Compare aware instants without renewing the originally published deadline.
     try:
-        member = ctypes.c_int()
-        if not kernel.IsProcessInJob(kernel.GetCurrentProcess(), handle, ctypes.byref(member)) or not member.value:
-            raise RefreshRefusal("refresh worker is outside its originally published process job")
-    finally:
-        kernel.CloseHandle(handle)
+        deadlines = [datetime.fromisoformat(value["deadline_utc"]) for value in (record, intent)]
+    except (KeyError, TypeError, ValueError):
+        raise RefreshRefusal("refresh child has an invalid original deadline") from None
+    if (any(value.utcoffset() is None for value in deadlines) or deadlines[0] != deadlines[1]
+            or record.get("intent_id") != intent.get("intent_id")
+            or intent.get("plan_sha256") != plan_sha256):
+        raise RefreshRefusal("refresh child differs from its original phase intent")
+    root = _windows_process_identity(record["pid"], record["job_name"])
+    worker = _windows_process_identity(os.getpid(), record["job_name"])
+    interpreter = interpreter_identity()
+    if root["start_filetime_utc"] != record.get("start_filetime_utc"):
+        raise RefreshRefusal("refresh launcher birth differs from original admission")
+    if _executable_identity(root["path"]) != record["interpreter"]["launcher"]:
+        raise RefreshRefusal("refresh launcher executable differs from original admission")
+    if interpreter != record["interpreter"]:
+        raise RefreshRefusal("refresh interpreter differs from original admission")
+    if worker["pid"] != root["pid"]:
+        if (interpreter["kind"] != "venv" or worker["parent_pid"] != root["pid"]
+                or worker["start_filetime_utc"] <= root["start_filetime_utc"]):
+            raise RefreshRefusal("refresh worker is not the original launcher's direct venv child")
+    # This is a separate first-use receipt, never a rewrite of the suspended
+    # launcher's original PID/birth record. A replay cannot replace either one.
+    publish(state / f"{phase}-worker-original.json", {
+        "schema": 1, "task_id": plan["task_id"], "plan_sha256": plan_sha256, "phase": phase,
+        "child_receipt_sha256": digest(path), "job_name": record["job_name"], **worker,
+        "executable": interpreter["worker"],
+    })
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -705,7 +822,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     plan, state, plan_hash = context(args.plan, configured_root)
     if args.action == "describe":
-        print(json.dumps({"plan": plan, "plan_sha256": plan_hash, "state": str(state)}))
+        print(json.dumps({"plan": plan, "plan_sha256": plan_hash, "state": str(state), "interpreter": interpreter_identity()}))
     elif args.action == "initialize":
         print(json.dumps(initialize(plan, state, plan_hash)))
     elif args.action == "status":

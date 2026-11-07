@@ -713,7 +713,8 @@ def main() -> int:
             raise Refusal("exclusive_private_lan_and_candidate_ownership_unproven")
         proof_sha = publish(address_path, proof)
         if baseline_mode(plan) == "dhcp":
-            controlled = {
+            controlled = dict(bound_json(plan["bootstrap_runtime"]))
+            controlled.update({
                 "schema": 1, "kind": "certificate-controlled-runtime",
                 "phase": "dhcp-baseline-native-observed", "task_id": plan["task_id"],
                 "repository": "mdaneri/Atlaso", "pr": plan_pr(plan),
@@ -724,7 +725,7 @@ def main() -> int:
                 "ordinary_ca_baseline_mode": "dhcp",
                 "dhcp_baseline_observation_sha256": plan["dhcp_baseline_observation"]["sha256"],
                 "address_proof_sha256": proof_sha,
-            }
+            })
         else:
             controlled = dict(rewire)
             controlled.update(
