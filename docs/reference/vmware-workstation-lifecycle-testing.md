@@ -128,6 +128,10 @@ After the private-network reboot, NTP acceptance waits at most 120 seconds for m
 page before sending credentials. Only explicit TCP non-acceptance and HTTP 502/503/504 startup responses retry;
 the original peer, topology, CA and hostname checks remain mandatory. This readiness wait precedes Apply and does
 not extend the helper's 60-second NTP startup/synchronization budget or retry an Apply submission.
+NTP uses its own fixed-root Apply admission after the original routing/NAT-absence proof. Changed WAN/NAT units
+are admitted only when the server's selection-specific review requires them as network dependencies inside the fixed
+closure. Unrelated pending units, extra roots and unrequired dependencies are refused before POST. The existing
+certificate initializer's stricter root-only preflight is unchanged.
 
 The consumer requires an unmanaged appliance with every clock controller inactive, then uses the existing settings
 forms and global Apply review for the initial resolver/DNS/access-interface/NTP baseline. A successful cold Apply
@@ -138,7 +142,10 @@ The result separately records NTPsec's native
 [`time set` and `time slew` events](https://github.com/ntpsec/ntpsec/blob/NTPsec_1_2_3/ntpd/ntp_loopfilter.c), when present
 after the original monotonic checkpoint. These are observations of real acquisition, not health assertions or clock edits.
 
-Native packet capture proves arrival of each unique query. Client mode must refuse it; server mode must return a
+Native packet capture proves arrival of each unique query. It uses Python's passive Linux `AF_PACKET` interface
+without an added capture package, transmit socket, promiscuous membership or firewall change. Only local unicast
+ingress with the exact peer, destination and unique UDP source port can pass. Capture stops within eight seconds,
+4096 packets or 4 MiB; raw packets are never published. Client mode must refuse the query; server mode must return a
 normal-leap nonce-matched response at the access address and refuse the unselected management address. A final
 candidate points only at the deliberately unused private address `192.168.77.11`. Acceptance requires a failed task,
 one new native initializer-acquisition failure after the recorded monotonic journal checkpoint, the exact prior

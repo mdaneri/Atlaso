@@ -19,7 +19,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from certificate_fixture_init import FixtureForm, replace_fields, submit_initialization
+from certificate_fixture_init import FixtureForm, replace_fields
 from certificate_handoff_native import (
     Client,
     Page,
@@ -35,6 +35,10 @@ from certificate_peer_time import verify_peer_time
 from certificate_peer_transport import PinnedApplianceSession, PinnedPeerTransport
 from certificate_retirement import verify_peer_isolation, verify_peer_tunnel_scope
 from ntp_cold_start_topology import watched_topology
+from time_source_guest import apply_review_fields, apply_review_path
+
+_NTP_APPLY_ROOTS = frozenset({"appliance_settings", "network", "ca", "firewall", "public_services", "dnsmasq", "ntpd"})
+_NTP_NETWORK_DEPENDENCIES = frozenset({"wan", "nat"})
 
 
 class Refusal(Exception):
@@ -265,7 +269,7 @@ def reviewed_source(plan: dict) -> None:
     dirty = subprocess.run([*base, "status", "--porcelain", "--untracked-files=no"], capture_output=True, timeout=15, check=True).stdout
     if head != plan["source_commit"] or dirty:
         raise Refusal("ntp_fixture_reviewed_checkout_changed")
-    for relative in ("ntp_cold_start_native.py", "ntp_cold_start_topology.py"):
+    for relative in ("ntp_cold_start_native.py", "ntp_cold_start_topology.py", "ntp_packet_capture.py"):
         blob = subprocess.run([*base, "cat-file", "blob", head + ":scripts/interop/" + relative],
                               capture_output=True, timeout=15, check=True).stdout
         if blob != Path(__file__).with_name(relative).read_bytes():
@@ -514,6 +518,57 @@ def acquisition_observation(session, password: str, before: dict) -> dict:
     return {"native_events": events, "real_clock_step_observed": any(row["kind"] == "step" for row in events)}
 
 
+def submit_initialization(client) -> tuple[str, str]:
+    """Submit fixed NTP roots and only server-required network dependencies.
+
+    The caller has already proved routing/NAT intent absent. A first network
+    baseline can still require disabled WAN/NAT enforcement. Keep this NTP
+    admission separate from the unchanged certificate initializer contract.
+
+    Args:
+        client: Original CA/hostname-validated authenticated management client.
+    """
+    _, original = client.json("/ui/management/appliance-apply/review")
+    rows = original.get("units")
+    if (original.get("active_task") or not isinstance(rows, list) or not rows
+            or any(not isinstance(row, dict) or not isinstance(row.get("id"), str) for row in rows)):
+        raise Refusal("ntp_fixture_apply_review_invalid")
+    changed = {row["id"] for row in rows if row.get("changed", True)}
+    if changed - _NTP_APPLY_ROOTS - _NTP_NETWORK_DEPENDENCIES:
+        raise Refusal("ntp_fixture_unrelated_pending_units")
+    _, review = client.json(apply_review_path("/ui/management/appliance-apply/review", sorted(_NTP_APPLY_ROOTS)))
+    try:
+        fields = apply_review_fields(review)
+    except ValueError:
+        raise Refusal("ntp_fixture_apply_review_invalid") from None
+    reviewed_rows = review["units"]
+    if (any(not isinstance(row, dict) or not isinstance(row.get("id"), str) for row in reviewed_rows)
+            or len({row["id"] for row in reviewed_rows}) != len(reviewed_rows)
+            or any(row.get("selected") is not True or row.get("valid") is not True
+                   for row in reviewed_rows if row.get("selected"))):
+        raise Refusal("ntp_fixture_apply_review_invalid")
+    selected = {row["id"]: row for row in reviewed_rows if row.get("selected")}
+    if (set(review["requested_units"]) != _NTP_APPLY_ROOTS
+            or not _NTP_APPLY_ROOTS.issubset(selected)
+            or set(selected) - _NTP_APPLY_ROOTS - _NTP_NETWORK_DEPENDENCIES
+            or any(row.get("required_dependency") is not True
+                   for key, row in selected.items() if key in _NTP_NETWORK_DEPENDENCIES)
+            or not (changed - _NTP_APPLY_ROOTS).issubset(selected)):
+        raise Refusal("ntp_fixture_apply_scope_changed")
+    _, body = client.request("/ui/management/physical-interfaces")
+    csrf = Page(body).csrf
+    if not csrf:
+        raise Refusal("ntp_fixture_form_csrf_missing")
+    form = {"csrf": csrf, "reviewed_plan": review["plan_token"], "requested_units": review["requested_units"],
+            "selected_units": [value for key, value in fields if key == "selected_units"]}
+    status, result = client.json("/ui/management/appliance-apply", form)
+    job, path = result.get("job_id"), result.get("status_url")
+    if (status != 202 or not isinstance(job, str) or not job
+            or path not in (f"/tasks/{job}/status", f"/ui/management/tasks/{job}/status")):
+        raise Refusal("ntp_fixture_apply_not_admitted")
+    return job, path
+
+
 def apply_once(client, output: Path, name: str, username: str, password: str) -> dict:
     """Journal one reviewed global Apply and reconcile only its exact task.
 
@@ -547,19 +602,8 @@ def packet_probe(session, peer, password: str, target: str, source: str, *, resp
     """
     target, source = _address(target), _address(source)
     port = 40000 + secrets.randbelow(20000)
-    packet_filter = f"dst host {target} and src host {source} and udp dst port 123 and udp src port {port} and udp[8] & 7 = 3"
-    capture = f"""import subprocess,time
-p=subprocess.Popen(['timeout','8','tcpdump','-nn','-l','-Q','in','-i','any','-c','1',{packet_filter!r}],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
-try:
- time.sleep(.5)
- assert p.poll() is None
- print('capture_ready',flush=True)
- out,_=p.communicate(timeout=12)
- assert p.returncode==0 and b'IP ' in out
- print('request_delivered',flush=True)
-finally:
- if p.poll() is None:p.kill();p.wait(timeout=5)
-"""
+    capture = (Path(__file__).with_name("ntp_packet_capture.py").read_text(encoding="utf-8")
+               + f"\ncapture({source!r}, {target!r}, {port})\n")
     request = f"""import json,socket,struct,time
 stamp=time.time()+2208988800; nonce=struct.pack('!II',int(stamp),int((stamp%1)*2**32))
 packet=b'\\x23'+b'\\0'*39+nonce
@@ -646,6 +690,7 @@ def run(plan: dict, output: Path, password: str, *, appliance_password: str | No
                     routing = json.loads(sudo_read(session, guest_python_command(probe), ssh_password))
                     if routing.get("state") != "proven-absent":
                         raise Refusal("ntp_fixture_routing_intent_present")
+                    result["routing_absence"] = {"state": "proven-absent"}
                     result["stage"] = "management_https_readiness"
                     client, result["management_readiness"] = wait_management_client(peer, plan)
                     client.login(plan["username"], password)
