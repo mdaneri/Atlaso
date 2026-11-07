@@ -4879,13 +4879,15 @@
 <p>The page opens Deployment on the first visit and remembers your selected tab. Workflow links and returned results
 open the relevant category. Closing a dialog returns focus to its launch action. Use Left/Right Arrow, Home, and End
 on the tabs to navigate with the keyboard. Without JavaScript, the page displays all helper groups.</p>
-<p>The <strong>Backup</strong> tab opens the native VCF 9.1.x backup wizard. VCF Operations is the primary connection for Fleet LCM
-discovery: after the operator confirms the VCF Operations TLS certificate, Atlaso reads its integrations catalog and
-requires one unambiguous <code>VCF_FLEET_LCM</code> service descriptor. The discovered Fleet service identity is shown for review
-and bound to the operation; a changed descriptor or certificate stops the workflow. Atlaso uses the advertised Fleet
-service through VCF Operations with a service JWT and the pinned certificate. Operators enter only the VCF Operations
-endpoint. SDDC Manager, vCenter, and NSX can also be added as optional direct connections when their native APIs are
-needed. See the <a href="../vcf-backups/">VCF Backups operator guide</a> for prerequisites, coverage limits, and recovery.</p>
+<p>The <strong>Backup</strong> tab opens the native VCF 9.1.x backup wizard. Select <strong>VCF Operations</strong>, <strong>vCenter</strong>, or both. One
+VCF Operations connection and TLS confirmation can cover its lifecycle and SDDC Manager backup scopes; the SDDC
+Manager scope also configures the co-managed NSX backup destination and cadence. When Operations is selected, each
+selected managed vCenter has its own credential and TLS confirmation flow. A vCenter-only plan connects directly to
+the selected vCenter. After Operations TLS confirmation, Atlaso reads its integrations catalog and requires one
+unambiguous <code>VCF_FLEET_LCM</code> service descriptor. The discovered Fleet service identity is shown for review and bound to
+the operation; a changed descriptor or certificate stops the workflow. Atlaso uses the advertised Fleet service
+through VCF Operations with a service JWT and the pinned certificate. See the
+<a href="../vcf-backups/">VCF Backups operator guide</a> for prerequisites, coverage limits, and recovery.</p>
 <h3 id="appliance-certificate-replacement">Appliance Certificate Replacement<a class="headerlink" href="#appliance-certificate-replacement" title="Permanent link">&para;</a></h3>
 <p>Administrators can replace the certificate on a standalone vCenter, an unregistered standalone SRM / Protection and
 Recovery appliance, or the SDDC Manager appliance resource in its own initialized VCF 9.x management domain using the

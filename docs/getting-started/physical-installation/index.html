@@ -4350,10 +4350,16 @@
 
 <h1 id="physical-installation">Physical installation<a class="headerlink" href="#physical-installation" title="Permanent link">&para;</a></h1>
 <p>This guide describes the planned x86-64 physical installation path tracked by
-<a href="https://github.com/mdaneri/Atlaso/issues/542">issue #542</a>. The ISO and installer workflow remain in development. The
-supported VMware path has not yet recorded a blank-disk install-ISO boot and installer-console smoke test; native VM
-validation and physical acceptance on real SATA or NVMe storage and wired Ethernet remain pending. This guide does not
-establish installer acceptance or hardware support. See the
+<a href="https://github.com/mdaneri/Atlaso/issues/542">issue #542</a>. The ISO and installer workflow remain in development.
+VMware virtual CD/DVD validation has recorded a fresh disconnected blank-disk ISO installation, strict installed-content
+verification, and media-free boot. The immutable
+<a href="https://github.com/mdaneri/Atlaso/commit/51c719000fa1444a976ab1ddcc47222fd6ccd586">merge <code>51c7190</code></a> and
+<a href="https://github.com/mdaneri/Atlaso/pull/1083">PR #1083</a> record the completed run; the earlier installation evidence and
+corrected service/protocol database defect are retained in <a href="https://github.com/mdaneri/Atlaso/issues/1087">issue #1087</a>.</p>
+<p>This virtual CD/DVD evidence does not establish USB-source acceptance, tracked separately in
+<a href="https://github.com/mdaneri/Atlaso/issues/1069">issue #1069</a>. Physical SATA/NVMe and wired-Ethernet acceptance, a production
+installation ISO release, and the remaining parent #542 acceptance are still pending. This guide does not establish
+complete installer acceptance or physical hardware support. See the
 <a href="../../reference/installation-iso/">installation ISO build and verification reference</a> for the release workflow and
 verifier.</p>
 <h2 id="requirements">Requirements<a class="headerlink" href="#requirements" title="Permanent link">&para;</a></h2>
