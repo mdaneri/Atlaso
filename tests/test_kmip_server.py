@@ -677,12 +677,16 @@ def test_mtls_server_binds_every_configured_listener_address(tmp_path: Path) -> 
         thread.join(timeout=3)
 
 
-def test_mtls_server_rejects_ca_valid_but_unmapped_client(tmp_path: Path) -> None:
+def test_mtls_server_rejects_ca_valid_but_unmapped_client(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     """Verify that mtls server rejects ca valid but unmapped client.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        caplog: Capture the server's explicit certificate-authorization refusal.
     """
+    caplog.set_level(logging.WARNING, logger="atlaso.kmip")
     materials = material(tmp_path)
     server = build_server(service_config(tmp_path, materials), secrets_key="appliance-secrets-key")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -694,12 +698,18 @@ def test_mtls_server_rejects_ca_valid_but_unmapped_client(tmp_path: Path) -> Non
                 raw,
                 server_hostname="localhost",
             ) as secured:
-                secured.sendall(discover_versions_request())
-                assert secured.recv(4096) == b""
+                try:
+                    secured.sendall(discover_versions_request())
+                    response = secured.recv(4096)
+                except (BrokenPipeError, ConnectionResetError, ssl.SSLEOFError):
+                    # The authorization refusal may close TLS before either client I/O operation.
+                    response = b""
+                assert response == b""
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=3)
+    assert "Rejected an unmapped KMIP client certificate." in caplog.messages
 
 
 def test_stalled_tls_handshake_does_not_block_other_connections(tmp_path: Path) -> None:
