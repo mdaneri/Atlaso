@@ -24,6 +24,20 @@ The acceptance cases below cover the existing fixture: one dedicated IPv4 manage
 disabled and an explicitly configured static baseline. They do not establish Access-management acceptance for #852 or
 support for other interface roles or address families.
 
+## Dual-stack contract preparation
+
+The pure `scripts/interop/certificate_dual_stack_contract.py` helpers describe expected reciprocal IPv4/IPv6 static
+transitions and validate normalized fixture inputs. They reject duplicate or out-of-prefix addresses, uncertain
+interface/MAC ownership, unusable links, tentative or DAD-failed IPv6 state, and unusable address lifetimes. The inputs
+are not raw native observations: a `source=static` field does not authenticate its producer or establish provenance.
+
+These helpers perform no transport, Apply, restoration, or VM operation and emit no execution or acceptance receipt.
+They do not extend the admitted IPv4 procedure below. A dual-stack native procedure still needs original source/boot
+and resource bindings, authenticated native producers, both-family certificate and retirement evidence, supported
+external enforcement, and its own reviewed execution admission. For that future procedure, unknown Apply outcomes or
+lost topology/control prohibit automatic restore submissions; reconcile read-only and re-admit restoration from known
+state first.
+
 ## Trusted host and admission
 
 The trusted-host boundary is the human maintainer with authority over the Workstation host, its VM inventory, VMX
