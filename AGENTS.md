@@ -37,6 +37,8 @@ If policy is missing, conflicting, or unclear, stop the affected operation for m
   capabilities never justify substitutes.
 - VM receipts and [trusted-host certificate admission](docs/reference/certificate-address-control.md) precede mutation;
   see the [VMware procedure](docs/reference/vmware-workstation-lifecycle-testing.md).
+- Follow [resource-scoped coordination](docs/contribute/agent-workflow.md#resource-scoped-vmware-coordination) for VMware
+  conflicts and preserve that scope in delegation, handoffs, and heartbeats.
 
 ## Conditional policy routes
 
