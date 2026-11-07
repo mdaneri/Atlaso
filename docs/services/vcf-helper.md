@@ -39,13 +39,15 @@ The page opens Deployment on the first visit and remembers your selected tab. Wo
 open the relevant category. Closing a dialog returns focus to its launch action. Use Left/Right Arrow, Home, and End
 on the tabs to navigate with the keyboard. Without JavaScript, the page displays all helper groups.
 
-The **Backup** tab opens the native VCF 9.1.x backup wizard. VCF Operations is the primary connection for Fleet LCM
-discovery: after the operator confirms the VCF Operations TLS certificate, Atlaso reads its integrations catalog and
-requires one unambiguous `VCF_FLEET_LCM` service descriptor. The discovered Fleet service identity is shown for review
-and bound to the operation; a changed descriptor or certificate stops the workflow. Atlaso uses the advertised Fleet
-service through VCF Operations with a service JWT and the pinned certificate. Operators enter only the VCF Operations
-endpoint. SDDC Manager, vCenter, and NSX can also be added as optional direct connections when their native APIs are
-needed. See the [VCF Backups operator guide](vcf-backups.md) for prerequisites, coverage limits, and recovery.
+The **Backup** tab opens the native VCF 9.1.x backup wizard. Select **VCF Operations**, **vCenter**, or both. One
+VCF Operations connection and TLS confirmation can cover its lifecycle and SDDC Manager backup scopes; the SDDC
+Manager scope also configures the co-managed NSX backup destination and cadence. When Operations is selected, each
+selected managed vCenter has its own credential and TLS confirmation flow. A vCenter-only plan connects directly to
+the selected vCenter. After Operations TLS confirmation, Atlaso reads its integrations catalog and requires one
+unambiguous `VCF_FLEET_LCM` service descriptor. The discovered Fleet service identity is shown for review and bound to
+the operation; a changed descriptor or certificate stops the workflow. Atlaso uses the advertised Fleet service
+through VCF Operations with a service JWT and the pinned certificate. See the
+[VCF Backups operator guide](vcf-backups.md) for prerequisites, coverage limits, and recovery.
 
 ### Appliance Certificate Replacement
 
