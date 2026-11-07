@@ -335,8 +335,18 @@ $legacyArgs=@($ntpOptions)
         check=True,
     )
     calls = json.loads(result.stdout)
-    assert "--vmware-vix" in [str(value) for value in calls["ntp"]]
-    assert "--vmware-vix" not in [str(value) for value in calls["legacy"]]
+    ntp_args = [str(value) for value in calls["ntp"]]
+    legacy_args = [str(value) for value in calls["legacy"]]
+    assert "--publish-host-key-to-serial" in ntp_args
+    assert "--serve-ntp" in ntp_args
+    assert "--vmware-vix" in ntp_args
+    assert "--retain-instance-cache" in ntp_args
+    instance_id_index = ntp_args.index("--instance-id")
+    assert ntp_args[instance_id_index + 1] == "synthetic-ntp-peer"
+    assert "--publish-host-key-to-serial" not in legacy_args
+    assert "--serve-ntp" not in legacy_args
+    assert "--vmware-vix" not in legacy_args
+    assert "--retain-instance-cache" not in legacy_args
 
 
 def test_peer_management_waiter_records_only_bounded_sanitized_ntp_timeout_categories():

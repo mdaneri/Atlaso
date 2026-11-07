@@ -204,13 +204,17 @@ def test_vmware_vix_cli_flag_is_explicit_and_opt_in() -> None:
         "--client-mac", "00:50:56:2a:11:22",
     ]
 
-    assert parser.parse_args(base).vmware_vix is False
+    default_args = parser.parse_args(base)
+    assert default_args.vmware_vix is False
+    assert default_args.retain_instance_cache is False
     parsed_args = parser.parse_args(
         [
             *base,
             "--publish-host-key-to-serial",
             "--vmware-vix",
             "--serve-ntp",
+            "--instance-id", "ntp-peer-unique-fixture-01",
+            "--retain-instance-cache",
             "--management-address", "192.168.77.10",
             "--management-address", "192.168.77.30",
             "--management-address", "192.168.77.40",
@@ -218,6 +222,7 @@ def test_vmware_vix_cli_flag_is_explicit_and_opt_in() -> None:
         ]
     )
     assert parsed_args.vmware_vix is True
+    assert parsed_args.retain_instance_cache is True
     rendered = yaml.safe_load(peer_files(parsed_args)["user-data"])
     assert "open-vm-tools-vix" in rendered["packages"]
     assert len(rendered["runcmd"]) == 1
@@ -239,6 +244,52 @@ def test_seed_removal_preserves_provisioned_host_keys_and_network_without_option
     assert retained == {"datasource_list": ["NoCloud", "None"], "ssh_deletekeys": False,
                         "ssh": {"emit_keys_to_console": False}, "network": {"config": "disabled"}}
     assert "ssh_deletekeys" not in parsed  # The first boot still generates fresh host keys.
+    assert "manual_cache_clean" not in retained
+
+
+def test_ntp_retained_instance_cache_is_opt_in_and_limited_to_qualified_peer_mode() -> None:
+    """Render manual cache trust only for an explicit, unique NTP peer identity.
+
+    Args:
+        None.
+    """
+    common = {
+        "publish_host_key_to_serial": True,
+        "instance_id": "ntp-peer-unique-fixture-01",
+        "serve_ntp": True,
+        "vmware_vix": True,
+        "management_addresses": ["192.168.77.10", "192.168.77.30", "192.168.77.40"],
+        "ntp_probe_cidr": "192.168.78.1/24",
+        "retain_instance_cache": True,
+    }
+    files = peer_files(_args(**common))
+    user_data = yaml.safe_load(files["user-data"])
+    policy = next(
+        item["content"] for item in user_data["write_files"]
+        if item["path"] == "/etc/cloud/cloud.cfg.d/99-atlaso-certificate-retained-peer.cfg"
+    )
+    assert yaml.safe_load(policy) == {
+        "datasource_list": ["NoCloud", "None"],
+        "ssh_deletekeys": False,
+        "manual_cache_clean": True,
+        "ssh": {"emit_keys_to_console": False},
+        "network": {"config": "disabled"},
+    }
+    assert "manual_cache_clean" not in user_data
+    assert yaml.safe_load(files["meta-data"])["instance-id"] == common["instance_id"]
+
+    invalid_modes = (
+        {key: value for key, value in common.items() if key != "instance_id"},
+        {**common, "publish_host_key_to_serial": False, "vmware_vix": False},
+        {**common, "vmware_vix": False},
+        {**common, "serve_ntp": False},
+    )
+    for mode in invalid_modes:
+        with pytest.raises(ValueError, match="Retaining the NoCloud instance cache requires"):
+            peer_files(_args(**mode))
+
+    with pytest.raises(ValueError, match="instance-cache option must be boolean"):
+        peer_files(_args(**{**common, "retain_instance_cache": "yes"}))
 
 
 def test_optional_instance_id_is_quoted_and_safe_for_cloud_init() -> None:

@@ -1830,6 +1830,7 @@ function New-CertificatePeerSeedIso {
         $helper = Join-Path $runtimeSourceRoot 'scripts\interop\create_certificate_peer_seed_iso.py'
         $ntpOptions = if ($NtpColdStartOnly) {
             @('--publish-host-key-to-serial', '--instance-id', "$LabName-peer", '--serve-ntp', '--vmware-vix',
+              '--retain-instance-cache',
               '--management-address', $CertificateLeaseAddress,
               '--management-address', $ntpBaselineAddress, '--management-address', $ntpCandidateAddress,
               '--ntp-probe-cidr', '192.168.78.1/24')

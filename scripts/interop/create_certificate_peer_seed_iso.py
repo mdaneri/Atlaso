@@ -71,7 +71,10 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
         raise ValueError("An exact Ed25519 peer SSH public key is required.")
     publish_host_key = getattr(args, "publish_host_key_to_serial", False)
     vmware_vix = getattr(args, "vmware_vix", False)
+    retain_instance_cache = getattr(args, "retain_instance_cache", False)
     preserve_host_keys = getattr(args, "preserve_host_keys", False)
+    if not isinstance(retain_instance_cache, bool):
+        raise ValueError("The retained NoCloud instance-cache option must be boolean.")
     if not isinstance(preserve_host_keys, bool):
         raise ValueError("The host-key preservation option must be boolean.")
     if not isinstance(publish_host_key, bool):
@@ -99,6 +102,13 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
     serve_ntp = getattr(args, "serve_ntp", False)
     if not isinstance(serve_ntp, bool) or (serve_ntp and len(tunnel_addresses) != 3):
         raise ValueError("Private NTP serving requires the three exact management addresses.")
+    if retain_instance_cache and (
+        instance_id is None or not publish_host_key or not vmware_vix or not serve_ntp
+    ):
+        raise ValueError(
+            "Retaining the NoCloud instance cache requires an explicit instance ID, serial host-key publication, "
+            "VMware VIX, and private NTP serving."
+        )
     ntp_probe_cidr = getattr(args, "ntp_probe_cidr", None)
     ntp_probe_address = ""
     if ntp_probe_cidr is not None:
@@ -218,6 +228,7 @@ sshd -T | grep -Fx 'gatewayports no'
             "  - rc-service dnsmasq restart\n"
         )
     host_key_policy = "ssh_deletekeys: false\n" if preserve_host_keys else ""
+    retained_instance_cache_policy = "      manual_cache_clean: true\n" if retain_instance_cache else ""
     user_data = f"""#cloud-config
 {host_key_policy}hostname: {args.hostname}
 manage_etc_hosts: true
@@ -258,7 +269,7 @@ packages:
     content: |
       datasource_list: [ NoCloud, None ]
       ssh_deletekeys: false
-      ssh:
+{retained_instance_cache_policy}      ssh:
         emit_keys_to_console: false
       network:
         config: disabled
@@ -297,6 +308,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--serve-ntp", action="store_true")
     parser.add_argument("--ntp-probe-cidr")
     parser.add_argument("--instance-id")
+    parser.add_argument("--retain-instance-cache", action="store_true")
     return parser
 
 
