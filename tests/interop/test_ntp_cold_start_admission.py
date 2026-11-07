@@ -12,7 +12,11 @@ import ntp_cold_start_native as native  # noqa: E402 - Local interop entrypoint.
 
 @pytest.fixture
 def admission(monkeypatch):
-    """Stop after the public fixture/host binding, before any VM or credential read."""
+    """Stop after the public fixture/host binding, before any VM or credential read.
+
+    Args:
+        monkeypatch: Patcher used to replace source and receipt admission calls.
+    """
     plan = {
         "schema": 1, "kind": "ntp-cold-start-native-plan", "trust_model": "trusted-host",
         "repository": "mdaneri/Atlaso", "pr": 1121, "task_id": "synthetic-ntp-task",
@@ -40,6 +44,11 @@ def admission(monkeypatch):
     monkeypatch.setattr(native, "reviewed_source", lambda _: None)
 
     def receipt(reference):
+        """Return the fixture for its exact receipt reference.
+
+        Args:
+            reference: Receipt reference requested by the admission function.
+        """
         if reference == plan["peer_fixture"]:
             return fixture
         raise LookupError("reached_next_original_identity_check")
@@ -53,7 +62,12 @@ def admission(monkeypatch):
     "lan_segment_receipt", "lan_segment_receipt_sha256",
 ])
 def test_original_fixture_cannot_substitute_another_observed_lan(admission, field):
-    """A valid separate host receipt cannot replace the fixture's original binding."""
+    """A valid separate host receipt cannot replace the fixture's original binding.
+
+    Args:
+        admission: Plan and original fixture supplied by the admission fixture.
+        field: Original peer-fixture field to replace with a conflicting value.
+    """
     plan, fixture = admission
     fixture[field] = "different-original-binding"
     with pytest.raises(native.Refusal, match="original_binding_invalid"):
@@ -61,7 +75,11 @@ def test_original_fixture_cannot_substitute_another_observed_lan(admission, fiel
 
 
 def test_matching_original_fixture_proceeds_to_the_next_identity_check(admission):
-    """The strict cross-binding admits the honest producer's matching fields."""
+    """The strict cross-binding admits the honest producer's matching fields.
+
+    Args:
+        admission: Matching plan and peer fixture supplied by the admission fixture.
+    """
     plan, _ = admission
     with pytest.raises(LookupError, match="reached_next_original_identity_check"):
         native.admit_plan(json.loads(json.dumps(plan)))

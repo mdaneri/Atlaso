@@ -103,7 +103,15 @@ def test_missing_schema_and_unknown_setting_fail_closed(source_database):
 def test_explicit_bootstrap_wait_requires_complete_schema_before_intent_snapshot(
     tmp_path, source_database, monkeypatch, capsys, partial,
 ):
-    """Readiness waits for application-created state and retains any existing intent."""
+    """Readiness waits for application-created state and retains any existing intent.
+
+    Args:
+        tmp_path: Temporary directory for the target database path.
+        source_database: Complete source database copied when the wait is released.
+        monkeypatch: Patcher for the probe database path and readiness delay.
+        capsys: Capture fixture used to read the bounded JSON result.
+        partial: Whether to create a database with an incomplete schema first.
+    """
     target = tmp_path / "starting.db"
     if partial:
         with sqlite3.connect(target) as connection:
@@ -113,6 +121,11 @@ def test_explicit_bootstrap_wait_requires_complete_schema_before_intent_snapshot
     waits = []
 
     def application_finishes_schema(_delay):
+        """Copy the complete application-created schema into the target database.
+
+        Args:
+            _delay: Readiness sleep duration requested by the probe.
+        """
         waits.append(True)
         with sqlite3.connect(source_database) as source, sqlite3.connect(target) as destination:
             for statement in source.iterdump():
@@ -128,7 +141,14 @@ def test_explicit_bootstrap_wait_requires_complete_schema_before_intent_snapshot
 
 @pytest.mark.parametrize("partial", [False, True], ids=["missing-database", "missing-tables"])
 def test_schema_timeout_never_creates_state_or_reports_zero_counts(tmp_path, monkeypatch, capsys, partial):
-    """Absent readiness remains an unproven source, without a synthesized absence result."""
+    """Absent readiness remains an unproven source, without a synthesized absence result.
+
+    Args:
+        tmp_path: Temporary directory for the not-ready database.
+        monkeypatch: Patcher for database access and the bounded readiness clock.
+        capsys: Capture fixture used to verify that refusal emits no snapshot.
+        partial: Whether to preserve an existing database that lacks required tables.
+    """
     target = tmp_path / "not-ready.db"
     if partial:
         with sqlite3.connect(target) as connection:
@@ -147,7 +167,13 @@ def test_schema_timeout_never_creates_state_or_reports_zero_counts(tmp_path, mon
 
 
 def test_ordinary_probe_does_not_wait_or_create_missing_database(tmp_path, monkeypatch, capsys):
-    """Historical certificate inspection remains immediate and strict by default."""
+    """Historical certificate inspection remains immediate and strict by default.
+
+    Args:
+        tmp_path: Temporary directory for the absent database path.
+        monkeypatch: Patcher used to reject any default readiness sleep.
+        capsys: Capture fixture used to verify that no snapshot is emitted.
+    """
     target = tmp_path / "missing.db"
     monkeypatch.setattr(probe, "DATABASE", str(target))
     monkeypatch.setattr(probe.time, "sleep", lambda _: pytest.fail("default probe waited"))
@@ -156,7 +182,13 @@ def test_ordinary_probe_does_not_wait_or_create_missing_database(tmp_path, monke
 
 
 def test_readiness_does_not_retry_or_repair_invalid_routing_settings(source_database, monkeypatch, capsys):
-    """A complete schema still receives the unchanged strict semantic validation."""
+    """A complete schema still receives the unchanged strict semantic validation.
+
+    Args:
+        source_database: Complete source database with an invalid routing setting.
+        monkeypatch: Patcher used to target the source and reject readiness retries.
+        capsys: Capture fixture used to verify that refusal emits no snapshot.
+    """
     with sqlite3.connect(source_database) as connection:
         connection.execute("INSERT INTO settings VALUES ('routes_wan.routing_enabled', 'maybe')")
     before = source_database.read_bytes()
@@ -168,14 +200,26 @@ def test_readiness_does_not_retry_or_repair_invalid_routing_settings(source_data
 
 @pytest.mark.parametrize("budget", ["0", "-1", "121"])
 def test_schema_wait_refuses_out_of_bounds_budgets(budget, monkeypatch, capsys):
-    """Bootstrap cannot turn into an unbounded guest operation."""
+    """Bootstrap cannot turn into an unbounded guest operation.
+
+    Args:
+        budget: Invalid schema-wait duration passed through the command line.
+        monkeypatch: Patcher used to ensure invalid budgets skip snapshot inspection.
+        capsys: Capture fixture used to verify that refusal emits no snapshot.
+    """
     monkeypatch.setattr(probe, "snapshot", lambda _: pytest.fail("invalid budget reached source inspection"))
     assert probe.main(["--wait-for-schema-seconds", budget]) == 2
     assert capsys.readouterr().out == ""
 
 
 def test_schema_wait_does_not_retry_a_corrupt_database(tmp_path, monkeypatch, capsys):
-    """Invalid storage is a source failure rather than missing first-boot schema."""
+    """Invalid storage is a source failure rather than missing first-boot schema.
+
+    Args:
+        tmp_path: Temporary directory for the corrupt database file.
+        monkeypatch: Patcher used to direct the probe at corrupt storage.
+        capsys: Capture fixture used to verify that refusal emits no snapshot.
+    """
     target = tmp_path / "corrupt.db"
     target.write_bytes(b"not a SQLite database")
     monkeypatch.setattr(probe, "DATABASE", str(target))

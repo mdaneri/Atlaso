@@ -197,6 +197,11 @@ def inspect_with_ntp_error(error: str) -> dict:
     ]}
 
     def respond(path: str) -> tuple[int, dict]:
+        """Return the synthetic task or selected-unit response for a URL path.
+
+        Args:
+            path: API path requested by the recovery inspection.
+        """
         return (200, {"task": task}) if path.startswith("/tasks/") else (200, selected)
 
     return init.inspect_recovery(SimpleNamespace(json=respond), failure, review, public, original, tls, PEER)
@@ -204,7 +209,11 @@ def inspect_with_ntp_error(error: str) -> dict:
 
 @pytest.mark.parametrize("seconds", ["0", "60", "1.5", "6e+01", "1e-3"])
 def test_recovery_accepts_historical_and_bounded_ntpsec_timeout_shapes(seconds: str) -> None:
-    """Keep the historical literal and admit only bounded NTPsec evidence timeout messages."""
+    """Keep the historical literal and admit only bounded NTPsec evidence timeout messages.
+
+    Args:
+        seconds: Timeout token embedded in the candidate NTPsec recovery evidence.
+    """
     historical = inspect_with_ntp_error(ERROR)
     current = inspect_with_ntp_error(NTPSEC_TIMEOUT.format(seconds=seconds))
 
@@ -237,7 +246,11 @@ def test_recovery_accepts_historical_and_bounded_ntpsec_timeout_shapes(seconds: 
          "missing-bounded-marker", "missing-evidence", "missing-rollback", "near-match-prefix"],
 )
 def test_recovery_refuses_generic_malformed_or_unsafe_ntp_timeout_shapes(error: str) -> None:
-    """Do not widen recovery admission to generic errors or unsafe timeout values."""
+    """Do not widen recovery admission to generic errors or unsafe timeout values.
+
+    Args:
+        error: Candidate error message whose timeout evidence must be refused.
+    """
     with pytest.raises(init.Refusal, match="fixture_recovery_failure_not_admitted"):
         inspect_with_ntp_error(error)
 

@@ -14,7 +14,12 @@ import ntp_cold_start_topology as topology  # noqa: E402 - Local interop entrypo
 
 @pytest.fixture
 def admitted_topology(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict:
-    """Provide two running VMs whose only private membership matches receipts."""
+    """Provide two running VMs whose only private membership matches receipts.
+
+    Args:
+        monkeypatch: Patcher for topology readers and host-state probes.
+        tmp_path: Temporary directory holding synthetic VMX and receipt paths.
+    """
     appliance = tmp_path / "appliance.vmx"
     peer = tmp_path / "peer.vmx"
     appliance.touch()
@@ -74,7 +79,11 @@ def admitted_topology(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict:
 def test_inspect_topology_accepts_exact_two_private_appliance_nics_and_split_peer(
     admitted_topology: dict,
 ) -> None:
-    """Accept the exact dual-subnet appliance LAN and separate peer control leg."""
+    """Accept the exact dual-subnet appliance LAN and separate peer control leg.
+
+    Args:
+        admitted_topology: Synthetic receipt-bound host and VMX state fixture.
+    """
     result = topology.inspect_topology(admitted_topology["plan"])
 
     assert result["kind"] == "ntp-cold-start-trusted-host-topology"
@@ -87,6 +96,11 @@ def test_inspect_topology_accepts_exact_two_private_appliance_nics_and_split_pee
 
 
 def test_inspect_topology_rejects_untrusted_host(admitted_topology: dict) -> None:
+    """Reject a plan that lacks explicit administrator trust.
+
+    Args:
+        admitted_topology: Synthetic receipt-bound host and VMX state fixture.
+    """
     admitted_topology["host"]["host_administrator_trusted"] = False
 
     with pytest.raises(topology.Refusal, match="ntp_topology_explicit_trust_required"):
@@ -94,6 +108,12 @@ def test_inspect_topology_rejects_untrusted_host(admitted_topology: dict) -> Non
 
 
 def test_inspect_topology_rejects_stopped_vm(admitted_topology: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reject topology evidence when one original VM is stopped.
+
+    Args:
+        admitted_topology: Synthetic receipt-bound host and VMX state fixture.
+        monkeypatch: Patcher used to report only one running original VM.
+    """
     monkeypatch.setattr(topology, "_run_vmrun", lambda _executable: ([admitted_topology["peer"]], ""))
 
     with pytest.raises(topology.Refusal, match="ntp_topology_original_vms_not_running"):
@@ -113,7 +133,14 @@ def test_inspect_topology_rejects_stopped_vm(admitted_topology: dict, monkeypatc
 def test_inspect_topology_rejects_changed_adapter_membership(
     admitted_topology: dict, monkeypatch: pytest.MonkeyPatch, mutate: str, reason: str,
 ) -> None:
-    """Refuse added fixture members and any unexpected or ambiguous VM adapter."""
+    """Refuse added fixture members and any unexpected or ambiguous VM adapter.
+
+    Args:
+        admitted_topology: Synthetic receipt-bound host and VMX state fixture.
+        monkeypatch: Patcher for inventory, adapter, and host readers.
+        mutate: Adapter or private-membership change to introduce.
+        reason: Expected stable refusal category for the introduced change.
+    """
     appliance = admitted_topology["appliance"]
     peer = admitted_topology["peer"]
     rows = admitted_topology["vmx"][str(appliance)]
@@ -144,7 +171,13 @@ def test_inspect_topology_rejects_changed_adapter_membership(
 def test_inspect_topology_rejects_changed_original_lan_binding(
     admitted_topology: dict, monkeypatch: pytest.MonkeyPatch, change: str,
 ) -> None:
-    """Require the current VMware segment to match the original source-bound receipt."""
+    """Require the current VMware segment to match the original source-bound receipt.
+
+    Args:
+        admitted_topology: Synthetic receipt-bound host and VMX state fixture.
+        monkeypatch: Patcher for receipt or current segment evidence.
+        change: Original LAN binding component to alter.
+    """
     if change == "segment_receipt":
         monkeypatch.setattr(topology, "bound_json", lambda _reference: {"schema": 1, "name": "other"})
     else:
@@ -157,7 +190,12 @@ def test_inspect_topology_rejects_changed_original_lan_binding(
 def test_watched_topology_keeps_a_detected_change_sticky(
     admitted_topology: dict, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A detected MAC change remains a failure after the adapter is restored."""
+    """A detected MAC change remains a failure after the adapter is restored.
+
+    Args:
+        admitted_topology: Synthetic receipt-bound host and VMX state fixture.
+        monkeypatch: Patcher used to control topology readers and the clock.
+    """
     with pytest.raises(topology.Refusal, match="ntp_topology_observer_unverified"):
         with topology.watched_topology(admitted_topology["plan"]) as (_original, check):
             row = admitted_topology["vmx"][str(admitted_topology["appliance"])][0]
@@ -173,12 +211,22 @@ def test_watched_topology_keeps_a_detected_change_sticky(
 def test_watched_topology_records_utc_samples_without_treating_time_as_drift(
     admitted_topology: dict, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Stable topology hashes survive changing sample timestamps and retain bounded evidence."""
+    """Stable topology hashes survive changing sample timestamps and retain bounded evidence.
+
+    Args:
+        admitted_topology: Synthetic receipt-bound host and VMX state fixture.
+        monkeypatch: Patcher used to substitute deterministic UTC samples.
+    """
     instants = iter(datetime(2026, 11, 6, 12, tzinfo=timezone.utc) + timedelta(seconds=i) for i in range(3))
 
     class Clock:
         @staticmethod
         def now(_timezone: object) -> datetime:
+            """Return the next deterministic sample time.
+
+            Args:
+                _timezone: Time zone requested by the topology observer.
+            """
             return next(instants)
 
     monkeypatch.setattr(topology, "datetime", Clock)
@@ -195,7 +243,12 @@ def test_watched_topology_records_utc_samples_without_treating_time_as_drift(
 def test_watched_topology_fails_closed_when_observation_bound_is_exceeded(
     admitted_topology: dict, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Observation evidence remains bounded and overflow permanently invalidates the watch."""
+    """Observation evidence remains bounded and overflow permanently invalidates the watch.
+
+    Args:
+        admitted_topology: Synthetic receipt-bound host and VMX state fixture.
+        monkeypatch: Patcher used to reduce the permitted observation count.
+    """
     monkeypatch.setattr(topology, "_MAX_TOPOLOGY_OBSERVATIONS", 2)
     with pytest.raises(topology.Refusal, match="ntp_topology_observer_unverified"):
         with topology.watched_topology(admitted_topology["plan"]) as (_snapshot, check):

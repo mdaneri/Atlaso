@@ -718,8 +718,15 @@ sentinel. Its original VM receipt seals the seed plan; the baseline records the 
 and raw-image digests. Cancellation and installation retain their original comparison rules. A stopped logical
 comparison against that baseline also proves that the old filesystem, UUID and sentinel survived unchanged.
 
-This optional Windows fixture requires an existing WSL distribution with Python 3, `mke2fs`, `debugfs`, `e2fsck`, and
-`blkid`, plus the existing native `qemu-img` dependency. It records the actual filesystem-tool paths and binary hashes.
+This optional Windows fixture requires `-OldLabelWslDistribution <EXISTING-DISTRIBUTION>` naming one existing WSL
+distribution, plus the existing native `qemu-img` dependency. Before it creates the seed directory or 4-GiB raw image,
+the harness checks that exact distribution for `/usr/bin/python3`, `mke2fs`, `debugfs`, `e2fsck`, and `blkid`. Missing
+distributions or tools stop creation before the old-label image is made. The selected distribution is passed
+explicitly to WSL for preflight and seeding, and its name is sealed into the original and baseline receipts. Supply the
+same selector for later Verify or Cleanup admission; an old-label receipt without that original selection is refused.
+There is no implicit distribution default: do not change the host's global WSL default or install a distribution to
+make this fixture pass. Select and prepare an existing compatible distribution separately.
+The fixture records the actual filesystem-tool paths and binary hashes.
 It formats only a newly created regular image inside the original owned VM directory; it uses no host block devices,
 loop mounts or host-network changes. The raw seed and sentinel are retained there for the normal receipt-bound owning
 cleanup. Creation reserves **78 GiB**, including the additional 4-GiB raw image; ordinary two-disk and MultiDisk gates
@@ -729,6 +736,7 @@ Use the ordinary ISO/root inputs shown above with one absent VM directory and:
 
 ```powershell
   -Scenario OldLabelReboot -TimeoutSeconds 3600 `
+  -OldLabelWslDistribution Atlaso-Build `
   -InspectInstalled -InspectContent -InspectionPythonPath <ABSOLUTE-PREPARED-PYTHON-EXECUTABLE>
 ```
 
@@ -747,6 +755,7 @@ same output directory and collision suffix for a distinct recovery invocation:
 
 ```powershell
   -Scenario RecoverOldLabelReboot -TimeoutSeconds 3600 `
+  -OldLabelWslDistribution Atlaso-Build `
   -OriginalReceiptPath <ORIGINAL-VM-RECEIPT> -OriginalReceiptSha256 <ORIGINAL-DIGEST> `
   -BaselineReceiptPath <ORIGINAL-BASELINE> -BaselineReceiptSha256 <ORIGINAL-BASELINE-DIGEST> `
   -InterruptionReceiptPath <ORIGINAL-INTERRUPTION-RECEIPT> -InterruptionReceiptSha256 <EMITTED-DIGEST> `

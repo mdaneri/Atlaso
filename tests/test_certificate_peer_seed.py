@@ -128,7 +128,12 @@ def test_optional_bootstrap_installs_tools_and_publishes_only_public_host_key() 
 def test_non_vix_modes_render_byte_for_byte_like_original_seed(
     overrides: dict[str, object], expected_digest: str
 ) -> None:
-    """Keep opt-in bootstrap changes out of existing seed modes from HEAD a3165c1fa."""
+    """Keep opt-in bootstrap changes out of existing seed modes from HEAD a3165c1fa.
+
+    Args:
+        overrides: Seed-generator options for one legacy mode.
+        expected_digest: SHA-256 of the expected concatenated seed files.
+    """
     files = peer_files(_args(**overrides))
     joined = b"\0".join(files[key].encode() for key in ("user-data", "meta-data", "network-config"))
 
@@ -321,6 +326,11 @@ def test_ntp_probe_adds_only_a_disjoint_private_address_to_eth1():
     ],
 )
 def test_ntp_probe_requires_ntp_and_public_host_key_admission(overrides: dict[str, bool]) -> None:
+    """Require NTP serving and public host-key admission for the probe address.
+
+    Args:
+        overrides: Admission-flag combination with one required option disabled.
+    """
     with pytest.raises(ValueError, match="NTP serving and public host-key admission"):
         peer_files(
             _args(
@@ -345,6 +355,11 @@ def test_ntp_probe_requires_ntp_and_public_host_key_admission(overrides: dict[st
     ],
 )
 def test_ntp_probe_rejects_non_private_or_unusable_interfaces(probe_cidr: str) -> None:
+    """Reject probe addresses outside the supported usable private /24 range.
+
+    Args:
+        probe_cidr: Probe-interface CIDR candidate to reject.
+    """
     with pytest.raises(ValueError):
         peer_files(
             _args(

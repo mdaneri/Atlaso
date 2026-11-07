@@ -153,16 +153,30 @@ $planPin = $null
 $sourceContext = $null
 $creationPins = $null
 $outputPin = $null
+$interpreterPins = [Collections.Generic.List[IDisposable]]::new()
 try {
     $mutexHeld = $mutex.WaitOne(0)
     if (-not $mutexHeld) { throw 'Another refresh controller owns this task; no consumer was started.' }
     $statePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($stateDirectory, $true)
     $planPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($planPath, $true)
+    $interpreterPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($python, $true))
     $descriptionJson = Invoke-AtlasoBoundedProcess -FilePath $python -ArgumentList (@('-I', '-B', $protocol, 'describe') + $common) `
         -TimeoutSeconds 90 -Action 'Validate immutable ISO refresh plan'
     $description = ($descriptionJson -join "`n") | ConvertFrom-Json -AsHashtable
     $planValue = $description.plan
     $planHash = [string]$description.plan_sha256
+    $interpreter = $description.interpreter
+    if ($interpreter.launcher.path -ine $python) { throw 'Interpreter probe differs from the selected executable.' }
+    foreach ($image in @($interpreter.launcher, $interpreter.worker)) {
+        $interpreterPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile([string]$image.path, $true))
+        if ([Atlaso.WorkstationFileIdentity]::Get([string]$image.path) -cne $image.native_identity -or
+            (Get-FileHash -LiteralPath $image.path -Algorithm SHA256).Hash -ine $image.sha256) {
+            throw 'Interpreter executable changed after its bounded probe.'
+        }
+    }
+    # A closure creates a dynamic module: capture the callable itself, rather than
+    # relying on a script-local function name resolving from that module.
+    $writeEvidence = ${function:Write-InstallationRefreshEvidence}
     if ($planValue.task_id -cne $taskId) { throw 'Plan belongs to a different actual task.' }
     Assert-InstallationRefreshConsumersQuiescent -Directory $stateDirectory -PlanSha256 $planHash
     if ($Phase -eq 'Status') {
@@ -184,7 +198,7 @@ try {
         if (Test-Path -LiteralPath $output) { throw 'Initialization requires an absent original output root.' }
         $callback = {
             param($CreatedPath, $OriginalIdentity)
-            Write-InstallationRefreshEvidence -Directory $stateDirectory -Name 'output-native-original.json' -Record ([ordered]@{
+            & $writeEvidence -Directory $stateDirectory -Name 'output-native-original.json' -Record ([ordered]@{
                 schema = 1; task_id = $taskId; source_commit = $planValue.installer_commit; repository = 'mdaneri/Atlaso'
                 plan_sha256 = $planHash; path = $CreatedPath; native_identity = $OriginalIdentity
                 created_utc = [DateTimeOffset]::UtcNow.ToString('o'); cleanup_tool = 'scripts/cleanup-completed-task.ps1'
@@ -215,12 +229,13 @@ try {
     $intent = ($intentJson -join "`n") | ConvertFrom-Json -AsHashtable
     $jobName = 'Local\Atlaso-ISORefresh-' + $intent.intent_id
     $childPath = Join-Path $stateDirectory ($Phase + '-child.json')
+    $bootIdentity = Get-AtlasoWindowsBootIdentity
     $publisher = {
         param($ProcessJob)
-        Write-InstallationRefreshEvidence -Directory $stateDirectory -Name ($Phase + '-child.json') -Record ([ordered]@{
-            schema = 1; phase = $Phase; task_id = $taskId; plan_sha256 = $planHash; intent_id = $intent.intent_id
+        & $writeEvidence -Directory $stateDirectory -Name ($Phase + '-child.json') -Record ([ordered]@{
+            schema = 2; phase = $Phase; task_id = $taskId; plan_sha256 = $planHash; intent_id = $intent.intent_id
             pid = [int]$ProcessJob.RootProcess.Id; start_filetime_utc = $ProcessJob.RootProcess.StartTime.ToUniversalTime().ToFileTimeUtc()
-            job_name = $jobName; boot_identity = Get-AtlasoWindowsBootIdentity; deadline_utc = $intent.deadline_utc
+            job_name = $jobName; boot_identity = $bootIdentity; deadline_utc = $intent.deadline_utc; interpreter = $interpreter
         })
     }.GetNewClosure()
     $remaining = [Math]::Floor(([DateTimeOffset]::Parse($intent.deadline_utc) - [DateTimeOffset]::UtcNow).TotalSeconds)
@@ -260,6 +275,7 @@ try {
     $result | ConvertTo-Json -Compress
 }
 finally {
+    foreach ($pin in $interpreterPins) { $pin.Dispose() }
     if ($creationPins) { $creationPins.Dispose() }
     if ($outputPin) { $outputPin.Dispose() }
     if ($sourceContext -and $sourceContext.PSObject.Properties['CheckoutSourcePin']) { $sourceContext.CheckoutSourcePin.Dispose() }

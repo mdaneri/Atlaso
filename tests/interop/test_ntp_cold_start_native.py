@@ -20,7 +20,11 @@ TOKEN = "synthetic-form-token-not-for-receipt"
 
 
 def ntp_page(sources: list[dict[str, object]] | None = None) -> str:
-    """Build a server-rendered NTP form with unrelated settings to preserve."""
+    """Build a server-rendered NTP form with unrelated settings to preserve.
+
+    Args:
+        sources: Optional upstream source rows rendered into the form.
+    """
     if sources is None:
         sources = [
             {"id": "disabled-ntp", "source": "192.0.2.44", "enabled": False,
@@ -49,15 +53,32 @@ class Client:
     """Record the one local form read and autosave without external I/O."""
 
     def __init__(self, body: str):
+        """Initialize the fake form client.
+
+        Args:
+            body: HTML returned by the simulated NTP settings page.
+        """
         self.body = body
         self.requests: list[str] = []
         self.submissions: list[tuple[str, list[tuple[str, str]], bool]] = []
 
     def request(self, path: str) -> tuple[int, str]:
+        """Record and serve a local page request.
+
+        Args:
+            path: UI path requested by the fixture code.
+        """
         self.requests.append(path)
         return 200, self.body
 
     def json(self, path: str, fields: list[tuple[str, str]], *, autosave: bool) -> tuple[int, dict[str, bool]]:
+        """Record a simulated JSON form submission.
+
+        Args:
+            path: UI action receiving the submitted form.
+            fields: Encoded form fields submitted by the fixture code.
+            autosave: Whether the submission uses the autosave behavior.
+        """
         self.submissions.append((path, fields, autosave))
         return 200, {"valid": True}
 
@@ -70,7 +91,13 @@ class Client:
 def test_save_ntp_selects_only_the_exact_peer_and_preserves_existing_controls(
     mode: str, enabled: str, server_interface: str | None
 ) -> None:
-    """NTP-only autosave retains unrelated fields and disabled source metadata."""
+    """NTP-only autosave retains unrelated fields and disabled source metadata.
+
+    Args:
+        mode: Requested client or server operating mode.
+        enabled: Expected submitted service checkbox value.
+        server_interface: Expected listener interface, or ``None`` for client mode.
+    """
     client = Client(ntp_page())
 
     result = fixture.save_ntp(client, PEER, mode=mode)
@@ -128,6 +155,13 @@ class StatefulClient(Client):
     """Update the server-rendered source form after every accepted autosave."""
 
     def json(self, path: str, fields: list[tuple[str, str]], *, autosave: bool) -> tuple[int, dict[str, bool]]:
+        """Save the submission and render its sources on the next page read.
+
+        Args:
+            path: UI action receiving the submitted form.
+            fields: Encoded submitted form fields.
+            autosave: Whether the submission uses the autosave behavior.
+        """
         response = super().json(path, fields, autosave=autosave)
         saved = dict(fields)
         self.body = ntp_page(json.loads(saved["upstream_sources_json"]))
@@ -173,6 +207,11 @@ def test_save_ntp_real_then_negative_source_keeps_unique_stable_row_ids() -> Non
 def test_save_ntp_retries_generated_id_when_it_matches_a_retained_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Retry a generated source identifier that collides with a retained row.
+
+    Args:
+        monkeypatch: Replaces the ID generator with deterministic collision values.
+    """
     values = iter(("collision", "fresh"))
     monkeypatch.setattr(fixture.secrets, "token_hex", lambda _size: next(values))
     client = Client(ntp_page([
@@ -201,7 +240,12 @@ def test_save_ntp_retries_generated_id_when_it_matches_a_retained_row(
     ids=["hostname", "ipv6", "loopback", "unspecified", "multicast", "unsupported-mode"],
 )
 def test_save_ntp_rejects_invalid_mode_or_non_unicast_address_before_form_read(address: str, mode: str) -> None:
-    """Invalid endpoint or mode fails before reading or saving the UI form."""
+    """Invalid endpoint or mode fails before reading or saving the UI form.
+
+    Args:
+        address: Invalid, non-unicast, or unsupported endpoint value.
+        mode: Requested operating mode to validate.
+    """
     client = Client(ntp_page())
 
     with pytest.raises(fixture.Refusal):
@@ -212,7 +256,11 @@ def test_save_ntp_rejects_invalid_mode_or_non_unicast_address_before_form_read(a
 
 
 def native_status(**changes: object) -> dict[str, object]:
-    """Return the sanitized helper fields plus deliberately raw diagnostic text."""
+    """Return the sanitized helper fields plus deliberately raw diagnostic text.
+
+    Args:
+        **changes: Values that override the healthy default status payload.
+    """
     payload: dict[str, object] = {
         "mode": "ntp_client",
         "synchronization": {"state": "synchronized", "healthy": True,
@@ -238,9 +286,22 @@ def native_status(**changes: object) -> dict[str, object]:
 
 
 def fake_native_status(monkeypatch, payload: dict[str, object]) -> list[tuple[object, str, str]]:
+    """Replace the native status reader and record its arguments.
+
+    Args:
+        monkeypatch: Installs the local fake status reader.
+        payload: JSON-compatible status returned to the clock verifier.
+    """
     calls: list[tuple[object, str, str]] = []
 
     def sudo_read(session: object, command: str, password: str) -> str:
+        """Record a simulated privileged read and return the fixture payload.
+
+        Args:
+            session: Fake privileged session supplied by the verifier.
+            command: Fixed native status command requested by the verifier.
+            password: Synthetic privileged credential passed to the reader.
+        """
         calls.append((session, command, password))
         return json.dumps(payload)
 
@@ -252,7 +313,12 @@ def fake_native_status(monkeypatch, payload: dict[str, object]) -> list[tuple[ob
 def test_native_clock_requires_matching_synchronized_ntpd_and_returns_only_bounded_evidence(
     monkeypatch, mode: str
 ) -> None:
-    """Health requires selected real peer, exclusive daemon, and mode packet guard."""
+    """Health requires selected real peer, exclusive daemon, and mode packet guard.
+
+    Args:
+        monkeypatch: Replaces the native status command with a fixture payload.
+        mode: NTP client or server mode whose guard must be active.
+    """
     payload = native_status(mode=mode)
     if mode == "ntp_client":
         payload["client_packet_guard"] = {"active": True}
@@ -286,7 +352,12 @@ def test_native_clock_requires_matching_synchronized_ntpd_and_returns_only_bound
     ],
 )
 def test_native_clock_refuses_unsynchronized_or_unproven_native_state(monkeypatch, defect: str) -> None:
-    """Every native authority, selection, and packet-guard field must be proven."""
+    """Every native authority, selection, and packet-guard field must be proven.
+
+    Args:
+        monkeypatch: Replaces the native reader with the mutated fixture payload.
+        defect: Native health field to corrupt for this refusal case.
+    """
     payload = native_status()
     evidence = payload["synchronization_evidence"]
     controller = payload["selected_controller"]
@@ -357,12 +428,23 @@ class FakeTransport:
     topology_guard = None
 
     def __init__(self, *args: object):
+        """Capture constructor arguments without opening a network connection.
+
+        Args:
+            *args: Transport constructor values supplied by the orchestration.
+        """
         self.args = args
 
     def __enter__(self) -> "FakeTransport":
+        """Enter the no-network transport context."""
         return self
 
     def __exit__(self, *_exc: object) -> None:
+        """Exit the no-network transport context.
+
+        Args:
+            *_exc: Context-manager exception details, which are ignored.
+        """
         return None
 
 
@@ -370,15 +452,31 @@ class FakeApplianceSession:
     """Context-managed appliance transport placeholder with no SSH access."""
 
     def __init__(self, *_args: object):
+        """Create an appliance-session placeholder without opening SSH.
+
+        Args:
+            *_args: Session constructor values supplied by the orchestration.
+        """
         pass
 
     def __enter__(self) -> "FakeApplianceSession":
+        """Enter the no-SSH session context."""
         return self
 
     def __exit__(self, *_exc: object) -> None:
+        """Exit the no-SSH session context.
+
+        Args:
+            *_exc: Context-manager exception details, which are ignored.
+        """
         return None
 
     def command(self, _command: str) -> bytes:
+        """Return the placeholder CA bytes requested by the fixture.
+
+        Args:
+            _command: Remote command ignored by this no-SSH fake.
+        """
         return b"synthetic-ca-placeholder"
 
 
@@ -386,28 +484,56 @@ class FakeRunClient:
     """Minimal authenticated client fake used by the orchestration seam."""
 
     def __init__(self, *_args: object, **_kwargs: object):
+        """Create a local authenticated-client fake.
+
+        Args:
+            *_args: Positional constructor values consumed by the real client.
+            **_kwargs: Keyword constructor values consumed by the real client.
+        """
         self.login_calls: list[tuple[object, object]] = []
 
     def login(self, username: object, password: object) -> None:
+        """Record the simulated web login.
+
+        Args:
+            username: Appliance account supplied for web authentication.
+            password: Synthetic test credential supplied for authentication.
+        """
         self.login_calls.append((username, password))
 
     def tls_identity(self) -> dict[str, str]:
+        """Return a stable synthetic TLS identity."""
         return {"fingerprint": "sha256:stable-test-tls"}
 
     def interface(self, name: str) -> tuple[dict[str, str], dict[str, str]]:
+        """Return the synthetic management interface fields.
+
+        Args:
+            name: Interface requested by the orchestration.
+        """
         assert name == "eth0"
         return {"role": "management", "ipv4_method": "dhcp", "mac": "00:50:56:00:00:01"}, {}
 
 
 @pytest.fixture
 def fake_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, object]:
-    """Replace every network/native boundary while retaining real orchestration journals."""
+    """Replace every network/native boundary while retaining real orchestration journals.
+
+    Args:
+        monkeypatch: Installs local fakes at native and transport boundaries.
+        tmp_path: Isolated output directory for the orchestration journals.
+    """
     calls: dict[str, object] = {"submissions": [], "waits": [], "desired": [], "native_modes": [],
                                "packets": [], "applied": [], "initial": "unmanaged",
                                "output_root": tmp_path.resolve()}
 
     @contextmanager
     def watch(_plan: dict):
+        """Yield a stable synthetic topology and its no-op verifier.
+
+        Args:
+            _plan: Admitted plan intentionally unused by this boundary fake.
+        """
         yield {"sha256": "3" * 64}, lambda: None
 
     monkeypatch.setattr(fixture, "admit_plan", lambda _plan: {})
@@ -423,6 +549,12 @@ def fake_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, objec
     monkeypatch.setattr(fixture, "Client", FakeRunClient)
     baseline = {"role": "management", "ipv4_method": "dhcp", "mac": "00:50:56:00:00:01"}
     def prepare(_client: object, _plan: object) -> dict[str, str]:
+        """Return baseline interface fields after simulating peer selection.
+
+        Args:
+            _client: Fake authenticated client passed to baseline preparation.
+            _plan: Public fixture plan passed to baseline preparation.
+        """
         fixture.save_ntp(_client, PEER)
         return dict(baseline)
 
@@ -445,6 +577,13 @@ def fake_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, objec
                         calls["applied"].append(True) or calls["applied_values"].pop(0))
 
     def sudo_read(_session: object, command: str, _password: str) -> str:
+        """Serve synthetic native status and routing evidence.
+
+        Args:
+            _session: Fake privileged session supplied by the orchestration.
+            command: Fixed helper command whose status response is requested.
+            _password: Synthetic privileged credential, unused by the fake.
+        """
         if "ntpd status" in command:
             assert command == "/opt/atlaso/bin/atlaso-helper ntpd status --real"
             conflicts = {
@@ -463,6 +602,11 @@ def fake_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, objec
     calls.setdefault("statuses", ["succeeded", "succeeded", "failed"])
 
     def submit(_client: object) -> tuple[str, str]:
+        """Record one initialization submission and return its task reference.
+
+        Args:
+            _client: Fake authenticated client submitting the operation.
+        """
         submissions = calls["submissions"]
         index = len(submissions) + 1
         job = f"job-{index}"
@@ -470,6 +614,14 @@ def fake_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, objec
         return job, f"/tasks/{job}/status"
 
     def wait(_clients: list[object], _path: str, _username: str, _password: str) -> tuple[dict[str, str], object]:
+        """Return the next configured terminal status without network polling.
+
+        Args:
+            _clients: Fake clients available to the task poller.
+            _path: Task status path returned by the one submission.
+            _username: Synthetic account name used for polling.
+            _password: Synthetic web credential used for polling.
+        """
         waits = calls["waits"]
         index = len(waits)
         waits.append(index)
@@ -483,7 +635,12 @@ def fake_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, objec
 def test_run_executes_three_apply_phases_and_publishes_immutable_journals(
     tmp_path: Path, fake_run: dict[str, object],
 ) -> None:
-    """Cold, server, and failed candidate each submit once and retain terminal evidence."""
+    """Cold, server, and failed candidate each submit once and retain terminal evidence.
+
+    Args:
+        tmp_path: Isolated directory receiving the run's evidence journals.
+        fake_run: Installed boundary fakes and call records for the run.
+    """
     result = fixture.run(orchestration_plan(), tmp_path, "synthetic-test-credential")
 
     assert result["success"] is True
@@ -502,6 +659,12 @@ def test_run_executes_three_apply_phases_and_publishes_immutable_journals(
 
 
 def test_run_does_not_retry_a_failed_cold_apply(tmp_path: Path, fake_run: dict[str, object]) -> None:
+    """A failed first Apply is retained without another submission.
+
+    Args:
+        tmp_path: Isolated directory receiving the failed run journals.
+        fake_run: Installed boundary fakes and call records for the run.
+    """
     fake_run["statuses"] = ["failed", "succeeded", "failed"]
 
     with pytest.raises(fixture.Refusal, match="ntp_fixture_acceptance_failed_preserve_and_reconcile"):
@@ -516,10 +679,22 @@ def test_run_does_not_retry_a_failed_cold_apply(tmp_path: Path, fake_run: dict[s
 
 @pytest.mark.parametrize("boundary", ["topology", "peer", "appliance"])
 def test_context_exit_failure_cannot_publish_success(tmp_path, fake_run, monkeypatch, boundary):
-    """Final admission and transport teardown failures invalidate the retained result."""
+    """Final admission and transport teardown failures invalidate the retained result.
+
+    Args:
+        tmp_path: Isolated directory receiving the run journals.
+        fake_run: Installed boundary fakes and call records for the run.
+        monkeypatch: Replaces the selected context manager with a failing exit.
+        boundary: Context whose final verification or teardown is made to fail.
+    """
     if boundary == "topology":
         @contextmanager
         def failing_watch(_plan):
+            """Yield a topology and fail its final synchronous verification.
+
+            Args:
+                _plan: Admitted fixture plan unused by this failure fake.
+            """
             yield {"sha256": "3" * 64}, lambda: None
             raise fixture.Refusal("ntp_topology_observer_unverified")
 
@@ -528,6 +703,11 @@ def test_context_exit_failure_cannot_publish_success(tmp_path, fake_run, monkeyp
         target = FakeTransport if boundary == "peer" else FakeApplianceSession
 
         def fail_exit(self, *_exc):
+            """Fail transport teardown to prevent publishing success.
+
+            Args:
+                *_exc: Context-manager exception details, which are ignored.
+            """
             raise fixture.Refusal("native_context_exit_unverified")
 
         monkeypatch.setattr(target, "__exit__", fail_exit)
@@ -544,7 +724,13 @@ def test_context_exit_failure_cannot_publish_success(tmp_path, fake_run, monkeyp
 
 
 def test_first_global_apply_can_publish_its_applied_tls_leaf(tmp_path, fake_run, monkeypatch):
-    """Setup may publish a leaf; later NTP-only transitions must preserve it."""
+    """Setup may publish a leaf; later NTP-only transitions must preserve it.
+
+    Args:
+        tmp_path: Isolated directory receiving the run journals.
+        fake_run: Installed boundary fakes and call records for the run.
+        monkeypatch: Supplies the TLS leaf sequence observed at each phase.
+    """
     leaves = iter([{"fingerprint": "bootstrap"}, {"fingerprint": "applied"}, {"fingerprint": "applied"}])
     monkeypatch.setattr(FakeRunClient, "tls_identity", lambda _: next(leaves))
     result = fixture.run(orchestration_plan(), tmp_path, "synthetic-test-credential")
@@ -553,7 +739,13 @@ def test_first_global_apply_can_publish_its_applied_tls_leaf(tmp_path, fake_run,
 
 
 def test_ntp_only_tls_identity_drift_refuses_acceptance(tmp_path, fake_run, monkeypatch):
-    """The acceptance result cannot hide a later unexpected leaf replacement."""
+    """The acceptance result cannot hide a later unexpected leaf replacement.
+
+    Args:
+        tmp_path: Isolated directory receiving the failed run journals.
+        fake_run: Installed boundary fakes and call records for the run.
+        monkeypatch: Supplies a changed final TLS leaf.
+    """
     leaves = iter([{"fingerprint": "bootstrap"}, {"fingerprint": "applied"}, {"fingerprint": "changed"}])
     monkeypatch.setattr(FakeRunClient, "tls_identity", lambda _: next(leaves))
     with pytest.raises(fixture.Refusal, match="preserve_and_reconcile"):
@@ -562,7 +754,13 @@ def test_ntp_only_tls_identity_drift_refuses_acceptance(tmp_path, fake_run, monk
 
 
 def test_root_ssh_and_web_authentication_use_distinct_credentials(tmp_path, fake_run, monkeypatch):
-    """Root native reads use the root value while web Apply keeps administrator auth."""
+    """Root native reads use the root value while web Apply keeps administrator auth.
+
+    Args:
+        tmp_path: Isolated directory receiving the run journals.
+        fake_run: Installed boundary fakes and call records for the run.
+        monkeypatch: Observes the native and web authentication boundaries.
+    """
     plan = orchestration_plan()
     plan["appliance_user"] = "root"
     web = "synthetic-web-credential"
@@ -572,11 +770,23 @@ def test_root_ssh_and_web_authentication_use_distinct_credentials(tmp_path, fake
 
     class RootSession(FakeApplianceSession):
         def __init__(self, *args):
+            """Record the root session identity passed to the native transport.
+
+            Args:
+                *args: Positional transport arguments including user and password.
+            """
             authenticated.append((args[2], args[3]))
 
     original_read = fixture.sudo_read
 
     def read(session, command, password):
+        """Require the root secret for the privileged status read.
+
+        Args:
+            session: Fake session passed to the privileged command runner.
+            command: Fixed native status command requested by the run.
+            password: Privileged secret supplied to the status reader.
+        """
         assert password == root
         return original_read(session, command, password)
 
@@ -590,7 +800,13 @@ def test_root_ssh_and_web_authentication_use_distinct_credentials(tmp_path, fake
 
 
 def test_planned_web_identity_is_preserved_when_each_apply_session_expires(tmp_path, fake_run, monkeypatch):
-    """Real task reconciliation reauthenticates the selected user and keeps each terminal job."""
+    """Real task reconciliation reauthenticates the selected user and keeps each terminal job.
+
+    Args:
+        tmp_path: Isolated directory receiving the run journals.
+        fake_run: Installed boundary fakes and call records for the run.
+        monkeypatch: Simulates expired sessions and records reauthentication.
+    """
     import certificate_handoff_native as handoff
 
     plan = orchestration_plan()
@@ -600,6 +816,12 @@ def test_planned_web_identity_is_preserved_when_each_apply_session_expires(tmp_p
     polls = {}
 
     def poll(_client, path):
+        """Simulate a session expiry followed by a terminal task response.
+
+        Args:
+            _client: Fake authenticated client polling the task.
+            path: Task status path whose job identifier is extracted.
+        """
         job = path.split("/")[-2]
         polls[job] = polls.get(job, 0) + 1
         if polls[job] == 1:
@@ -626,9 +848,21 @@ def test_planned_web_identity_is_preserved_when_each_apply_session_expires(tmp_p
 def test_run_unknown_wait_preserves_submission_without_terminal_or_resubmission(
     tmp_path: Path, fake_run: dict[str, object], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """An unknown wait outcome retains submission evidence and never retries.
+
+    Args:
+        tmp_path: Isolated directory receiving the run journals.
+        fake_run: Installed boundary fakes and call records for the run.
+        monkeypatch: Replaces task waiting with an unclassified exception.
+    """
     secret = "synthetic-password-and-native-stderr-must-not-leak"
 
     def unknown_wait(*_args: object) -> tuple[dict[str, str], object]:
+        """Raise a secret-bearing error to check the public result stays sanitized.
+
+        Args:
+            *_args: Task wait arguments, unused by this failure fake.
+        """
         raise RuntimeError(secret)
 
     monkeypatch.setattr(fixture, "wait_task", unknown_wait)
@@ -647,6 +881,12 @@ def test_run_unknown_wait_preserves_submission_without_terminal_or_resubmission(
 def test_run_wrong_rollback_digest_never_claims_verified_restoration(
     tmp_path: Path, fake_run: dict[str, object],
 ) -> None:
+    """Reject a negative candidate when its rollback digest differs from baseline.
+
+    Args:
+        tmp_path: Isolated directory receiving the run journals.
+        fake_run: Installed boundary fakes and call records for the run.
+    """
     fake_run["applied_values"] = [
         {"sha256": "4" * 64, "transaction_phase": "verified"},
         {"sha256": "5" * 64, "transaction_phase": "verified"},
@@ -663,6 +903,12 @@ def test_run_wrong_rollback_digest_never_claims_verified_restoration(
 def test_run_refuses_an_existing_attempt_without_overwriting_it(
     tmp_path: Path, fake_run: dict[str, object],
 ) -> None:
+    """Preserve an existing attempt journal and refuse to reuse its namespace.
+
+    Args:
+        tmp_path: Isolated directory containing the pre-existing journal.
+        fake_run: Installed boundary fakes and call records for the run.
+    """
     prior = tmp_path / "ntp-native-started.json"
     prior.write_text('{"original":"keep"}\n')
     before = prior.read_bytes()
@@ -677,7 +923,12 @@ def test_run_refuses_an_existing_attempt_without_overwriting_it(
 def test_run_refuses_a_result_root_outside_original_ownership(
     tmp_path: Path, fake_run: dict[str, object],
 ) -> None:
-    """The journal namespace must resolve to the originally receipted lab root."""
+    """The journal namespace must resolve to the originally receipted lab root.
+
+    Args:
+        tmp_path: Isolated directory used to form an unowned output location.
+        fake_run: Installed boundary fakes and call records for the run.
+    """
     wrong_root = tmp_path / "other-output-root"
 
     with pytest.raises(fixture.Refusal, match="ntp_fixture_output_original_ownership_mismatch"):
@@ -691,6 +942,13 @@ def test_run_refuses_a_result_root_outside_original_ownership(
 def test_run_refuses_an_active_or_unknown_initial_controller_before_any_apply(
     tmp_path: Path, fake_run: dict[str, object], initial: str,
 ) -> None:
+    """Refuse an unsafe or unknown clock state before the first Apply.
+
+    Args:
+        tmp_path: Isolated directory receiving the admission failure result.
+        fake_run: Installed boundary fakes and call records for the run.
+        initial: Initial controller-state category returned by the fake helper.
+    """
     fake_run["initial"] = initial
 
     with pytest.raises(fixture.Refusal, match="ntp_fixture_acceptance_failed_preserve_and_reconcile"):
@@ -716,7 +974,13 @@ def test_run_refuses_an_active_or_unknown_initial_controller_before_any_apply(
 def test_admit_plan_rejects_malformed_identity_before_receipt_access(
     monkeypatch: pytest.MonkeyPatch, field: str, value: object,
 ) -> None:
-    """Reject incompatible source/task identity before opening any receipt."""
+    """Reject incompatible source/task identity before opening any receipt.
+
+    Args:
+        monkeypatch: Fails if admission attempts to open a receipt prematurely.
+        field: Plan identity field replaced with an invalid value.
+        value: Invalid field value used for this parametrized refusal case.
+    """
     plan = {
         "schema": 1, "kind": "ntp-cold-start-native-plan", "trust_model": "trusted-host", "task_id": "test-task-ntp",
         "repository": "mdaneri/Atlaso", "pr": 1121, "source_commit": "1" * 40,

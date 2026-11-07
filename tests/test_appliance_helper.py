@@ -21032,6 +21032,11 @@ def test_ntpd_apply_wait_failure_restores_nts_server_assets_before_rollback(
     wait_count = 0
 
     def wait_for_sync(_timeout=60) -> None:
+        """Record the candidate synchronization wait before simulating rollback.
+
+        Args:
+            _timeout: Synchronization deadline passed to the mocked candidate wait.
+        """
         nonlocal wait_count, candidate_wait_failed
         wait_count += 1
         if wait_count == 1:
@@ -21257,6 +21262,11 @@ def test_ntpd_first_nts_server_apply_failure_restores_captured_roots_before_prio
     wait_count = 0
 
     def fail_candidate_after_material_creation(_timeout=60) -> None:
+        """Create candidate-only NTS assets, then fail synchronization.
+
+        Args:
+            _timeout: Synchronization deadline passed to the mocked candidate wait.
+        """
         nonlocal wait_count, candidate_wait_failed
         wait_count += 1
         if wait_count == 1:
@@ -21392,6 +21402,11 @@ def test_ntpd_interrupted_first_nts_server_apply_retains_nonsecret_rollback_barr
     monkeypatch.setattr(helper, "_ntpd_begin_transaction", inspect_pre_mutation_barrier)
 
     def simulate_process_death(_timeout=60) -> None:
+        """Leave candidate mutation evidence and simulate helper termination.
+
+        Args:
+            _timeout: Synchronization deadline passed to the mocked candidate wait.
+        """
         assert transaction_created_before_candidate
         candidate_cookie = cookie_dir / "candidate" / "cookie.key"
         candidate_cookie.parent.mkdir(parents=True)

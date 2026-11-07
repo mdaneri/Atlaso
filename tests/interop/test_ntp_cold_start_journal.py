@@ -14,7 +14,11 @@ FAILURE = "NTPsec initial clock acquisition failed (TimeoutExpired); Apply must 
 
 
 def test_acquisition_failure_accepts_only_one_new_original_boot_event(monkeypatch):
-    """The failure proof excludes old journal lines and all arbitrary native text."""
+    """The failure proof excludes old journal lines and all arbitrary native text.
+
+    Args:
+        monkeypatch: Patcher used to supply the bounded synthetic journal read.
+    """
     rows = [
         {"_BOOT_ID": BOOT, "__MONOTONIC_TIMESTAMP": "10", "MESSAGE": FAILURE},
         {"_BOOT_ID": BOOT, "__MONOTONIC_TIMESTAMP": "21", "MESSAGE": FAILURE},
@@ -28,7 +32,12 @@ def test_acquisition_failure_accepts_only_one_new_original_boot_event(monkeypatc
 
 @pytest.mark.parametrize("events", [[], [0], [2], [1, 1]], ids=["missing", "old", "other-boot", "multiple"])
 def test_acquisition_failure_refuses_missing_old_or_ambiguous_events(monkeypatch, events):
-    """A failed master task alone cannot establish that NTP caused its failure."""
+    """A failed master task alone cannot establish that NTP caused its failure.
+
+    Args:
+        monkeypatch: Patcher used to supply selected journal rows.
+        events: Indices selecting missing, old, foreign-boot, or duplicate rows.
+    """
     choices = [
         {"_BOOT_ID": BOOT, "__MONOTONIC_TIMESTAMP": "10", "MESSAGE": FAILURE},
         {"_BOOT_ID": BOOT, "__MONOTONIC_TIMESTAMP": "21", "MESSAGE": FAILURE},
@@ -40,7 +49,11 @@ def test_acquisition_failure_refuses_missing_old_or_ambiguous_events(monkeypatch
 
 
 def test_acquisition_observes_real_step_and_slew_without_treating_them_as_health(monkeypatch):
-    """Only source-defined fixed native messages become bounded observations."""
+    """Only source-defined fixed native messages become bounded observations.
+
+    Args:
+        monkeypatch: Patcher used to supply bounded journal observations.
+    """
     messages = ["CLOCK: time set +2.745000 s", "CLOCK: time slew -0.002100 s", "private native data"]
     rows = [{"_BOOT_ID": BOOT, "__MONOTONIC_TIMESTAMP": "21", "MESSAGE": value} for value in messages]
     monkeypatch.setattr(fixture, "sudo_read", lambda *_: b"\n".join(json.dumps(row).encode() for row in rows))

@@ -25,7 +25,13 @@ def load_helper_module():
 
 
 def probe(stdout: str, *, returncode: int = 0, stderr: str = "") -> dict[str, object]:
-    """Build one ntpq process result without introducing host clock state."""
+    """Build one ntpq process result without introducing host clock state.
+
+    Args:
+        stdout: Synthetic standard output from the local ntpq query.
+        returncode: Process exit status attached to the query result.
+        stderr: Synthetic error output used to exercise query-failure handling.
+    """
     return {"returncode": returncode, "stdout": stdout, "stderr": stderr}
 
 
@@ -89,7 +95,13 @@ HEALTHY_PEER = "*192.0.2.1 .GPS. 1 u 10 64 377 1.0 0.0 0.0\n"
 def test_synchronization_evidence_requires_successful_flags_and_a_real_selected_peer(
     variables: dict[str, object], peers: dict[str, object], expected_query: str
 ) -> None:
-    """Do not treat zero exit, text flags, stale events, or an unselected row as health."""
+    """Do not treat zero exit, text flags, stale events, or an unselected row as health.
+
+    Args:
+        variables: Result of the system-variable query.
+        peers: Result of the peer-list query.
+        expected_query: Sanitized query-failure category expected for the sample pair.
+    """
     evidence = load_helper_module()._ntpd_synchronization_evidence(variables, peers)
 
     assert evidence["healthy"] is False
@@ -116,7 +128,11 @@ def test_synchronization_evidence_accepts_a_selected_reachable_numeric_ipv6_peer
 
 @pytest.mark.parametrize("peer_type", ["8", "0"], ids=["nts-with-cookies", "nts-without-cookies"])
 def test_synchronization_evidence_accepts_nts_peer_cookie_count_type(peer_type: str) -> None:
-    """NTPsec displays an NTS peer's cookie count in the peer type column."""
+    """NTPsec displays an NTS peer's cookie count in the peer type column.
+
+    Args:
+        peer_type: NTPsec peer-type token representing the reported cookie count.
+    """
     peer = probe(f"*192.0.2.1 .GPS. 2 {peer_type} 10 64 377 1.0 0.0 0.0\n")
     evidence = load_helper_module()._ntpd_synchronization_evidence(probe(HEALTHY_VARIABLES), peer)
 
@@ -157,7 +173,11 @@ def test_synchronization_evidence_rejects_nonzero_query_with_healthy_stdout() ->
 
 
 def test_wait_uses_numeric_local_query_and_bounds_the_last_probe_to_remaining_time(monkeypatch) -> None:
-    """The combined status/peer probe uses the remaining portion of the 60-second guard."""
+    """The combined status/peer probe uses the remaining portion of the 60-second guard.
+
+    Args:
+        monkeypatch: Patcher for ntpq lookup, monotonic time, sleep, and query execution.
+    """
     helper = load_helper_module()
     now = [0.0]
     calls: list[tuple[list[str], float]] = []
@@ -166,6 +186,12 @@ def test_wait_uses_numeric_local_query_and_bounds_the_last_probe_to_remaining_ti
     monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
 
     def run(command: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
+        """Return a synthetic process result for the bounded query.
+
+        Args:
+            command: Bounded ntpd or ntpq invocation being stubbed.
+            timeout: Maximum runtime allowed for the synthetic query.
+        """
         calls.append((command, timeout))
         return subprocess.CompletedProcess(command, 0, HEALTHY_VARIABLES + HEALTHY_PEER, "")
 
@@ -179,7 +205,11 @@ def test_wait_uses_numeric_local_query_and_bounds_the_last_probe_to_remaining_ti
 
 
 def test_wait_timeout_retains_only_distinct_sanitized_state(monkeypatch) -> None:
-    """Failure evidence identifies state changes without including raw query payloads."""
+    """Failure evidence identifies state changes without including raw query payloads.
+
+    Args:
+        monkeypatch: Patcher for the clock, ntpq lookup, sleep, and query results.
+    """
     helper = load_helper_module()
     now = [0.0]
     samples = [
@@ -191,11 +221,22 @@ def test_wait_timeout_retains_only_distinct_sanitized_state(monkeypatch) -> None
     monkeypatch.setattr(helper.time, "monotonic", lambda: now[0])
 
     def sleep(seconds: float) -> None:
+        """Advance the test clock without waiting in real time.
+
+        Args:
+            seconds: Interval to add to the mocked monotonic clock.
+        """
         now[0] += seconds
 
     monkeypatch.setattr(helper.time, "sleep", sleep)
 
     def run(command: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
+        """Return a synthetic process result for the bounded query.
+
+        Args:
+            command: Combined local status and peer query being stubbed.
+            timeout: Remaining runtime budget supplied to the query process.
+        """
         del timeout
         index = min(calls[0], len(samples) - 1)
         calls[0] += 1
@@ -216,7 +257,11 @@ def test_wait_timeout_retains_only_distinct_sanitized_state(monkeypatch) -> None
 
 
 def test_wait_timeout_keeps_only_last_four_distinct_states(monkeypatch) -> None:
-    """A changing status inventory stays bounded and retains its latest sample."""
+    """A changing status inventory stays bounded and retains its latest sample.
+
+    Args:
+        monkeypatch: Patcher for the clock, ntpq lookup, sleep, and query results.
+    """
     helper = load_helper_module()
     now = [0.0]
     samples = [
@@ -228,11 +273,22 @@ def test_wait_timeout_keeps_only_last_four_distinct_states(monkeypatch) -> None:
     monkeypatch.setattr(helper.time, "monotonic", lambda: now[0])
 
     def sleep(seconds: float) -> None:
+        """Advance the test clock without waiting in real time.
+
+        Args:
+            seconds: Interval to add to the mocked monotonic clock.
+        """
         now[0] += seconds
 
     monkeypatch.setattr(helper.time, "sleep", sleep)
 
     def run(command: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
+        """Return a synthetic process result for the bounded query.
+
+        Args:
+            command: Combined local status and peer query being stubbed.
+            timeout: Remaining runtime budget supplied to the query process.
+        """
         del timeout
         variables, secret = samples[min(calls[0], len(samples) - 1)]
         calls[0] += 1
@@ -252,7 +308,14 @@ def test_wait_timeout_keeps_only_last_four_distinct_states(monkeypatch) -> None:
 
 
 def configure_transition_mocks(monkeypatch, helper, *, start=None, wait=None) -> list[str]:
-    """Replace system operations while retaining Apply transition ordering."""
+    """Replace system operations while retaining Apply transition ordering.
+
+    Args:
+        monkeypatch: Patcher for the helper's system-operation functions.
+        helper: Loaded appliance helper module whose operations are replaced.
+        start: Optional replacement for persistent ntpd service startup.
+        wait: Optional replacement for synchronization waiting.
+    """
     operations: list[str] = []
     monkeypatch.setattr(helper, "_ntpd_stop_service", lambda unit: operations.append(f"stop:{unit}"))
     monkeypatch.setattr(helper, "_ntpd_set_vmware_timesync", lambda enabled: operations.append(f"vmware:{enabled}"))
@@ -267,11 +330,22 @@ def configure_transition_mocks(monkeypatch, helper, *, start=None, wait=None) ->
 
 
 def test_transition_subtracts_initialization_time_from_the_existing_sync_budget(monkeypatch, tmp_path) -> None:
-    """A slower one-shot initializer consumes the same 60-second synchronization deadline."""
+    """A slower one-shot initializer consumes the same 60-second synchronization deadline.
+
+    Args:
+        monkeypatch: Patcher used to advance monotonic time during service startup.
+        tmp_path: Temporary directory for the candidate NTP configuration path.
+    """
     helper = load_helper_module()
     now = [0.0]
 
     def start(_unit: str, **_kwargs: object) -> None:
+        """Record the mocked service start and its elapsed startup time.
+
+        Args:
+            _unit: Systemd unit requested by the transition.
+            **_kwargs: Optional bounded startup arguments passed to the helper.
+        """
         operations.append("start")
         now[0] = 19.5
 
@@ -285,10 +359,20 @@ def test_transition_subtracts_initialization_time_from_the_existing_sync_budget(
 
 
 def test_transition_does_not_checkpoint_when_candidate_sync_fails(monkeypatch, tmp_path) -> None:
-    """Failed candidate synchronization cannot advance the verified clock checkpoint."""
+    """Failed candidate synchronization cannot advance the verified clock checkpoint.
+
+    Args:
+        monkeypatch: Patcher used to make candidate synchronization fail.
+        tmp_path: Temporary directory for the candidate NTP configuration path.
+    """
     helper = load_helper_module()
 
     def fail(_timeout: float) -> None:
+        """Fail the candidate synchronization wait.
+
+        Args:
+            _timeout: Remaining synchronization budget passed by the transition.
+        """
         raise RuntimeError("NTPsec candidate remains unsynchronized")
 
     operations = configure_transition_mocks(monkeypatch, helper, wait=fail)
@@ -301,7 +385,12 @@ def test_transition_does_not_checkpoint_when_candidate_sync_fails(monkeypatch, t
 
 
 def test_transition_does_not_checkpoint_when_systemd_start_fails(monkeypatch, tmp_path) -> None:
-    """A failed bounded systemctl start stops before synchronization or checkpoint."""
+    """A failed bounded systemctl start stops before synchronization or checkpoint.
+
+    Args:
+        monkeypatch: Patcher used to inspect and fail the systemctl start operation.
+        tmp_path: Temporary directory for the candidate NTP configuration path.
+    """
     helper = load_helper_module()
     start_service = helper._ntpd_start_service
     operations = configure_transition_mocks(
@@ -313,6 +402,13 @@ def test_transition_does_not_checkpoint_when_systemd_start_fails(monkeypatch, tm
     monkeypatch.setattr(helper, "_ntpd_read_transaction", lambda: None)
 
     def run_checked(command: list[str], _description: str, **kwargs: object) -> None:
+        """Return a bounded synthetic systemd process result.
+
+        Args:
+            command: Bounded systemctl command being stubbed.
+            _description: Fixed operation description supplied by the helper.
+            **kwargs: Optional bounded process arguments supplied by the helper.
+        """
         checked.append((command, kwargs))
         if command[:2] == ["systemctl", "start"]:
             raise RuntimeError("systemctl start failed")
@@ -331,7 +427,12 @@ def test_transition_does_not_checkpoint_when_systemd_start_fails(monkeypatch, tm
 
 
 def test_ntpd_service_owns_one_shot_initialization_before_persistent_daemon(monkeypatch, tmp_path) -> None:
-    """Guarded initialization runs before persistent ntpd in its own cgroup."""
+    """Guarded initialization runs before persistent ntpd in its own cgroup.
+
+    Args:
+        monkeypatch: Patcher for service paths and bounded system-operation calls.
+        tmp_path: Temporary root for generated service unit files.
+    """
     helper = load_helper_module()
     monkeypatch.setattr(helper, "FIREWALL_SERVICE_PATH", tmp_path / "missing-firewall.service")
     monkeypatch.setattr(helper, "NTP_GUARD_SERVICE_PATH", tmp_path / "atlaso-time-sync-guard.service")
@@ -363,7 +464,19 @@ def configure_initializer(
     q_returncode=0,
     q_error=None,
 ):
-    """Mock every process and filesystem dependency used by the clock initializer."""
+    """Mock every process and filesystem dependency used by the clock initializer.
+
+    Args:
+        monkeypatch: Patcher for helper constants, process calls, and owner checks.
+        helper: Loaded appliance helper module whose dependencies are replaced.
+        tmp_path: Temporary directory for the managed candidate NTP config.
+        mode: Applied time mode returned by the helper state reader.
+        transaction: Optional prepared Apply ownership record.
+        control_pid: Optional systemd ControlPID value returned by the mocked query.
+        owner_alive: Boolean or predicate result for the Apply transaction owner check.
+        q_returncode: Exit status returned by the one-shot ntpd query.
+        q_error: Optional exception raised by the one-shot ntpd query.
+    """
     config = tmp_path / "ntp.conf"
     config.write_text("managed NTP fixture", encoding="utf-8")
     monkeypatch.setattr(helper, "NTP_CONFIG_PATH", config)
@@ -375,11 +488,24 @@ def configure_initializer(
     q_calls: list[list[str]] = []
 
     def run_checked(command: list[str], _description: str, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Return a bounded synthetic systemd process result.
+
+        Args:
+            command: Bounded process command used to query systemd ownership.
+            _description: Fixed operation description supplied by the helper.
+            **_kwargs: Optional bounded process arguments supplied by the helper.
+        """
         control_calls.append(command)
         stdout = str(helper.os.getpid()) if control_pid is None else control_pid
         return subprocess.CompletedProcess(command, 0, stdout, "")
 
     def run(command: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
+        """Return a synthetic process result for the bounded query.
+
+        Args:
+            command: One-shot ntpd query command being stubbed.
+            timeout: Maximum runtime allowed for the query.
+        """
         del timeout
         q_calls.append(command)
         if q_error is not None:
@@ -392,7 +518,12 @@ def configure_initializer(
 
 
 def test_initialize_clock_refuses_a_different_systemd_control_pid(monkeypatch, tmp_path) -> None:
-    """Only the helper process systemd launched as ControlPID may run ntpd -q."""
+    """Only the helper process systemd launched as ControlPID may run ntpd -q.
+
+    Args:
+        monkeypatch: Patcher used by the clock-initializer dependency fixture.
+        tmp_path: Temporary directory for the managed candidate NTP config.
+    """
     helper = load_helper_module()
     _control_calls, q_calls = configure_initializer(
         monkeypatch, helper, tmp_path, control_pid="999999"
@@ -413,7 +544,15 @@ def test_initialize_clock_refuses_a_different_systemd_control_pid(monkeypatch, t
 def test_initialize_clock_refuses_wrong_mode_or_dead_apply_owner(
     monkeypatch, tmp_path, mode: str, transaction: dict[str, object] | None, owner_alive
 ) -> None:
-    """Mode or transaction ownership failures stop before the one-shot command."""
+    """Mode or transaction ownership failures stop before the one-shot command.
+
+    Args:
+        monkeypatch: Patcher used by the clock-initializer dependency fixture.
+        tmp_path: Temporary directory for the managed candidate NTP config.
+        mode: Applied time mode presented to the initializer.
+        transaction: Optional candidate Apply transaction record.
+        owner_alive: Result controlling whether the transaction owner is alive.
+    """
     helper = load_helper_module()
     _control_calls, q_calls = configure_initializer(
         monkeypatch, helper, tmp_path, mode=mode, transaction=transaction, owner_alive=owner_alive
@@ -424,7 +563,12 @@ def test_initialize_clock_refuses_wrong_mode_or_dead_apply_owner(
 
 
 def test_initialize_clock_zero_exit_does_not_checkpoint_or_verify_health(monkeypatch, tmp_path) -> None:
-    """One-shot success only permits systemd to proceed to persistent ntpd."""
+    """One-shot success only permits systemd to proceed to persistent ntpd.
+
+    Args:
+        monkeypatch: Patcher used by the clock-initializer dependency fixture.
+        tmp_path: Temporary directory for the managed candidate NTP config.
+    """
     helper = load_helper_module()
     _control_calls, q_calls = configure_initializer(monkeypatch, helper, tmp_path)
     checkpoints: list[str] = []
@@ -439,7 +583,12 @@ def test_initialize_clock_zero_exit_does_not_checkpoint_or_verify_health(monkeyp
 
 
 def test_initialize_clock_apply_failure_prevents_candidate_daemon_start(monkeypatch, tmp_path) -> None:
-    """An Apply-owned acquisition failure returns nonzero so ExecStart cannot run."""
+    """An Apply-owned acquisition failure returns nonzero so ExecStart cannot run.
+
+    Args:
+        monkeypatch: Patcher used by the clock-initializer dependency fixture.
+        tmp_path: Temporary directory for the managed candidate NTP config.
+    """
     helper = load_helper_module()
     transaction = {"phase": "prepared", "owner": "candidate"}
     _control_calls, q_calls = configure_initializer(
@@ -471,7 +620,16 @@ def test_initialize_clock_apply_failure_prevents_candidate_daemon_start(monkeypa
 def test_initialize_clock_boot_failure_allows_persistent_recovery_without_health(
     monkeypatch, tmp_path, capsys, q_returncode: int, q_error: Exception | None, diagnostic: str
 ) -> None:
-    """Without a prepared Apply, acquisition failure still starts polling ntpd."""
+    """Without a prepared Apply, acquisition failure still starts polling ntpd.
+
+    Args:
+        monkeypatch: Patcher for query, checkpoint, and health-wait operations.
+        tmp_path: Temporary directory for the managed candidate NTP config.
+        capsys: Capture fixture used to inspect the sanitized failure diagnostic.
+        q_returncode: Exit status returned by the one-shot ntpd query.
+        q_error: Optional exception raised by the one-shot ntpd query.
+        diagnostic: Fixed diagnostic text expected for the query failure.
+    """
     helper = load_helper_module()
     _control_calls, q_calls = configure_initializer(
         monkeypatch, helper, tmp_path, q_returncode=q_returncode, q_error=q_error
@@ -491,7 +649,12 @@ def test_initialize_clock_boot_failure_allows_persistent_recovery_without_health
 def test_initialize_clock_refuses_candidate_if_owner_dies_during_successful_query(
     monkeypatch, tmp_path
 ) -> None:
-    """An Apply that ends during -q cannot hand its config to persistent ntpd."""
+    """An Apply that ends during -q cannot hand its config to persistent ntpd.
+
+    Args:
+        monkeypatch: Patcher for transaction ownership and process operations.
+        tmp_path: Temporary directory for the managed candidate NTP config.
+    """
     helper = load_helper_module()
     alive = iter((True, False))
     transaction = {"phase": "prepared", "owner": "candidate"}

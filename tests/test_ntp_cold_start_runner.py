@@ -13,7 +13,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.mark.parametrize(("plan_only", "cleanup", "admitted"), [(True, True, True), (False, True, False), (False, False, True)])
 def test_ntp_cleanup_gate_distinguishes_plan_only_from_a_live_retained_lab(plan_only, cleanup, admitted):
-    """A default wrapper cleanup flag must not block a resource-free plan."""
+    """A default wrapper cleanup flag must not block a resource-free plan.
+
+    Args:
+        plan_only: Whether the candidate invocation is a resource-free plan.
+        cleanup: Wrapper cleanup option supplied to the runner.
+        admitted: Whether a retained live lab passed cleanup ownership admission.
+    """
     pwsh = shutil.which("pwsh")
     if not pwsh:
         pytest.skip("PowerShell is required for the executable runner guard check")
@@ -480,7 +486,11 @@ function Scenario {
 
 
 def test_ntp_post_tools_restart_is_seed_bound_single_use_and_precedes_existing_readiness(tmp_path: Path):
-    """Execute the real NTP restart path and ownership/seed validators without vmrun."""
+    """Execute the real NTP restart path and ownership/seed validators without vmrun.
+
+    Args:
+        tmp_path: Pytest-owned temporary root for synthetic ownership and seed receipts.
+    """
     pwsh = shutil.which("pwsh")
     if os.name != "nt" or not pwsh:
         pytest.skip("Windows ownership primitives and PowerShell are required for the bootstrap receipt check")
