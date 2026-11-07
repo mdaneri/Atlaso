@@ -289,7 +289,8 @@ def test_firewall_settings_autosave_updates_desired_state_preview(client):
     assert disabled_payload["enabled"] is False
     assert disabled_payload["valid"] is True
     assert "Atlaso firewall desired state is disabled" in disabled_payload["config_preview"]
-    assert "table inet atlaso" not in disabled_payload["config_preview"]
+    assert "table inet atlaso {" not in disabled_payload["config_preview"]
+    assert "table inet atlaso_ipv4ll {" in disabled_payload["config_preview"]
 
     enabled = client.post(
         "/firewall/settings",

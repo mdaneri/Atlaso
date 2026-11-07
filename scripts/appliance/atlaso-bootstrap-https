@@ -16,8 +16,11 @@ import sys
 import tempfile
 import time
 from datetime import datetime, timezone
+from functools import partial
 from ipaddress import ip_interface
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 from cryptography import x509
 from cryptography.exceptions import UnsupportedAlgorithm
@@ -55,15 +58,35 @@ from atlaso.app.services.networking import (
     sync_host_physical_interfaces,
     verify_native_management_vlans,
 )
-from atlaso.app.ui import (
-    ca_managed_certificate_paths,
-    ensure_ca_state,
-    load_appliance_apply_baselines,
-    make_appliance_apply_unit,
-    network_management_paths,
-    redact_config_preview,
-    update_appliance_apply_baselines,
-)
+
+
+def _ui_functions() -> ModuleType:
+    """Load UI publication helpers only for a transition that needs them."""
+    from atlaso.app import ui
+
+    return ui
+
+
+def _ui_call(name: str, *args: Any, **kwargs: Any) -> Any:
+    """Defer the large UI/schema import during marker-only observer heartbeats.
+
+    Args:
+        name: Fixed helper name selected by this module's bindings below.
+        *args: Existing helper positional inputs.
+        **kwargs: Existing helper keyword inputs.
+    """
+    return getattr(_ui_functions(), name)(*args, **kwargs)
+
+
+# Keep the existing callable surface for bootstrap/recovery consumers. The
+# periodic observer's unchanged publication needs none of the UI/schema graph.
+ca_managed_certificate_paths = partial(_ui_call, "ca_managed_certificate_paths")
+ensure_ca_state = partial(_ui_call, "ensure_ca_state")
+load_appliance_apply_baselines = partial(_ui_call, "load_appliance_apply_baselines")
+make_appliance_apply_unit = partial(_ui_call, "make_appliance_apply_unit")
+network_management_paths = partial(_ui_call, "network_management_paths")
+redact_config_preview = partial(_ui_call, "redact_config_preview")
+update_appliance_apply_baselines = partial(_ui_call, "update_appliance_apply_baselines")
 
 CONSOLE_PUBLICATION_DIRECTORY = Path("/run/atlaso-console-recovery")
 ENV_PATH = Path("/var/lib/atlaso/apply/ca/first-boot-management.env")
@@ -1017,11 +1040,13 @@ def refresh_completed_management_certificate(network_job_id: str) -> int:
         return 0
 
 
-def main(network_job_id: str | None = None) -> int:
+def main(network_job_id: str | None = None, *, completed_boot_admission: bool = False) -> int:
     """Run the command-line entry point.
 
     Args:
         network_job_id: Completed console Network task binding certificate recovery.
+        completed_boot_admission: Admit a previously completed systemd boot without
+            requiring old dynamic listeners to bind before the backend can start.
     """
     network_job_id = network_job_id or os.environ.get("ATLASO_CONSOLE_NETWORK_JOB_ID")
     if network_job_id is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", network_job_id):
@@ -1041,13 +1066,20 @@ def main(network_job_id: str | None = None) -> int:
         if nginx is None:
             print("nginx is unavailable; completed first-boot HTTPS state cannot be validated")
             return 2
-        validation = run([nginx, "-t"])
-        if validation.stdout:
-            print(validation.stdout, end="")
-        if validation.stderr:
-            print(validation.stderr, end="")
-        if validation.returncode != 0:
-            return validation.returncode
+        if not completed_boot_admission:
+            validation = run([nginx, "-t"])
+            if validation.stdout:
+                print(validation.stdout, end="")
+            if validation.stderr:
+                print(validation.stderr, end="")
+            if validation.returncode != 0:
+                return validation.returncode
+        # A former DHCP listener can be unbindable after a lease change or
+        # IPv4LL acquisition. Blocking this completed boot would also block
+        # atlaso.service, whose upstream the dynamic publisher needs. This
+        # admits only the already completed artifacts and root proof below;
+        # nginx.service still validates its configuration, and the observer
+        # retains fresh native/TLS admission and atomic listener activation.
         try:
             publish_first_boot_stage("https-development-root-proof")
             published = publish_development_root_ca_import_proof()
@@ -1062,6 +1094,9 @@ def main(network_job_id: str | None = None) -> int:
         publish_first_boot_stage("https-development-root-proof-complete")
         return 0
 
+    # Full bootstrap needs UI publication helpers; load them before admitting a
+    # writer rather than adding their cold import to the database lock interval.
+    _ui_functions()
     if network_job_id is None:
         init_db()
     development_root_fingerprint = ""
@@ -1210,6 +1245,8 @@ def main(network_job_id: str | None = None) -> int:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--completed-boot-admission"]:
+        raise SystemExit(main(completed_boot_admission=True))
     if sys.argv[1:] == ["--verify-imported-development-root"]:
         try:
             verified = verify_imported_development_root(sys.stdin.read(32769))

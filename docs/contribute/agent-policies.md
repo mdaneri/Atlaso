@@ -1082,6 +1082,15 @@ preserved with their affected subsystem below. Keep new requirements at their to
   OVF export requires an explicit proven source VMX; exported product identity, deployed-appliance names, and immutable
   release asset names remain canonical and never inherit a transient pull-request number.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
+- DHCPv4 IPv4LL fallback defaults on through one persisted global setting. Native networkd owns allocation, mandatory
+  conflict checking, retry and withdrawal; never inject addresses or enable no-carrier assignment. Dedicated-management
+  setup admits only complete native assigned-address evidence pinned to the applied MAC and fallback policy. Keep APIPA
+  outside generic service/DNS inventory, restrict its nginx paths and client sources, and retain a link-local forward
+  drop even with the ordinary firewall disabled. A root observer may refresh only the applied management leaf/listeners
+  after CA-root, writer-lock and active-Apply checks, then acknowledge only the verified publication. Preserve applied
+  hostname, ports, destinations, unrelated CA leaves and pending desired intent. Unknown observations age out the public
+  receipt without authorizing retirement; known carrier loss or withdrawal retires only the owned dynamic listener.
+  Native no-DHCP acceptance still requires the VM lifecycle and independent certificate address-control gates.
 - The tty1 console service enables privileged systemd helper execution, matching the worker and preserving its
   root-private PowerShell environment for Appliance Settings.
 - A successful tty1 management-network correction must explicitly apply Network and Firewall from the corrected state,

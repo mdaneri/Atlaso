@@ -330,6 +330,7 @@ class ConsoleStatus:
         maintenance_isolation: Maintenance isolation maintained by this consolestatus.
         services: Services maintained by this consolestatus.
         urls: Urls maintained by this consolestatus.
+        ipv4_acquisition: Current carrier-aware DHCPv4/fallback state.
     """
     hostname: str
     release: str
@@ -352,6 +353,7 @@ class ConsoleStatus:
     maintenance_isolation: bool
     services: tuple[ServiceStatus, ...]
     urls: tuple[str, ...]
+    ipv4_acquisition: str = ""
 
 
 @dataclass(frozen=True)
@@ -909,8 +911,30 @@ def load_console_status() -> ConsoleStatus:
             settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
             firewall = db.scalar(select(FirewallSettings).order_by(FirewallSettings.id))
             method = (interface.ipv4_method or "static").strip().lower()
+            from atlaso.app.services.network_address_status import (
+                read_status,
+                row_status,
+            )
+
+            address_status = row_status(read_status(db), "physical", interface.id)
+            ipv4_acquisition = str(address_status.get("ipv4_state", "unknown")) if method == "dhcp" else "static"
+            from atlaso.app.services.dynamic_management import read_publication
+
+            setup_publication = read_publication(db)
             cidr = (interface.host_ip_cidr if method == "dhcp" else interface.ip_cidr) or _fallback_cidr(interface.name, 4)
             gateway = interface.gateway or _fallback_gateway(interface.name, 4)
+            if setup_publication.get("interface") == interface.name:
+                method = "dhcp"
+                ipv4_acquisition = str(setup_publication["ipv4_state"])
+                if setup_publication.get("apipa_addresses"):
+                    cidr = setup_publication["apipa_addresses"][0] + "/16"
+                    gateway = ""
+                elif setup_publication.get("addresses"):
+                    published_ipv4 = next((value for value in setup_publication["addresses"] if ip_address(value).version == 4), "")
+                    cidr = (interface.host_ip_cidr if interface.host_ip_cidr
+                            and str(ip_interface(interface.host_ip_cidr).ip) == published_ipv4 else published_ipv4)
+            ipv4_acquisition = {"no-carrier": "No carrier", "waiting-dhcp": "Waiting for DHCP",
+                                "apipa": "APIPA fallback", "dhcp-ready": "DHCP lease acquired"}.get(ipv4_acquisition, ipv4_acquisition)
             ipv6_mode = "disabled" if not interface.ipv6_enabled else ("static" if interface.ipv6_cidr else "automatic")
             ipv6_cidr = (
                 interface.ipv6_cidr
@@ -938,6 +962,8 @@ def load_console_status() -> ConsoleStatus:
         ipv6_cidr,
         https_enabled=bool(settings and settings.management_https_enabled),
     )
+    if setup_publication and setup_publication.get("interface") == interface.name:
+        urls = tuple(setup_publication.get("urls", []))
     load_summary, load_severity = _load_status()
     return ConsoleStatus(
         hostname=fqdn or socket.gethostname(),
@@ -961,6 +987,7 @@ def load_console_status() -> ConsoleStatus:
         maintenance_isolation=MAINTENANCE_STATE_PATH.exists(),
         services=services,
         urls=urls,
+        ipv4_acquisition=ipv4_acquisition,
     )
 
 
@@ -2365,7 +2392,7 @@ class CursesConsole:
             address,
             width,
             gateway=status.gateway or "none",
-            mode=status.ipv4_method,
+            mode=status.ipv4_acquisition or status.ipv4_method,
         )
         self._safe_add(16, 6, ipv4, curses.color_pair(2))
         ipv6_address = status.ipv6_cidr or ("Not configured" if status.ipv6_mode == "disabled" else "Awaiting RA/SLAAC")

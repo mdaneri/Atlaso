@@ -144,8 +144,9 @@ def test_icmpv6_diagnostics_do_not_require_a_protocol_name_database():
     settings = FirewallSettings(enabled=True, allow_icmp=True, default_input_policy="drop",
                                 default_forward_policy="drop", default_output_policy="accept")
     config = render_nftables_config(settings, [], management_source_cidr="192.168.167.0/24")
+    managed_table = config.split("table inet atlaso {", 1)[1]
     for name in ("input", "forward", "output"):
-        chain = config.split(f"  chain {name} {{", 1)[1].split("\n  }", 1)[0]
+        chain = managed_table.split(f"  chain {name} {{", 1)[1].split("\n  }", 1)[0]
         assert 'meta l4proto 58 accept comment "Atlaso IPv6 ICMP diagnostics"' in chain
         assert 'meta l4proto icmp accept comment "Atlaso ICMP diagnostics"' in chain
     assert "ipv6-icmp" not in config

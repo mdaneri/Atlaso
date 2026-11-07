@@ -48,6 +48,12 @@ During the first 30 seconds after startup, a missing interface inventory is show
 **Initializing appliance networking...**. If the interface remains missing after that period, the console reports the
 normal actionable error.
 
+IPv4 acquisition status distinguishes **No carrier**, **Waiting for DHCP**, **APIPA fallback**, and **DHCP lease
+acquired**. A link-local address alone does not prove a usable management listener. The console displays an APIPA setup
+URL only after the applied identity, TLS publication and listener readiness have been verified; expired or withdrawn
+publication receipts do not supply a URL. See [setup without DHCP](networking.md#set-up-an-appliance-without-dhcp) for
+peer addressing, the global opt-out and recovery steps.
+
 A raw VMware VM with no OVF envelope confirms that state through 30 consecutive successful empty VMware Tools reads.
 Atlaso then records non-OVF first-boot completion, logs **No OVF deployment properties supplied; using image
 defaults.**, clears the initialization lock and any stale network-review handshake, and opens the ordinary console.

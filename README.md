@@ -10,6 +10,10 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 The shared [Appliance Apply review](docs/operate/appliance-apply.md) shows the complete execution plan, including
 unchanged required dependencies and their reasons, before submitting one task.
 
+[Local setup without DHCP](docs/operate/networking.md#set-up-an-appliance-without-dhcp) uses enabled-by-default,
+conflict-checked IPv4 link-local fallback with a global Network Settings opt-out. Dedicated management setup publishes
+its URL after TLS and listener verification; DHCP continues retrying. Native VMnet1 acceptance is tracked in #1077.
+
 DNS listeners serve managed zones and configured upstream forwarding together, excluding appliance-local `/etc/hosts`
 entries from published answers. Appliance Apply coordinates host
 resolution with DNS activation and updates Atlaso-owned service records after listener-address readiness; DHCP scopes

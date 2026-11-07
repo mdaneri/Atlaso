@@ -277,6 +277,10 @@ test("address evidence keeps failed attempts distinct from restored addresses an
   assert.ok(rendered.includes("Rejected 192.0.2.20 &lt;script&gt; &lt;SCRIPT&gt;"));
   assert.equal(rendered.includes("MAC:"), false);
   assert.match(context.render({}), /Unable to check/);
+  const fallback = context.render({ ipv4_detail: "Using APIPA fallback", ipv4ll_addresses: ["169.254.20.10", "<script>"] });
+  assert.match(fallback, /Using APIPA fallback.*169\.254\.20\.10/);
+  assert.ok(fallback.includes("&lt;script&gt;"));
+  assert.equal(fallback.includes("<script>"), false);
 });
 
 test("address status refresh never replaces a desired edit in progress", async () => {

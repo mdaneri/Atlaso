@@ -31,6 +31,7 @@ class Settings(BaseSettings):
             application.
         appliance_management_gateway: Configured appliance management gateway used by the Atlaso
             application.
+        ipv4_link_local_fallback_enabled: Initial global DHCPv4 fallback choice; saved settings take precedence.
         appliance_management_ipv6_enabled: Whether appliance management ipv6 is enabled.
         appliance_management_ipv6_cidr: Configured appliance management ipv6 cidr used by the Atlaso
             application.
@@ -67,6 +68,7 @@ class Settings(BaseSettings):
     appliance_fqdn: str = "core.atlaso.internal"
     appliance_management_cidr: str = "192.168.49.1/24"
     appliance_management_gateway: str = ""
+    ipv4_link_local_fallback_enabled: bool = True
     appliance_management_ipv6_enabled: bool = False
     appliance_management_ipv6_cidr: str = ""
     appliance_management_ipv6_gateway: str = ""

@@ -123,7 +123,6 @@ from atlaso.app.services.appliance_settings import (
     appliance_settings_to_dict,
     management_dhcp_dns_context,
     management_interface_context,
-    management_ui_context,
     normalized_web_terminal_interfaces,
     render_appliance_settings_config,
     validate_appliance_settings,
@@ -527,8 +526,10 @@ def appliance_settings_response(db: Session, app_settings: Settings) -> Settings
     local_dns_enabled = bool(dns_settings and dns_settings.enabled)
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
-    management = management_ui_context(interfaces, vlans)
-    terminal_options = web_terminal_interface_options(interfaces, vlans)
+    from atlaso.app.services.dynamic_management import settings_management_context
+
+    management = settings_management_context(db, interfaces, vlans)
+    terminal_options = web_terminal_interface_options(interfaces, vlans, management_interface=management)
     validation_errors, validation_warnings = validate_appliance_settings(
         desired,
         local_dns_enabled=local_dns_enabled,
@@ -549,6 +550,7 @@ def appliance_settings_response(db: Session, app_settings: Settings) -> Settings
         web_terminal_enabled=desired.web_terminal_enabled,
         web_terminal_interfaces=normalized_web_terminal_interfaces(desired, management),
         root_ssh_enabled=desired.root_ssh_enabled,
+        ipv4_link_local_fallback_enabled=desired.ipv4_link_local_fallback_enabled,
         browser_session_idle_timeout_minutes=desired.browser_session_idle_timeout_minutes,
         api_token_max_lifetime_days=desired.api_token_max_lifetime_days,
         external_dns_servers=appliance_settings_to_dict(desired)["external_dns_servers"],

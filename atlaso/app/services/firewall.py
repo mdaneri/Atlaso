@@ -994,6 +994,13 @@ def render_nftables_config(
         "# Managed by Atlaso. Local changes may be overwritten.",
         "# nftables firewall state for Photon OS appliance images.",
         "flush ruleset",
+        "table inet atlaso_ipv4ll {",
+        "  chain forward {",
+        "    type filter hook forward priority -300; policy accept;",
+        "    ip saddr 169.254.0.0/16 drop",
+        "    ip daddr 169.254.0.0/16 drop",
+        "  }",
+        "}",
     ]
     if not settings.enabled:
         lines.extend(
