@@ -544,6 +544,15 @@ mode `0644`. Before and after package verification, `/var/log/journal` must be a
 `systemd-journal`, with mode `2755`, exactly as the native tmpfiles rule specifies. Only mode and group discrepancies
 for that directory are reconciled after this proof. Missing entries, owner or digest changes, descendants, other
 verification flags and different policy bytes still fail. Journal contents remain private and are not inspected.
+The current profile admits Photon `systemd-257.13-6.ph5` (SHA-256
+`54d0b99c3d18b45d88ef0f8358c4bb13187e6456df6d0f4f054901af8a864077`). Its journal policy bytes and packaged
+directory ownership match the previously reviewed `257.13-5.ph5`; the native policy checksum remains
+`68e4c097e33b30c731a359cb3af86693e5f854c53d3d6bb5ec9eb7d17f04e585`.
+The [upstream package change](https://github.com/vmware/photon/commit/682001eb08d91802bfdda61fcef5b7cc0a89576b)
+adds transaction file triggers for native service reload/restart and system metadata maintenance. An ordinary
+`rpm --scripts` comparison does not include those triggers; inspect them with `rpm -qp --filetriggers` during review.
+The exact package pin establishes this journal metadata profile. A new complete capture, signature and transaction
+admission, ISO readback and installed-content verification still establish acceptance for each refreshed image.
 The audit-directory profile similarly requires the exact admitted audit RPM and its native
 `/usr/lib/tmpfiles.d/audit.conf` checksum. The policy must be an ordinary single-link root:root file with mode `0640`.
 Before and after package verification, `/var/log/audit` must be a root:root directory with mode `0700`, as its
@@ -709,8 +718,15 @@ sentinel. Its original VM receipt seals the seed plan; the baseline records the 
 and raw-image digests. Cancellation and installation retain their original comparison rules. A stopped logical
 comparison against that baseline also proves that the old filesystem, UUID and sentinel survived unchanged.
 
-This optional Windows fixture requires an existing WSL distribution with Python 3, `mke2fs`, `debugfs`, `e2fsck`, and
-`blkid`, plus the existing native `qemu-img` dependency. It records the actual filesystem-tool paths and binary hashes.
+This optional Windows fixture requires `-OldLabelWslDistribution <EXISTING-DISTRIBUTION>` naming one existing WSL
+distribution, plus the existing native `qemu-img` dependency. Before it creates the seed directory or 4-GiB raw image,
+the harness checks that exact distribution for `/usr/bin/python3`, `mke2fs`, `debugfs`, `e2fsck`, and `blkid`. Missing
+distributions or tools stop creation before the old-label image is made. The selected distribution is passed
+explicitly to WSL for preflight and seeding, and its name is sealed into the original and baseline receipts. Supply the
+same selector for later Verify or Cleanup admission; an old-label receipt without that original selection is refused.
+There is no implicit distribution default: do not change the host's global WSL default or install a distribution to
+make this fixture pass. Select and prepare an existing compatible distribution separately.
+The fixture records the actual filesystem-tool paths and binary hashes.
 It formats only a newly created regular image inside the original owned VM directory; it uses no host block devices,
 loop mounts or host-network changes. The raw seed and sentinel are retained there for the normal receipt-bound owning
 cleanup. Creation reserves **78 GiB**, including the additional 4-GiB raw image; ordinary two-disk and MultiDisk gates
@@ -720,6 +736,7 @@ Use the ordinary ISO/root inputs shown above with one absent VM directory and:
 
 ```powershell
   -Scenario OldLabelReboot -TimeoutSeconds 3600 `
+  -OldLabelWslDistribution Atlaso-Build `
   -InspectInstalled -InspectContent -InspectionPythonPath <ABSOLUTE-PREPARED-PYTHON-EXECUTABLE>
 ```
 
@@ -738,6 +755,7 @@ same output directory and collision suffix for a distinct recovery invocation:
 
 ```powershell
   -Scenario RecoverOldLabelReboot -TimeoutSeconds 3600 `
+  -OldLabelWslDistribution Atlaso-Build `
   -OriginalReceiptPath <ORIGINAL-VM-RECEIPT> -OriginalReceiptSha256 <ORIGINAL-DIGEST> `
   -BaselineReceiptPath <ORIGINAL-BASELINE> -BaselineReceiptSha256 <ORIGINAL-BASELINE-DIGEST> `
   -InterruptionReceiptPath <ORIGINAL-INTERRUPTION-RECEIPT> -InterruptionReceiptSha256 <EMITTED-DIGEST> `

@@ -85,6 +85,18 @@ Use the same plan and Python path for `Status` and each lowercase phase: `drift`
 its recorded terminal result before requesting another. `Status` reads the current operation; pending means
 the consumer has not reached a proven terminal state.
 
+Invoke the launcher with `-File` as shown; dot-sourcing is not required. `-PythonPath` accepts a prepared Windows
+CPython 3.14 virtualenv as well as the base interpreter. The owner pins both the selected launcher and the actual
+interpreter executable for the child lifetime. A virtualenv worker must be the original launcher's direct child,
+with the expected executable, a later kernel birth time, and membership in the same non-breakaway Windows job.
+The suspended launcher's original receipt is preserved; a separate `*-worker-original.json` records the admitted
+worker before phase work starts. Another descendant, changed executable, reused PID, or process outside that job
+is refused. Success and failure still require whole-job quiescence.
+
+A failed operation remains terminal. Preserve its original receipts and output, including records from earlier
+callback or worker-admission failures; prepare a new plan and absent output for a retry. These launcher tests do
+not establish complete ISO, USB, or physical-installation acceptance for issue #542.
+
 ## Plan identity and paths
 
 `Initialize` admits the exact plan once and binds it to the current caller's task identity. Do not type,
@@ -150,7 +162,12 @@ validation budgets from another task.
    resources for their owning diagnosis and cleanup procedure.
 3. **Admit.** Run `admit` after drift and, when required, capture. It repeats early drift admission and
    verifies current official package metadata, signatures, every selected identity, full RPM closure and
-   transaction, and the reviewed runtime-profile digests. Assembly and installed content inspection retain
+   transaction, and the reviewed runtime-profile digests. A canonical capture also contains a separate
+   `guest-tools` companion with the VMware, Hyper-V and QEMU closures. Drift checks its exact bounded
+   profile/checksum inventory; admission independently authenticates its packages and tests every provider
+   transaction through the same verifier used by ISO assembly. Companion RPMs do not enter the Photon
+   installation transaction. Missing required payloads, unexpected entries, links or altered bytes refuse
+   the workflow. Assembly and installed content inspection retain
    the complete firmware and native module-index checks. A changed or unknown
    profile refuses the workflow until reviewed source and new-source admission are provided.
 4. **Build development media.** Run `build` to prepare the payload and assemble the development-only

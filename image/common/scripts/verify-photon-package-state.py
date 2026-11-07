@@ -19,7 +19,9 @@ from pathlib import Path
 PACKAGE_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9+._:-]*\Z")
 PHOTON_DEFAULT_DISTROVERPKG = "photon-release"
 INSTALLATION_FILESYSTEM_SHA256 = "7f5bba3e84f6eb50f6e5e311325089bc642549469d83793e0ba5f40d74ec6024"
-INSTALLATION_SYSTEMD_SHA256 = "2ef0275f25c9b782e7f3cbbaaa5bf0d9037149b5253630c6db27e155c461618f"
+# Reviewed 257.13-6.ph5 retains the pinned journal policy and directory metadata.
+# Its new transaction triggers remain subject to full native installation checks.
+INSTALLATION_SYSTEMD_SHA256 = "54d0b99c3d18b45d88ef0f8358c4bb13187e6456df6d0f4f054901af8a864077"
 INSTALLATION_SYSTEMD_TMPFILES_PATH = Path("/usr/lib/tmpfiles.d/systemd.conf")
 INSTALLATION_SYSTEMD_TMPFILES_SHA256 = "68e4c097e33b30c731a359cb3af86693e5f854c53d3d6bb5ec9eb7d17f04e585"
 INSTALLATION_SYSTEMD_JOURNAL_PATH = Path("/var/log/journal")

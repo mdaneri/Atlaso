@@ -33,6 +33,8 @@ OldLabelInterrupted stops after native partitioning; RecoverOldLabelReboot requi
 LoginInstalled resumes an already installed, receipt-bound VM without repeating installation.
 BootInstalled completes a VNC-driven installation by disconnecting media and checking ordinary serial login.
 VncCredential submits one SDK account value at an operator-observed concealed installer field.
+.PARAMETER OldLabelWslDistribution
+Exact existing WSL distribution required for old-label creation and later admission.
 .PARAMETER OriginalReceiptPath
 Original VM creation receipt for LoginInstalled.
 .PARAMETER OriginalReceiptSha256
@@ -95,6 +97,7 @@ param(
     [Parameter(Mandatory = $true)][ValidateRange(1, 2147483647)][int]$PullRequestNumber,
     [string]$CollisionSuffix = '',
     [ValidateSet('Probe', 'RecoverOldLabelReboot', 'OldLabelReboot', 'MultiProbe', 'Cancel', 'CancelReview', 'Insufficient', 'Auto', 'AutoReboot', 'OldLabelInterrupted', 'CustomCancel', 'CustomAliasProbe', 'CustomReboot', 'CustomMultiReboot', 'BootInstalled', 'LoginInstalled', 'VncCredential')][string]$Scenario = 'Probe',
+    [string]$OldLabelWslDistribution = '',
     [string]$OriginalReceiptPath = '',
     [string]$OriginalReceiptSha256 = '',
     [string]$ContinuationReceiptPath = '',
@@ -145,6 +148,7 @@ if (-not $Child) {
         '-BaselineReceiptPath', $BaselineReceiptPath, '-BaselineReceiptSha256', $BaselineReceiptSha256,
         '-BootReceiptPath', $BootReceiptPath, '-BootReceiptSha256', $BootReceiptSha256,
         '-InterruptionReceiptPath', $InterruptionReceiptPath, '-InterruptionReceiptSha256', $InterruptionReceiptSha256,
+        '-OldLabelWslDistribution', $OldLabelWslDistribution,
         '-InspectionPythonPath', $InspectionPythonPath, '-InspectionVmnet', $InspectionVmnet
     )
     if ($InspectInstalled) { $childArguments += '-InspectInstalled' }
@@ -1476,6 +1480,7 @@ function Invoke-InstallationVncCredential {
     $consumer = $null
     try {
         $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -OldLabelWslDistribution $OldLabelWslDistribution `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
             -Mode AdmitConsole `
             -Worktree $Context.Worktree -OutputDirectory $Context.OutputDirectory `
@@ -1544,6 +1549,7 @@ function Invoke-InstallationVncCredential {
         }
         Assert-AtlasoTestVmCheckoutSource -Context $Context
         $readmitted = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -OldLabelWslDistribution $OldLabelWslDistribution `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
             -Mode AdmitConsole `
             -Worktree $Context.Worktree -OutputDirectory $Context.OutputDirectory `
@@ -1631,6 +1637,15 @@ $knownProvisioningStages = @(Get-InstallationProvisioningStages -Text (Get-Conte
     (Join-Path $worktree 'image/common/scripts/provision-atlaso.sh') -Raw -Encoding utf8))
 $credentials = $null
 $creationFixture = Get-AtlasoInstallationFixture -FixtureProfile $(if ($Scenario -in @('MultiProbe', 'CustomMultiReboot')) { 'MultiDisk' } elseif ($Scenario -in @('OldLabelReboot', 'OldLabelInterrupted', 'RecoverOldLabelReboot')) { 'OldSystemLabel' } else { 'SingleDisk' })
+if ($creationFixture.Profile -ceq 'OldSystemLabel' -and
+    ([string]::IsNullOrWhiteSpace($OldLabelWslDistribution) -or $OldLabelWslDistribution.Length -gt 128 -or
+        $OldLabelWslDistribution -match '[\x00-\x1f\x7f]')) {
+    throw 'Old-label scenarios require -OldLabelWslDistribution naming an existing prepared WSL distribution.'
+}
+if ($creationFixture.Profile -ceq 'OldSystemLabel') {
+    Import-Module (Join-Path $PSScriptRoot 'Atlaso.InstallationOldLabel.psm1') -Force
+    $null = Get-AtlasoInstallationOldLabelToolchain -WslDistribution $OldLabelWslDistribution
+}
 $resumeSelectors = @{}
 if (($ContinuationReceiptPath -or $ContinuationReceiptSha256) -and $Scenario -ne 'LoginInstalled') {
     throw 'Continuation permits only retained LoginInstalled validation.'
@@ -1726,6 +1741,7 @@ $recoveryAdmission = $null
 if ($Scenario -eq 'RecoverOldLabelReboot') {
     # Validate the interruption and original filesystem provenance before obtaining any credential.
     $recoveryAdmission = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -OldLabelWslDistribution $OldLabelWslDistribution `
         -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
         -Mode Verify -Worktree $worktree -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber `
         -CollisionSuffix $CollisionSuffix @resumeSelectors -InterruptionReceiptPath $InterruptionReceiptPath `
@@ -1747,6 +1763,7 @@ $pipeName = 'Atlaso-Installation-' + [guid]::NewGuid().ToString('N')
 if ($Scenario -in @('LoginInstalled', 'BootInstalled', 'RecoverOldLabelReboot')) {
     if ($recoveryAdmission) { $vm = $recoveryAdmission } else {
     $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -OldLabelWslDistribution $OldLabelWslDistribution `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
             -Mode Verify -Worktree $worktree `
         -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix @resumeSelectors -Confirm:$false
@@ -1776,11 +1793,13 @@ try {
     $connection = $pipe.WaitForConnectionAsync()
     if ($Scenario -eq 'LoginInstalled') {
         $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -OldLabelWslDistribution $OldLabelWslDistribution `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
             -Mode ResumeInstalled -Worktree $worktree `
             -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix @resumeSelectors -Confirm:$false
     } elseif ($Scenario -eq 'RecoverOldLabelReboot') {
         $resumedInstaller = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -OldLabelWslDistribution $OldLabelWslDistribution `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
             -Mode ResumeInstaller -Worktree $worktree -OutputDirectory $OutputDirectory `
             -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix @resumeSelectors `
@@ -1788,12 +1807,14 @@ try {
         Write-Host ('Installer recovery original selectors: ' + ($resumedInstaller | ConvertTo-Json -Depth 4 -Compress))
     } elseif ($Scenario -eq 'BootInstalled') {
         $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -OldLabelWslDistribution $OldLabelWslDistribution `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
             -Mode BootInstalled -ReceiptDirectory $ReceiptDirectory -Worktree $worktree `
             -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix @resumeSelectors -Confirm:$false
         Write-Host ('Installed boot ownership: ' + ($boot | ConvertTo-Json -Depth 4 -Compress))
     } else {
         $vm = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -OldLabelWslDistribution $OldLabelWslDistribution `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
             -Mode Create -ReceiptDirectory $ReceiptDirectory -Worktree $worktree `
         -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix -IsoPath $IsoPath -IsoSha256 $IsoSha256 `
@@ -1819,6 +1840,7 @@ try {
     $networkAdmission = $null
     if ($InspectNetwork) {
         $networkAdmission = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -OldLabelWslDistribution $OldLabelWslDistribution `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
             -Mode AdmitNetwork -NetworkVmnet $InspectionVmnet -Worktree $worktree `
             -ContinuationReceiptPath $ContinuationReceiptPath -ContinuationReceiptSha256 $ContinuationReceiptSha256 `
@@ -1898,6 +1920,7 @@ try {
         # Keep checked provider stop and disk comparison inside this runner's existing
         # whole-process-tree deadline, including the shared vmrun inactivity checks.
         $verification = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -OldLabelWslDistribution $OldLabelWslDistribution `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
             -Mode Verify -Worktree $worktree `
             -ContinuationReceiptPath $ContinuationReceiptPath -ContinuationReceiptSha256 $ContinuationReceiptSha256 `
@@ -1911,6 +1934,7 @@ try {
         $pipe.Disconnect()
         $connection = $pipe.WaitForConnectionAsync()
         $boot = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -OldLabelWslDistribution $OldLabelWslDistribution `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
             -Mode BootInstalled -ReceiptDirectory $ReceiptDirectory -Worktree $worktree `
             -OutputDirectory $OutputDirectory -PullRequestNumber $PullRequestNumber -CollisionSuffix $CollisionSuffix `
@@ -2033,6 +2057,7 @@ try {
             Send-InstallationConsoleText -Pipe $pipe -Text ('exit' + $accountProbe.EnterKey)
         }
         $verification = & (Join-Path $PSScriptRoot 'test-installation-iso.ps1') `
+            -OldLabelWslDistribution $OldLabelWslDistribution `
             -ValidationRootReceiptPath $ValidationRootReceiptPath -ValidationRootReceiptSha256 $ValidationRootReceiptSha256 `
             -Mode Verify -Worktree $worktree `
             -ContinuationReceiptPath $ContinuationReceiptPath -ContinuationReceiptSha256 $ContinuationReceiptSha256 `
