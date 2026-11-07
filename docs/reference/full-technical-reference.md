@@ -617,16 +617,22 @@ and [VCF Certificate Trust](../services/vcf-trust.md).
 
 ### Native VCF backup wizard
 
-The VCF Helper **Backup → Configure VCF Backup** wizard targets native VCF 9.1.x backup APIs for Fleet LCM,
-SDDC Manager, vCenter, and NSX. VCF Operations is the primary connection for Fleet discovery. After confirming the
-Operations TLS certificate, Atlaso reads `GET /suite-api/api/integrations/services`, requires a unique
-`VCF_FLEET_LCM` descriptor, displays its FQDN, port, base path, certificate, version, and key for review, then uses
-the advertised Fleet service through Operations with a service JWT and pinned certificate. Operators do not enter a
-separate Fleet endpoint or fingerprint. Descriptor or certificate drift invalidates the inspection. SDDC Manager,
-vCenter, and NSX may be added as optional direct connections. Fleet schedules are shared by a complete eligible
-SDDC-LCM group. The workflow requires the already enabled and applied Atlaso VCF Backup SFTP receiver, its fixed
-volume, synchronized local SFTP user, mounted filesystem, current rendered apply baseline, live `sshd` listener, and
-required ECDSA/RSA-SHA2 host keys.
+The VCF Helper **Backup → Configure VCF Backup** wizard targets native VCF 9.1.x backup APIs through VCF Operations
+and vCenter. Its top-level choices are **VCF Operations** and **vCenter**. One confirmed Operations connection covers
+the selected lifecycle and SDDC Manager backup scopes; SDDC Manager backup settings also configure the co-managed NSX
+destination and cadence. After confirming the Operations TLS certificate, Atlaso reads
+`GET /suite-api/api/integrations/services`, requires a unique `VCF_FLEET_LCM` descriptor, displays its FQDN, port,
+base path, certificate, version, and key for review, then uses the advertised Fleet service through Operations with a
+service JWT and pinned certificate. Operators do not enter a separate Fleet endpoint or fingerprint. Descriptor or
+certificate drift invalidates the inspection. Each selected managed vCenter has its own credential and TLS
+confirmation flow; a vCenter-only plan connects directly to its selected endpoint. Fleet schedules are shared by a
+complete eligible SDDC-LCM group. The workflow requires the already enabled and applied Atlaso VCF Backup SFTP
+receiver, its fixed volume, synchronized local SFTP user, mounted filesystem, current rendered apply baseline, live
+`sshd` listener, and required ECDSA/RSA-SHA2 host keys.
+
+Historical operation records can still contain direct SDDC Manager or NSX source kinds. The backend retains adapters
+for these records and can render their recorded source and settings during readback; those compatibility paths do not
+add direct SDDC Manager or NSX choices to the current configuration wizard.
 
 Backup-encryption passphrases must contain 12–20 visible ASCII characters, uppercase and lowercase letters, at least
 two digits, and a symbol. This wizard policy is stricter than vCenter's eight-character minimum. The passphrase is
@@ -641,13 +647,14 @@ An unresolved `dispatch_pending` operation without a native task reference canno
 reservation until a verifiable native outcome is available. Reconciliation can adopt success only when native
 completion and fresh matching receiver files are both observed.
 
-Native API gaps remain explicit in discovery and review. SDDC Manager backup settings may also change the backup target
-and cadence for co-managed NSX; configure SDDC Manager first, then inspect NSX in a separate fresh operation. The NSX
-native API exposes no retention configuration in the documented VCF 9.0/9.1 behavior. The vCenter Recovery API has no
-SSH fingerprint field for the destination. Only fresh receiver files matched to the recorded native result for each
-selected component count as verified initial-backup evidence. VCF Operations Fleet daily full-backup schedules run at
-02:00 UTC; direct appliance schedules use the appliance's configured timezone. See the
-[VCF Backups operator guide](../services/vcf-backups.md), the
+Native API gaps remain explicit in discovery and review. SDDC Manager backup settings may change the backup target
+and cadence for co-managed NSX. The initial SDDC Manager task does not independently verify NSX backup completion;
+verify it separately in the native product. The NSX native API exposes no retention configuration in the documented
+VCF 9.0/9.1 behavior. The vCenter Recovery API has no SSH fingerprint field for the destination. Only fresh receiver
+files matched to the recorded native result for each selected component count as verified initial-backup evidence.
+Operations recurrence can preserve the reviewed full and incremental schedules or set daily recurrence at a selected
+UTC time. SDDC Manager uses its native schedule controls in UTC; vCenter uses its configured appliance timezone.
+See the [VCF Backups operator guide](../services/vcf-backups.md), the
 [pinned Fleet LCM API specification](https://github.com/vmware/vcf-api-specs/blob/98086628de07a7480141873ea5b8a53bb113e98f/specifications/fleet-lcm/fleet-lcm-openapi.yaml),
 and Broadcom [KB 438943](https://knowledge.broadcom.com/external/article/438943) and
 [KB 442696](https://knowledge.broadcom.com/external/article/442696/nsx-backup-retention-settings-in-sddc-ma.html).
