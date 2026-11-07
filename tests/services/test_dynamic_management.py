@@ -450,10 +450,10 @@ def test_disabling_only_fallback_requires_native_withdrawal(tmp_path, monkeypatc
         helper._IPV4LL_DISABLE_ONLY_LINKS.reset(token)
 
 
-@pytest.mark.parametrize("first_boot", [False, True])
-@pytest.mark.parametrize("renamed", [False, True])
-@pytest.mark.parametrize("warmup_carrier_loss", [False, True])
-def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, monkeypatch, first_boot, renamed, warmup_carrier_loss):
+@pytest.mark.parametrize("first_boot,renamed,warmup_carrier_loss,transition_intent", [
+    (first, renamed, carrier, "prepared") for first in (False, True) for renamed in (False, True) for carrier in (False, True)
+] + [(False, False, False, "planned"), (False, False, False, "unchanged")])
+def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, monkeypatch, first_boot, renamed, warmup_carrier_loss, transition_intent):
     """Publish real signed leaves across APIPA, DHCP and carrier loss with isolated host seams.
 
     Args:
@@ -463,6 +463,7 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
         first_boot: Freeze published first-boot identity before an explicit Settings Apply exists.
         renamed: Preserve the original Settings name while reconciling the applied NIC through its MAC-bound alias.
         warmup_carrier_loss: Withdraw carrier while slow publication helpers initialize outside the writer transaction.
+        transition_intent: Preserve an issued or unissued pending leaf, or advance only an unchanged applied leaf.
     """
     import hashlib
     import json
@@ -490,6 +491,7 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
     from atlaso.app.secrets import decrypt_secret
     from atlaso.app.services import dynamic_management as admission
     from atlaso.app.services.ca import (
+        CA_CLIENT_PROFILE_NAME,
         CA_SERVER_PROFILE_NAME,
         ManagedCertificateSpec,
         ensure_default_ca_profiles,
@@ -845,25 +847,79 @@ def test_tls_publication_and_later_lease_use_applied_identity(client, tmp_path, 
     before_repair = len(publications)
     publisher.reconcile(helper, bootstrap)
     assert len(publications) == before_repair + 1
-    with SessionLocal() as db:
-        repaired = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
-        assert publisher.installed_pair_matches(repaired, cert_path, key_path)
+    assert publisher.published_pair_matches(receipts[-1]["leaf_fingerprint"], {"169.254.20.10"},
+                                            "applied.atlaso.internal", cert_path, key_path)
     observation["links"][0]["addresses"] = [{"address": "192.168.50.10", "cidr": "192.168.50.10/24",
                                                  "scope": "global", "source": "DHCPv4", "state": "assigned"}]
+    # A retained checkpoint cannot protect pending intent when the native
+    # address changes. Keep the complete desired row across failure, successful
+    # lease publication and the later retirement of the old listener's SAN.
+    with SessionLocal() as db:
+        leaf = db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+        ca = db.scalar(select(CaSettings))
+        profiles = list(db.scalars(select(CaProfile)))
+        if transition_intent == "prepared":
+            pending = ManagedCertificateSpec(
+                pending.owner, pending.common_name, pending.dns_names, pending.ip_addresses,
+                CA_CLIENT_PROFILE_NAME, pending.description, pending.cert_path, pending.key_path, pending.chain_path,
+            )
+            ensure_managed_certificate_rows(db, settings=ca, profiles=profiles, specs=[pending])
+            assert issue_certificate(ca, profiles, leaf)
+        elif transition_intent == "planned":
+            # Public issued material can still match the applied baseline while
+            # unissued SAN intent is pending in the same row.
+            leaf.ip_addresses += "\n192.0.2.99"
+            leaf.status = "planned"
+        db.commit()
+        db.refresh(leaf)
+        pending_transition = {column.key: getattr(leaf, column.key) for column in CaCertificate.__table__.columns}
+
+    def assert_pending_transition():
+        """Read the complete persisted pending intent independently after each observer transaction."""
+        with SessionLocal() as check_db:
+            desired = check_db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+            for field, expected in pending_transition.items():
+                actual = getattr(desired, field)
+                if field == "private_key_encrypted":
+                    assert hashlib.sha256(actual.encode()).hexdigest() == hashlib.sha256(expected.encode()).hexdigest()
+                else:
+                    assert actual == expected, field
+
+    def assert_verified_transition():
+        """Advance ordinary desired material only after proven publication, retaining prepared intent."""
+        if transition_intent == "unchanged" and not first_boot:
+            with SessionLocal() as check_db:
+                desired = check_db.scalar(select(CaCertificate).where(CaCertificate.managed_owner == "appliance:https"))
+                assert desired.fingerprint == receipts[-1]["leaf_fingerprint"]
+                assert publisher.installed_pair_matches(desired, cert_path, key_path)
+        else:
+            assert_pending_transition()
+
     bootstrap["recovery_root_matches_baseline"] = lambda _db: False
     with pytest.raises(ValueError, match="pending CA root"):
         publisher.reconcile(helper, bootstrap)
+    assert_pending_transition()
     assert receipts[-1]["addresses"] == ["169.254.20.10"]
     bootstrap["recovery_root_matches_baseline"] = lambda _db: True
     helper["_configure_atlaso_management_https"] = lambda *_args, **_kwargs: (1, None)
     with pytest.raises(ValueError, match="failed readiness"):
         publisher.reconcile(helper, bootstrap)
+    assert_pending_transition()
     assert receipts[-1]["addresses"] == ["169.254.20.10"]
     helper["_configure_atlaso_management_https"] = publish_config
     publisher.reconcile(helper, bootstrap)
+    assert_verified_transition()
     assert receipts[-1]["addresses"] == ["192.168.50.10"]
     assert receipts[-1]["apipa_addresses"] == []
     assert "169.254.20.10" not in site.read_text()
+    publisher.reconcile(helper, bootstrap)
+    assert_verified_transition()
+    published_leaf = x509.load_pem_x509_certificate(cert_path.read_bytes())
+    assert {str(value) for value in published_leaf.extensions.get_extension_for_class(
+        x509.SubjectAlternativeName).value.get_values_for_type(x509.IPAddress)} == {"192.168.50.10"}
+    with SessionLocal() as db:
+        applied_ca = json.loads(admission.applied_snapshots(db)["ca"]["config_preview"])
+        assert next(item for item in applied_ca["certificates"] if item["managed_owner"] == "appliance:https")["fingerprint"] == receipts[-1]["leaf_fingerprint"]
     with SessionLocal() as db:
         assert db.scalar(select(CaSettings)).root_fingerprint == root_fingerprint
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == current_name))

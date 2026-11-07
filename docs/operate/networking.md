@@ -82,6 +82,10 @@ After reboot removes the runtime checkpoint, the observer can recover the applie
 durable CA baseline. It requires matching applied hostname and certificate destinations, the exact expected nginx
 configuration, fresh native ownership, the installed pair and the active served fingerprint before publishing a new
 receipt. Pending certificate edits remain pending during this recovery too.
+Lease changes and certificate repair issue an applied candidate independently of the desired certificate row.
+Only verified activation advances the applied CA baseline; a desired row with prepared hostname, SAN, profile or
+destination changes stays intact on success and failure. An unchanged desired leaf follows the new publication only
+after activation succeeds. Interrupted certificate/key replacement uses the existing durable front-door rollback.
 An interrupted management certificate/key replacement restores the previous pair before retrying listener activation.
 Cold publication helpers load and the initial application-upstream readiness wait runs outside the database writer
 and Network Apply locks, so application startup can commit state and acquire its own native admission. The observer

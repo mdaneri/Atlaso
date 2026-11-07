@@ -36,10 +36,10 @@ from atlaso.app.models import (
 )
 from atlaso.app.secrets import decrypt_secret
 from atlaso.app.services.ca import (
-    ManagedCertificateSpec,
+    CA_SERVER_PROFILE_NAME,
     ensure_aware,
-    ensure_managed_certificate_rows,
     issue_certificate,
+    join_multiline,
     render_ca_apply_payload,
 )
 from atlaso.app.services.dynamic_management import (
@@ -357,6 +357,8 @@ def _reconcile_once(
             ca = db.scalar(select(CaSettings))
             profiles = list(db.scalars(select(CaProfile)))
             material_writer: Callable[[], None] | None = None
+            applied_candidate: CaCertificate | None = None
+            advance_desired = False
             if settings.get("management_https_enabled"):
                 if ca is None or not ca.enabled or leaf is None or not leaf.enabled or leaf.status == "revoked":
                     raise ValueError("applied management CA or leaf is unavailable or revoked")
@@ -370,35 +372,48 @@ def _reconcile_once(
                     r"(?m)^\s*listen (?:([0-9.]+)|\[([0-9a-fA-F:]+)\]):\d+", site_path.read_text())
                                if not ip_address(match[1] or match[2]).is_loopback} if site_path.is_file() else set()
                 sans = sorted(target_sans | old_sockets)
-                profile = next((profile for profile in profiles if profile.id == leaf.profile_id), None)
+                profile = next((profile for profile in profiles if profile.name == CA_SERVER_PROFILE_NAME), None)
                 if profile is None or not profile.enabled:
                     raise ValueError("applied management issuance profile is unavailable")
-                spec = ManagedCertificateSpec(owner="appliance:https", common_name=settings["fqdn"],
-                            dns_names=[settings["fqdn"]], ip_addresses=sans, profile_name=profile.name,
-                            description=leaf.description or "Managed Atlaso appliance HTTPS certificate.", cert_path=settings["management_https_cert_path"],
-                            key_path=settings["management_https_key_path"], chain_path=leaf.chain_path)
-                ensure_managed_certificate_rows(db, settings=ca, profiles=profiles, specs=[spec])
-                issue_certificate(ca, profiles, leaf)
-                if leaf.expires_at is None or ensure_aware(leaf.expires_at) <= datetime.now(timezone.utc) + timedelta(seconds=90):
+                applied_ca = json.loads(str((baselines.get("ca") or {}).get("config_preview") or "{}"))
+                applied_leaves = [item for item in applied_ca.get("certificates", []) if item.get("managed_owner") == "appliance:https"]
+                if (len(applied_leaves) != 1 or applied_leaves[0].get("common_name") != settings["fqdn"]
+                        or applied_leaves[0].get("cert_path") != settings["management_https_cert_path"]
+                        or applied_leaves[0].get("key_path") != settings["management_https_key_path"]):
+                    raise ValueError("applied management certificate identity is unavailable")
+                # Issuance is detached from desired state. In particular an
+                # Apply review may already have prepared an entirely different
+                # leaf; neither failure nor lease publication may replace it.
+                advance_desired = (leaf.status == "issued" and leaf.profile_id == profile.id and not leaf.csr_text
+                    and json.loads(render_ca_apply_payload(ca, [leaf], include_private_keys=False, profiles=profiles))["certificates"] == applied_leaves)
+                applied_candidate = CaCertificate(
+                    managed_owner="appliance:https", common_name=settings["fqdn"], profile_id=profile.id,
+                    subject_alt_names=join_multiline([settings["fqdn"]]), ip_addresses=join_multiline(sans),
+                    enabled=True, status="planned", csr_text=None,
+                    cert_path=settings["management_https_cert_path"], key_path=settings["management_https_key_path"],
+                    chain_path=applied_leaves[0].get("chain_path") or "",
+                )
+                if not issue_certificate(ca, profiles, applied_candidate):
+                    raise ValueError("applied management certificate issuance failed")
+                if applied_candidate.expires_at is None or ensure_aware(applied_candidate.expires_at) <= datetime.now(timezone.utc) + timedelta(seconds=90):
                     raise ValueError("management TLS leaf has insufficient remaining validity")
-                # Commit the encrypted candidate first. An interrupted write can
-                # always republish this exact pair; no private bytes enter receipts.
-                candidate = leaf.fingerprint
-                db.commit()
-                acquire_network_objects_write_lock(db)
-                db.refresh(leaf)
+                # Retain writer admission through activation. The helper's
+                # durable pair/site rollback owns interrupted file replacement;
+                # no candidate is committed over pending desired intent.
                 if (db.scalar(select(Job.id).where(Job.type == "appliance-apply", Job.status.in_(["pending", "running"])))
-                        or leaf.fingerprint != candidate or snapshot_digest(applied_snapshots(db).get("network")) != published["network_digest"]
+                        or snapshot_digest(applied_snapshots(db).get("network")) != published["network_digest"]
                         or snapshot_digest(applied_snapshots(db).get("appliance_settings")) != published["settings_digest"]
+                        or snapshot_digest(applied_snapshots(db).get("ca")) != snapshot_digest(baselines.get("ca"))
                         or not bootstrap["recovery_root_matches_baseline"](db)):
                     raise ValueError("management publication inputs changed before activation")
                 def install_pair() -> None:
                     """Replace only the management pair after its rollback snapshot is durable."""
-                    bootstrap["write_secret_text_atomic"](key_destination, decrypt_secret(leaf.private_key_encrypted))
-                    bootstrap["write_text_atomic"](cert_destination, leaf.chain_pem, mode=0o644)
+                    assert applied_candidate is not None
+                    bootstrap["write_secret_text_atomic"](key_destination, decrypt_secret(applied_candidate.private_key_encrypted))
+                    bootstrap["write_text_atomic"](cert_destination, applied_candidate.chain_pem, mode=0o644)
 
                 material_writer = install_pair
-                published["leaf_fingerprint"] = candidate
+                published["leaf_fingerprint"] = applied_candidate.fingerprint
             # Native re-read excludes carrier/address changes during issuance.
             if native_management_addresses(row, helper["_network_address_observation"]()) != native:
                 raise ValueError("native management address changed during publication")
@@ -408,12 +423,19 @@ def _reconcile_once(
             if result:
                 raise ValueError("dynamic management listener failed readiness; prior front door restored")
             if settings.get("management_https_enabled"):
-                assert ca is not None and leaf is not None
+                assert ca is not None and leaf is not None and applied_candidate is not None
                 served = ssl.get_server_certificate((settings["management_ip"], int(settings.get("management_public_https_port") or 443)), timeout=3)
                 if hashlib.sha256(ssl.PEM_cert_to_DER_cert(served)).hexdigest() != published["leaf_fingerprint"]:
                     raise ValueError("published TLS leaf is not active on the dynamic listener")
-                public_payload = render_ca_apply_payload(ca, [leaf], include_private_keys=False, profiles=profiles)
+                public_payload = render_ca_apply_payload(ca, [applied_candidate], include_private_keys=False, profiles=profiles)
                 bootstrap["record_ca_publication_baseline"](db, public_payload, [], management_only=True)
+                if advance_desired:
+                    # Only an unchanged, already applied desired leaf follows
+                    # the new publication, and only after verified activation.
+                    for field in ("common_name", "profile_id", "subject_alt_names", "ip_addresses", "status", "serial_number",
+                                  "certificate_pem", "private_key_encrypted", "chain_pem", "issuer_common_name", "fingerprint",
+                                  "cert_path", "key_path", "chain_path", "issued_at", "expires_at"):
+                        setattr(leaf, field, getattr(applied_candidate, field))
             # Refresh only this proven observation, never interface desired state.
             identity.host_ip_cidr = next((address["cidr"] for link in observation["links"] if link["name"] == row["name"]
                                          for address in link["addresses"] if address["address"] in native["addresses"]

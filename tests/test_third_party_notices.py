@@ -47,29 +47,117 @@ def test_notice_version_lock(tmp_path):
         module.installed_python_records(environment, module.locked_packages(checkout))
 
 
-def write_wheel(path: Path, *, license_name: str = "MIT") -> None:
+def write_wheel(
+    path: Path,
+    *,
+    license_name: str = "MIT",
+    top_level: tuple[str, str] | None = ("Example-Package", "1.2.3"),
+    nested_metadata: tuple[str, str] = ("helper", "1.0"),
+    duplicate_top_level: bool = False,
+) -> None:
     """Persist wheel.
 
     Args:
         path: Filesystem or URL path to read, validate, or update.
         license_name: License name supplied by the caller.
+        top_level: Optional top-level distribution identity.
+        nested_metadata: Vendored distribution identity to embed.
+        duplicate_top_level: Whether to add a second matching top-level identity.
     """
-    metadata = "\n".join(
-        [
-            "Metadata-Version: 2.4",
-            "Name: Example-Package",
-            "Version: 1.2.3",
-            f"License-Expression: {license_name}" if license_name else "",
-            "Home-page: https://example.invalid/package",
-            "",
-        ]
-    )
+    def metadata(name: str, version: str) -> str:
+        """Build distribution metadata for a synthetic wheel.
+
+        Args:
+            name: Distribution name declared by the fixture.
+            version: Distribution version declared by the fixture.
+        """
+        return "\n".join(
+            [
+                "Metadata-Version: 2.4",
+                f"Name: {name}",
+                f"Version: {version}",
+                f"License-Expression: {license_name}" if license_name else "",
+                "Home-page: https://example.invalid/package",
+                "",
+            ]
+        )
+
     with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr("example_package-1.2.3.dist-info/METADATA", metadata)
+        top_level_metadata = metadata(*top_level) if top_level is not None else None
+        if top_level_metadata is not None:
+            archive.writestr("example_package-1.2.3.dist-info/METADATA", top_level_metadata)
+        if duplicate_top_level:
+            archive.writestr("duplicate_example-1.2.3.dist-info/METADATA", top_level_metadata)
         archive.writestr(
             "example_package/_vendor/helper-1.0.dist-info/METADATA",
-            "Metadata-Version: 2.4\nName: helper\nVersion: 1.0\nLicense: MIT\n",
+            metadata(*nested_metadata),
         )
+
+
+def test_wheel_records_ignore_vendored_metadata_for_another_locked_package(tmp_path):
+    """A vendored locked identity cannot make a wheel metadata-ambiguous.
+
+    Args:
+        tmp_path: Isolated wheelhouse used by the test.
+    """
+    module = load_module()
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    write_wheel(
+        wheelhouse / "example_package-1.2.3-py3-none-any.whl",
+        nested_metadata=("packaging", "26.3"),
+    )
+    write_wheel(
+        wheelhouse / "packaging-26.3-py3-none-any.whl",
+        top_level=("packaging", "26.3"),
+    )
+
+    records = module.wheel_records(
+        wheelhouse,
+        {"example-package": ("1.2.3", "example-package"), "packaging": ("26.3", "packaging")},
+    )
+
+    assert records["example-package"]["version"] == "1.2.3"
+    assert records["packaging"]["version"] == "26.3"
+
+
+@pytest.mark.parametrize("top_level", (None, ("Example-Package", "9.9.9")))
+def test_wheel_records_do_not_use_nested_metadata_as_locked_identity(tmp_path, top_level):
+    """Nested metadata cannot supply a missing or mismatched top-level identity.
+
+    Args:
+        tmp_path: Isolated wheelhouse used by the test.
+        top_level: Optional top-level distribution identity.
+    """
+    module = load_module()
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    write_wheel(
+        wheelhouse / "example_package-1.2.3-py3-none-any.whl",
+        top_level=top_level,
+        nested_metadata=("Example-Package", "1.2.3"),
+    )
+
+    with pytest.raises(ValueError, match="exactly one locked package"):
+        module.wheel_records(wheelhouse, {"example-package": ("1.2.3", "example-package")})
+
+
+def test_wheel_records_reject_ambiguous_top_level_locked_metadata(tmp_path):
+    """Multiple matching top-level identities remain an error.
+
+    Args:
+        tmp_path: Isolated wheelhouse used by the test.
+    """
+    module = load_module()
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    write_wheel(
+        wheelhouse / "example_package-1.2.3-py3-none-any.whl",
+        duplicate_top_level=True,
+    )
+
+    with pytest.raises(ValueError, match="exactly one locked package"):
+        module.wheel_records(wheelhouse, {"example-package": ("1.2.3", "example-package")})
 
 
 def test_generator_uses_locked_wheel_metadata_and_is_deterministic(monkeypatch, tmp_path):
