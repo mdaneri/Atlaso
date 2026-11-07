@@ -300,8 +300,33 @@ def _metadata(raw: bytes) -> tuple[str, list[str]]:
     return version, sorted(str(value) for value in metadata.get_all("Requires-Dist", []))
 
 
+def _appliance_requirements(raw: bytes) -> list[str]:
+    """Keep exact dependency declarations except the never-selected sole dev extra.
+
+    Args:
+        raw: Original signed or reviewed candidate wheel metadata container.
+    """
+    try:
+        from packaging.requirements import InvalidRequirement, Requirement
+    except ImportError:
+        raise Refusal("iso_deployment_wheel_metadata_parser_unavailable") from None
+    selected = []
+    for value in _metadata(raw)[1]:
+        try:
+            requirement = Requirement(value)
+        except InvalidRequirement:
+            raise Refusal("iso_deployment_wheel_requirements_invalid") from None
+        # The deployer installs a bare wheel with --no-deps, never [dev]. Do
+        # not evaluate host/platform markers or discard broader expressions:
+        # every other declaration must still match the original bytes exactly.
+        if requirement.marker is not None and str(requirement.marker) == 'extra == "dev"':
+            continue
+        selected.append(value)
+    return selected
+
+
 def admit_offline_wheels(context: dict[str, Any], candidate: bytes, directory: Path) -> dict[str, str]:
-    """Require the complete original signed offline wheelhouse and unchanged app requirements.
+    """Require original signed wheels and unchanged declarations outside the sole dev extra.
 
     Args:
         context: Original ISO identity already admitted by the canonical inspector.
@@ -340,7 +365,7 @@ def admit_offline_wheels(context: dict[str, Any], candidate: bytes, directory: P
         installation_iso._verify_pinned(pinned)
     finally:
         stream.close()
-    if _metadata(candidate)[1] != _metadata(original_raw)[1]:
+    if _appliance_requirements(candidate) != _appliance_requirements(original_raw):
         raise Refusal("iso_deployment_offline_requirements_changed")
     actual = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in directory.iterdir()
               if path.suffix == ".whl" and path.is_file() and not path.is_symlink() and path.stat().st_nlink == 1}

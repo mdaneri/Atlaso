@@ -57,11 +57,12 @@ def _wheel_bytes(version: str, requirements: tuple[str, ...] = _REQUIREMENTS) ->
     return stream.getvalue()
 
 
-def _write_mini_iso(path: Path) -> tuple[str, str, dict[str, str]]:
+def _write_mini_iso(path: Path, requirements: tuple[str, ...] = _REQUIREMENTS) -> tuple[str, str, dict[str, str]]:
     """Create a real Rock Ridge ISO carrying the original manifest and wheelhouse.
 
     Args:
         path: Pytest-owned destination for the small ISO fixture.
+        requirements: Dependency declarations bound into the original application wheel.
 
     Returns:
         The ISO digest, release-manifest digest, and signed wheelhouse inventory.
@@ -73,7 +74,7 @@ def _write_mini_iso(path: Path) -> tuple[str, str, dict[str, str]]:
     manifest = json.dumps({
         "content_hashes": {f"wheelhouse/cp314/{dependency_name}": dependency_digest},
     }, sort_keys=True, separators=(",", ":")).encode()
-    original_wheel = _wheel_bytes("1.2.3")
+    original_wheel = _wheel_bytes("1.2.3", requirements)
     source = json.dumps({"application_wheel": "atlaso-1.2.3.whl"}, sort_keys=True).encode()
 
     source_root = path.parent / "iso-source"
@@ -113,7 +114,8 @@ def _write_mini_iso(path: Path) -> tuple[str, str, dict[str, str]]:
     return hashlib.sha256(path.read_bytes()).hexdigest(), hashlib.sha256(manifest).hexdigest(), inventory
 
 
-def _producer_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[
+def _producer_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *,
+                      original_requirements: tuple[str, ...] = _REQUIREMENTS) -> tuple[
     dict[str, Any], dict[str, Any], dict[str, Any], Path, Path, dict[str, str], bytes, bytes,
 ]:
     """Extend the shared admission fixture with the producer's original-state receipts.
@@ -121,6 +123,7 @@ def _producer_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[
     Args:
         tmp_path: Pytest-owned root for source, media, and receipt files.
         monkeypatch: Replace immutable Git output and bind the task identity.
+        original_requirements: Exact original signed-wheel dependency declarations.
 
     Returns:
         The plan, native admission, admitted context, ISO path, dependency directory,
@@ -135,7 +138,7 @@ def _producer_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[
     backup = tmp_path / "original-vmx-backup.bin"
     backup.write_bytes(b"exact original backed-up VMX bytes")
     iso_path = tmp_path / "original.iso"
-    iso_sha256, release_sha256, inventory = _write_mini_iso(iso_path)
+    iso_sha256, release_sha256, inventory = _write_mini_iso(iso_path, original_requirements)
 
     # The existing fixture's public validator result is closure-bound; update it in place.
     deployment_inputs = deployment.deployment_inputs
@@ -143,7 +146,7 @@ def _producer_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[
     original_expected.update({
         "iso_sha256": iso_sha256,
         "release_manifest_sha256": release_sha256,
-        "wheel_sha256": hashlib.sha256(_wheel_bytes("1.2.3")).hexdigest(),
+        "wheel_sha256": hashlib.sha256(_wheel_bytes("1.2.3", original_requirements)).hexdigest(),
     })
     original_assets["iso_sha256"] = iso_sha256
     monkeypatch.setattr(deployment, "deployment_inputs", lambda _path, _sha: (original_expected, original_assets))
@@ -380,6 +383,49 @@ def test_admit_offline_wheels_accepts_the_exact_iso_signed_inventory(
     )
 
     assert deployment.admit_offline_wheels(context, candidate, directory) == inventory
+
+
+@pytest.mark.parametrize("development,accepted", [
+    (None, True),
+    ("markdown==3.11.2; extra == 'dev'", True),
+    ('markdown==3.11.2; extra == "dev"', True),
+    ("markdown==3.11.2", False),
+    ("markdown==3.11.2; extra == 'dev' or python_version >= '3.14'", False),
+    ("markdown==3.11.2; extra == 'dev' and sys_platform == 'linux'", False),
+    ("markdown==3.11.2; extra != 'dev'", False),
+    ("markdown==3.11.2; extra == 'docs'", False),
+    ("not a requirement; extra == 'dev'", False),
+    ("markdown @ https://example.invalid/package.whl;extra=='dev'", False),
+])
+def test_offline_admission_excludes_only_the_unselected_sole_dev_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, development: str | None, accepted: bool,
+) -> None:
+    """Compare actual mini-ISO metadata without masking runtime or broader marker changes.
+
+    Args:
+        tmp_path: Originally owned pytest root for ISO and exact wheel inventory.
+        monkeypatch: Replace immutable Git facts and bind the task identity.
+        development: Candidate replacement for the original sole dev requirement.
+        accepted: Whether all remaining dependency declarations still match exactly.
+    """
+    original = _REQUIREMENTS + ("markdown==3.11.1; extra == 'dev'",)
+    _, _, context, _, directory, inventory, _, _ = _producer_fixture(
+        tmp_path, monkeypatch, original_requirements=original,
+    )
+    requirements = _REQUIREMENTS + ((development,) if development is not None else ())
+    candidate = _wheel_bytes("1.2.4", requirements)
+    if not accepted:
+        with pytest.raises(deployment.Refusal, match="iso_deployment_(offline_requirements_changed|wheel_requirements_invalid)"):
+            deployment.admit_offline_wheels(context, candidate, directory)
+        return
+    assert deployment.admit_offline_wheels(context, candidate, directory) == inventory
+    # The exception never admits a changed production declaration or inventory.
+    changed_runtime = _wheel_bytes("1.2.4", ("packaging>=99",) + requirements[1:])
+    with pytest.raises(deployment.Refusal, match="iso_deployment_offline_requirements_changed"):
+        deployment.admit_offline_wheels(context, changed_runtime, directory)
+    next(directory.iterdir()).write_bytes(b"changed original dependency wheel")
+    with pytest.raises(deployment.Refusal, match="iso_deployment_offline_wheelhouse_mismatch"):
+        deployment.admit_offline_wheels(context, candidate, directory)
 
 
 @pytest.mark.parametrize("defect", ["missing", "extra", "changed", "requirements"])

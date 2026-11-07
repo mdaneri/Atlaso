@@ -380,9 +380,13 @@ $deployOwner = [scriptblock]::Create(($bytes -join "`n"))
 ```
 
 Use a prepared, originally owned isolated Python environment beneath this worktree's `test-results` with the locked
-native inspector and wheel-build dependencies. The runtime and immutable Git archive stay pinned through every
+native inspector and wheel-build dependencies, including the build backend's `packaging` parser. The runtime and
+immutable Git archive stay pinned through every
 consumer. The owner creates and receipts a fresh artifact root before use, builds one wheel from that archive, and
-requires its dependency declarations to match the original signed app. The complete offline cp314 wheelhouse must
+requires its dependency declarations to match the original signed app except requirements whose entire marker is
+`extra == "dev"`. The deployer installs only the bare wheel with `--no-deps`; it never selects the development extra.
+Runtime changes, other extras, broader marker expressions and malformed requirements remain refusals. The complete
+offline cp314 wheelhouse must
 match the original ISO's release inventory. Native VM admission uses the separately pinned canonical checkout owner
 and its complete checkout/parsed-code validation; the wheel builder and deployment child use the immutable archive
 from that same reviewed commit. The existing direct deployer keeps its bootstrap, deployment-lock and

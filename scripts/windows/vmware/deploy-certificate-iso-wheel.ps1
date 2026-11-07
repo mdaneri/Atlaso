@@ -245,7 +245,7 @@ try {
     $env:TMP = $output
     $env:PYTHONDONTWRITEBYTECODE = '1'
     $env:PYTHONPYCACHEPREFIX = Join-Path $output 'python-cache'
-    $runtime = Protect-AtlasoCertificatePythonRuntime -PythonPath $PythonPath -EvidenceRoot $evidenceRoot -RequiredModules @('pycdlib')
+    $runtime = Protect-AtlasoCertificatePythonRuntime -PythonPath $PythonPath -EvidenceRoot $evidenceRoot -RequiredModules @('pycdlib', 'packaging')
     $PythonPath = $runtime.Executable
     $source = New-LifecycleSourceSnapshot -RepositoryRoot $repo -Commit $ReviewedSourceCommit `
         -DestinationRoot $output -ConsumerPins $sourcePins
