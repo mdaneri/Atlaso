@@ -5247,6 +5247,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
 </ul>
 <h2 id="photon-os-appliance-deployment">Photon OS Appliance Deployment<a class="headerlink" href="#photon-os-appliance-deployment" title="Permanent link">&para;</a></h2>
 <ul>
+<li>Follow <a href="../agent-workflow/#resource-scoped-vmware-coordination">resource-scoped VMware coordination</a> for shared-resource
+  conflicts; use the <a href="../../reference/vmware-workstation-lifecycle-testing/#resource-scoped-coordination">lifecycle examples and guard limitations</a>.</li>
 <li>Canonical image builds and live appliance testing use VMware Workstation. VMware Workstation is installed by default at
   <code>C:\Program Files\VMware\VMware Workstation</code>; use <code>vmrun.exe</code> there with the helpers under <code>scripts/windows/vmware/</code>.</li>
 <li>The Photon OS 5.0 canonical template lives under <code>image/vmware-workstation/</code>. Hyper-V, KVM, and Proxmox VE are
@@ -6046,6 +6048,8 @@ preserved with their affected subsystem below. Keep new requirements at their to
 </ul>
 <h2 id="photon-vm-debugging-notes">Photon VM Debugging Notes<a class="headerlink" href="#photon-vm-debugging-notes" title="Permanent link">&para;</a></h2>
 <ul>
+<li>Preserve <a href="../agent-workflow/#resource-scoped-vmware-coordination">resource-scoped coordination</a> during debugging and
+  retained-lab handoffs; co-location alone does not require pausing independent validation.</li>
 <li>
 <p>Task-owned Photon/Packer VMware builders use the exact open same-repository pull request whose head branch and commit
   match the checkout. The shared builder-identity helper derives

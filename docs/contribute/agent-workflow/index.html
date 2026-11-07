@@ -3555,6 +3555,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#resource-scoped-vmware-coordination" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Resource-scoped VMware coordination
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#codex-task-title-traceability" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4287,6 +4298,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#resource-scoped-vmware-coordination" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Resource-scoped VMware coordination
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#codex-task-title-traceability" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4493,24 +4515,18 @@
 <h1 id="agent-worktree-and-delegation-workflow">Agent worktree and delegation workflow<a class="headerlink" href="#agent-worktree-and-delegation-workflow" title="Permanent link">&para;</a></h1>
 <p>Read before preparing implementation, selecting a worktree, or delegating work.</p>
 <h2 id="worktree-preparation">Worktree preparation<a class="headerlink" href="#worktree-preparation" title="Permanent link">&para;</a></h2>
-<p>Before creating, selecting, delegating into, or reporting an agent-owned implementation worktree, read the supported
-Codex configuration and resolve the exact configured <code>git-worktree-root</code>. Use only that configured root for the
-worktree. Never guess, infer, synthesize, or silently fall back to a repository sibling, user profile, temporary
-directory, drive, or other conventional path. A repository policy must not hard-code a host drive: the supported Codex
-setting is authoritative. If the setting is missing, ambiguous, inaccessible, unsafe, or unavailable through a
-supported interface, stop before repository, build, or external mutation and request maintainer direction.</p>
-<p>Agent-authored implementation work must use a dedicated clean worktree beneath that resolved root on its task-owned
-branch. Do not make implementation edits in the repository's primary checkout; reserve that checkout for
-synchronization, coordination, and completed-task cleanup. Keep task-owned temporary roots, staging, build outputs,
-logs, reservation state, and generated artifacts beneath the configured worktree root or another explicit
-maintainer-configured permitted root; do not silently inherit <code>GetTempPath()</code>, <code>LocalAppData</code>, or another OS-default
-location. If no supported permitted location is available, stop before mutation. Create or select the task worktree
-before applying implementation changes, and repeat the Mandatory Agent Startup Gate there before planning or mutation.
-If an existing task is outside the configured root or another required task-owned mutable path is outside every
-permitted root, preserve its state: do not move or delete it automatically, and report the exact conflict for
-maintainer-directed migration or cleanup. If a safe dedicated worktree cannot be established, stop for maintainer
-direction instead of continuing in the primary checkout.</p>
-<p>Credential access is conditional: before copying or using worktree credentials, read the
+<p>Before creating, selecting, delegating into, or reporting an implementation worktree, read the supported Codex configuration
+and resolve its exact <code>git-worktree-root</code>; use only that root. Never guess, infer, synthesize, or silently fall back
+to conventional paths or hard-code a host drive. Missing, ambiguous, inaccessible, unsafe, or unsupported configuration
+requires maintainer direction before repository, build, or external mutation.</p>
+<p>Implementation requires a dedicated clean worktree on a task-owned branch beneath that root. Reserve the primary
+checkout for synchronization, coordination, and completed-task cleanup. Keep all task-owned temporary roots, staging,
+builds, logs, reservations, and artifacts beneath that root or another explicit maintainer-configured permitted root;
+never inherit <code>GetTempPath()</code>, <code>LocalAppData</code>, or OS defaults. Repeat the Mandatory Agent Startup Gate in the task
+worktree before planning or mutation. If a worktree or mutable path is outside its permitted roots, preserve its state;
+report the exact conflict for maintainer-directed migration or cleanup without automatically moving or deleting it.
+Without a safe worktree or supported state location, stop before mutation; never implement in the primary checkout.</p>
+<p>Before copying or using worktree credentials, read the
 <a href="../../reference/vmware-workstation-lifecycle-testing/#reuse-primary-checkout-configuration-in-a-task-worktree">credential reuse procedure</a>.
 An ordinary task that does not use credentials need not seed credential files.</p>
 <h2 id="validation-resource-preparation">Validation resource preparation<a class="headerlink" href="#validation-resource-preparation" title="Permanent link">&para;</a></h2>
@@ -4520,50 +4536,50 @@ identity and task/source binding at creation, and preserve the manifest outside 
 supported by an existing owning cleanup tool; the generated-tree command requires a strict descendant of the task
 worktree. A permitted root alone does not prove cleanup support. Keep durable handoff/evidence outside disposable
 roots. Load the full cleanup procedure before release. Never retrofit missing creation evidence at cleanup time.</p>
+<h2 id="resource-scoped-vmware-coordination">Resource-scoped VMware coordination<a class="headerlink" href="#resource-scoped-vmware-coordination" title="Permanent link">&para;</a></h2>
+<p>Coordinate only overlapping operations on a specific VM, network, address allocation, credential/staging transaction,
+or host-wide setting. Sharing a VMware host alone requires no coordination: independent task-owned labs may proceed
+concurrently. Co-location never requires host-wide exclusivity, all-other-PR acknowledgements, zero running VMs, or
+blanket PowerShell/Python pauses.</p>
+<p>Record the exact shared resource or global operation, affected owners, unsafe overlap, bounded paused operations,
+eligible independent work, and explicit release condition. Prefer supported atomic allocators/transaction locks to
+entire-test-duration holds. Source, tests, read-only work, and disjoint VM/network operations remain eligible under
+their own guards. Never stop unrelated VMs/processes or infer access to another owner's resources.</p>
+<p>Generated delegation, handoffs, and heartbeat instructions must preserve the conflict record, scope, and release
+condition. Recheck on resumption; never broaden a pause to the host or unrelated PRs without a new conflict explanation.
+Preserve task/source ownership, original receipts, fresh scoped admission, capacity checks, credential custody,
+collision protection, and native acceptance. Never bypass a guard for concurrency; report the blocked operation and
+separately track proposed guard fixes. See <a href="../../reference/vmware-workstation-lifecycle-testing/#resource-scoped-coordination">lifecycle examples and current limitations</a>.</p>
 <h2 id="codex-task-title-traceability">Codex Task Title Traceability<a class="headerlink" href="#codex-task-title-traceability" title="Permanent link">&para;</a></h2>
 <h3 id="supported-title-controls">Supported title controls<a class="headerlink" href="#supported-title-controls" title="Permanent link">&para;</a></h3>
-<p>When the current Codex runtime exposes supported task-title controls, use them after identifying or creating the linked
-GitHub issue to rename the current task to <code>Short description · Issue #&lt;issue&gt;</code>. After opening or discovering the pull
-request, rename it again to <code>Short description · Issue #&lt;issue&gt; · PR #&lt;pr&gt;</code>. Keep the short description concise and
-stable, and omit only a segment whose identifier does not exist yet. When one task spans multiple items, list every
-identifier in its segment, for example <code>Short description · Issues #123, #124 · PRs #456, #457</code>.</p>
-<p>For private vulnerability remediation, use only a sanitized short description in the task title. Do not place advisory
-identifiers, affected features, or patch details in titles.</p>
+<p>Use supported task-title controls after identifying the issue: <code>Short description · Issue #&lt;issue&gt;</code>; after identifying
+the PR: <code>Short description · Issue #&lt;issue&gt; · PR #&lt;pr&gt;</code>. Keep the description concise and stable; omit only nonexistent
+identifiers and include every linked issue/PR for multi-item tasks. Private remediation titles contain only a sanitized
+description, never advisory identifiers, affected features, or patch details.</p>
 <h3 id="unsupported-title-controls">Unsupported title controls<a class="headerlink" href="#unsupported-title-controls" title="Permanent link">&para;</a></h3>
-<p>When supported task-title controls are unavailable, or the runtime does not have a mutable Codex task, continue without
-blocking on the rename. Do not invent or depend on an undocumented CLI fallback.</p>
+<p>Without supported controls or a mutable task, continue without renaming; never invent an undocumented CLI fallback.</p>
 <h3 id="schema-constrained-reporting">Schema-constrained reporting<a class="headerlink" href="#schema-constrained-reporting" title="Permanent link">&para;</a></h3>
-<p>Include every linked issue and pull-request identifier in the first progress update and final response only when those
-reporting surfaces accept free-form traceability metadata. When a required output schema does not permit extra metadata,
-follow the schema and do not block solely to add the identifiers.</p>
+<p>Include every linked issue/PR in the first update and final response when free-form metadata is allowed. Otherwise
+follow the required schema without blocking solely to add identifiers.</p>
 <h2 id="sol-and-luna-delegation">Sol and Luna Delegation<a class="headerlink" href="#sol-and-luna-delegation" title="Permanent link">&para;</a></h2>
-<p>The project-scoped <code>luna_worker</code> in <code>.codex/agents/luna-worker.toml</code> selects <code>gpt-6-luna</code> at high reasoning effort.
-GPT-6 Sol High is the lead; GPT-6 Luna High is the default worker for scoped implementation, investigation, tests,
-documentation, and parallel tasks. Sol owns architecture, difficult debugging, integration, security, final review,
-validation, and delivery.</p>
-<p>Escalate to Sol after repeated Luna failures or when the task needs architectural reasoning, non-obvious interactions
-across services, authentication or security, database/schema migration, or broader networking/routing/DHCP/DNS
-reasoning. Luna returns its evidence and the open decision to Sol.
-Every delegated prompt must state the exact scope, owned files, expected result, relevant checks, the Mandatory Agent
-Startup Gate, and the exact resolved Codex worktree root and permitted task-state roots. The delegating agent must
-verify the delegated worktree and task-owned mutable paths against those roots before relying on the result. UI prompts
-must also include the Mandatory UI Design Guide Gate, interaction classification, and reused Atlaso reference. Luna
-must not commit, push, change GitHub state, or delegate further.</p>
-<p>Run multiple Luna workers only for independent tasks with non-overlapping
-file ownership. Sol must inspect and integrate every returned diff before
-relying on it.</p>
-<p>If Luna is unavailable, rate-limited, its usage allowance is exhausted,
-or the worker cannot be started because of capacity/runtime limitations,
-Sol performs the work directly. Sol does not repeatedly retry Luna after a
-quota or rate-limit failure and never substitutes an unapproved model.
-Report the fallback once for the current task.</p>
+<p>The project <code>luna_worker</code> (<code>.codex/agents/luna-worker.toml</code>) selects <code>gpt-6-luna</code> at high reasoning effort. GPT-6 Sol High
+leads; GPT-6 Luna High defaults to scoped implementation, investigation, tests, documentation, and parallel work.
+Sol owns architecture, difficult debugging, integration, security, final review, validation, and delivery.</p>
+<p>Luna returns evidence and open decisions to Sol after repeated failures or for architectural/cross-service reasoning,
+authentication/security, database/schema migration, or broader networking/routing/DHCP/DNS work.
+Delegated prompts require exact scope, owned files, expected result, checks, Mandatory Agent Startup Gate, resolved
+Codex worktree root, and permitted task-state roots. Verify delegated worktree/mutable-path containment before relying
+on results. UI prompts also require the Mandatory UI Design Guide Gate, interaction classification, and reused Atlaso
+reference. Luna must not commit, push, change GitHub state, or delegate further.</p>
+<p>Use multiple workers only for independent tasks with non-overlapping file ownership. Sol inspects and integrates every
+returned diff. If Luna is unavailable, rate-limited, quota-exhausted, or cannot start due to capacity/runtime limits,
+Sol works directly, reports fallback once, avoids repeated quota/rate-limit retries, and
+never substitutes an unapproved model.</p>
 <h3 id="unrelated-issue-discoveries">Unrelated issue discoveries<a class="headerlink" href="#unrelated-issue-discoveries" title="Permanent link">&para;</a></h3>
-<p>Keep each pull request limited to its linked issue scope. When work reveals a reproducible or otherwise evidence-backed
-actionable problem outside that scope, search open and closed issues for an existing tracking record. If none exists,
-open a separate issue with exactly one appropriate type label and enough sanitized evidence for independent follow-up.
-Link the new or existing issue from the active pull request or task report when useful, but do not add <code>Closes</code> unless
-the active pull request actually resolves it. Do not expand the pull request to fix the unrelated issue without explicit
-maintainer approval. Route suspected sensitive vulnerabilities through
+<p>Keep PRs scoped to linked issues. For reproducible or otherwise evidence-backed unrelated actionable problems, search
+open and closed issues; absent a match, open a separate issue with exactly one appropriate type label and sanitized
+evidence for independent follow-up. Link tracking when useful; add <code>Closes</code> only for issues the PR resolves. Fixing an
+unrelated issue in the same PR requires explicit maintainer approval. Suspected sensitive vulnerabilities follow
 <a href="https://github.com/mdaneri/Atlaso/blob/main/SECURITY.md">SECURITY.md</a> instead of a public issue.</p>
 
 

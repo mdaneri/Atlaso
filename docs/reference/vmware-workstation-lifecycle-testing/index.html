@@ -2976,6 +2976,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#resource-scoped-coordination" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Resource-scoped coordination
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#focused-reverse-proxy-acceptance" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4420,6 +4431,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#resource-scoped-coordination" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Resource-scoped coordination
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#focused-reverse-proxy-acceptance" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4796,6 +4818,51 @@
 <p>The shared lifecycle host-state checks verify that first-boot appliances retain <code>vcf-sdk==9.1.1.0</code>,
 <code>VCF.PowerCLI==9.1.1.25718932</code>, and <code>Connect-VIServer</code> after the wheel-only test deployment. The PowerCLI import and
 command check run directly as the unprivileged appliance SSH user rather than through sudo.</p>
+<h2 id="resource-scoped-coordination">Resource-scoped coordination<a class="headerlink" href="#resource-scoped-coordination" title="Permanent link">&para;</a></h2>
+<p>Apply the <a href="../../contribute/agent-workflow/#resource-scoped-vmware-coordination">canonical agent coordination rule</a> before
+pausing work. Independent task-owned labs may share a VMware host; co-location alone establishes no host-wide
+exclusivity, all-other-PR acknowledgement, zero-running-VM prerequisite, or blanket PowerShell/Python pause.
+Record the exact resource or global operation, affected owners, unsafe overlap, bounded paused operations, eligible
+independent work, and release condition. Preserve that record in generated handoffs and heartbeat instructions.</p>
+<table>
+<thead>
+<tr>
+<th>Operations</th>
+<th>Coordination boundary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Lab A and lab B use distinct owned VMs, private LANs, and independently admitted management addresses.</td>
+<td>Both may proceed concurrently after their own ownership, fresh scoped admission, and capacity checks.</td>
+</tr>
+<tr>
+<td>Lab A performs guest validation while lab B operates on its disjoint owned VM/network without changing shared catalogs or host settings.</td>
+<td>Both may proceed; unrelated source edits, tests, and read-only work also remain eligible.</td>
+</tr>
+<tr>
+<td>Two tasks propose power, snapshot, adapter, or guest mutations on the same VM.</td>
+<td>Coordinate with its owner and serialize the conflicting operations until the first operation completes and fresh admission permits the next. Coordination grants no resource access by itself.</td>
+</tr>
+<tr>
+<td>Two builders allocate or release addresses from the same pool.</td>
+<td>Use the shared atomic allocator and ledger lock for each transaction; keep each exact address reserved for its required lifetime. Distinct admitted reservations permit concurrent builds.</td>
+</tr>
+<tr>
+<td>Tasks edit the same LAN catalog, use a shared credential/staging transaction, or change genuinely host-wide configuration.</td>
+<td>Use the supported transaction lock or a bounded owner-agreed pause until publication, verification, and any required recovery complete.</td>
+</tr>
+</tbody>
+</table>
+<p>The real shared builder-address collision in <a href="https://github.com/mdaneri/Atlaso/issues/637">#637</a> explains why allocator
+serialization remains required. A short ledger lock is distinct from the reservation retained while the exact builder
+is active or recovery evidence is ambiguous. Never release that reservation early to obtain concurrency.</p>
+<p>Existing tool guards still apply. LAN-segment release currently requires the Workstation UI closed and refuses any
+active <code>vmware-vmx</code> or <code>vmrun</code> process while checking shared preferences, inventory, and complete configured VM storage
+roots. This is a guard on that catalog cleanup operation, not a general VMware/plugin concurrency limitation or a
+prerequisite for independent lab validation. If blocked, retain the segment and defer its release; do not stop unrelated
+VMs or processes. Name the guard and affected operation, and separately track any proposed narrowing with its required
+safety evidence. Do not bypass it, omit scan roots, or weaken receipts, identity checks, or native acceptance gates.</p>
 <h2 id="focused-reverse-proxy-acceptance">Focused reverse-proxy acceptance<a class="headerlink" href="#focused-reverse-proxy-acceptance" title="Permanent link">&para;</a></h2>
 <p><code>invoke-lifecycle-test.ps1 -ReverseProxyOnly -PullRequestNumber &lt;number&gt;</code> uses a two-interface appliance and a
 host-reachable Site A network. Supply the powered-off, provenance-admitted builder VMX explicitly with
@@ -5021,8 +5088,11 @@ durable controller evidence surface before deleting any lifecycle result root.</
 <li>Independently verify the originating task, repository, creation commit, exact PR, canonical lab root, and original
    receipt hash against the task's creation evidence and lifecycle identity. Do not derive expected ownership or a new
    expected hash from the candidate receipt during cleanup.</li>
-<li>Close the Workstation UI normally and finish VMware VM/vmrun activity. The cleanup operation never closes the UI,
-   stops another VM, or terminates another task's process. Coordinate with other validation tasks before proceeding.</li>
+<li>Admit only this catalog cleanup operation under the <a href="#resource-scoped-coordination">resource-scoped coordination boundary</a>.
+   Its current guard requires the Workstation UI closed and no active <code>vmware-vmx</code> or <code>vmrun</code> process. Arrange a bounded
+   window with affected owners, or retain the segment and defer release while independent work continues. The cleanup
+   operation never closes the UI, stops another VM, or terminates another task's process. Never stop unrelated VMs or
+   processes to clear its guard.</li>
 <li>Supply every independently configured VM storage root in <code>$vmRoots</code>, including locations of unregistered VMX files.
    The operation additionally inspects all paths in Workstation's inventory. Missing configured roots, inaccessible
    registered directories, malformed adapter/inventory records, links, and surviving references refuse cleanup.</li>
