@@ -11,13 +11,13 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize("fail_copy", [False, True])
-def test_ntp_retained_wheel_is_receipted_before_copy_and_never_published_on_failure(tmp_path, fail_copy):
+@pytest.mark.parametrize("failure", ["none", "operation", "missing-marker", "wrong-marker"])
+def test_ntp_retained_wheel_is_receipted_before_copy_and_never_published_on_failure(tmp_path, failure):
     """A bounded guest copy cannot publish verified custody after a failed mutation.
 
     Args:
         tmp_path: Isolated synthetic original receipt root.
-        fail_copy: Whether the bounded guest copy fails.
+        failure: Native operation failure or missing/incorrect guest completion evidence.
     """
     pwsh = shutil.which("pwsh")
     if not pwsh:
@@ -42,6 +42,7 @@ $applianceVmx='original.vmx'; $resolvedVmrun='synthetic-vmrun'; $RootGuestPasswo
 $runtimeConsumerPins=@{}; $applianceWheel=@{Name='atlaso-0.9.485-py3-none-any.whl';Sha256='b'*64}
 $certificateOwnership=@{Path=$env:ATLASO_NTP_TEST_OWNER;Sha256=(Get-FileHash $env:ATLASO_NTP_TEST_OWNER).Hash}
 $certificateRuntime=@{Sha256='d'*64}; $script:events=[Collections.Generic.List[string]]::new()
+$resultRoot=Split-Path -Parent $env:ATLASO_NTP_TEST_OWNER
 function Assert-LifecycleSourcePins {param($Pins) $script:events.Add('pins')}
 function Get-AtlasoPathIdentity {param($Path,$Description) return '00000001:0000000200000003'}
 function ConvertTo-GuestShellSingleQuote {param($Value) return "'$Value'"}
@@ -55,26 +56,37 @@ function Write-CertificateLabReceipt {
 }
 function Invoke-AtlasoBoundedStreamingProcess {
  param($FilePath,$ArgumentList,$TimeoutSeconds,$Action,[switch]$DiscardOutput)
- $script:events.Add('copy')
  if($TimeoutSeconds -ne 30 -or -not $DiscardOutput){throw 'Unbounded or output-bearing copy.'}
+ if($ArgumentList[6] -ceq 'copyFileFromGuestToHost'){
+  $script:events.Add('readback')
+  if($env:ATLASO_NTP_TEST_FAIL -eq 'missing-marker'){return}
+  $digest=if($env:ATLASO_NTP_TEST_FAIL -eq 'wrong-marker'){'c'*64}else{'b'*64}
+  [IO.File]::WriteAllText($ArgumentList[-1],$digest+"`n")
+  return
+ }
+ $script:events.Add('copy')
  $guest=$ArgumentList[-1]
  foreach($guard in @('test ! -e "$retained_dir"','test ! -L "$source_wheel"',
   'sha256sum --check --status','install -o 0 -g 0 -m 0600','0:0:600:1')){
   if(-not $guest.Contains($guard)){throw 'Missing artifact refusal or integrity check.'}
  }
- if($env:ATLASO_NTP_TEST_FAIL -eq 'true'){throw 'Synthetic guest copy failure.'}
+ if($env:ATLASO_NTP_TEST_FAIL -eq 'operation'){throw 'Synthetic guest copy failure.'}
 }
 $failed=$false
 try {$null=Save-NtpRetainedWheel} catch {$failed=$true}
 @{events=@($script:events);failed=$failed}|ConvertTo-Json -Compress
 """
-    environment = dict(os.environ, ATLASO_NTP_TEST_OWNER=str(receipt), ATLASO_NTP_TEST_FAIL=str(fail_copy).lower())
+    environment = dict(os.environ, ATLASO_NTP_TEST_OWNER=str(receipt), ATLASO_NTP_TEST_FAIL=failure)
     result = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", program], cwd=ROOT,
                             env=environment, capture_output=True, text=True, timeout=30, check=True)
     observed = json.loads(result.stdout)
-    assert observed["failed"] is fail_copy
+    assert observed["failed"] is (failure != "none")
     events = ["pins", "ntp-wheel-retention-intent.json", "copy"]
-    assert observed["events"] == events if fail_copy else observed["events"] == [*events, "pins", "ntp-retained-wheel.json"]
+    if failure != "operation":
+        events.append("readback")
+    if failure == "none":
+        events.extend(["pins", "ntp-retained-wheel.json"])
+    assert observed["events"] == events
 
 
 @pytest.mark.parametrize(("plan_only", "cleanup", "admitted"), [(True, True, True), (False, True, False), (False, False, True)])

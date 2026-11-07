@@ -542,6 +542,8 @@ function Save-NtpRetainedWheel {
     }
     $sourcePath = "/tmp/$($applianceWheel.Name)"
     $guestPath = "/var/lib/atlaso/ntp-acceptance/$($applianceWheel.Name)"
+    $verificationPath = Join-Path $resultRoot 'ntp-retained-wheel-verification.txt'
+    if (Test-Path -LiteralPath $verificationPath) { throw 'NTP retained-wheel verification already exists.' }
     $digest = $applianceWheel.Sha256.ToLowerInvariant()
     $intent = Write-CertificateLabReceipt -Name 'ntp-wheel-retention-intent.json' -Value ([ordered]@{
         schema = 1; kind = 'ntp-wheel-retention-intent'; task_id = $lifecycleTaskId; repository = 'mdaneri/Atlaso'
@@ -566,12 +568,24 @@ install -o 0 -g 0 -m 0600 -- "$source_wheel" "$retained_wheel"
 test ! -L "$retained_wheel"
 test "$(stat -c '%u:%g:%a:%h' "$retained_wheel")" = '0:0:600:1'
 printf '%s  %s\n' '__DIGEST__' "$retained_wheel" | sha256sum --check --status
+printf '%s\n' '__DIGEST__' > "$retained_dir/verified.sha256"
 '@
     $script = $script.Replace('__SOURCE__', (ConvertTo-GuestShellSingleQuote -Value $sourcePath)).
         Replace('__TARGET__', (ConvertTo-GuestShellSingleQuote -Value $guestPath)).Replace('__DIGEST__', $digest)
     $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
         '-T', 'ws', '-gu', 'root', '-gp', $RootGuestPassword, 'runScriptInGuest', $applianceVmx, '/bin/sh', $script
     ) -TimeoutSeconds 30 -Action 'Retain original NTP wheel before appliance reboot'
+    # VIX operation completion alone does not prove guest script completion.
+    # This fresh marker can exist only after both hashes and ownership checks.
+    $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
+        '-T', 'ws', '-gu', 'root', '-gp', $RootGuestPassword, 'copyFileFromGuestToHost', $applianceVmx,
+        '/var/lib/atlaso/ntp-acceptance/verified.sha256', $verificationPath
+    ) -TimeoutSeconds 30 -Action 'Verify original NTP retained wheel completion'
+    if (-not (Test-Path -LiteralPath $verificationPath -PathType Leaf) -or
+        (Get-Item -LiteralPath $verificationPath).Length -gt 66 -or
+        (Get-Content -LiteralPath $verificationPath -Raw).Trim() -cne $digest) {
+        throw 'NTP retained wheel guest completion was not verified.'
+    }
     Assert-LifecycleSourcePins -Pins $runtimeConsumerPins
     return Write-CertificateLabReceipt -Name 'ntp-retained-wheel.json' -Value ([ordered]@{
         schema = 1; kind = 'ntp-retained-wheel'; task_id = $lifecycleTaskId; repository = 'mdaneri/Atlaso'
