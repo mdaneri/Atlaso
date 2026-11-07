@@ -16,6 +16,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from ipaddress import ip_address
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from cryptography import x509
@@ -356,6 +357,95 @@ def client_context(materials: dict[str, Path], *, trusted: bool) -> ssl.SSLConte
     return context
 
 
+def assert_rejected_client_connection_closed(client: ssl.SSLSocket, request: bytes) -> None:
+    """Require a rejected client connection to close without an application response.
+
+    Args:
+        client: TLS socket for the rejected client.
+        request: KMIP request that must not receive a response.
+    """
+    try:
+        client.sendall(request)
+        response = client.recv(4096)
+    except (BrokenPipeError, ConnectionResetError, ssl.SSLEOFError, ssl.SSLZeroReturnError):
+        return
+    assert response == b""
+
+
+@pytest.mark.parametrize(
+    ("stage", "close_error"),
+    [
+        (stage, error_type("peer closed"))
+        for stage in ("sendall", "recv")
+        for error_type in (BrokenPipeError, ConnectionResetError, ssl.SSLEOFError, ssl.SSLZeroReturnError)
+    ],
+)
+def test_rejected_client_connection_accepts_supported_close_errors(
+    stage: str, close_error: OSError,
+) -> None:
+    """Accept only explicit socket and TLS close outcomes from a rejected peer.
+
+    Args:
+        stage: Socket operation where the peer closes.
+        close_error: Supported connection-close exception.
+    """
+    client = Mock(spec=ssl.SSLSocket)
+    if stage == "sendall":
+        client.sendall.side_effect = close_error
+    else:
+        client.recv.side_effect = close_error
+
+    assert_rejected_client_connection_closed(client, b"request")
+
+    client.sendall.assert_called_once_with(b"request")
+    if stage == "sendall":
+        client.recv.assert_not_called()
+    else:
+        client.recv.assert_called_once_with(4096)
+
+
+@pytest.mark.parametrize("response", [b"", b"application response"])
+def test_rejected_client_connection_checks_eof_and_rejects_response(response: bytes) -> None:
+    """Require EOF and reject all application response bytes.
+
+    Args:
+        response: Bytes returned by the rejected peer.
+    """
+    client = Mock(spec=ssl.SSLSocket)
+    client.recv.return_value = response
+
+    if response:
+        with pytest.raises(AssertionError):
+            assert_rejected_client_connection_closed(client, b"request")
+    else:
+        assert_rejected_client_connection_closed(client, b"request")
+
+    client.sendall.assert_called_once_with(b"request")
+    client.recv.assert_called_once_with(4096)
+
+
+@pytest.mark.parametrize(
+    ("stage", "unexpected_error"),
+    [
+        (stage, error_type("unexpected failure"))
+        for stage in ("sendall", "recv")
+        for error_type in (TimeoutError, OSError, ssl.SSLError)
+    ],
+)
+def test_rejected_client_connection_propagates_other_errors(stage: str, unexpected_error: OSError) -> None:
+    """Propagate timeouts and socket errors outside the accepted close outcomes.
+
+    Args:
+        stage: Socket operation that fails.
+        unexpected_error: Error that must remain visible to the test.
+    """
+    client = Mock(spec=ssl.SSLSocket)
+    getattr(client, stage).side_effect = unexpected_error
+
+    with pytest.raises(type(unexpected_error), match="unexpected failure"):
+        assert_rejected_client_connection_closed(client, b"request")
+
+
 @pytest.mark.parametrize("version", [(1, 1), (1, 4)])
 def test_mtls_server_accepts_mapped_fingerprint_and_writes_redacted_trace(
     tmp_path: Path, version: tuple[int, int],
@@ -678,17 +768,22 @@ def test_mtls_server_binds_every_configured_listener_address(tmp_path: Path) -> 
 
 
 def test_mtls_server_rejects_ca_valid_but_unmapped_client(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Verify that mtls server rejects ca valid but unmapped client.
+    """Verify an unmapped but CA-valid client is rejected before request dispatch.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
-        caplog: Capture the server's explicit certificate-authorization refusal.
+        caplog: Pytest fixture capturing the rejection warning.
+        monkeypatch: Pytest fixture replacing dispatch with an observable spy.
     """
-    caplog.set_level(logging.WARNING, logger="atlaso.kmip")
     materials = material(tmp_path)
     server = build_server(service_config(tmp_path, materials), secrets_key="appliance-secrets-key")
+    dispatch = Mock(wraps=server.dispatcher.dispatch)
+    monkeypatch.setattr(server.dispatcher, "dispatch", dispatch)
+    caplog.set_level(logging.WARNING, logger="atlaso.kmip")
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     host, port = server.server_address
@@ -698,18 +793,17 @@ def test_mtls_server_rejects_ca_valid_but_unmapped_client(
                 raw,
                 server_hostname="localhost",
             ) as secured:
-                try:
-                    secured.sendall(discover_versions_request())
-                    response = secured.recv(4096)
-                except (BrokenPipeError, ConnectionResetError, ssl.SSLEOFError):
-                    # The authorization refusal may close TLS before either client I/O operation.
-                    response = b""
-                assert response == b""
+                assert_rejected_client_connection_closed(secured, discover_versions_request())
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=3)
-    assert "Rejected an unmapped KMIP client certificate." in caplog.messages
+
+    assert not thread.is_alive()
+    assert (
+        "atlaso.kmip", logging.WARNING, "Rejected an unmapped KMIP client certificate.",
+    ) in caplog.record_tuples
+    dispatch.assert_not_called()
 
 
 def test_stalled_tls_handshake_does_not_block_other_connections(tmp_path: Path) -> None:
