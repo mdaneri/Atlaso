@@ -76,9 +76,11 @@ required release reaches seven full days.
 
 Setuptools `84.1.0` was the first patched minimum for the upstream Windows legacy wheel-installation path escape
 described in [GHSA-xmj3-9gf7-h52w](https://github.com/pypa/setuptools/security/advisories/GHSA-xmj3-9gf7-h52w).
-The [appliance bootstrap input](../../requirements-appliance-bootstrap.in) currently selects `84.2.1`, while the
+The [appliance bootstrap input][bootstrap-input] currently selects `84.2.1`, while the
 development extra requires at least the patched minimum so its transitive setuptools selection remains safe. Regenerate
 both appliance and development locks when updating this dependency.
+
+[bootstrap-input]: https://github.com/mdaneri/Atlaso/blob/main/requirements-appliance-bootstrap.in
 
 The Windows candidate job installs the release-tools and virtualization-smoke locks into one interpreter. Their input
 manifests therefore pin shared runtime packages compatibly so the second installation cannot replace part of the
