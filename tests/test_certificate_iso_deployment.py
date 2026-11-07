@@ -6,6 +6,9 @@ import base64
 import copy
 import hashlib
 import json
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -29,6 +32,44 @@ _MACHINE_ID_SHA256 = "f" * 64
 _DEPLOYMENT_DIR = "atlaso-certificate-deploy-0123456789abcdef0123456789abcdef"
 _WHEEL_FILENAME = "atlaso-1.2.4.whl"
 _REMOTE_WHEEL = f"/tmp/{_DEPLOYMENT_DIR}/{_WHEEL_FILENAME}"
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell is unavailable")
+def test_native_deployment_identity_arguments_preserve_original_receipts(tmp_path: Path) -> None:
+    """Run the pure PowerShell identity builder without accessing VMware resources.
+
+    Args:
+        tmp_path: Pytest-owned location for PowerShell's module-analysis cache.
+    """
+    repository_root = Path(__file__).resolve().parents[1]
+    test_script = repository_root / "tests/powershell/Test-CertificateIsoDeploymentIdentity.ps1"
+    inherited_names = {
+        "PATH", "SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "HOME", "USERPROFILE", "HOMEDRIVE",
+        "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PSMODULEPATH", "PATHEXT",
+        "COMSPEC", "LANG", "LC_ALL", "TZ",
+    }
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in inherited_names
+    }
+    environment.update({
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PSModuleAnalysisCachePath": str(tmp_path / "PSModuleAnalysis.cache"),
+        "TEMP": str(tmp_path),
+        "TMP": str(tmp_path),
+    })
+    result = subprocess.run(
+        [shutil.which("pwsh") or "pwsh", "-NoProfile", "-NonInteractive", "-File",
+         str(test_script), "-RepositoryRoot", str(repository_root)],
+        cwd=repository_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def _digest(payload: bytes) -> str:

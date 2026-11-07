@@ -347,6 +347,8 @@ The immutable public deployment plan retains `task_id`, positive `pr`, `trust_mo
 SHA-256 digests under `appliance_intent`, `appliance_ownership`, `appliance_disk_baseline`,
 `appliance_installed_boot` and `installed_inspection`. Add `deployment_network_inspection` for the original console
 network report and `deployment_network_binding` with its native `vmnet`, `subnet` and integer `prefixlen`.
+Native admission retains the original appliance's canonical name and collision suffix. Keep the original VM identity
+when the reviewed harness advances; never rename it to fit a later invocation.
 
 Before the stopped host-only configuration transition, publish `host_only_transition` as a path/digest reference to
 an immutable public record. Its schema is `1`, kind is `certificate-iso-host-only-transition`, and it binds the exact

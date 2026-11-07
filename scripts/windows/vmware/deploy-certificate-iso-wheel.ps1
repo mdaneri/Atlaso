@@ -91,6 +91,44 @@ function New-CertificateIsoDeploymentOutput {
         } catch { $pin.Dispose(); throw }
     } finally { $parentPin.Dispose(); $receiptDirectoryPin.Dispose() }
 }
+<#
+.SYNOPSIS
+Preserve the original appliance's canonical identity in every native admission call.
+.PARAMETER RepositoryRoot
+Exact admitted task checkout that owns the original appliance.
+.PARAMETER Plan
+Digest-bound deployment plan retaining the original receipt selectors and host-only network.
+.PARAMETER Original
+Digest-checked original ISO ownership record containing its canonical name and VMX path.
+#>
+function Get-CertificateIsoNativeArguments {
+    param([Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][hashtable]$Plan, [Parameter(Mandatory)][hashtable]$Original)
+    $base = New-AtlasoVmwareTestIdentity -PullRequestNumber ([int]$Plan.pr) -Purpose installation-iso
+    $name = [string]$Original.canonical_name
+    $suffix = ''
+    if ($name -cne $base.Name) {
+        $prefix = $base.Name + '-'
+        if (-not $name.StartsWith($prefix, [StringComparison]::Ordinal)) {
+            throw 'Original ISO canonical identity differs from this pull request.'
+        }
+        $suffix = $name.Substring($prefix.Length)
+    }
+    $identity = New-AtlasoVmwareTestIdentity -PullRequestNumber ([int]$Plan.pr) `
+        -Purpose installation-iso -CollisionSuffix $suffix
+    if ($identity.Name -cne $name -or
+        [IO.Path]::GetFileNameWithoutExtension([string]$Original.vmx_path) -cne $identity.Name) {
+        throw 'Original ISO canonical VMX identity is not preserved.'
+    }
+    return @{
+        Mode = 'AdmitNetwork'; Worktree = $RepositoryRoot; OutputDirectory = $Original.output_directory
+        PullRequestNumber = [int]$Plan.pr; CollisionSuffix = $identity.CollisionSuffix
+        NetworkVmnet = $Plan.deployment_network_binding.vmnet
+        OriginalReceiptPath = $Plan.appliance_ownership.path; OriginalReceiptSha256 = $Plan.appliance_ownership.sha256
+        BaselineReceiptPath = $Plan.appliance_disk_baseline.path; BaselineReceiptSha256 = $Plan.appliance_disk_baseline.sha256
+        BootReceiptPath = $Plan.appliance_installed_boot.path; BootReceiptSha256 = $Plan.appliance_installed_boot.sha256
+    }
+}
 if ($PSScriptRoot) { throw 'Load this entrypoint from the exact reviewed Git blob.' }
 if ($env:DEFAULT_ADMIN_PASSWORD -or $env:OP_SERVICE_ACCOUNT_TOKEN) {
     throw 'Use only the existing task-local 1Password credential bridge.'
@@ -121,6 +159,7 @@ try {
         'scripts/windows/vmware/Atlaso.SourceSnapshot.psm1',
         'scripts/windows/vmware/Atlaso.LifecycleOwnership.ps1',
         'scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1',
+        'scripts/windows/vmware/Atlaso.VmwareTestIdentity.psm1',
         'scripts/windows/vmware/Atlaso.FixtureWheel.psm1'
     )) {
         $path = Join-Path $repo $relative
@@ -145,6 +184,7 @@ try {
     $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($helpers, $false, $true))
     Import-Module (Join-Path $helpers 'Atlaso.SourceSnapshot.psm1') -Force
     Import-Module (Join-Path $helpers 'Atlaso.FixtureWheel.psm1') -Force
+    Import-Module (Join-Path $helpers 'Atlaso.VmwareTestIdentity.psm1') -Force
     . (Join-Path $helpers 'Atlaso.LifecycleOwnership.ps1')
     . (Join-Path $helpers 'Atlaso.WorkstationFirstBoot.ps1')
     $durable = Get-AtlasoLifecycleDurableRoot
@@ -194,13 +234,7 @@ try {
     foreach ($wheelFile in @(Get-ChildItem -LiteralPath $dependencies -Filter '*.whl' -File)) {
         $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($wheelFile.FullName, $true))
     }
-    $nativeArguments = @{
-        Mode = 'AdmitNetwork'; Worktree = $repo; OutputDirectory = $original.output_directory
-        PullRequestNumber = [int]$planData.pr; NetworkVmnet = $planData.deployment_network_binding.vmnet
-        OriginalReceiptPath = $planData.appliance_ownership.path; OriginalReceiptSha256 = $planData.appliance_ownership.sha256
-        BaselineReceiptPath = $planData.appliance_disk_baseline.path; BaselineReceiptSha256 = $planData.appliance_disk_baseline.sha256
-        BootReceiptPath = $planData.appliance_installed_boot.path; BootReceiptSha256 = $planData.appliance_installed_boot.sha256
-    }
+    $nativeArguments = Get-CertificateIsoNativeArguments -RepositoryRoot $repo -Plan $planData -Original $original
     $output = Join-Path $evidenceRoot ('certificate-wheel-' + [guid]::NewGuid().ToString('N'))
     $preparedOutput = New-CertificateIsoDeploymentOutput -DurableRoot $durable -Worktree $repo -OutputRoot $output `
         -TaskId $env:CODEX_THREAD_ID -SourceCommit $ReviewedSourceCommit -PullRequestNumber ([int]$planData.pr)
