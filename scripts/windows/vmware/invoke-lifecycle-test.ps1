@@ -72,6 +72,16 @@ Run only the same-address IPv4 handoff within RoutingOverlapOnly.
 Run only the OIDC lifecycle scenario.
 .PARAMETER TimeSourceOnly
 Run focused NTP clock-source Apply and host/client UDP acceptance without lifecycle clients.
+.PARAMETER NtpColdStartOnly
+Run the isolated native NTP cold-start acceptance using a receipt-backed private peer.
+.PARAMETER NtpPeerSourceReceiptPath
+Path to the pre-existing receipt binding the NTP peer source identity.
+.PARAMETER NtpPeerSourceReceiptSha256
+Expected SHA-256 digest of the NTP peer source receipt.
+.PARAMETER NtpPeerPreparedReceiptPath
+Path to the pre-existing receipt binding the prepared NTP peer fixture.
+.PARAMETER NtpPeerPreparedReceiptSha256
+Expected SHA-256 digest of the prepared NTP peer receipt.
 .PARAMETER ReverseProxyOnly
 Run the focused public reverse-proxy lifecycle scenario on the appliance's management and host-reachable Site A interfaces.
 .PARAMETER ReverseProxyTlsFixtureDirectory
@@ -255,6 +265,26 @@ param(
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
+    [switch]$NtpColdStartOnly,
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [string]$NtpPeerSourceReceiptPath = '',
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [string]$NtpPeerSourceReceiptSha256 = '',
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [string]$NtpPeerPreparedReceiptPath = '',
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [string]$NtpPeerPreparedReceiptSha256 = '',
+
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
     [switch]$ReverseProxyOnly,
 
     [Parameter(ParameterSetName = 'Run')]
@@ -283,11 +313,16 @@ param(
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
+    [Alias('NtpPeerCidr')]
     [string]$CertificatePeerCidr = '192.168.77.1/24',
 
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Plan')]
+    [Alias('NtpLeaseAddress')]
     [string]$CertificateLeaseAddress = '192.168.77.10',
+    [Parameter(ParameterSetName = 'Run')]
+    [Parameter(ParameterSetName = 'Plan')]
+    [Alias('NtpPeerPublicKeyPath')]
     [string]$CertificatePeerPublicKeyPath = '',
 
     [Parameter(ParameterSetName = 'Run')]
@@ -396,6 +431,55 @@ if ($SignedReleaseRepositoryUrl -and ($OidcOnly -or $TimeSourceOnly -or $Routing
 }
 if ($SignedReleaseRepositoryUrl -and $ReverseProxyOnly) {
     throw '-SignedReleaseRepositoryUrl requires the full lifecycle and cannot be combined with -ReverseProxyOnly.'
+}
+if ($NtpColdStartOnly) {
+    $otherFocusedModes = @(
+        $OidcOnly, $TimeSourceOnly, $RoutingWanOnly, $CertificateOnly, $CertificateDhcpPeer,
+        $RoutingOverlapOnly, $SameAddressHandoffOnly, $FullEsxiPxeInstall, $ReverseProxyOnly
+    )
+    if (@($otherFocusedModes | Where-Object { $_ }).Count -gt 0) {
+        throw '-NtpColdStartOnly cannot be combined with another focused lifecycle mode.'
+    }
+    if ($SiteInterface -cne 'eth0' -or $SiteANetwork -notmatch '^lan:.+$') {
+        throw '-NtpColdStartOnly requires SiteInterface eth0 and a named private lan: SiteANetwork.'
+    }
+    if ($ManagementNetwork -notmatch '^VMnet\d+$') {
+        throw '-NtpColdStartOnly requires an existing VMnet-numbered ManagementNetwork.'
+    }
+    if ($PSBoundParameters.ContainsKey('ApplianceIPAddress') -or $PSBoundParameters.ContainsKey('ApplianceUrl') -or
+        $AllowDryRunApply -or $PSBoundParameters.ContainsKey('SignedReleaseRepositoryUrl')) {
+        throw '-NtpColdStartOnly does not accept appliance address/URL overrides, dry-run Apply, or a signed-release fixture.'
+    }
+    if (-not $NtpPeerSourceReceiptPath -or $NtpPeerSourceReceiptSha256 -notmatch '^[0-9a-fA-F]{64}$' -or
+        -not $NtpPeerPreparedReceiptPath -or $NtpPeerPreparedReceiptSha256 -notmatch '^[0-9a-fA-F]{64}$') {
+        throw '-NtpColdStartOnly requires both receipt paths and their 64-character SHA-256 digests.'
+    }
+    if (-not $PlanOnly) {
+        if (-not $KeepVms -or -not $SkipClientPrepare -or
+            -not $PSBoundParameters.ContainsKey('ApplianceVmxPath') -or
+            -not (Test-Path -LiteralPath $ApplianceVmxPath -PathType Leaf) -or
+            -not $PSBoundParameters.ContainsKey('ClientVmdkPath') -or
+            -not (Test-Path -LiteralPath $ClientVmdkPath -PathType Leaf)) {
+            throw '-NtpColdStartOnly Run requires KeepVms, SkipClientPrepare, and explicit existing ApplianceVmxPath and ClientVmdkPath values.'
+        }
+        if (-not $CertificatePeerPublicKeyPath -or
+            -not (Test-Path -LiteralPath $CertificatePeerPublicKeyPath -PathType Leaf)) {
+            throw '-NtpColdStartOnly Run requires an existing Ed25519 peer public key through NtpPeerPublicKeyPath.'
+        }
+        if ($null -eq $AdminPassword -or $null -eq $RootPassword) {
+            throw '-NtpColdStartOnly Run requires protected AdminPassword and RootPassword credentials.'
+        }
+        foreach ($receiptPath in @($NtpPeerSourceReceiptPath, $NtpPeerPreparedReceiptPath)) {
+            if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
+                throw '-NtpColdStartOnly Run requires existing source and prepared peer receipt files.'
+            }
+        }
+    }
+} elseif ($PSBoundParameters.ContainsKey('NtpPeerSourceReceiptPath') -or
+    $PSBoundParameters.ContainsKey('NtpPeerSourceReceiptSha256') -or
+    $PSBoundParameters.ContainsKey('NtpPeerPreparedReceiptPath') -or
+    $PSBoundParameters.ContainsKey('NtpPeerPreparedReceiptSha256')) {
+    throw 'NTP peer receipt parameters are accepted only with -NtpColdStartOnly.'
 }
 if ($SignedReleaseRepositoryUrl) {
     [Uri]$fixtureUri = $null
@@ -622,7 +706,7 @@ if (-not $PlanOnly) {
     if ($null -eq $SshPassword) {
         $SshPassword = $AdminPassword
     }
-    if (-not ($OidcOnly -or $TimeSourceOnly -or $RoutingWanOnly -or $CertificateOnly -or $RoutingOverlapOnly) -and $null -eq $VcfBackupPassword) {
+    if (-not ($OidcOnly -or $TimeSourceOnly -or $NtpColdStartOnly -or $RoutingWanOnly -or $CertificateOnly -or $RoutingOverlapOnly) -and $null -eq $VcfBackupPassword) {
         if (-not $ReverseProxyOnly) {
             $VcfBackupPassword = Read-Host -Prompt 'VCF Backup lifecycle password' -AsSecureString
         }
@@ -631,8 +715,8 @@ if (-not $PlanOnly) {
         $EsxiPassword = Read-Host -Prompt 'ESXi root password for lifecycle probing' -AsSecureString
     }
 }
-if (@(@($OidcOnly, $TimeSourceOnly, $RoutingWanOnly, $CertificateOnly, $RoutingOverlapOnly, $FullEsxiPxeInstall) | Where-Object { $_ }).Count -gt 1) {
-    throw "-OidcOnly, -TimeSourceOnly, -RoutingWanOnly, -CertificateOnly, -RoutingOverlapOnly, and -FullEsxiPxeInstall are mutually exclusive."
+if (@(@($OidcOnly, $TimeSourceOnly, $NtpColdStartOnly, $RoutingWanOnly, $CertificateOnly, $RoutingOverlapOnly, $FullEsxiPxeInstall) | Where-Object { $_ }).Count -gt 1) {
+    throw "-OidcOnly, -TimeSourceOnly, -NtpColdStartOnly, -RoutingWanOnly, -CertificateOnly, -RoutingOverlapOnly, and -FullEsxiPxeInstall are mutually exclusive."
 }
 if ($RoutingOverlapOnly -and -not $PlanOnly -and (-not $SkipClientPrepare -or -not $ClientVmdkPath -or $ApplianceSshUser -cne 'root' -or
     $ApplianceIPAddress -or $ApplianceUrl -or $AllowDryRunApply -or $ManagementNetwork -notmatch '^VMnet\d+$')) {
@@ -686,14 +770,14 @@ if (-not $ReverseProxyOnly) {
 }
 $effectiveApplianceUrl = if ($ApplianceUrl) { $ApplianceUrl } elseif ($ApplianceIPAddress) { "https://${ApplianceIPAddress}" } else { "" }
 
-if (-not $SkipClientPrepare -and -not ($TimeSourceOnly -or $CertificateOnly) -and -not $PlanOnly) {
+if (-not $SkipClientPrepare -and -not ($TimeSourceOnly -or $NtpColdStartOnly -or $CertificateOnly) -and -not $PlanOnly) {
     & (Join-Path $PSScriptRoot 'prepare-tiny-linux-client.ps1')
     if (-not $?) {
         throw "Tiny Linux VMware client preparation failed."
     }
 }
 
-$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly -or $TimeSourceOnly -or $CertificateOnly -or $RoutingOverlapOnly)
+$effectiveSkipBackupRestoreTest = [bool]($SkipBackupRestoreTest -or $RoutingWanOnly -or $OidcOnly -or $TimeSourceOnly -or $NtpColdStartOnly -or $CertificateOnly -or $RoutingOverlapOnly)
 if ($ReverseProxyOnly) { $effectiveSkipBackupRestoreTest = $true }
 $powerShell7Path = Resolve-PowerShell7Path
 
@@ -749,6 +833,18 @@ if ($AllowDryRunApply) { $arguments += '-AllowDryRunApply' }
 if ($effectiveSkipBackupRestoreTest) { $arguments += '-SkipBackupRestoreTest' }
 if ($OidcOnly) { $arguments += '-OidcOnly' }
 if ($TimeSourceOnly) { $arguments += '-TimeSourceOnly' }
+if ($NtpColdStartOnly) {
+    $arguments += @(
+        '-NtpColdStartOnly',
+        '-NtpPeerSourceReceiptPath', $NtpPeerSourceReceiptPath,
+        '-NtpPeerSourceReceiptSha256', $NtpPeerSourceReceiptSha256,
+        '-NtpPeerPreparedReceiptPath', $NtpPeerPreparedReceiptPath,
+        '-NtpPeerPreparedReceiptSha256', $NtpPeerPreparedReceiptSha256,
+        '-CertificatePeerCidr', $CertificatePeerCidr,
+        '-CertificateLeaseAddress', $CertificateLeaseAddress,
+        '-CertificatePeerPublicKeyPath', $CertificatePeerPublicKeyPath
+    )
+}
 if ($ReverseProxyOnly) {
     $arguments += @('-ReverseProxyOnly', '-ReverseProxyUpstreamHost', $reverseProxyUpstreamHost,
         '-ReverseProxyTlsFixtureDirectory', $ReverseProxyTlsFixtureDirectory)
