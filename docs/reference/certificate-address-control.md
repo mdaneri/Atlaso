@@ -65,6 +65,21 @@ test-only driver. They do not provide an admitted end-to-end native command or e
   complete action schemas, and sync the original before acknowledging. Native `runtimeConfig` quoting and
   absent-key behavior still require a public canary on the admitted VM before use.
 
+The separate pure `certificate_dual_stack_retirement.py` helper checks exact retired-host references across every
+supported row of the complete seven-producer payload, including both families and every route table. It handles native
+route `from` and `src` forms, independent rule prefix lengths, mapped IPv4, explicit cross-family `via` objects and
+bounded nested nexthops. Unknown fields, indirect nexthop IDs, encapsulation, NAT, inverted rules and unsupported
+address peers/tunnels refuse interpretation. A wildcard management listener remains unknown. Generic default routes
+and broad connected or policy prefixes are not treated as address ownership merely because they cover the target.
+
+Its `payload_sha256` covers canonical `public_bytes(payload)`, not original command-output bytes; preserve those original
+bytes separately. The summary carries no public-action schema or execution authority. It requires separately admitted
+producer authenticity, owned handoff-route absence, terminal Apply and positive peer-path/TCP nonacceptance evidence.
+No parser result supplies native retirement acceptance or continuous LAN/address enforcement. The existing IPv4
+procedure, public channel and disabled credential adapter are unchanged. The supported forms follow the upstream
+[iproute2 route printer](https://github.com/iproute2/iproute2/blob/main/ip/iproute.c) and
+[rule printer](https://github.com/iproute2/iproute2/blob/main/ip/iprule.c); these references do not admit a guest runtime.
+
 The credential terminal adapter deliberately refuses until the controller can prove the bounded SDK child has
 stopped before restoring terminal settings. A guest input deadline alone cannot provide that guarantee: remaining
 SDK keystrokes could reach a restored shell. The byte-reader tests exercise synthetic sentinel input only.
