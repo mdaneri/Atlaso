@@ -3243,10 +3243,10 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "Remove-Item -LiteralPath $generatedRuntimeDependencyRoot -Recurse -Force" in script
     assert "Matched local and remote runtime dependency wheels are required." in script
     assert (
-        '"$python" -m pip install --force-reinstall --no-compile --no-deps '
+        '"$python" -m pip install --force-reinstall --no-compile --no-deps --no-index --disable-pip-version-check '
         '"$runtime_dependency_path"'
     ) in script
-    assert '"$python" -m pip install --force-reinstall --no-compile --no-deps "$wheel"' in script
+    assert '"$python" -m pip install --force-reinstall --no-compile --no-deps --no-index --disable-pip-version-check "$wheel"' in script
     assert "Atlaso site-packages resolved outside the active environment." in script
     assert 'find "$site_packages" -type f -name \'*.pyc\' -delete' in script
     assert "/etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf" in script

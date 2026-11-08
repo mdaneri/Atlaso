@@ -895,11 +895,11 @@ def test_vmware_wheel_deploy_exposes_fail_closed_vault_shell_commands():
     assert deploy.count("preflight_powershell_layouts") == 3
     first_preflight_call = deploy.index("preflight_powershell_layouts", preflight_comment)
     dependency_install = deploy.index(
-        '"$python" -m pip install --force-reinstall --no-compile --no-deps '
+        '"$python" -m pip install --force-reinstall --no-compile --no-deps --no-index --disable-pip-version-check '
         '"$runtime_dependency_path"'
     )
     wheel_install = deploy.index(
-        '"$python" -m pip install --force-reinstall --no-compile --no-deps "$wheel"'
+        '"$python" -m pip install --force-reinstall --no-compile --no-deps --no-index --disable-pip-version-check "$wheel"'
     )
     service_stop = deploy.index(
         "systemctl stop atlaso-worker.service atlaso.service"

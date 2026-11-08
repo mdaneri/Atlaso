@@ -1736,10 +1736,10 @@ fi
 old_ifs="$IFS"
 IFS=:
 for runtime_dependency_path in $runtime_dependency_paths; do
-    "$python" -m pip install --force-reinstall --no-compile --no-deps "$runtime_dependency_path"
+    "$python" -m pip install --force-reinstall --no-compile --no-deps --no-index --disable-pip-version-check "$runtime_dependency_path"
 done
 IFS="$old_ifs"
-"$python" -m pip install --force-reinstall --no-compile --no-deps "$wheel"
+"$python" -m pip install --force-reinstall --no-compile --no-deps --no-index --disable-pip-version-check "$wheel"
 find "$site_packages" -type f -name '*.pyc' -delete
 find "$site_packages" -depth -type d -name __pycache__ -empty -delete
 atlaso_was_active=false

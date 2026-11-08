@@ -392,7 +392,9 @@ offline cp314 wheelhouse must
 match the original ISO's release inventory. Native VM admission uses the separately pinned canonical checkout owner
 and its complete checkout/parsed-code validation; the wheel builder and deployment child use the immutable archive
 from that same reviewed commit. The existing direct deployer keeps its bootstrap, deployment-lock and
-Appliance Update guards. It verifies the original console-observed SSH key before authentication, uses one private
+Appliance Update guards. Local-wheel installation disables package-index access and pip's online version check,
+so the no-default-route appliance does not spend its deployment budget checking the network for every wheel.
+It verifies the original console-observed SSH key before authentication, uses one private
 remote staging directory, verifies every uploaded file, and retains the original helper and console/boot assets.
 This exclusive mode-0700 staging directory lives under `/var/tmp`, preserving the same verified wheel archive across
 the private-LAN handoff reboot for subsequent payload measurements. `/tmp` staging is refused for this workflow.
