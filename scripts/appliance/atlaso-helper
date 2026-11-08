@@ -34747,22 +34747,45 @@ def _networkd_handoff_text(previous: str, candidate: str, *, held_routes: list[d
             section = line
         elif section == "[Network]":
             previous_network_lines.append(line)
+    candidate_network_lines = []
+    filtered_candidate_lines = []
+    section = ""
+    for line in candidate_lines:
+        if line.startswith("["):
+            section = line
+        elif section == "[Network]":
+            candidate_network_lines.append(line)
+            if line.startswith("LinkLocalAddressing="):
+                continue
+        filtered_candidate_lines.append(line)
+    link_local_families: set[int] = set()
+    explicit_link_local = False
+    for network_lines in (previous_network_lines, candidate_network_lines):
+        policies = [line.partition("=")[2].strip().lower() for line in network_lines if line.startswith("LinkLocalAddressing=")]
+        if policies:
+            # A single effective setting must retain both paths. Appending the
+            # old scalar can otherwise disable the candidate's IPv4LL or IPv6.
+            families = {"no": set(), "ipv4": {4}, "ipv6": {6}, "yes": {4, 6}}
+            if policies[-1] not in families:
+                raise ValueError("previous or candidate link-local policy could not be preserved")
+            link_local_families.update(families[policies[-1]])
+            explicit_link_local = True
+    candidate_lines = filtered_candidate_lines
+    network_start = candidate_lines.index("[Network]") + 1
+    next_section = next(
+        (index for index in range(network_start, len(candidate_lines)) if candidate_lines[index].startswith("[")),
+        len(candidate_lines),
+    )
     network_values = [
         line
         for line in previous_network_lines
-        if re.match(r"^(Address|DHCP|DNS|Domains|IPv6AcceptRA|LinkLocalAddressing)=", line)
+        if re.match(r"^(Address|DHCP|DNS|Domains|IPv6AcceptRA)=", line)
         and line not in candidate_lines
         and not (line == "IPv6AcceptRA=no" and "IPv6AcceptRA=yes" in candidate_lines)
-        and not (line == "LinkLocalAddressing=no" and "LinkLocalAddressing=ipv6" in candidate_lines)
     ]
-    next_section = next(
-        (
-            index
-            for index, line in enumerate(candidate_lines)
-            if index > candidate_lines.index("[Network]") and line.startswith("[")
-        ),
-        len(candidate_lines),
-    )
+    if explicit_link_local:
+        policy = "yes" if link_local_families == {4, 6} else "ipv4" if link_local_families == {4} else "ipv6" if link_local_families == {6} else "no"
+        network_values.append("LinkLocalAddressing=" + policy)
     candidate_lines[next_section:next_section] = network_values
     previous_blocks: list[list[str]] = []
     index = 0

@@ -52,6 +52,126 @@ def test_networkd_fallback_preserves_address_families(tmp_path, monkeypatch, met
     assert "DNS=" not in rendered
 
 
+def _network_link_local_values(text):
+    """Return only effective-setting assignments within Network sections.
+
+    Args:
+        text: Rendered public transitional configuration.
+    """
+    values = []
+    section = ""
+    for line in text.splitlines():
+        if line.startswith("["):
+            section = line
+        elif section == "[Network]" and line.startswith("LinkLocalAddressing="):
+            values.append(line.partition("=")[2])
+    return values
+
+
+@pytest.mark.parametrize("previous_policy", ["no", "ipv4", "ipv6", "yes"])
+@pytest.mark.parametrize("candidate_policy", ["no", "ipv4", "ipv6", "yes"])
+def test_handoff_unions_old_and_candidate_link_local_families(previous_policy, candidate_policy):
+    """Keep both paths' required families in one effective transitional directive.
+
+    Args:
+        previous_policy: Previous networkd link-local family selection.
+        candidate_policy: Candidate networkd link-local family selection.
+    """
+    helper = load_helper_module()
+    previous = (
+        "[Match]\nName=eth0\n[Network]\nAddress=192.0.2.10/24\n"
+        f"LinkLocalAddressing={previous_policy}\nDNS=192.0.2.53\n"
+        "[Address]\nAddress=fd00:1084:1077::10/64\nDuplicateAddressDetection=ipv6\n"
+    )
+    candidate = (
+        "[Match]\nName=eth0\n[Network]\nDHCP=ipv4\n"
+        f"LinkLocalAddressing={candidate_policy}\nIPv4LLRoute=no\nConfigureWithoutCarrier=no\n"
+        "[DHCPv4]\nSendRelease=no\nMaxAttempts=infinity\n"
+    )
+    families = {"no": set(), "ipv4": {4}, "ipv6": {6}, "yes": {4, 6}}
+    union = families[previous_policy] | families[candidate_policy]
+    expected = "yes" if union == {4, 6} else "ipv4" if union == {4} else "ipv6" if union == {6} else "no"
+    merged = helper._networkd_handoff_text(previous, candidate)
+    assert _network_link_local_values(merged) == [expected]
+    assert "Address=192.0.2.10/24" in merged
+    assert "Address=fd00:1084:1077::10/64\nDuplicateAddressDetection=ipv6" in merged
+    assert "DNS=192.0.2.53" in merged
+    assert "DHCP=ipv4" in merged and "MaxAttempts=infinity" in merged
+    assert "IPv4LLRoute=no" in merged and "ConfigureWithoutCarrier=no" in merged
+    assert "Gateway=" not in merged
+
+
+@pytest.mark.parametrize("ipv6", [False, True])
+def test_installed_static_to_dhcp_holdover_preserves_fallback(tmp_path, monkeypatch, ipv6):
+    """Exercise the real renderer and holdover installer without a native Apply.
+
+    Args:
+        tmp_path: Owned generated configuration, old snapshot and networkd output.
+        monkeypatch: Isolate networkd output and all existing-state reads.
+        ipv6: Whether the candidate also requires IPv6 link-local addressing.
+    """
+    helper = load_helper_module()
+    interface = PhysicalInterface(name="eth0", mac_address="02:00:00:00:10:77", role="management",
+                                  mode="access", admin_state="up", oper_state="up", mtu=1500,
+                                  ipv4_method="dhcp", ipv6_enabled=ipv6, check_duplicate_ip_addresses=False)
+    config = tmp_path / "network.conf"
+    config.write_text(render_network_config(interfaces=[interface], vlans=[], ipv4_link_local_fallback_enabled=True), encoding="utf-8")
+    old = tmp_path / "previous.network"
+    old.write_text("[Match]\nName=eth0\n[Network]\nLinkLocalAddressing=no\n[Address]\nAddress=192.0.2.10/24\n", encoding="utf-8")
+    output = tmp_path / "networkd"
+    output.mkdir()
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", output)
+    monkeypatch.setattr(helper, "_read_existing_management_network_values", lambda *_args: {"DNS": [], "Domains": [], "Gateway": []})
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: None)
+    state = {"previous_management_interfaces": ["eth0"], "snapshots": [{"path": str(output / "old.network"), "backup": str(old)}]}
+    installed = helper._install_management_holdovers(state, {"network_config_path": str(config)})
+    assert len(installed) == 1
+    text = installed[0].read_text(encoding="utf-8")
+    assert _network_link_local_values(text) == ["yes" if ipv6 else "ipv4"]
+    assert "Address=192.0.2.10/24" in text
+    assert "DHCP=ipv4" in text and "MaxAttempts=infinity" in text
+    assert [line for line in text.splitlines() if line.startswith("Gateway=")] == ["Gateway=_dhcp4"] + (["Gateway=_ipv6ra"] if ipv6 else [])
+    assert "DNS=" not in text
+
+
+@pytest.mark.parametrize("previous,candidate,expected", [
+    ("[Network]\nLinkLocalAddressing=no\nLinkLocalAddressing=ipv6\n", "[Network]\nLinkLocalAddressing=ipv4\n", ["yes"]),
+    ("[Network]\nLinkLocalAddressing=ipv4\n[Network]\nLinkLocalAddressing=no\n", "[Network]\nLinkLocalAddressing=ipv6\n", ["ipv6"]),
+    ("[Network]\nLinkLocalAddressing=ipv6\n", "[Network]\nLinkLocalAddressing=ipv4\n[Route]\nTable=100\n[Network]\nLinkLocalAddressing=no\n", ["ipv6"]),
+    ("[Network]\nLinkLocalAddressing=no\n[Route]\nLinkLocalAddressing=yes\n", "[Network]\nLinkLocalAddressing=ipv6\n", ["ipv6"]),
+    ("[Network]\nLinkLocalAddressing=no\n", "[Match]\nLinkLocalAddressing=invalid\n[Network]\nLinkLocalAddressing=no\n[Route]\nLinkLocalAddressing=yes\n", ["no"]),
+    ("[Network]\n", "[Network]\n", []),
+    ("[Network]\nLinkLocalAddressing=no\n", "[Network]\n", ["no"]),
+    ("[Network]\n", "[Network]\nLinkLocalAddressing=ipv4\n", ["ipv4"]),
+    ("[Network]\nLinkLocalAddressing=ipv6\n", "[Network]\n", ["ipv6"]),
+])
+def test_handoff_link_local_precedence_and_missing_settings(previous, candidate, expected):
+    """Honor last Network assignments without inferring missing native defaults.
+
+    Args:
+        previous: Previous public configuration with explicit or missing policy.
+        candidate: Candidate public configuration, possibly with repeated sections.
+        expected: Single merged Network policy, or no invented assignment.
+    """
+    helper = load_helper_module()
+    assert _network_link_local_values(helper._networkd_handoff_text(previous, candidate)) == expected
+
+
+@pytest.mark.parametrize("unsupported_side", ["previous", "candidate"])
+def test_handoff_refuses_unsupported_effective_link_local_policy(unsupported_side):
+    """Refuse an unrecognized final policy rather than inventing reachability.
+
+    Args:
+        unsupported_side: Input whose final Network assignment is unsupported.
+    """
+    helper = load_helper_module()
+    valid = "[Network]\nLinkLocalAddressing=ipv4\n"
+    unsupported = "[Network]\nLinkLocalAddressing=no\n[Network]\nLinkLocalAddressing=unsupported\n"
+    with pytest.raises(ValueError, match="link-local policy could not be preserved"):
+        helper._networkd_handoff_text(unsupported if unsupported_side == "previous" else valid,
+                                     unsupported if unsupported_side == "candidate" else valid)
+
+
 @pytest.mark.parametrize("carrier,state,source,expected", [
     (False, "assigned", "IPv4LL", "no-carrier"),
     (True, "checking", "IPv4LL", "waiting-dhcp"),

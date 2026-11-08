@@ -97,6 +97,9 @@ configuration; the observer then verifies and atomically publishes the current D
 bootstrap, direct bootstrap invocation and completed Network certificate recovery retain their native validation.
 Protected Network Apply can admit a newly acquired fallback address from the reviewed NIC identity and fresh native
 evidence; the normal TLS certificate-coverage and readiness checks still apply.
+When changing static management to DHCP, the temporary networkd holdover retains the link-local address families
+required by both the previous and candidate configurations. The previous policy cannot disable newly enabled IPv4LL
+or IPv6 during readiness. Successful retirement removes the temporary holdover and leaves the candidate's final policy.
 When moving from an APIPA-only setup address to static IPv4, Apply captures the old published listener from fresh
 native interface/MAC ownership before preparing the handoff. Unpublished, stale or unready link-local addresses
 cannot become that previous path; IPv6 link-local addresses remain excluded.
