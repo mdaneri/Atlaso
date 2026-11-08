@@ -41,3 +41,9 @@ deleting it. After the test process is terminal, run `scripts.photon_build_state
 `--config` and `--receipt`: it retires only the four original redirect leaves, then seals the graph through its
 existing Git owner. Preserve the manifest and digest for normal completed-task cleanup. A failed creation, changed
 link, missing receipt or incomplete seal requires retention; never reconstruct ownership from the surviving tree.
+
+When a Python test extracts a production PowerShell block, load its real helper dependencies and supply the valid
+public inputs that the full script normally initializes. For example, the Windows ownership fixtures load
+`Atlaso.WorkstationFirstBoot.ps1` and bind the VM name before running parent preflight and restored-root admission.
+Run `python -m pytest tests/test_vmware_test_vm_ownership.py` on Windows to check those synthetic fixtures. Keep their
+ownership, refusal, and publication assertions intact; setup must let each test reach the behavior it names.
