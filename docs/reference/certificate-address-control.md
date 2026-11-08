@@ -83,6 +83,17 @@ procedure, public channel and disabled credential adapter are unchanged. The sup
 [iproute2 route printer](https://github.com/iproute2/iproute2/blob/main/ip/iproute.c) and
 [rule printer](https://github.com/iproute2/iproute2/blob/main/ip/iprule.c); these references do not admit a guest runtime.
 
+The read-only restoration baseline helper uses the existing Physical Interfaces, DNS Settings, and default Apply
+review pages. It reads those three pages twice, checks that the desired projections agree, and passes a separate
+copy to the caller's synchronous checkpoint. Three final reads check for drift after acknowledgement. The caller
+owns durable storage and the separate admission required for any restoration. The capture uses at most nine GETs.
+
+The baseline distinguishes nullable values in the original interface row from the empty fields used in the browser
+form. It retains the ordered DNS listen-interface settings and excludes private controls, derived addresses, and the
+server-managed SOA serial from its projections and digests. The digests bind canonical parsed values. Repeated reads
+can detect observed changes between reads. The baseline carries data for the restoration journal and leaves
+runtime readiness, DNS zone and record verification, and write admission to their respective gates.
+
 The credential terminal adapter deliberately refuses until the controller can prove the bounded SDK child has
 stopped before restoring terminal settings. A guest input deadline alone cannot provide that guarantee: remaining
 SDK keystrokes could reach a restored shell. The byte-reader tests exercise synthetic sentinel input only.
