@@ -295,7 +295,7 @@ try {
     $outputPin = New-CertificatePeerPreparedOutput -Context $context -PlanSha256 $planDigest
     $context | Add-Member CloneOutputPin $outputPin -Force
     $owner = @{ task_id = $context.TaskId; repository = $context.Repository; source_commit = $head;
-        pr = $validation.pr; lab_root = $context.EvidenceDirectory }
+        pr = $validation.pr; lab_root = $context.PermittedRoot }
     $segment = Resolve-AtlasoOwnedLanSegment -Name ($identity.Name + '-private') -Owner $owner -PublishReceipt {
         param($Receipt)
         $record = [ordered]@{ schema = 1; kind = 'certificate-peer-lan-binding'; task_id = $context.TaskId;

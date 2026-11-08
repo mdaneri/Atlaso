@@ -60,6 +60,74 @@ def run_powershell(command: str, *, check: bool = True) -> subprocess.CompletedP
     )
 
 
+@pytest.mark.parametrize("case", ["permitted", "foreign_output", "wrong_task", "outside_receipt"])
+def test_factory_lan_owner_reaches_real_installed_vm_segment_admission(tmp_path, case):
+    """Pass the actual owner projection through the unchanged native receipt guard.
+
+    Args:
+        tmp_path: Owned fixture tree containing receipt and appliance paths.
+        case: Valid projection or one independently refused binding.
+    """
+    permitted = tmp_path / "scope"
+    evidence = permitted / ".task-ownership"
+    output = permitted / "checkout" / "test-results" / "appliance"
+    if case == "foreign_output":
+        output = tmp_path / "foreign-appliance"
+    evidence.mkdir(parents=True)
+    output.mkdir(parents=True)
+    head = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
+    native_owner = ROOT / "scripts/windows/vmware/test-installation-iso.ps1"
+    command = f"""
+$ErrorActionPreference='Stop'
+Import-Module {ps_literal(ROOT / 'scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1')} -Force
+. {ps_literal(ROOT / 'scripts/windows/vmware/Atlaso.TestVmOwnership.ps1')}
+$context=[pscustomobject]@{{ Enabled=$true; TaskId='factory-admission-fixture'; Repository='mdaneri/Atlaso';
+  PullRequestNumber=1118; SourceCommit={ps_literal(head)}; Worktree={ps_literal(ROOT)};
+  PermittedRoot={ps_literal(permitted)}; EvidenceDirectory={ps_literal(evidence)}; OutputDirectory={ps_literal(output)} }}
+$head={ps_literal(head)}
+$validation=[pscustomobject]@{{ pr=1118 }}
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile({ps_literal(SCRIPT)},[ref]$tokens,[ref]$errors)
+if ($errors.Count) {{ throw 'Factory source did not parse.' }}
+$owners=@($ast.FindAll({{ param($node)
+  $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq '$owner'
+}},$true))
+if ($owners.Count -ne 1) {{ throw 'Expected one production LAN owner projection.' }}
+. ([scriptblock]::Create($owners[0].Extent.Text))
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile({ps_literal(native_owner)},[ref]$tokens,[ref]$errors)
+if ($errors.Count) {{ throw 'Installed VM owner source did not parse.' }}
+$readers=@($ast.FindAll({{ param($node)
+  $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Read-InstallationPrivateLanSegment'
+}},$true))
+if ($readers.Count -ne 1) {{ throw 'Expected one native segment admission function.' }}
+. ([scriptblock]::Create($readers[0].Extent.Text))
+$name='Atlaso-PR-1118-certificate-peer-fixture-private'
+$id='52 00 00 00 00 00 00 02-00 00 00 00 00 00 00 02'
+$record=[ordered]@{{ schema=1; name=$name; pvn_id=$id }}
+foreach ($entry in $owner.GetEnumerator()) {{ $record[$entry.Key]=$entry.Value }}
+if ({ps_literal(case)} -eq 'wrong_task') {{ $record.task_id='another-task' }}
+$receiptRoot=Join-Path $owner.lab_root lan-segments
+if ({ps_literal(case)} -eq 'outside_receipt') {{ $receiptRoot={ps_literal(tmp_path / 'outside-receipts')} }}
+[IO.Directory]::CreateDirectory($receiptRoot) | Out-Null
+$path=Join-Path $receiptRoot original-segment.json
+[IO.File]::WriteAllText($path,($record | ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
+$sha=(Get-FileHash $path).Hash.ToLowerInvariant()
+try {{
+  $admitted=Read-InstallationPrivateLanSegment -Context $context -Path $path -Sha256 $sha -Name $name -Id $id
+  @{{ admitted=$true; lab_root=$admitted.Record.lab_root }} | ConvertTo-Json -Compress
+}} catch {{
+  @{{ admitted=$false; refusal=$_.Exception.Message }} | ConvertTo-Json -Compress
+}}
+"""
+    observed = json.loads(run_powershell(command).stdout)
+    if case == "permitted":
+        assert observed == {"admitted": True, "lab_root": str(permitted)}
+    else:
+        assert observed["admitted"] is False
+        assert "not bound to this task, VM output, name, and ID" in observed["refusal"]
+
+
 def test_factory_script_is_parseable_and_keeps_plan_before_creation_boundaries():
     """Plan returns before publisher, output creation, LAN, disk, or seed operations."""
     command = f"""
@@ -526,7 +594,7 @@ function New-AtlasoTestVmOwnershipContext {{
   $global:FactoryCalls.Add('context')
   return [pscustomobject]@{{ Enabled=$true; TaskId='synthetic-task'; Repository='mdaneri/Atlaso';
     PullRequestNumber=1118; SourceCommit=$SourceCommit; Branch=$SourceBranch; Worktree=$Worktree;
-    OutputDirectory=$OutputDirectory; VmxPath=$VmxPath; Name=$Name; EvidenceDirectory={ps_literal(tmp_path / 'durable')};
+    OutputDirectory=$OutputDirectory; VmxPath=$VmxPath; Name=$Name; PermittedRoot={ps_literal(tmp_path)}; EvidenceDirectory={ps_literal(tmp_path / 'durable')};
     EvidenceDirectoryId=[Atlaso.WorkstationFileIdentity]::Get({ps_literal(durable)}); LocalBuilder=$false }}
 }}
 function Assert-AtlasoTestVmCheckoutSource {{ param($Context); $global:FactoryCalls.Add('checkout-source') }}
