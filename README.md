@@ -21,7 +21,10 @@ DHCP writers can verify and cancel, and unresolved findings retain identity evid
 
 [Appliance time synchronization](docs/services/ntp.md#appliance-clock-source) uses one clock authority: VMware Tools,
 NTP client, or the managed NTP/NTS server. Server mode takes precedence over the remembered client choice. Appliance
-Apply and startup enforce mutual exclusion; health requires actual synchronization, not merely listening sockets.
+Apply and startup enforce mutual exclusion. NTPsec initializes and verifies its persistent daemon within one bounded
+startup budget; health requires normal synchronization state and a reachable selected upstream peer.
+The [focused NTP cold-start fixture](docs/reference/vmware-workstation-lifecycle-testing.md#focused-ntp-cold-start-acceptance)
+verifies fresh acquisition, listener isolation and failed-candidate rollback with a real peer and original ownership evidence.
 
 [Settings](docs/operate/appliance-settings.md) separates General, Access & Security, Hardware, and Logging. Hardware
 summarizes the appliance and shows read-only disk and network inventories alongside an explicitly reviewed, audited
