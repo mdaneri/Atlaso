@@ -7,6 +7,218 @@ import pytest
 from atlaso.app.services.dynamic_management import native_management_addresses
 
 
+def _observer_recovery_fixture(tmp_path, monkeypatch):
+    """Prepare real front-door recovery with isolated files and database admission.
+
+    Args:
+        tmp_path: Owned public snapshot and live-activation fixture namespace.
+        monkeypatch: Replace privileged effects, retaining actual journal recovery.
+    """
+    import subprocess
+    from contextlib import contextmanager
+
+    from atlaso import dynamic_management as publisher
+    from tests.test_appliance_helper import (
+        load_helper_module,
+        patch_appliance_settings_nginx_paths,
+    )
+
+    module = load_helper_module()
+    paths = patch_appliance_settings_nginx_paths(monkeypatch, module, tmp_path)
+    site = paths["management_site"]
+    site.parent.mkdir(parents=True, exist_ok=True)
+    site.write_text("previous front door\n", encoding="utf-8")
+    dropin = tmp_path / "systemd" / "management.conf"
+    monkeypatch.setattr(module, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    monkeypatch.setattr(module.os, "chown", lambda *_args: None, raising=False)
+    monkeypatch.setattr(module, "_run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
+    monkeypatch.setattr(module, "_nginx_test_command", lambda: subprocess.CompletedProcess([], 0, "", ""))
+    monkeypatch.setattr(module, "_reload_nginx", lambda: 0)
+    tracked = (site, paths["include"], paths["main"], dropin)
+    module._persist_management_front_door_state(tracked)
+    for path in tracked:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("live candidate " + path.name, encoding="utf-8")
+    state = {"native_locked": False, "recoveries": [], "publications": [], "module": module,
+             "site": site, "tracked": {path: path.read_bytes() for path in tracked},
+             "journal": module.MANAGEMENT_FRONT_DOOR_STATE_PATH.read_bytes(),
+             "backups": {path.name: path.read_bytes() for path in module.MANAGEMENT_FRONT_DOOR_BACKUP_DIR.iterdir()}}
+
+    @contextmanager
+    def native_lock():
+        """Model only the scoped native lock; real SQLite admission stays independent."""
+        assert not state["native_locked"]
+        state["native_locked"] = True
+        try:
+            yield
+        finally:
+            state["native_locked"] = False
+
+    def recover(*, quiet=False):
+        """Run the actual durable restore and cleanup against synthetic paths.
+
+        Args:
+            quiet: Preserve the production recovery call's output selection.
+        """
+        state["recoveries"].append(True)
+        return module._recover_management_front_door(quiet=quiet)
+
+    helper = {"_network_transaction_lock": native_lock, "_network_transaction_state": lambda: {},
+              "MANAGEMENT_HANDOFF_STATE_PATH": tmp_path / "no-network-handoff", "_console_bootstrap_is_idle": lambda: True,
+              "_recover_management_front_door": recover, "_network_address_observation": lambda: {"complete": False}}
+    # Recovery precedes this short non-publishing branch; no host reads, CA or UI imports.
+    monkeypatch.setattr(publisher, "applied_snapshots", lambda _db: {})
+    monkeypatch.setattr(publisher, "bootstrap_row", lambda _db, _observation: {"role": "management", "ipv4_method": "static"})
+    monkeypatch.setattr(publisher, "write_publication", lambda value: state["publications"].append(value))
+    return publisher, helper, state
+
+
+def _assert_live_front_door_unchanged(state):
+    """Require a live activation's files, journal and backups to remain untouched.
+
+    Args:
+        state: Synthetic original bytes and the actual recovery module.
+    """
+    module = state["module"]
+    assert state["recoveries"] == []
+    assert {path: path.read_bytes() for path in state["tracked"]} == state["tracked"]
+    assert module.MANAGEMENT_FRONT_DOOR_STATE_PATH.read_bytes() == state["journal"]
+    assert {path.name: path.read_bytes() for path in module.MANAGEMENT_FRONT_DOOR_BACKUP_DIR.iterdir()} == state["backups"]
+    assert not state["native_locked"]
+
+
+@pytest.mark.parametrize("status", ["pending", "running"])
+@pytest.mark.parametrize("timing", ["already-active", "during-observation"])
+def test_observer_never_recovers_a_live_settings_apply(client, tmp_path, monkeypatch, status, timing):
+    """Active Settings Apply retains its actual prepared journal and candidate files.
+
+    Args:
+        client: Initialized isolated SQLite application database.
+        tmp_path: Owned synthetic live activation and original journal.
+        monkeypatch: Isolate native operations while retaining real database admission.
+        status: Apply state that must block recovery.
+        timing: Existing job or a submission before the observer takes writer admission.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    publisher, helper, state = _observer_recovery_fixture(tmp_path, monkeypatch)
+
+    def submit():
+        """Persist the live worker's ordinary Apply ownership before admission."""
+        with SessionLocal() as db:
+            db.add(Job(id="live-settings-apply", type="appliance-apply", status=status, created_by="test"))
+            db.commit()
+
+    def observation():
+        """Submit during the read-only native observation, before writer admission."""
+        submit()
+        return {"complete": False}
+
+    if timing == "already-active":
+        submit()
+    else:
+        helper["_network_address_observation"] = observation
+    publisher.reconcile(helper, {})
+    _assert_live_front_door_unchanged(state)
+    assert state["publications"] == []
+
+
+@pytest.mark.parametrize("status", ["succeeded", "failed"])
+def test_observer_recovers_only_under_retained_writer_admission(client, tmp_path, monkeypatch, status):
+    """A terminal job allows genuine recovery while another writer is excluded.
+
+    Args:
+        client: Initialized isolated SQLite database.
+        tmp_path: Owned interrupted front-door journal and runtime files.
+        monkeypatch: Isolate native effects while using real writer contention.
+        status: Terminal Apply state which no longer owns the activation.
+    """
+    from sqlalchemy.exc import OperationalError
+
+    from atlaso.app.database import SessionLocal, engine
+    from atlaso.app.models import Job
+
+    publisher, helper, state = _observer_recovery_fixture(tmp_path, monkeypatch)
+    with SessionLocal() as db:
+        db.add(Job(id="terminal-settings-apply", type="appliance-apply", status=status, created_by="test"))
+        db.commit()
+    actual_recover = helper["_recover_management_front_door"]
+
+    def checked_recover(*, quiet=False):
+        """Require the same SQLite writer boundary during snapshot restoration.
+
+        Args:
+            quiet: Production recovery output selection.
+        """
+        assert state["native_locked"]
+        with engine.connect() as other:
+            other.exec_driver_sql("PRAGMA busy_timeout=0")
+            with pytest.raises(OperationalError, match="locked"):
+                other.exec_driver_sql("UPDATE settings SET value=value WHERE 0")
+        return actual_recover(quiet=quiet)
+
+    helper["_recover_management_front_door"] = checked_recover
+    publisher.reconcile(helper, {})
+    assert state["recoveries"] == [True]
+    assert state["site"].read_text(encoding="utf-8") == "previous front door\n"
+    assert not state["module"].MANAGEMENT_FRONT_DOOR_STATE_PATH.exists()
+    assert not state["module"].MANAGEMENT_FRONT_DOOR_BACKUP_DIR.exists()
+    assert not state["native_locked"]
+    with engine.connect() as other:
+        other.exec_driver_sql("PRAGMA busy_timeout=0")
+        other.exec_driver_sql("UPDATE settings SET value=value WHERE 0")
+
+
+def test_observer_failed_recovery_releases_admission_and_retains_journal(client, tmp_path, monkeypatch):
+    """An actual restore failure leaves recovery evidence while releasing all locks.
+
+    Args:
+        client: Initialized isolated SQLite database.
+        tmp_path: Owned interrupted activation fixture.
+        monkeypatch: Fail only the isolated nginx configuration check.
+    """
+    import subprocess
+
+    from atlaso.app.database import engine
+
+    publisher, helper, state = _observer_recovery_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(state["module"], "_nginx_test_command", lambda: subprocess.CompletedProcess([], 1, "", ""))
+    with pytest.raises(ValueError, match="previous management publication requires recovery"):
+        publisher.reconcile(helper, {})
+    assert state["recoveries"] == [True]
+    assert state["module"].MANAGEMENT_FRONT_DOOR_STATE_PATH.exists()
+    assert state["module"].MANAGEMENT_FRONT_DOOR_BACKUP_DIR.exists()
+    assert not state["native_locked"]
+    with engine.connect() as other:
+        other.exec_driver_sql("PRAGMA busy_timeout=0")
+        other.exec_driver_sql("UPDATE settings SET value=value WHERE 0")
+
+
+def test_observer_writer_admission_failure_cannot_touch_front_door(client, tmp_path, monkeypatch):
+    """Refused writer admission precedes every recovery mutation.
+
+    Args:
+        client: Initialized isolated SQLite application.
+        tmp_path: Owned synthetic live front-door state.
+        monkeypatch: Refuse the observer's writer gate before querying ownership.
+    """
+    publisher, helper, state = _observer_recovery_fixture(tmp_path, monkeypatch)
+
+    def busy(_db):
+        """Refuse writer admission before any recovery side effect.
+
+        Args:
+            _db: Actual new observer database session.
+        """
+        raise RuntimeError("synthetic writer admission busy")
+
+    monkeypatch.setattr(publisher, "acquire_network_objects_write_lock", busy)
+    with pytest.raises(RuntimeError, match="writer admission busy"):
+        publisher.reconcile(helper, {})
+    _assert_live_front_door_unchanged(state)
+
+
 def fixture_observation():
     """Return complete identity-bound IPv4LL native evidence."""
     row = {"name": "eth0", "mac": "02:00:00:00:10:77", "role": "management", "mode": "access",

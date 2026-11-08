@@ -206,14 +206,17 @@ def _reconcile_once(
             return None
         if not helper["_console_bootstrap_is_idle"]():
             return None
-        # An interrupted front-door publication must recover before any newer one.
-        if helper["_recover_management_front_door"](quiet=True):
-            raise ValueError("previous management publication requires recovery")
         observation = helper["_network_address_observation"]()
         with SessionLocal() as db:
             acquire_network_objects_write_lock(db)
             if db.scalar(select(Job.id).where(Job.type == "appliance-apply", Job.status.in_(["pending", "running"]))):
                 return None
+            # Ordinary Settings Apply does not hold the native network lock.
+            # Check its ownership under writer admission and retain that same
+            # admission through recovery, so a live activation is never restored
+            # as though it were interrupted and no new Apply can enter the gap.
+            if helper["_recover_management_front_door"](quiet=True):
+                raise ValueError("previous management publication requires recovery")
             baselines = applied_snapshots(db)
             network = baselines.get("network")
             rows = _network_rows(network["config_preview"]) if network else [bootstrap_row(db, observation)]
