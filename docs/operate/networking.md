@@ -114,8 +114,12 @@ Saving a different management NIC or static address keeps that desired identity 
 publication cannot replace it while its new address is pending.
 
 This path serves management UI/API and their static and CA-download dependencies only, to link-local source addresses.
+When management HTTPS is enabled, HTTP still serves the two exact public trust-bootstrap downloads,
+`/ca/downloads/root-ca.pem` and `/ca/downloads/ca-bundle.pem`; other HTTP paths redirect to the configured HTTPS port.
+The link-local source restriction and release-maintenance guard cover both downloads and redirects. Verify the public
+CA fingerprint independently before trusting it; bootstrapping trust does not require disabling TLS verification.
 The Certificate Authority page's root, bundle, certificate, chain and private-key downloads retain their existing
-authenticated management routes on this listener.
+authenticated management routes on this listener, over TLS when management HTTPS is enabled.
 Existing authentication and management firewall source restrictions still apply. It does not enable public protocols,
 publish APIPA in DNS, invent a gateway or DNS server, or forward link-local traffic between interfaces. APIPA on other
 DHCP interfaces remains visible as acquisition status and is not a general service-listener address.

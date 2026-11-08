@@ -11348,19 +11348,21 @@ def _ipv4ll_setup_nginx_server(payload: dict, address: str, cert_path: Path | No
     https = bool(payload.get("management_https_enabled"))
     http_port = int(payload.get("management_public_http_port") or 80)
     tls_port = int(payload.get("management_public_https_port") or 443)
+    upstream = str(payload.get("management_upstream_host") or "127.0.0.1")
+    port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
     lines = []
     if https and http_allowed:
         lines.extend(["server {", f"  listen {address}:{http_port} default_server;",
                       "  server_name _;", '  if ($remote_addr !~ "^169\\.254\\.") { return 403; }',
-                      f"  return 308 https://$host:{tls_port}$request_uri;", "}"])
+                      _release_maintenance_condition(),
+                      *_management_ca_download_locations(upstream, port),
+                      "  location / {", f"    return 308 https://$host:{tls_port}$request_uri;", "  }", "}"])
     if not (https_allowed if https else http_allowed):
         return "\n".join(lines) + "\n" if lines else ""
     lines.extend(["server {", f"  listen {address}:{tls_port if https else http_port}" + (" ssl" if https else "") + " default_server;",
                   "  server_name _;", '  if ($remote_addr !~ "^169\\.254\\.") { return 403; }'])
     if https:
         lines.extend([f"  ssl_certificate {cert_path};", f"  ssl_certificate_key {key_path};"])
-    upstream = str(payload.get("management_upstream_host") or "127.0.0.1")
-    port = int(payload.get("management_upstream_port") or payload.get("management_http_port") or 8000)
     for index, location in enumerate(("^~ /ui/management/", "= /terminal/ws", "^~ /api/v1/", "^~ /static/", "= /openapi.json", "^~ /api/docs", "^~ /ca/downloads/",
                                       "= /certificate-authority/downloads/root-ca.pem",
                                       "= /certificate-authority/downloads/ca-bundle.pem",

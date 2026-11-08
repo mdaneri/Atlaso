@@ -16,6 +16,7 @@ ARTIFACT_PATHS = (
     "/certificate-authority/certificates/7/downloads/chain.pem",
     "/certificate-authority/certificates/7/downloads/private-key.pem",
 )
+PUBLIC_CA_PATHS = ("/ca/downloads/root-ca.pem", "/ca/downloads/ca-bundle.pem")
 
 
 def _proxy_for_request(config: str, uri: str) -> str | None:
@@ -35,6 +36,61 @@ def _proxy_for_request(config: str, uri: str) -> str | None:
                 or (modifier == "~" and re.search(pattern, path))):
             return body
     return None
+
+
+@pytest.mark.parametrize("tls_port, upstream_host, upstream_port", [(443, "127.0.0.1", 8000), (9443, "127.0.0.2", 9080)])
+@pytest.mark.parametrize("https_allowed", [False, True])
+def test_setup_http_preserves_exact_public_ca_bootstrap(tls_port, upstream_host, upstream_port, https_allowed):
+    """Serve public trust material before HTTPS trust without exposing other HTTP paths.
+
+    Args:
+        tls_port: Applied HTTPS destination retained by the catch-all redirect.
+        upstream_host: Existing validated loopback backend selected by the applied plan.
+        upstream_port: Applied backend port used for public CA downloads.
+        https_allowed: Whether this site also owns its HTTPS socket during handoff.
+    """
+    helper = load_helper_module()
+    config = helper._ipv4ll_setup_nginx_server(
+        {"fqdn": "core.atlaso.internal", "management_https_enabled": True,
+         "management_public_https_port": tls_port, "management_upstream_host": upstream_host,
+         "management_upstream_port": upstream_port},
+        "169.254.20.10", Path("/etc/atlaso/https/certs/core.pem"), Path("/etc/atlaso/https/certs/core.key"),
+        https_allowed=https_allowed,
+    )
+    http = config.split("\nserver {", 1)[0]
+    assert "listen 169.254.20.10:80 default_server;" in http
+    for path in PUBLIC_CA_PATHS:
+        assert _proxy_for_request(http, path + "?download=1") is not None, path
+    # Use the shared public-download contract, rather than the authenticated
+    # setup proxy helper or a broad /ca/ prefix that opens other HTTP routes.
+    expected = "\n".join(helper._management_ca_download_locations(upstream_host, upstream_port))
+    assert expected in http
+    source_guard = 'if ($remote_addr !~ "^169\\.254\\.") { return 403; }'
+    maintenance = helper._release_maintenance_condition()
+    assert http.count(source_guard) == http.count(maintenance) == 1
+    assert http.index(source_guard) < http.index(maintenance) < http.index("  location ")
+    assert "return 308" not in http.split("  location ", 1)[0]
+    assert f"  location / {{\n    return 308 https://$host:{tls_port}$request_uri;\n  }}" in http
+    assert "ssl_certificate" not in http
+    assert "location ^~" not in http
+    for path in (*ARTIFACT_PATHS, "/ca/downloads/unknown.pem", "/ca/downloads/root-ca.pem/extra",
+                 "/ca/downloads/root-ca.pem.bak", "/terminal/ws", "/api/v1/settings", "/identity", "/PROD/test"):
+        assert _proxy_for_request(http, path) is None, path
+    assert ("listen 169.254.20.10:9443 ssl" in config or "listen 169.254.20.10:443 ssl" in config) is https_allowed
+
+
+def test_setup_http_exclusion_still_omits_bootstrap_socket():
+    """An excluded HTTP socket cannot be restored just to serve CA bootstrap."""
+    helper = load_helper_module()
+    config = helper._ipv4ll_setup_nginx_server(
+        {"fqdn": "core.atlaso.internal", "management_https_enabled": True},
+        "169.254.20.10", Path("/etc/atlaso/https/certs/core.pem"), Path("/etc/atlaso/https/certs/core.key"),
+        http_allowed=False,
+    )
+    assert "listen 169.254.20.10:80 " not in config
+    assert "listen 169.254.20.10:443 ssl" in config
+    for path in PUBLIC_CA_PATHS:
+        assert f"location = {path}" not in config
 
 
 @pytest.mark.parametrize("https", [False, True])
