@@ -4252,6 +4252,11 @@ checker so the local and pull-request requirements remain identical.</p>
 <code>pwsh -NoProfile -File tests/powershell/Test-PhotonBuildStateRoot.ps1 -RepositoryRoot (Resolve-Path .).Path</code>.
 It extracts wrapper functions through the PowerShell AST without running the image build. Keep required helper
 imports synchronized with the functions under test, and reject missing or duplicate definitions during setup.</p>
+<p>When a Python test extracts a production PowerShell block, load its real helper dependencies and supply the valid
+public inputs that the full script normally initializes. For example, the Windows ownership fixtures load
+<code>Atlaso.WorkstationFirstBoot.ps1</code> and bind the VM name before running parent preflight and restored-root admission.
+Run <code>python -m pytest tests/test_vmware_test_vm_ownership.py</code> on Windows to check those synthetic fixtures. Keep their
+ownership, refusal, and publication assertions intact; setup must let each test reach the behavior it names.</p>
 
 
 
