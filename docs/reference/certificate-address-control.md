@@ -67,6 +67,13 @@ The credential terminal adapter deliberately refuses until the controller can pr
 stopped before restoring terminal settings. A guest input deadline alone cannot provide that guarantee: remaining
 SDK keystrokes could reach a restored shell. The byte-reader tests exercise synthetic sentinel input only.
 
+The Windows bounded-process runner has an opt-in quiescence callback for the future controller. It requires a
+named job, original suspended-child ownership publication, and an absolute deadline. The callback runs once after
+whole-job emptiness is proven and handles are disposed. A nonzero exit, timeout, publication interruption, or forced
+descendant termination produces a failed outcome; unproven termination produces no callback. A failed callback is
+never retried. This process observation is not a durable credential transaction, a guest stop acknowledgement, or
+permission to restore terminal echo. The credential consumer and terminal adapter do not yet use it.
+
 Remaining execution work includes that controller and credential-stop boundary, original runtime/console admission,
 family-aware route/rule retirement interpretation, peer DNS setup and restoration through the normal UI, and a
 reviewed transaction/restoration journal. No component or synthetic test supplies continuous LAN/address enforcement,
