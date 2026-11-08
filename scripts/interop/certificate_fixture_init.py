@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import ipaddress
 import json
+import math
 import os
 import re
 import sys
@@ -52,6 +53,16 @@ ROOTS = {"appliance_settings", "network", "ca", "firewall", "public_services", "
 # original routing-absence proof is mandatory; no routing desired state is edited.
 CLOSURE = ROOTS | {"wan", "nat"}
 RECOVERY_ROOTS = {"ntpd", "public_services"}
+
+_HISTORICAL_NTP_TIMEOUT_PREFIX = (
+    "ntpd clock-source transition failed: ntpd is active as the only selected clock source, "
+    "but did not synchronize within 60 seconds:"
+)
+_NEW_NTP_TIMEOUT_PREFIX = re.compile(
+    r"\Antpd clock-source transition failed: NTPsec did not verify leap_none, sync_ntp and a reachable "
+    r"selected upstream within (?P<seconds>[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?) seconds\. "
+    r"Bounded synchronization evidence: "
+)
 
 
 class Refusal(Exception):
@@ -371,6 +382,29 @@ def recovery_selection(review: dict) -> list[str]:
     return sorted(unit["id"] for unit in selected)
 
 
+def _is_admitted_ntp_synchronization_timeout(error: object) -> bool:
+    """Recognize only the historical or current bounded NTP startup timeout.
+
+    Args:
+        error: Sanitized terminal child-task error text.
+    """
+    if not isinstance(error, str):
+        return False
+    if error.startswith(_HISTORICAL_NTP_TIMEOUT_PREFIX):
+        return True
+    match = _NEW_NTP_TIMEOUT_PREFIX.match(error)
+    if match is None:
+        return False
+    try:
+        seconds = float(match.group("seconds"))
+    except (ValueError, OverflowError):
+        return False
+    evidence = error[match.end():].strip()
+    return math.isfinite(seconds) and 0 <= seconds <= 60 and bool(evidence) and not evidence.startswith(
+        "Previous config is restored;"
+    )
+
+
 def inspect_recovery(client, failure: dict, review: dict, public: dict, original: dict, tls: dict,
                      peer_address: str) -> dict:
     """Admit a distinct two-unit recovery without saving any desired-state forms.
@@ -406,9 +440,7 @@ def inspect_recovery(client, failure: dict, review: dict, public: dict, original
             or not required <= states.keys() or not states.keys() <= CLOSURE
             or states.get("ntpd") != "failed" or states.get("public_services") != "skipped"
             or any(state != "succeeded" for unit, state in states.items() if unit not in RECOVERY_ROOTS)
-            or len(ntp) != 1 or not str(ntp[0].get("error", "")).startswith(
-                "ntpd clock-source transition failed: ntpd is active as the only selected clock source, "
-                "but did not synchronize within 60 seconds:")
+            or len(ntp) != 1 or not _is_admitted_ntp_synchronization_timeout(ntp[0].get("error"))
             or "Previous config is restored;" not in ntp[0].get("error", "")):
         raise Refusal("fixture_recovery_failure_not_admitted")
     _, selected = client.json(apply_review_path("/ui/management/appliance-apply/review", sorted(RECOVERY_ROOTS)))
