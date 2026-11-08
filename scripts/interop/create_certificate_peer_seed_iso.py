@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the isolated, MAC-bound DHCP peer for certificate lifecycle acceptance."""
+"""Build the isolated, MAC-bound DHCP peer for certificate and NTP lifecycle acceptance."""
 
 from __future__ import annotations
 
@@ -71,11 +71,17 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
     if not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/]+={0,2}(?: [^\r\n]{1,128})?", args.public_key):
         raise ValueError("An exact Ed25519 peer SSH public key is required.")
     publish_host_key = getattr(args, "publish_host_key_to_serial", False)
+    vmware_vix = getattr(args, "vmware_vix", False)
+    retain_instance_cache = getattr(args, "retain_instance_cache", False)
     preserve_host_keys = getattr(args, "preserve_host_keys", False)
+    if not isinstance(retain_instance_cache, bool):
+        raise ValueError("The retained NoCloud instance-cache option must be boolean.")
     if not isinstance(preserve_host_keys, bool):
         raise ValueError("The host-key preservation option must be boolean.")
     if not isinstance(publish_host_key, bool):
         raise ValueError("The serial host-key publication option must be boolean.")
+    if not isinstance(vmware_vix, bool) or (vmware_vix and not publish_host_key):
+        raise ValueError("VMware VIX support requires serial host-key publication.")
     instance_id = getattr(args, "instance_id", None)
     if instance_id is None:
         metadata_instance_id = args.hostname
@@ -97,6 +103,30 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
     serve_ntp = getattr(args, "serve_ntp", False)
     if not isinstance(serve_ntp, bool) or (serve_ntp and len(tunnel_addresses) != 3):
         raise ValueError("Private NTP serving requires the three exact management addresses.")
+    if retain_instance_cache and (
+        instance_id is None or not publish_host_key or not vmware_vix or not serve_ntp
+    ):
+        raise ValueError(
+            "Retaining the NoCloud instance cache requires an explicit instance ID, serial host-key publication, "
+            "VMware VIX, and private NTP serving."
+        )
+    ntp_probe_cidr = getattr(args, "ntp_probe_cidr", None)
+    ntp_probe_address = ""
+    if ntp_probe_cidr is not None:
+        if not serve_ntp or not publish_host_key:
+            raise ValueError("An NTP probe address requires NTP serving and public host-key admission.")
+        try:
+            probe = ipaddress.IPv4Interface(ntp_probe_cidr)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("The NTP probe address must be a private IPv4 /24 interface.") from exc
+        probe_network = probe.network
+        if (probe_network.prefixlen != 24 or not probe_network.is_private or
+                probe.ip.is_loopback or probe.ip.is_link_local or probe.ip.is_multicast or
+                probe.ip.is_unspecified or probe.ip.is_reserved or
+                probe.ip in (probe_network.network_address, probe_network.broadcast_address) or
+                probe_network.overlaps(network.network)):
+            raise ValueError("The NTP probe address must be a usable private IPv4 /24 disjoint from the DHCP subnet.")
+        ntp_probe_address = f"      - {probe}\n"
 
     # dnsmasq's static range has no dynamic pool: only this exact MAC receives
     # the reservation. eth0 stays on the management network for SSH control.
@@ -121,11 +151,14 @@ def peer_files(args: argparse.Namespace) -> dict[str, str]:
             "    content: |\n"
             + "".join(f"      {line}\n" for line in publisher.splitlines())
         )
-        extra_commands = (
-            "  - rc-update add open-vm-tools default\n"
-            "  - rc-service open-vm-tools start\n"
-            "  - /usr/local/sbin/atlaso-certificate-peer-publish-host-key\n"
-        )
+        if vmware_vix:
+            extra_packages += "  - open-vm-tools-vix\n"
+        else:
+            extra_commands = (
+                "  - rc-update add open-vm-tools default\n"
+                "  - rc-service open-vm-tools start\n"
+                "  - /usr/local/sbin/atlaso-certificate-peer-publish-host-key\n"
+            )
     if tunnel_addresses:
         permitted = " ".join(f"{address}:{port}" for address in sorted(tunnel_addresses) for port in (22, 443))
         policy = ("DisableForwarding no\nAllowTcpForwarding local\nGatewayPorts no\n"
@@ -153,7 +186,50 @@ sshd -T | grep -Fx 'gatewayports no'
             extra_write_files += (f"  - path: {path}\n    permissions: '{permissions}'\n    content: |\n"
                                   + "".join(f"      {line}\n" for line in content.splitlines()))
         ntp_command = "  - /usr/local/sbin/atlaso-certificate-peer-chrony\n"
+    if vmware_vix:
+        # Keep every prerequisite for the VMware Tools identity and NTP seed
+        # in one fail-fast command. The marker is final so this block reaches
+        # it only after its configured setup commands return successfully.
+        setup_commands = []
+        if ssh_policy_command:
+            setup_commands.append(ssh_policy_command.strip()[2:])
+        setup_commands.extend((
+            "rc-update add sshd default",
+            "rc-service sshd restart",
+            "rc-service sshd status",
+            "mkdir -p /var/lib/misc",
+            "cp /usr/local/etc/atlaso-certificate-peer.conf /etc/dnsmasq.conf",
+            "dnsmasq --test --conf-file=/etc/dnsmasq.conf",
+            "rc-update add dnsmasq default",
+            "rc-service dnsmasq restart",
+            "rc-service dnsmasq status",
+            "test -s /usr/lib/open-vm-tools/plugins/vmsvc/libguestInfo.so",
+            "test -s /usr/lib/open-vm-tools/plugins/common/libvix.so",
+            "rc-update add open-vm-tools default",
+            "rc-service open-vm-tools restart",
+            "rc-service open-vm-tools status",
+        ))
+        if ntp_command:
+            setup_commands.append(ntp_command.strip()[2:])
+        setup_commands.append("/usr/local/sbin/atlaso-certificate-peer-publish-host-key")
+        extra_commands = "  - |\n    set -eu\n" + "".join(
+            f"    {command}\n" for command in setup_commands
+        )
+        peer_runcmd = ""
+        ntp_command = ""
+    else:
+        peer_runcmd = (
+            f"{ssh_policy_command}"
+            "  - rc-update add sshd default\n"
+            "  - rc-service sshd restart\n"
+            "  - mkdir -p /var/lib/misc\n"
+            "  - cp /usr/local/etc/atlaso-certificate-peer.conf /etc/dnsmasq.conf\n"
+            "  - dnsmasq --test --conf-file=/etc/dnsmasq.conf\n"
+            "  - rc-update add dnsmasq default\n"
+            "  - rc-service dnsmasq restart\n"
+        )
     host_key_policy = "ssh_deletekeys: false\n" if preserve_host_keys else ""
+    retained_instance_cache_policy = "      manual_cache_clean: true\n" if retain_instance_cache else ""
     user_data = f"""#cloud-config
 {host_key_policy}hostname: {args.hostname}
 manage_etc_hosts: true
@@ -194,19 +270,12 @@ packages:
     content: |
       datasource_list: [ NoCloud, None ]
       ssh_deletekeys: false
-      ssh:
+{retained_instance_cache_policy}      ssh:
         emit_keys_to_console: false
       network:
         config: disabled
 {extra_write_files}runcmd:
-{ssh_policy_command}  - rc-update add sshd default
-  - rc-service sshd restart
-  - mkdir -p /var/lib/misc
-  - cp /usr/local/etc/atlaso-certificate-peer.conf /etc/dnsmasq.conf
-  - dnsmasq --test --conf-file=/etc/dnsmasq.conf
-  - rc-update add dnsmasq default
-  - rc-service dnsmasq restart
-{extra_commands}{ntp_command}"""
+{peer_runcmd}{extra_commands}{ntp_command}"""
     network_config = f"""version: 2
 ethernets:
   eth0:
@@ -215,7 +284,7 @@ ethernets:
     dhcp4: false
     addresses:
       - {network}
-"""
+{ntp_probe_address}"""
     return {
         "user-data": user_data,
         "meta-data": f"instance-id: {metadata_instance_id}\nlocal-hostname: {args.hostname}\n",
@@ -223,8 +292,8 @@ ethernets:
     }
 
 
-def main() -> int:
-    """Create a NoCloud seed ISO; the password is accepted on stdin only."""
+def build_argument_parser() -> argparse.ArgumentParser:
+    """Build the bounded command-line interface for peer seed creation."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True)
     parser.add_argument("--hostname", required=True)
@@ -234,11 +303,19 @@ def main() -> int:
     parser.add_argument("--lease-address", required=True)
     parser.add_argument("--client-mac", required=True)
     parser.add_argument("--publish-host-key-to-serial", action="store_true")
+    parser.add_argument("--vmware-vix", action="store_true")
     parser.add_argument("--preserve-host-keys", action="store_true")
     parser.add_argument("--management-address", dest="management_addresses", action="append", default=[])
     parser.add_argument("--serve-ntp", action="store_true")
+    parser.add_argument("--ntp-probe-cidr")
     parser.add_argument("--instance-id")
-    args = parser.parse_args()
+    parser.add_argument("--retain-instance-cache", action="store_true")
+    return parser
+
+
+def main() -> int:
+    """Create a NoCloud seed ISO; the password is accepted on stdin only."""
+    args = build_argument_parser().parse_args()
     files = peer_files(args)
     try:
         import pycdlib
