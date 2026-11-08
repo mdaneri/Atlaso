@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.487"
+version = "0.9.488"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -111,6 +111,10 @@ files = [
   "scripts/interop/dedicated_host_contract.py",
   "scripts/interop/dedicated_host_proof.py",
   "scripts/interop/certificate_dual_stack_contract.py",
+  "scripts/interop/certificate_dual_stack_guest.py",
+  "scripts/interop/certificate_dual_stack_ui.py",
+  "scripts/interop/certificate_dual_stack_channel.py",
+  "scripts/interop/certificate_dual_stack_inventory.py",
   "atlaso/app/services/routing_permissions.py",
   "atlaso/app/routers/api_v1/routing_permissions.py",
   "atlaso/app/routing_permission_schemas.py",

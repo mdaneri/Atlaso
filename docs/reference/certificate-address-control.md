@@ -41,6 +41,37 @@ external enforcement, and its own reviewed execution admission. For that future 
 lost topology/control prohibit automatic restore submissions; reconcile read-only and re-admit restoration from known
 state first.
 
+### Console driver components
+
+The separate `certificate_dual_stack_guest.py`, `certificate_dual_stack_ui.py`,
+`certificate_dual_stack_channel.py`, and `certificate_dual_stack_inventory.py` modules prepare a console-only,
+test-only driver. They do not provide an admitted end-to-end native command or extend the IPv4 acceptance fixture.
+
+- Native readback retains complete link and address inventories, both families' routes from every table, both
+  rule inventories, and numeric TCP listeners. A failed producer, malformed row, changed boot, duplicate target
+  address, or uncertain address flag refuses interpretation. Normalized static consistency is distinct from
+  assignment provenance; preserve the complete original observations alongside it.
+- Numeric TLS connections verify the original CA, numeric IP SAN and independently observed console leaf, with no
+  DNS, proxy, redirect or insecure fallback. A peer TCP refusal remains an observation requiring separate complete
+  native absence and positive-path evidence; a timeout is unknown.
+- Desired interface Save and the full server-expanded five-unit protected Apply use the existing normal UI
+  endpoints. An acknowledged durable public intent precedes the single POST. The original returned job receipt
+  requires its own durable acknowledgement before any separate status read. Unknown outcomes never trigger
+  resubmission, cancellation or automatic restoration.
+- Public observations use immutable run/stage keys, bounded ASCII JSON chunks and a manifest written last. The
+  host must read matching manifests before and after all chunks, verify exact source/resource/boot bindings and
+  complete action schemas, and sync the original before acknowledging. Native `runtimeConfig` quoting and
+  absent-key behavior still require a public canary on the admitted VM before use.
+
+The credential terminal adapter deliberately refuses until the controller can prove the bounded SDK child has
+stopped before restoring terminal settings. A guest input deadline alone cannot provide that guarantee: remaining
+SDK keystrokes could reach a restored shell. The byte-reader tests exercise synthetic sentinel input only.
+
+Remaining execution work includes that controller and credential-stop boundary, original runtime/console admission,
+family-aware route/rule retirement interpretation, peer DNS setup and restoration through the normal UI, and a
+reviewed transaction/restoration journal. No component or synthetic test supplies continuous LAN/address enforcement,
+native completion, or permission to merge while the task's formal gates remain open.
+
 ## Trusted host and admission
 
 The trusted-host boundary is the human maintainer with authority over the Workstation host, its VM inventory, VMX

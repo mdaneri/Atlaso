@@ -30,3 +30,9 @@ Run the isolated Photon build-state regression on Windows with
 `pwsh -NoProfile -File tests/powershell/Test-PhotonBuildStateRoot.ps1 -RepositoryRoot (Resolve-Path .).Path`.
 It extracts wrapper functions through the PowerShell AST without running the image build. Keep required helper
 imports synchronized with the functions under test, and reject missing or duplicate definitions during setup.
+
+When a Python test extracts a production PowerShell block, load its real helper dependencies and supply the valid
+public inputs that the full script normally initializes. For example, the Windows ownership fixtures load
+`Atlaso.WorkstationFirstBoot.ps1` and bind the VM name before running parent preflight and restored-root admission.
+Run `python -m pytest tests/test_vmware_test_vm_ownership.py` on Windows to check those synthetic fixtures. Keep their
+ownership, refusal, and publication assertions intact; setup must let each test reach the behavior it names.
