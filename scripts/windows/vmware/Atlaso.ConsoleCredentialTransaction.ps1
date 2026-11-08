@@ -111,6 +111,7 @@ Public admission bindings and retained read pins for this one transaction.
 #>
 function Assert-AtlasoConsoleTransactionBinding {
     param([Parameter(Mandatory)][psobject]$Transaction)
+    if ($Transaction.IsClosed -isnot [bool] -or $Transaction.IsClosed) { throw 'Original console transaction is closed.' }
     $context = $Transaction.Context
     $plan = $Transaction.Plan
     $options = $Transaction.Options
@@ -148,10 +149,13 @@ Existing public credential-consumer arguments, never credential values.
 Exact original public plan in the admitted durable evidence directory.
 .PARAMETER PlanSha256
 Independently preserved plan digest.
+.PARAMETER ProtocolVersion
+Explicit original plan and receiver version; v1 never upgrades to signed-ACK admission.
 #>
 function Open-AtlasoConsoleCredentialTransaction {
     param([Parameter(Mandatory)][psobject]$Context, [Parameter(Mandatory)][hashtable]$Options,
-        [Parameter(Mandatory)][string]$PlanPath, [Parameter(Mandatory)][string]$PlanSha256)
+        [Parameter(Mandatory)][string]$PlanPath, [Parameter(Mandatory)][string]$PlanSha256,
+        [ValidateSet(1,2)][int]$ProtocolVersion = 1)
     if (-not $Context.Enabled -or
         ($Context.PSObject.Properties['ContinuationReceiptPath'] -and $Context.ContinuationReceiptPath) -or
         ($Context.PSObject.Properties['ValidationRootAdmission'] -and $Context.ValidationRootAdmission)) {
@@ -166,6 +170,9 @@ function Open-AtlasoConsoleCredentialTransaction {
             'provider_start_filetime_utc', 'screen_sha256', 'runtime_sha256', 'runtime_file_count', 'account',
             'port', 'field_rectangle', 'deadline_utc', 'guest_bundle_sha256', 'receiver_receipt_path',
             'receiver_receipt_sha256', 'client_source_sha256')
+        if ($ProtocolVersion -eq 2) {
+            $keys += @('stop_ack_public_key_hex', 'stop_ack_signing_key_sha256', 'stop_ack_transport_key')
+        }
         $read = Read-AtlasoConsoleTransactionRecord -Context $Context -Path $PlanPath -Sha256 $PlanSha256 -Keys $keys
         foreach ($pin in $read.Pins) { $pins.Add($pin) }
         $plan = $read.Value
@@ -179,7 +186,7 @@ function Open-AtlasoConsoleCredentialTransaction {
                 'runtime_sha256', 'guest_bundle_sha256', 'receiver_receipt_sha256', 'client_source_sha256')) {
             if ($plan[$key] -cnotmatch '^[0-9a-f]{64}$') { throw 'Plan digest type refused.' }
         }
-        if ($plan.schema -ne 1 -or $plan.kind -cne 'console-credential-transaction-v1' -or
+        if ($plan.schema -ne $ProtocolVersion -or $plan.kind -cne ('console-credential-transaction-v' + $ProtocolVersion) -or
             $plan.source_commit -cne $Context.SourceCommit -or $plan.task_id -cne $Context.TaskId -or
             $plan.source_commit -cnotmatch '^[0-9a-f]{40}$' -or $plan.run_id -cnotmatch '^[0-9a-f]{32}$' -or
             $plan.receiver_nonce -cnotmatch '^[0-9a-f]{32}$' -or
@@ -198,24 +205,43 @@ function Open-AtlasoConsoleCredentialTransaction {
             $plan.persistent_vm_identity_sha256 -cne $original.Record.persistent_vm_identity_sha256) {
             throw 'Console transaction selectors do not match original admission.'
         }
+        if ($ProtocolVersion -eq 2) {
+            # The plan digest is independently retained by the host controller.
+            # Never adopt either a key or a key fingerprint from the ACK channel.
+            if ($plan.stop_ack_public_key_hex -cnotmatch '^[0-9a-f]{64}$' -or
+                $plan.stop_ack_signing_key_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+                $plan.task_id -cnotmatch '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$' -or
+                $plan.stop_ack_transport_key -cne ('guestinfo.atlaso.pr1084.native.stop-ack.' + $plan.run_id + '.' + $plan.receiver_nonce)) {
+                throw 'Signed stop acknowledgement admission refused.'
+            }
+            $keyBytes = [Convert]::FromHexString($plan.stop_ack_public_key_hex)
+            $fingerprint = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($keyBytes)).ToLowerInvariant()
+            if ($fingerprint -cne $plan.stop_ack_signing_key_sha256) { throw 'Original stop signing key fingerprint differs.' }
+        }
         $deadline = [DateTimeOffset]::MinValue
         if (-not [DateTimeOffset]::TryParseExact($plan.deadline_utc, 'O', [Globalization.CultureInfo]::InvariantCulture,
                 [Globalization.DateTimeStyles]::None, [ref]$deadline) -or $deadline -le [DateTimeOffset]::UtcNow -or
             $deadline -gt [DateTimeOffset]::UtcNow.AddSeconds(420)) { throw 'Original transaction deadline refused.' }
         $readyKeys = @('schema', 'kind', 'task_id', 'source_commit', 'run_id', 'receiver_nonce', 'guest_boot_id',
             'ownership_receipt_sha256', 'persistent_vm_identity_sha256', 'guest_bundle_sha256', 'screen_sha256', 'echo_off')
+        if ($ProtocolVersion -eq 2) { $readyKeys += @('stop_ack_signing_key_sha256', 'stop_ack_algorithm') }
         $readyRead = Read-AtlasoConsoleTransactionRecord -Context $Context -Path $plan.receiver_receipt_path `
             -Sha256 $plan.receiver_receipt_sha256 -Keys $readyKeys
         foreach ($pin in $readyRead.Pins) { $pins.Add($pin) }
         $ready = $readyRead.Value
-        if (($ready.schema -isnot [int] -and $ready.schema -isnot [long]) -or $ready.schema -ne 1 -or
-            $ready.kind -isnot [string] -or $ready.kind -cne 'console-concealed-receiver-v1' -or
+        if (($ready.schema -isnot [int] -and $ready.schema -isnot [long]) -or $ready.schema -ne $ProtocolVersion -or
+            $ready.kind -isnot [string] -or $ready.kind -cne ('console-concealed-receiver-v' + $ProtocolVersion) -or
             $ready.echo_off -isnot [bool] -or -not $ready.echo_off) {
             throw 'Original concealed receiver receipt refused.'
         }
         foreach ($key in @('task_id', 'source_commit', 'run_id', 'receiver_nonce', 'guest_boot_id',
                 'ownership_receipt_sha256', 'persistent_vm_identity_sha256', 'guest_bundle_sha256', 'screen_sha256')) {
             if ($ready[$key] -isnot [string] -or $ready[$key] -cne $plan[$key]) { throw 'Concealed receiver binding changed.' }
+        }
+        if ($ProtocolVersion -eq 2 -and ($ready.stop_ack_signing_key_sha256 -isnot [string] -or
+                $ready.stop_ack_signing_key_sha256 -cne $plan.stop_ack_signing_key_sha256 -or
+                $ready.stop_ack_algorithm -isnot [string] -or $ready.stop_ack_algorithm -cne 'Ed25519')) {
+            throw 'Original concealed receiver signing admission differs.'
         }
         foreach ($path in @($Options.ScreenPath, $Options.PythonPath)) {
             $full = [IO.Path]::GetFullPath($path)
@@ -229,7 +255,7 @@ function Open-AtlasoConsoleCredentialTransaction {
         }
         $Context | Add-Member -NotePropertyName InvocationId -NotePropertyValue $plan.receiver_nonce -Force
         $binding = [ordered]@{
-            schema = 1; task_id = $plan.task_id; source_commit = $plan.source_commit; plan_sha256 = $PlanSha256
+            schema = $ProtocolVersion; task_id = $plan.task_id; source_commit = $plan.source_commit; plan_sha256 = $PlanSha256
             run_id = $plan.run_id; receiver_nonce = $plan.receiver_nonce; guest_boot_id = $plan.guest_boot_id
             host_boot_identity = $plan.host_boot_identity; guest_bundle_sha256 = $plan.guest_bundle_sha256
             original_vm_receipt_path = $Context.ReceiptPath; original_vm_receipt_sha256 = $Context.ReceiptSha256
@@ -242,12 +268,19 @@ function Open-AtlasoConsoleCredentialTransaction {
             receiver_receipt_path = $plan.receiver_receipt_path; receiver_receipt_sha256 = $plan.receiver_receipt_sha256
             deadline_utc = $plan.deadline_utc
         }
+        if ($ProtocolVersion -eq 2) {
+            foreach ($key in @('stop_ack_public_key_hex', 'stop_ack_signing_key_sha256', 'stop_ack_transport_key')) {
+                $binding.Add($key, $plan[$key])
+            }
+        }
         $paths = @{}
         foreach ($kind in @('intent', 'process', 'stop')) {
             $paths[$kind] = Join-Path $Context.EvidenceDirectory ('atlaso-test-vm-console-credential-' + $kind + '-' + $plan.receiver_nonce + '.json')
         }
         $transaction = [pscustomobject]@{Context=$Context; Options=$Options; Plan=$plan; Binding=$binding; Paths=$paths;
+            PlanReceipt=[pscustomobject]@{Path=$PlanPath; Sha256=$PlanSha256};
             Deadline=$deadline; Pins=$pins; JobName=('Local\Atlaso-ConsoleCredential-' + $plan.receiver_nonce);
+            ProtocolVersion=$ProtocolVersion; IsClosed=$false; ControllerIdentity=$null; IntentReceipt=$null;
             RootIdentity=$null; ProcessReceipt=$null; StopReceipt=$null; StopOutcome=$null}
         Assert-AtlasoConsoleTransactionBinding -Transaction $transaction
         return $transaction
@@ -271,6 +304,7 @@ Public original process facts created by the committed controller.
 function Publish-AtlasoConsoleCredentialRecord {
     param([Parameter(Mandatory)][psobject]$Transaction, [Parameter(Mandatory)][ValidateSet('intent','process','stop')][string]$Kind,
         [Parameter(Mandatory)][Collections.IDictionary]$Details)
+    if ($Transaction.IsClosed -isnot [bool] -or $Transaction.IsClosed) { throw 'Original console transaction is closed.' }
     $record = [ordered]@{schema=1; phase=('console-credential-' + $Kind); binding=$Transaction.Binding;
         observed_utc=[DateTimeOffset]::UtcNow.ToString('O'); details=$Details}
     if ([Text.Encoding]::UTF8.GetByteCount(($record | ConvertTo-Json -Depth 8 -Compress)) -gt 16384) {
@@ -307,7 +341,8 @@ function Invoke-AtlasoConsoleCredentialTransaction {
     $controller = [Diagnostics.Process]::GetCurrentProcess()
     try { $controllerIdentity = Get-AtlasoConsoleProcessCreation -Process $controller }
     finally { $controller.Dispose() }
-    $null = Publish-AtlasoConsoleCredentialRecord -Transaction $Transaction -Kind intent -Details $controllerIdentity
+    $Transaction.ControllerIdentity = $controllerIdentity
+    $Transaction.IntentReceipt = Publish-AtlasoConsoleCredentialRecord -Transaction $Transaction -Kind intent -Details $controllerIdentity
     $publish = ${function:Publish-AtlasoConsoleCredentialRecord}
     $assert = ${function:Assert-AtlasoConsoleTransactionBinding}
     $creation = ${function:Get-AtlasoConsoleProcessCreation}
@@ -429,5 +464,8 @@ Opened original transaction, or null after an admission failure.
 #>
 function Close-AtlasoConsoleCredentialTransaction {
     param([AllowNull()][object]$Transaction)
-    if ($Transaction) { foreach ($pin in $Transaction.Pins) { $pin.Dispose() } }
+    if ($Transaction -and -not $Transaction.IsClosed) {
+        $Transaction.IsClosed = $true
+        foreach ($pin in $Transaction.Pins) { $pin.Dispose() }
+    }
 }

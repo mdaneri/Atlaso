@@ -278,7 +278,13 @@ try {{ $null=Invoke-AtlasoConsoleCredentialTransaction -Transaction $transaction
     -ArgumentList @('-NoProfile','-NonInteractive','-Command',$childProbe + ';' + $childCommand) }} catch {{ $failure=$_.Exception.Message }}
 try {{
     if(-not (Test-Path -LiteralPath {_ps(marker)})){{ throw 'Child resumed without the original process receipt' }}
-    if($null -eq $transaction.ProcessReceipt -or $null -eq $transaction.StopReceipt){{ throw 'Original phase receipt missing' }}
+    if($null -eq $transaction.IntentReceipt -or $null -eq $transaction.ProcessReceipt -or
+       $null -eq $transaction.StopReceipt){{ throw 'Original phase receipt missing' }}
+    if($transaction.ControllerIdentity.pid -ne $PID -or
+       $transaction.IntentReceipt.Path -cne $transaction.Paths.intent -or
+       $transaction.IntentReceipt.Sha256 -cne (Get-FileHash -LiteralPath $transaction.Paths.intent).Hash.ToLowerInvariant()){{
+        throw 'Original publisher-returned intent selectors were not retained'
+    }}
     $processRecord=Get-Content -LiteralPath $transaction.ProcessReceipt.Path -Raw | ConvertFrom-Json
     $stopRecord=Get-Content -LiteralPath $transaction.StopReceipt.Path -Raw | ConvertFrom-Json
     if($processRecord.phase -cne 'console-credential-process' -or $stopRecord.phase -cne 'console-credential-stop' -or
@@ -574,3 +580,160 @@ try {{
 }} finally {{Close-AtlasoConsoleCredentialTransaction -Transaction $tx}}
 """
     assert "post-stop-binding-loss-failed-closed" in _run(script, tmp_path, timeout=35)
+
+
+def _v2_fixture(tmp_path: Path) -> tuple[str, Path, Path]:
+    """Prepare a new signed-protocol admission using a public test-vector key.
+
+    Args:
+        tmp_path: Fresh pytest-owned public fixture namespace.
+    """
+    setup, plan_path, receiver_path, _ = _fixture(tmp_path)
+    setup += rf"""
+$taskId='00000000-0000-4000-8000-000000001077'
+$context.TaskId=$taskId;$plan.task_id=$taskId;$ready.task_id=$taskId
+$plan.schema=2;$plan.kind='console-credential-transaction-v2'
+$ready.schema=2;$ready.kind='console-concealed-receiver-v2'
+# RFC8032 public test vector only; no private key exists in this fixture.
+$plan.stop_ack_public_key_hex='d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a'
+$publicKey=[Convert]::FromHexString($plan.stop_ack_public_key_hex)
+$fingerprint=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($publicKey)).ToLowerInvariant()
+$plan.stop_ack_signing_key_sha256=$fingerprint
+$plan.stop_ack_transport_key='guestinfo.atlaso.pr1084.native.stop-ack.'+$run+'.'+$nonce
+$ready.stop_ack_signing_key_sha256=$fingerprint;$ready.stop_ack_algorithm='Ed25519'
+[IO.File]::WriteAllText({_ps(receiver_path)},($ready|ConvertTo-Json -Depth 5 -Compress),[Text.UTF8Encoding]::new($false))
+$plan.receiver_receipt_sha256=(Get-FileHash -LiteralPath {_ps(receiver_path)}).Hash.ToLowerInvariant()
+[IO.File]::WriteAllText({_ps(plan_path)},($plan|ConvertTo-Json -Depth 5 -Compress),[Text.UTF8Encoding]::new($false))
+$planSha=(Get-FileHash -LiteralPath {_ps(plan_path)}).Hash.ToLowerInvariant()
+"""
+    return setup, plan_path, receiver_path
+
+
+def test_explicit_v2_admission_binds_public_key_and_receiver_without_execution(tmp_path: Path) -> None:
+    """Admit a separate original v2 definition without creating any journal phase.
+
+    Args:
+        tmp_path: Fresh public admission fixtures, not native receipts.
+    """
+    setup, plan_path, _ = _v2_fixture(tmp_path)
+    script = setup + rf"""
+$tx=Open-AtlasoConsoleCredentialTransaction -Context $context -Options $options -PlanPath {_ps(plan_path)} `
+ -PlanSha256 $planSha -ProtocolVersion 2
+try {{
+ if($tx.ProtocolVersion -ne 2 -or $tx.Binding.schema -ne 2 -or
+    $tx.PlanReceipt.Path -cne {_ps(plan_path)} -or $tx.PlanReceipt.Sha256 -cne $planSha -or
+    $tx.Binding.stop_ack_signing_key_sha256 -cne $fingerprint -or
+    $tx.Binding.stop_ack_public_key_hex -cne $plan.stop_ack_public_key_hex -or
+    $tx.Binding.stop_ack_transport_key -cne ('guestinfo.atlaso.pr1084.native.stop-ack.'+$run+'.'+$nonce)){{
+  throw 'Signed protocol admission did not bind the independently pinned key'
+ }}
+ if($tx.IntentReceipt -or $tx.ProcessReceipt -or $tx.StopReceipt -or
+    @(Get-ChildItem -LiteralPath $evidence -Filter 'atlaso-test-vm-console-credential-*.json').Count){{
+  throw 'Admission definition unexpectedly claimed or executed a transaction'
+ }}
+ Write-Output 'v2-admission-only-no-execution'
+}} finally {{Close-AtlasoConsoleCredentialTransaction -Transaction $tx}}
+"""
+    assert "v2-admission-only-no-execution" in _run(script, tmp_path)
+
+
+@pytest.mark.parametrize("direction", ["v2-with-default-v1", "v1-with-explicit-v2"])
+def test_protocol_versions_never_upgrade_or_adopt_old_receipts(tmp_path: Path, direction: str) -> None:
+    """An explicit version mismatch refuses before any transaction is claimed.
+
+    Args:
+        tmp_path: Fresh version-specific original fixture files.
+        direction: Schema-adoption direction to reject.
+    """
+    if direction == "v2-with-default-v1":
+        setup, plan_path, _ = _v2_fixture(tmp_path)
+        version = ""
+    else:
+        setup, plan_path, _, _ = _fixture(tmp_path)
+        setup += "$planSha=(Get-FileHash -LiteralPath " + _ps(plan_path) + ").Hash.ToLowerInvariant()\n"
+        version = "-ProtocolVersion 2"
+    script = setup + rf"""
+$refused=$false
+try {{$null=Open-AtlasoConsoleCredentialTransaction -Context $context -Options $options -PlanPath {_ps(plan_path)} `
+ -PlanSha256 $planSha {version}}} catch {{$refused=$true}}
+if(-not $refused -or @(Get-ChildItem -LiteralPath $evidence -Filter 'atlaso-test-vm-console-credential-*.json').Count){{
+ throw 'A different protocol version was adopted or claimed'
+}}
+Write-Output 'version-adoption-refused'
+"""
+    assert "version-adoption-refused" in _run(script, tmp_path)
+
+
+@pytest.mark.parametrize("defect", [
+    "key-uppercase", "key-length", "key-type", "key-hash", "fingerprint-type", "replayed-key",
+    "plan-version", "plan-kind", "receiver-version", "receiver-kind", "receiver-key", "algorithm",
+    "algorithm-type", "receiver-key-type", "receiver-duplicate", "receiver-extra",
+])
+def test_v2_key_and_receiver_admission_refuse_before_claim(tmp_path: Path, defect: str) -> None:
+    """Reject wrong pins, schemas, algorithms and namespaces before publication.
+
+    Args:
+        tmp_path: Fresh synthetic public v2 admission files.
+        defect: Exact defect injected before the module reads its original digest.
+    """
+    setup, plan_path, receiver_path = _v2_fixture(tmp_path)
+    script = setup + rf"""
+switch({_ps(defect)}){{
+ 'key-uppercase' {{$plan.stop_ack_public_key_hex=$plan.stop_ack_public_key_hex.ToUpperInvariant()}}
+ 'key-length' {{$plan.stop_ack_public_key_hex='a'*62}}
+ 'key-type' {{$plan.stop_ack_public_key_hex=$true}}
+ 'key-hash' {{$plan.stop_ack_signing_key_sha256='0'*64}}
+ 'fingerprint-type' {{$plan.stop_ack_signing_key_sha256=123}}
+ 'replayed-key' {{$plan.stop_ack_transport_key='guestinfo.atlaso.pr1084.native.stop-ack.'+$run+'.'+('0'*32)}}
+ 'plan-version' {{$plan.schema=1}}
+ 'plan-kind' {{$plan.kind='console-credential-transaction-v1'}}
+ 'receiver-version' {{$ready.schema=1}}
+ 'receiver-kind' {{$ready.kind='console-concealed-receiver-v1'}}
+ 'receiver-key' {{$ready.stop_ack_signing_key_sha256='0'*64}}
+ 'algorithm' {{$ready.stop_ack_algorithm='none'}}
+ 'algorithm-type' {{$ready.stop_ack_algorithm=@{{value='Ed25519'}}}}
+ 'receiver-key-type' {{$ready.stop_ack_signing_key_sha256=$true}}
+ 'receiver-extra' {{$ready.channel_key='untrusted public key'}}
+}}
+$json=$ready|ConvertTo-Json -Depth 5 -Compress
+if({_ps(defect)} -ceq 'receiver-duplicate'){{$json=$json.Replace('"schema":2,','"schema":2,"schema":2,')}}
+[IO.File]::WriteAllText({_ps(receiver_path)},$json,[Text.UTF8Encoding]::new($false))
+$plan.receiver_receipt_sha256=(Get-FileHash -LiteralPath {_ps(receiver_path)}).Hash.ToLowerInvariant()
+[IO.File]::WriteAllText({_ps(plan_path)},($plan|ConvertTo-Json -Depth 5 -Compress),[Text.UTF8Encoding]::new($false))
+$sha=(Get-FileHash -LiteralPath {_ps(plan_path)}).Hash.ToLowerInvariant()
+$refused=$false
+try {{$null=Open-AtlasoConsoleCredentialTransaction -Context $context -Options $options -PlanPath {_ps(plan_path)} `
+ -PlanSha256 $sha -ProtocolVersion 2}} catch {{$refused=$true}}
+if(-not $refused -or @(Get-ChildItem -LiteralPath $evidence -Filter 'atlaso-test-vm-console-credential-*.json').Count){{
+ throw 'Invalid signed protocol admission reached a transaction claim'
+}}
+Write-Output 'invalid-v2-admission-refused'
+"""
+    assert "invalid-v2-admission-refused" in _run(script, tmp_path)
+
+
+def test_closed_v2_transaction_cannot_claim_or_reopen_historical_pins(tmp_path: Path) -> None:
+    """Closing admission ends its live authority even if record bytes still exist.
+
+    Args:
+        tmp_path: Fresh public versioned admission fixture.
+    """
+    setup, plan_path, _ = _v2_fixture(tmp_path)
+    script = setup + rf"""
+$tx=Open-AtlasoConsoleCredentialTransaction -Context $context -Options $options -PlanPath {_ps(plan_path)} `
+ -PlanSha256 $planSha -ProtocolVersion 2
+Close-AtlasoConsoleCredentialTransaction -Transaction $tx
+Close-AtlasoConsoleCredentialTransaction -Transaction $tx
+$publicationRefused=$false
+try {{$null=Publish-AtlasoConsoleCredentialRecord -Transaction $tx -Kind intent -Details ([ordered]@{{pid=$PID}})}}
+catch {{$publicationRefused=$true}}
+$refused=$false
+try {{$null=Invoke-AtlasoConsoleCredentialTransaction -Transaction $tx -FilePath (Get-Process -Id $PID).Path `
+ -ArgumentList @('-NoProfile','-NonInteractive','-Command','exit 0')}} catch {{$refused=$true}}
+if(-not $tx.IsClosed -or -not $refused -or -not $publicationRefused -or
+ @(Get-ChildItem -LiteralPath $evidence -Filter 'atlaso-test-vm-console-credential-*.json').Count){{
+ throw 'Closed transaction was reused as live authority'
+}}
+Write-Output 'closed-v2-authority-refused'
+"""
+    assert "closed-v2-authority-refused" in _run(script, tmp_path)

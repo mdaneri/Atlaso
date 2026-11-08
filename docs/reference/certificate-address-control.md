@@ -94,6 +94,14 @@ guardian is provided. Existing v1 receipts do not admit this protocol. A valid s
 statement; the future signer must separately verify the original journal and actual quiescence. It supplies neither
 terminal-input drainage nor continuous LAN/address enforcement, and cannot release a partially entered credential.
 
+The host journal module has an explicit v2 admission definition for that future protocol. It requires separate v2
+plan and receiver schemas, the independently pinned raw public key and matching SHA-256, the fixed Ed25519 algorithm,
+and the exact run/receiver transport key. Default v1 admission never upgrades or adopts a v2 record. The consumer CLI
+still uses v1; this module definition enables no signing, ACK transport or credential execution. The journal retains
+the original publisher-returned intent selectors and controller clocks with its process/stop selectors. Closing the
+transaction ends its live authority; surviving records cannot reopen it. Receiver production and chain validation
+remain prerequisites before signing.
+
 Remaining execution work includes that controller and credential-stop boundary, original runtime/console admission,
 family-aware route/rule retirement interpretation, peer DNS setup and restoration through the normal UI, and a
 reviewed transaction/restoration journal. No component or synthetic test supplies continuous LAN/address enforcement,
