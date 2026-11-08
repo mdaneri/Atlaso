@@ -138,6 +138,29 @@ This interface has no SDK access, key selector, signing backend or VM write. Syn
 jobs and process clocks with explicitly mocked source/VM/provider endpoints; they do not admit the native consumer.
 A separately reviewed runtime and explicit production key admission remain required before backend implementation.
 
+The separate `Atlaso.ConsoleStopSignerAdmission.ps1` prepares a host-protocol-3 scope without upgrading those v1/v2
+consumers or the wire-v2 verifier. `New-AtlasoConsoleSignerScope` binds the original normal-VM context, evidence-directory
+identity and live controller before generating a fresh receiver nonce. Keep that original reference; copied,
+serialized, closed or reconstructed records cannot reopen it. Do not forward its nonce to a legacy consumer.
+
+`Read-AtlasoConsoleSignerDescriptor` reads bounded public data and retained read pins. Its exact acyclic schema commits
+to original source/resource/controller, runtime and protected-provider evidence, plus an independently admitted public
+key. It contains no plan digest, receiver digest, self digest, private selector or credential. A future receiver3 must
+bind the descriptor digest before a plan3 binds both; neither producer is implemented here.
+
+`Open-AtlasoConsoleSignerAdmission` verifies that descriptor against the same original scope before atomically claiming
+the nonce. The claim filename depends only on that nonce; run and protocol identities belong inside it. A deterministic
+pending file also consumes an uncertain attempt. Existing claims, publication uncertainty and later refusal preserve
+all files and block retry or replacement, including after close. This serializes cooperating v3 attempts only: v1/v2
+writers do not honor the marker, and exact legacy-path checks cannot lock them. Actual overlap on the same receiver or
+nonce refuses; it requires no unrelated-owner or host-wide pause.
+
+Production runtime/provider admission always refuses before SDK or secret access. Public descriptor metadata cannot
+supply that missing verifier, codec, production key selector or runtime provenance. Synthetic internal test seams can
+exercise reference lifetime and real file publication but cannot establish native or SDK admission. Closing revokes
+private authority before releasing read pins and preserves the nonce claim. No production SDK-capable object,
+credential dispatch, signer backend or transport is enabled by this stage.
+
 Remaining execution work includes that controller and credential-stop boundary, original runtime/console admission,
 family-aware route/rule retirement interpretation, peer DNS setup and restoration through the normal UI, and a
 reviewed transaction/restoration journal. No component or synthetic test supplies continuous LAN/address enforcement,
