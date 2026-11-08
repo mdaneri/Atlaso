@@ -346,6 +346,28 @@ def test_task_status_schema_roundtrips() -> None:
     assert round_trip(value) == value
 
 
+def test_pending_task_status_from_application_roundtrips() -> None:
+    """Retain the application's initial pending state in original job observations."""
+    from atlaso.app.models import JobStatus
+
+    value = task_status_payload()
+    value["status"] = JobStatus.PENDING.value
+    assert round_trip(value) == value
+
+
+@pytest.mark.parametrize("status", ["queued", "unknown", None, []])
+def test_nonapplication_task_status_refuses(status: Any) -> None:
+    """Reject invented status names and malformed values instead of adopting them.
+
+    Args:
+        status: Synthetic unsupported or malformed task state.
+    """
+    value = task_status_payload()
+    value["status"] = status
+    with pytest.raises(GuestRefusal, match="^public_task_status_invalid$"):
+        channel.frame_public(value, metadata(), set())
+
+
 @pytest.mark.parametrize("field", ["job_id", "status_url", "task_type", "status", "original_job_receipt_sha256"])
 def test_task_status_rejects_invalid_identity_path_type_status_or_digest(field: str) -> None:
     """Reject task status if any job, path, type, status, or receipt fact drifts.

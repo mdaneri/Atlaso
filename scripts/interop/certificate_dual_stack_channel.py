@@ -194,7 +194,7 @@ def validate_public_payload(payload: dict[str, Any]) -> None:
         if (not _job(job) or payload["status_url"] not in
                 (f"/tasks/{job}/status", f"/ui/management/tasks/{job}/status")
                 or payload["task_type"] != "appliance-apply" or not isinstance(payload["status"], str)
-                or payload["status"] not in {"queued", "running", "succeeded", "failed", "cancelled"}
+                or payload["status"] not in {"pending", "running", "succeeded", "failed", "cancelled"}
                 or not _sha256(payload["original_job_receipt_sha256"])):
             raise GuestRefusal("public_task_status_invalid")
     if kind == "test-only-tls-observation":

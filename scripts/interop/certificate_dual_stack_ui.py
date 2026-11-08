@@ -464,7 +464,7 @@ def read_apply_status_once(
     task = response.get("task")
     if (not isinstance(task, dict) or task.get("id") != job or task.get("type") != "appliance-apply"
             or not isinstance(task.get("status"), str)
-            or task["status"] not in {"queued", "running", "succeeded", "failed", "cancelled"}):
+            or task["status"] not in {"pending", "running", "succeeded", "failed", "cancelled"}):
         raise GuestRefusal("original_apply_task_identity_changed")
     result = {
         "schema": 1, "kind": "test-only-task-status", "test_only": True,

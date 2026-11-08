@@ -92,7 +92,7 @@ def test_job_status_is_unavailable_before_original_receipt_acknowledgement() -> 
     assert client.requests == requests_before
 
 
-@pytest.mark.parametrize("status", ["queued", "running", "succeeded", "failed", "cancelled"])
+@pytest.mark.parametrize("status", ["pending", "running", "succeeded", "failed", "cancelled"])
 def test_job_status_projects_only_original_job_identity_without_followup(status: str) -> None:
     """A single status read never exports the full task result or submits restoration.
 
@@ -113,7 +113,7 @@ def test_job_status_projects_only_original_job_identity_without_followup(status:
 
 
 @pytest.mark.parametrize("change", [{"id": "foreign-job"}, {"type": "foreign-type"},
-                                    {"status": "unknown"}, {"status": []}])
+                                    {"status": "unknown"}, {"status": "queued"}, {"status": []}])
 def test_status_drift_does_not_adopt_another_job_or_unknown_outcome(change: dict[str, Any]) -> None:
     """Reject identity and state drift without resubmission or automatic restoration.
 
@@ -127,6 +127,22 @@ def test_status_drift_does_not_adopt_another_job_or_unknown_outcome(change: dict
         ui.read_apply_status_once(client, receipt,
                                   durable_receipt_sha256=hashlib.sha256(public_bytes(receipt)).hexdigest())
     assert sum(form is not None for _, form in client.requests) == 1
+
+
+def test_pending_job_matches_application_enum_and_public_channel() -> None:
+    """Reconcile a real pending Apply status before the worker has started it."""
+    from atlaso.app.models import JobStatus
+
+    client = FakeClient()
+    receipt = ui.submit_once(client, sorted(ui.PROTECTED), lambda _stage, _value: None)
+    client.review = {"task": {"id": receipt["job_id"], "type": "appliance-apply",
+                              "status": JobStatus.PENDING.value}}
+    before = len(client.requests)
+    result = ui.read_apply_status_once(client, receipt,
+                                      durable_receipt_sha256=hashlib.sha256(public_bytes(receipt)).hexdigest())
+    assert result["status"] == "pending"
+    assert client.requests[before:] == [("/tasks/job-123/status", None)]
+    assert_public_channel_roundtrip(result)
 
 
 def test_checkpoint_precedes_the_single_post_and_no_poll_follows() -> None:
