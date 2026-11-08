@@ -99,8 +99,19 @@ plan and receiver schemas, the independently pinned raw public key and matching 
 and the exact run/receiver transport key. Default v1 admission never upgrades or adopts a v2 record. The consumer CLI
 still uses v1; this module definition enables no signing, ACK transport or credential execution. The journal retains
 the original publisher-returned intent selectors and controller clocks with its process/stop selectors. Closing the
-transaction ends its live authority; surviving records cannot reopen it. Receiver production and chain validation
-remain prerequisites before signing.
+transaction ends its live authority; surviving records cannot reopen it.
+
+The module can verify the complete original stop chain only for the same still-open v2 transaction and live controller.
+Admission selectors and source-pin identity are frozen when it opens; only the original outer callback can register
+completion. Copied or reopened transaction objects cannot adopt that completion. Verification reopens the pinned plan,
+receiver and three journal phases, checks original clock and parent/job relationships without querying the exited root,
+and rechecks current source/runtime/frame/VM admission. This is host bookkeeping, not protection from arbitrary code
+executing inside the trusted controller or authenticated guest-producer evidence.
+
+ACK preparation publishes one exclusive original intent without its own digest. The returned digest enters an unsigned
+statement marked `prepared_unsigned_no_ack`; no signature or transport write occurs. Failed outcomes stay failed.
+An uncertain publication or later admission loss preserves the original state and blocks retry, including after a run
+identifier changes. A reviewed signer/writer, receiver/guardian and native public-channel qualification remain required.
 
 Remaining execution work includes that controller and credential-stop boundary, original runtime/console admission,
 family-aware route/rule retirement interpretation, peer DNS setup and restoration through the normal UI, and a

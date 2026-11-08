@@ -23,11 +23,12 @@ def _ps(value: str | Path) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def _fixture(tmp_path: Path) -> tuple[str, Path, Path, Path]:
+def _fixture(tmp_path: Path, *, disable_name_checking: bool = False) -> tuple[str, Path, Path, Path]:
     """Prepare a synthetic context and public plan without acquiring credentials.
 
     Args:
         tmp_path: Pytest-owned ignored directory for all fixture files and receipts.
+        disable_name_checking: Suppress only module verb-name warnings for structured-output fixtures.
     """
     evidence = tmp_path / "evidence"
     output = tmp_path / "vm"
@@ -41,12 +42,13 @@ def _fixture(tmp_path: Path) -> tuple[str, Path, Path, Path]:
     plan_path = evidence / "plan.json"
     receiver_path = evidence / "receiver.json"
     plan_sha_path = tmp_path / "plan.sha256"
+    import_flags = " -DisableNameChecking" if disable_name_checking else ""
     setup = rf"""
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 $repo={_ps(ROOT)}
-Import-Module (Join-Path $repo 'scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1') -Force
-Import-Module (Join-Path $repo 'scripts/windows/vmware/Atlaso.SourceSnapshot.psm1') -Force
+Import-Module (Join-Path $repo 'scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1') -Force{import_flags}
+Import-Module (Join-Path $repo 'scripts/windows/vmware/Atlaso.SourceSnapshot.psm1') -Force{import_flags}
 . (Join-Path $repo 'scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1')
 . (Join-Path $repo 'scripts/windows/vmware/Atlaso.TestVmOwnership.ps1')
 . (Join-Path $repo 'scripts/windows/vmware/Atlaso.ConsoleCredentialTransaction.ps1')
@@ -582,16 +584,23 @@ try {{
     assert "post-stop-binding-loss-failed-closed" in _run(script, tmp_path, timeout=35)
 
 
-def _v2_fixture(tmp_path: Path) -> tuple[str, Path, Path]:
+def _v2_fixture(tmp_path: Path, *, disable_name_checking: bool = False) -> tuple[str, Path, Path]:
     """Prepare a new signed-protocol admission using a public test-vector key.
 
     Args:
         tmp_path: Fresh pytest-owned public fixture namespace.
+        disable_name_checking: Keep module verb-name warnings outside structured output.
     """
-    setup, plan_path, receiver_path, _ = _fixture(tmp_path)
+    setup, plan_path, receiver_path, _ = _fixture(tmp_path, disable_name_checking=disable_name_checking)
     setup += rf"""
 $taskId='00000000-0000-4000-8000-000000001077'
 $context.TaskId=$taskId;$plan.task_id=$taskId;$ready.task_id=$taskId
+$context|Add-Member ActiveTaskId $taskId
+$context|Add-Member Repository 'mdaneri/Atlaso'
+$context|Add-Member WorktreeDirectoryId 'synthetic-worktree-id'
+$context|Add-Member PermittedRoot $repo
+$context|Add-Member LocalBuilder $false
+$context|Add-Member ContinuationReceiptSha256 ''
 $plan.schema=2;$plan.kind='console-credential-transaction-v2'
 $ready.schema=2;$ready.kind='console-concealed-receiver-v2'
 # RFC8032 public test vector only; no private key exists in this fixture.
