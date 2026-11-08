@@ -380,7 +380,10 @@ function Open-AtlasoConsoleCredentialTransaction {
                 AckPrepared=$false; AckPath=$null; AckSha256=$null; AckRecordJson=$null
                 UnsignedJson=$null; UnsignedSha256=$null; PublicKeyHex=$null
                 SigningAttempted=$false; PublishingSigning=$false; SigningThreadId=0; SigningDetailsJson=$null
-                SigningIntentPath=$null; SigningIntentSha256=$null
+                SigningIntentPath=$null; SigningIntentSha256=$null; SigningPrepared=$false
+                SignerAttempted=$false; PublishingSigner=$false; SignerThreadId=0; SignerKind=$null; SignerDetailsJson=$null
+                SignerProcessPath=$null; SignerProcessSha256=$null; SignerRootJson=$null; SignerRootPid=0; SignerRootStartUtc=$null
+                SignerStopPath=$null; SignerStopSha256=$null
             }
             $script:AtlasoConsoleStopAuthorities.Add($transaction, $authority)
         }
@@ -403,11 +406,11 @@ Exact original phase; ACK and signing intents require their separate private pre
 Public original process facts created by the committed controller.
 #>
 function Publish-AtlasoConsoleCredentialRecord {
-    param([Parameter(Mandatory)][psobject]$Transaction, [Parameter(Mandatory)][ValidateSet('intent','process','stop','ack-intent','signing-intent')][string]$Kind,
+    param([Parameter(Mandatory)][psobject]$Transaction, [Parameter(Mandatory)][ValidateSet('intent','process','stop','ack-intent','signing-intent','signer-process','signer-stop')][string]$Kind,
         [Parameter(Mandatory)][Collections.IDictionary]$Details)
     if ($Transaction.IsClosed -isnot [bool] -or $Transaction.IsClosed) { throw 'Original console transaction is closed.' }
     $expectedPath = $Transaction.Paths[$Kind]
-    if ($Kind -cin @('ack-intent','signing-intent')) {
+    if ($Kind -cin @('ack-intent','signing-intent','signer-process','signer-stop')) {
         $authority = $null
         if ($Transaction.ProtocolVersion -ne 2 -or
             -not $script:AtlasoConsoleStopAuthorities.TryGetValue($Transaction, [ref]$authority) -or
@@ -422,11 +425,19 @@ function Publish-AtlasoConsoleCredentialRecord {
             if (-not $authority.PublishingAck -or $authority.AckThreadId -ne $threadId -or
                 $detailsJson -cne $authority.AckDetailsJson) { throw 'ACK intent requires private preparation.' }
         }
-        else {
+        elseif ($Kind -ceq 'signing-intent') {
             if (-not $authority.AckPrepared -or -not $authority.SigningAttempted -or
                 -not $authority.PublishingSigning -or $authority.SigningThreadId -ne $threadId -or
                 $detailsJson -cne $authority.SigningDetailsJson) { throw 'Signing intent requires private preparation.' }
             $expectedPath = $authority.SigningIntentPath
+        }
+        else {
+            if (-not $authority.SigningPrepared -or -not $authority.SignerAttempted -or
+                -not $authority.PublishingSigner -or $authority.SignerThreadId -ne $threadId -or
+                $authority.SignerKind -cne $Kind -or $detailsJson -cne $authority.SignerDetailsJson) {
+                throw 'Signer record requires its original suspended-root or outer-stop publisher.'
+            }
+            $expectedPath = if ($Kind -ceq 'signer-process') { $authority.SignerProcessPath } else { $authority.SignerStopPath }
         }
     }
     $record = [ordered]@{schema=1; phase=('console-credential-' + $Kind); binding=$Transaction.Binding;
@@ -672,6 +683,86 @@ function Assert-AtlasoConsoleOriginalClock {
 
 <#
 .SYNOPSIS
+Read coherent original credential phase data and retain its read pins, without live authority.
+.PARAMETER Transaction
+Freshly reopened original v2 plan and receiver binding.
+.PARAMETER Selectors
+Independently retained exact intent, process and stop paths and digests.
+#>
+function Read-AtlasoConsoleCredentialStopChain {
+    param([Parameter(Mandatory)][psobject]$Transaction, [Parameter(Mandatory)][Collections.IDictionary]$Selectors)
+    $keys = @('intent_path','intent_sha256','process_path','process_sha256','stop_path','stop_sha256')
+    if ($Selectors.Count -ne $keys.Count -or @($Selectors.Keys | Where-Object { $_ -cnotin $keys }).Count -or
+        $Transaction.ProtocolVersion -ne 2) { throw 'Original chain selectors differ.' }
+    foreach ($kind in @('intent','process','stop')) {
+        $pathKey = $kind + '_path'; $shaKey = $kind + '_sha256'
+        $expected = Join-Path $Transaction.Context.EvidenceDirectory (
+            'atlaso-test-vm-console-credential-' + $kind + '-' + $Transaction.Plan.receiver_nonce + '.json')
+        if ($Selectors[$pathKey] -isnot [string] -or $Selectors[$pathKey] -cne $expected -or
+            $Selectors[$shaKey] -isnot [string]) { throw 'Original chain phase path differs.' }
+    }
+    $bindingJson = $Transaction.Binding | ConvertTo-Json -Depth 8 -Compress
+    $deadlineUtc = $Transaction.Deadline.ToUniversalTime().ToString('O')
+    $reads = [Collections.Generic.List[object]]::new()
+    $pins = [Collections.Generic.List[IDisposable]]::new()
+    try {
+        $previous = [DateTimeOffset]::MinValue
+        $phases = @(
+            @{Kind='intent'; Path=$Selectors.intent_path; Sha256=$Selectors.intent_sha256},
+            @{Kind='process'; Path=$Selectors.process_path; Sha256=$Selectors.process_sha256},
+            @{Kind='stop'; Path=$Selectors.stop_path; Sha256=$Selectors.stop_sha256})
+        foreach ($phase in $phases) {
+            $kind = $phase.Kind
+            $read = Read-AtlasoConsoleTransactionRecord -Context $Transaction.Context -Path $phase.Path -Sha256 $phase.Sha256 `
+                -Keys @('schema','phase','binding','observed_utc','details')
+            $reads.Add($read)
+            $record = $read.Value
+            $observed = [DateTimeOffset]::MinValue
+            if (($record.schema -isnot [int] -and $record.schema -isnot [long]) -or $record.schema -ne 1 -or
+                $record.phase -isnot [string] -or $record.phase -cne ('console-credential-' + $kind) -or
+                $record.binding -isnot [Collections.IDictionary] -or
+                ($record.binding | ConvertTo-Json -Depth 8 -Compress) -cne $bindingJson -or
+                $record.details -isnot [Collections.IDictionary] -or $record.observed_utc -isnot [string] -or
+                -not [DateTimeOffset]::TryParseExact($record.observed_utc, 'O', [Globalization.CultureInfo]::InvariantCulture,
+                    [Globalization.DateTimeStyles]::None, [ref]$observed) -or $observed -lt $previous -or
+                $observed -gt [DateTimeOffset]::UtcNow -or $observed -ge $Transaction.Deadline) {
+                throw 'Original phase envelope or ordering differs.'
+            }
+            $previous = $observed
+        }
+        $controller = $reads[0].Value.details; $root = $reads[1].Value.details; $stop = $reads[2].Value.details
+        Assert-AtlasoConsoleOriginalClock -Value $controller
+        Assert-AtlasoConsoleOriginalClock -Value $root -IncludeJob
+        if ($root.parent_pid -ne $controller.pid -or $root.job_name -cne $Transaction.JobName) {
+            throw 'Original controller/root relationship differs.'
+        }
+        $keys = @('process_receipt_path','process_receipt_sha256','root_pid','getprocess_start_utc','deadline_utc',
+            'whole_job_empty','outer_outcome','outcome','root_exit_code','original_binding_rechecked')
+        if ($stop.Count -ne $keys.Count -or @($stop.Keys | Where-Object { $_ -cnotin $keys }).Count -or
+            $stop.process_receipt_path -isnot [string] -or $stop.process_receipt_path -cne $Selectors.process_path -or
+            $stop.process_receipt_sha256 -isnot [string] -or $stop.process_receipt_sha256 -cne $Selectors.process_sha256 -or
+            ($stop.root_pid -isnot [int] -and $stop.root_pid -isnot [long]) -or $stop.root_pid -ne $root.pid -or
+            $stop.getprocess_start_utc -isnot [string] -or $stop.getprocess_start_utc -cne $root.getprocess_start_utc -or
+            $stop.deadline_utc -isnot [string] -or $stop.deadline_utc -cne $deadlineUtc -or
+            $stop.whole_job_empty -isnot [bool] -or -not $stop.whole_job_empty -or
+            $stop.original_binding_rechecked -isnot [bool] -or
+            $stop.outer_outcome -isnot [string] -or $stop.outer_outcome -cnotin @('succeeded','terminated_failure') -or
+            $stop.outcome -isnot [string] -or $stop.outcome -cnotin @('succeeded','terminated_failure') -or
+            ($stop.root_exit_code -isnot [int] -and $stop.root_exit_code -isnot [long]) -or
+            $stop.root_exit_code -lt [int]::MinValue -or $stop.root_exit_code -gt [int]::MaxValue -or
+            ($stop.outer_outcome -ceq 'succeeded' -and $stop.root_exit_code -ne 0) -or
+            ($stop.original_binding_rechecked -and $stop.outcome -cne $stop.outer_outcome) -or
+            (-not $stop.original_binding_rechecked -and $stop.outcome -cne 'terminated_failure')) { throw 'Original stop facts are incoherent.' }
+        foreach ($read in $reads) {
+            foreach ($pin in $read.Pins) { $pins.Add($pin) }; $read.Pins.Clear()
+        }
+        return [pscustomobject]@{Controller=$controller; Root=$root; Stop=$stop; Pins=$pins}
+    }
+    finally { foreach ($read in $reads) { foreach ($pin in $read.Pins) { $pin.Dispose() } } }
+}
+
+<#
+.SYNOPSIS
 Verify the original live invocation's complete stop chain without granting native acceptance.
 .PARAMETER Transaction
 Same still-open v2 object completed by the source-pinned outer callback, never a record projection.
@@ -733,57 +824,16 @@ function Get-AtlasoVerifiedConsoleCredentialStop {
             $fresh.Deadline.ToUniversalTime().ToString('O') -cne $authority.DeadlineUtc) {
             throw 'Original plan or receiver changed.'
         }
-        $previous = [DateTimeOffset]::MinValue
-        $phases = @(
-            @{Kind='intent'; Path=$authority.IntentPath; Sha256=$authority.IntentSha256},
-            @{Kind='process'; Path=$authority.ProcessPath; Sha256=$authority.ProcessSha256},
-            @{Kind='stop'; Path=$authority.StopPath; Sha256=$authority.StopSha256})
-        foreach ($phase in $phases) {
-            $kind = $phase.Kind
-            $read = Read-AtlasoConsoleTransactionRecord -Context $authority.Context -Path $phase.Path -Sha256 $phase.Sha256 `
-                -Keys @('schema','phase','binding','observed_utc','details')
-            $reads.Add($read)
-            $record = $read.Value
-            $observed = [DateTimeOffset]::MinValue
-            if (($record.schema -isnot [int] -and $record.schema -isnot [long]) -or $record.schema -ne 1 -or
-                $record.phase -isnot [string] -or $record.phase -cne ('console-credential-' + $kind) -or
-                $record.binding -isnot [Collections.IDictionary] -or
-                ($record.binding | ConvertTo-Json -Depth 8 -Compress) -cne $authority.BindingJson -or
-                $record.details -isnot [Collections.IDictionary] -or $record.observed_utc -isnot [string] -or
-                -not [DateTimeOffset]::TryParseExact($record.observed_utc, 'O', [Globalization.CultureInfo]::InvariantCulture,
-                    [Globalization.DateTimeStyles]::None, [ref]$observed) -or $observed -lt $previous -or
-                $observed -gt [DateTimeOffset]::UtcNow -or $observed -ge $fresh.Deadline) {
-                throw 'Original phase envelope or ordering differs.'
-            }
-            $previous = $observed
-        }
-        $controller = $reads[0].Value.details; $root = $reads[1].Value.details; $stop = $reads[2].Value.details
-        Assert-AtlasoConsoleOriginalClock -Value $controller
-        Assert-AtlasoConsoleOriginalClock -Value $root -IncludeJob
+        $chain = Read-AtlasoConsoleCredentialStopChain -Transaction $fresh -Selectors @{
+            intent_path=$authority.IntentPath; intent_sha256=$authority.IntentSha256
+            process_path=$authority.ProcessPath; process_sha256=$authority.ProcessSha256
+            stop_path=$authority.StopPath; stop_sha256=$authority.StopSha256}
+        $reads.Add($chain)
+        $controller=$chain.Controller; $root=$chain.Root; $stop=$chain.Stop
         if (($controller | ConvertTo-Json -Depth 4 -Compress) -cne $authority.ControllerJson -or
             ($root | ConvertTo-Json -Depth 4 -Compress) -cne $authority.RootJson -or
-            $root.parent_pid -ne $controller.pid -or $root.job_name -cne $authority.JobName -or
-            ($stop | ConvertTo-Json -Depth 4 -Compress) -cne $authority.StopJson) {
-            throw 'Original controller/root/stop chain differs.'
-        }
-        $keys = @('process_receipt_path','process_receipt_sha256','root_pid','getprocess_start_utc','deadline_utc',
-            'whole_job_empty','outer_outcome','outcome','root_exit_code','original_binding_rechecked')
-        if ($stop.Count -ne $keys.Count -or @($stop.Keys | Where-Object { $_ -cnotin $keys }).Count -or
-            $stop.process_receipt_path -isnot [string] -or $stop.process_receipt_path -cne $authority.ProcessPath -or
-            $stop.process_receipt_sha256 -isnot [string] -or $stop.process_receipt_sha256 -cne $authority.ProcessSha256 -or
-            ($stop.root_pid -isnot [int] -and $stop.root_pid -isnot [long]) -or $stop.root_pid -ne $root.pid -or
-            $stop.getprocess_start_utc -isnot [string] -or $stop.getprocess_start_utc -cne $root.getprocess_start_utc -or
-            $stop.deadline_utc -isnot [string] -or $stop.deadline_utc -cne $authority.DeadlineUtc -or
-            $stop.whole_job_empty -isnot [bool] -or -not $stop.whole_job_empty -or
-            $stop.original_binding_rechecked -isnot [bool] -or
-            $stop.outer_outcome -isnot [string] -or $stop.outer_outcome -cnotin @('succeeded','terminated_failure') -or
-            $stop.outcome -isnot [string] -or $stop.outcome -cnotin @('succeeded','terminated_failure') -or
-            ($stop.root_exit_code -isnot [int] -and $stop.root_exit_code -isnot [long]) -or
-            $stop.root_exit_code -lt [int]::MinValue -or $stop.root_exit_code -gt [int]::MaxValue -or
-            ($stop.outer_outcome -ceq 'succeeded' -and $stop.root_exit_code -ne 0) -or
-            ($stop.original_binding_rechecked -and $stop.outcome -cne $stop.outer_outcome) -or
-            (-not $stop.original_binding_rechecked -and $stop.outcome -cne 'terminated_failure') -or
-            $Transaction.StopOutcome -cne $stop.outcome) { throw 'Original stop facts are incoherent.' }
+            ($stop | ConvertTo-Json -Depth 4 -Compress) -cne $authority.StopJson -or
+            $Transaction.StopOutcome -cne $stop.outcome) { throw 'Original controller/root/stop chain differs.' }
         Assert-AtlasoConsoleTransactionBinding -Transaction $Transaction
         if ((Get-AtlasoConsoleSelectorSnapshot -Transaction $Transaction) -cne $authority.SelectorsJson -or
             -not [object]::ReferenceEquals($Transaction.Context.CheckoutSourcePin, $authority.SourcePin)) {
@@ -963,6 +1013,7 @@ function New-AtlasoConsoleStopSigningRequest {
         $authority.SigningIntentSha256 = $published.Sha256
         $null = Get-AtlasoVerifiedConsoleCredentialStop -Transaction $Transaction
         foreach ($pin in $read.Pins) { $Transaction.Pins.Add($pin) }; $read.Pins.Clear()
+        $authority.SigningPrepared = $true
         return [pscustomobject]@{status='prepared_signing_request_no_backend'; public_key_hex=$authority.PublicKeyHex;
             signing_intent_receipt=[pscustomobject]@{Path=$authority.SigningIntentPath; Sha256=$authority.SigningIntentSha256};
             ack_intent_receipt=[pscustomobject]@{Path=$authority.AckPath; Sha256=$authority.AckSha256};
@@ -972,6 +1023,318 @@ function New-AtlasoConsoleStopSigningRequest {
         if ($document) { $document.Dispose() }
         if ($read) { foreach ($pin in $read.Pins) { $pin.Dispose() } }
         [Threading.Monitor]::Exit($authority.Lock)
+    }
+}
+
+<#
+.SYNOPSIS
+Read the original signing request and coherent chain as data, never parent completion authority.
+.PARAMETER Transaction
+Fresh original v2 admission with the independently retained plan digest.
+.PARAMETER Path
+Original controller-published signing request path.
+.PARAMETER Sha256
+Independently retained publisher-returned request digest.
+#>
+function Read-AtlasoConsoleStopSigningRequest {
+    param([Parameter(Mandatory)][psobject]$Transaction, [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Sha256)
+    $reads = [Collections.Generic.List[object]]::new()
+    $pins = [Collections.Generic.List[IDisposable]]::new()
+    $success = $false
+    try {
+        $binding = $Transaction.Binding
+        $expectedPath = Join-Path $Transaction.Context.EvidenceDirectory (
+            'atlaso-test-vm-console-credential-signing-intent-' + $binding.receiver_nonce + '.json')
+        if ($Transaction.ProtocolVersion -ne 2 -or $Path -cne $expectedPath) { throw 'Original signing namespace differs.' }
+        $request = Read-AtlasoConsoleTransactionRecord -Context $Transaction.Context -Path $Path -Sha256 $Sha256 `
+            -Keys @('schema','phase','binding','observed_utc','details')
+        $reads.Add($request)
+        $d = $request.Value.details
+        $keys = @('status','controller','plan_receipt_path','plan_receipt_sha256','receiver_receipt_path','receiver_receipt_sha256',
+            'intent_receipt_path','intent_receipt_sha256','process_receipt_path','process_receipt_sha256',
+            'stop_receipt_path','stop_receipt_sha256','ack_intent_receipt_path','ack_intent_receipt_sha256',
+            'unsigned_canonical_ascii','unsigned_sha256','public_key_hex','signing_key_sha256','transport_key','deadline_utc')
+        if ($d -isnot [Collections.IDictionary] -or $d.Count -ne $keys.Count -or
+            @($d.Keys | Where-Object { $_ -cnotin $keys }).Count) { throw 'Original signing-request details differ.' }
+        foreach ($key in $keys | Where-Object { $_ -cne 'controller' }) {
+            if ($d[$key] -isnot [string]) { throw 'Original signing-request detail type differs.' }
+        }
+        if ($d.status -cne 'prepared_signing_request_no_backend' -or
+            $d.plan_receipt_path -cne $Transaction.PlanReceipt.Path -or $d.plan_receipt_sha256 -cne $binding.plan_sha256 -or
+            $d.receiver_receipt_path -cne $binding.receiver_receipt_path -or $d.receiver_receipt_sha256 -cne $binding.receiver_receipt_sha256 -or
+            $d.public_key_hex -cne $binding.stop_ack_public_key_hex -or $d.signing_key_sha256 -cne $binding.stop_ack_signing_key_sha256 -or
+            $d.transport_key -cne $binding.stop_ack_transport_key -or
+            $d.deadline_utc -cne $Transaction.Deadline.ToUniversalTime().ToString('O')) {
+            throw 'Original signing-request plan/key binding differs.'
+        }
+        $chain = Read-AtlasoConsoleCredentialStopChain -Transaction $Transaction -Selectors @{
+            intent_path=$d.intent_receipt_path; intent_sha256=$d.intent_receipt_sha256
+            process_path=$d.process_receipt_path; process_sha256=$d.process_receipt_sha256
+            stop_path=$d.stop_receipt_path; stop_sha256=$d.stop_receipt_sha256}
+        $reads.Add($chain)
+        if (($d.controller | ConvertTo-Json -Depth 4 -Compress) -cne
+            ($chain.Controller | ConvertTo-Json -Depth 4 -Compress)) { throw 'Original signing controller differs.' }
+        $ackPath = Join-Path $Transaction.Context.EvidenceDirectory (
+            'atlaso-test-vm-console-credential-ack-intent-' + $binding.receiver_nonce + '.json')
+        if ($d.ack_intent_receipt_path -cne $ackPath) { throw 'Original ACK intent namespace differs.' }
+        $ack = Read-AtlasoConsoleTransactionRecord -Context $Transaction.Context -Path $ackPath -Sha256 $d.ack_intent_receipt_sha256 `
+            -Keys @('schema','phase','binding','observed_utc','details')
+        $reads.Add($ack)
+        $expectedAck = [ordered]@{
+            status='prepared_unsigned_no_ack'; plan_receipt_path=$d.plan_receipt_path; plan_receipt_sha256=$d.plan_receipt_sha256
+            receiver_receipt_path=$d.receiver_receipt_path; receiver_receipt_sha256=$d.receiver_receipt_sha256
+            intent_receipt_path=$d.intent_receipt_path; intent_receipt_sha256=$d.intent_receipt_sha256
+            process_receipt_path=$d.process_receipt_path; process_receipt_sha256=$d.process_receipt_sha256
+            stop_receipt_path=$d.stop_receipt_path; stop_receipt_sha256=$d.stop_receipt_sha256
+            signing_key_sha256=$binding.stop_ack_signing_key_sha256; transport_key=$binding.stop_ack_transport_key
+            deadline_utc=$Transaction.Deadline.ToUniversalTime().ToString('O'); outcome=$chain.Stop.outcome}
+        if (($ack.Value.details | ConvertTo-Json -Depth 8 -Compress) -cne ($expectedAck | ConvertTo-Json -Depth 8 -Compress)) {
+            throw 'Original ACK intent chain differs.'
+        }
+        # The original stop precedes the ACK and signing request; no new deadline is minted.
+        $stopRead = Read-AtlasoConsoleTransactionRecord -Context $Transaction.Context -Path $d.stop_receipt_path `
+            -Sha256 $d.stop_receipt_sha256 -Keys @('schema','phase','binding','observed_utc','details')
+        $reads.Add($stopRead)
+        $previous = [DateTimeOffset]::ParseExact($stopRead.Value.observed_utc, 'O', [Globalization.CultureInfo]::InvariantCulture)
+        foreach ($phase in @(@{Read=$ack; Name='ack-intent'}, @{Read=$request; Name='signing-intent'})) {
+            $r = $phase.Read.Value; $observed = [DateTimeOffset]::MinValue
+            if (($r.schema -isnot [int] -and $r.schema -isnot [long]) -or $r.schema -ne 1 -or
+                $r.phase -isnot [string] -or $r.phase -cne ('console-credential-' + $phase.Name) -or
+                $r.binding -isnot [Collections.IDictionary] -or
+                ($r.binding | ConvertTo-Json -Depth 8 -Compress) -cne ($binding | ConvertTo-Json -Depth 8 -Compress) -or
+                $r.observed_utc -isnot [string] -or -not [DateTimeOffset]::TryParseExact($r.observed_utc, 'O',
+                    [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$observed) -or
+                $observed -lt $previous -or $observed -gt [DateTimeOffset]::UtcNow -or $observed -ge $Transaction.Deadline) {
+                throw 'Original signing/ACK envelope ordering differs.'
+            }
+            $previous = $observed
+        }
+        $payload = [ordered]@{
+            task_id=$binding.task_id; source_commit=$binding.source_commit; bundle_sha256=$binding.guest_bundle_sha256
+            run_id=$binding.run_id; receiver_nonce=$binding.receiver_nonce; guest_boot_id=$binding.guest_boot_id
+            host_boot_identity=$binding.host_boot_identity; original_vm_receipt_sha256=$binding.original_vm_receipt_sha256
+            persistent_vm_identity_sha256=$binding.persistent_vm_identity_sha256; plan_sha256=$binding.plan_sha256
+            receiver_receipt_sha256=$binding.receiver_receipt_sha256; process_receipt_sha256=$d.process_receipt_sha256
+            stop_receipt_sha256=$d.stop_receipt_sha256; ack_intent_sha256=$d.ack_intent_receipt_sha256
+            transport_key=$binding.stop_ack_transport_key; deadline_unix_ms=$Transaction.Deadline.ToUnixTimeMilliseconds()
+            root_pid=$chain.Root.pid; root_start_filetime_utc=$chain.Root.start_filetime_utc
+            whole_job_empty=$chain.Stop.whole_job_empty; outcome=$chain.Stop.outcome
+            root_exit_code=$chain.Stop.root_exit_code; original_binding_rechecked=$chain.Stop.original_binding_rechecked}
+        $canonical = ConvertTo-AtlasoConsoleStopCanonicalJson -Value ([ordered]@{schema=2; kind='console-sdk-stop-ack-v2';
+            algorithm='Ed25519'; signing_key_sha256=$binding.stop_ack_signing_key_sha256; payload=$payload})
+        $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::ASCII.GetBytes($canonical))).ToLowerInvariant()
+        if ($canonical -cne $d.unsigned_canonical_ascii -or $hash -cne $d.unsigned_sha256 -or
+            $canonical.Length + 147 -gt 3000) { throw 'Original signing bytes differ from the complete chain.' }
+        Assert-AtlasoConsoleTransactionBinding -Transaction $Transaction
+        foreach ($read in $reads) { foreach ($pin in $read.Pins) { $pins.Add($pin) }; $read.Pins.Clear() }
+        $success = $true
+        return [pscustomobject]@{Record=$request.Value; Controller=$chain.Controller; CredentialRoot=$chain.Root; Pins=$pins}
+    }
+    finally {
+        foreach ($read in $reads) { foreach ($pin in $read.Pins) { $pin.Dispose() } }
+        if (-not $success) { foreach ($pin in $pins) { $pin.Dispose() } }
+    }
+}
+
+<#
+.SYNOPSIS
+Derive the single committed refusing signer entrypoint and current PowerShell executable.
+.PARAMETER Transaction
+Original current-source transaction; no caller command or argument is accepted.
+.PARAMETER RequestPath
+Privately retained original request path.
+.PARAMETER RequestSha256
+Privately retained original request digest.
+#>
+function Get-AtlasoConsoleStopSignerLaunch {
+    param([Parameter(Mandatory)][psobject]$Transaction, [Parameter(Mandatory)][string]$RequestPath,
+        [Parameter(Mandatory)][string]$RequestSha256)
+    $child = Join-Path $Transaction.Context.Worktree 'scripts/windows/vmware/invoke-console-stop-signer-child.ps1'
+    $self = [Diagnostics.Process]::GetCurrentProcess()
+    try { $exe = $self.MainModule.FileName } finally { $self.Dispose() }
+    return [pscustomobject]@{FilePath=$exe; ChildPath=$child; Arguments=@('-NoProfile','-NonInteractive','-File',$child,
+        '-VmxPath',$Transaction.Context.VmxPath,'-OwnershipReceiptPath',$Transaction.Context.ReceiptPath,
+        '-OwnershipReceiptSha256',$Transaction.Context.ReceiptSha256,'-PullRequestNumber',[string]$Transaction.Context.PullRequestNumber,
+        '-RequestPath',$RequestPath,'-RequestSha256',$RequestSha256)}
+}
+
+<#
+.SYNOPSIS
+Launch one distinct contained signer child which has no admitted backend and always refuses.
+.PARAMETER Transaction
+Only the original still-open v2 reference with successful private signing-request custody.
+#>
+function Invoke-AtlasoConsoleStopSigner {
+    param([Parameter(Mandatory)][psobject]$Transaction)
+    $authority = $null
+    if (-not $script:AtlasoConsoleStopAuthorities.TryGetValue($Transaction, [ref]$authority)) {
+        throw 'Original signer invocation authority is unavailable.'
+    }
+    [Threading.Monitor]::Enter($authority.Lock)
+    $read = $null
+    try {
+        if (-not $authority.SigningPrepared -or $authority.SignerAttempted) {
+            throw 'Original successful signing request is unavailable or already consumed.'
+        }
+        $authority.SignerAttempted = $true
+        $null = Get-AtlasoVerifiedConsoleCredentialStop -Transaction $Transaction
+        $read = Read-AtlasoConsoleStopSigningRequest -Transaction $Transaction -Path $authority.SigningIntentPath `
+            -Sha256 $authority.SigningIntentSha256
+        if (($read.Record.details | ConvertTo-Json -Depth 8 -Compress) -cne $authority.SigningDetailsJson -or
+            $read.Record.details.unsigned_canonical_ascii -cne $authority.UnsignedJson -or
+            $read.Record.details.unsigned_sha256 -cne $authority.UnsignedSha256) { throw 'Original private signing custody changed.' }
+        foreach ($pin in $read.Pins) { $Transaction.Pins.Add($pin) }; $read.Pins.Clear()
+        $nonce = $Transaction.Plan.receiver_nonce
+        $jobName = 'Local\Atlaso-ConsoleStopSigner-' + $nonce
+        $authority.SignerProcessPath = Join-Path $authority.Context.EvidenceDirectory ('atlaso-test-vm-console-credential-signer-process-' + $nonce + '.json')
+        $authority.SignerStopPath = Join-Path $authority.Context.EvidenceDirectory ('atlaso-test-vm-console-credential-signer-stop-' + $nonce + '.json')
+        foreach ($path in @($authority.SignerProcessPath,$authority.SignerStopPath)) {
+            if (Test-Path -LiteralPath $path) { throw 'Original signer namespace exists; preserve without replay.' }
+        }
+        $launch = Get-AtlasoConsoleStopSignerLaunch -Transaction $Transaction -RequestPath $authority.SigningIntentPath `
+            -RequestSha256 $authority.SigningIntentSha256
+        foreach ($path in @($launch.FilePath,$launch.ChildPath)) {
+            $Transaction.Pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true))
+        }
+        $childHash = (Get-FileHash -LiteralPath $launch.ChildPath).Hash.ToLowerInvariant()
+        $exeHash = (Get-FileHash -LiteralPath $launch.FilePath).Hash.ToLowerInvariant()
+        $publish = ${function:Publish-AtlasoConsoleCredentialRecord}
+        $verify = ${function:Get-AtlasoVerifiedConsoleCredentialStop}
+        $creation = ${function:Get-AtlasoConsoleProcessCreation}
+        $owner = {
+            param($Job)
+            $null = & $verify -Transaction $Transaction
+            $root = & $creation -Process $Job.RootProcess
+            $root['job_name'] = $jobName
+            $details = [ordered]@{request_path=$authority.SigningIntentPath; request_sha256=$authority.SigningIntentSha256
+                controller=$read.Controller; root=$root; child_path=$launch.ChildPath; child_sha256=$childHash
+                executable_path=$launch.FilePath; executable_sha256=$exeHash; deadline_utc=$authority.DeadlineUtc; backend='unavailable'}
+            $authority.SignerRootJson = $root | ConvertTo-Json -Depth 4 -Compress
+            $authority.SignerRootPid=$root.pid; $authority.SignerRootStartUtc=$root.getprocess_start_utc
+            $authority.SignerKind='signer-process'; $authority.SignerDetailsJson=$details | ConvertTo-Json -Depth 8 -Compress
+            $authority.PublishingSigner=$true; $authority.SignerThreadId=[Threading.Thread]::CurrentThread.ManagedThreadId
+            try { $record = & $publish -Transaction $Transaction -Kind signer-process -Details $details }
+            finally { $authority.PublishingSigner=$false; $authority.SignerThreadId=0 }
+            $authority.SignerProcessSha256=$record.Sha256
+        }.GetNewClosure()
+        $stopped = {
+            param($Proof)
+            $root = @{pid=$authority.SignerRootPid; getprocess_start_utc=$authority.SignerRootStartUtc}
+            if (-not $authority.SignerProcessSha256 -or $Proof.Schema -isnot [int] -or $Proof.Schema -ne 1 -or
+                $Proof.WholeJobEmpty -isnot [bool] -or -not $Proof.WholeJobEmpty -or $Proof.ProcessJobName -cne $jobName -or
+                $Proof.RootProcessId -ne $root.pid -or $Proof.RootStartTimeUtc -cne $root.getprocess_start_utc -or
+                $Proof.DeadlineUtc -cne $authority.DeadlineUtc -or $Proof.RootExitCode -isnot [int] -or
+                $Proof.Outcome -isnot [string] -or $Proof.Outcome -cnotin @('succeeded','terminated_failure')) {
+                throw 'Original signer outer-job stop proof is unavailable.'
+            }
+            $rechecked=$true
+            try { $null = & $verify -Transaction $Transaction } catch { $rechecked=$false }
+            $details = [ordered]@{request_path=$authority.SigningIntentPath; request_sha256=$authority.SigningIntentSha256
+                process_receipt_path=$authority.SignerProcessPath; process_receipt_sha256=$authority.SignerProcessSha256
+                root_pid=$root.pid; getprocess_start_utc=$root.getprocess_start_utc; deadline_utc=$authority.DeadlineUtc
+                whole_job_empty=$true; outer_outcome=$Proof.Outcome; outcome='terminated_failure'; root_exit_code=$Proof.RootExitCode
+                original_binding_rechecked=$rechecked; backend='unavailable'}
+            $authority.SignerKind='signer-stop'; $authority.SignerDetailsJson=$details | ConvertTo-Json -Depth 8 -Compress
+            $authority.PublishingSigner=$true; $authority.SignerThreadId=[Threading.Thread]::CurrentThread.ManagedThreadId
+            try { $record = & $publish -Transaction $Transaction -Kind signer-stop -Details $details }
+            finally { $authority.PublishingSigner=$false; $authority.SignerThreadId=0 }
+            $authority.SignerStopSha256=$record.Sha256
+        }.GetNewClosure()
+        $null = Get-AtlasoVerifiedConsoleCredentialStop -Transaction $Transaction
+        Invoke-AtlasoBoundedStreamingProcess -FilePath $launch.FilePath -ArgumentList $launch.Arguments -TimeoutSeconds 420 `
+            -Action 'Separately admitted refusing console-stop signer' -ProcessJobName $jobName -DeadlineUtc $Transaction.Deadline `
+            -ProcessOwnershipPublisher $owner -ProcessQuiescencePublisher $stopped -DiscardOutput
+        throw 'Console-stop signing backend is unavailable; no signature or transport is admitted.'
+    }
+    finally {
+        if ($read) { foreach ($pin in $read.Pins) { $pin.Dispose() } }
+        [Threading.Monitor]::Exit($authority.Lock)
+    }
+}
+
+<#
+.SYNOPSIS
+Authenticate the distinct signer suspended-root handoff without accessing a backend.
+.PARAMETER Transaction
+Fresh original plan/receiver admission reconstructed inside the signer child.
+.PARAMETER RequestPath
+Original immutable request selected by the parent before child creation.
+.PARAMETER RequestSha256
+Independently retained original request digest passed by the live parent.
+.PARAMETER EntryPoint
+Actual committed child script path, supplied only by its own PSCommandPath.
+#>
+function Assert-AtlasoConsoleStopSignerChild {
+    param([Parameter(Mandatory)][psobject]$Transaction, [Parameter(Mandatory)][string]$RequestPath,
+        [Parameter(Mandatory)][string]$RequestSha256, [Parameter(Mandatory)][string]$EntryPoint)
+    $read = $null; $processRead = $null; $job = $null; $parent = $null
+    $self = [Diagnostics.Process]::GetCurrentProcess()
+    $pins = [Collections.Generic.List[IDisposable]]::new()
+    try {
+        $read = Read-AtlasoConsoleStopSigningRequest -Transaction $Transaction -Path $RequestPath -Sha256 $RequestSha256
+        $nonce=$Transaction.Plan.receiver_nonce
+        $processPath=Join-Path $Transaction.Context.EvidenceDirectory ('atlaso-test-vm-console-credential-signer-process-' + $nonce + '.json')
+        $stopPath=Join-Path $Transaction.Context.EvidenceDirectory ('atlaso-test-vm-console-credential-signer-stop-' + $nonce + '.json')
+        $jobName='Local\Atlaso-ConsoleStopSigner-' + $nonce
+        $expectedChild=Join-Path $Transaction.Context.Worktree 'scripts/windows/vmware/invoke-console-stop-signer-child.ps1'
+        if ($EntryPoint -cne $expectedChild -or (Test-Path -LiteralPath $stopPath)) {
+            throw 'Original signer entrypoint or terminal state differs.'
+        }
+        # Parent pins this actual record before resume. Its digest cannot exist
+        # in pre-creation arguments: authenticate the producer through self,
+        # the independently pinned request, live parent and exclusive new job.
+        $processRead=Read-AtlasoConsoleTransactionRecord -Context $Transaction.Context -Path $processPath `
+            -Sha256 (Get-FileHash -LiteralPath $processPath).Hash.ToLowerInvariant() -Keys @('schema','phase','binding','observed_utc','details')
+        $r=$processRead.Value; $d=$r.details
+        $keys=@('request_path','request_sha256','controller','root','child_path','child_sha256','executable_path','executable_sha256','deadline_utc','backend')
+        $observed=[DateTimeOffset]::MinValue
+        if (($r.schema -isnot [int] -and $r.schema -isnot [long]) -or $r.schema -ne 1 -or
+            $r.phase -isnot [string] -or $r.phase -cne 'console-credential-signer-process' -or
+            ($r.binding | ConvertTo-Json -Depth 8 -Compress) -cne ($Transaction.Binding | ConvertTo-Json -Depth 8 -Compress) -or
+            $r.observed_utc -isnot [string] -or -not [DateTimeOffset]::TryParseExact($r.observed_utc, 'O',
+                [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$observed) -or
+            $observed -lt [DateTimeOffset]::ParseExact($read.Record.observed_utc,'O',[Globalization.CultureInfo]::InvariantCulture) -or
+            $observed -gt [DateTimeOffset]::UtcNow -or $observed -ge $Transaction.Deadline -or
+            $d -isnot [Collections.IDictionary] -or $d.Count -ne $keys.Count -or
+            @($d.Keys | Where-Object { $_ -cnotin $keys }).Count) { throw 'Original signer process envelope differs.' }
+        foreach ($key in $keys | Where-Object { $_ -cnotin @('controller','root') }) {
+            if ($d[$key] -isnot [string]) { throw 'Original signer process selector type differs.' }
+        }
+        Assert-AtlasoConsoleOriginalClock -Value $d.controller
+        Assert-AtlasoConsoleOriginalClock -Value $d.root -IncludeJob
+        if ($d.request_path -cne $RequestPath -or $d.request_sha256 -cne $RequestSha256 -or
+            $d.child_path -cne $EntryPoint -or $d.executable_path -cne $self.MainModule.FileName -or
+            $d.deadline_utc -cne $Transaction.Deadline.ToUniversalTime().ToString('O') -or $d.backend -cne 'unavailable' -or
+            ($d.controller | ConvertTo-Json -Depth 4 -Compress) -cne ($read.Controller | ConvertTo-Json -Depth 4 -Compress)) {
+            throw 'Original signer request/controller/source selectors differ.'
+        }
+        foreach ($pair in @(@($EntryPoint,$d.child_sha256),@($self.MainModule.FileName,$d.executable_sha256))) {
+            $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($pair[0],$true))
+            if ($pair[1] -cnotmatch '\A[0-9a-f]{64}\z' -or (Get-FileHash -LiteralPath $pair[0]).Hash.ToLowerInvariant() -cne $pair[1]) {
+                throw 'Original signer executable/source digest differs.'
+            }
+        }
+        $clock=Get-AtlasoConsoleProcessCreation -Process $self
+        $clock['job_name']=$jobName
+        if (($clock | ConvertTo-Json -Depth 4 -Compress) -cne ($d.root | ConvertTo-Json -Depth 4 -Compress) -or
+            $clock.parent_pid -ne $read.Controller.pid -or $clock.pid -eq $read.CredentialRoot.pid) {
+            throw 'Signer child is not the new original suspended root.'
+        }
+        $parent=Get-Process -Id $read.Controller.pid -ErrorAction Stop
+        $live=Get-AtlasoConsoleProcessCreation -Process $parent
+        if (($live | ConvertTo-Json -Depth 4 -Compress) -cne ($read.Controller | ConvertTo-Json -Depth 4 -Compress)) {
+            throw 'Original signer parent is not the same live controller.'
+        }
+        $job=Open-AtlasoBoundedProcessJob -ProcessJobName $jobName
+        if ($null -eq $job -or -not $job.ContainsProcess($self)) { throw 'Signer child is outside its distinct original job.' }
+        Assert-AtlasoConsoleTransactionBinding -Transaction $Transaction
+        if (Test-Path -LiteralPath $stopPath) { throw 'Stopped signer cannot resume.' }
+    }
+    finally {
+        if ($job) { $job.Dispose() }; if ($parent) { $parent.Dispose() }; $self.Dispose()
+        foreach ($pin in $pins) { $pin.Dispose() }
+        foreach ($row in @($read,$processRead)) { if ($row) { foreach ($pin in $row.Pins) { $pin.Dispose() } } }
     }
 }
 

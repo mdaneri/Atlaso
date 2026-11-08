@@ -122,8 +122,21 @@ signature within the 3,000-byte wire limit. It does not sign the statement.
 stop chain and original ACK intent, consumes one request attempt and durably publishes a separate signing intent with
 the exact unsigned text, original controller, receipt chain, key pin and unchanged deadline. Publication uncertainty or
 later drift preserves the original attempt and forbids retry. Its result is `prepared_signing_request_no_backend`:
-no child, SDK access, signing-key selector, signer backend or VM write exists here. A separately admitted suspended
-signer child and whole-job closeout remain required before any future signing or transport implementation can use it.
+it contains no signature and selects no signing-key provider or transport.
+
+`Invoke-AtlasoConsoleStopSigner -Transaction` consumes only the same live reference after the request's final checks
+succeed. A published request digest alone cannot authorize it after a failed post-publication check. The method derives
+the committed refusing child and current PowerShell executable internally. Before resuming a fresh suspended root in a
+distinct named job, it durably publishes the original request, controller/root clocks, script/executable hashes and
+unchanged deadline. The child reopens the original plan, receiver, credential stop chain, ACK and signing intents,
+checks its actual process, live parent and distinct job, then refuses the unavailable backend. Its dedicated exit 78
+means admission reached that refusal; exit 77 means admission failed. Neither result is signing success. Only the
+outer whole-job-empty callback after disposal publishes its original signer-stop receipt; unknown results are retained
+without retry. Reading a coherent chain returns data and retained read pins, never the parent's live authority.
+
+This interface has no SDK access, key selector, signing backend or VM write. Synthetic fixtures exercise real Windows
+jobs and process clocks with explicitly mocked source/VM/provider endpoints; they do not admit the native consumer.
+A separately reviewed runtime and explicit production key admission remain required before backend implementation.
 
 Remaining execution work includes that controller and credential-stop boundary, original runtime/console admission,
 family-aware route/rule retirement interpretation, peer DNS setup and restoration through the normal UI, and a
