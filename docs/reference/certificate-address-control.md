@@ -218,6 +218,10 @@ the task inventory. Records live outside the peer removal root. A failure preser
 partial output; an existing destination is refused, never adopted or replaced. The seed publishes the public SSH host
 key to the VMX-bound serial file, uses a task-unique NoCloud instance, constrains local SSH tunnels to the three addresses,
 and configures only the peer's genuinely synchronized Chrony service to serve time on its private interface.
+It installs the existing GuestInfo/VIX profile and restarts Tools before publishing the host-key marker, so native
+address and graceful-power operations can use the installed plugins. The unique NoCloud instance cache is retained
+across seed retirement; the original SSH keys, interface configuration and successful cloud-init state must survive
+the separate seed-removal restart.
 
 Creation is not readiness or native acceptance. Admit the original VMX and serial endpoint before starting the new peer,
 then capture and pin its actual public host key before SSH. Follow the existing two-member topology, seed retirement,

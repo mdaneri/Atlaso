@@ -108,8 +108,9 @@ private DHCP, Tools and the real Chrony setup before publishing the public marke
 one graceful bootstrap restart with the original seed still attached. This stage does not establish readiness:
 the restarted peer must pass the existing Tools-address, pinned SSH and completed cloud-init checks before the separate
 seed-retirement restart. Original seed identity, digest and attachment must survive the bootstrap restart unchanged.
-Only the NTP mode opts into retaining its original cloud-init instance cache (`manual_cache_clean: true`) across
-seed retirement. Its explicit unique instance ID and pristine, never-booted source are mandatory: this peer is never
+The NTP mode and standalone certificate-peer factory retain their original cloud-init instance cache
+(`manual_cache_clean: true`) across seed retirement. An explicit unique instance ID and pristine, never-booted source
+are mandatory: this peer is never
 cloned or reused after initialization. Retaining the admitted NoCloud instance avoids a fallback-datasource warning
 after the public-only seed is removed; both readiness checks still require successful cloud-init completion.
 The NTP address lookup uses VMware's `getGuestIPAddress -wait` with the existing ten-second child timeout inside
