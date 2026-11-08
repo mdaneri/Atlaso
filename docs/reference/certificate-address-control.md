@@ -56,8 +56,10 @@ test-only driver. They do not provide an admitted end-to-end native command or e
   native absence and positive-path evidence; a timeout is unknown.
 - Desired interface Save and the full server-expanded five-unit protected Apply use the existing normal UI
   endpoints. An acknowledged durable public intent precedes the single POST. The original returned job receipt
-  requires its own durable acknowledgement before any separate status read. Unknown outcomes never trigger
-  resubmission, cancellation or automatic restoration.
+  requires its own durable acknowledgement before any separate status read. The read derives the canonical
+  management Tasks path from the validated original job ID; the server-returned URL remains unchanged in the original
+  receipt and status evidence. Redirects remain refusals. Unknown outcomes never trigger resubmission, cancellation
+  or automatic restoration.
 - Public observations use immutable run/stage keys, bounded ASCII JSON chunks and a manifest written last. The
   host must read matching manifests before and after all chunks, verify exact source/resource/boot bindings and
   complete action schemas, and sync the original before acknowledging. Native `runtimeConfig` quoting and

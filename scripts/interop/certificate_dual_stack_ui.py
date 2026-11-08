@@ -460,7 +460,9 @@ def read_apply_status_once(
             or re.fullmatch(r"[0-9a-f]{64}", receipt["intent_sha256"]) is None
             or durable_receipt_sha256 != hashlib.sha256(public_bytes(receipt)).hexdigest()):
         raise GuestRefusal("original_durable_job_receipt_required")
-    response = client.read_json(receipt["status_url"])
+    # Keep the original receipt URL immutable. The legacy GET redirects, so the
+    # no-redirect client must derive the canonical read from the validated job.
+    response = client.read_json(f"/ui/management/tasks/{job}/status")
     task = response.get("task")
     if (not isinstance(task, dict) or task.get("id") != job or task.get("type") != "appliance-apply"
             or not isinstance(task.get("status"), str)

@@ -106,7 +106,7 @@ def test_job_status_projects_only_original_job_identity_without_followup(status:
                               "result": {"arbitrary": "private-synthetic-not-exported"}}}
     before = len(client.requests)
     result = ui.read_apply_status_once(client, receipt, durable_receipt_sha256=digest)
-    assert client.requests[before:] == [("/tasks/job-123/status", None)]
+    assert client.requests[before:] == [("/ui/management/tasks/job-123/status", None)]
     assert result["status"] == status and result["original_job_receipt_sha256"] == digest
     assert result["formal_acceptance"] is False
     assert "private-synthetic-not-exported" not in json.dumps(result)
@@ -141,7 +141,7 @@ def test_pending_job_matches_application_enum_and_public_channel() -> None:
     result = ui.read_apply_status_once(client, receipt,
                                       durable_receipt_sha256=hashlib.sha256(public_bytes(receipt)).hexdigest())
     assert result["status"] == "pending"
-    assert client.requests[before:] == [("/tasks/job-123/status", None)]
+    assert client.requests[before:] == [("/ui/management/tasks/job-123/status", None)]
     assert_public_channel_roundtrip(result)
 
 
@@ -411,3 +411,76 @@ def test_job_receipt_cannot_publish_a_private_session_value() -> None:
     with pytest.raises(GuestRefusal, match="^public_review_contains_private_material$"):
         ui.submit_once(client, sorted(ui.PROTECTED), lambda *_args: None)
     assert len([path for path, _ in client.requests if path == "/ui/management/appliance-apply"]) == 1
+
+
+def status_transport(requests: list[tuple[str, str]], *, redirect: int = 0) -> Any:
+    """Model real browser namespace redirects behind the actual no-redirect client.
+
+    Args:
+        requests: Public synthetic request trace, without cookies or form material.
+        redirect: Optional canonical-endpoint redirect to test fail-closed reads.
+    """
+    from atlaso.app.ui_routes import legacy_browser_target
+
+    def connection() -> Any:
+        """Return an in-memory HTTP connection with the actual browser-path mapping."""
+        def response() -> Any:
+            """Return the legacy redirect or canonical task projection for one GET."""
+            path = requests[-1][1]
+            target = legacy_browser_target(path)
+            status = 307 if target else redirect or 200
+            location = target[1] if target else "/ui/management/login"
+            return SimpleNamespace(
+                status=status,
+                read=lambda _limit: json.dumps({"task": {"id": "job-123", "type": "appliance-apply",
+                                                         "status": "pending"}}).encode(),
+                getheaders=lambda: [], getheader=lambda _name: location,
+            )
+
+        return SimpleNamespace(
+            request=lambda method, path, **_kwargs: requests.append((method, path)),
+            getresponse=response, close=lambda: None,
+        )
+
+    return connection
+
+
+@pytest.mark.parametrize("returned_path", ["/tasks/job-123/status", "/ui/management/tasks/job-123/status"])
+def test_canonical_status_read_preserves_original_receipt(returned_path: str) -> None:
+    """Read only the canonical endpoint while retaining the server's original URL.
+
+    Args:
+        returned_path: Supported original legacy or canonical server receipt path.
+    """
+    from atlaso.app.ui_routes import legacy_browser_target
+
+    canonical = "/ui/management/tasks/job-123/status"
+    assert legacy_browser_target("/tasks/job-123/status") == ("management", canonical)
+    submit_client = FakeClient()
+    submit_client.post_result = (202, "", json.dumps({"job_id": "job-123", "status_url": returned_path}).encode())
+    receipt = ui.submit_once(submit_client, sorted(ui.PROTECTED), lambda _stage, _value: None)
+    original = copy.deepcopy(receipt)
+    digest = hashlib.sha256(public_bytes(receipt)).hexdigest()
+    requests: list[tuple[str, str]] = []
+    client = ui.UIClient(status_transport(requests))
+    result = ui.read_apply_status_once(client, receipt, durable_receipt_sha256=digest)
+    assert requests == [("GET", canonical)]
+    assert receipt == original and hashlib.sha256(public_bytes(receipt)).hexdigest() == digest
+    assert result["status_url"] == returned_path and result["original_job_receipt_sha256"] == digest
+    assert result["status"] == "pending" and result["formal_acceptance"] is False
+    assert_public_channel_roundtrip(result)
+
+
+@pytest.mark.parametrize("status", [302, 307])
+def test_canonical_status_redirect_is_never_followed(status: int) -> None:
+    """A redirect from the canonical endpoint refuses without a second request.
+
+    Args:
+        status: Explicit redirect response from the synthetic canonical endpoint.
+    """
+    receipt = ui.submit_once(FakeClient(), sorted(ui.PROTECTED), lambda _stage, _value: None)
+    requests: list[tuple[str, str]] = []
+    client = ui.UIClient(status_transport(requests, redirect=status))
+    with pytest.raises(GuestRefusal, match="^authenticated_json_unavailable$"):
+        ui.read_apply_status_once(client, receipt, durable_receipt_sha256=hashlib.sha256(public_bytes(receipt)).hexdigest())
+    assert requests == [("GET", "/ui/management/tasks/job-123/status")]
