@@ -5,6 +5,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import shlex
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -470,7 +473,7 @@ def test_verify_uploads_binds_exact_hashes_destinations_and_duplicate_rejection(
     monkeypatch.setattr(transport, "run_read", read)
     transport.verify_uploads(object(), [(wheel, remote + "/wheel.whl"), (script, remote + "/deploy.sh")],
                              request, _PASSWORD, 5)
-    encoded = commands[0].split("b64decode('", 1)[1].split("')", 1)[0]
+    encoded = commands[0].split('b64decode("', 1)[1].split('")', 1)[0]
     verifier = base64.b64decode(encoded).decode()
     assert hashlib.sha256(wheel.read_bytes()).hexdigest() in verifier
     assert hashlib.sha256(script.read_bytes()).hexdigest() in verifier
@@ -483,6 +486,59 @@ def test_verify_uploads_binds_exact_hashes_destinations_and_duplicate_rejection(
     monkeypatch.setattr(transport, "run_read", lambda *_args: b'{"verified_uploads":0}')
     with pytest.raises(transport.Refusal, match="iso_transport_upload_verification_failed"):
         transport.verify_uploads(object(), [(wheel, remote + "/wheel.whl")], request, _PASSWORD, 5)
+
+
+@pytest.mark.parametrize("shell", ["pwsh", "sh"])
+def test_upload_verifier_reaches_native_python_as_one_complete_shell_argument(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shell: str,
+) -> None:
+    """Round-trip the actual verifier through the supported login shells.
+
+    Args:
+        tmp_path: Owned synthetic wheel input.
+        monkeypatch: Substitute the SSH boundary with a real local shell.
+        shell: Login-shell parser used before native Python receives its code.
+    """
+    executable = shutil.which(shell)
+    if executable is None:
+        pytest.skip(f"{shell} is unavailable")
+    wheel = tmp_path / "wheel with spaces.whl"
+    wheel.write_bytes(b"original synthetic wheel")
+    remote = "/var/tmp/atlaso-certificate-deploy-" + "a" * 32
+
+    def read(_client: object, command: str, _password: str, timeout: int) -> bytes:
+        """Capture native argv after the real shell parses the verifier.
+
+        Args:
+            _client: Unused SSH client boundary.
+            command: Unmodified generated verifier command.
+            _password: Synthetic credential, never sent to the local process.
+            timeout: Bound for the shell and native argument receiver.
+        """
+        prefix = "/opt/atlaso/.venv/bin/python -I -B -c "
+        assert command.startswith(prefix)
+        receiver = "import json,sys;print(json.dumps(sys.argv[1:]))"
+        python = str(Path(sys.executable))
+        if shell == "pwsh":
+            invocation = "& '" + python.replace("'", "''") + "' -I -B -c '" + receiver + "' "
+            shell_args = [executable, "-NoProfile", "-NonInteractive", "-Command"]
+        else:
+            invocation = shlex.quote(Path(python).as_posix()) + " -I -B -c " + shlex.quote(receiver) + " "
+            shell_args = [executable, "-c"]
+        result = subprocess.run(shell_args + [invocation + command[len(prefix):]],
+            capture_output=True, text=True, timeout=timeout, check=True)
+        arguments = json.loads(result.stdout)
+        assert len(arguments) == 1
+        compile(arguments[0], "native-upload-verifier", "exec")
+        encoded = arguments[0].split('b64decode("', 1)[1].split('")', 1)[0]
+        verifier = base64.b64decode(encoded, validate=True).decode()
+        assert hashlib.sha256(wheel.read_bytes()).hexdigest() in verifier
+        assert remote + "/wheel.whl" in verifier
+        return b'{"verified_uploads":1}'
+
+    monkeypatch.setattr(transport, "run_read", read)
+    transport.verify_uploads(object(), [(wheel, remote + "/wheel.whl")],
+        {"remote_directory": remote}, _PASSWORD, 15)
 
 
 def test_finish_writes_validated_immutable_output_and_leaves_none_on_payload_failure(

@@ -11185,6 +11185,26 @@ def management_address_only_appliance_settings_change(
     if not previous or not current:
         return False
     changed_keys = {key for key in previous.keys() | current.keys() if previous.get(key) != current.get(key)}
+    if "web_terminal_addresses" in changed_keys:
+        old_address = str(previous.get("management_ip") or "")
+        new_address = str(current.get("management_ip") or "")
+        old_addresses = previous.get("web_terminal_addresses")
+        if (
+            previous.get("web_terminal_enabled") is not True
+            or current.get("web_terminal_enabled") is not True
+            or previous.get("management_interface") != current.get("management_interface")
+            or not old_address or not new_address
+            or not isinstance(old_addresses, list)
+            or any(not isinstance(address, str) for address in old_addresses)
+            or old_address not in old_addresses
+        ):
+            return False
+        derived_addresses = list(dict.fromkeys(
+            new_address if address == old_address else address for address in old_addresses
+        ))
+        if current.get("web_terminal_addresses") != derived_addresses:
+            return False
+        changed_keys.remove("web_terminal_addresses")
     return bool(changed_keys) and changed_keys <= {"management_interface", "management_ip", "management_ip_cidr"}
 
 

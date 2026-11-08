@@ -236,7 +236,7 @@ for p,n,h in r:
 print(json.dumps({{"verified_uploads":len(r)}}))
 '''
     encoded = base64.b64encode(body.encode()).decode()
-    command = "/opt/atlaso/.venv/bin/python -I -B -c " + shlex.quote("import base64;exec(base64.b64decode('" + encoded + "'))")
+    command = "/opt/atlaso/.venv/bin/python -I -B -c " + shlex.quote('import base64;exec(base64.b64decode("' + encoded + '"))')
     if json.loads(run_read(client, command, password, timeout)) != {"verified_uploads": len(records)}:
         raise Refusal("iso_transport_upload_verification_failed")
 

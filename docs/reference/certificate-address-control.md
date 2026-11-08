@@ -282,6 +282,8 @@ or rejected; stop and reconcile the approved key and its receipts.
 
 A manual ISO installation can still have pending first-run DNS/DHCP and NTP settings. Establish the fixture baseline
 before the certificate bootstrap; its protected handoff bundle must not absorb those independent changes.
+With Web Terminal enabled, replacing only the management IP also replaces its derived terminal listener address in
+the handoff. Separate terminal enablement, selected-interface or other listener-address edits still require Settings consent.
 This preparation reuses the existing non-grid **Appliance Settings**, **DNS**, and **NTP and NTS** forms and normal
 **Appliance Apply** review.
 The initializer follows the Settings form's original ID across tabs, including external controls, so changing the

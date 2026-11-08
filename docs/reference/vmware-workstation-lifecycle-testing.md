@@ -549,8 +549,10 @@ Key-backed Windows
 transfers keep `scp` sources and destinations separate and cross the PowerShell login shell through a secret-free
 base64 `sh -lc` wrapper. Password-backed SSH supports one password-only keyboard-interactive challenge, rejects OTP/MFA
 prompts, and uses a separate deployment timeout from the readiness allowance with a non-PTY
-`sudo -S` handoff. Do not pass a password argument, create a local `.env` file, or use the retired
-`ATLASO_DEPLOY_SSH_PASSWORD` fallback. The PowerShell parent performs local build and input preparation without the
+`sudo -S` handoff. The original-ISO upload verifier preserves its encoded Python program as one native argument through
+the appliance administrator's PowerShell login shell and POSIX shells, before admitting deployment-engine execution.
+Do not pass a password argument, create a local `.env` file, or use the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback.
+The PowerShell parent performs local build and input preparation without the
 credential, then invokes the isolated Python child directly. That child obtains `DEFAULT_ADMIN_PASSWORD` with a
 human-approved 1Password desktop authorization prompt and keeps it in process memory only. Python starts with `-I -S`
 and an explicit dependency path so startup hooks and inherited `PYTHONPATH` cannot observe the value. The beta-only
