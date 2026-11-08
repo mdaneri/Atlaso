@@ -57,7 +57,7 @@ def validate(value: Any, **expected: Any) -> None:
 
     Args:
         value: Synthetic observation under test.
-        expected: Explicit expected-value overrides.
+        **expected: Explicit expected-value overrides.
     """
     arguments = {
         "expected_interface": "eth0",

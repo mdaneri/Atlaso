@@ -155,6 +155,7 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
             "atlaso/app/services/dhcp_pool_verification.py",
             "scripts/interop/dedicated_host_contract.py",
             "scripts/interop/dedicated_host_proof.py",
+            "scripts/interop/certificate_dual_stack_contract.py",
             "atlaso/app/services/routing_permissions.py",
             "atlaso/app/routers/api_v1/routing_permissions.py",
             "atlaso/app/routing_permission_schemas.py",
