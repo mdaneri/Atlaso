@@ -18791,7 +18791,13 @@ def test_settings_leaf_readiness_preserves_public_services_ownership(monkeypatch
     urls, leaves = [], []
 
     def status(_curl, url, **kwargs):
-        """Every external socket retains CA trust, including the public site's old leaf."""
+        """Require CA trust on every external socket, including the public site's old leaf.
+
+        Args:
+            _curl: Unused native HTTP client executable.
+            url: Upstream or external management readiness endpoint.
+            **kwargs: Explicit CA trust and transport options supplied by readiness.
+        """
         urls.append(url)
         if url.startswith("https:"):
             assert kwargs["ca_certificate"] == managed / "root.pem"
@@ -18799,14 +18805,26 @@ def test_settings_leaf_readiness_preserves_public_services_ownership(monkeypatch
         return "200"
 
     def leaf(address, _port, _ca, expected):
-        """Only the activating site's sockets may already serve its new leaf."""
+        """Require the new leaf only on sockets owned by the activating site.
+
+        Args:
+            address: Listener address selected for exact-leaf verification.
+            _port: Unused public HTTPS port.
+            _ca: Unused CA path, checked by the separate availability probe.
+            expected: Captured DER bytes of the activating site's intended leaf.
+        """
         leaves.append(address)
         assert expected == b"leaf"
         if address not in owned or stale_owned:
             raise ValueError("previous FQDN leaf is still active")
 
     def install(path, text):
-        """Publish the actual generated candidate under the owned test directory."""
+        """Publish the actual generated candidate under the owned test directory.
+
+        Args:
+            path: Owned management-site destination.
+            text: Rendered nginx candidate to install.
+        """
         helper._install_nginx_include()
         path.write_text(text, encoding="utf-8")
         return 0
