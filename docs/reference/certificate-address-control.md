@@ -71,6 +71,9 @@ route `from` and `src` forms, independent rule prefix lengths, mapped IPv4, expl
 bounded nested nexthops. Unknown fields, indirect nexthop IDs, encapsulation, NAT, inverted rules and unsupported
 address peers/tunnels refuse interpretation. A wildcard management listener remains unknown. Generic default routes
 and broad connected or policy prefixes are not treated as address ownership merely because they cover the target.
+The detailed link and address producers retain and validate ordinary scalar link metadata, including queue counts,
+MTU limits, offload sizes, hardware identifiers and known IPv6 address generation modes. Unknown topology still
+refuses interpretation; these fields do not establish link readiness or address ownership.
 
 Its `payload_sha256` covers canonical `public_bytes(payload)`, not original command-output bytes; preserve those original
 bytes separately. The summary carries no public-action schema or execution authority. It requires separately admitted

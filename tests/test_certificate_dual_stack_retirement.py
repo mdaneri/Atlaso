@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from scripts.interop import certificate_dual_stack_guest as guest
 from scripts.interop import certificate_dual_stack_retirement as retirement
 from scripts.interop.certificate_dual_stack_channel import validate_public_payload
 from scripts.interop.certificate_dual_stack_contract import ContractRefusal
@@ -52,6 +55,80 @@ def read(payload: dict[str, Any], family: int = 4) -> dict[str, Any]:
         family: Explicit target family, excluding opposite-family filtering.
     """
     return retirement.retirement_consistency(payload, boot_id=BOOT_ID, family=family, address=TARGETS[family], port=443)
+
+
+@pytest.mark.parametrize("family", [4, 6])
+def test_native_detail_producers_preserve_ordinary_link_metadata(monkeypatch: pytest.MonkeyPatch, family: int) -> None:
+    """Exercise the real collector with representative synthetic detailed JSON output.
+
+    Args:
+        monkeypatch: Replaces only command and boot-file reads, never runs native tools.
+        family: Retired target family; both link/address producers remain complete.
+    """
+    rows = payload_fixture()["observations"]
+    details = {
+        "mtu": 1500, "qdisc": "fq_codel", "linkmode": "DEFAULT", "group": "default",
+        "txqlen": 1000, "link_type": "ether", "broadcast": "ff:ff:ff:ff:ff:ff",
+        "promiscuity": 0, "allmulti": 0, "min_mtu": 68, "max_mtu": 9000,
+        "num_tx_queues": 4, "num_rx_queues": 4, "gso_max_size": 65536,
+        "gso_max_segs": 65535, "tso_max_size": 65536, "tso_max_segs": 65535,
+        "gro_max_size": 65536, "gso_ipv4_max_size": 65536, "gro_ipv4_max_size": 65536,
+        "parentbus": "pci", "parentdev": "0000:02:00.0", "permaddr": "00:0c:29:11:22:aa",
+    }
+    for row in rows["links"]["raw"] + rows["addresses"]["raw"]:
+        row.update(details)
+    rows["links"]["raw"][0]["inet6_addr_gen_mode"] = "eui64"
+    rows["links"]["raw"][1]["flags"] = ["NO-CARRIER", "BROADCAST", "MULTICAST", "UP"]
+    commands = []
+    stdout = {
+        tuple(row["argv"]): (
+            "\n".join(row["raw"]) if name == "listeners" else json.dumps(row["raw"])
+        ).encode()
+        for name, row in rows.items()
+    }
+
+    def collect(command: tuple[str, ...], **_options: object) -> SimpleNamespace:
+        """Return fixture bytes only for the exact original producer command.
+
+        Args:
+            command: Actual collector argument tuple.
+            **_options: Bounded subprocess options supplied by the collector.
+        """
+        commands.append(command)
+        return SimpleNamespace(stdout=stdout[command], stderr=b"", returncode=0)
+
+    monkeypatch.setattr(guest.subprocess, "run", collect)
+    monkeypatch.setattr(guest.Path, "read_text", lambda *_args, **_kwargs: BOOT_ID + "\n")
+    payload = guest.native_inventory()
+    assert commands[:2] == [
+        ("ip", "-j", "-details", "link", "show"),
+        ("ip", "-j", "-details", "address", "show"),
+    ]
+    assert payload["observations"] == rows
+    digest = hashlib.sha256(public_bytes(payload)).hexdigest()
+    assert read(payload, family)["payload_sha256"] == digest
+    assert payload["observations"] == rows
+
+
+@pytest.mark.parametrize("producer", ["links", "addresses"])
+@pytest.mark.parametrize(("field", "value"), [
+    ("promiscuity", True), ("min_mtu", -1), ("num_rx_queues", 2**32),
+    ("gso_max_size", "65536"), ("tso_max_segs", 1.0),
+    ("inet6_addr_gen_mode", "0x09"), ("parentdev", {"local": "192.0.2.10"}),
+    ("permaddr", "192.0.2.10"),
+])
+def test_malformed_detail_fields_do_not_establish_absence(producer: str, field: str, value: Any) -> None:
+    """Require exact typed detail fields from either producer, on every interface.
+
+    Args:
+        producer: Complete detailed link or address inventory.
+        field: Supported metadata field carrying a malformed value.
+        value: Synthetic malformed value, including types that must not coerce.
+    """
+    payload = payload_fixture()
+    payload["observations"][producer]["raw"][1][field] = value
+    with pytest.raises(GuestRefusal, match="^retirement_address_metadata_invalid$"):
+        read(payload)
 
 
 @pytest.mark.parametrize("family", [4, 6])

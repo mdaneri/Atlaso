@@ -23,9 +23,19 @@ from scripts.interop.certificate_dual_stack_inventory import (
 Address = ipaddress.IPv4Address | ipaddress.IPv6Address
 Network = ipaddress.IPv4Network | ipaddress.IPv6Network
 MAX_ROWS = 8192
-LINK_KEYS = frozenset({"ifindex", "ifname", "address", "broadcast", "flags", "mtu", "qdisc",
-                       "operstate", "linkmode", "group", "txqlen", "link_type", "altnames", "master", "link_index"})
-LINK_FLAGS = frozenset({"LOOPBACK", "BROADCAST", "MULTICAST", "UP", "LOWER_UP", "DORMANT", "POINTOPOINT",
+# Both detailed producers share the iproute2 link printer. Admit its ordinary
+# scalar counters and limits explicitly; nested topology remains unsupported.
+LINK_UINT_KEYS = frozenset({
+    "mtu", "txqlen", "link_index", "promiscuity", "allmulti", "min_mtu", "max_mtu",
+    "num_tx_queues", "num_rx_queues", "gso_max_size", "gso_max_segs", "tso_max_size",
+    "tso_max_segs", "gro_max_size", "gso_ipv4_max_size", "gro_ipv4_max_size",
+})
+LINK_KEYS = LINK_UINT_KEYS | {
+    "ifindex", "ifname", "address", "broadcast", "flags", "qdisc", "operstate",
+    "linkmode", "group", "link_type", "altnames", "master", "permaddr", "parentbus",
+    "parentdev", "inet6_addr_gen_mode",
+}
+LINK_FLAGS = frozenset({"LOOPBACK", "BROADCAST", "MULTICAST", "UP", "LOWER_UP", "DORMANT", "POINTOPOINT", "NO-CARRIER",
                         "NOARP", "PROMISC", "ALLMULTI", "MASTER", "SLAVE", "RUNNING", "ECHO", "DEBUG",
                         "NOTRAILERS", "PORTSEL", "AUTOMEDIA", "DYNAMIC"})
 ADDRESS_FLAGS = frozenset({"permanent", "secondary", "dynamic", "temporary", "tentative", "dadfailed",
@@ -262,16 +272,24 @@ def _address_rows(payload: dict[str, Any], target: Address) -> int:
         for row in payload["observations"][name]["raw"]:
             _shape(row, LINK_KEYS | ({"addr_info"} if name == "addresses" else set()),
                    {"ifindex", "ifname", "address"}, "retirement_address_state_unsupported")
-            for key in ("address", "broadcast"):
+            for key in ("address", "broadcast", "permaddr"):
                 if key in row and (not isinstance(row[key], str)
                                    or re.fullmatch(r"[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}", row[key]) is None):
                     raise GuestRefusal("retirement_address_metadata_invalid")
-            for key in ("mtu", "txqlen", "link_index"):
+            for key in LINK_UINT_KEYS:
                 if key in row and not _uint(row[key]):
                     raise GuestRefusal("retirement_address_metadata_invalid")
             for key in ("qdisc", "operstate", "linkmode", "group", "link_type", "master"):
                 if key in row and (not isinstance(row[key], str) or re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", row[key]) is None):
                     raise GuestRefusal("retirement_address_metadata_invalid")
+            for key in ("parentbus", "parentdev"):
+                if key in row and (not isinstance(row[key], str)
+                                   or re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", row[key]) is None):
+                    raise GuestRefusal("retirement_address_metadata_invalid")
+            if "inet6_addr_gen_mode" in row and row["inet6_addr_gen_mode"] not in (
+                "eui64", "none", "stable_secret", "random",
+            ):
+                raise GuestRefusal("retirement_address_metadata_invalid")
             if "flags" in row and (not isinstance(row["flags"], list)
                                    or any(not isinstance(flag, str) or flag not in LINK_FLAGS for flag in row["flags"])):
                 raise GuestRefusal("retirement_address_metadata_invalid")
