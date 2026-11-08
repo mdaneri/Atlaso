@@ -160,6 +160,7 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
             "scripts/interop/certificate_dual_stack_ui.py",
             "scripts/interop/certificate_dual_stack_channel.py",
             "scripts/interop/certificate_dual_stack_inventory.py",
+            "scripts/interop/certificate_dual_stack_stop.py",
             "atlaso/app/services/routing_permissions.py",
             "atlaso/app/routers/api_v1/routing_permissions.py",
             "atlaso/app/routing_permission_schemas.py",

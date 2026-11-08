@@ -85,6 +85,15 @@ These interfaces are source components, not an admitted credential command. The 
 actually viewed console admission, separate stop acknowledgement and concealed guardian remain required before use.
 No acknowledgement is sent by the journal. The guest terminal adapter still refuses before I/O.
 
+The separate v2 stop-acknowledgement verifier accepts a bounded canonical ASCII envelope signed with Ed25519.
+Its public key and fingerprint must be admitted independently before credential entry; keys supplied by the channel
+are never adopted. The signature binds the source, original resource and receipt digests, boots, run, receiver,
+exclusive ACK intent, transport key, deadline and whole-job outcome. A signed failed outcome remains a failure.
+This pure verifier has synthetic coverage only: no production signer, one-shot host writer, receiver admission or
+guardian is provided. Existing v1 receipts do not admit this protocol. A valid signature authenticates the host's
+statement; the future signer must separately verify the original journal and actual quiescence. It supplies neither
+terminal-input drainage nor continuous LAN/address enforcement, and cannot release a partially entered credential.
+
 Remaining execution work includes that controller and credential-stop boundary, original runtime/console admission,
 family-aware route/rule retirement interpretation, peer DNS setup and restoration through the normal UI, and a
 reviewed transaction/restoration journal. No component or synthetic test supplies continuous LAN/address enforcement,
