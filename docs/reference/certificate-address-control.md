@@ -582,6 +582,8 @@ Protected handoff validation checks the staged candidate certificate's format, c
 requiring it to authenticate the old listener addresses. The transaction preserves and verifies the old TLS path with
 its snapshotted certificate, then validates the candidate leaf against every actual candidate address before publishing
 that listener. An ordinary Appliance Settings certificate change still requires coverage of its retained listeners.
+Settings verifies CA-trusted availability on every external management listener, but checks its new leaf only on the
+HTTPS sockets owned by its site. Flagged Access sockets on port 443 receive their new leaf during Public Services apply.
 This separation also applies to DHCP: an unknown lease does not waive certificate validation after acquisition.
 
 Use the standard Atlaso [Network configuration](../operate/networking.md) pages and [Appliance

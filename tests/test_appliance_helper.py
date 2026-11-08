@@ -18743,6 +18743,92 @@ def test_management_front_door_authenticates_external_scope_and_retains_loopback
     assert "listen [::1]:443 ssl" in site
 
 
+@pytest.mark.parametrize("ownership,stale_owned", [
+    ("dedicated", False), ("all", False), ("public", False), ("dedicated", True),
+])
+def test_settings_leaf_readiness_preserves_public_services_ownership(monkeypatch, tmp_path, ownership, stale_owned):
+    """An FQDN rotation accepts the public site's previous leaf until its later Apply.
+
+    Args:
+        monkeypatch: Replace native commands and sockets while retaining real readiness admission.
+        tmp_path: Owned synthetic nginx and public certificate directory.
+        ownership: HTTPS sockets retained by the Settings site after a protected handoff.
+        stale_owned: Keep an obsolete leaf on a Settings-owned socket to prove refusal.
+    """
+    helper = load_helper_module()
+    paths = patch_appliance_settings_nginx_paths(monkeypatch, helper, tmp_path)
+    managed = tmp_path / "managed"
+    managed.mkdir()
+    cert = managed / "new-fqdn.pem"
+    cert.write_text("-----BEGIN CERTIFICATE-----\nbGVhZg==\n-----END CERTIFICATE-----\n", encoding="utf-8")
+    payload = json.loads(appliance_settings_json(
+        management_https_enabled=True, management_https_cert_path=str(cert),
+        management_https_key_path=str(managed / "new-fqdn.key"),
+    ))
+    payload["management_https_ca_path"] = str(managed / "root.pem")
+    payload["management_public_https_port"] = 8443 if ownership == "all" else 443
+    scope = ["127.0.0.1", "::1", "192.0.2.10", "2001:db8::10", "192.0.2.20"]
+    owned = scope if ownership == "all" else scope[:4] if ownership == "dedicated" else scope[:2]
+    site = paths["management_site"]
+    site.parent.mkdir(parents=True, exist_ok=True)
+    previous = helper._management_nginx_config(
+        dict(payload, fqdn="previous.example.test"), managed / "previous.pem", managed / "previous.key",
+        listen_addresses=scope, https_listen_addresses=owned,
+    )
+    site.write_text(previous, encoding="utf-8")
+    monkeypatch.setattr(helper, "CA_MANAGED_PATH_BASE", managed)
+    dropin = tmp_path / "systemd/atlaso.service.d/management-https.conf"
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_DROPIN_DIR", dropin.parent)
+    monkeypatch.setattr(helper, "ATLASO_SERVICE_HTTPS_DROPIN_PATH", dropin)
+    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: False)
+    monkeypatch.setattr(helper, "_grant_atlaso_service_key_read", lambda *_args: None)
+    monkeypatch.setattr(helper, "_management_certificate_covers_scoped_addresses", lambda *_args: None)
+    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/bin/curl")
+    monkeypatch.setattr(helper.time, "sleep", lambda _seconds: None)
+    ticks = iter(range(0, 1000, 5))
+    monkeypatch.setattr(helper.time, "monotonic", lambda: next(ticks))
+    urls, leaves = [], []
+
+    def status(_curl, url, **kwargs):
+        """Every external socket retains CA trust, including the public site's old leaf."""
+        urls.append(url)
+        if url.startswith("https:"):
+            assert kwargs["ca_certificate"] == managed / "root.pem"
+            assert not kwargs.get("insecure")
+        return "200"
+
+    def leaf(address, _port, _ca, expected):
+        """Only the activating site's sockets may already serve its new leaf."""
+        leaves.append(address)
+        assert expected == b"leaf"
+        if address not in owned or stale_owned:
+            raise ValueError("previous FQDN leaf is still active")
+
+    def install(path, text):
+        """Publish the actual generated candidate under the owned test directory."""
+        helper._install_nginx_include()
+        path.write_text(text, encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(helper, "_console_management_http_status", status)
+    monkeypatch.setattr(helper, "_management_served_leaf", leaf)
+    monkeypatch.setattr(helper, "_install_nginx_site", install)
+    preserved = helper._existing_management_scoped_addresses()
+    assert preserved is not None
+    result = helper._configure_atlaso_management_https(
+        payload, listen_addresses=preserved[0], https_listen_addresses=preserved[1],
+    )
+    assert result == ((1, None) if stale_owned else (0, None))
+    expected_addresses = set(owned) - {"127.0.0.1", "::1"}
+    assert set(leaves) == expected_addresses
+    port = payload["management_public_https_port"]
+    assert {f"https://{host}:{port}/openapi.json" for host in ["192.0.2.10", "[2001:db8::10]", "192.0.2.20"]} <= set(urls)
+    assert site.read_text(encoding="utf-8") == (previous if stale_owned else helper._management_nginx_config(
+        payload, cert, managed / "new-fqdn.key", listen_addresses=preserved[0], https_listen_addresses=preserved[1],
+    ).rstrip() + "\n")
+
+
 @pytest.mark.parametrize("tls_rotation", [False, True])
 def test_management_front_door_rolls_back_failed_candidate_readiness(
     monkeypatch,

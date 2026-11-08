@@ -11567,6 +11567,9 @@ def _configure_atlaso_management_https(
                 tls_ca_paths={address: readiness_ca_path for address in readiness_addresses}
                 if readiness_ca_path is not None else None,
                 tls_expected_leaf=readiness_leaf,
+                tls_expected_leaf_addresses=[address for address in https_listen_addresses
+                                             if not ip_address(address).is_loopback]
+                if https_enabled and https_listen_addresses is not None else None,
                 upstream_host=upstream_host,
                 upstream_port=port,
             )
@@ -34838,6 +34841,7 @@ def _management_handoff_readiness(
     *,
     tls_ca_paths: dict[str, Path] | None = None,
     tls_expected_leaf: bytes | None = None,
+    tls_expected_leaf_addresses: list[str] | None = None,
     samples: int = 3,
     upstream_host: str = "127.0.0.1",
     upstream_port: int = 8000,
@@ -34849,7 +34853,8 @@ def _management_handoff_readiness(
         https_enabled: Whether the applied management front door uses HTTPS.
         public_port: Configured host-facing management listener port.
         tls_ca_paths: Candidate addresses requiring explicit transaction CA trust.
-        tls_expected_leaf: Captured deployed leaf that every fresh TLS connection must serve.
+        tls_expected_leaf: Captured deployed leaf required on the activating site's HTTPS sockets.
+        tls_expected_leaf_addresses: HTTPS sockets owned by the activating site; None checks every address.
         samples: Required consecutive successful samples.
         upstream_host: Atlaso application endpoint host behind nginx.
         upstream_port: Atlaso application endpoint port behind nginx.
@@ -34868,6 +34873,8 @@ def _management_handoff_readiness(
         not https_enabled or any(address not in (tls_ca_paths or {}) for address in addresses)
     ):
         raise ValueError("exact management certificate readiness requires explicit CA trust for every address")
+    if tls_expected_leaf_addresses is not None and not set(tls_expected_leaf_addresses) <= set(addresses):
+        raise ValueError("exact management certificate scope contains an unverified listener address")
     deadline = time.monotonic() + 45
     consecutive = 0
     statuses: dict[str, str] = {}
@@ -34887,7 +34894,9 @@ def _management_handoff_readiness(
                 status = _console_management_http_status(
                     curl, f"{scheme}://{host}:{public_port}/openapi.json", ca_certificate=trust,
                 )
-                if tls_expected_leaf is not None:
+                if tls_expected_leaf is not None and (
+                    tls_expected_leaf_addresses is None or address in tls_expected_leaf_addresses
+                ):
                     try:
                         _management_served_leaf(address, public_port, trust, tls_expected_leaf)
                     except (OSError, ValueError):
