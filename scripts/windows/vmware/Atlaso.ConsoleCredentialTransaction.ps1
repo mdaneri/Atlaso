@@ -14,6 +14,48 @@ $script:AtlasoConsoleStopAuthorities = [Runtime.CompilerServices.ConditionalWeak
 
 <#
 .SYNOPSIS
+Encode the restricted public stop schema with Python-compatible canonical ASCII JSON.
+.PARAMETER Value
+Public dictionaries, identifier strings, booleans or exact signed integers; never secrets.
+.PARAMETER Depth
+Bound the fixed envelope and payload nesting without accepting arbitrary JSON structures.
+#>
+function ConvertTo-AtlasoConsoleStopCanonicalJson {
+    param([Parameter(Mandatory)][AllowNull()][object]$Value, [ValidateRange(0,4)][int]$Depth = 0)
+    if ($Value -is [Collections.IDictionary]) {
+        $names = [Collections.Generic.List[string]]::new()
+        $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($key in $Value.Keys) {
+            if ($key -isnot [string] -or $key -cnotmatch '\A[a-z0-9_]+\z' -or -not $seen.Add($key)) {
+                throw 'Canonical stop object key refused.'
+            }
+            $names.Add($key)
+        }
+        $names.Sort([StringComparer]::Ordinal)
+        $parts = [Collections.Generic.List[string]]::new()
+        foreach ($name in $names) {
+            $encoded = ConvertTo-AtlasoConsoleStopCanonicalJson -Value $Value[$name] -Depth ($Depth + 1)
+            $parts.Add(('"' + $name + '":' + $encoded))
+        }
+        $result = '{' + [string]::Join(',', $parts) + '}'
+    }
+    elseif ($Value -is [string]) {
+        # All admitted schema text uses this alphabet. No escaping or coercion
+        # can silently produce different bytes from the guest verifier.
+        if ($Value -cnotmatch '\A[A-Za-z0-9_.:-]+\z') { throw 'Canonical stop identifier refused.' }
+        $result = '"' + $Value + '"'
+    }
+    elseif ($Value -is [bool]) { $result = if ($Value) { 'true' } else { 'false' } }
+    elseif ($Value -is [int] -or $Value -is [long]) {
+        $result = $Value.ToString([Globalization.CultureInfo]::InvariantCulture)
+    }
+    else { throw 'Canonical stop primitive type refused.' }
+    if ($result.Length -gt 3000) { throw 'Canonical stop statement exceeded its public bound.' }
+    return $result
+}
+
+<#
+.SYNOPSIS
 Snapshot the public original context and runtime selectors without serializing pins.
 .PARAMETER Transaction
 Original open transaction whose context/options must remain unchanged.
@@ -335,6 +377,10 @@ function Open-AtlasoConsoleCredentialTransaction {
                 Lock=[object]::new(); JobName=$transaction.JobName; ControllerJson=$null; RootJson=$null; StopJson=$null
                 IntentPath=$null; IntentSha256=$null; ProcessPath=$null; ProcessSha256=$null; StopPath=$null; StopSha256=$null
                 Invoked=$false; Completed=$false; AckAttempted=$false; PublishingAck=$false; AckThreadId=0; AckDetailsJson=$null
+                AckPrepared=$false; AckPath=$null; AckSha256=$null; AckRecordJson=$null
+                UnsignedJson=$null; UnsignedSha256=$null; PublicKeyHex=$null
+                SigningAttempted=$false; PublishingSigning=$false; SigningThreadId=0; SigningDetailsJson=$null
+                SigningIntentPath=$null; SigningIntentSha256=$null
             }
             $script:AtlasoConsoleStopAuthorities.Add($transaction, $authority)
         }
@@ -352,24 +398,35 @@ Atomically publish and retain a read pin on one bounded original transaction rec
 .PARAMETER Transaction
 Original admission, evidence namespace and existing pinned records.
 .PARAMETER Kind
-Exact original phase; ACK intent is available only to the live verified preparation path.
+Exact original phase; ACK and signing intents require their separate private preparation paths.
 .PARAMETER Details
 Public original process facts created by the committed controller.
 #>
 function Publish-AtlasoConsoleCredentialRecord {
-    param([Parameter(Mandatory)][psobject]$Transaction, [Parameter(Mandatory)][ValidateSet('intent','process','stop','ack-intent')][string]$Kind,
+    param([Parameter(Mandatory)][psobject]$Transaction, [Parameter(Mandatory)][ValidateSet('intent','process','stop','ack-intent','signing-intent')][string]$Kind,
         [Parameter(Mandatory)][Collections.IDictionary]$Details)
     if ($Transaction.IsClosed -isnot [bool] -or $Transaction.IsClosed) { throw 'Original console transaction is closed.' }
-    if ($Kind -ceq 'ack-intent') {
+    $expectedPath = $Transaction.Paths[$Kind]
+    if ($Kind -cin @('ack-intent','signing-intent')) {
         $authority = $null
         if ($Transaction.ProtocolVersion -ne 2 -or
             -not $script:AtlasoConsoleStopAuthorities.TryGetValue($Transaction, [ref]$authority) -or
-            -not $authority.Completed -or -not $authority.PublishingAck -or
-            $authority.AckThreadId -ne [Threading.Thread]::CurrentThread.ManagedThreadId -or
-            ($Details | ConvertTo-Json -Depth 8 -Compress) -cne $authority.AckDetailsJson -or
+            -not $authority.Completed -or
             (Get-AtlasoConsoleSelectorSnapshot -Transaction $Transaction) -cne $authority.SelectorsJson -or
             ($Transaction.Binding | ConvertTo-Json -Depth 8 -Compress) -cne $authority.BindingJson) {
-            throw 'ACK intent requires the original verified preparation path.'
+            throw 'Console intent requires its original verified preparation path.'
+        }
+        $threadId = [Threading.Thread]::CurrentThread.ManagedThreadId
+        $detailsJson = $Details | ConvertTo-Json -Depth 8 -Compress
+        if ($Kind -ceq 'ack-intent') {
+            if (-not $authority.PublishingAck -or $authority.AckThreadId -ne $threadId -or
+                $detailsJson -cne $authority.AckDetailsJson) { throw 'ACK intent requires private preparation.' }
+        }
+        else {
+            if (-not $authority.AckPrepared -or -not $authority.SigningAttempted -or
+                -not $authority.PublishingSigning -or $authority.SigningThreadId -ne $threadId -or
+                $detailsJson -cne $authority.SigningDetailsJson) { throw 'Signing intent requires private preparation.' }
+            $expectedPath = $authority.SigningIntentPath
         }
     }
     $record = [ordered]@{schema=1; phase=('console-credential-' + $Kind); binding=$Transaction.Binding;
@@ -378,7 +435,7 @@ function Publish-AtlasoConsoleCredentialRecord {
         throw 'Public console transaction record exceeded its bound.'
     }
     $published = Publish-AtlasoTestVmOwnershipRecord -Context $Transaction.Context -Record $record -Kind ('console-credential-' + $Kind)
-    if ($published.Path -cne $Transaction.Paths[$Kind]) { throw 'Original console transaction namespace changed.' }
+    if ($published.Path -cne $expectedPath) { throw 'Original console transaction namespace changed.' }
     $pin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($published.Path, $true)
     try {
         if ((Get-FileHash -LiteralPath $published.Path).Hash.ToLowerInvariant() -cne $published.Sha256) {
@@ -781,7 +838,7 @@ function Prepare-AtlasoConsoleCredentialStopAck {
         $authority.PublishingAck = $true; $authority.AckThreadId = [Threading.Thread]::CurrentThread.ManagedThreadId
         try { $published = Publish-AtlasoConsoleCredentialRecord -Transaction $Transaction -Kind ack-intent -Details $details }
         finally { $authority.PublishingAck = $false; $authority.AckThreadId = 0 }
-        $Transaction.AckIntentReceipt = $published
+        $Transaction.AckIntentReceipt = [pscustomobject]@{Path=$published.Path; Sha256=$published.Sha256}
         Assert-AtlasoConsoleTransactionBinding -Transaction $Transaction
         if ((Get-AtlasoConsoleSelectorSnapshot -Transaction $Transaction) -cne $authority.SelectorsJson) {
             throw 'Original selectors changed during ACK preparation; preserve its intent without replay.'
@@ -798,11 +855,124 @@ function Prepare-AtlasoConsoleCredentialStopAck {
             whole_job_empty=$verified.Stop.whole_job_empty; outcome=$verified.Stop.outcome
             root_exit_code=$verified.Stop.root_exit_code; original_binding_rechecked=$verified.Stop.original_binding_rechecked
         }
-        return [pscustomobject]@{status='prepared_unsigned_no_ack'; public_key_hex=$binding.stop_ack_public_key_hex;
-            ack_intent_receipt=$published; unsigned_envelope=[ordered]@{schema=2; kind='console-sdk-stop-ack-v2';
-                algorithm='Ed25519'; signing_key_sha256=$binding.stop_ack_signing_key_sha256; payload=$payload}}
+        $unsigned = [ordered]@{schema=2; kind='console-sdk-stop-ack-v2'; algorithm='Ed25519';
+            signing_key_sha256=$binding.stop_ack_signing_key_sha256; payload=$payload}
+        $canonical = ConvertTo-AtlasoConsoleStopCanonicalJson -Value $unsigned
+        # The eventual signed envelope must also fit the guest's 3000-byte cap.
+        $signatureOverhead = ',"signature_hex":""'.Length + 128
+        if ($canonical.Length + $signatureOverhead -gt 3000) { throw 'Unsigned stop statement leaves no signature budget.' }
+        $read = Read-AtlasoConsoleTransactionRecord -Context $authority.Context -Path $published.Path -Sha256 $published.Sha256 `
+            -Keys @('schema','phase','binding','observed_utc','details')
+        try {
+            $observed = [DateTimeOffset]::MinValue
+            if ($read.Value.schema -ne 1 -or $read.Value.phase -cne 'console-credential-ack-intent' -or
+                ($read.Value.binding | ConvertTo-Json -Depth 8 -Compress) -cne $authority.BindingJson -or
+                ($read.Value.details | ConvertTo-Json -Depth 8 -Compress) -cne $authority.AckDetailsJson -or
+                $read.Value.observed_utc -isnot [string] -or
+                -not [DateTimeOffset]::TryParseExact($read.Value.observed_utc, 'O', [Globalization.CultureInfo]::InvariantCulture,
+                    [Globalization.DateTimeStyles]::None, [ref]$observed) -or
+                $observed -gt [DateTimeOffset]::UtcNow -or $observed -ge $Transaction.Deadline) {
+                throw 'Original ACK intent readback differs.'
+            }
+            $null = Get-AtlasoVerifiedConsoleCredentialStop -Transaction $Transaction
+            foreach ($pin in $read.Pins) { $Transaction.Pins.Add($pin) }; $read.Pins.Clear()
+            # Freeze only successfully admitted preparation. Public projections
+            # and the transaction's mutable receipt property are never custody.
+            $authority.AckPath = $published.Path; $authority.AckSha256 = $published.Sha256
+            $authority.AckRecordJson = $read.Value | ConvertTo-Json -Depth 8 -Compress
+            $authority.UnsignedJson = $canonical
+            $authority.UnsignedSha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+                [Text.Encoding]::ASCII.GetBytes($canonical))).ToLowerInvariant()
+            $authority.PublicKeyHex = $binding.stop_ack_public_key_hex
+            $authority.AckPrepared = $true
+        }
+        finally { foreach ($pin in $read.Pins) { $pin.Dispose() } }
+        return [pscustomobject]@{status='prepared_unsigned_no_ack'; public_key_hex=$authority.PublicKeyHex;
+            ack_intent_receipt=[pscustomobject]@{Path=$authority.AckPath; Sha256=$authority.AckSha256};
+            unsigned_envelope=$unsigned; unsigned_canonical_ascii=$canonical; unsigned_sha256=$authority.UnsignedSha256}
     }
     finally { [Threading.Monitor]::Exit($authority.Lock) }
+}
+
+<#
+.SYNOPSIS
+Publish one original signing request without launching a child or choosing a backend.
+.PARAMETER Transaction
+Same still-open v2 reference with privately retained successful ACK preparation.
+#>
+function New-AtlasoConsoleStopSigningRequest {
+    param([Parameter(Mandatory)][psobject]$Transaction)
+    $authority = $null
+    if (-not $script:AtlasoConsoleStopAuthorities.TryGetValue($Transaction, [ref]$authority)) {
+        throw 'Original live signing-request authority is unavailable.'
+    }
+    [Threading.Monitor]::Enter($authority.Lock)
+    $read = $null
+    $document = $null
+    try {
+        if (-not $authority.AckPrepared) { throw 'Original successful ACK preparation is unavailable.' }
+        if ($authority.SigningAttempted) { throw 'Original signing request was already attempted; preserve without replay.' }
+        $authority.SigningAttempted = $true
+        $verified = Get-AtlasoVerifiedConsoleCredentialStop -Transaction $Transaction
+        $expectedAck = Join-Path $authority.Context.EvidenceDirectory (
+            'atlaso-test-vm-console-credential-ack-intent-' + $verified.Binding.receiver_nonce + '.json')
+        if ($authority.AckPath -cne $expectedAck -or $null -eq $Transaction.AckIntentReceipt -or
+            $Transaction.AckIntentReceipt.Path -cne $authority.AckPath -or
+            $Transaction.AckIntentReceipt.Sha256 -cne $authority.AckSha256 -or
+            $authority.PublicKeyHex -cne $verified.Binding.stop_ack_public_key_hex) {
+            throw 'Original prepared ACK selectors changed.'
+        }
+        $read = Read-AtlasoConsoleTransactionRecord -Context $authority.Context -Path $authority.AckPath -Sha256 $authority.AckSha256 `
+            -Keys @('schema','phase','binding','observed_utc','details')
+        if (($read.Value | ConvertTo-Json -Depth 8 -Compress) -cne $authority.AckRecordJson) {
+            throw 'Original prepared ACK record changed.'
+        }
+        $document = [Text.Json.JsonDocument]::Parse($authority.UnsignedJson)
+        $unsigned = ConvertFrom-AtlasoConsoleJsonElement -Element $document.RootElement
+        $canonical = ConvertTo-AtlasoConsoleStopCanonicalJson -Value $unsigned
+        $sha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+            [Text.Encoding]::ASCII.GetBytes($canonical))).ToLowerInvariant()
+        if ($canonical -cne $authority.UnsignedJson -or $sha -cne $authority.UnsignedSha256 -or
+            $unsigned.payload.ack_intent_sha256 -cne $authority.AckSha256 -or
+            $unsigned.signing_key_sha256 -cne $verified.Binding.stop_ack_signing_key_sha256 -or
+            $unsigned.payload.deadline_unix_ms -ne $verified.Deadline.ToUnixTimeMilliseconds()) {
+            throw 'Original canonical stop statement changed.'
+        }
+        $authority.SigningIntentPath = Join-Path $authority.Context.EvidenceDirectory (
+            'atlaso-test-vm-console-credential-signing-intent-' + $verified.Binding.receiver_nonce + '.json')
+        if (Test-Path -LiteralPath $authority.SigningIntentPath) { throw 'Original signing intent exists; preserve without adoption.' }
+        $details = [ordered]@{
+            status='prepared_signing_request_no_backend'; controller=$verified.Controller
+            plan_receipt_path=$authority.PlanPath; plan_receipt_sha256=$authority.PlanSha256
+            receiver_receipt_path=$verified.Binding.receiver_receipt_path; receiver_receipt_sha256=$verified.Binding.receiver_receipt_sha256
+            intent_receipt_path=$authority.IntentPath; intent_receipt_sha256=$authority.IntentSha256
+            process_receipt_path=$authority.ProcessPath; process_receipt_sha256=$authority.ProcessSha256
+            stop_receipt_path=$authority.StopPath; stop_receipt_sha256=$authority.StopSha256
+            ack_intent_receipt_path=$authority.AckPath; ack_intent_receipt_sha256=$authority.AckSha256
+            unsigned_canonical_ascii=$canonical; unsigned_sha256=$sha; public_key_hex=$authority.PublicKeyHex
+            signing_key_sha256=$verified.Binding.stop_ack_signing_key_sha256
+            transport_key=$verified.Binding.stop_ack_transport_key; deadline_utc=$authority.DeadlineUtc
+        }
+        Assert-AtlasoConsoleTransactionBinding -Transaction $Transaction
+        $authority.SigningDetailsJson = $details | ConvertTo-Json -Depth 8 -Compress
+        $authority.PublishingSigning = $true; $authority.SigningThreadId = [Threading.Thread]::CurrentThread.ManagedThreadId
+        try { $published = Publish-AtlasoConsoleCredentialRecord -Transaction $Transaction -Kind signing-intent -Details $details }
+        finally { $authority.PublishingSigning = $false; $authority.SigningThreadId = 0 }
+        # Retain actual publication before later checks. Uncertainty never
+        # retries, replaces a nonce claim or manufactures a child handoff.
+        $authority.SigningIntentSha256 = $published.Sha256
+        $null = Get-AtlasoVerifiedConsoleCredentialStop -Transaction $Transaction
+        foreach ($pin in $read.Pins) { $Transaction.Pins.Add($pin) }; $read.Pins.Clear()
+        return [pscustomobject]@{status='prepared_signing_request_no_backend'; public_key_hex=$authority.PublicKeyHex;
+            signing_intent_receipt=[pscustomobject]@{Path=$authority.SigningIntentPath; Sha256=$authority.SigningIntentSha256};
+            ack_intent_receipt=[pscustomobject]@{Path=$authority.AckPath; Sha256=$authority.AckSha256};
+            unsigned_canonical_ascii=$authority.UnsignedJson; unsigned_sha256=$authority.UnsignedSha256}
+    }
+    finally {
+        if ($document) { $document.Dispose() }
+        if ($read) { foreach ($pin in $read.Pins) { $pin.Dispose() } }
+        [Threading.Monitor]::Exit($authority.Lock)
+    }
 }
 
 <#

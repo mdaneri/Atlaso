@@ -100,6 +100,11 @@ try {
     data = json.loads(_run(script, tmp_path, timeout=60))
     prepared, plan = data["prepared"], data["plan"]
     unsigned = prepared["unsigned_envelope"]
+    canonical = json.dumps(unsigned, ensure_ascii=True, allow_nan=False,
+                           sort_keys=True, separators=(",", ":")).encode("ascii")
+    assert prepared["unsigned_canonical_ascii"].encode("ascii") == canonical
+    assert prepared["unsigned_sha256"] == hashlib.sha256(canonical).hexdigest()
+    assert len(canonical) + len(',"signature_hex":""') + 128 <= 3000
     payload = unsigned["payload"]
     assert payload["outcome"] == ("succeeded" if exit_code == 0 else "terminated_failure")
     assert payload["root_exit_code"] == exit_code
@@ -250,6 +255,8 @@ try {{
  if($exists -ne ({_ps(mode)} -ceq 'post-publication-drift')){{throw 'Original publication facts were relabeled'}}
  $hash=if($exists){{(Get-FileHash -LiteralPath $tx.Paths['ack-intent']).Hash}}else{{''}}
  $options.FieldRectangle='10,20,300,40'
+ $requestFailed=$false;try{{$null=New-AtlasoConsoleStopSigningRequest -Transaction $tx}}catch{{$requestFailed=$true}}
+ if(-not $requestFailed){{throw 'Failed ACK preparation acquired signing-request authority'}}
  $again=$false;try{{$null=Prepare-AtlasoConsoleCredentialStopAck -Transaction $tx}}catch{{$again=$true}}
  if(-not $again -or $script:ackCalls -ne 1 -or
   ($exists -and (Get-FileHash -LiteralPath $tx.Paths['ack-intent']).Hash -cne $hash)){{throw 'Failed preparation was replayed'}}
@@ -257,3 +264,154 @@ try {{
 }}finally{{
 """ + _close_fixture() + "}\n"
     assert "one-shot-failure-preserved" in _run(script, tmp_path, timeout=60)
+
+
+@pytest.mark.parametrize("exit_code", [0, 17])
+def test_signing_request_uses_private_preparation_and_never_a_returned_projection(
+    tmp_path: Path, exit_code: int,
+) -> None:
+    """Retain exact public bytes through mutable projections without signing.
+
+    Args:
+        tmp_path: Owned original chain and immutable public request files.
+        exit_code: Real fake credential child's original success or failure.
+    """
+    script = _chain_fixture(tmp_path, exit_code=exit_code) + r"""
+try {
+ $prepared=Prepare-AtlasoConsoleCredentialStopAck -Transaction $tx
+ $originalAscii=$prepared.unsigned_canonical_ascii
+ $prepared.unsigned_envelope.payload.root_exit_code=99
+ $prepared.unsigned_envelope.payload.outcome='caller-supplied'
+ $prepared.ack_intent_receipt.Path='caller-path';$prepared.ack_intent_receipt.Sha256='0'*64
+ $prepared.public_key_hex='0'*64;$prepared.unsigned_canonical_ascii='caller-text';$prepared.unsigned_sha256='0'*64
+ $direct=$false;try{$null=Publish-AtlasoConsoleCredentialRecord -Transaction $tx -Kind signing-intent `
+  -Details ([ordered]@{status='prepared_signing_request_no_backend'})}catch{$direct=$true}
+ if(-not $direct){throw 'Direct publication adopted private signing authority'}
+ $request=New-AtlasoConsoleStopSigningRequest -Transaction $tx
+ if($request.status -cne 'prepared_signing_request_no_backend' -or $request.unsigned_canonical_ascii -cne $originalAscii -or
+  $request.ack_intent_receipt.Path -cne $tx.Paths['ack-intent'] -or $tx.Paths.Count -ne 4){throw 'Mutable projection supplied signing authority'}
+ $read=Read-AtlasoConsoleTransactionRecord -Context $context -Path $request.signing_intent_receipt.Path `
+  -Sha256 $request.signing_intent_receipt.Sha256 -Keys @('schema','phase','binding','observed_utc','details')
+ try {
+  if($read.Value.phase -cne 'console-credential-signing-intent' -or
+   $read.Value.details.controller.pid -ne $PID -or $read.Value.details.unsigned_canonical_ascii -cne $originalAscii -or
+   $read.Value.details.ack_intent_receipt_sha256 -cne $tx.AckIntentReceipt.Sha256 -or
+   $read.Value.details.deadline_utc -cne $tx.Plan.deadline_utc){throw 'Original signing intent chain differs'}
+ }finally{foreach($pin in $read.Pins){$pin.Dispose()}}
+ $path=$request.signing_intent_receipt.Path;$hash=$request.signing_intent_receipt.Sha256
+ $request.signing_intent_receipt.Path='caller-path';$request.signing_intent_receipt.Sha256='0'*64
+ $request.unsigned_canonical_ascii='caller-text'
+ $again=$false;try{$null=New-AtlasoConsoleStopSigningRequest -Transaction $tx}catch{$again=$true}
+ if(-not $again -or (Get-FileHash -LiteralPath $path).Hash.ToLowerInvariant() -cne $hash){throw 'Signing request was replayed'}
+ [ordered]@{canonical=$originalAscii;intent_sha256=$hash;ack_sha256=$tx.AckIntentReceipt.Sha256}|ConvertTo-Json -Compress
+}finally{
+""" + _close_fixture() + "}\n"
+    data = json.loads(_run(script, tmp_path, timeout=60))
+    unsigned = json.loads(data["canonical"])
+    assert data["canonical"] == json.dumps(unsigned, ensure_ascii=True, allow_nan=False,
+                                           sort_keys=True, separators=(",", ":"))
+    assert unsigned["payload"]["root_exit_code"] == exit_code
+    assert unsigned["payload"]["outcome"] == ("succeeded" if exit_code == 0 else "terminated_failure")
+    assert unsigned["payload"]["ack_intent_sha256"] == data["ack_sha256"]
+    assert len(data["intent_sha256"]) == 64
+
+
+@pytest.mark.parametrize("defect", ["unprepared", "copied", "closed", "ack-path", "ack-sha", "source", "deadline"])
+def test_signing_request_requires_same_live_original_preparation(tmp_path: Path, defect: str) -> None:
+    """Refuse missing private custody, changed selectors and revoked authority.
+
+    Args:
+        tmp_path: Owned original public chain fixtures.
+        defect: Exact post-completion or post-preparation admission defect.
+    """
+    script = _chain_fixture(tmp_path) + rf"""
+try {{
+ if({_ps(defect)} -cne 'unprepared'){{$null=Prepare-AtlasoConsoleCredentialStopAck -Transaction $tx}}
+ $candidate=$tx
+ switch({_ps(defect)}){{
+  'copied' {{$candidate=$tx.PSObject.Copy()}}
+  'closed' {{Close-AtlasoConsoleCredentialTransaction -Transaction $tx}}
+  'ack-path' {{$tx.AckIntentReceipt.Path=$tx.PlanReceipt.Path}}
+  'ack-sha' {{$tx.AckIntentReceipt.Sha256='0'*64}}
+  'source' {{$script:expectedCommit='b'*40}}
+  'deadline' {{$tx.Deadline=$tx.Deadline.AddSeconds(1)}}
+ }}
+ $refused=$false;try{{$null=New-AtlasoConsoleStopSigningRequest -Transaction $candidate}}catch{{$refused=$true}}
+ $path=Join-Path $context.EvidenceDirectory ('atlaso-test-vm-console-credential-signing-intent-'+$nonce+'.json')
+ if(-not $refused -or (Test-Path -LiteralPath $path)){{throw 'Invalid preparation supplied signing authority'}}
+ Write-Output 'signing-admission-refused'
+}}finally{{
+""" + _close_fixture() + "}\n"
+    assert "signing-admission-refused" in _run(script, tmp_path, timeout=60)
+
+
+@pytest.mark.parametrize("mode", ["publication-uncertain", "post-publication-drift"])
+def test_signing_request_uncertainty_is_consumed_without_retry(tmp_path: Path, mode: str) -> None:
+    """Preserve original publication facts without replacing or retrying intent.
+
+    Args:
+        tmp_path: Owned original public preparation and request namespace.
+        mode: Unknown publication result or later source-admission loss.
+    """
+    script = _chain_fixture(tmp_path) + rf"""
+$null=Prepare-AtlasoConsoleCredentialStopAck -Transaction $tx
+$originalPublisher=${{function:Publish-AtlasoTestVmOwnershipRecord}}
+$script:signingCalls=0
+function Publish-AtlasoTestVmOwnershipRecord {{param($Context,$Record,$Kind)
+ if($Kind -ceq 'console-credential-signing-intent'){{
+  $script:signingCalls+=1
+  if({_ps(mode)} -ceq 'publication-uncertain'){{throw 'Synthetic unknown publication result'}}
+  $result=& $originalPublisher -Context $Context -Record $Record -Kind $Kind
+  $options.FieldRectangle='11,20,300,40'
+  return $result
+ }}
+ & $originalPublisher -Context $Context -Record $Record -Kind $Kind
+}}
+try {{
+ $result=$null;$failed=$false
+ try{{$result=New-AtlasoConsoleStopSigningRequest -Transaction $tx}}catch{{$failed=$true}}
+ $path=Join-Path $context.EvidenceDirectory ('atlaso-test-vm-console-credential-signing-intent-'+$nonce+'.json')
+ $exists=Test-Path -LiteralPath $path
+ if(-not $failed -or $result -or $script:signingCalls -ne 1 -or
+  $exists -ne ({_ps(mode)} -ceq 'post-publication-drift')){{throw 'Uncertain signing request returned success'}}
+ $hash=if($exists){{(Get-FileHash -LiteralPath $path).Hash}}else{{''}}
+ $options.FieldRectangle='10,20,300,40'
+ $again=$false;try{{$null=New-AtlasoConsoleStopSigningRequest -Transaction $tx}}catch{{$again=$true}}
+ if(-not $again -or $script:signingCalls -ne 1 -or
+  ($exists -and (Get-FileHash -LiteralPath $path).Hash -cne $hash)){{throw 'Uncertain signing request was retried'}}
+ Write-Output 'signing-uncertainty-preserved'
+}}finally{{
+""" + _close_fixture() + "}\n"
+    assert "signing-uncertainty-preserved" in _run(script, tmp_path, timeout=60)
+
+
+@pytest.mark.parametrize("expression", ["$null", "1.5", "@(1,2)", "([uint64]1)", "'space value'",
+                                          "([string][char]233)", "('x'*3001)", "@{Bad='value'}",
+                                          "('value'+[char]10)", "@{('key'+[char]10)='value'}"])
+def test_stop_canonical_encoder_refuses_coercion_and_unbounded_text(tmp_path: Path, expression: str) -> None:
+    """The restricted canonical schema never coerces unexpected public values.
+
+    Args:
+        tmp_path: Owned local PowerShell source fixture.
+        expression: Explicit synthetic primitive or unsupported object.
+    """
+    script = f". {_ps(ROOT / 'scripts/windows/vmware/Atlaso.ConsoleCredentialTransaction.ps1')}\n" + rf"""
+$refused=$false;try{{$null=ConvertTo-AtlasoConsoleStopCanonicalJson -Value ({expression})}}catch{{$refused=$true}}
+if(-not $refused){{throw 'Unexpected primitive was coerced'}}
+Write-Output 'canonical-primitive-refused'
+"""
+    assert "canonical-primitive-refused" in _run(script, tmp_path)
+
+
+def test_stop_canonical_encoder_matches_python_under_non_english_culture(tmp_path: Path) -> None:
+    """Preserve exact booleans and invariant decimal integers with ordinal keys.
+
+    Args:
+        tmp_path: Owned local PowerShell source fixture.
+    """
+    script = f". {_ps(ROOT / 'scripts/windows/vmware/Atlaso.ConsoleCredentialTransaction.ps1')}\n" + r"""
+[Threading.Thread]::CurrentThread.CurrentCulture=[Globalization.CultureInfo]::GetCultureInfo('fr-FR')
+ConvertTo-AtlasoConsoleStopCanonicalJson -Value ([ordered]@{z=[long]::MinValue;a=$false;n=0;s='Ed25519';t=$true})
+"""
+    expected = {"z": -(2**63), "a": False, "n": 0, "s": "Ed25519", "t": True}
+    assert _run(script, tmp_path).strip() == json.dumps(expected, sort_keys=True, separators=(",", ":"))

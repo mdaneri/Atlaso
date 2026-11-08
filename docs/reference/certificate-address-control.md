@@ -113,6 +113,18 @@ statement marked `prepared_unsigned_no_ack`; no signature or transport write occ
 An uncertain publication or later admission loss preserves the original state and blocks retry, including after a run
 identifier changes. A reviewed signer/writer, receiver/guardian and native public-channel qualification remain required.
 
+Successful preparation now retains the original ACK-intent path/digest, canonical unsigned ASCII text/digest and admitted
+public key privately on that same live transaction. Returned objects are independent projections. Canonical encoding
+sorts keys ordinally, preserves exact integers and booleans, rejects unsupported values and reserves space for the future
+signature within the 3,000-byte wire limit. It does not sign the statement.
+
+`New-AtlasoConsoleStopSigningRequest -Transaction` accepts only that original open reference. It rechecks the complete
+stop chain and original ACK intent, consumes one request attempt and durably publishes a separate signing intent with
+the exact unsigned text, original controller, receipt chain, key pin and unchanged deadline. Publication uncertainty or
+later drift preserves the original attempt and forbids retry. Its result is `prepared_signing_request_no_backend`:
+no child, SDK access, signing-key selector, signer backend or VM write exists here. A separately admitted suspended
+signer child and whole-job closeout remain required before any future signing or transport implementation can use it.
+
 Remaining execution work includes that controller and credential-stop boundary, original runtime/console admission,
 family-aware route/rule retirement interpretation, peer DNS setup and restoration through the normal UI, and a
 reviewed transaction/restoration journal. No component or synthetic test supplies continuous LAN/address enforcement,
