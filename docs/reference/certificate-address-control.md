@@ -222,6 +222,7 @@ It installs the existing GuestInfo/VIX profile and restarts Tools before publish
 address and graceful-power operations can use the installed plugins. The unique NoCloud instance cache is retained
 across seed retirement; the original SSH keys, interface configuration and successful cloud-init state must survive
 the separate seed-removal restart.
+The peer VMX declares UTF-8 for the supported offline ISO seed-retirement tools.
 
 Creation is not readiness or native acceptance. Admit the original VMX and serial endpoint before starting the new peer,
 then capture and pin its actual public host key before SSH. Follow the existing two-member topology, seed retirement,

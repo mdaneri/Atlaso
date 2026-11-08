@@ -91,6 +91,7 @@ def test_render_vmx_builds_offline_peer_with_receipt_identity_and_serial_log() -
     text = _render(spec={"collision_suffix": "run-2"}, name="Atlaso-PR-1118-certificate-peer-run-2")
     assignments = dict(line.split(" = ", 1) for line in text.splitlines() if " = " in line)
 
+    assert assignments[".encoding"] == '"UTF-8"'
     assert assignments["firmware"] == '"efi"'
     assert assignments["virtualHW.version"] == '"21"'
     assert assignments["numvcpus"] == '"1"'

@@ -256,7 +256,7 @@ def render_vmx(
         raise ValueError("Peer MAC addresses and appliance_mac must all be distinct.")
 
     lines = [
-        '.encoding = "windows-1252"',
+        '.encoding = "UTF-8"',
         'config.version = "8"',
         'virtualHW.version = "21"',
         'pciBridge0.present = "TRUE"',
