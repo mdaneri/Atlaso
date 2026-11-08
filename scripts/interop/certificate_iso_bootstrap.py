@@ -409,53 +409,52 @@ def setup(plan: dict, output: Path, password: str, *, execute: bool) -> dict:
                               observed_address=current, bootstrap_runtime_sha256=bootstrap_sha,
                               dhcp_baseline_observation_sha256=observation_sha)
                 monitor.check()
-                publish(output / "proof-plan.json", compiled)
-                return result
-            intent = {"schema": 1, "kind": "certificate-management-rewire-intent", "phase": "iso-static-baseline",
-                      "task_id": plan["task_id"], "bootstrap_runtime_sha256": bootstrap_sha,
-                      "peer_fixture_sha256": plan["peer_fixture"]["sha256"], "peer_identity_sha256": plan["peer_identity"]["sha256"],
-                      "original_address": current, "baseline_address": baseline}
-            intent_sha = publish(output / "management-rewire-intent.json", intent)
-            changed = dict(fields, ipv4_method="static", ip_cidr=f"{baseline}/{network.prefixlen}", gateway="",
-                           ipv6_enabled=False, ipv6_cidr="", ipv6_gateway="")
-            # submit() refuses an existing task and unrelated changed units; the
-            # journal precedes desired editing so an unknown task is never retried.
-            result["stage"] = "desired_edit"
-            publish(output / "mutation-started.json", {**result, "baseline_fields": changed})
-            mutation_started = True
-            edit(client, "eth0", changed, plan["mac"])
-            task_terminal = False
-            job, status_path = submit(client, include_generated_dns=True)
-            result.update(stage="apply_wait", job_id=job, status_path=status_path)
-            publish(output / "apply-submitted.json", {"schema": 1, "job_id": job, "status_path": status_path})
-            target = Client("https://" + baseline, plan["ca_path"], peer=peer, connect_ip=baseline)
-            task, _ = wait_task([client, target], status_path, plan.get("username", "admin"), password)
-            task_terminal = True
-            if task.get("status") != "succeeded":
-                raise Refusal("bootstrap_apply_failed")
-            target.login(plan.get("username", "admin"), password)
-            observed, _ = target.interface("eth0")
-            observed_fields = saved_fields(observed)
-            if any(observed_fields[key] != changed[key] for key in ("ipv4_method", "ip_cidr", "gateway", "ipv6_enabled")):
-                raise Refusal("bootstrap_static_readback_mismatch")
-            target.json("/openapi.json")
-            clean_baseline(target)
-            with PinnedApplianceSession(peer, baseline, plan["appliance_user"], password, plan["appliance_ssh_host_key"]) as appliance:
-                if guest_identity(appliance, plan, password) != facts:
-                    raise Refusal("bootstrap_guest_identity_changed")
-            monitor.check()
-            runtime.update(kind="certificate-rewired-runtime", phase="iso-static-baseline-applied", url="https://" + baseline,
-                           observed_address=baseline, mac=plan["mac"].replace(":", "-"),
-                           rewired_runtime_source="original-iso-supported-ui-apply", rewire_intent_sha256=intent_sha,
-                           peer_identity_sha256=plan["peer_identity"]["sha256"], bootstrap_runtime_sha256=bootstrap_sha)
-            rewire_sha = publish(output / "rewired-runtime.json", runtime)
-            compiled = dict(plan, helper_sha256=facts["helper_sha256"], wheel_sha256=facts["wheel_sha256"], url="https://" + baseline)
-            for key, filename, checksum in (
-                ("predeployment_evidence", "source.json", source_sha), ("bootstrap_runtime", "bootstrap-runtime.json", bootstrap_sha),
-                ("rewire_intent", "management-rewire-intent.json", intent_sha), ("rewired_runtime", "rewired-runtime.json", rewire_sha),
-            ):
-                compiled[key] = {"path": str(output / filename), "sha256": checksum}
-            result.update(success=True, stage="static_baseline_complete", baseline_tls=target.tls_identity(), job_id=job)
+            else:
+                intent = {"schema": 1, "kind": "certificate-management-rewire-intent", "phase": "iso-static-baseline",
+                          "task_id": plan["task_id"], "bootstrap_runtime_sha256": bootstrap_sha,
+                          "peer_fixture_sha256": plan["peer_fixture"]["sha256"], "peer_identity_sha256": plan["peer_identity"]["sha256"],
+                          "original_address": current, "baseline_address": baseline}
+                intent_sha = publish(output / "management-rewire-intent.json", intent)
+                changed = dict(fields, ipv4_method="static", ip_cidr=f"{baseline}/{network.prefixlen}", gateway="",
+                               ipv6_enabled=False, ipv6_cidr="", ipv6_gateway="")
+                # submit() refuses an existing task and unrelated changed units; the
+                # journal precedes desired editing so an unknown task is never retried.
+                result["stage"] = "desired_edit"
+                publish(output / "mutation-started.json", {**result, "baseline_fields": changed})
+                mutation_started = True
+                edit(client, "eth0", changed, plan["mac"])
+                task_terminal = False
+                job, status_path = submit(client, include_generated_dns=True)
+                result.update(stage="apply_wait", job_id=job, status_path=status_path)
+                publish(output / "apply-submitted.json", {"schema": 1, "job_id": job, "status_path": status_path})
+                target = Client("https://" + baseline, plan["ca_path"], peer=peer, connect_ip=baseline)
+                task, _ = wait_task([client, target], status_path, plan.get("username", "admin"), password)
+                task_terminal = True
+                if task.get("status") != "succeeded":
+                    raise Refusal("bootstrap_apply_failed")
+                target.login(plan.get("username", "admin"), password)
+                observed, _ = target.interface("eth0")
+                observed_fields = saved_fields(observed)
+                if any(observed_fields[key] != changed[key] for key in ("ipv4_method", "ip_cidr", "gateway", "ipv6_enabled")):
+                    raise Refusal("bootstrap_static_readback_mismatch")
+                target.json("/openapi.json")
+                clean_baseline(target)
+                with PinnedApplianceSession(peer, baseline, plan["appliance_user"], password, plan["appliance_ssh_host_key"]) as appliance:
+                    if guest_identity(appliance, plan, password) != facts:
+                        raise Refusal("bootstrap_guest_identity_changed")
+                monitor.check()
+                runtime.update(kind="certificate-rewired-runtime", phase="iso-static-baseline-applied", url="https://" + baseline,
+                               observed_address=baseline, mac=plan["mac"].replace(":", "-"),
+                               rewired_runtime_source="original-iso-supported-ui-apply", rewire_intent_sha256=intent_sha,
+                               peer_identity_sha256=plan["peer_identity"]["sha256"], bootstrap_runtime_sha256=bootstrap_sha)
+                rewire_sha = publish(output / "rewired-runtime.json", runtime)
+                compiled = dict(plan, helper_sha256=facts["helper_sha256"], wheel_sha256=facts["wheel_sha256"], url="https://" + baseline)
+                for key, filename, checksum in (
+                    ("predeployment_evidence", "source.json", source_sha), ("bootstrap_runtime", "bootstrap-runtime.json", bootstrap_sha),
+                    ("rewire_intent", "management-rewire-intent.json", intent_sha), ("rewired_runtime", "rewired-runtime.json", rewire_sha),
+                ):
+                    compiled[key] = {"path": str(output / filename), "sha256": checksum}
+                result.update(success=True, stage="static_baseline_complete", baseline_tls=target.tls_identity(), job_id=job)
         # A sticky failure or unjoined watcher invalidates even the final TLS
         # readback. Publish the usable proof plan only after observation stops.
         publish(output / "proof-plan.json", compiled)

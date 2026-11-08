@@ -419,12 +419,16 @@ def test_unknown_bootstrap_apply_retains_original_and_forbids_automatic_retry(tm
     assert not (late / "proof-plan.json").exists()
 
 
-def test_dhcp_bootstrap_publishes_observation_without_applying(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("monitor_failure", [None, "late-drift", "unjoined"])
+def test_dhcp_bootstrap_publishes_observation_without_applying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, monitor_failure: str | None,
+) -> None:
     """Observe the original fixed DHCP baseline and publish distinct no-mutation receipts.
 
     Args:
         tmp_path: Existing isolated evidence directory for generated immutable records.
         monkeypatch: Replacements for native topology, peer, guest, and UI operations.
+        monitor_failure: Optional sticky failure after the final readback or at watcher shutdown.
     """
     ca = b"-----BEGIN CERTIFICATE-----\npublic\n-----END CERTIFICATE-----\n"
     plan = {
@@ -473,17 +477,20 @@ def test_dhcp_bootstrap_publishes_observation_without_applying(tmp_path: Path, m
             Args:
                 *_args: Plan and original topology passed by the bootstrap flow.
             """
+            self.failed = threading.Event()
 
         def start(self) -> None:
             """Start the no-drift test observer."""
 
         def stop(self) -> None:
             """Stop the no-drift test observer."""
+            if monitor_failure == "unjoined":
+                self.failed.set()
 
         def check(self) -> None:
             """Accept the unchanged synthetic topology."""
-
-        failed = threading.Event()
+            if monitor_failure == "late-drift":
+                self.failed.set()
 
     monkeypatch.setattr(bootstrap, "TrustedHostMonitor", Monitor)
 
@@ -576,6 +583,19 @@ def test_dhcp_bootstrap_publishes_observation_without_applying(tmp_path: Path, m
     monkeypatch.setattr(bootstrap, "edit", lambda *_args: mutation_calls.append("edit"))
     monkeypatch.setattr(bootstrap, "submit", lambda *_args, **_kwargs: mutation_calls.append("submit"))
     monkeypatch.setattr(bootstrap, "wait_task", lambda *_args: mutation_calls.append("wait"))
+
+    if monitor_failure:
+        with pytest.raises(bootstrap.Refusal, match="bootstrap_topology_observation_failed"):
+            bootstrap.setup(plan, tmp_path, "synthetic-concealed-value", execute=True)
+        result = json.loads((tmp_path / "bootstrap-result.json").read_text())
+        assert result["success"] is False
+        assert result["recovery"] == "no_desired_mutation_started"
+        assert mutation_calls == []
+        assert (tmp_path / "dhcp-baseline-observation.json").is_file()
+        assert (tmp_path / "bootstrap-runtime.json").is_file()
+        assert not (tmp_path / "proof-plan.json").exists()
+        assert not (tmp_path / "rewired-runtime.json").exists()
+        return
 
     result = bootstrap.setup(plan, tmp_path, "synthetic-concealed-value", execute=True)
 

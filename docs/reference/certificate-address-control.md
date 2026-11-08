@@ -402,6 +402,10 @@ Preserve `deployment.json` separately and bind its path/digest as `iso_wheel_dep
 Keep `installed_inspection` unchanged: it continues to describe the original signed software. Subsequent certificate
 admission measures the active PR wheel again before and after rotation.
 
+Both static and DHCP bootstrap publish their usable `proof-plan.json` only after trusted-host topology monitoring
+stops successfully. Late drift or an unjoined watcher preserves preliminary observations and a failed bootstrap
+result without publishing that plan; those observations alone do not establish an admitted baseline.
+
 On failure or an unknown outcome, preserve the fixture, exclusive claim and all process/intent records. Reconcile
 those records before any recovery; another output directory never permits redeployment. New attempts publish fixed
 `deployer-phase-*.json` records for credential retrieval, pinned SSH, original-media preflight, verified uploads,
