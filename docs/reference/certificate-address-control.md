@@ -71,8 +71,19 @@ The Windows bounded-process runner has an opt-in quiescence callback for the fut
 named job, original suspended-child ownership publication, and an absolute deadline. The callback runs once after
 whole-job emptiness is proven and handles are disposed. A nonzero exit, timeout, publication interruption, or forced
 descendant termination produces a failed outcome; unproven termination produces no callback. A failed callback is
-never retried. This process observation is not a durable credential transaction, a guest stop acknowledgement, or
-permission to restore terminal echo. The credential consumer and terminal adapter do not yet use it.
+never retried. This process observation alone is not a guest stop acknowledgement or permission to restore terminal echo.
+
+The normal console credential consumer has an opt-in transaction journal using original public plan and concealed-receiver
+receipt digests. Source, runtime, frame, original VM, provider, boot, run and receiver bindings precede its original intent.
+The suspended child's PID, managed start time, native start FILETIME, distinct CIM creation time and named job are durable
+before resume. The child rechecks its original controller and job membership before SDK access. Only the outer job's
+quiescence callback can publish a stop receipt; changed or expired admission produces a failed outcome. Existing receiver
+namespaces and failed or uncertain publications are preserved without replay. Records use the existing atomic durable
+publisher and remain outside the VM removal root.
+
+These interfaces are source components, not an admitted credential command. The reviewed public receiver producer,
+actually viewed console admission, separate stop acknowledgement and concealed guardian remain required before use.
+No acknowledgement is sent by the journal. The guest terminal adapter still refuses before I/O.
 
 Remaining execution work includes that controller and credential-stop boundary, original runtime/console admission,
 family-aware route/rule retirement interpretation, peer DNS setup and restoration through the normal UI, and a

@@ -35,6 +35,10 @@ Internal bounded-child selector.
 Verify original VM ownership and committed source without obtaining credentials or connecting to VNC.
 .PARAMETER VerifyConsoleOnly
 Verify original VM ownership, committed source and the existing loopback console provider without credentials.
+.PARAMETER TransactionPlanPath
+Optional original public concealed-receiver transaction plan in the admitted evidence directory.
+.PARAMETER TransactionPlanSha256
+Independently retained plan digest, required together with TransactionPlanPath.
 #>
 [CmdletBinding(SupportsShouldProcess = $true, DefaultParameterSetName = 'Credential')]
 param(
@@ -53,6 +57,8 @@ param(
     [Parameter(Mandatory, ParameterSetName = 'Credential')][ValidateRange(1, 14000)][int]$RuntimeFileCount,
     [Parameter(Mandatory, ParameterSetName = 'Admission')][switch]$AdmissionOnly,
     [Parameter(Mandatory, ParameterSetName = 'Console')][switch]$VerifyConsoleOnly,
+    [Parameter(ParameterSetName = 'Credential')][string]$TransactionPlanPath = '',
+    [Parameter(ParameterSetName = 'Credential')][ValidatePattern('^[0-9a-f]{64}$')][string]$TransactionPlanSha256 = '',
     [switch]$Child
 )
 
@@ -61,6 +67,49 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 $operation = if ($AdmissionOnly -or $VerifyConsoleOnly) { 'Verify original VM admission' } else { 'Submit one concealed account value to the original VM console' }
 if (-not $PSCmdlet.ShouldProcess($VmxPath, $operation)) { return }
+if ([bool]$TransactionPlanPath -xor [bool]$TransactionPlanSha256) { throw 'Provide both original transaction plan selectors.' }
+$context = $null
+$transaction = $null
+if ($Child -or $TransactionPlanPath) {
+    $worktree = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).Path
+    Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
+    Import-Module (Join-Path $PSScriptRoot 'Atlaso.SourceSnapshot.psm1') -Force
+    . (Join-Path $PSScriptRoot 'Atlaso.TestVmOwnership.ps1')
+    $commit = ([string](& git -C $worktree rev-parse HEAD)).Trim()
+    $branch = ([string](& git -C $worktree branch --show-current)).Trim()
+    $context = New-AtlasoTestVmOwnershipContext -Worktree $worktree -VmxPath $VmxPath `
+        -OutputDirectory ([IO.Path]::GetDirectoryName($VmxPath)) -Name ([IO.Path]::GetFileNameWithoutExtension($VmxPath)) `
+        -SourceCommit $commit -SourceBranch $branch -PullRequestNumber $PullRequestNumber `
+        -OwnershipReceiptPath $OwnershipReceiptPath -OwnershipReceiptSha256 $OwnershipReceiptSha256
+    if (-not $context.Enabled) { throw 'Console credentials require original task ownership admission.' }
+}
+if ($TransactionPlanPath) {
+    . (Join-Path $PSScriptRoot 'Atlaso.ConsoleCredentialTransaction.ps1')
+    try {
+        Assert-AtlasoTestVmCheckoutSource -Context $context
+        $null = Assert-AtlasoTestVmOriginalOwnership -Context $context
+        $parseErrors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PSScriptRoot 'invoke-installation-iso-test.ps1'), [ref]$null, [ref]$parseErrors)
+        if ($parseErrors.Count) { throw 'Shared console adapter source could not be parsed.' }
+        foreach ($name in @('Initialize-InstallationConsolePeerVerifier', 'Get-InstallationVncPeer', 'Send-InstallationConsoleSecret')) {
+            $functions = @($ast.FindAll({ param($node)
+                $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name
+            }, $true))
+            if ($functions.Count -ne 1) { throw 'Shared console adapter declaration is missing or ambiguous.' }
+            . ([scriptblock]::Create($functions[0].Extent.Text))
+        }
+        $transaction = Open-AtlasoConsoleCredentialTransaction -Context $context -PlanPath $TransactionPlanPath `
+            -PlanSha256 $TransactionPlanSha256 -Options @{
+                Account=$Account; Port=$Port; ScreenPath=$ScreenPath; ScreenSha256=$ScreenSha256
+                FieldRectangle=$FieldRectangle; PythonPath=$PythonPath; RuntimeSha256=$RuntimeSha256; RuntimeFileCount=$RuntimeFileCount
+            }
+    }
+    catch {
+        if ($context.PSObject.Properties['CheckoutSourcePin'] -and $context.CheckoutSourcePin) { $context.CheckoutSourcePin.Dispose() }
+        throw
+    }
+}
 if (-not $Child) {
     $arguments = @('-NoProfile', '-NonInteractive', '-File', $PSCommandPath, '-Child',
         '-VmxPath', $VmxPath, '-OwnershipReceiptPath', $OwnershipReceiptPath,
@@ -73,22 +122,23 @@ if (-not $Child) {
             '-PythonPath', $PythonPath, '-RuntimeSha256', $RuntimeSha256,
             '-RuntimeFileCount', [string]$RuntimeFileCount)
     }
-    Invoke-AtlasoBoundedStreamingProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList $arguments `
-        -TimeoutSeconds 420 -Action 'Receipt-bound normal VM console credential'
+    if ($transaction) {
+        $arguments += @('-TransactionPlanPath', $TransactionPlanPath, '-TransactionPlanSha256', $TransactionPlanSha256)
+        try {
+            Invoke-AtlasoConsoleCredentialTransaction -Transaction $transaction -FilePath (Get-Process -Id $PID).Path -ArgumentList $arguments
+        }
+        finally {
+            Close-AtlasoConsoleCredentialTransaction -Transaction $transaction
+            if ($context.PSObject.Properties['CheckoutSourcePin'] -and $context.CheckoutSourcePin) { $context.CheckoutSourcePin.Dispose() }
+        }
+    }
+    else {
+        Invoke-AtlasoBoundedStreamingProcess -FilePath (Get-Process -Id $PID).Path -ArgumentList $arguments `
+            -TimeoutSeconds 420 -Action 'Receipt-bound normal VM console credential'
+    }
     return
 }
 
-$worktree = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).Path
-Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'Atlaso.SourceSnapshot.psm1') -Force
-. (Join-Path $PSScriptRoot 'Atlaso.TestVmOwnership.ps1')
-$commit = ([string](& git -C $worktree rev-parse HEAD)).Trim()
-$branch = ([string](& git -C $worktree branch --show-current)).Trim()
-$context = New-AtlasoTestVmOwnershipContext -Worktree $worktree -VmxPath $VmxPath `
-    -OutputDirectory ([IO.Path]::GetDirectoryName($VmxPath)) -Name ([IO.Path]::GetFileNameWithoutExtension($VmxPath)) `
-    -SourceCommit $commit -SourceBranch $branch -PullRequestNumber $PullRequestNumber `
-    -OwnershipReceiptPath $OwnershipReceiptPath -OwnershipReceiptSha256 $OwnershipReceiptSha256
-if (-not $context.Enabled) { throw 'Console credentials require original task ownership admission.' }
 $runtime = $null
 $inspectorSource = $null
 $framePin = $null
@@ -96,6 +146,7 @@ $frameDirectoryPin = $null
 $pair = $null
 $consumer = $null
 try {
+    if ($transaction) { Assert-AtlasoConsoleCredentialChild -Transaction $transaction }
     Assert-AtlasoTestVmCheckoutSource -Context $context
     $null = Assert-AtlasoTestVmOriginalOwnership -Context $context
     if ($AdmissionOnly) {
@@ -129,12 +180,6 @@ try {
         & git -C $worktree check-ignore -q -- $path
         if ($LASTEXITCODE -ne 0) { throw 'Console client and frame must be ignored task resources.' }
     }
-    Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
-    $selector = Resolve-AtlasoOnePasswordEnvironmentId -RepositoryRoot $worktree
-    $token = Resolve-AtlasoOnePasswordServiceAccountTokenFile -RepositoryRoot $worktree `
-        -TokenFile (Join-Path $worktree '.atlaso-local/onepassword-service-account-token.dpapi')
-    $pair = Get-AtlasoOnePasswordCredentialPair -RepositoryRoot $worktree -EnvironmentId $selector `
-        -OnePasswordServiceAccountTokenFile $token -TimeoutSeconds 300 -ConsumerDescription 'normal test VM concealed console field'
     $venv = [IO.Path]::GetDirectoryName([IO.Path]::GetDirectoryName($PythonPath))
     $evidenceRoot = [IO.Path]::GetDirectoryName($venv)
     $inspectorSource = New-AtlasoCertificateInspectorSnapshot -RepositoryRoot $worktree -EvidenceRoot $evidenceRoot `
@@ -150,6 +195,13 @@ try {
         (Get-FileHash -LiteralPath $ScreenPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ScreenSha256) {
         throw 'Observed console frame differs from its admitted digest or bound.'
     }
+    if ($transaction) { Assert-AtlasoConsoleCredentialChild -Transaction $transaction }
+    Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
+    $selector = Resolve-AtlasoOnePasswordEnvironmentId -RepositoryRoot $worktree
+    $token = Resolve-AtlasoOnePasswordServiceAccountTokenFile -RepositoryRoot $worktree `
+        -TokenFile (Join-Path $worktree '.atlaso-local/onepassword-service-account-token.dpapi')
+    $pair = Get-AtlasoOnePasswordCredentialPair -RepositoryRoot $worktree -EnvironmentId $selector `
+        -OnePasswordServiceAccountTokenFile $token -TimeoutSeconds 300 -ConsumerDescription 'normal test VM concealed console field'
     $clientArguments = New-AtlasoCertificatePythonArguments -Runtime $runtime `
         -ScriptPath (Join-Path $inspectorSource.Root 'scripts/installation/vnc_console.py') -ScriptArguments @(
             '--port', [string]$Port, '--expected-screen', $ScreenPath,
@@ -174,6 +226,7 @@ try {
     if ((Get-InstallationVncPeer -VmxPath $VmxPath -Port $Port) -ne $peer) {
         throw 'Receipt-bound console provider changed before credential submission.'
     }
+    if ($transaction) { Assert-AtlasoConsoleCredentialChild -Transaction $transaction }
     $secret = if ($Account -ceq 'admin') { $pair.AdminPassword } else { $pair.RootPassword }
     Send-InstallationConsoleSecret -Pipe $consumer.StandardInput.BaseStream -Value $secret -JsonRequest
     $consumer.StandardInput.Close()
@@ -204,4 +257,5 @@ finally {
     if ($context.PSObject.Properties['CheckoutSourcePin'] -and $context.CheckoutSourcePin) {
         $context.CheckoutSourcePin.Dispose()
     }
+    if ($transaction) { Close-AtlasoConsoleCredentialTransaction -Transaction $transaction }
 }
